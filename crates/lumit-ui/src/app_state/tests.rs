@@ -2,6 +2,32 @@
 
 use super::*;
 
+/// Delete a media file a background probe thread may still hold open.
+///
+/// Windows refuses to unlink a file with an open handle, and the probe threads
+/// these tests deliberately let run are real, so a test that removes footage it
+/// just imported is racing its own probe. Retrying for a moment is the honest
+/// fix — the probe finishes in milliseconds — where an unconditional `unwrap`
+/// turns a lost race into a red CI run. Panics if it never becomes deletable,
+/// so a genuine leak still fails loudly.
+#[cfg(feature = "media")]
+fn remove_when_unlocked(path: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match std::fs::remove_file(path) {
+            Ok(()) => return,
+            Err(e) if std::time::Instant::now() < deadline => {
+                if !path.exists() {
+                    return; // someone else got there first; that is the goal
+                }
+                let _ = e;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => panic!("could not delete {}: {e}", path.display()),
+        }
+    }
+}
+
 fn kf(t: f64, interp: lumit_core::anim::SideInterp) -> lumit_core::anim::Keyframe {
     lumit_core::anim::Keyframe {
         time: Rational::from_f64_on_grid(t, Rational::FLICK_DEN).unwrap(),
@@ -56,57 +82,6 @@ fn linked_axis_partner_maps_x_to_y_only() {
         Some(TransformProp::ScaleY)
     );
     assert_eq!(linked_axis_partner(TransformProp::Opacity), None);
-}
-
-#[test]
-fn draft_width_caps_for_instant_scrub_but_never_exceeds_specified() {
-    // Full res, dragging: capped at the draft width for a fast decode.
-    assert_eq!(decode_target_width(1920, true, false, 1.0, 1), Some(640));
-    // Draft never coarser than needed: half res (960) already below no cap,
-    // still above 640 -> draft caps to 640.
-    assert_eq!(decode_target_width(1920, true, false, 1.0, 2), Some(640));
-    // Quarter res (480) is finer than the draft cap: keep 480, don't raise.
-    assert_eq!(decode_target_width(1920, true, false, 1.0, 4), Some(480));
-    // Auto res zoomed right out (192) stays 192 under draft.
-    assert_eq!(decode_target_width(1920, true, true, 0.1, 1), Some(192));
-    // A source already smaller than the cap needs no draft decode.
-    assert_eq!(decode_target_width(320, true, false, 1.0, 1), None);
-}
-
-#[test]
-fn fill_walk_is_forward_biased_and_complete() {
-    let order = fill_walk_order(5, 0, 10);
-    assert_eq!(order[0], 5); // the playhead caches first
-    let mut sorted = order.clone();
-    sorted.sort_unstable();
-    assert_eq!(sorted, (0..10).collect::<Vec<_>>()); // every frame once
-                                                     // Of the four frames right after the playhead, at least three are ahead.
-    let ahead = order[1..5].iter().filter(|&&f| f > 5).count();
-    assert!(ahead >= 3, "expected a forward bias: {order:?}");
-    // Playhead at the work-area start: everything is ahead, no panic.
-    assert_eq!(fill_walk_order(0, 0, 4), vec![0, 1, 2, 3]);
-    // Degenerate spans return cleanly.
-    assert_eq!(fill_walk_order(0, 0, 1), vec![0]);
-    assert!(fill_walk_order(0, 0, 0).is_empty());
-}
-
-#[test]
-fn playback_lookahead_is_a_bounded_forward_window() {
-    // Strictly forward, starting just past the playhead.
-    assert_eq!(playback_lookahead(5, 100, 4), vec![6, 7, 8, 9]);
-    // Clamps to the (exclusive) work-area end.
-    assert_eq!(playback_lookahead(8, 10, 4), vec![9]);
-    // Empty at or past the end, and with a zero lookahead.
-    assert!(playback_lookahead(9, 10, 4).is_empty());
-    assert!(playback_lookahead(10, 10, 4).is_empty());
-    assert!(playback_lookahead(5, 100, 0).is_empty());
-}
-
-#[test]
-fn specified_width_is_unchanged_when_not_drafting() {
-    assert_eq!(decode_target_width(1920, false, false, 1.0, 1), None);
-    assert_eq!(decode_target_width(1920, false, false, 1.0, 2), Some(960));
-    assert_eq!(decode_target_width(1000, false, true, 0.5, 1), Some(500));
 }
 
 /// K-068: solids are assets auto-filed into a "Solids" folder that is
@@ -1017,7 +992,7 @@ fn audio_sync_decision(app: &AppState, comp_id: Uuid) -> AudioSync {
 
 /// The comp audio job for the sole footage layer, if any.
 #[cfg(feature = "media")]
-fn only_audio_job(app: &AppState, comp_id: Uuid) -> Option<crate::export::AudioJob> {
+fn only_audio_job(app: &AppState, comp_id: Uuid) -> Option<lumit_render::export::AudioJob> {
     let doc = app.store.snapshot();
     let comp = doc.comp(comp_id).unwrap();
     app.comp_audio_jobs(&doc, comp).into_iter().next()
@@ -1642,7 +1617,7 @@ fn a_comp_frame_comes_back_stamped_with_the_epoch_it_was_asked_for() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         match app.preview_engine.results.try_recv() {
-            Ok(Ok(crate::app_state::preview::PreviewResult::Comp(cf))) => {
+            Ok(Ok(lumit_render::decode::PreviewResult::Comp(cf))) => {
                 assert_eq!(cf.comp, comp);
                 assert_eq!(
                     cf.media_epoch, 7,
@@ -1723,7 +1698,10 @@ fn a_reopened_project_with_missing_media_slates_at_every_frame() {
     app.save();
 
     // The file goes away, and the project is reopened exactly as the app does.
-    std::fs::remove_file(&media).unwrap();
+    // `add_footage_to_comp` spawned a real probe thread, and on Windows a file
+    // cannot be deleted while another handle is open — so retry briefly rather
+    // than failing the run on a lost race with our own probe.
+    remove_when_unlocked(&media);
     let mut app = AppState::default();
     app.open_path(&project);
 

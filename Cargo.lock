@@ -2916,6 +2916,7 @@ dependencies = [
  "proptest",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.18",
  "uuid",
 ]
@@ -2996,6 +2997,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "lumit-render"
+version = "0.1.0"
+dependencies = [
+ "lumit-audio",
+ "lumit-cache",
+ "lumit-core",
+ "lumit-eval",
+ "lumit-flow",
+ "lumit-gpu",
+ "lumit-media",
+ "lumit-project",
+ "lumit-text",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "uuid",
+ "wgpu",
+]
+
+[[package]]
 name = "lumit-text"
 version = "0.1.0"
 dependencies = [
@@ -3019,6 +3040,7 @@ dependencies = [
  "lumit-gpu",
  "lumit-media",
  "lumit-project",
+ "lumit-render",
  "lumit-text",
  "muda",
  "rfd",

@@ -16,17 +16,17 @@ pub struct FramePixels {
     pub item: Uuid,
 }
 
-struct Request {
-    generation: u64,
-    item: Uuid,
-    path: PathBuf,
-    frame: usize,
-    target_width: Option<u32>,
+pub struct Request {
+    pub generation: u64,
+    pub item: Uuid,
+    pub path: PathBuf,
+    pub frame: usize,
+    pub target_width: Option<u32>,
     /// The file is missing (docs/07 §3.3): answer with the test-bar slate at
     /// this size instead of decoding. Viewing a lost clip on its own must
     /// show the same bars a comp shows for it — the Viewer previously drew
     /// nothing at all here, which looks identical to a broken application.
-    slate: Option<(u32, u32)>,
+    pub slate: Option<(u32, u32)>,
 }
 
 /// One layer's decode job inside a comp render request.
@@ -147,29 +147,21 @@ impl Default for PreviewEngine {
         let generation = Arc::new(AtomicU64::new(0));
         let live = generation.clone();
         std::thread::spawn(move || {
-            let mut decoders: HashMap<Uuid, lumit_media::VideoDecoder> = HashMap::new();
-            // Decoded-frame RAM cache (K-016 tier seed): recently shown
-            // frames re-display instantly instead of re-decoding.
-            let mut frame_cache: lumit_cache::ByteLru<(Uuid, usize, Option<u32>), CachedFrame> =
-                lumit_cache::ByteLru::new(512 * 1024 * 1024);
-            // Flow backend, created on the first Flow-policy frame: its
-            // own headless GPU when one exists, the CPU oracle otherwise
-            // (lumit-flow degrades by itself — never a fault).
-            let mut flow_engine: Option<lumit_flow::FlowEngine> = None;
+            let mut pool = DecodePool::new();
             loop {
                 // Block for one request, then drain to the newest (latest
                 // wins). Budget messages apply on the spot — they must never
                 // be dropped by the latest-wins replacement.
                 let mut req = loop {
                     match rx.recv() {
-                        Ok(Message::SetCacheBudget(bytes)) => frame_cache.set_budget(bytes),
+                        Ok(Message::SetCacheBudget(bytes)) => pool.set_budget(bytes),
                         Ok(r) => break r,
                         Err(_) => return,
                     }
                 };
                 loop {
                     match rx.try_recv() {
-                        Ok(Message::SetCacheBudget(bytes)) => frame_cache.set_budget(bytes),
+                        Ok(Message::SetCacheBudget(bytes)) => pool.set_budget(bytes),
                         Ok(newer) => req = newer,
                         Err(TryRecvError::Empty) => break,
                         Err(TryRecvError::Disconnected) => return,
@@ -184,25 +176,16 @@ impl Default for PreviewEngine {
                     continue; // superseded while queued
                 }
                 let result = match req {
-                    Message::Footage(r) => {
-                        decode(&mut decoders, &mut frame_cache, &r).map(PreviewResult::Footage)
-                    }
+                    Message::Footage(r) => pool.decode_footage(&r).map(PreviewResult::Footage),
                     Message::Comp {
                         comp,
                         frame,
                         jobs,
                         media_epoch,
                         ..
-                    } => decode_comp(
-                        &mut decoders,
-                        &mut frame_cache,
-                        &mut flow_engine,
-                        comp,
-                        frame,
-                        &jobs,
-                        media_epoch,
-                    )
-                    .map(PreviewResult::Comp),
+                    } => pool
+                        .decode_comp(comp, frame, &jobs, media_epoch)
+                        .map(PreviewResult::Comp),
                     Message::SetCacheBudget(_) => continue, // handled above
                 };
                 let _ = result_tx.send(result);
@@ -225,6 +208,100 @@ struct CachedFrame {
 impl lumit_cache::ByteSized for CachedFrame {
     fn byte_size(&self) -> usize {
         self.rgba.len() + 16
+    }
+}
+
+/// The decoders, the decoded-frame cache and the flow backend one decoding
+/// context owns.
+///
+/// # In plain terms
+///
+/// Opening a video file is expensive and seeking around it is worse, so the
+/// pipeline keeps one open decoder per footage item and a byte-budgeted cache of
+/// the frames it has already read. This is that state, bundled so it can be
+/// owned by whoever is doing the decoding: the background worker thread that
+/// serves the egui Viewer, or — for the Flutter frontend, whose render calls
+/// already arrive on a worker — the headless renderer itself.
+///
+/// The decoded-frame cache is what makes a scrub cheap: revisiting a frame is a
+/// map lookup rather than a seek and a decode. Note that it holds *decoded
+/// source frames*, not finished comp frames — those are named and cached a level
+/// up, in [`crate::cache`].
+pub struct DecodePool {
+    decoders: HashMap<Uuid, lumit_media::VideoDecoder>,
+    frame_cache: lumit_cache::ByteLru<(Uuid, usize, Option<u32>), CachedFrame>,
+    /// Flow backend, created on the first Flow-policy frame: its own headless
+    /// GPU when one exists, the CPU oracle otherwise (lumit-flow degrades by
+    /// itself — never a fault).
+    flow_engine: Option<lumit_flow::FlowEngine>,
+    /// How many comp frames this pool has actually decoded. Diagnostic, and the
+    /// thing the drag fast path is *measured* by: a value drag must not move it
+    /// (see the headless preview tests).
+    comp_decodes: u64,
+}
+
+/// The decoded-frame cache's default share of RAM (K-016 tier seed); Settings →
+/// Performance moves it.
+pub const DEFAULT_DECODE_CACHE_BYTES: usize = 512 * 1024 * 1024;
+
+impl Default for DecodePool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DecodePool {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            decoders: HashMap::new(),
+            frame_cache: lumit_cache::ByteLru::new(DEFAULT_DECODE_CACHE_BYTES),
+            flow_engine: None,
+            comp_decodes: 0,
+        }
+    }
+
+    /// How many comp frames this pool has decoded since it was made.
+    #[must_use]
+    pub fn comp_decodes(&self) -> u64 {
+        self.comp_decodes
+    }
+
+    /// Resize the decoded-frame cache (its slice of the one RAM budget).
+    pub fn set_budget(&mut self, bytes: usize) {
+        self.frame_cache.set_budget(bytes);
+    }
+
+    /// Drop every cached decoded frame, keeping the open decoders (Settings →
+    /// Clear cache). The decoders are cheap to keep and expensive to re-open.
+    pub fn clear(&mut self) {
+        self.frame_cache.clear();
+    }
+
+    /// Decode one source frame (or synthesise the missing-footage slate).
+    pub fn decode_footage(&mut self, req: &Request) -> Result<FramePixels, String> {
+        decode(&mut self.decoders, &mut self.frame_cache, req)
+    }
+
+    /// Decode every layer of one comp frame from its plan — the pixels
+    /// [`crate::build`] then turns into a draw list.
+    pub fn decode_comp(
+        &mut self,
+        comp: Uuid,
+        frame: usize,
+        jobs: &[CompJob],
+        media_epoch: u64,
+    ) -> Result<CompFrame, String> {
+        self.comp_decodes += 1;
+        decode_comp(
+            &mut self.decoders,
+            &mut self.frame_cache,
+            &mut self.flow_engine,
+            comp,
+            frame,
+            jobs,
+            media_epoch,
+        )
     }
 }
 
@@ -443,7 +520,7 @@ fn decode_comp(
                         quality,
                     )
             } else {
-                crate::pixels::blend_rgba(&px.rgba, &px2.rgba, w)
+                lumit_core::pixels::blend_rgba(&px.rgba, &px2.rgba, w)
             }
         } else {
             px.rgba

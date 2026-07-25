@@ -72,6 +72,30 @@ impl MediaRegistry {
     }
 }
 
+/// Answer the render pipeline's one media question from this registry
+/// (K-178). The pipeline never learns that the egui shell probes on a
+/// background thread — only what each item turned out to be.
+impl lumit_render::SourceProbes for MediaRegistry {
+    fn probe(&self, item: Uuid) -> lumit_render::SourceProbe {
+        use lumit_render::SourceProbe as P;
+        match self.map.get(&item) {
+            None | Some(MediaStatus::Probing) => P::Unprobed,
+            Some(MediaStatus::Missing) => P::Missing,
+            Some(MediaStatus::Failed(_)) => P::Failed,
+            Some(MediaStatus::Ready { probe, frames, .. }) => match probe.video.as_ref() {
+                Some(v) => P::Video {
+                    fps: v.fps(),
+                    width: v.width,
+                    height: v.height,
+                    frames: *frames,
+                    audio: probe.audio.is_some(),
+                },
+                None => P::AudioOnly,
+            },
+        }
+    }
+}
+
 fn probe_and_index(path: &std::path::Path) -> MediaStatus {
     // Absent is not the same as broken: it has its own status, its own
     // badge, and a slate rather than an error (docs/07 §3.3).

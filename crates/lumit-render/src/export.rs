@@ -8,10 +8,8 @@
 //! source. Runs on its own thread with its own decoders (K-017); progress
 //! streams back; cancel is checked every frame.
 
-#![cfg(feature = "media")]
-
-pub use crate::pixels::{px_tile, solid_rgba, srgb_decode, srgb_encode};
 use lumit_core::model::{Composition, Document, LayerKind, MatteChannel, ProjectItem};
+pub use lumit_core::pixels::{px_tile, solid_rgba, srgb_decode, srgb_encode};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,7 +17,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use uuid::Uuid;
 
-type Tex = egui_wgpu::wgpu::Texture;
+type Tex = wgpu::Texture;
 
 pub enum ExportEvent {
     /// Which encoder the ladder settled on ("NVENC", "software x264", …),
@@ -348,26 +346,26 @@ pub fn audio_samples_through(frame_count: usize, fps: f64, rate: u32) -> usize {
 /// build a `Renderer` from persistent GPU engines it owns and read them back
 /// afterwards — the one place other than [`run`] that drives this compositor,
 /// so the Flutter Viewer renders through the exact export path (K-031, K-175).
-pub(crate) struct Renderer<'a> {
-    pub(crate) doc: &'a Document,
-    pub(crate) items: &'a HashMap<Uuid, ItemInfo>,
-    pub(crate) gpu: &'a lumit_gpu::GpuContext,
-    pub(crate) colour: lumit_gpu::ColourEngine,
-    pub(crate) compositor: lumit_gpu::Compositor,
-    pub(crate) decoders: HashMap<Uuid, lumit_media::VideoDecoder>,
+pub struct Renderer<'a> {
+    pub doc: &'a Document,
+    pub items: &'a HashMap<Uuid, ItemInfo>,
+    pub gpu: &'a lumit_gpu::GpuContext,
+    pub colour: lumit_gpu::ColourEngine,
+    pub compositor: lumit_gpu::Compositor,
+    pub decoders: HashMap<Uuid, lumit_media::VideoDecoder>,
     /// Flow interpolation backend, sharing the export device; falls back to
     /// the CPU oracle by itself (export MUST honour the Flow policy, K-019).
-    pub(crate) flow: lumit_flow::FlowEngine,
+    pub flow: lumit_flow::FlowEngine,
     /// Effect kernels, sharing the export device (docs/08; the same passes
     /// the preview runs, so effects export pixel-identically).
-    pub(crate) fx: lumit_gpu::fx::FxEngine,
+    pub fx: lumit_gpu::fx::FxEngine,
     /// Parsed-and-uploaded `.cube` LUTs keyed by path (docs/08 §3.11,
     /// docs/impl/lut.md §4), living across the whole export so each distinct
     /// file is parsed and uploaded once, not per frame. `RefCell` because
     /// `apply_fx` takes `&self`. The same load the preview's GpuViewer runs, so
     /// LUTs export pixel-identically (K-031). Path-only key (mtime invalidation
     /// is a documented follow-up).
-    pub(crate) lut_cache: std::cell::RefCell<HashMap<String, crate::fxops::LoadedLut>>,
+    pub lut_cache: std::cell::RefCell<HashMap<String, crate::fxops::LoadedLut>>,
 }
 
 /// A layer's source, prepared for compositing: a linear texture plus the
@@ -400,7 +398,7 @@ struct CollapsedSpec {
 impl Renderer<'_> {
     /// Decode one footage item at `source_time` (seconds) into the same
     /// interpolated, **unmasked** sRGB frame the preview's decode worker
-    /// produces — the raw pixels [`crate::shell::build_comp_draws`] expects
+    /// produces — the raw pixels [`crate::build::build_comp_draws`] expects
     /// (masks are applied there). `pair` = fetch the neighbour; `flow` =
     /// flow-synthesise it; `sample_fps` = the K-095 conform rate. Shared by
     /// [`Self::prepare_footage`] (which masks and uploads) and the temporal
@@ -426,7 +424,7 @@ impl Renderer<'_> {
         // Same frame-pick + interpolation the preview uses, so export matches
         // (K-031).
         let (source_frame, blend_frame) =
-            crate::pixels::frame_pick(source_time, info.fps, info.frames, pair, sample_fps);
+            lumit_core::pixels::frame_pick(source_time, info.fps, info.frames, pair, sample_fps);
         if !self.decoders.contains_key(&item) {
             let index =
                 lumit_media::index::build_frame_index(&info.path).map_err(|e| e.to_string())?;
@@ -449,7 +447,7 @@ impl Renderer<'_> {
                     w,
                 )
             } else {
-                crate::pixels::blend_rgba(&px.rgba, &px2.rgba, w)
+                lumit_core::pixels::blend_rgba(&px.rgba, &px2.rgba, w)
             };
         }
         Ok(Some((px.rgba, px.width, px.height)))
@@ -484,8 +482,8 @@ impl Renderer<'_> {
     /// Borrow the export renderer's GPU primitives as a [`crate::shell::
     /// Realiser`], so the temporal re-render drives the exact draw-list
     /// compositor the preview does (K-031).
-    fn realiser(&self) -> crate::shell::Realiser<'_> {
-        crate::shell::Realiser {
+    fn realiser(&self) -> crate::realise::Realiser<'_> {
+        crate::realise::Realiser {
             ctx: lumit_gpu::GpuContext::from_parts(self.gpu.device.clone(), self.gpu.queue.clone()),
             engine: &self.colour,
             compositor: &self.compositor,
@@ -511,7 +509,7 @@ impl Renderer<'_> {
         below: &[lumit_core::model::Layer],
         t: f64,
         visited: &mut Vec<Uuid>,
-        out: &mut HashMap<Uuid, crate::app_state::preview::CompLayerPixels>,
+        out: &mut HashMap<Uuid, crate::decode::CompLayerPixels>,
     ) -> Result<(), String> {
         // Posterize Time (docs/08 §3.25, FX-1): a layer covered by a Posterize
         // within `below` decodes its source at the held grid time, so the held
@@ -876,7 +874,7 @@ impl Renderer<'_> {
         {
             let nlt = lt + f64::from(o) * comp_dt;
             let nst = retime.as_ref().map(|r| r.evaluate(nlt)).unwrap_or(nlt);
-            let (nf, _) = crate::pixels::frame_pick(nst, fps, frames, false, None);
+            let (nf, _) = lumit_core::pixels::frame_pick(nst, fps, frames, false, None);
             let dec = self.decoders.get_mut(item).ok_or("decoder missing")?;
             let px = dec.frame_rgba(nf, None).map_err(|e| e.to_string())?;
             let src = self
@@ -928,7 +926,7 @@ impl Renderer<'_> {
         let pick = |o: i32| {
             let nlt = lt + f64::from(o) * comp_dt;
             let nst = retime.as_ref().map(|r| r.evaluate(nlt)).unwrap_or(nlt);
-            crate::pixels::frame_pick(nst, fps, frames, false, None).0
+            lumit_core::pixels::frame_pick(nst, fps, frames, false, None).0
         };
         let (f0, f1) = (pick(0), pick(neighbour));
         let dec = self.decoders.get_mut(item).ok_or("decoder missing")?;
@@ -1216,7 +1214,7 @@ impl Renderer<'_> {
         )
     }
 
-    pub(crate) fn render_comp_linear(
+    pub fn render_comp_linear(
         &mut self,
         comp: &Composition,
         t: f64,
@@ -1281,7 +1279,7 @@ impl Renderer<'_> {
                     );
                     // A parented collapsed precomp: its parent's world placement
                     // wraps its own, matching the preview (K-103, K-031).
-                    let pre = match crate::shell::parent_world_placement(comp, l, t) {
+                    let pre = match crate::build::parent_world_placement(comp, l, t) {
                         Some(pw) => lumit_gpu::concat_place(pw, own),
                         None => own,
                     };
@@ -1332,7 +1330,7 @@ impl Renderer<'_> {
         // Per-layer motion blur (docs/06 §4, K-120): a blurring layer's
         // prepared texture is averaged across its sub-frame placements by the
         // exact helper the preview calls, from the exact same sample times
-        // (crate::shell::motion_blur_samples), so the two smear identically
+        // (crate::build::motion_blur_samples), so the two smear identically
         // (K-031). Stored owned so each averaged texture outlives the borrows
         // in `draws`. Collapsed Precomp inner layers are excluded to match the
         // preview splice (they never reach `prepared`).
@@ -1344,11 +1342,11 @@ impl Renderer<'_> {
             let Some(p) = prepared.get(&l.id) else {
                 continue;
             };
-            let samples = crate::shell::motion_blur_samples(comp, l, t);
+            let samples = crate::build::motion_blur_samples(comp, l, t);
             if samples.is_empty() {
                 continue;
             }
-            let pre = crate::shell::parent_world_placement(comp, l, t);
+            let pre = crate::build::parent_world_placement(comp, l, t);
             let avg = self.compositor.motion_blur_average(
                 self.gpu,
                 comp.width,
@@ -1550,7 +1548,7 @@ impl Renderer<'_> {
                         let below_layers = &comp.layers[idx + 1..];
                         let mut pixels_map = HashMap::new();
                         self.collect_below_pixels(below_layers, base, visited, &mut pixels_map)?;
-                        let pixels_ref: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> =
+                        let pixels_ref: HashMap<Uuid, &crate::decode::CompLayerPixels> =
                             pixels_map.iter().map(|(k, v)| (*k, v)).collect();
                         let realiser = self.realiser();
                         // Force on all layers (docs/08 §3.26): each sample render
@@ -1562,7 +1560,7 @@ impl Renderer<'_> {
                             .iter()
                             .map(|off| {
                                 let tau = base + off * dt;
-                                crate::shell::render_below_at(
+                                crate::build::render_below_at(
                                     &realiser,
                                     self.doc,
                                     comp,
@@ -1605,10 +1603,10 @@ impl Renderer<'_> {
                     // playback steps in the re-render, matching the preview's
                     // snapped decode (K-031).
                     self.collect_below_pixels(below_layers, tau, visited, &mut pixels_map)?;
-                    let pixels_ref: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> =
+                    let pixels_ref: HashMap<Uuid, &crate::decode::CompLayerPixels> =
                         pixels_map.iter().map(|(k, v)| (*k, v)).collect();
                     let realiser = self.realiser();
-                    crate::shell::render_below_at(
+                    crate::build::render_below_at(
                         &realiser,
                         self.doc,
                         comp,
@@ -1735,7 +1733,7 @@ impl Renderer<'_> {
                 matte,
                 blend: blend_of(l.blend),
                 layer_mask: p.mask.as_ref(),
-                pre: crate::shell::parent_world_placement(comp, l, t),
+                pre: crate::build::parent_world_placement(comp, l, t),
             });
         }
 
@@ -1847,7 +1845,7 @@ fn run(
             .map_err(|e| e.to_string())?;
         // Letterbox into the delivery frame when a preset changes the size.
         let rgba = if resize {
-            crate::pixels::letterbox_resize(&rgba, comp.width, comp.height, tw, th)
+            lumit_core::pixels::letterbox_resize(&rgba, comp.width, comp.height, tw, th)
         } else {
             rgba
         };
@@ -1891,13 +1889,8 @@ pub fn mask_rgba(coverage: &[u8]) -> Vec<u8> {
 /// (docs/08 §3.25). Export renders full resolution, so the decoded size is the
 /// natural size; temporal inputs are empty (the below-stack's own temporal
 /// effects hold to stills in the re-render).
-fn comp_layer_pixels(
-    id: Uuid,
-    rgba: Vec<u8>,
-    w: u32,
-    h: u32,
-) -> crate::app_state::preview::CompLayerPixels {
-    crate::app_state::preview::CompLayerPixels {
+fn comp_layer_pixels(id: Uuid, rgba: Vec<u8>, w: u32, h: u32) -> crate::decode::CompLayerPixels {
+    crate::decode::CompLayerPixels {
         layer: id,
         width: w,
         height: h,
@@ -1915,7 +1908,7 @@ fn comp_layer_pixels(
 /// shared mapper (`shell::inspector::blend_of`) so the preview and export
 /// paths cannot disagree (K-031).
 fn blend_of(b: lumit_core::model::BlendMode) -> lumit_gpu::Blend {
-    crate::shell::inspector::blend_of(b)
+    crate::build::blend_of(b)
 }
 
 /// CameraPose (core model) -> GPU camera matrix: the single conversion both
@@ -1942,46 +1935,45 @@ pub fn camera_mat(
     )
 }
 
-/// Collect the ItemInfo map from probed media (UI thread, cheap).
-/// `slate_size` is the exported comp's dimensions, used to size the
-/// missing-footage slate exactly as the preview does.
+/// Collect the ItemInfo map from probed media (cheap — it only reads the
+/// frontend's probe cache, never touches disk). `slate_size` is the exported
+/// comp's dimensions, used to size the missing-footage slate exactly as the
+/// preview does.
 pub fn item_infos(
     doc: &Document,
-    media: &crate::app_state::media::MediaRegistry,
+    probes: &dyn crate::source::SourceProbes,
     slate_size: (u32, u32),
 ) -> HashMap<Uuid, ItemInfo> {
     let mut map = HashMap::new();
     for item in &doc.items {
-        if let ProjectItem::Footage(f) = item {
-            match media.map.get(&f.id) {
-                Some(crate::app_state::media::MediaStatus::Ready { probe, frames, .. }) => {
-                    if let Some(v) = &probe.video {
-                        map.insert(
-                            f.id,
-                            ItemInfo {
-                                path: PathBuf::from(&f.media.absolute_path),
-                                fps: v.fps(),
-                                frames: *frames,
-                                missing: None,
-                            },
-                        );
-                    }
-                }
-                // Missing media is carried, not skipped, so export renders the
-                // same slate the Viewer shows (K-031).
-                Some(crate::app_state::media::MediaStatus::Missing) => {
-                    map.insert(
-                        f.id,
-                        ItemInfo {
-                            path: PathBuf::from(&f.media.absolute_path),
-                            fps: 1.0,
-                            frames: 1,
-                            missing: Some(slate_size),
-                        },
-                    );
-                }
-                _ => {}
-            }
+        let ProjectItem::Footage(f) = item else {
+            continue;
+        };
+        let probe = probes.probe(f.id);
+        if let Some((fps, _w, _h, frames)) = probe.video() {
+            map.insert(
+                f.id,
+                ItemInfo {
+                    path: PathBuf::from(&f.media.absolute_path),
+                    fps,
+                    frames,
+                    missing: None,
+                },
+            );
+        } else if probe.slates() {
+            // Missing/unreadable media is carried, not skipped, so export
+            // renders the same slate the Viewer shows (K-031). Audio-only and
+            // unprobed items are simply absent: no picture, and — crucially —
+            // no slate over a perfectly healthy sound file.
+            map.insert(
+                f.id,
+                ItemInfo {
+                    path: PathBuf::from(&f.media.absolute_path),
+                    fps: 1.0,
+                    frames: 1,
+                    missing: Some(slate_size),
+                },
+            );
         }
     }
     map

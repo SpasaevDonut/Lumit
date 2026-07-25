@@ -6,7 +6,7 @@
 //! reused or shared. Loading one gives every effect a fresh id, so applying
 //! the same preset to two layers never makes them share an instance.
 
-use lumit_core::model::EffectInstance;
+use crate::model::EffectInstance;
 
 /// A saved effect stack. `format` is bumped if the on-disk shape changes;
 /// the effects are exactly the model's `EffectInstance`s, so a preset always
@@ -144,11 +144,11 @@ pub fn selection_subset(
     selected_effects: &std::collections::BTreeSet<usize>,
     selected_keys: &std::collections::BTreeMap<
         (usize, usize),
-        std::collections::BTreeSet<lumit_core::Rational>,
+        std::collections::BTreeSet<crate::Rational>,
     >,
 ) -> Vec<EffectInstance> {
-    use lumit_core::anim::Animation;
-    use lumit_core::model::EffectValue;
+    use crate::anim::Animation;
+    use crate::model::EffectValue;
 
     // Nothing highlighted anywhere: keep the whole-stack behaviour.
     if selected_effects.is_empty() && selected_keys.is_empty() {
@@ -176,7 +176,7 @@ pub fn selection_subset(
                 continue; // only Float parameters carry lane keys today
             };
             if let Animation::Keyframed(keys) = &prop.animation {
-                let kept: Vec<lumit_core::anim::Keyframe> = keys
+                let kept: Vec<crate::anim::Keyframe> = keys
                     .iter()
                     .filter(|k| times.contains(&k.time))
                     .copied()
@@ -201,8 +201,8 @@ mod tests {
 
     fn stack() -> Vec<EffectInstance> {
         vec![
-            lumit_core::fx::instantiate("blur").unwrap(),
-            lumit_core::fx::instantiate("glow").unwrap(),
+            crate::fx::instantiate("blur").unwrap(),
+            crate::fx::instantiate("glow").unwrap(),
         ]
     }
 
@@ -278,22 +278,21 @@ mod tests {
     /// A stack of three effects; effect 1's first Float parameter is keyframed
     /// at the given times so the subset filtering has real keys to trim.
     fn keyed_stack(times: &[f64]) -> (Vec<EffectInstance>, usize) {
-        use lumit_core::anim::{Animation, Keyframe, SideInterp};
-        use lumit_core::model::EffectValue;
+        use crate::anim::{Animation, Keyframe, SideInterp};
+        use crate::model::EffectValue;
         let keys: Vec<Keyframe> = times
             .iter()
             .map(|&t| Keyframe {
-                time: lumit_core::Rational::from_f64_on_grid(t, lumit_core::Rational::FLICK_DEN)
-                    .unwrap(),
+                time: crate::Rational::from_f64_on_grid(t, crate::Rational::FLICK_DEN).unwrap(),
                 value: t,
                 interp_in: SideInterp::Linear,
                 interp_out: SideInterp::Linear,
             })
             .collect();
         let mut effects = vec![
-            lumit_core::fx::instantiate("blur").unwrap(),
-            lumit_core::fx::instantiate("glow").unwrap(),
-            lumit_core::fx::instantiate("blur").unwrap(),
+            crate::fx::instantiate("blur").unwrap(),
+            crate::fx::instantiate("glow").unwrap(),
+            crate::fx::instantiate("blur").unwrap(),
         ];
         // The first Float parameter on effect 1 becomes keyframed.
         let pi = effects[1]
@@ -301,15 +300,15 @@ mod tests {
             .iter()
             .position(|p| matches!(p.value, EffectValue::Float(_)))
             .unwrap();
-        effects[1].params[pi].value = EffectValue::Float(lumit_core::anim::Property {
+        effects[1].params[pi].value = EffectValue::Float(crate::anim::Property {
             animation: Animation::Keyframed(keys),
             extra: serde_json::Map::new(),
         });
         (effects, pi)
     }
 
-    fn rat(t: f64) -> lumit_core::Rational {
-        lumit_core::Rational::from_f64_on_grid(t, lumit_core::Rational::FLICK_DEN).unwrap()
+    fn rat(t: f64) -> crate::Rational {
+        crate::Rational::from_f64_on_grid(t, crate::Rational::FLICK_DEN).unwrap()
     }
 
     #[test]
@@ -338,8 +337,8 @@ mod tests {
 
     #[test]
     fn selection_subset_of_keyframes_trims_to_just_those_keys_and_effects() {
-        use lumit_core::anim::Animation;
-        use lumit_core::model::EffectValue;
+        use crate::anim::Animation;
+        use crate::model::EffectValue;
         let (effects, pi) = keyed_stack(&[0.0, 1.0, 2.0]);
         // Only two of effect 1's three keys are highlighted; no other effect.
         let mut keys = std::collections::BTreeMap::new();
@@ -366,8 +365,8 @@ mod tests {
 
     #[test]
     fn selection_subset_combines_a_row_and_a_key_selection() {
-        use lumit_core::anim::Animation;
-        use lumit_core::model::EffectValue;
+        use crate::anim::Animation;
+        use crate::model::EffectValue;
         let (effects, pi) = keyed_stack(&[0.0, 1.0, 2.0]);
         // Effect 0 is row-selected (saved whole); effect 1 has one key selected
         // (trimmed to it). Effect 2 is untouched and must not appear.

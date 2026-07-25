@@ -1,4 +1,4 @@
-// The final integration sweep (docs/flutter-port/06): the cross-agent seams and
+// The final integration sweep (docs/archive/flutter-port/06): the cross-agent seams and
 // thin remainders closed together — Ctrl+C/V keyframe-clipboard routing, the
 // preview-scale downsample threading, the timeline cache bar, the layer context
 // menu (Rename in place, the categorised Add-effect submenu, Convert / Trim),
@@ -153,6 +153,11 @@ class _RecordingRenderer implements FrameRenderer {
     scales.add(scale);
     onFrame(DecodedFrame(width: 2, height: 2, rgba: Uint8List(16)));
   }
+
+  @override
+  void requestPreview(String compId, int frame, double scale, int generation,
+          void Function(DecodedFrame?) onFrame) =>
+      onFrame(null);
 
   @override
   void requestShared(String compId, int frame, int generation,

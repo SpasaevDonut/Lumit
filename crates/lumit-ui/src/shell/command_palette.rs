@@ -254,7 +254,7 @@ impl Shell {
             }
             #[cfg(feature = "media")]
             PaletteAction::ExportComp => {
-                self.open_export_dialog(crate::export::ExportPreset::Custom)
+                self.open_export_dialog(lumit_render::export::ExportPreset::Custom)
             }
         }
         self.palette_open = false;

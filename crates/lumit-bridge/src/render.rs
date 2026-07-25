@@ -4,10 +4,17 @@
 //!
 //! The Viewer needs the *real* picture — every layer composited, transformed,
 //! blended, with its effects — not one raw footage layer. That compositor lives
-//! in `lumit-ui` (it is the same code the egui Viewer and the exporter use). The
-//! bridge borrows it here through the headless seam (`lumit_ui::headless`), a
-//! deliberate temporary arrangement recorded as K-175: the bridge reaches into
-//! the UI crate's renderer until the pixel pass moves into an engine crate.
+//! in `lumit-render`, the engine crate the egui Viewer and the exporter drive
+//! too (K-178); the bridge reaches it through its headless seam
+//! (`lumit_render::headless`). Nothing here depends on a frontend.
+//!
+//! Two render entry points, and the difference is the point:
+//!
+//! - [`render_comp_frame`] serves the Viewer. It names each frame by its content
+//!   and serves it from [`crate::framecache`] when it has been rendered before,
+//!   so a re-scrubbed frame never touches the GPU.
+//! - [`render_preview_frame`] serves a live drag. It re-composites from pixels
+//!   the renderer already holds, so a drag tick decodes nothing.
 //!
 //! The GPU renderer is expensive to build (it acquires an adapter and compiles
 //! shaders), so it is created **once**, lazily, on the first render call and
@@ -36,7 +43,7 @@ enum Slot {
     /// A live renderer, holding its GPU context, engines and decoder pool.
     /// Boxed: the renderer is far larger than the empty variants, so the enum
     /// stays small and moving it between states is a pointer move.
-    Ready(Box<lumit_ui::headless::HeadlessRenderer>),
+    Ready(Box<lumit_render::headless::HeadlessRenderer>),
 }
 
 /// The renderer lives behind its OWN lock, distinct from the document lock, so a
@@ -51,8 +58,8 @@ static RENDERER: OnceLock<Mutex<Slot>> = OnceLock::new();
 /// comp's own resolution; a smaller positive value downsamples the output.
 ///
 /// The result is served from the bridge-side rendered-frame cache
-/// ([`crate::framecache`]) when this comp/frame/scale was already rendered under
-/// the current document — a re-scrubbed frame skips the GPU entirely. The legacy
+/// ([`crate::framecache`]) when a frame with this exact content was rendered
+/// before — a re-scrubbed frame skips the GPU entirely. The legacy
 /// (generation-less) entry point; [`render_comp_frame_gen`] adds latest-wins
 /// cancellation for the worker's newer calls.
 pub(crate) fn render_comp_frame(
@@ -75,13 +82,19 @@ pub(crate) fn render_comp_frame_gen(
     generation: u64,
 ) -> Option<(u32, u32, Vec<u8>)> {
     let comp = Uuid::parse_str(comp_id).ok()?;
-    // Take a cheap snapshot (an `Arc<Document>` clone) under the document lock;
-    // its identity is this render's cache epoch. Released before the GPU work.
+    // Take a cheap snapshot (an `Arc<Document>` clone) under the document lock,
+    // released before the GPU work.
     let doc = with_bridge(|b| b.store.snapshot());
     // The comp's own frame rate, for the realtime controller's frame budget.
     let fps = doc.comp(comp).map(|c| c.frame_rate.fps()).unwrap_or(0.0);
-    let key = crate::framecache::FrameKey::new(comp, frame, scale);
-    crate::framecache::get_or_render(&doc, key, || {
+    let quality = quality_for(scale);
+    // Name the frame by its CONTENT (K-178): the renderer computes the hash from
+    // its own probe results, so the name and the pixels cannot disagree about
+    // what a source file is. `None` means some footage is still unprobed — the
+    // frame renders live and is not banked.
+    let key = with_ready(|r| r.frame_key(&doc, comp, frame, quality)).flatten();
+
+    let render = || {
         // A genuine miss: only render if this generation is still the latest
         // wanted — the stale-request skip (checked once the renderer lock is in
         // hand, the granularity the monolithic headless render allows).
@@ -98,7 +111,7 @@ pub(crate) fn render_comp_frame_gen(
         let started = std::time::Instant::now();
         let rendered = with_ready(|renderer| {
             renderer
-                .render_rgba(&doc, comp, frame, scale)
+                .render_preview(&doc, comp, frame, quality, scale, None)
                 .ok()
                 .map(|(rgba, w, h)| (w, h, rgba))
         })
@@ -107,7 +120,64 @@ pub(crate) fn render_comp_frame_gen(
             crate::realtime::observe(started.elapsed().as_secs_f64(), fps, scale);
         }
         rendered
+    };
+    match key {
+        Some(key) => crate::framecache::get_or_render(key, render),
+        // Unkeyable (unprobed footage): render live, bank nothing.
+        None => render(),
+    }
+}
+
+/// The preview quality one Viewer render asks for. The Dart side sends a single
+/// `scale`, which the realtime controller (K-171) drives; below 1.0 it means
+/// "this frame is being shown smaller than the comp, so decode it smaller".
+///
+/// Auto rather than a fixed divisor because the scale is continuous — it tracks
+/// the viewport and the adaptive tier, not a Full/Half/Quarter picker.
+fn quality_for(scale: f32) -> lumit_render::Quality {
+    let sane = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    lumit_render::Quality {
+        draft: false,
+        auto_res: sane < 1.0,
+        display_scale: sane,
+        divisor: 1,
+    }
+}
+
+/// Render `comp_id` at `frame` under the ACTIVE drag preview (if any) — the
+/// live-feedback sibling of [`render_comp_frame`].
+///
+/// This is the path a value drag runs, once per tick, and it is deliberately
+/// cheap in a specific way: the renderer keeps the frame's decoded per-layer
+/// pixels, and a drag changes only what is *done* with them, never which frame
+/// of which file is wanted. So each tick re-runs the draw build and the GPU
+/// composite and decodes nothing at all
+/// ([`lumit_render::HeadlessRenderer::render_preview`]). Before K-178 this call
+/// re-decoded the whole comp every tick, which is what made dragging stutter.
+///
+/// It bypasses [`crate::framecache`]: these frames carry a provisional value
+/// that is not in the document, so banking them under the document's own frame
+/// name would be a lie. The caller (Dart's `_pendingKey` latest-wins guard) is
+/// responsible for not calling this more than once per outstanding frame.
+/// `None` on any failure — the same calm-null contract as `render_comp_frame`.
+pub(crate) fn render_preview_frame(
+    comp_id: &str,
+    frame: u64,
+    scale: f32,
+) -> Option<(u32, u32, Vec<u8>)> {
+    let comp = Uuid::parse_str(comp_id).ok()?;
+    let doc = with_bridge(|b| crate::state::snapshot_with_preview(b));
+    with_ready(|renderer| {
+        renderer
+            .render_preview(&doc, comp, frame, quality_for(scale), scale, None)
+            .ok()
+            .map(|(rgba, w, h)| (w, h, rgba))
     })
+    .flatten()
 }
 
 /// Run `f` against the session-lifetime headless renderer, building it lazily on
@@ -117,11 +187,11 @@ pub(crate) fn render_comp_frame_gen(
 /// render or export prep never blocks an edit. Shared by the Viewer render path
 /// and the export-input builder ([`with_export_inputs`]) so both drive the one
 /// renderer and share its probe cache.
-fn with_ready<R>(f: impl FnOnce(&mut lumit_ui::headless::HeadlessRenderer) -> R) -> Option<R> {
+fn with_ready<R>(f: impl FnOnce(&mut lumit_render::headless::HeadlessRenderer) -> R) -> Option<R> {
     let mutex = RENDERER.get_or_init(|| Mutex::new(Slot::Uninit));
     let mut guard = mutex.lock().unwrap_or_else(|poison| poison.into_inner());
     if matches!(*guard, Slot::Uninit) {
-        *guard = match lumit_ui::headless::HeadlessRenderer::new() {
+        *guard = match lumit_render::headless::HeadlessRenderer::new() {
             Ok(renderer) => Slot::Ready(Box::new(renderer)),
             Err(_) => Slot::Failed,
         };
@@ -145,7 +215,7 @@ pub(crate) fn render_to_shared(comp_id: &str, frame: u64) -> Option<(u64, u32, u
     let doc = with_bridge(|b| b.store.snapshot());
     with_ready(|renderer| {
         renderer
-            .render_to_shared(&doc, comp, frame)
+            .render_to_shared(&doc, comp, frame, quality_for(1.0))
             .ok()
             .map(|info| (info.handle, info.width, info.height))
     })
@@ -170,7 +240,7 @@ pub(crate) fn render_to_shared_dmabuf(comp_id: &str, frame: u64) -> Option<Dmabu
     let doc = with_bridge(|b| b.store.snapshot());
     with_ready(|renderer| {
         renderer
-            .render_to_shared_dmabuf(&doc, comp, frame)
+            .render_to_shared_dmabuf(&doc, comp, frame, quality_for(1.0))
             .ok()
             .map(|info| {
                 (
@@ -214,13 +284,13 @@ pub(crate) fn render_scope(
 
 /// Build the footage/audio inputs and a GPU export context for `comp` through
 /// the headless seam (K-175), so the export driver can hand them to the exact
-/// egui exporter (`lumit_ui::export::start`). `None` when the machine has no GPU
+/// egui exporter (`lumit_render::export::start`). `None` when the machine has no GPU
 /// adapter or the comp is unknown. Reuses the same renderer instance the Viewer
 /// path uses, so probes are shared and warm.
 pub(crate) fn with_export_inputs(
     doc: &lumit_core::model::Document,
     comp: Uuid,
-) -> Option<lumit_ui::headless::ExportInputs> {
+) -> Option<lumit_render::headless::ExportInputs> {
     with_ready(|renderer| renderer.export_inputs(doc, comp)).flatten()
 }
 
@@ -259,5 +329,15 @@ mod tests {
     fn an_unknown_comp_is_none() {
         let unknown = Uuid::now_v7().to_string();
         assert!(render_comp_frame(&unknown, 0, 1.0).is_none());
+    }
+
+    /// The preview render's null contract mirrors `render_comp_frame` exactly:
+    /// a bad or unknown comp id is `None` before/without any GPU work needed,
+    /// never a panic.
+    #[test]
+    fn preview_render_of_a_bad_or_unknown_comp_is_none() {
+        assert!(render_preview_frame("not-a-uuid", 0, 1.0).is_none());
+        let unknown = Uuid::now_v7().to_string();
+        assert!(render_preview_frame(&unknown, 0, 1.0).is_none());
     }
 }

@@ -1,6 +1,6 @@
 //! Comp audio playback for the Flutter frontend — gated, like beat detection,
 //! behind the `media` + `render` features (the mix needs the decoders and the
-//! audio-jobs walk lumit-ui carries).
+//! audio-jobs walk `lumit-render` carries).
 //!
 //! # In plain terms
 //!
@@ -21,7 +21,7 @@
 //!   "no audio" state on the first attempt: playback then simply has no
 //!   sound, and nothing retries or errors per call.
 //! - **The prepare worker** builds a comp's mix in the background: walk the
-//!   document for audio jobs (the GPU-free [`lumit_ui::headless::AudioJobsBuilder`]
+//!   document for audio jobs (the GPU-free [`lumit_render::headless::AudioJobsBuilder`]
 //!   seam, so audio never queues behind a slow comp render), decode each
 //!   source at the device rate (cached per item), place the clips, and hand
 //!   the finished [`MixPlan`] to the audio thread. The FFI prepare call only
@@ -41,8 +41,8 @@
 
 use crate::state::with_bridge;
 use lumit_audio::mix::MixPlan;
-use lumit_ui::export::AudioJob;
-use lumit_ui::headless::AudioJobsBuilder;
+use lumit_render::export::AudioJob;
+use lumit_render::headless::AudioJobsBuilder;
 use std::collections::HashMap;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -208,7 +208,7 @@ pub(crate) fn build_plan(
                 buffer.samples.len() / 2,
                 rate,
             )?;
-            let (gain, envelope) = lumit_ui::export::volume_bake(job, start_frame, len, rate);
+            let (gain, envelope) = lumit_render::export::volume_bake(job, start_frame, len, rate);
             Some(lumit_audio::mix::PlacedClip {
                 buffer: Arc::clone(buffer),
                 start_frame,

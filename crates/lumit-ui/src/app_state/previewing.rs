@@ -6,16 +6,7 @@ use super::*;
 impl AppState {
     /// Work-area frame span of a comp (start, end-exclusive); full when unset.
     pub fn work_area_frames(&self, comp: &Composition) -> (usize, usize) {
-        let total = self.comp_frame_count(comp);
-        let fps = comp.frame_rate.fps().max(1.0);
-        match comp.work_area {
-            Some((a, b)) => {
-                let s = ((a.0.to_f64() * fps).round() as usize).min(total.saturating_sub(1));
-                let e = ((b.0.to_f64() * fps).round() as usize).clamp(s + 1, total);
-                (s, e)
-            }
-            None => (0, total),
-        }
+        lumit_render::cache::work_area_frames(comp)
     }
 
     /// AE's B/N: set the work-area start or end at the playhead.
@@ -66,8 +57,7 @@ impl AppState {
 
     /// Frame count of the comp preview (comp duration × comp rate).
     pub fn comp_frame_count(&self, comp: &Composition) -> usize {
-        let dur = comp.duration.0.to_f64();
-        (dur * comp.frame_rate.fps()).round().max(1.0) as usize
+        lumit_render::cache::comp_frame_count(comp)
     }
 
     /// Total frame count of whatever the Viewer is previewing — the active comp
@@ -92,18 +82,33 @@ impl AppState {
         0
     }
 
-    /// Build and send the batch request rendering `preview_comp` at the
-    /// current frame (evaluator v0: footage layers, no retime yet).
+    /// How coarsely this preview DECODES: the resolution picker, plus the draft
+    /// cap while scrubbing, plus Realtime's adaptive tier when it is driving
+    /// (K-030). What actually reaches the decoder.
     #[cfg(feature = "media")]
-    /// The evaluator's window onto probed media: which file and which source
-    /// frame a Footage layer shows, with the decode width folded into the
-    /// identity so each preview-resolution tier keys separately (docs/06
-    /// §5.2 quality axis; Auto folds the live zoom in the same way).
+    pub(crate) fn decode_quality(&self) -> lumit_render::Quality {
+        let (auto_res, divisor) = if self.preview_realtime {
+            (false, self.realtime_ctrl.tier())
+        } else {
+            (self.preview_auto_res, self.preview_divisor)
+        };
+        lumit_render::Quality {
+            draft: self.preview_draft,
+            auto_res,
+            display_scale: self.last_display_scale,
+            divisor,
+        }
+    }
+
+    /// How coarsely a frame is NAMED — the *settled* resolution, deliberately
+    /// ignoring both the draft cap and Realtime's tier. Neither of those frames
+    /// is ever banked (draft frames are skipped explicitly; Realtime only runs
+    /// during playback, and playback does not bank), so naming by the settled
+    /// resolution is what lets a scrub and a later still share one entry.
     #[cfg(feature = "media")]
-    fn stamper<'a>(&'a self, doc: &'a Document) -> PreviewStamper<'a> {
-        PreviewStamper {
-            doc,
-            media: &self.media,
+    pub(crate) fn key_quality(&self) -> lumit_render::Quality {
+        lumit_render::Quality {
+            draft: false,
             auto_res: self.preview_auto_res,
             display_scale: self.last_display_scale,
             divisor: self.preview_divisor,
@@ -116,15 +121,7 @@ impl AppState {
     pub fn frame_key_for(&self, comp_id: Uuid, frame: usize) -> Option<u128> {
         let doc = self.store.snapshot();
         let comp = doc.comp(comp_id)?;
-        let t = frame as f64 / comp.frame_rate.fps().max(1.0);
-        lumit_eval::comp_frame_key(
-            &doc,
-            comp,
-            t,
-            lumit_eval::Quality { divisor: 1 },
-            &self.stamper(&doc),
-        )
-        .map(|k| k.0)
+        lumit_render::cache::frame_key(&doc, comp, frame, self.key_quality(), &self.media)
     }
 
     /// Ask the preview engine to render an arbitrary frame (the background
@@ -152,7 +149,7 @@ impl AppState {
         let comp = doc.comp(comp_id)?;
         let (start, end) = self.work_area_frames(comp);
         let playhead = self.preview_frame.clamp(start, end.saturating_sub(1));
-        fill_walk_order(playhead, start, end)
+        lumit_render::cache::fill_walk_order(playhead, start, end)
             .into_iter()
             .find_map(|frame| {
                 let key = self.frame_key_for(comp_id, frame)?;
@@ -175,22 +172,12 @@ impl AppState {
         // Fixed lookahead for now; the impl note adapts it to render cost in a
         // later slice. Eight to sixteen frames per the note; twelve is a middle.
         const LOOKAHEAD: usize = 12;
-        playback_lookahead(playhead, end, LOOKAHEAD)
+        lumit_render::cache::playback_lookahead(playhead, end, LOOKAHEAD)
             .into_iter()
             .find_map(|frame| {
                 let key = self.frame_key_for(comp_id, frame)?;
                 (!self.comp_frame_cache.contains_key(&key)).then_some(frame)
             })
-    }
-
-    /// One number capturing the preview-quality state (memo key component).
-    #[cfg(feature = "media")]
-    fn quality_tag(&self) -> u32 {
-        if self.preview_auto_res {
-            1000 + (self.last_display_scale.clamp(0.05, 1.0) * 100.0) as u32
-        } else {
-            self.preview_divisor
-        }
     }
 
     /// Which of a comp's frames are in Nebula's RAM tier — the timeline cache
@@ -214,7 +201,7 @@ impl AppState {
         let key = (
             std::sync::Arc::as_ptr(&self.store.snapshot()) as usize,
             self.cache_epoch,
-            self.quality_tag(),
+            self.key_quality().tag(),
             comp.id,
             disk.len(),
         );
@@ -248,10 +235,10 @@ impl AppState {
             return;
         }
         if self.disk_io.is_none() {
-            self.disk_io = Some(diskio::spawn());
+            self.disk_io = Some(lumit_render::diskio::spawn());
         }
         if let Some(io) = &self.disk_io {
-            let _ = io.tx.send(diskio::Cmd::SetRoot(root.clone()));
+            let _ = io.tx.send(lumit_render::diskio::Cmd::SetRoot(root.clone()));
         }
         self.disk_load_pending.clear();
         self.disk_root = root;
@@ -261,7 +248,9 @@ impl AppState {
     #[cfg(feature = "media")]
     pub fn disk_store_behind(&mut self, key: u128, width: u32, height: u32, rgba: Vec<u8>) {
         if let Some(io) = &self.disk_io {
-            let _ = io.tx.send(diskio::Cmd::Store(key, width, height, rgba));
+            let _ = io
+                .tx
+                .send(lumit_render::diskio::Cmd::Store(key, width, height, rgba));
         }
     }
 
@@ -282,7 +271,7 @@ impl AppState {
             return;
         }
         if let Some(io) = &self.disk_io {
-            if io.tx.send(diskio::Cmd::Load(key)).is_ok() {
+            if io.tx.send(lumit_render::diskio::Cmd::Load(key)).is_ok() {
                 self.disk_load_pending.insert(key);
             }
         }
@@ -396,25 +385,10 @@ impl AppState {
             || self.retime_edit.is_some()
     }
 
+    /// The width one source decodes at under the current preview quality.
+    #[cfg(feature = "media")]
     pub fn target_width_for(&self, natural_w: u32) -> Option<u32> {
-        // Realtime mode (K-030, docs/06 §6.5): the adaptive controller's tier
-        // drives the divisor and overrides the manual/Auto picker. Draft (scrub)
-        // still caps on top for instant feedback.
-        #[cfg(feature = "media")]
-        let (auto_res, divisor) = if self.preview_realtime {
-            (false, self.realtime_ctrl.tier())
-        } else {
-            (self.preview_auto_res, self.preview_divisor)
-        };
-        #[cfg(not(feature = "media"))]
-        let (auto_res, divisor) = (self.preview_auto_res, self.preview_divisor);
-        decode_target_width(
-            natural_w,
-            self.preview_draft,
-            auto_res,
-            self.last_display_scale,
-            divisor,
-        )
+        self.decode_quality().target_width(natural_w)
     }
 
     /// The preview divisor Realtime mode is currently applying — the adaptive
@@ -431,256 +405,36 @@ impl AppState {
         }
     }
 
-    /// Recursively collect decode jobs for a comp at time `t`
-    /// (docs/06-RENDER-PIPELINE.md: Precomp evaluation).
+    /// Recursively collect decode jobs for a comp at time `t` — delegated to
+    /// the shared planner (`lumit_render::plan`), which the Flutter frontend
+    /// drives too, so the two frontends cannot decode different things.
+    ///
+    /// The one bit of shell state it needs is the live Retime "Time" drag: that
+    /// is the only edit that changes *which* source frame a layer shows, so it
+    /// reaches the plan rather than being patched in afterwards.
     #[cfg(feature = "media")]
     pub(crate) fn collect_comp_jobs(
         &self,
         doc: &Document,
         comp: &Composition,
         t: f64,
-        jobs: &mut Vec<preview::CompJob>,
+        jobs: &mut Vec<lumit_render::decode::CompJob>,
         visited: &mut Vec<Uuid>,
     ) {
-        use lumit_core::model::LayerKind;
-        let in_span =
-            |l: &lumit_core::model::Layer| t >= l.in_point.0.to_f64() && t < l.out_point.0.to_f64();
-        let mut wanted: Vec<Uuid> = Vec::new();
-        for l in &comp.layers {
-            if l.switches.visible && in_span(l) {
-                wanted.push(l.id);
-                if let Some(m) = &l.matte {
-                    if !wanted.contains(&m.layer) {
-                        wanted.push(m.layer);
-                    }
-                }
-                // Layer-input references (K-123, e.g. a DoF depth pass) decode
-                // exactly like matte sources: the referenced layer is usually
-                // hidden (you don't want the depth map rendering), but its
-                // pixels still feed the effect.
-                for e in l.effects.iter().filter(|e| e.enabled) {
-                    for p in &e.params {
-                        if let lumit_core::model::EffectValue::Layer(Some(id)) = p.value {
-                            if !wanted.contains(&id) {
-                                wanted.push(id);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // Posterize Time (docs/08 §3.25, FX-1): a layer covered by a live
-        // Posterize decodes its source at the held grid time, not the live
-        // playhead, so footage playback visibly steps — the decode twin of the
-        // held re-render the draw builder performs. `sample_times[idx]` is the
-        // held comp time for `comp.layers[idx]`; equal to `t` for every layer
-        // when no Posterize is live, so an ordinary comp is unchanged.
-        let sample_times = lumit_core::fx::posterize_sample_times(&comp.layers, t);
-        for (idx, layer) in comp.layers.iter().enumerate() {
-            if !wanted.contains(&layer.id) || !in_span(layer) {
-                continue;
-            }
-            let lt = sample_times[idx] - layer.start_offset.0.to_f64();
-            match &layer.kind {
-                // No footage source to decode (an adjustment layer processes
-                // the composite below; solids/text/cameras rasterise elsewhere).
-                LayerKind::Solid { .. }
-                | LayerKind::Text { .. }
-                | LayerKind::Camera { .. }
-                | LayerKind::Adjustment => {}
-                LayerKind::Sequence { clips } => {
-                    // Resolve the clip under the playhead to a footage frame
-                    // (comp-source clips + gaps are handled elsewhere/skip).
-                    if let Some((_id, lumit_core::sequence::ClipSource::Footage(item), st)) =
-                        lumit_core::sequence::resolve(clips, lt)
-                    {
-                        if let (
-                            Some(ProjectItem::Footage(f)),
-                            Some(media::MediaStatus::Ready {
-                                probe,
-                                frames: src_frames,
-                                ..
-                            }),
-                        ) = (doc.item(item), self.media.map.get(&item))
-                        {
-                            if let Some(video) = probe.video.as_ref() {
-                                use lumit_core::retime::Interpolation;
-                                let interp = lumit_core::sequence::active_clip(clips, lt)
-                                    .map(|c| c.interpolation.clone());
-                                let blend_on = matches!(
-                                    interp,
-                                    Some(Interpolation::Blend | Interpolation::Flow(_))
-                                );
-                                let flow = matches!(interp, Some(Interpolation::Flow(_)));
-                                let flow_full = matches!(
-                                    &interp,
-                                    Some(Interpolation::Flow(p)) if !p.half_resolution
-                                );
-                                let sample_fps = match &interp {
-                                    Some(Interpolation::Flow(p)) => p.input_fps_at(lt),
-                                    _ => None,
-                                };
-                                let (source_frame, blend) = crate::pixels::frame_pick(
-                                    st,
-                                    video.fps(),
-                                    *src_frames,
-                                    blend_on,
-                                    sample_fps,
-                                );
-                                jobs.push(preview::CompJob {
-                                    layer: layer.id,
-                                    item,
-                                    path: PathBuf::from(&f.media.absolute_path),
-                                    source_frame,
-                                    target_width: self.target_width_for(video.width),
-                                    natural_w: video.width,
-                                    natural_h: video.height,
-                                    blend,
-                                    flow,
-                                    flow_full,
-                                    // Temporal effects on Sequence clips are a
-                                    // later refinement (clip-relative neighbour
-                                    // resolution); footage layers first.
-                                    temporal: Vec::new(),
-                                    flow_neighbour: None,
-                                    slate: false,
-                                });
-                            }
-                        }
-                    }
-                }
-                LayerKind::Precomp { comp: nested_id } => {
-                    if visited.contains(nested_id) {
-                        continue; // cycle guard
-                    }
-                    if let Some(nested) = doc.comp(*nested_id) {
-                        visited.push(*nested_id);
-                        self.collect_comp_jobs(doc, nested, lt, jobs, visited);
-                        visited.pop();
-                    }
-                }
-                LayerKind::Footage { item, retime } => {
-                    // A live "Time" drag overrides this layer's retime so the
-                    // decode picks the dragged source frame (the frame itself
-                    // changes, unlike a transform/effect live patch).
-                    let live_retime;
-                    let retime: &Option<lumit_core::retime::Retime> = match &self.retime_edit {
-                        Some((rl, rt)) if *rl == layer.id => {
-                            live_retime = Some(rt.clone());
-                            &live_retime
-                        }
-                        _ => retime,
-                    };
-                    let Some(ProjectItem::Footage(f)) = doc.item(*item) else {
-                        continue;
-                    };
-                    // Missing media still draws (docs/07 §3.3): a slate job at
-                    // comp size, so the layer shows test bars in place of the
-                    // picture instead of silently vanishing. Sized to the comp
-                    // because a file we cannot open has no size to report.
-                    if matches!(self.media.map.get(item), Some(media::MediaStatus::Missing)) {
-                        jobs.push(preview::CompJob {
-                            layer: layer.id,
-                            item: *item,
-                            path: PathBuf::from(&f.media.absolute_path),
-                            source_frame: 0,
-                            target_width: None,
-                            natural_w: comp.width,
-                            natural_h: comp.height,
-                            blend: None,
-                            flow: false,
-                            flow_full: false,
-                            temporal: Vec::new(),
-                            flow_neighbour: None,
-                            slate: true,
-                        });
-                        continue;
-                    }
-                    let Some(media::MediaStatus::Ready {
-                        probe,
-                        frames: src_frames,
-                        ..
-                    }) = self.media.map.get(item)
-                    else {
-                        continue; // not probed yet; retried once Ready
-                    };
-                    let Some(video) = probe.video.as_ref() else {
-                        continue;
-                    };
-                    // Retime maps local time → source time before frame pick;
-                    // its interpolation policy decides nearest vs blend.
-                    let source_time = retime.as_ref().map(|r| r.evaluate(lt)).unwrap_or(lt);
-                    use lumit_core::retime::Interpolation;
-                    let interp = retime.as_ref().map(|r| &r.interpolation);
-                    let blend_on =
-                        matches!(interp, Some(Interpolation::Blend | Interpolation::Flow(_)));
-                    let flow = matches!(interp, Some(Interpolation::Flow(_)));
-                    let flow_full =
-                        matches!(interp, Some(Interpolation::Flow(p)) if !p.half_resolution);
-                    let sample_fps = match interp {
-                        Some(Interpolation::Flow(p)) => p.input_fps_at(lt),
-                        _ => None,
-                    };
-                    let (source_frame, blend) = crate::pixels::frame_pick(
-                        source_time,
-                        video.fps(),
-                        *src_frames,
-                        blend_on,
-                        sample_fps,
-                    );
-                    // Neighbour source frames for a temporal effect stack
-                    // (echo/trails, flow motion blur, datamosh): the layer's
-                    // source at each non-zero offset in the stack's window,
-                    // mapped through the retime like the primary frame. Empty
-                    // unless the stack actually reads other frames, so a plain
-                    // footage layer decodes exactly one frame.
-                    let temporal =
-                        if lumit_core::fx::stack_is_temporal(&layer.effects, layer.switches.fx) {
-                            let comp_dt = 1.0 / comp.frame_rate.fps().max(1.0);
-                            lumit_core::fx::stack_temporal_window(&layer.effects, layer.switches.fx)
-                                .into_iter()
-                                .filter(|&o| o != 0)
-                                .map(|o| {
-                                    let nlt = lt + f64::from(o) * comp_dt;
-                                    let nst =
-                                        retime.as_ref().map(|r| r.evaluate(nlt)).unwrap_or(nlt);
-                                    let (nf, _) = crate::pixels::frame_pick(
-                                        nst,
-                                        video.fps(),
-                                        *src_frames,
-                                        false,
-                                        None,
-                                    );
-                                    (o, nf)
-                                })
-                                .collect()
-                        } else {
-                            Vec::new()
-                        };
-                    jobs.push(preview::CompJob {
-                        layer: layer.id,
-                        item: *item,
-                        path: PathBuf::from(&f.media.absolute_path),
-                        source_frame,
-                        target_width: self.target_width_for(video.width),
-                        natural_w: video.width,
-                        natural_h: video.height,
-                        blend,
-                        flow,
-                        flow_full,
-                        temporal,
-                        // Flow motion blur / Datamosh measure motion between
-                        // this frame and their requested neighbour (already
-                        // in `temporal`).
-                        flow_neighbour: lumit_core::fx::stack_flow_neighbour(
-                            &layer.effects,
-                            layer.switches.fx,
-                        ),
-                        slate: false,
-                    });
-                }
-            }
-        }
+        let retime =
+            self.retime_edit
+                .as_ref()
+                .map(|(layer, retime)| lumit_render::RetimeOverride {
+                    layer: *layer,
+                    retime: retime.clone(),
+                });
+        let ctx = lumit_render::plan::PlanContext {
+            doc,
+            quality: self.decode_quality(),
+            probes: &self.media,
+            retime_override: retime.as_ref(),
+        };
+        lumit_render::plan::collect_comp_jobs(&ctx, comp, t, jobs, visited);
     }
 
     /// Throw away every rendered frame of every comp, because something
@@ -907,7 +661,7 @@ impl AppState {
         &self,
         doc: &lumit_core::model::Document,
         comp: &lumit_core::model::Composition,
-    ) -> Vec<crate::export::AudioJob> {
+    ) -> Vec<lumit_render::export::AudioJob> {
         let mut jobs = Vec::new();
         let mut visited = vec![comp.id];
         self.collect_audio_jobs(
@@ -975,7 +729,7 @@ impl AppState {
         window: (f64, f64),
         carriers: &[(lumit_core::anim::Property, f64)],
         visited: &mut Vec<Uuid>,
-        jobs: &mut Vec<crate::export::AudioJob>,
+        jobs: &mut Vec<lumit_render::export::AudioJob>,
     ) {
         use lumit_core::model::LayerKind;
         // Solo silences non-soloed audio exactly as it hides non-soloed video
@@ -1006,7 +760,7 @@ impl AppState {
                     let Some(ProjectItem::Footage(f)) = doc.item(*item) else {
                         continue;
                     };
-                    jobs.push(crate::export::AudioJob {
+                    jobs.push(lumit_render::export::AudioJob {
                         item: *item,
                         path: PathBuf::from(&f.media.absolute_path),
                         in_s,
@@ -1103,7 +857,7 @@ impl AppState {
                         // keyframed → a control-rate envelope. Same bake the
                         // export mixdown uses, so playback == export.
                         let (gain, envelope) =
-                            crate::export::volume_bake(job, start_frame, len, rate);
+                            lumit_render::export::volume_bake(job, start_frame, len, rate);
                         clips.push(lumit_audio::mix::PlacedClip {
                             buffer,
                             start_frame,
@@ -1124,7 +878,7 @@ impl AppState {
         if fallback {
             self.audio_preparing = Some((comp_id, sig));
             std::thread::spawn(move || {
-                let samples = crate::export::mixdown(&jobs, rate, duration_s);
+                let samples = lumit_render::export::mixdown(&jobs, rate, duration_s);
                 let _ = tx.send(super::CompAudioMsg::Baked(
                     comp_id,
                     sig,

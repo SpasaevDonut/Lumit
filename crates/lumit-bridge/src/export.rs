@@ -5,7 +5,7 @@
 //!
 //! Exporting writes the composited comp to an `.mp4` on its own thread, exactly
 //! as the egui frontend does (K-017). The bridge reuses the identical exporter
-//! (`lumit_ui::export`) through the headless seam (K-175): the seam builds the
+//! (`lumit_render::export`) through the headless seam (K-175): the seam builds the
 //! footage/audio inputs and lends a GPU context, and `export::start` spawns the
 //! encode thread and streams progress back over a channel. The bridge holds that
 //! channel's receiver and drains it on each poll, so Dart can drive a simple
@@ -39,12 +39,12 @@ use crate::err_json;
 use serde_json::{json, Value};
 
 /// Audio on all delivery presets: AAC 320 kbps (docs/06 §7.5). The bridge's own
-/// copy of `lumit_ui::export::PRESET_AUDIO_BPS`, so spec resolution needs no GPU
+/// copy of `lumit_render::export::PRESET_AUDIO_BPS`, so spec resolution needs no GPU
 /// build to know the default.
 pub(crate) const PRESET_AUDIO_BPS: i64 = 320_000;
 
 /// The parameter row a delivery preset stamps — the bridge's pure mirror of
-/// `lumit_ui::export::PresetParams` (kept here so the resolver and its tests
+/// `lumit_render::export::PresetParams` (kept here so the resolver and its tests
 /// build with or without the `render` feature). `codec` is the codec name
 /// (`h264`/`hevc`); the bitrates are bits/second.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -102,7 +102,7 @@ fn preset_default_file_name(name: &str) -> &'static str {
 }
 
 /// The resolved export spec — the bridge's pure mirror of
-/// `lumit_ui::export::ExportSpec` (codec as a name string). Produced by
+/// `lumit_render::export::ExportSpec` (codec as a name string). Produced by
 /// [`resolve_spec`] and, under the `render` feature, converted into the real
 /// `ExportSpec` the exporter runs with.
 #[derive(Clone, PartialEq, Debug)]
@@ -374,7 +374,7 @@ pub(crate) fn export_cancel() -> String {
 #[cfg(feature = "render")]
 mod driving {
     use super::{err_json, parse_inputs, resolve_spec, ResolvedSpec};
-    use lumit_ui::export::{ExportEvent, ExportHandle, ExportSpec};
+    use lumit_render::export::{ExportEvent, ExportHandle, ExportSpec};
     use serde_json::json;
     use std::sync::{Mutex, OnceLock};
     use uuid::Uuid;
@@ -472,7 +472,7 @@ mod driving {
         let Some(inputs) = crate::render::with_export_inputs(&doc, comp) else {
             return err_json("export: the GPU pipeline is unavailable");
         };
-        let handle = lumit_ui::export::start(
+        let handle = lumit_render::export::start(
             doc.clone(),
             comp,
             inputs.items,

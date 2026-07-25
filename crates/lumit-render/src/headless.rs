@@ -1,31 +1,36 @@
-//! Headless comp rendering — the seam the Flutter Viewer shares with export.
+//! Rendering single comp frames without a window — what a frontend that draws
+//! its own pixels (Flutter, over `lumit-bridge`) holds and drives.
 //!
 //! # In plain terms
 //!
-//! The Viewer needs the *real* picture: every layer composited, transformed,
-//! blended, with its effects — the same pixels the egui Viewer shows and the
-//! same pixels the exported file carries. That work lives in [`crate::export`]'s
-//! `Renderer`, which needs no window and no egui: only a GPU device, the media
-//! decoders, and the document. This module wraps that renderer in a small,
-//! reusable object a *second* frontend (Flutter, over `lumit-bridge`) can hold
-//! and drive frame by frame.
+//! A [`HeadlessRenderer`] owns the expensive things that must survive between
+//! frames: the GPU context (whose adapter is acquired once), the compiled
+//! shaders, the open video decoders, and the probe results. Hold one per
+//! session and ask it for frames.
 //!
-//! A [`HeadlessRenderer`] owns the expensive, must-persist state — the GPU
-//! context (whose adapter is created once) and the compiled shader engines —
-//! plus a decoder pool and a probe cache, and lends them to a fresh
-//! `export::Renderer` for each call. Because it drives the identical compositor
-//! export drives, preview == export == Flutter (K-031). The bridge borrowing
-//! this seam is the deliberate, temporary architecture recorded as K-175: the
-//! bridge reaches into `lumit-ui`'s renderer until the pixel pass moves into an
-//! engine crate.
+//! It offers two ways to render, and the difference matters:
 //!
-//! Everything here is gated behind the `media` feature (it needs `lumit-gpu`,
-//! `lumit-flow` and `lumit-media`); a `--no-default-features` build has no
-//! headless renderer at all, exactly as it has no export.
+//! - [`HeadlessRenderer::render_preview`] is the **interactive** path. It plans
+//!   the decode, reuses the pixels it decoded last time whenever the plan has
+//!   not changed, builds a draw list and composites. Dragging an effect value
+//!   changes what is *done* with the pixels, never *which* pixels are wanted,
+//!   so a drag re-composites and decodes nothing at all. It also honours the
+//!   preview resolution, so footage is decoded at the size it will be shown
+//!   rather than at full size and thrown away. This is the path a Viewer wants.
+//! - [`HeadlessRenderer::render_rgba`] is the **export** path, driving
+//!   [`crate::export`]'s `Renderer` straight: always full resolution, decoding
+//!   every frame afresh, holding nothing between calls. Correct and simple,
+//!   which is what writing a file wants.
+//!
+//! Both composite through the same GPU code, so preview == export == Flutter
+//! (K-031). The two currently walk the comp by different routes
+//! (`build_comp_draws` here, `render_comp_linear` there) and are kept in step by
+//! hand plus tests; unifying them is a recorded next step (docs/TODO.md).
 
-#![cfg(feature = "media")]
-
+use crate::decode::{CompFrame, CompJob, DecodePool};
 use crate::export::{AudioJob, ItemInfo, Renderer};
+use crate::plan::{plan_comp_frame, Quality, RetimeOverride};
+use crate::source::{SourceProbe, SourceProbes};
 use lumit_core::model::{Composition, Document, FootageItem, LayerKind, ProjectItem};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -48,8 +53,19 @@ struct Parts {
 /// to the comp being rendered at call time, since the same item can appear in
 /// comps of different dimensions.
 enum Probe {
-    /// Decodable video: its exact rate and frame count (the `frame_pick` inputs).
-    Ok { fps: f64, frames: usize },
+    /// Decodable video: its exact rate, native size and frame count (the
+    /// `frame_pick` and decode-width inputs).
+    Ok {
+        fps: f64,
+        frames: usize,
+        width: u32,
+        height: u32,
+    },
+    /// A readable file with no video stream (audio-only). Not an error, so it
+    /// must never draw the missing-footage slate — the layer simply
+    /// contributes no picture, exactly as `item_infos` (export) and
+    /// `collect_comp_jobs` (the live preview) already treat it.
+    NoVideo,
     /// Not on disk, or present-but-unreadable: render the colour-bars slate,
     /// exactly as export's `item_infos` carries a `Missing` item (docs/07 §3.3).
     Slate,
@@ -80,6 +96,15 @@ pub struct HeadlessRenderer {
     /// The audio-jobs walk with its has-audio probe cache, so building the
     /// export audio jobs probes each file at most once (export path only).
     audio_jobs: AudioJobsBuilder,
+    /// The open decoders and the decoded-source-frame cache the interactive
+    /// path uses. Deliberately separate from the `Parts::decoders` the export
+    /// path lends to `Renderer`: the two decode at different resolutions, and
+    /// sharing them would let a half-resolution preview frame reach an export.
+    pool: DecodePool,
+    /// The last interactive frame's decoded per-layer pixels, kept with the
+    /// plan that produced them — what makes a live value drag cost no decoding
+    /// at all. Replaced whenever a render genuinely needs different pixels.
+    retained: Option<Retained>,
     /// The Windows zero-copy Viewer target (K-177), held for the session and
     /// re-created only when the comp's dimensions change. `None` until the first
     /// `render_to_shared` call. Present only in the opt-in shared-texture build.
@@ -91,6 +116,16 @@ pub struct HeadlessRenderer {
     /// Present only in the opt-in shared-texture-linux build.
     #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
     shared_dmabuf: Option<lumit_gpu::shared_linux::SharedDmabuf>,
+}
+
+/// One frame's decoded per-layer pixels, kept alongside the decode plan that
+/// asked for them, so the next render can tell at a glance whether it needs new
+/// ones ([`crate::plan::same_decode`]).
+struct Retained {
+    comp: Uuid,
+    frame: u64,
+    jobs: Vec<CompJob>,
+    pixels: CompFrame,
 }
 
 /// A rendered frame that stayed on the GPU: the NT handle of the shared texture
@@ -162,6 +197,8 @@ impl HeadlessRenderer {
             items: HashMap::new(),
             probe_cache: HashMap::new(),
             audio_jobs: AudioJobsBuilder::new(),
+            pool: DecodePool::new(),
+            retained: None,
             #[cfg(all(windows, feature = "shared-texture"))]
             shared: None,
             #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
@@ -195,10 +232,204 @@ impl HeadlessRenderer {
         self.audio_jobs.audio_jobs(doc, comp)
     }
 
+    /// The content-hash name of this comp frame ([`crate::cache::frame_key`]),
+    /// computed from **this renderer's own** probe results so the name and the
+    /// pixels can never disagree about what a source file is. `None` while some
+    /// footage is unprobed — the frame renders live and is not cached.
+    ///
+    /// Takes `&mut self` because it probes anything new, exactly as a render
+    /// would; a caller that then renders pays for the probe only once.
+    pub fn frame_key(
+        &mut self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+    ) -> Option<u128> {
+        let comp = doc.comp(comp_id)?;
+        let slate = (comp.width, comp.height);
+        self.sync_items(doc, slate);
+        let comp = doc.comp(comp_id)?;
+        crate::cache::frame_key(
+            doc,
+            comp,
+            frame as usize,
+            quality,
+            &ProbeView(&self.probe_cache),
+        )
+    }
+
+    /// Composite one interactive frame and return the display-encoded GPU
+    /// texture with the comp's dimensions — the shared body of both interactive
+    /// entry points.
+    ///
+    /// Its callers differ only in what they do with the texture: read it back to
+    /// bytes ([`Self::render_preview`]) or copy it into a texture the frontend
+    /// samples directly ([`Self::render_preview_to_shared`]). So both show the
+    /// same pixels, and both get the drag fast path.
+    fn preview_display_texture(
+        &mut self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+        retime_override: Option<&RetimeOverride>,
+    ) -> Result<(wgpu::Texture, u32, u32), String> {
+        let comp = doc
+            .comp(comp_id)
+            .ok_or_else(|| "headless preview: unknown composition".to_string())?;
+        let (cw, ch) = (comp.width, comp.height);
+        // Fills `probe_cache` for anything new, which `ProbeView` then reads.
+        self.sync_items(doc, (cw, ch));
+        let fps = comp.frame_rate.fps().max(1.0);
+        let t = frame as f64 / fps;
+
+        let jobs = plan_comp_frame(
+            doc,
+            comp,
+            t,
+            quality,
+            &ProbeView(&self.probe_cache),
+            retime_override,
+        );
+        // The whole point: decode only when the wanted pixels actually differ.
+        let reusable = matches!(
+            &self.retained,
+            Some(r) if r.comp == comp_id
+                && r.frame == frame
+                && crate::plan::same_decode(&r.jobs, &jobs)
+        );
+        if !reusable {
+            let pixels = self
+                .pool
+                .decode_comp(comp_id, frame as usize, &jobs, 0)
+                .map_err(|e| format!("headless preview: {e}"))?;
+            self.retained = Some(Retained {
+                comp: comp_id,
+                frame,
+                jobs,
+                pixels,
+            });
+        }
+        let Some(retained) = self.retained.as_ref() else {
+            return Err("headless preview: no decoded pixels".into());
+        };
+
+        let Some(parts) = self.parts.take() else {
+            return Err("headless preview: renderer is unavailable after an earlier fault".into());
+        };
+        let out = {
+            let realiser = crate::realise::Realiser {
+                ctx: lumit_gpu::GpuContext::from_parts(
+                    self.gpu.device.clone(),
+                    self.gpu.queue.clone(),
+                ),
+                engine: &parts.colour,
+                compositor: &parts.compositor,
+                fx: &parts.fx,
+                lut_cache: &parts.lut_cache,
+            };
+            let pixels_by_layer: HashMap<Uuid, &crate::decode::CompLayerPixels> = retained
+                .pixels
+                .layers
+                .iter()
+                .map(|lp| (lp.layer, lp))
+                .collect();
+            let mut visited = vec![comp_id];
+            let draws =
+                crate::build::build_comp_draws(doc, comp, t, &pixels_by_layer, &mut visited);
+            let background = comp.background.0.map(f64::from);
+            let linear = realiser.realise(comp.camera_pose(t), cw, ch, background, &draws);
+            Ok(parts.colour.display(&self.gpu, &linear))
+        };
+        // Return the engines to the pool even on error, so one failed frame does
+        // not discard the compiled shaders.
+        self.parts = Some(parts);
+        out.map(|shown| (shown, cw, ch))
+    }
+
+    /// The interactive render: composition `comp_id` at integer `frame`, read
+    /// back to tightly-packed RGBA8 as `(pixels, width, height)`.
+    ///
+    /// This is the path a Viewer should drive. Unlike [`Self::render_rgba`] it:
+    ///
+    /// - **decodes at the preview resolution** `quality` asks for, so a source
+    ///   shown in a small viewport is decoded small rather than in full and then
+    ///   thrown away;
+    /// - **reuses the pixels it already has** whenever the decode plan has not
+    ///   changed. Dragging a transform or effect value alters what is done with
+    ///   the footage, never which frame of it is wanted, so a drag composites
+    ///   from the retained pixels and touches no file at all. That is what makes
+    ///   a value drag feel live rather than stuttery.
+    ///
+    /// `retime_override` is the one live edit that *does* change the decode — a
+    /// Retime "Time" drag moves to a different source frame — so it is applied
+    /// to the plan rather than patched into the document afterwards.
+    ///
+    /// The document handed in may be a throwaway with a drag's provisional value
+    /// already patched in; nothing is cached against its identity here, so that
+    /// costs nothing. `scale` shrinks the returned buffer for the trip back to
+    /// the frontend only (see [`resize_output`]).
+    ///
+    /// A missing layer is drawn as colour bars by the compositor itself, so the
+    /// returned buffer already carries the slate.
+    pub fn render_preview(
+        &mut self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+        scale: f32,
+        retime_override: Option<&RetimeOverride>,
+    ) -> Result<(Vec<u8>, u32, u32), String> {
+        let (shown, cw, ch) =
+            self.preview_display_texture(doc, comp_id, frame, quality, retime_override)?;
+        let Some(parts) = self.parts.as_ref() else {
+            return Err("headless preview: renderer is unavailable after an earlier fault".into());
+        };
+        parts
+            .colour
+            .readback8(&self.gpu, &shown)
+            .map(|rgba| resize_output(rgba, cw, ch, scale))
+            .map_err(|e| format!("headless preview: {e}"))
+    }
+
+    /// How many comp frames the interactive path has actually decoded. A live
+    /// value drag must not move this — that is the whole promise of
+    /// [`Self::render_preview`], and the preview tests assert it here.
+    #[must_use]
+    pub fn decoded_frames(&self) -> u64 {
+        self.pool.comp_decodes()
+    }
+
+    /// Forget the retained per-layer pixels. The next [`Self::render_preview`]
+    /// decodes afresh. Called when something outside the document changes what
+    /// the sources *are* — a probe landing, a relink — since the decode plan
+    /// alone cannot see that.
+    pub fn forget_retained(&mut self) {
+        self.retained = None;
+    }
+
+    /// Resize the decoded-source-frame cache (Settings → Performance).
+    pub fn set_decode_budget(&mut self, bytes: usize) {
+        self.pool.set_budget(bytes);
+    }
+
+    /// Drop every cached decoded source frame and the retained pixels, keeping
+    /// the open decoders (Settings → Clear cache).
+    pub fn clear_decoded(&mut self) {
+        self.pool.clear();
+        self.retained = None;
+    }
+
     /// Render composition `comp_id` at integer `frame` to tightly-packed RGBA8,
     /// returning `(pixels, width, height)`. `scale` of 1.0 is the comp's own
     /// resolution; a smaller positive `scale` downsamples the *output* (the
     /// internal composite is always full resolution — see the note below).
+    ///
+    /// The **export** path: every frame decodes afresh at full resolution and
+    /// nothing is retained between calls. A Viewer wants
+    /// [`Self::render_preview`] instead.
     ///
     /// The frame is `frame / fps` seconds of comp time, `fps` the comp's exact
     /// rational rate, exactly as export computes it. A missing layer inside the
@@ -309,10 +540,14 @@ impl HeadlessRenderer {
 
     /// Render composition `comp_id` at integer `frame` into the Windows shared
     /// GPU texture, returning its NT handle and dimensions ([`SharedFrameInfo`],
-    /// K-177) — the zero-copy sibling of [`Self::render_rgba`]. The frame never
-    /// leaves the graphics card: it is composited and display-encoded exactly as
-    /// `render_rgba` does (preview == export == Flutter, K-031), then copied into
-    /// the shared texture instead of being read back to the CPU.
+    /// K-177) — the zero-copy sibling of [`Self::render_preview`]. The frame
+    /// never leaves the graphics card: it is composited and display-encoded by
+    /// the identical interactive path, then copied GPU-to-GPU into the shared
+    /// texture instead of being read back to the CPU.
+    ///
+    /// Because it shares that path it also shares the drag fast path: on the
+    /// shipped Windows build, dragging a value re-composites and copies without
+    /// decoding or reading anything back at all.
     ///
     /// The shared texture is created on the first call and re-used across frames
     /// (a stable handle); a comp of different dimensions re-creates it and reports
@@ -325,61 +560,38 @@ impl HeadlessRenderer {
         doc: &Document,
         comp_id: Uuid,
         frame: u64,
+        quality: Quality,
     ) -> Result<SharedFrameInfo, String> {
-        let comp = doc
-            .comp(comp_id)
-            .ok_or_else(|| "headless render: unknown composition".to_string())?;
-        let (cw, ch) = (comp.width, comp.height);
-        self.sync_items(doc, (cw, ch));
-        let fps = comp.frame_rate.fps().max(1.0);
-        let t = frame as f64 / fps;
-
-        let Some(parts) = self.parts.take() else {
-            return Err("headless render: renderer is unavailable after an earlier fault".into());
+        let (shown, cw, ch) = self.preview_display_texture(doc, comp_id, frame, quality, None)?;
+        // Re-create the shared texture when it is missing or the comp changed
+        // size — a new handle is reported then, which the bridge relays so Dart
+        // re-registers.
+        let needs_new = match self.shared.as_ref() {
+            Some(sh) => sh.width != cw || sh.height != ch,
+            None => true,
         };
-        let mut renderer = Renderer {
-            doc,
-            items: &self.items,
-            gpu: &self.gpu,
-            colour: parts.colour,
-            compositor: parts.compositor,
-            decoders: parts.decoders,
-            flow: parts.flow,
-            fx: parts.fx,
-            lut_cache: parts.lut_cache,
-        };
-        let mut visited = vec![comp_id];
-        // Ensure the shared texture matches the comp size (create/recreate), then
-        // composite and copy into it — disjoint field borrows (`&self.gpu`
-        // immutable, `&mut self.shared` mutable) so the borrow checker is happy.
-        let out = render_display_into_shared(
-            &mut renderer,
-            comp,
-            t,
-            &mut visited,
-            &self.gpu,
-            &mut self.shared,
-            cw,
-            ch,
-        );
-        // Return the engines and warm decoders to the pool, even on error.
-        self.parts = Some(Parts {
-            colour: renderer.colour,
-            compositor: renderer.compositor,
-            fx: renderer.fx,
-            flow: renderer.flow,
-            lut_cache: renderer.lut_cache,
-            decoders: renderer.decoders,
-        });
-        out
+        if needs_new {
+            self.shared = Some(lumit_gpu::shared::SharedTexture::new(&self.gpu, cw, ch)?);
+        }
+        let target = self
+            .shared
+            .as_ref()
+            .ok_or_else(|| "headless render: shared texture missing after create".to_string())?;
+        target.present(&self.gpu, &shown);
+        Ok(SharedFrameInfo {
+            handle: target.handle(),
+            width: cw,
+            height: ch,
+            format: "rgba8888",
+        })
     }
 
     /// Render composition `comp_id` at integer `frame` into the Linux DMA-BUF GPU
     /// texture, returning its exported fd and DRM metadata ([`SharedFrameInfoLinux`],
     /// K-177) — the Linux sibling of [`Self::render_to_shared`]. The frame never
-    /// leaves the graphics card: it is composited and display-encoded exactly as
-    /// `render_rgba` does (preview == export == Flutter, K-031), then copied into
-    /// the DMA-BUF texture instead of being read back.
+    /// leaves the graphics card: it is composited and display-encoded by the same
+    /// interactive path (so it shares the drag fast path), then copied into the
+    /// DMA-BUF texture instead of being read back.
     ///
     /// The texture is created on the first call and re-used across frames (a
     /// stable fd); a comp of different dimensions re-creates it and reports the new
@@ -392,50 +604,36 @@ impl HeadlessRenderer {
         doc: &Document,
         comp_id: Uuid,
         frame: u64,
+        quality: Quality,
     ) -> Result<SharedFrameInfoLinux, String> {
-        let comp = doc
-            .comp(comp_id)
-            .ok_or_else(|| "headless render: unknown composition".to_string())?;
-        let (cw, ch) = (comp.width, comp.height);
-        self.sync_items(doc, (cw, ch));
-        let fps = comp.frame_rate.fps().max(1.0);
-        let t = frame as f64 / fps;
-
-        let Some(parts) = self.parts.take() else {
-            return Err("headless render: renderer is unavailable after an earlier fault".into());
+        let (shown, cw, ch) = self.preview_display_texture(doc, comp_id, frame, quality, None)?;
+        // Re-create the DMA-BUF texture when it is missing or the comp changed
+        // size — a new fd is reported then, which the bridge relays so Dart
+        // re-registers.
+        let needs_new = match self.shared_dmabuf.as_ref() {
+            Some(sh) => sh.width != cw || sh.height != ch,
+            None => true,
         };
-        let mut renderer = Renderer {
-            doc,
-            items: &self.items,
-            gpu: &self.gpu,
-            colour: parts.colour,
-            compositor: parts.compositor,
-            decoders: parts.decoders,
-            flow: parts.flow,
-            fx: parts.fx,
-            lut_cache: parts.lut_cache,
-        };
-        let mut visited = vec![comp_id];
-        let out = render_display_into_shared_dmabuf(
-            &mut renderer,
-            comp,
-            t,
-            &mut visited,
-            &self.gpu,
-            &mut self.shared_dmabuf,
-            cw,
-            ch,
-        );
-        // Return the engines and warm decoders to the pool, even on error.
-        self.parts = Some(Parts {
-            colour: renderer.colour,
-            compositor: renderer.compositor,
-            fx: renderer.fx,
-            flow: renderer.flow,
-            lut_cache: renderer.lut_cache,
-            decoders: renderer.decoders,
-        });
-        out
+        if needs_new {
+            self.shared_dmabuf = Some(lumit_gpu::shared_linux::SharedDmabuf::new(
+                &self.gpu, cw, ch,
+            )?);
+        }
+        let target = self
+            .shared_dmabuf
+            .as_ref()
+            .ok_or_else(|| "headless render: dmabuf texture missing after create".to_string())?;
+        target.present(&self.gpu, &shown);
+        let info = target.info();
+        Ok(SharedFrameInfoLinux {
+            fd: info.fd,
+            width: info.width,
+            height: info.height,
+            stride: info.stride,
+            offset: info.offset,
+            drm_fourcc: info.drm_fourcc,
+            modifier: info.modifier,
+        })
     }
 
     /// Rebuild the `ItemInfo` map from the document's footage, probing any item
@@ -452,7 +650,7 @@ impl HeadlessRenderer {
                 .entry(f.id)
                 .or_insert_with(|| probe_item(&footage_path(f)));
             match probe {
-                Probe::Ok { fps, frames } => {
+                Probe::Ok { fps, frames, .. } => {
                     self.items.insert(
                         f.id,
                         ItemInfo {
@@ -479,6 +677,11 @@ impl HeadlessRenderer {
                         },
                     );
                 }
+                // Audio-only media has no picture to composite: leave it out of
+                // the map entirely, exactly as export's `item_infos` does, so
+                // `footage_rgba` answers `Ok(None)` for it and the layer draws
+                // nothing rather than the missing-footage slate.
+                Probe::NoVideo => {}
             }
         }
     }
@@ -626,104 +829,25 @@ fn render_to_rgba(
         .colour
         .readback8(gpu, &shown)
         .map_err(|e| e.to_string())?;
-    // Full resolution unless a valid, shrinking scale is asked for; the resize
-    // preserves aspect (same-aspect target, so no letterbox bars appear) and
-    // reuses the export path's bilinear resampler.
+    Ok(resize_output(rgba, width, height, scale))
+}
+
+/// Shrink a finished frame to `scale` of its size for the trip back to the
+/// frontend, or hand it back untouched at 1.0 (and for any nonsense value).
+///
+/// This is a **transfer** saving, not a render saving: the composite has already
+/// happened at the comp's own size. The saving that reduces real work is the
+/// decode width, which [`crate::plan::Quality`] controls. The resize preserves
+/// aspect (a same-aspect target, so no letterbox bars appear) and reuses the
+/// export path's bilinear resampler, so both render paths downsample alike.
+fn resize_output(rgba: Vec<u8>, width: u32, height: u32, scale: f32) -> (Vec<u8>, u32, u32) {
     if !scale.is_finite() || scale <= 0.0 || (scale - 1.0).abs() < 1e-4 {
-        return Ok((rgba, width, height));
+        return (rgba, width, height);
     }
     let sw = ((width as f32 * scale).round() as u32).max(1);
     let sh = ((height as f32 * scale).round() as u32).max(1);
-    let scaled = crate::pixels::letterbox_resize(&rgba, width, height, sw, sh);
-    Ok((scaled, sw, sh))
-}
-
-/// Composite once, display-encode, and copy the result into the shared texture
-/// (creating/resizing it as needed), returning its handle. Split out so
-/// `render_to_shared` can restore the engine pool on either arm. The composite +
-/// display passes are byte-for-byte what `render_to_rgba` runs; only the final
-/// step differs (a GPU-to-GPU copy instead of a read-back).
-#[cfg(all(windows, feature = "shared-texture"))]
-#[allow(clippy::too_many_arguments)]
-fn render_display_into_shared(
-    renderer: &mut Renderer,
-    comp: &lumit_core::model::Composition,
-    t: f64,
-    visited: &mut Vec<Uuid>,
-    gpu: &lumit_gpu::GpuContext,
-    shared: &mut Option<lumit_gpu::shared::SharedTexture>,
-    width: u32,
-    height: u32,
-) -> Result<SharedFrameInfo, String> {
-    let linear = renderer.render_comp_linear(comp, t, visited)?;
-    let shown = renderer.colour.display(gpu, &linear);
-
-    // Re-create the shared texture when it is missing or the comp changed size —
-    // a new handle is reported then, which the bridge relays so Dart re-registers.
-    let needs_new = match shared.as_ref() {
-        Some(s) => s.width != width || s.height != height,
-        None => true,
-    };
-    if needs_new {
-        *shared = Some(lumit_gpu::shared::SharedTexture::new(gpu, width, height)?);
-    }
-    let target = shared
-        .as_ref()
-        .ok_or_else(|| "headless render: shared texture missing after create".to_string())?;
-    target.present(gpu, &shown);
-    Ok(SharedFrameInfo {
-        handle: target.handle(),
-        width,
-        height,
-        format: "rgba8888",
-    })
-}
-
-/// The Linux DMA-BUF twin of [`render_display_into_shared`]: composite once,
-/// display-encode, and copy the result into the DMA-BUF texture (creating/resizing
-/// it as needed), returning its fd and DRM metadata. The composite + display
-/// passes are byte-for-byte what `render_to_rgba` runs; only the final step
-/// differs (a GPU-to-GPU copy into the exported image instead of a read-back).
-#[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
-#[allow(clippy::too_many_arguments)]
-fn render_display_into_shared_dmabuf(
-    renderer: &mut Renderer,
-    comp: &lumit_core::model::Composition,
-    t: f64,
-    visited: &mut Vec<Uuid>,
-    gpu: &lumit_gpu::GpuContext,
-    shared: &mut Option<lumit_gpu::shared_linux::SharedDmabuf>,
-    width: u32,
-    height: u32,
-) -> Result<SharedFrameInfoLinux, String> {
-    let linear = renderer.render_comp_linear(comp, t, visited)?;
-    let shown = renderer.colour.display(gpu, &linear);
-
-    // Re-create the DMA-BUF texture when it is missing or the comp changed size —
-    // a new fd is reported then, which the bridge relays so Dart re-registers.
-    let needs_new = match shared.as_ref() {
-        Some(s) => s.width != width || s.height != height,
-        None => true,
-    };
-    if needs_new {
-        *shared = Some(lumit_gpu::shared_linux::SharedDmabuf::new(
-            gpu, width, height,
-        )?);
-    }
-    let target = shared
-        .as_ref()
-        .ok_or_else(|| "headless render: dmabuf texture missing after create".to_string())?;
-    target.present(gpu, &shown);
-    let info = target.info();
-    Ok(SharedFrameInfoLinux {
-        fd: info.fd,
-        width: info.width,
-        height: info.height,
-        stride: info.stride,
-        offset: info.offset,
-        drm_fourcc: info.drm_fourcc,
-        modifier: info.modifier,
-    })
+    let scaled = lumit_core::pixels::letterbox_resize(&rgba, width, height, sw, sh);
+    (scaled, sw, sh)
 }
 
 /// The on-disk path a footage item points at (absolute when known, else the
@@ -737,9 +861,12 @@ fn footage_path(f: &FootageItem) -> PathBuf {
 }
 
 /// Probe one footage path into a [`Probe`]. A path that is not a file, an
-/// unreadable file, a file with no video stream, or one whose frame index will
-/// not build all fall to [`Probe::Slate`] — none of them is an error, they are
-/// the states the slate exists for. A clean video caches its exact rate and
+/// unreadable file, or one whose frame index will not build falls to
+/// [`Probe::Slate`] — none of them is an error, they are the states the slate
+/// exists for. A readable file with no video stream (audio-only) is
+/// [`Probe::NoVideo`] instead: also not an error, but the opposite treatment —
+/// no slate, no picture at all, since flagging a valid audio-only source as
+/// "missing" would be actively wrong. A clean video caches its exact rate and
 /// frame count, warming the on-disk frame index so the decoder open reuses it.
 fn probe_item(path: &Path) -> Probe {
     if !path.is_file() {
@@ -749,7 +876,7 @@ fn probe_item(path: &Path) -> Probe {
         return Probe::Slate;
     };
     let Some(video) = probe.video.as_ref() else {
-        return Probe::Slate;
+        return Probe::NoVideo;
     };
     let Some(index) = load_or_build_index(path) else {
         return Probe::Slate;
@@ -757,6 +884,38 @@ fn probe_item(path: &Path) -> Probe {
     Probe::Ok {
         fps: video.fps(),
         frames: index.frame_count(),
+        width: video.width,
+        height: video.height,
+    }
+}
+
+/// The renderer's own probe cache, seen through the pipeline's one media
+/// question ([`SourceProbes`]), so the decode planner and the frame-key stamper
+/// read exactly what `sync_items` already resolved — no second probe, and no
+/// chance of the two disagreeing about what a file is.
+pub(crate) struct ProbeView<'a>(&'a HashMap<Uuid, Probe>);
+
+impl SourceProbes for ProbeView<'_> {
+    fn probe(&self, item: Uuid) -> SourceProbe {
+        match self.0.get(&item) {
+            None => SourceProbe::Unprobed,
+            Some(Probe::NoVideo) => SourceProbe::AudioOnly,
+            Some(Probe::Slate) => SourceProbe::Missing,
+            Some(Probe::Ok {
+                fps,
+                frames,
+                width,
+                height,
+            }) => SourceProbe::Video {
+                fps: *fps,
+                width: *width,
+                height: *height,
+                frames: *frames,
+                // The has-audio question is answered by `AudioJobsBuilder`,
+                // which probes for it separately; the picture path never asks.
+                audio: false,
+            },
+        }
     }
 }
 
@@ -902,6 +1061,71 @@ mod tests {
         assert!(rgba[idx + 1] > 200, "green solid stays green after resize");
     }
 
+    /// Audio-only media (a readable file with no video stream) must not draw
+    /// the missing-footage slate: it is a valid source, not a broken one. Bugs
+    /// here previously conflated the two (`Probe::Slate`), which painted the
+    /// colour bars over a perfectly good audio-only layer in the Flutter
+    /// Viewer. Bypasses real FFmpeg probing by seeding `probe_cache` directly
+    /// with the outcome `probe_item` would give each file, so the test needs
+    /// no media fixture. A genuinely missing file is asserted to still slate,
+    /// so a regression collapsing `NoVideo` back onto `Slate` fails this test.
+    #[test]
+    fn audio_only_media_is_omitted_not_slated() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, _comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 4, 4);
+        let mut doc = (*store.snapshot()).clone();
+
+        let audio_id = Uuid::now_v7();
+        doc.items
+            .push(ProjectItem::Footage(lumit_core::model::FootageItem {
+                id: audio_id,
+                name: "audio.wav".into(),
+                media: lumit_core::model::MediaRef {
+                    relative_path: "audio.wav".into(),
+                    absolute_path: "audio.wav".into(),
+                    fingerprint: None,
+                    extra: serde_json::Map::new(),
+                },
+                extra: serde_json::Map::new(),
+            }));
+        r.probe_cache.insert(audio_id, Probe::NoVideo);
+        r.sync_items(&doc, (64, 64));
+        assert!(
+            !r.items.contains_key(&audio_id),
+            "audio-only media must contribute no picture, not a missing slate"
+        );
+
+        // Contrast: a genuinely missing/unreadable file DOES slate.
+        let missing_id = Uuid::now_v7();
+        doc.items
+            .push(ProjectItem::Footage(lumit_core::model::FootageItem {
+                id: missing_id,
+                name: "gone.mp4".into(),
+                media: lumit_core::model::MediaRef {
+                    relative_path: "gone.mp4".into(),
+                    absolute_path: "gone.mp4".into(),
+                    fingerprint: None,
+                    extra: serde_json::Map::new(),
+                },
+                extra: serde_json::Map::new(),
+            }));
+        r.probe_cache.insert(missing_id, Probe::Slate);
+        r.sync_items(&doc, (64, 64));
+        assert_eq!(
+            r.items.get(&missing_id).map(|i| i.missing),
+            Some(Some((64, 64))),
+            "a missing/unreadable file still slates at the comp's size"
+        );
+        // The audio-only item stays omitted across the second sync_items call.
+        assert!(!r.items.contains_key(&audio_id));
+    }
+
     /// The zero-copy path (K-177) renders a real comp into a shared GPU texture
     /// and reports a non-zero NT handle whose dimensions are stable across two
     /// frames (the texture is re-used, not re-created). Skips when there is no
@@ -919,7 +1143,7 @@ mod tests {
         };
         let (store, comp_id) = doc_with_solid(LinearColour([0.0, 0.0, 1.0, 1.0]), 32, 16);
         let doc = store.snapshot();
-        let first = match r.render_to_shared(&doc, comp_id, 0) {
+        let first = match r.render_to_shared(&doc, comp_id, 0, crate::plan::Quality::default()) {
             Ok(info) => info,
             Err(e) => {
                 // e.g. wgpu chose Vulkan over D3D12, or no shared-heap support.
@@ -933,7 +1157,7 @@ mod tests {
 
         // A second frame re-uses the same texture: same dimensions, same handle.
         let second = r
-            .render_to_shared(&doc, comp_id, 1)
+            .render_to_shared(&doc, comp_id, 1, crate::plan::Quality::default())
             .expect("second shared render");
         assert_eq!((second.width, second.height), (32, 16));
         assert_eq!(
@@ -955,7 +1179,9 @@ mod tests {
         };
         let (store, _comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 4, 4);
         let doc = store.snapshot();
-        assert!(r.render_to_shared(&doc, Uuid::now_v7(), 0).is_err());
+        assert!(r
+            .render_to_shared(&doc, Uuid::now_v7(), 0, crate::plan::Quality::default())
+            .is_err());
     }
 
     /// The audio-jobs builder needs no GPU: a comp holding a solid (no sound)
@@ -1031,5 +1257,125 @@ mod tests {
         let doc = store.snapshot();
         let err = r.render_rgba(&doc, Uuid::now_v7(), 0, 1.0);
         assert!(err.is_err(), "an unknown comp id yields an error");
+    }
+
+    /// **The drag contract.** Re-rendering the same frame of a document whose
+    /// only difference is a dragged value must not decode again: the pixels are
+    /// the same, only what is done with them changed. This is the whole reason
+    /// the interactive path exists, so it is asserted on the decode counter
+    /// rather than on timing.
+    ///
+    /// Moving to a different frame *must* decode, or the fast path would be
+    /// serving stale pixels — so that is asserted in the same test, which means
+    /// a regression that simply never decodes cannot pass it.
+    #[test]
+    fn a_value_drag_recomposites_without_decoding_again() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([0.0, 0.0, 1.0, 1.0]), 16, 16);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality::default();
+
+        r.render_preview(&doc, comp_id, 0, q, 1.0, None)
+            .expect("first");
+        let after_first = r.decoded_frames();
+        assert_eq!(after_first, 1, "the first frame decodes");
+
+        // Ten drag ticks, each a throwaway document with a provisional value —
+        // exactly what a frontend hands in while a slider is held.
+        let layer = doc.comp(comp_id).expect("comp").layers[0].id;
+        for tick in 1..=10 {
+            let comp = doc.comp(comp_id).expect("comp");
+            let patched = crate::build::patch_layer_prop(
+                comp,
+                layer,
+                lumit_core::model::TransformProp::Rotation,
+                f64::from(tick) * 3.0,
+            );
+            let mut dragging = (*doc).clone();
+            for item in &mut dragging.items {
+                if let ProjectItem::Composition(c) = item {
+                    if c.id == comp_id {
+                        *c = patched.clone();
+                    }
+                }
+            }
+            r.render_preview(&dragging, comp_id, 0, q, 1.0, None)
+                .expect("drag tick");
+        }
+        assert_eq!(
+            r.decoded_frames(),
+            after_first,
+            "ten drag ticks must decode nothing — the pixels never changed"
+        );
+
+        // A different frame is genuinely different pixels, so it decodes.
+        r.render_preview(&doc, comp_id, 1, q, 1.0, None)
+            .expect("frame 1");
+        assert_eq!(
+            r.decoded_frames(),
+            after_first + 1,
+            "moving the playhead must decode"
+        );
+    }
+
+    /// The interactive path renders the same picture the export path does — the
+    /// K-031 promise, checked on the one comp both can build without media. A
+    /// solid is enough to catch a wrong background, colour pipeline or camera:
+    /// those are the parts the two walks each implement separately.
+    #[test]
+    fn the_preview_and_export_paths_agree_on_a_solid_comp() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([0.2, 0.7, 0.4, 1.0]), 32, 16);
+        let doc = store.snapshot();
+
+        let (preview, pw, ph) = r
+            .render_preview(&doc, comp_id, 0, crate::plan::Quality::default(), 1.0, None)
+            .expect("preview render");
+        let (export, ew, eh) = r.render_rgba(&doc, comp_id, 0, 1.0).expect("export render");
+
+        assert_eq!((pw, ph), (ew, eh), "both paths render at the comp's size");
+        assert_eq!(
+            preview, export,
+            "the interactive and export paths must produce identical pixels (K-031)"
+        );
+    }
+
+    /// An unknown comp id on the interactive path is a calm error, and it must
+    /// not disturb the pixels retained for a comp that *does* exist.
+    #[test]
+    fn an_unknown_comp_is_a_calm_error_on_the_preview_path() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality::default();
+        r.render_preview(&doc, comp_id, 0, q, 1.0, None)
+            .expect("render");
+        let decodes = r.decoded_frames();
+
+        assert!(r
+            .render_preview(&doc, Uuid::now_v7(), 0, q, 1.0, None)
+            .is_err());
+        // The good comp still re-composites from its retained pixels.
+        r.render_preview(&doc, comp_id, 0, q, 1.0, None)
+            .expect("still fine");
+        assert_eq!(r.decoded_frames(), decodes);
     }
 }

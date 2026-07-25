@@ -14,38 +14,38 @@ crate-type = ["cdylib", "staticlib"]
 # it entirely, so the crate still builds and tests without FFmpeg (CI parity,
 # exactly as lumit-ui gates its own media wiring).
 #
-# The `render` feature (default on, implies `media`) pulls lumit-ui so the
-# bridge can borrow its headless compositor (`lumit_ui::headless`) for the
-# composited-comp Viewer path. This is the deliberate, temporary architecture
-# recorded as K-175: the bridge (a leaf) depends on the UI crate through the
-# headless seam until the pixel pass moves into an engine crate. Engine crates
-# still never depend on the bridge; the docs/05 arrow is unchanged.
-# `--no-default-features` drops both, and the crate still builds and tests
-# without FFmpeg or a GPU (CI parity) — render calls then return null.
+# The `render` feature (default on, implies `media`) pulls lumit-render, the
+# engine crate holding the pixel pass: decode planning, the decode worker, draw
+# building, the GPU compositor, the frame caches, export and the headless seam.
+# The bridge used to reach that code through `lumit-ui` (the temporary K-175
+# arrangement); K-178 moved it into its own engine crate, so the bridge no
+# longer depends on a frontend at all. `--no-default-features` drops both, and
+# the crate still builds and tests without FFmpeg or a GPU (CI parity) — render
+# calls then return null.
 [features]
 default = ["media", "render", "shared-texture", "shared-texture-linux" ]
 media = ["dep:lumit-media"]
 # `render` also pulls lumit-audio: beat detection (docs/09 §5) mixes the comp's
 # audio through the headless input builder and runs onset/tempo analysis, so it
 # needs both the compositor (for the audio jobs) and the analysis crate.
-render = ["media", "dep:lumit-ui", "dep:lumit-audio"]
+render = ["media", "dep:lumit-render", "dep:lumit-audio"]
 # The Windows zero-copy Viewer path (K-177). OFF by default so the standard
 # build and every gate stay identical to today; the owner builds the shipped
 # `.dll` with `--features shared-texture` to turn it on. It implies `render`
-# (the compositor) and forwards to lumit-ui's own `shared-texture` feature,
+# (the compositor) and forwards to lumit-render's own `shared-texture` feature,
 # which pins the D3D12 backend and pulls the shared-texture GPU code. The actual
 # D3D interop is `cfg(windows)`-gated on top, so enabling it off Windows is
 # inert. `lumit_bridge_shared_supported()` reports whether this build has it.
-shared-texture = ["render", "lumit-ui/shared-texture"]
+shared-texture = ["render", "lumit-render/shared-texture"]
 # The Linux zero-copy Viewer path (K-177), the DMA-BUF sibling of
 # `shared-texture`. OFF by default so the standard build and every gate stay
 # identical to today; the owner builds the shipped Linux `.so` with
 # `--features shared-texture-linux`. It implies `render` and forwards to
-# lumit-ui's own `shared-texture-linux` feature (the Vulkan/DMA-BUF GPU code).
+# lumit-render's own `shared-texture-linux` feature (the Vulkan/DMA-BUF code).
 # The Vulkan interop is `cfg(target_os = "linux")`-gated on top, so enabling it
 # off Linux is inert. `lumit_bridge_shared_supported()` reports whether this build
 # has it; `lumit_bridge_render_to_shared_dmabuf` is its render entry point.
-shared-texture-linux = ["render", "lumit-ui/shared-texture-linux"]
+shared-texture-linux = ["render", "lumit-render/shared-texture-linux"]
 
 [dependencies]
 lumit-core = { path = "../lumit-core" }
@@ -59,9 +59,10 @@ lumit-media = { path = "../lumit-media", optional = true }
 # Beat detection maths (docs/09 §5), pulled by the `render` feature alongside
 # lumit-ui (the audio mixdown rides the same headless input path).
 lumit-audio = { path = "../lumit-audio", optional = true }
-# Borrowed for its headless compositor only (K-175); its media feature carries
-# the GPU/decoder wiring the renderer needs.
-lumit-ui = { path = "../lumit-ui", optional = true, default-features = false, features = ["media"] }
+# The pixel pass (K-178): the headless renderer, the decode worker, the draw
+# builder and the compositor the Viewer and export both drive. An engine crate,
+# so the bridge depends on no frontend.
+lumit-render = { path = "../lumit-render", optional = true }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v7", "serde"] }
@@ -72,7 +73,7 @@ tempfile = "3"
 
 # The bridge is the one crate that cannot inherit the workspace's
 # `unsafe_code = "deny"`: a C ABI over raw pointers is unsafe by construction
-# (docs/flutter-port/03-ARCHITECTURE.md "Bridge v0"). The clippy denies from the
+# (docs/archive/flutter-port/03-ARCHITECTURE.md "Bridge v0"). The clippy denies from the
 # workspace are kept, so no-panic/no-unwrap discipline still holds here.
 [lints.clippy]
 unwrap_used = "deny"

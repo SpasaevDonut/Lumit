@@ -1,7 +1,7 @@
 //! Preview-engine tests for `AppState` (moved verbatim from app_state.rs).
 
-use super::preview::PreviewEngine;
 use lumit_media::index::tests_support::fixture;
+use lumit_render::decode::PreviewEngine;
 use std::time::Duration;
 
 /// End-to-end: request a frame the way the Viewer does; receive pixels.
@@ -20,7 +20,7 @@ fn preview_engine_decodes_requested_frame_at_requested_size() {
         .recv_timeout(Duration::from_secs(20))
         .expect("engine replied")
         .expect("decode succeeded");
-    let super::preview::PreviewResult::Footage(px) = result else {
+    let lumit_render::decode::PreviewResult::Footage(px) = result else {
         panic!("expected a footage frame");
     };
     assert_eq!(px.item, id);
@@ -47,7 +47,7 @@ fn preview_engine_latest_request_wins() {
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     while std::time::Instant::now() < deadline {
         match engine.results.recv_timeout(Duration::from_millis(500)) {
-            Ok(Ok(super::preview::PreviewResult::Footage(px))) => {
+            Ok(Ok(lumit_render::decode::PreviewResult::Footage(px))) => {
                 last = Some(px.frame);
                 if px.frame == 59 {
                     break;

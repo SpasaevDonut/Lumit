@@ -31,7 +31,7 @@ use uuid::Uuid;
 /// `PRESET_FORMAT` so files interchange.
 pub(crate) const PRESET_FORMAT: u32 = 1;
 
-/// A saved effect stack, byte-compatible with `lumit_ui::preset::EffectPreset`.
+/// A saved effect stack, byte-compatible with `lumit_core::preset::EffectPreset`.
 /// Field order and names match exactly (`format`, `name`, `effects`), so
 /// `serde_json` produces identical bytes for identical stacks.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -86,7 +86,7 @@ pub(crate) fn load_effect_preset(
     };
     // Fresh instance ids so applying one preset to several layers never shares
     // an instance id (ids are instance identity only; they never feed a cache
-    // key). Mirrors `lumit_ui::preset::instantiated`.
+    // key). Mirrors `lumit_core::preset::instantiated`.
     let fresh: Vec<EffectInstance> = preset
         .effects
         .into_iter()
@@ -269,7 +269,7 @@ mod tests {
     }
 
     /// The bridge preset shape is byte-identical to `lumit-ui`'s: a document the
-    /// bridge writes parses under `lumit_ui::preset::from_json`, and one egui
+    /// bridge writes parses under `lumit_core::preset::from_json`, and one egui
     /// writes parses here. (Compiled only in the `render` build, where
     /// `lumit-ui` is linked; the shape is pinned there so the two cannot drift.)
     #[cfg(feature = "render")]
@@ -282,11 +282,11 @@ mod tests {
             .to_owned();
         // lumit-ui parses what the bridge wrote.
         let ui_preset =
-            lumit_ui::preset::from_json(&text).expect("lumit-ui parses the bridge file");
+            lumit_core::preset::from_json(&text).expect("lumit-ui parses the bridge file");
         assert_eq!(ui_preset.name, "shared");
         assert_eq!(ui_preset.effects.len(), 2);
         // And the bridge parses what lumit-ui writes, byte-for-byte identical.
-        let ui_text = lumit_ui::preset::to_json("shared", &ui_preset.effects).unwrap();
+        let ui_text = lumit_core::preset::to_json("shared", &ui_preset.effects).unwrap();
         assert_eq!(ui_text, text, "the two frontends serialise identically");
     }
 }

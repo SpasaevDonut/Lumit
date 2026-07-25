@@ -456,8 +456,14 @@ pub(crate) fn effects_rows(
                         // Effects & Presets browser straight away; the user can
                         // still navigate elsewhere.
                         let mut dialog = rfd::FileDialog::new()
-                            .set_file_name(format!("effects.{}", crate::preset::PRESET_EXTENSION))
-                            .add_filter("Lumit effect preset", &[crate::preset::PRESET_EXTENSION]);
+                            .set_file_name(format!(
+                                "effects.{}",
+                                lumit_core::preset::PRESET_EXTENSION
+                            ))
+                            .add_filter(
+                                "Lumit effect preset",
+                                &[lumit_core::preset::PRESET_EXTENSION],
+                            );
                         if let Some(dir) = lumit_project::presets_dir() {
                             let _ = std::fs::create_dir_all(&dir);
                             dialog = dialog.set_directory(&dir);
@@ -471,12 +477,12 @@ pub(crate) fn effects_rows(
                             // Only what the user highlighted (UI-10): the
                             // selected effects and, where keys are picked out,
                             // just those keys. No selection → the whole stack.
-                            let subset = crate::preset::selection_subset(
+                            let subset = lumit_core::preset::selection_subset(
                                 &layer.effects,
                                 &sel_effects,
                                 &sel_keys,
                             );
-                            if let Ok(json) = crate::preset::to_json(&name, &subset) {
+                            if let Ok(json) = lumit_core::preset::to_json(&name, &subset) {
                                 // Best-effort: a failed write leaves the
                                 // document untouched (never an edit).
                                 let _ = std::fs::write(&path, json);
@@ -487,17 +493,20 @@ pub(crate) fn effects_rows(
                 });
                 if ui.button("Load preset…").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("Lumit effect preset", &[crate::preset::PRESET_EXTENSION])
+                        .add_filter(
+                            "Lumit effect preset",
+                            &[lumit_core::preset::PRESET_EXTENSION],
+                        )
                         .pick_file()
                     {
                         if let Ok(preset) = std::fs::read_to_string(&path)
                             .map_err(|e| e.to_string())
-                            .and_then(|t| crate::preset::from_json(&t))
+                            .and_then(|t| lumit_core::preset::from_json(&t))
                         {
                             // Append the preset's effects (fresh ids) to the
                             // stack — one undoable SetLayerEffects.
                             let mut effects = layer.effects.clone();
-                            effects.extend(crate::preset::instantiated(&preset));
+                            effects.extend(lumit_core::preset::instantiated(&preset));
                             *pending = Some(commit(effects));
                         }
                     }

@@ -16,7 +16,6 @@ mod app_update;
 mod command_palette;
 mod dialogs;
 mod dock;
-mod draws;
 #[cfg(feature = "media")]
 mod export_actions;
 mod eyedropper;
@@ -34,11 +33,17 @@ mod widgets;
 
 pub(crate) use command_palette::*;
 pub(crate) use dock::*;
-pub(crate) use draws::*;
+// The pixel pass moved to `lumit-render` (K-178); the shell drives it from
+// here, so its draw-list types and builders keep the short names the panel code
+// already uses.
 pub(crate) use gpu::*;
 pub(crate) use graph::*;
 pub(crate) use hierarchy::*;
 pub(crate) use inspector::*;
+#[cfg(feature = "media")]
+pub(crate) use lumit_render::build::{
+    build_comp_draws, patch_layer_effect_param, patch_layer_prop,
+};
 pub(crate) use overlays::*;
 pub(crate) use panels::*;
 pub(crate) use scopes::*;
@@ -174,12 +179,12 @@ pub struct Shell {
     /// footage frame each layer shows, so no re-decode is needed.
     #[cfg(feature = "media")]
     #[serde(skip, default)]
-    last_comp: Option<crate::app_state::preview::CompFrame>,
+    last_comp: Option<lumit_render::decode::CompFrame>,
     #[serde(skip, default)]
     last_doc_ptr: usize,
     #[cfg(feature = "media")]
     #[serde(skip, default)]
-    export: Option<crate::export::ExportHandle>,
+    export: Option<lumit_render::export::ExportHandle>,
     #[cfg(feature = "media")]
     #[serde(skip, default)]
     export_progress: Option<(usize, usize)>,
@@ -195,7 +200,7 @@ pub struct Shell {
     /// (docs/06 §7.1) and starts when the running one finishes.
     #[cfg(feature = "media")]
     #[serde(skip, default)]
-    export_queue: std::collections::VecDeque<crate::export::QueuedExport>,
+    export_queue: std::collections::VecDeque<lumit_render::export::QueuedExport>,
     #[cfg(feature = "media")]
     #[serde(skip, default)]
     export_dialog: Option<ExportDialogState>,
@@ -219,10 +224,10 @@ struct ExportDialogState {
     /// file name, untouched.
     filename_template: Option<String>,
     /// The last preset applied (display only; the fields below are truth).
-    preset: crate::export::ExportPreset,
+    preset: lumit_render::export::ExportPreset,
     /// What that preset stamped, kept to preserve its VBR peak while the
     /// stamped numbers stand unedited.
-    stamped: Option<crate::export::PresetParams>,
+    stamped: Option<lumit_render::export::PresetParams>,
     codec: lumit_media::encode::VideoCodec,
     /// None = the comp's own size; Some = a delivery frame.
     size: Option<(u32, u32)>,
@@ -235,7 +240,7 @@ struct ExportDialogState {
 #[cfg(feature = "media")]
 impl ExportDialogState {
     /// Stamp a preset's parameters over the editable fields.
-    fn apply(&mut self, preset: crate::export::ExportPreset) {
+    fn apply(&mut self, preset: lumit_render::export::ExportPreset) {
         self.preset = preset;
         self.stamped = preset.params();
         self.default_name =
@@ -254,7 +259,7 @@ impl ExportDialogState {
     }
 
     /// Resolve the fields into the spec one queued export runs with.
-    fn spec(&self) -> crate::export::ExportSpec {
+    fn spec(&self) -> lumit_render::export::ExportSpec {
         let target = self.size.unwrap_or(self.comp_size);
         let bit_rate = self
             .bitrate_mbps
@@ -270,13 +275,13 @@ impl ExportDialogState {
             (_, Some(b)) => Some(b.saturating_mul(3) / 2),
             (_, None) => None,
         };
-        crate::export::ExportSpec {
+        lumit_render::export::ExportSpec {
             codec: self.codec,
             target,
             bit_rate,
             max_rate,
             include_audio: self.include_audio,
-            audio_bit_rate: crate::export::PRESET_AUDIO_BPS,
+            audio_bit_rate: lumit_render::export::PRESET_AUDIO_BPS,
         }
     }
 }
@@ -290,7 +295,7 @@ impl ExportDialogState {
 /// the setting now exists.
 #[cfg(feature = "media")]
 fn export_default_file_name(
-    preset: crate::export::ExportPreset,
+    preset: lumit_render::export::ExportPreset,
     comp_name: &str,
     template: Option<&str>,
 ) -> String {

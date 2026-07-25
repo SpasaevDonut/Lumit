@@ -1,4 +1,4 @@
-// The Dart half of bridge v0 (docs/flutter-port/03-ARCHITECTURE.md "Bridge
+// The Dart half of bridge v0 (docs/archive/flutter-port/03-ARCHITECTURE.md "Bridge
 // v0"): a thin dart:ffi wrapper over the `lumit_bridge` shared library. Dart
 // calls the crate's C functions, each of which returns a Rust-owned UTF-8 JSON
 // string; this side copies the string out, immediately frees it back to Rust,
@@ -1118,6 +1118,11 @@ class BridgeMedia {
         height: _asInt(m['height']),
         audio: m['audio'] == true,
       );
+
+  /// Whether the container has a video stream — mirrors the bridge probe's own
+  /// `(0, 1, 0, 0)` sentinel for "no video" (`media.rs::probe_path`), so an
+  /// audio-only file reads false here.
+  bool get hasVideo => width > 0 && height > 0;
 }
 
 /// A decoded footage frame: tightly-packed straight (non-premultiplied) RGBA8,
@@ -1805,6 +1810,34 @@ abstract class CompRenderBridge {
   DecodedFrame? renderCompFrame(String compId, int frame, double scale);
 }
 
+/// The transform-preview fast-path capability (ABI 11), kept as its own
+/// interface for the same reason as [CompRenderBridge]: a bridge either offers
+/// it or not, and the many `implements DocumentBridge` fakes need no change.
+/// Lets a drag stage an in-memory-only edit and render just the current frame
+/// under it, without the full commit path's undo entry, journal write and
+/// whole-document JSON round-trip — see `AppStateStub.previewTransform`.
+abstract class PreviewTransformBridge {
+  /// True when the loaded library exports the preview-transform symbols.
+  /// False for an older library — the discriminator that keeps such a build on
+  /// the per-tick [DocumentBridge.setTransform] path it already had.
+  bool get supportsPreviewTransform;
+
+  /// Stage (or update) an in-memory preview of [layerId]'s [property] —
+  /// no undo entry, no journal write, no snapshot round-trip. The reply is a
+  /// tiny `{"ok":true}` ack, never a document snapshot.
+  BridgeReply previewTransform(
+      String compId, String layerId, String property, double value);
+
+  /// Drop the active preview without committing (Escape / drag-cancel).
+  void cancelTransformPreview();
+
+  /// Render composition [compId] at [frame] under the active preview (if
+  /// any) — the drag-preview sibling of [CompRenderBridge.renderCompFrame].
+  /// Never served from or banked into the engine's rendered-frame cache, so a
+  /// caller must not call this more than once per frame it actually wants.
+  DecodedFrame? renderPreviewFrame(String compId, int frame, double scale);
+}
+
 /// The zero-copy Viewer capability (K-177), kept as its own interface for the
 /// same reason as [CompRenderBridge]: a bridge either offers it or it does not,
 /// and the many `implements DocumentBridge` fakes need no change. The real
@@ -2087,6 +2120,7 @@ class LumitBridge
     implements
         DocumentBridge,
         CompRenderBridge,
+        PreviewTransformBridge,
         SharedTextureBridge,
         CacheControlBridge,
         RenderCancelBridge,
@@ -2193,6 +2227,15 @@ class LumitBridge
   /// keeps its single-layer path. Non-final because it is looked up defensively
   /// in the constructor body, not the initializer list.
   _RenderDart? _renderCompFrame;
+
+  /// The transform-preview fast-path symbols (ABI 11). Bound defensively like
+  /// [_renderCompFrame], all three together in one block (they only make
+  /// sense as a set): an older `.dll` lacks them, so [supportsPreviewTransform]
+  /// is false and the Effect Controls panel keeps its per-tick
+  /// [DocumentBridge.setTransform] path.
+  _TransformDart? _previewTransform;
+  _NoArgDart? _cancelTransformPreview;
+  _RenderDart? _renderPreviewFrame;
 
   /// The zero-copy shared-texture symbols (K-177). Bound defensively like
   /// [_renderCompFrame]: an older `.dll` lacks them, and both stay null then, so
@@ -2496,6 +2539,24 @@ class LumitBridge
     } catch (_) {
       _renderCompFrame = null;
     }
+    // The transform-preview fast-path symbols (ABI 11) are optional together —
+    // an older library omits all three, and only make sense as a set — so bind
+    // them in one block and leave the capability off if any is missing.
+    try {
+      _previewTransform = lib.lookupFunction<_TransformC, _TransformDart>(
+        'lumit_bridge_preview_transform',
+      );
+      _cancelTransformPreview = lib.lookupFunction<_NoArgC, _NoArgDart>(
+        'lumit_bridge_cancel_transform_preview',
+      );
+      _renderPreviewFrame = lib.lookupFunction<_RenderC, _RenderDart>(
+        'lumit_bridge_render_comp_frame_preview',
+      );
+    } catch (_) {
+      _previewTransform = null;
+      _cancelTransformPreview = null;
+      _renderPreviewFrame = null;
+    }
     // The shared-texture symbols are likewise optional (K-177): an older library
     // omits them, so bind defensively and leave the capability off if either is
     // missing.
@@ -2692,13 +2753,15 @@ class LumitBridge
   /// bare name so the OS loader's own search path gets a turn.
   static List<String> _candidatePaths() {
     // The shared library's platform base name: `lumit_bridge.dll` on Windows
-    // (cdylib), `liblumit_bridge.so` on Linux (the `lib` prefix Cargo gives a
-    // cdylib on Unix). macOS would be `liblumit_bridge.dylib` — added when that
-    // pass happens. The search ORDER below is identical on every platform, so
-    // Windows behaviour is byte-for-byte what it was.
+    // (cdylib), `liblumit_bridge.so` on Linux, `liblumit_bridge.dylib` on macOS
+    // (the `lib` prefix Cargo gives a cdylib on both Unix targets). The search
+    // ORDER below is identical on every platform, so Windows behaviour is
+    // byte-for-byte what it was.
     final name = Platform.isWindows
         ? 'lumit_bridge.dll'
-        : 'liblumit_bridge.so';
+        : Platform.isMacOS
+            ? 'liblumit_bridge.dylib'
+            : 'liblumit_bridge.so';
     final paths = <String>[];
     try {
       final exeDir = File(Platform.resolvedExecutable).parent.path;
@@ -2819,6 +2882,42 @@ class LumitBridge
       malloc.free(l);
       malloc.free(p);
     }
+  }
+
+  @override
+  bool get supportsPreviewTransform =>
+      _previewTransform != null &&
+      _cancelTransformPreview != null &&
+      _renderPreviewFrame != null;
+
+  @override
+  BridgeReply previewTransform(
+    String compId,
+    String layerId,
+    String property,
+    double value,
+  ) {
+    final fn = _previewTransform;
+    if (fn == null) {
+      return const BridgeReply.err('preview transform unsupported');
+    }
+    final c = compId.toNativeUtf8();
+    final l = layerId.toNativeUtf8();
+    final p = property.toNativeUtf8();
+    try {
+      return BridgeReply.parse(_readReply(fn(c.cast(), l.cast(), p.cast(), value)));
+    } finally {
+      malloc.free(c);
+      malloc.free(l);
+      malloc.free(p);
+    }
+  }
+
+  @override
+  void cancelTransformPreview() {
+    final fn = _cancelTransformPreview;
+    if (fn == null) return;
+    _readReply(fn()); // a tiny stateless ack — nothing to adopt
   }
 
   @override
@@ -3350,6 +3449,37 @@ class LumitBridge
       try {
         // Copy the pixels out before the buffer is freed back to Rust — the same
         // contract as decodeFrame (one boxed slice, freed as a whole).
+        final rgba = Uint8List.fromList(ptr.asTypedList(len));
+        return DecodedFrame(
+          width: outW.value,
+          height: outH.value,
+          rgba: rgba,
+        );
+      } finally {
+        _freeBuffer(ptr, len);
+      }
+    } finally {
+      malloc.free(id);
+      malloc.free(outW);
+      malloc.free(outH);
+      malloc.free(outLen);
+    }
+  }
+
+  @override
+  DecodedFrame? renderPreviewFrame(String compId, int frame, double scale) {
+    final render = _renderPreviewFrame;
+    if (render == null) return null; // old library, or unsupported — see supportsPreviewTransform
+    final id = compId.toNativeUtf8();
+    final outW = malloc<Uint32>();
+    final outH = malloc<Uint32>();
+    final outLen = malloc<Size>();
+    try {
+      final ptr = render(id.cast(), frame, scale, outW, outH, outLen);
+      if (ptr == nullptr) return null;
+      final len = outLen.value;
+      try {
+        // Same copy-then-free contract as renderCompFrame/decodeFrame.
         final rgba = Uint8List.fromList(ptr.asTypedList(len));
         return DecodedFrame(
           width: outW.value,

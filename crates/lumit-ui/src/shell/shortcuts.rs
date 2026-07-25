@@ -28,11 +28,11 @@ impl Shell {
                 }
                 MenuAction::ExportYouTube1080 => {
                     #[cfg(feature = "media")]
-                    self.open_export_dialog(crate::export::ExportPreset::Youtube1080p60);
+                    self.open_export_dialog(lumit_render::export::ExportPreset::Youtube1080p60);
                 }
                 MenuAction::ExportVertical => {
                     #[cfg(feature = "media")]
-                    self.open_export_dialog(crate::export::ExportPreset::Vertical1080p60);
+                    self.open_export_dialog(lumit_render::export::ExportPreset::Vertical1080p60);
                 }
                 MenuAction::ShareExport50 => {
                     #[cfg(feature = "media")]

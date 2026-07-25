@@ -5,6 +5,8 @@ the project owner) or **PROPOSED** (a strong default chosen during the July 2026
 editing the entry and noting why). Reversing a DECIDED entry requires a new entry that
 supersedes it — never edit history.
 
+**How to use this log:** it is a long reference, not a start-of-task read. Don't read it end to end - search it for the entries relevant to your task (by topic keyword, or by the `k-###` numbers the relevant spec cites) and read those. Where two entries conflict, the later one that says it supersedes the earlier wins.
+
 Format: ID · status · decision · rationale · consequences.
 
 ---
@@ -2226,14 +2228,14 @@ and missing ones are named in a notice, the relink dialogue remaining future wor
 one-for-one before any redesign.** The owner wants to evaluate replacing the egui frontend
 with Flutter (text rendering, motion, platform polish, widget ecosystem). The experiment
 lives on `flutter-frontend-alternative`: a Dart application in `flutter_ui/` over the
-unchanged Rust engine crates, specified by `docs/flutter-port/` (strategy, full UI
+unchanged Rust engine crates, specified by `docs/archive/flutter-port/` (strategy, full UI
 inventory, bridge architecture, widget map, living parity checklist). Ground rules: the
 first pass reproduces the shipped egui behaviour exactly — known rough edges are logged,
 not fixed — so there is a truthful baseline; the glossary, no-hex-outside-theme and
 tests-with-features rules bind the Dart tree as they bind Rust; engine crates never depend
 on either frontend; `main` keeps shipping the egui frontend until the Flutter one reaches
 parity and wins the side-by-side. The Viewer's frame path is the one piece of new systems
-work (wgpu → shared D3D11 texture → Flutter texture registrar, docs/flutter-port/03).
+work (wgpu → shared D3D11 texture → Flutter texture registrar, docs/archive/flutter-port/03).
 
 **K-175 · DECIDED · The bridge borrows lumit-ui's renderer through the headless seam until
 the pixel pass moves into an engine crate.** The composited comp frame the Flutter Viewer
@@ -2247,7 +2249,7 @@ feature that depends on `lumit-ui` and drives that seam through
 bridge (a leaf, not an engine crate) depends on the UI crate here and nowhere else. The
 docs/05 rule — *engine crates never depend on a frontend* — is unbroken; the bridge is not
 an engine crate. When the pixel pass is extracted into an engine crate (the shared-compositor
-work docs/flutter-port/03 anticipates), the bridge will depend on that crate instead and the
+work docs/archive/flutter-port/03 anticipates), the bridge will depend on that crate instead and the
 `lumit-ui` dependency is dropped. Recorded so the dependency edge is understood as scaffolding,
 not the destination.
 
@@ -2288,3 +2290,39 @@ pixels (the texture path moves none): a throttled read-back render (~10 Hz) feed
 the texture drives the Viewer. **Remaining after this:** the read-back path stays for scopes
 and for every fallback; engine-side render cancellation and a rendered-frame cache (K-176)
 are still open; the keyed-mutex handshake is the named follow-up.
+
+**K-178 · DECIDED · The pixel pass moves into `lumit-render`, an engine crate both
+frontends drive; the bridge's dependency on `lumit-ui` (K-175) is retired.** K-175 recorded,
+as deliberate scaffolding, that `lumit-bridge` would depend on `lumit-ui` to reach the
+compositor "until the pixel pass moves into an engine crate". This is that move. A new engine
+crate `lumit-render` holds the whole pass: probing abstraction (`source`), decode planning
+(`plan`), the decode worker and its decoded-frame cache (`decode`), draw-list building
+(`build`) and its types (`draw`), the GPU compositor (`realise`), effect dispatch (`fxops`),
+frame naming and the cache tiers (`cache`, `diskio`), export, and the headless seam. It
+depends on no frontend and names neither egui nor Flutter; `lumit-ui` and `lumit-bridge` both
+drive it. The docs/05 rule is not merely unbroken but strengthened — the bridge is no longer a
+leaf hanging off a frontend, and the shipped Flutter `.dll` no longer links egui, `egui_tiles`,
+`iconflow`, `rfd` or `muda`. Two pieces moved further down: `pixels` and `preset` are pure
+data/maths with no media or GPU dependency and must survive a `--no-default-features` build, so
+they live in `lumit-core`. **Why now, and what it bought:** the reason was performance, not
+tidiness. The Flutter Viewer drove `export::Renderer`, which decodes every frame afresh at full
+resolution and retains nothing, so *dragging a value re-decoded the whole composition on every
+tick* — while the egui Viewer had long re-composited from the frame's retained per-layer pixels
+and never re-decoded during a drag. Sharing one crate made it possible to give the Flutter path
+that behaviour instead of building it a second time: `HeadlessRenderer::render_preview` plans
+the decode, reuses the pixels it holds when the plan is unchanged (`plan::same_decode`), and
+decodes at the preview resolution. `DecodePool::comp_decodes` counts real decodes so the drag
+contract is a *test*, not a claim. The zero-copy shared-texture paths (K-177) were moved onto
+the same walk, so the shipped build gets the fast path and cannot disagree with the read-back
+path about a frame. **Frame naming:** the bridge's rendered-frame cache (K-176) keyed on
+`(comp, frame, scale)` plus the identity of the document snapshot, so *any* commit — a rename,
+a work-area nudge, a solo toggle — emptied it. It now keys on the content hash
+(`lumit_eval::comp_frame_key`, already an engine crate), so picture-free edits discard nothing
+and an edit to one layer retires only the frames that layer appears in. **Cost, recorded
+honestly:** two comp walks still exist — `build_comp_draws` (interactive) and
+`render_comp_linear` (export) — kept in step by hand and by tests, exactly as they were inside
+`lumit-ui`. Unifying them by having export decode into a pixels map and share the draw walk is
+the recorded next step (docs/TODO.md, Now), gated on a bit-identity matrix across precomps,
+mattes, adjustments, collapse and motion blur; a solid-comp identity test is in place already.
+This entry supersedes K-175's temporary arrangement; K-175 stays as the record of why the edge
+existed.

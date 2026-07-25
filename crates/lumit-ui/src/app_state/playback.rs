@@ -128,7 +128,7 @@ impl AppState {
         let duration_s = comp.duration.0.to_f64();
         let tx = self.beats_tx.clone();
         std::thread::spawn(move || {
-            let samples = crate::export::mixdown(&jobs, rate, duration_s);
+            let samples = lumit_render::export::mixdown(&jobs, rate, duration_s);
             let analysis = lumit_audio::beat::analyse_stereo(&samples, rate, sensitivity);
             // Grid-assist: nudge near-grid onsets onto the tempo grid (≤45ms),
             // which removes the small analysis latency without moving outliers.
