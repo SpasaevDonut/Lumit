@@ -14,6 +14,7 @@ pub mod layer;
 pub mod folder;
 pub mod solid;
 pub mod footage;
+mod worker_thread;
 
 #[derive(Debug)]
 pub enum BridgeError {
@@ -23,6 +24,7 @@ pub enum BridgeError {
     InvalidLayer,
     ReadFailed,
     WriteFailed,
+    InvalidWorkerState,
     OpError(OpError),
 }
 
@@ -37,6 +39,7 @@ impl fmt::Display for BridgeError {
             BridgeError::InvalidItem => write!(f, "Invalid Item"),
             BridgeError::InvalidLayer => write!(f, "Invalid Layer"),
             BridgeError::WriteFailed => write!(f, "Write Failed"),
+            BridgeError::InvalidWorkerState => write!(f, "Invalid worker state"),
             BridgeError::OpError(op_error) => write!(f, "{}", op_error),
         };
 

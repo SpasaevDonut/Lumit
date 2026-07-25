@@ -23,7 +23,7 @@ crate-type = ["cdylib", "staticlib"]
 # `--no-default-features` drops both, and the crate still builds and tests
 # without FFmpeg or a GPU (CI parity) — render calls then return null.
 [features]
-default = ["media", "render"]
+default = ["media", "render", "shared-texture", "shared-texture-linux" ]
 media = ["dep:lumit-media"]
 # `render` also pulls lumit-audio: beat detection (docs/09 §5) mixes the comp's
 # audio through the headless input builder and runs onset/tempo analysis, so it

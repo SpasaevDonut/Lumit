@@ -10,7 +10,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `project`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `eq`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `clone`, `eq`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
 class CompositionReference {
@@ -26,6 +26,10 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetLayers(
         that: this,
       );
+
+  Future<void> renderFrame({required BigInt frame}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
+          that: this, frame: frame);
 
   @override
   int get hashCode => internalproject.hashCode ^ internalid.hashCode;

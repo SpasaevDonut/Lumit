@@ -9,10 +9,12 @@ import 'folder.dart';
 import 'footage.dart';
 import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 import 'package:uuid/uuid.dart';
 import 'project.dart';
 import 'project_item.dart';
 import 'solid.dart';
+part 'state.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `handle_change_callback`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
@@ -32,6 +34,53 @@ abstract class LumitBridgeState implements RustOpaqueInterface {
           RustStreamSink<ScopedChange>? onChangeStream}) =>
       BridgeLib.instance.api.crateApiStateLumitBridgeStateOpenProject(
           path: path, onChangeStream: onChangeStream);
+}
+
+class BridgeSharedFrameInfoLinux {
+  final int fd;
+  final int width;
+  final int height;
+  final int stride;
+  final int offset;
+
+  /// The DRM fourcc (`DRM_FORMAT_ABGR8888`, memory order R,G,B,A).
+  final int drmFourcc;
+
+  /// The DRM modifier (`DRM_FORMAT_MOD_LINEAR` = 0 on the linear-tiling path).
+  final BigInt modifier;
+
+  const BridgeSharedFrameInfoLinux({
+    required this.fd,
+    required this.width,
+    required this.height,
+    required this.stride,
+    required this.offset,
+    required this.drmFourcc,
+    required this.modifier,
+  });
+
+  @override
+  int get hashCode =>
+      fd.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      stride.hashCode ^
+      offset.hashCode ^
+      drmFourcc.hashCode ^
+      modifier.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeSharedFrameInfoLinux &&
+          runtimeType == other.runtimeType &&
+          fd == other.fd &&
+          width == other.width &&
+          height == other.height &&
+          stride == other.stride &&
+          offset == other.offset &&
+          drmFourcc == other.drmFourcc &&
+          modifier == other.modifier;
 }
 
 class ScopedChange {
@@ -56,4 +105,13 @@ class ScopedChange {
           project == other.project &&
           item == other.item &&
           layer == other.layer;
+}
+
+@freezed
+sealed class WorkerResponse with _$WorkerResponse {
+  const WorkerResponse._();
+
+  const factory WorkerResponse.renderedDmaBuf(
+    BridgeSharedFrameInfoLinux field0,
+  ) = WorkerResponse_RenderedDMABuf;
 }

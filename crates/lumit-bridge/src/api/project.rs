@@ -5,11 +5,10 @@ use lumit_core::model::ProjectItem;
 use uuid::Uuid;
 
 use crate::api::{
-    composition::CompositionReference, folder::FolderReference, footage::FootageReference,
-    project_item::ItemReference, solid::SolidReference, state::PROJECTS, BridgeError,
+    BridgeError, composition::CompositionReference, folder::FolderReference, footage::FootageReference, project_item::ItemReference, solid::SolidReference, state::{PROJECTS, WorkerResponseStream}, worker_thread,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 #[frb]
 pub struct ProjectReference {
     #[frb(name = "internalid")]
@@ -21,12 +20,18 @@ impl ProjectReference {
     pub fn new(id: Uuid) -> ProjectReference {
         ProjectReference { id }
     }
-
-    fn state(&self) -> Arc<std::sync::RwLock<super::state::LumitBridgeState>> {
+    
+    #[frb(ignore)]
+    pub fn state(&self) -> Arc<std::sync::RwLock<super::state::LumitBridgeState>> {
         let projects = PROJECTS.read().unwrap();
         let project = projects.get(&self.id);
 
         project.unwrap().clone()
+    }
+
+    #[frb(sync)]
+    pub fn start_worker(&self, on_reponse: WorkerResponseStream) {
+        worker_thread::run_worker(self.clone(), on_reponse);
     }
 
     #[frb(sync)]

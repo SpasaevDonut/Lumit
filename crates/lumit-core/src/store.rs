@@ -93,7 +93,7 @@ impl DocumentStore {
 
         match &self.on_change {
             Some(callback) => callback(DocumentChange { op: o }),
-            None => todo!(),
+            None => (),
         }
 
         Ok(arc)

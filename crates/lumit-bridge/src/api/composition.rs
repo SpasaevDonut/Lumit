@@ -1,4 +1,4 @@
-use std::{sync::Arc, todo};
+use std::{println, sync::Arc, todo};
 
 use flutter_rust_bridge::frb;
 
@@ -7,10 +7,11 @@ use uuid::Uuid;
 use crate::api::{
     layer::LayerReference,
     state::{LumitBridgeState, PROJECTS},
+    worker_thread::{RenderCompRequest, WorkerRequest::RenderComp},
     BridgeError,
 };
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 #[frb]
 pub struct CompositionReference {
     #[frb(name = "internalproject")]
@@ -59,6 +60,30 @@ impl CompositionReference {
                 .map(|i| LayerReference::new(self.project.clone(), self.id.clone(), i.id.clone()))
                 .collect()),
             _ => todo!(),
+        }
+    }
+
+    pub fn render_frame(&self, frame: u64) -> Result<(), BridgeError> {
+        let p = self.project()?;
+
+        let p = p.read().map_err(|_| BridgeError::ReadFailed)?;
+
+        match &p.sender {
+            Some(sender) => {
+                let result = sender.send(RenderComp(RenderCompRequest {
+                    comp: self.clone(),
+                    frame,
+                }));
+
+                return match result {
+                    Ok(_) => Ok(()),
+                    Err(err) => {
+                        println!("Error while requesting render: {:?}", err);
+                        Err(BridgeError::InvalidWorkerState)
+                    }
+                };
+            }
+            None => Err(BridgeError::InvalidWorkerState),
         }
     }
 }

@@ -65,6 +65,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dynamic raw);
 
   @protected
+  RustStreamSink<WorkerResponse> dco_decode_StreamSink_worker_response_Sse(
+      dynamic raw);
+
+  @protected
   String dco_decode_String(dynamic raw);
 
   @protected
@@ -72,6 +76,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  BridgeSharedFrameInfoLinux
+      dco_decode_box_autoadd_bridge_shared_frame_info_linux(dynamic raw);
 
   @protected
   CompositionReference dco_decode_box_autoadd_composition_reference(
@@ -94,6 +102,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
+
+  @protected
+  BridgeSharedFrameInfoLinux dco_decode_bridge_shared_frame_info_linux(
+      dynamic raw);
 
   @protected
   CompositionReference dco_decode_composition_reference(dynamic raw);
@@ -148,6 +160,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   SolidReference dco_decode_solid_reference(dynamic raw);
 
   @protected
+  int dco_decode_u_32(dynamic raw);
+
+  @protected
+  BigInt dco_decode_u_64(dynamic raw);
+
+  @protected
   int dco_decode_u_8(dynamic raw);
 
   @protected
@@ -155,6 +173,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BigInt dco_decode_usize(dynamic raw);
+
+  @protected
+  WorkerResponse dco_decode_worker_response(dynamic raw);
 
   @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
@@ -184,6 +205,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  RustStreamSink<WorkerResponse> sse_decode_StreamSink_worker_response_Sse(
+      SseDeserializer deserializer);
+
+  @protected
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
@@ -191,6 +216,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  BridgeSharedFrameInfoLinux
+      sse_decode_box_autoadd_bridge_shared_frame_info_linux(
+          SseDeserializer deserializer);
 
   @protected
   CompositionReference sse_decode_box_autoadd_composition_reference(
@@ -218,6 +248,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   SolidReference sse_decode_box_autoadd_solid_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeSharedFrameInfoLinux sse_decode_bridge_shared_frame_info_linux(
       SseDeserializer deserializer);
 
   @protected
@@ -279,6 +313,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   SolidReference sse_decode_solid_reference(SseDeserializer deserializer);
 
   @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
+
+  @protected
+  BigInt sse_decode_u_64(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_u_8(SseDeserializer deserializer);
 
   @protected
@@ -286,6 +326,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BigInt sse_decode_usize(SseDeserializer deserializer);
+
+  @protected
+  WorkerResponse sse_decode_worker_response(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -316,6 +359,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       RustStreamSink<ScopedChange> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_StreamSink_worker_response_Sse(
+      RustStreamSink<WorkerResponse> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
@@ -323,6 +370,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_shared_frame_info_linux(
+      BridgeSharedFrameInfoLinux self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_composition_reference(
@@ -351,6 +402,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_solid_reference(
       SolidReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_shared_frame_info_linux(
+      BridgeSharedFrameInfoLinux self, SseSerializer serializer);
 
   @protected
   void sse_encode_composition_reference(
@@ -418,6 +473,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SolidReference self, SseSerializer serializer);
 
   @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_64(BigInt self, SseSerializer serializer);
+
+  @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
 
   @protected
@@ -425,6 +486,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_usize(BigInt self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_worker_response(
+      WorkerResponse self, SseSerializer serializer);
 }
 
 // Section: wire_class

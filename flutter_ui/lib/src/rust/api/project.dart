@@ -12,10 +12,10 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 import 'project_item.dart';
 import 'solid.dart';
+import 'state.dart';
 
-// These functions are ignored because they are not marked as `pub`: `state`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `new`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `new`, `state`
 
 class ProjectReference {
   final UuidValue internalid;
@@ -30,6 +30,11 @@ class ProjectReference {
       );
 
   void redo() => BridgeLib.instance.api.crateApiProjectProjectReferenceRedo(
+        that: this,
+      );
+
+  Stream<WorkerResponse> startWorker() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceStartWorker(
         that: this,
       );
 

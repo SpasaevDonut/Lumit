@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:lumit_flutter/builder/item_builder.dart';
 import 'package:lumit_flutter/builder/layer_builder.dart';
+import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
@@ -60,12 +61,17 @@ class LumitState extends ChangeNotifier {
   StreamSubscription? currentDocumentStream;
 
   final StreamController<ScopedChange> _onChange = StreamController.broadcast();
+  final StreamController<WorkerResponse> _onWorkerResponse =
+      StreamController.broadcast();
 
   Stream<ScopedChange> get onChange => _onChange.stream;
+  Stream<WorkerResponse> get onWorkerResponse => _onWorkerResponse.stream;
 
   void newProject() {
     final sink = RustStreamSink<ScopedChange>();
     project = LumitBridgeState.newProject(onChangeStream: sink);
+
+    project?.startWorker();
 
     currentDocumentStream?.cancel();
     currentDocumentStream = sink.stream.listen(handleChange);
@@ -76,6 +82,8 @@ class LumitState extends ChangeNotifier {
   void openProject(String path) {
     final sink = RustStreamSink<ScopedChange>();
     project = LumitBridgeState.openProject(path: path, onChangeStream: sink);
+    final messages = project?.startWorker();
+    messages!.listen((msg) => _onWorkerResponse.add(msg));
 
     currentDocumentStream?.cancel();
     currentDocumentStream = sink.stream.listen(handleChange);
@@ -120,6 +128,46 @@ class LumitAppView extends StatefulWidget {
 }
 
 class _LumitAppViewState extends State<LumitAppView> {
+  WorkerResponse_RenderedDMABuf? renderedFrame;
+  ViewerTextureController controller = ViewerTextureController();
+  StreamSubscription? sub;
+  int? frameId;
+
+  @override
+  void initState() {
+    final store = Provider.of<LumitState>(context, listen: false);
+
+    sub = store.onWorkerResponse.listen((msg) {
+      if (msg case WorkerResponse_RenderedDMABuf frame) {
+        controller
+            .ensureRegistered(
+                frame.field0.fd, frame.field0.width, frame.field0.height,
+                fd: frame.field0.fd,
+                stride: frame.field0.stride,
+                offset: frame.field0.offset,
+                fourcc: frame.field0.drmFourcc,
+                modifier: frame.field0.modifier.toInt())
+            .then((id) {
+          controller.frameReady();
+          if (id != frameId) {
+            setState(() {
+              print("Frame Id: $id");
+              frameId = id;
+            });
+          }
+        });
+      }
+    });
+
+    super.initState();
+  }
+
+  @override
+  void dispose() {
+    sub?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     var state = context.watch<LumitState>();
@@ -172,6 +220,12 @@ class _LumitAppViewState extends State<LumitAppView> {
                   ))
             ],
           ),
+          if (frameId != null)
+            SizedBox(
+              height: 200,
+              width: 200,
+              child: Texture(textureId: frameId!),
+            ),
           Expanded(
             child: Container(
                 color: ColorScheme.of(context).surfaceContainerLow,
@@ -192,6 +246,8 @@ class _LumitAppViewState extends State<LumitAppView> {
       ],
     );
   }
+
+  static int frame = 161;
 
   Widget buildItem(BuildContext context, ItemReference item) {
     // since this is just a lookup from the project document, it should be really fast, and is okay to be called sync
@@ -233,6 +289,18 @@ class _LumitAppViewState extends State<LumitAppView> {
                 SizedBox(
                   width: 8,
                 ),
+                TextButton(
+                    onPressed: () {
+                      print(
+                        "Rendering frame: $frame",
+                      );
+                      comp.field0.renderFrame(frame: BigInt.from(frame));
+                      frame += 5;
+                    },
+                    child: Text(
+                      "Render",
+                      style: Theme.of(context).textTheme.labelSmall,
+                    )),
                 Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.start,
