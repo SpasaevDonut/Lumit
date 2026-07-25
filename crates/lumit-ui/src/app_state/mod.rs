@@ -21,14 +21,6 @@ mod playback;
 mod previewing;
 mod project;
 
-/// Latest-wins background frame decoding for the Viewer (slice 5).
-/// In plain terms: the UI sends "show frame N of item X" requests down a
-/// channel; a worker thread owns the decoders and answers with pixels; stale
-/// requests are simply skipped (the epoch/latest-wins idea from
-/// docs/impl/playback-scheduler.md, in miniature).
-#[cfg(feature = "media")]
-pub mod preview;
-
 /// Probe/index results for footage items, filled by background threads.
 #[cfg(feature = "media")]
 pub mod media;
@@ -210,7 +202,10 @@ pub(crate) fn restore_handle_lengths(
 /// outlives the state it was baked from (the GEN-4 audio fixes). Pure, so the
 /// gating is a plain deterministic test.
 #[cfg(feature = "media")]
-pub(crate) fn audio_jobs_signature(jobs: &[crate::export::AudioJob], duration_s: f64) -> u64 {
+pub(crate) fn audio_jobs_signature(
+    jobs: &[lumit_render::export::AudioJob],
+    duration_s: f64,
+) -> u64 {
     use std::hash::{Hash, Hasher};
     // DefaultHasher is fine HERE because this signature is session-only change
     // detection (compared within one run, never written to disk) — unlike the
@@ -280,7 +275,7 @@ pub(crate) fn comp_audio_sync(
     loaded_sig: Option<u64>,
     preparing: Option<(Uuid, u64)>,
     comp_id: Uuid,
-    jobs: &[crate::export::AudioJob],
+    jobs: &[lumit_render::export::AudioJob],
     duration_s: f64,
 ) -> AudioSync {
     if jobs.is_empty() {
@@ -460,15 +455,6 @@ pub enum CacheTier {
     /// On disk only — promotable, not yet playable (blue).
     Disk,
 }
-
-/// The disk tier's IO side (docs/06 §5.4): one background thread owns the
-/// [`lumit_cache::disk::DiskCache`] so the UI thread never touches the
-/// filesystem. Writes are fire-and-forget (write-behind); loads come back
-/// through a channel and are folded into the RAM tier each frame. The shared
-/// `known` set mirrors which hashes exist on disk, for the cache bar's blue
-/// tier and the fill scheduler's promote-before-render choice.
-#[cfg(feature = "media")]
-pub mod diskio;
 
 /// One display-ready comp frame in Nebula's RAM tier (sRGB bytes as shown and
 /// as exported — the same pixels, K-031).
@@ -763,7 +749,7 @@ pub struct AppState {
     #[cfg(feature = "media")]
     pub media: media::MediaRegistry,
     #[cfg(feature = "media")]
-    pub preview_engine: preview::PreviewEngine,
+    pub preview_engine: lumit_render::decode::PreviewEngine,
     /// Adaptive realtime-resolution controller (K-030): fed each live playback
     /// frame's GPU-composite cost, it returns the preview divisor to use next
     /// (drop fast, rise slow, anti-flap). Only consulted while
@@ -1116,7 +1102,7 @@ pub struct AppState {
     pub realtime_inflight: Option<(usize, Instant)>,
     /// The disk tier's IO worker (docs/06 §5.4), started lazily once the
     /// project has a path (unsaved projects have no sidecar to cache into).
-    pub disk_io: Option<diskio::DiskIo>,
+    pub disk_io: Option<lumit_render::diskio::DiskIo>,
     /// The sidecar root the worker currently points at (memo, so the root is
     /// re-sent only when the project path actually changes).
     disk_root: Option<std::path::PathBuf>,
@@ -1184,7 +1170,7 @@ impl Default for AppState {
             #[cfg(feature = "media")]
             media: media::MediaRegistry::default(),
             #[cfg(feature = "media")]
-            preview_engine: preview::PreviewEngine::default(),
+            preview_engine: lumit_render::decode::PreviewEngine::default(),
             #[cfg(feature = "media")]
             realtime_ctrl: lumit_eval::schedule::RealtimeController::new(),
             #[cfg(feature = "media")]

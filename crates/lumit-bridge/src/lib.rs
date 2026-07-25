@@ -34,7 +34,7 @@
 //! `render` feature it *also* borrows `lumit-ui`'s headless compositor for the
 //! composited-comp Viewer path — the one deliberate, temporary exception, logged
 //! as K-175: the bridge reaches into the UI crate's renderer through the
-//! `lumit_ui::headless` seam until the pixel pass moves into an engine crate.
+//! `lumit_render::headless` seam until the pixel pass moves into an engine crate.
 //! The docs/05 rule (engine crates never depend on the UI) is unbroken; this is
 //! the bridge, not an engine crate.
 //!

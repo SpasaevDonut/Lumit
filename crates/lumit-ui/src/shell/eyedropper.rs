@@ -74,7 +74,7 @@ fn depth_stamp_id() -> egui::Id {
 pub(crate) fn stash_depth_source(
     ctx: &egui::Context,
     app: &AppState,
-    last_comp: &Option<crate::app_state::preview::CompFrame>,
+    last_comp: &Option<lumit_render::decode::CompFrame>,
 ) {
     let Some(target) = app.eyedropper else {
         return;
@@ -426,9 +426,9 @@ fn average_colour(rgba: &[u8], w: i32, h: i32, cx: i32, cy: i32, region: u32) ->
             let px = (cx - half + dx).clamp(0, w - 1);
             let py = (cy - half + dy).clamp(0, h - 1);
             let i = ((py * w + px) * 4) as usize;
-            sum[0] += f64::from(crate::pixels::srgb_decode(rgba[i]));
-            sum[1] += f64::from(crate::pixels::srgb_decode(rgba[i + 1]));
-            sum[2] += f64::from(crate::pixels::srgb_decode(rgba[i + 2]));
+            sum[0] += f64::from(lumit_core::pixels::srgb_decode(rgba[i]));
+            sum[1] += f64::from(lumit_core::pixels::srgb_decode(rgba[i + 1]));
+            sum[2] += f64::from(lumit_core::pixels::srgb_decode(rgba[i + 2]));
             n += 1.0;
         }
     }
@@ -454,9 +454,9 @@ fn average_depth(rgba: &[u8], w: i32, h: i32, cx: i32, cy: i32, region: u32) -> 
             let px = (cx - half + dx).clamp(0, w - 1);
             let py = (cy - half + dy).clamp(0, h - 1);
             let i = ((py * w + px) * 4) as usize;
-            let r = f64::from(crate::pixels::srgb_decode(rgba[i]));
-            let g = f64::from(crate::pixels::srgb_decode(rgba[i + 1]));
-            let b = f64::from(crate::pixels::srgb_decode(rgba[i + 2]));
+            let r = f64::from(lumit_core::pixels::srgb_decode(rgba[i]));
+            let g = f64::from(lumit_core::pixels::srgb_decode(rgba[i + 1]));
+            let b = f64::from(lumit_core::pixels::srgb_decode(rgba[i + 2]));
             luma += 0.2126 * r + 0.7152 * g + 0.0722 * b;
             n += 1.0;
         }
@@ -617,15 +617,15 @@ fn draw_magnifier(
         | crate::app_state::EyedropperMode::Position { .. } => {
             let avg = average_colour(rgba, w, h, cx, cy, region);
             crate::theme::document_colour([
-                crate::pixels::srgb_encode(avg[0] as f32),
-                crate::pixels::srgb_encode(avg[1] as f32),
-                crate::pixels::srgb_encode(avg[2] as f32),
+                lumit_core::pixels::srgb_encode(avg[0] as f32),
+                lumit_core::pixels::srgb_encode(avg[1] as f32),
+                lumit_core::pixels::srgb_encode(avg[2] as f32),
                 255,
             ])
         }
         crate::app_state::EyedropperMode::Depth => {
             let d = depth_override.unwrap_or_else(|| average_depth(rgba, w, h, cx, cy, region));
-            let g = crate::pixels::srgb_encode(d as f32);
+            let g = lumit_core::pixels::srgb_encode(d as f32);
             crate::theme::document_colour([g, g, g, 255])
         }
     };

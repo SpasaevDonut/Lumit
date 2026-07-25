@@ -203,7 +203,7 @@ pub(crate) struct ExportSettings {
     /// comp…" entry and its native-menu twin. Picking a specific preset from
     /// the "Export preset" submenu always uses that preset, regardless of
     /// this default.
-    pub default_preset: crate::export::ExportPreset,
+    pub default_preset: lumit_render::export::ExportPreset,
     /// Filename template for the export dialogue's suggested name. `{comp}`,
     /// `{preset}`, and `{date}` substitute the composition name, the
     /// preset's file stem, and today's date (YYYY-MM-DD). `None` (the
@@ -669,7 +669,7 @@ impl Shell {
                 ),
                 |ui| {
                     bare_dropdown(ui, preset.label(), |ui| {
-                        for p in crate::export::ExportPreset::ALL {
+                        for p in lumit_render::export::ExportPreset::ALL {
                             if ui.selectable_label(preset == p, p.label()).clicked() {
                                 preset = p;
                                 ui.close_menu();
@@ -719,7 +719,7 @@ impl Shell {
         self.app.comp_frame_cache.set_budget(budget / 4);
         let disk = (self.settings.disk_cache_mb as u64).saturating_mul(1024 * 1024);
         if let Some(io) = &self.app.disk_io {
-            let _ = io.tx.send(crate::app_state::diskio::Cmd::SetCap(disk));
+            let _ = io.tx.send(lumit_render::diskio::Cmd::SetCap(disk));
         }
         #[cfg(feature = "media")]
         {
@@ -872,7 +872,7 @@ mod tests {
     #[test]
     fn export_defaults_are_a_no_op_for_existing_installs() {
         let e = ExportSettings::default();
-        assert_eq!(e.default_preset, crate::export::ExportPreset::Custom);
+        assert_eq!(e.default_preset, lumit_render::export::ExportPreset::Custom);
         assert_eq!(e.filename_template, None);
     }
 

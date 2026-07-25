@@ -1,6 +1,18 @@
 //! Byte-level colour helpers shared by every path that hands sRGB pixels to
-//! the GPU or a colour picker — deliberately ungated (the Project panel needs
-//! a solid's swatch even in a media-free build).
+//! the GPU or a colour picker.
+//!
+//! # In plain terms
+//!
+//! These are the small, boring conversions everything else leans on: turning a
+//! scene-linear colour into the sRGB bytes a screen or a texture upload wants,
+//! crossfading two frames, fitting one image inside another, and working out
+//! *which* source frame of a clip a given moment lands on. None of it needs
+//! FFmpeg or a graphics card, so it lives in the engine root where every crate
+//! — the render pipeline, both frontends, the bridge — can reach it, including
+//! in a build with no media support at all (the Project panel still has to draw
+//! a solid's colour swatch).
+
+use crate::model::LinearColour;
 
 pub fn srgb_encode(v: f32) -> u8 {
     let v = v.clamp(0.0, 1.0);
@@ -22,7 +34,7 @@ pub fn srgb_decode(v: u8) -> f32 {
     }
 }
 
-pub fn solid_rgba(c: lumit_core::model::LinearColour) -> [u8; 4] {
+pub fn solid_rgba(c: LinearColour) -> [u8; 4] {
     [
         srgb_encode(c.0[0]),
         srgb_encode(c.0[1]),

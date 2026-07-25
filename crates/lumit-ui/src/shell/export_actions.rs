@@ -31,7 +31,7 @@ impl Shell {
             bits -= audio_bit_rate as f64 * duration;
         }
         let bit_rate = ((bits / duration) as i64).max(100_000);
-        let spec = crate::export::ExportSpec {
+        let spec = lumit_render::export::ExportSpec {
             codec: lumit_media::encode::VideoCodec::H264,
             target: (comp.width, comp.height),
             bit_rate: Some(bit_rate),
@@ -45,7 +45,7 @@ impl Shell {
     /// Open the export dialogue for the current comp, with `preset` applied
     /// (Custom = the comp's own size and the encoder's default quality).
     #[cfg(feature = "media")]
-    pub(super) fn open_export_dialog(&mut self, preset: crate::export::ExportPreset) {
+    pub(super) fn open_export_dialog(&mut self, preset: lumit_render::export::ExportPreset) {
         let Some(comp_id) = self.app.preview_comp.or(self.app.selected_comp) else {
             self.app.error = Some("select a composition to export".into());
             return;
@@ -77,7 +77,7 @@ impl Shell {
     fn enqueue_export(
         &mut self,
         comp_id: uuid::Uuid,
-        spec: crate::export::ExportSpec,
+        spec: lumit_render::export::ExportSpec,
         default_name: &str,
     ) {
         let doc = self.app.store.snapshot();
@@ -89,16 +89,18 @@ impl Shell {
             .set_file_name(default_name)
             .save_file();
         let Some(path) = picked else { return };
-        let items = crate::export::item_infos(&doc, &self.app.media, (comp.width, comp.height));
+        let items =
+            lumit_render::export::item_infos(&doc, &self.app.media, (comp.width, comp.height));
         let audio = self.app.comp_audio_jobs(&doc, comp);
-        self.export_queue.push_back(crate::export::QueuedExport {
-            doc,
-            comp_id,
-            items,
-            audio,
-            out_path: path,
-            spec,
-        });
+        self.export_queue
+            .push_back(lumit_render::export::QueuedExport {
+                doc,
+                comp_id,
+                items,
+                audio,
+                out_path: path,
+                spec,
+            });
         self.try_start_next_export();
     }
 
@@ -124,7 +126,7 @@ impl Shell {
         );
         self.export_encoder = None;
         self.export_progress = Some((0, 0));
-        self.export = Some(crate::export::start(
+        self.export = Some(lumit_render::export::start(
             next.doc,
             next.comp_id,
             next.items,
@@ -140,8 +142,8 @@ impl Shell {
     /// asks where to save and queues the export.
     #[cfg(feature = "media")]
     pub(super) fn export_dialog_modal(&mut self, ctx: &egui::Context) {
-        use crate::export::ExportPreset;
         use lumit_media::encode::VideoCodec;
+        use lumit_render::export::ExportPreset;
         let Some(dialog) = &mut self.export_dialog else {
             return;
         };

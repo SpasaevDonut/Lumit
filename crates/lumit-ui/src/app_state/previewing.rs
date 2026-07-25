@@ -248,10 +248,10 @@ impl AppState {
             return;
         }
         if self.disk_io.is_none() {
-            self.disk_io = Some(diskio::spawn());
+            self.disk_io = Some(lumit_render::diskio::spawn());
         }
         if let Some(io) = &self.disk_io {
-            let _ = io.tx.send(diskio::Cmd::SetRoot(root.clone()));
+            let _ = io.tx.send(lumit_render::diskio::Cmd::SetRoot(root.clone()));
         }
         self.disk_load_pending.clear();
         self.disk_root = root;
@@ -261,7 +261,9 @@ impl AppState {
     #[cfg(feature = "media")]
     pub fn disk_store_behind(&mut self, key: u128, width: u32, height: u32, rgba: Vec<u8>) {
         if let Some(io) = &self.disk_io {
-            let _ = io.tx.send(diskio::Cmd::Store(key, width, height, rgba));
+            let _ = io
+                .tx
+                .send(lumit_render::diskio::Cmd::Store(key, width, height, rgba));
         }
     }
 
@@ -282,7 +284,7 @@ impl AppState {
             return;
         }
         if let Some(io) = &self.disk_io {
-            if io.tx.send(diskio::Cmd::Load(key)).is_ok() {
+            if io.tx.send(lumit_render::diskio::Cmd::Load(key)).is_ok() {
                 self.disk_load_pending.insert(key);
             }
         }
@@ -439,7 +441,7 @@ impl AppState {
         doc: &Document,
         comp: &Composition,
         t: f64,
-        jobs: &mut Vec<preview::CompJob>,
+        jobs: &mut Vec<lumit_render::decode::CompJob>,
         visited: &mut Vec<Uuid>,
     ) {
         use lumit_core::model::LayerKind;
@@ -520,14 +522,14 @@ impl AppState {
                                     Some(Interpolation::Flow(p)) => p.input_fps_at(lt),
                                     _ => None,
                                 };
-                                let (source_frame, blend) = crate::pixels::frame_pick(
+                                let (source_frame, blend) = lumit_core::pixels::frame_pick(
                                     st,
                                     video.fps(),
                                     *src_frames,
                                     blend_on,
                                     sample_fps,
                                 );
-                                jobs.push(preview::CompJob {
+                                jobs.push(lumit_render::decode::CompJob {
                                     layer: layer.id,
                                     item,
                                     path: PathBuf::from(&f.media.absolute_path),
@@ -579,7 +581,7 @@ impl AppState {
                     // picture instead of silently vanishing. Sized to the comp
                     // because a file we cannot open has no size to report.
                     if matches!(self.media.map.get(item), Some(media::MediaStatus::Missing)) {
-                        jobs.push(preview::CompJob {
+                        jobs.push(lumit_render::decode::CompJob {
                             layer: layer.id,
                             item: *item,
                             path: PathBuf::from(&f.media.absolute_path),
@@ -621,7 +623,7 @@ impl AppState {
                         Some(Interpolation::Flow(p)) => p.input_fps_at(lt),
                         _ => None,
                     };
-                    let (source_frame, blend) = crate::pixels::frame_pick(
+                    let (source_frame, blend) = lumit_core::pixels::frame_pick(
                         source_time,
                         video.fps(),
                         *src_frames,
@@ -644,7 +646,7 @@ impl AppState {
                                     let nlt = lt + f64::from(o) * comp_dt;
                                     let nst =
                                         retime.as_ref().map(|r| r.evaluate(nlt)).unwrap_or(nlt);
-                                    let (nf, _) = crate::pixels::frame_pick(
+                                    let (nf, _) = lumit_core::pixels::frame_pick(
                                         nst,
                                         video.fps(),
                                         *src_frames,
@@ -657,7 +659,7 @@ impl AppState {
                         } else {
                             Vec::new()
                         };
-                    jobs.push(preview::CompJob {
+                    jobs.push(lumit_render::decode::CompJob {
                         layer: layer.id,
                         item: *item,
                         path: PathBuf::from(&f.media.absolute_path),
@@ -907,7 +909,7 @@ impl AppState {
         &self,
         doc: &lumit_core::model::Document,
         comp: &lumit_core::model::Composition,
-    ) -> Vec<crate::export::AudioJob> {
+    ) -> Vec<lumit_render::export::AudioJob> {
         let mut jobs = Vec::new();
         let mut visited = vec![comp.id];
         self.collect_audio_jobs(
@@ -975,7 +977,7 @@ impl AppState {
         window: (f64, f64),
         carriers: &[(lumit_core::anim::Property, f64)],
         visited: &mut Vec<Uuid>,
-        jobs: &mut Vec<crate::export::AudioJob>,
+        jobs: &mut Vec<lumit_render::export::AudioJob>,
     ) {
         use lumit_core::model::LayerKind;
         // Solo silences non-soloed audio exactly as it hides non-soloed video
@@ -1006,7 +1008,7 @@ impl AppState {
                     let Some(ProjectItem::Footage(f)) = doc.item(*item) else {
                         continue;
                     };
-                    jobs.push(crate::export::AudioJob {
+                    jobs.push(lumit_render::export::AudioJob {
                         item: *item,
                         path: PathBuf::from(&f.media.absolute_path),
                         in_s,
@@ -1103,7 +1105,7 @@ impl AppState {
                         // keyframed → a control-rate envelope. Same bake the
                         // export mixdown uses, so playback == export.
                         let (gain, envelope) =
-                            crate::export::volume_bake(job, start_frame, len, rate);
+                            lumit_render::export::volume_bake(job, start_frame, len, rate);
                         clips.push(lumit_audio::mix::PlacedClip {
                             buffer,
                             start_frame,
@@ -1124,7 +1126,7 @@ impl AppState {
         if fallback {
             self.audio_preparing = Some((comp_id, sig));
             std::thread::spawn(move || {
-                let samples = crate::export::mixdown(&jobs, rate, duration_s);
+                let samples = lumit_render::export::mixdown(&jobs, rate, duration_s);
                 let _ = tx.send(super::CompAudioMsg::Baked(
                     comp_id,
                     sig,

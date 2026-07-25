@@ -23,8 +23,6 @@
 //! `lumit-flow` and `lumit-media`); a `--no-default-features` build has no
 //! headless renderer at all, exactly as it has no export.
 
-#![cfg(feature = "media")]
-
 use crate::export::{AudioJob, ItemInfo, Renderer};
 use lumit_core::model::{Composition, Document, FootageItem, LayerKind, ProjectItem};
 use std::collections::HashMap;
@@ -644,7 +642,7 @@ fn render_to_rgba(
     }
     let sw = ((width as f32 * scale).round() as u32).max(1);
     let sh = ((height as f32 * scale).round() as u32).max(1);
-    let scaled = crate::pixels::letterbox_resize(&rgba, width, height, sw, sh);
+    let scaled = lumit_core::pixels::letterbox_resize(&rgba, width, height, sw, sh);
     Ok((scaled, sw, sh))
 }
 

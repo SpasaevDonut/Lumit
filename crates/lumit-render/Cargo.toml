@@ -1,0 +1,42 @@
+[package]
+name = "lumit-render"
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-only"
+
+# The pixel pass: decode planning, per-layer decoding, draw-list building, GPU
+# compositing, the frame-cache tiers, the headless render seam and export. An
+# engine crate — it depends on no frontend and knows nothing about egui, Flutter
+# or the bridge (docs/05-ARCHITECTURE.md). Both frontends drive it (K-178).
+[dependencies]
+lumit-core = { path = "../lumit-core" }
+lumit-audio = { path = "../lumit-audio" }
+lumit-cache = { path = "../lumit-cache" }
+lumit-eval = { path = "../lumit-eval" }
+lumit-flow = { path = "../lumit-flow" }
+lumit-gpu = { path = "../lumit-gpu" }
+lumit-media = { path = "../lumit-media" }
+lumit-project = { path = "../lumit-project" }
+lumit-text = { path = "../lumit-text" }
+# The compositor speaks wgpu directly. lumit-ui reached it through
+# `egui_wgpu::wgpu` (a re-export of this same crate), so the types are identical
+# — the version is pinned to the one lumit-gpu links, or the handles would not
+# unify.
+wgpu = "24"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v7"] }
+
+[features]
+# The Windows zero-copy Viewer path (K-177). Off by default; forwarded from
+# whichever frontend builds it (the bridge's shipped `.dll`).
+shared-texture = ["lumit-gpu/shared-texture"]
+# The Linux DMA-BUF sibling (K-177).
+shared-texture-linux = ["lumit-gpu/shared-texture-linux"]
+
+[dev-dependencies]
+lumit-media = { path = "../lumit-media", features = ["test-fixtures"] }
+tempfile = "3"
+
+[lints]
+workspace = true

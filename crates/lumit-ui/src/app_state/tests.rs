@@ -1017,7 +1017,7 @@ fn audio_sync_decision(app: &AppState, comp_id: Uuid) -> AudioSync {
 
 /// The comp audio job for the sole footage layer, if any.
 #[cfg(feature = "media")]
-fn only_audio_job(app: &AppState, comp_id: Uuid) -> Option<crate::export::AudioJob> {
+fn only_audio_job(app: &AppState, comp_id: Uuid) -> Option<lumit_render::export::AudioJob> {
     let doc = app.store.snapshot();
     let comp = doc.comp(comp_id).unwrap();
     app.comp_audio_jobs(&doc, comp).into_iter().next()
@@ -1642,7 +1642,7 @@ fn a_comp_frame_comes_back_stamped_with_the_epoch_it_was_asked_for() {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     loop {
         match app.preview_engine.results.try_recv() {
-            Ok(Ok(crate::app_state::preview::PreviewResult::Comp(cf))) => {
+            Ok(Ok(lumit_render::decode::PreviewResult::Comp(cf))) => {
                 assert_eq!(cf.comp, comp);
                 assert_eq!(
                     cf.media_epoch, 7,

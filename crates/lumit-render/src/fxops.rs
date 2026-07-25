@@ -11,7 +11,7 @@ use lumit_core::fx::Resolved;
 use lumit_gpu::fx::FxEngine;
 use lumit_gpu::GpuContext;
 
-type Tex = egui_wgpu::wgpu::Texture;
+type Tex = wgpu::Texture;
 
 /// A parsed-and-uploaded `.cube` LUT ready to bind (docs/08 §3.11,
 /// docs/impl/lut.md): the 3D cube texture plus its per-axis size `N`. Held by

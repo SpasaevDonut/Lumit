@@ -443,7 +443,7 @@ fn decode_comp(
                         quality,
                     )
             } else {
-                crate::pixels::blend_rgba(&px.rgba, &px2.rgba, w)
+                lumit_core::pixels::blend_rgba(&px.rgba, &px2.rgba, w)
             }
         } else {
             px.rgba

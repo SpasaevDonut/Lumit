@@ -17,6 +17,10 @@ lumit-eval = { path = "../lumit-eval", optional = true }
 lumit-gpu = { path = "../lumit-gpu", optional = true }
 lumit-flow = { path = "../lumit-flow", optional = true }
 lumit-media = { path = "../lumit-media", optional = true }
+# The pixel pass (K-178): decode planning, draw building, compositing, the frame
+# caches, export and the headless seam. The egui shell drives it; it knows
+# nothing about egui in return.
+lumit-render = { path = "../lumit-render", optional = true }
 lumit-text = { path = "../lumit-text" }
 lumit-project = { path = "../lumit-project" }
 rfd = "0.15"
@@ -31,17 +35,17 @@ egui_tiles = { version = "0.12", features = ["serde"] }
 # "media" wires probing/frame-indexing (ffmpeg). Default on; Windows CI builds
 # --no-default-features until ffmpeg dev libs are set up there (tracked TODO).
 default = ["media"]
-media = ["dep:lumit-media", "dep:lumit-audio", "dep:lumit-cache", "dep:lumit-eval", "dep:lumit-gpu", "dep:lumit-flow", "dep:egui-wgpu"]
+media = ["dep:lumit-media", "dep:lumit-audio", "dep:lumit-cache", "dep:lumit-eval", "dep:lumit-gpu", "dep:lumit-flow", "dep:lumit-render", "dep:egui-wgpu"]
 # The zero-copy Viewer path (K-177): the headless renderer can draw into a
 # Windows shared GPU texture Flutter samples directly. Off by default; the
 # bridge turns it on for the shipped build. Needs the GPU renderer, so it
 # implies `media`, and forwards to lumit-gpu's own `shared-texture` feature.
-shared-texture = ["media", "lumit-gpu/shared-texture"]
+shared-texture = ["media", "lumit-gpu/shared-texture", "lumit-render/shared-texture"]
 # The Linux DMA-BUF sibling of `shared-texture` (K-177): the headless renderer
 # can draw into a Vulkan image exported as a DMA-BUF for the GTK embedder. Off by
 # default; the bridge turns it on for the shipped Linux build. Implies `media`
 # and forwards to lumit-gpu's own `shared-texture-linux` feature.
-shared-texture-linux = ["media", "lumit-gpu/shared-texture-linux"]
+shared-texture-linux = ["media", "lumit-gpu/shared-texture-linux", "lumit-render/shared-texture-linux"]
 
 [target.'cfg(target_os = "macos")'.dependencies]
 muda = "0.15"

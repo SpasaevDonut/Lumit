@@ -82,7 +82,7 @@ pub(crate) struct FrameKey {
 
 impl FrameKey {
     /// Build a key, normalising a non-finite or non-positive `scale` to 1.0 —
-    /// exactly the values [`render_rgba`](lumit_ui::headless) treats as
+    /// exactly the values [`render_rgba`](lumit_render::headless) treats as
     /// full-resolution, so the key matches the frame that is actually produced.
     pub fn new(comp: Uuid, frame: u64, scale: f32) -> Self {
         let s = if scale.is_finite() && scale > 0.0 {

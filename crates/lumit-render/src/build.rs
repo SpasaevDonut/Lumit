@@ -1,15 +1,84 @@
-//! `shell::draws` — split out of the monolithic shell.rs (mechanical,
-//! no logic changes). Shared names resolve through the parent module
-//! via `use super::*` and the glob re-exports in `shell/mod.rs`.
+//! Turning a document into a draw list.
+//!
+//! # In plain terms
+//!
+//! This is the step that reads the project and works out what the frame should
+//! look like: where each layer sits at this instant, how opaque it is, which
+//! blend mode it uses, what its effect stack resolves to in plain numbers, which
+//! layer mattes it, and how its masks cover it. Nested comps recurse; a
+//! collapsed Precomp splices its contents straight into the parent list; an
+//! adjustment layer becomes a staging marker the compositor splits on.
+//!
+//! Nothing here decodes video or touches the graphics card. The already-decoded
+//! pixels arrive as `pixels_by_layer` and are simply *referred to*. That is what
+//! makes a live value drag cheap: the drag patches the composition, re-runs this
+//! builder against the pixels it already has, and re-composites — no file is
+//! read again (see [`crate::plan::same_decode`]).
+//!
+//! Preview and export both build through here, so a comp cannot look different
+//! in the viewport and the file (K-031).
 
-use super::*;
+use crate::decode::CompLayerPixels;
+use crate::draw::{
+    AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
+};
+use crate::export::mask_rgba;
+use crate::realise::Realiser;
+use lumit_core::pixels::{px_tile, solid_rgba};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+/// One layer's source pixels ready for a draw: `(rgba, tex_w, tex_h, natural
+/// size)`. The natural size is the layer's *own* pixel size, which is what
+/// transforms act in — never the decoded size, which shrinks and grows with the
+/// preview resolution.
+pub type LayerPixels = (Vec<u8>, u32, u32, (f32, f32));
+
+/// The map of already-decoded pixels a build reads, keyed by layer id.
+pub type PixelsByLayer<'a> = HashMap<Uuid, &'a CompLayerPixels>;
+
+/// The single `model::BlendMode` → `gpu::Blend` mapping shared by every path
+/// that composites (K-031: they must never disagree). Every mode maps to its
+/// like-named GPU variant (K-162, T24).
+#[must_use]
+pub fn blend_of(b: lumit_core::model::BlendMode) -> lumit_gpu::Blend {
+    use lumit_core::model::BlendMode as M;
+    use lumit_gpu::Blend as G;
+    match b {
+        M::Normal => G::Normal,
+        M::Add => G::Add,
+        M::Multiply => G::Multiply,
+        M::Screen => G::Screen,
+        M::Overlay => G::Overlay,
+        M::SoftLight => G::SoftLight,
+        M::HardLight => G::HardLight,
+        M::Lighten => G::Lighten,
+        M::Darken => G::Darken,
+        M::Subtract => G::Subtract,
+        M::ColourBurn => G::ColourBurn,
+        M::LinearBurn => G::LinearBurn,
+        M::DarkerColour => G::DarkerColour,
+        M::ColourDodge => G::ColourDodge,
+        M::LighterColour => G::LighterColour,
+        M::LinearLight => G::LinearLight,
+        M::VividLight => G::VividLight,
+        M::PinLight => G::PinLight,
+        M::HardMix => G::HardMix,
+        M::Difference => G::Difference,
+        M::Exclusion => G::Exclusion,
+        M::Divide => G::Divide,
+        M::Hue => G::Hue,
+        M::Saturation => G::Saturation,
+        M::Colour => G::Colour,
+        M::Luminosity => G::Luminosity,
+    }
+}
 
 /// A copy of `comp` with one layer's transform property overridden to a fixed
 /// `value` — the live value-drag preview renders this so the provisional value
 /// shows before the edit is committed. Only the previewed frame is rendered, so
 /// pinning the property to a constant is exactly its value at that instant.
-#[cfg(feature = "media")]
-pub(crate) fn patch_layer_prop(
+pub fn patch_layer_prop(
     comp: &lumit_core::model::Composition,
     layer: uuid::Uuid,
     prop: lumit_core::model::TransformProp,
@@ -29,8 +98,7 @@ pub(crate) fn patch_layer_prop(
 /// with it (`build_comp_draws` re-resolves the layer's effects). Out-of-range
 /// indices or a non-Float param leave the comp unchanged (a no-op, never a
 /// panic).
-#[cfg(feature = "media")]
-pub(crate) fn patch_layer_effect_param(
+pub fn patch_layer_effect_param(
     comp: &lumit_core::model::Composition,
     layer: uuid::Uuid,
     effect_idx: usize,
@@ -63,8 +131,7 @@ pub(crate) fn patch_layer_effect_param(
 /// Shared by the preview (here) and the export path so the two stay identical
 /// (K-031). v1 composes the full `place_matrix` (2D plus the 2.5D axes it
 /// already carries); no behaviour changes for an unparented layer (`None`).
-#[cfg(feature = "media")]
-pub(crate) fn parent_world_placement(
+pub fn parent_world_placement(
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     t_comp: f64,
@@ -119,8 +186,7 @@ pub(crate) fn parent_world_placement(
 /// two smear identically (K-031). Parent motion within the shutter is a
 /// follow-up: only the layer's OWN transform is sampled here — a parented
 /// layer keeps its frame-time parent placement (`pre`) for every sub-copy.
-#[cfg(feature = "media")]
-pub(crate) fn motion_blur_samples(
+pub fn motion_blur_samples(
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     t_comp: f64,
@@ -166,15 +232,11 @@ pub(crate) fn motion_blur_samples(
 /// await the GPU mask pass, mirroring export). The ordinary render entry: draws
 /// at comp time `t_comp` with every effect resolved at `t_comp` too — a thin
 /// wrapper over [`build_comp_draws_at`] with the sample and frame times equal.
-#[cfg(feature = "media")]
-pub(crate) fn build_comp_draws(
+pub fn build_comp_draws(
     doc: &lumit_core::model::Document,
     comp: &lumit_core::model::Composition,
     t_comp: f64,
-    pixels_by_layer: &std::collections::HashMap<
-        uuid::Uuid,
-        &crate::app_state::preview::CompLayerPixels,
-    >,
+    pixels_by_layer: &std::collections::HashMap<uuid::Uuid, &CompLayerPixels>,
     visited: &mut Vec<uuid::Uuid>,
 ) -> Vec<CompLayerDraw> {
     build_comp_draws_at(doc, comp, t_comp, t_comp, pixels_by_layer, visited)
@@ -190,16 +252,12 @@ pub(crate) fn build_comp_draws(
 /// the rest of the scene is sampled. `frame_t` threads through nested Precomps
 /// (each layer's own `start_offset` subtracted) so the flag is honoured at every
 /// depth.
-#[cfg(feature = "media")]
-pub(crate) fn build_comp_draws_at(
+pub fn build_comp_draws_at(
     doc: &lumit_core::model::Document,
     comp: &lumit_core::model::Composition,
     t_comp: f64,
     frame_t: f64,
-    pixels_by_layer: &std::collections::HashMap<
-        uuid::Uuid,
-        &crate::app_state::preview::CompLayerPixels,
-    >,
+    pixels_by_layer: &std::collections::HashMap<uuid::Uuid, &CompLayerPixels>,
     visited: &mut Vec<uuid::Uuid>,
 ) -> Vec<CompLayerDraw> {
     use lumit_core::model::LayerKind;
@@ -228,21 +286,21 @@ pub(crate) fn build_comp_draws_at(
                 })
             }
             LayerKind::Solid { def } => doc.solid(*def).filter(|_| in_span(layer)).map(|sd| {
-                let px = crate::export::solid_rgba(sd.colour);
+                let px = solid_rgba(sd.colour);
                 let (tw, th) = if layer.masks.is_empty() {
                     (8, 8)
                 } else {
                     (sd.width, sd.height)
                 };
                 (
-                    crate::export::px_tile(&px, tw, th),
+                    px_tile(&px, tw, th),
                     tw,
                     th,
                     (sd.width as f32, sd.height as f32),
                 )
             }),
             LayerKind::Text { document } => in_span(layer).then(|| {
-                let fill = crate::export::solid_rgba(document.fill);
+                let fill = solid_rgba(document.fill);
                 let r = lumit_text::rasterise_line(
                     &document.text,
                     document.size as f32,
@@ -544,7 +602,7 @@ pub(crate) fn build_comp_draws_at(
                         // Adjustment masks live in comp space (comp-sized
                         // natural), same as the property panel treats them.
                         (
-                            crate::export::mask_rgba(&lumit_core::mask::combined_coverage(
+                            mask_rgba(&lumit_core::mask::combined_coverage(
                                 &layer.masks,
                                 comp.width,
                                 comp.height,
@@ -735,7 +793,7 @@ pub(crate) fn build_comp_draws_at(
                 LayerKind::Precomp { .. } if !layer.masks.is_empty() => {
                     let (w, h) = (natural.0 as u32, natural.1 as u32);
                     Some((
-                        crate::export::mask_rgba(&lumit_core::mask::combined_coverage(
+                        mask_rgba(&lumit_core::mask::combined_coverage(
                             &layer.masks,
                             w,
                             h,
@@ -780,7 +838,6 @@ pub(crate) fn build_comp_draws_at(
 /// one `Resolved::Lut`, so this list is 1:1 and in the same order as the stack's
 /// `Resolved::Lut` ops — the alignment `run_ops` relies on to bind LUT k to op
 /// k. Preview (here) and export build it the same way, so the two match (K-031).
-#[cfg(feature = "media")]
 fn lut_files(effects: &[lumit_core::model::EffectInstance], lt: f64) -> Vec<Option<String>> {
     use lumit_core::model::EffectNamespace;
     effects
@@ -816,9 +873,8 @@ fn lut_files(effects: &[lumit_core::model::EffectInstance], lt: f64) -> Vec<Opti
 /// flagged `sample_temporally == false` holds at the frame time rather than
 /// `tau` (docs/impl/temporal-rerender.md §5); for a plain re-render at the same
 /// time the caller passes `frame_t == tau`.
-#[cfg(feature = "media")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn render_below_at(
+pub fn render_below_at(
     realiser: &Realiser,
     doc: &lumit_core::model::Document,
     comp: &lumit_core::model::Composition,
@@ -826,12 +882,9 @@ pub(crate) fn render_below_at(
     tau: f64,
     frame_t: f64,
     force_mb: Option<lumit_core::model::MotionBlur>,
-    pixels_by_layer: &std::collections::HashMap<
-        uuid::Uuid,
-        &crate::app_state::preview::CompLayerPixels,
-    >,
+    pixels_by_layer: &std::collections::HashMap<uuid::Uuid, &CompLayerPixels>,
     visited: &mut Vec<uuid::Uuid>,
-) -> egui_wgpu::wgpu::Texture {
+) -> wgpu::Texture {
     let (draws, camera) = below_draws_at(
         doc,
         comp,
@@ -852,19 +905,15 @@ pub(crate) fn render_below_at(
 /// drive, so the two re-render the identical stack (K-031). Footage is held
 /// (the same `pixels_by_layer`); temporal effects in the below-stack are
 /// dropped to stills ([`strip_temporal_inputs`]).
-#[cfg(feature = "media")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn below_draws_at(
+pub fn below_draws_at(
     doc: &lumit_core::model::Document,
     comp: &lumit_core::model::Composition,
     below: &[lumit_core::model::Layer],
     tau: f64,
     frame_t: f64,
     force_mb: Option<lumit_core::model::MotionBlur>,
-    pixels_by_layer: &std::collections::HashMap<
-        uuid::Uuid,
-        &crate::app_state::preview::CompLayerPixels,
-    >,
+    pixels_by_layer: &std::collections::HashMap<uuid::Uuid, &CompLayerPixels>,
     visited: &mut Vec<uuid::Uuid>,
 ) -> (Vec<CompLayerDraw>, Option<lumit_core::model::CameraPose>) {
     // A below-only view of the comp: the same size, background, frame rate,
@@ -900,19 +949,15 @@ pub(crate) fn below_draws_at(
 /// later step), so it returns None here. Shared by the preview
 /// (`build_comp_draws`) and export, which detects the same effect in
 /// `render_comp_linear` and calls [`render_below_at`] directly.
-#[cfg(feature = "media")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn posterize_below(
+pub fn posterize_below(
     doc: &lumit_core::model::Document,
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     idx: usize,
     t_comp: f64,
     frame_t: f64,
-    pixels_by_layer: &std::collections::HashMap<
-        uuid::Uuid,
-        &crate::app_state::preview::CompLayerPixels,
-    >,
+    pixels_by_layer: &std::collections::HashMap<uuid::Uuid, &CompLayerPixels>,
     visited: &mut Vec<uuid::Uuid>,
 ) -> Option<TemporalBelow> {
     let lt = t_comp - layer.start_offset.0.to_f64();
@@ -950,19 +995,15 @@ pub(crate) fn posterize_below(
 /// export drives, so preview equals export (K-031). `frame_t` threads the
 /// playhead so a sample_temporally == false effect in the below-stack still holds
 /// at the frame time (§5).
-#[cfg(feature = "media")]
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn accumulation_mb_below(
+pub fn accumulation_mb_below(
     doc: &lumit_core::model::Document,
     comp: &lumit_core::model::Composition,
     layer: &lumit_core::model::Layer,
     idx: usize,
     t_comp: f64,
     frame_t: f64,
-    pixels_by_layer: &std::collections::HashMap<
-        uuid::Uuid,
-        &crate::app_state::preview::CompLayerPixels,
-    >,
+    pixels_by_layer: &std::collections::HashMap<uuid::Uuid, &CompLayerPixels>,
     visited: &mut Vec<uuid::Uuid>,
 ) -> Option<AccumulationBelow> {
     let lt = t_comp - layer.start_offset.0.to_f64();
@@ -1005,7 +1046,6 @@ pub(crate) fn accumulation_mb_below(
 /// carries no such decode for the re-render (docs/impl/temporal-rerender.md
 /// Traps). Spatial effects (blur, glow, colour, transform) are untouched, so a
 /// posterised or motion-blurred scene still holds its full spatial animation.
-#[cfg(feature = "media")]
 fn strip_temporal_inputs(draws: &mut [CompLayerDraw]) {
     for d in draws.iter_mut() {
         d.neighbours = Vec::new();
@@ -1016,7 +1056,11 @@ fn strip_temporal_inputs(draws: &mut [CompLayerDraw]) {
     }
 }
 
-#[cfg(all(test, feature = "media"))]
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod build_tests;
+
+#[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod parent_placement_tests {
     use super::*;
@@ -1100,7 +1144,7 @@ mod parent_placement_tests {
     }
 }
 
-#[cfg(all(test, feature = "media"))]
+#[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod render_below_at_tests {
     use super::*;
@@ -1183,7 +1227,7 @@ mod render_below_at_tests {
             extra: serde_json::Map::new(),
         };
         let doc = Document::new();
-        let pixels: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> = HashMap::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         // Compute the background exactly as render_below_at does (from the f32
         // LinearColour via f64::from), so the plain composite and the re-render
         // clear to identical values and the comparison is honest.
@@ -1298,7 +1342,7 @@ mod render_below_at_tests {
     fn posterize_adjustment_holds_the_below_stack_at_the_grid_time() {
         let comp = posterize_comp();
         let doc = Document::new();
-        let pixels: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> = HashMap::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
         // t = 0.35, 10 fps grid → held tau = floor(3.5)/10 = 0.3.
         let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
@@ -1352,7 +1396,7 @@ mod render_below_at_tests {
             extra: serde_json::Map::new(),
         };
         let doc = Document::new();
-        let pixels: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> = HashMap::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
         let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
         let adj = draws
@@ -1429,7 +1473,7 @@ mod render_below_at_tests {
             extra: serde_json::Map::new(),
         };
         let doc = Document::new();
-        let pixels: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> = HashMap::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
         let draws = build_comp_draws(&doc, &comp, 0.35, &pixels, &mut visited);
         let d = draws
@@ -1489,7 +1533,7 @@ mod render_below_at_tests {
         };
         let comp = posterize_comp();
         let doc = Document::new();
-        let pixels: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> = HashMap::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let bg = comp.background.0.map(f64::from);
 
         // The posterised frame at t = 0.35.
@@ -1576,7 +1620,7 @@ mod render_below_at_tests {
         text.transform.position_x = ramp(0.0, 200.0); // x = 200·t
         let comp = comp_with(2, vec![accumulation_adjustment(4.0), text]);
         let doc = Document::new();
-        let pixels: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> = HashMap::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let mut visited = vec![comp.id];
         let draws = build_comp_draws(&doc, &comp, 0.5, &pixels, &mut visited);
         let adj = draws
@@ -1628,7 +1672,7 @@ mod render_below_at_tests {
             lut_cache: &lut_cache,
         };
         let doc = Document::new();
-        let pixels: HashMap<Uuid, &crate::app_state::preview::CompLayerPixels> = HashMap::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
         let render = |comp: &Composition, t: f64| -> Vec<u8> {
             let mut v = vec![comp.id];
             let draws = build_comp_draws(&doc, comp, t, &pixels, &mut v);

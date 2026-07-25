@@ -5,7 +5,7 @@
 //! The Viewer needs the *real* picture — every layer composited, transformed,
 //! blended, with its effects — not one raw footage layer. That compositor lives
 //! in `lumit-ui` (it is the same code the egui Viewer and the exporter use). The
-//! bridge borrows it here through the headless seam (`lumit_ui::headless`), a
+//! bridge borrows it here through the headless seam (`lumit_render::headless`), a
 //! deliberate temporary arrangement recorded as K-175: the bridge reaches into
 //! the UI crate's renderer until the pixel pass moves into an engine crate.
 //!
@@ -36,7 +36,7 @@ enum Slot {
     /// A live renderer, holding its GPU context, engines and decoder pool.
     /// Boxed: the renderer is far larger than the empty variants, so the enum
     /// stays small and moving it between states is a pointer move.
-    Ready(Box<lumit_ui::headless::HeadlessRenderer>),
+    Ready(Box<lumit_render::headless::HeadlessRenderer>),
 }
 
 /// The renderer lives behind its OWN lock, distinct from the document lock, so a
@@ -143,11 +143,11 @@ pub(crate) fn render_preview_frame(
 /// render or export prep never blocks an edit. Shared by the Viewer render path
 /// and the export-input builder ([`with_export_inputs`]) so both drive the one
 /// renderer and share its probe cache.
-fn with_ready<R>(f: impl FnOnce(&mut lumit_ui::headless::HeadlessRenderer) -> R) -> Option<R> {
+fn with_ready<R>(f: impl FnOnce(&mut lumit_render::headless::HeadlessRenderer) -> R) -> Option<R> {
     let mutex = RENDERER.get_or_init(|| Mutex::new(Slot::Uninit));
     let mut guard = mutex.lock().unwrap_or_else(|poison| poison.into_inner());
     if matches!(*guard, Slot::Uninit) {
-        *guard = match lumit_ui::headless::HeadlessRenderer::new() {
+        *guard = match lumit_render::headless::HeadlessRenderer::new() {
             Ok(renderer) => Slot::Ready(Box::new(renderer)),
             Err(_) => Slot::Failed,
         };
@@ -240,13 +240,13 @@ pub(crate) fn render_scope(
 
 /// Build the footage/audio inputs and a GPU export context for `comp` through
 /// the headless seam (K-175), so the export driver can hand them to the exact
-/// egui exporter (`lumit_ui::export::start`). `None` when the machine has no GPU
+/// egui exporter (`lumit_render::export::start`). `None` when the machine has no GPU
 /// adapter or the comp is unknown. Reuses the same renderer instance the Viewer
 /// path uses, so probes are shared and warm.
 pub(crate) fn with_export_inputs(
     doc: &lumit_core::model::Document,
     comp: Uuid,
-) -> Option<lumit_ui::headless::ExportInputs> {
+) -> Option<lumit_render::headless::ExportInputs> {
     with_ready(|renderer| renderer.export_inputs(doc, comp)).flatten()
 }
 

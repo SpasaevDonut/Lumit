@@ -266,16 +266,16 @@ impl Shell {
                 let mut finished: Option<Result<std::path::PathBuf, String>> = None;
                 while let Ok(ev) = export.events.try_recv() {
                     match ev {
-                        crate::export::ExportEvent::Encoder(label) => {
+                        lumit_render::export::ExportEvent::Encoder(label) => {
                             encoder_seen = Some(label);
                         }
-                        crate::export::ExportEvent::Progress { frame, total } => {
+                        lumit_render::export::ExportEvent::Progress { frame, total } => {
                             self.export_progress = Some((frame, total));
                         }
-                        crate::export::ExportEvent::Done(path) => {
+                        lumit_render::export::ExportEvent::Done(path) => {
                             finished = Some(Ok(path));
                         }
-                        crate::export::ExportEvent::Failed(e) => {
+                        lumit_render::export::ExportEvent::Failed(e) => {
                             finished = Some(Err(e));
                         }
                     }
@@ -406,7 +406,7 @@ impl Shell {
             while let Ok(result) = self.app.preview_engine.results.try_recv() {
                 newest = Some(result);
             }
-            use crate::app_state::preview::PreviewResult;
+            use lumit_render::decode::PreviewResult;
             match newest {
                 // Rendered before a probe changed what one of its sources
                 // *is* — most often footage turning out to be missing, which
@@ -743,10 +743,10 @@ impl Shell {
                     #[cfg(feature = "media")]
                     ui.menu_button("Export preset", |ui| {
                         for preset in [
-                            crate::export::ExportPreset::Youtube1080p60,
-                            crate::export::ExportPreset::Youtube1440p60,
-                            crate::export::ExportPreset::Youtube4k60,
-                            crate::export::ExportPreset::Vertical1080p60,
+                            lumit_render::export::ExportPreset::Youtube1080p60,
+                            lumit_render::export::ExportPreset::Youtube1440p60,
+                            lumit_render::export::ExportPreset::Youtube4k60,
+                            lumit_render::export::ExportPreset::Vertical1080p60,
                         ] {
                             if ui.button(preset.label()).clicked() {
                                 self.open_export_dialog(preset);

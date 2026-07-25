@@ -470,7 +470,7 @@ pub(crate) fn project_header(
                 }
                 ProjectItem::Solid(s) => {
                     ui.horizontal(|ui| {
-                        let px = crate::pixels::solid_rgba(s.colour);
+                        let px = lumit_core::pixels::solid_rgba(s.colour);
                         let (rect, _) =
                             ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::hover());
                         ui.painter()
@@ -1218,11 +1218,11 @@ pub(crate) fn effects_panel(ui: &mut egui::Ui, theme: &Theme, app: &mut AppState
     // The preset library, scanned fresh each paint so a just-saved preset shows
     // straight away. A missing directory or read error yields an empty list —
     // the section then shows a hint, never a failure.
-    let presets: Vec<crate::preset::PresetEntry> = lumit_project::presets_dir()
+    let presets: Vec<lumit_core::preset::PresetEntry> = lumit_project::presets_dir()
         .as_deref()
-        .map(crate::preset::list_presets)
+        .map(lumit_core::preset::list_presets)
         .unwrap_or_default();
-    let shown_presets: Vec<&crate::preset::PresetEntry> = presets
+    let shown_presets: Vec<&lumit_core::preset::PresetEntry> = presets
         .iter()
         .filter(|p| needle.is_empty() || p.name.to_lowercase().contains(&needle))
         .collect();
@@ -1346,7 +1346,7 @@ pub(crate) fn effects_panel(ui: &mut egui::Ui, theme: &Theme, app: &mut AppState
 /// hint and leaves the document untouched (applying a preset is never a
 /// half-done edit).
 fn apply_preset_to_selected_layer(app: &mut AppState, path: &std::path::Path) {
-    let Some(added) = crate::preset::load_instantiated(path) else {
+    let Some(added) = lumit_core::preset::load_instantiated(path) else {
         app.error = Some("that preset could not be read".into());
         return;
     };
@@ -1607,7 +1607,3 @@ pub(crate) fn effect_controls_panel(ui: &mut egui::Ui, theme: &Theme, app: &mut 
         app.refresh_preview();
     }
 }
-
-/// Pixels + texture dims + natural size for any layer kind (preview path).
-#[cfg(feature = "media")]
-pub(crate) type LayerPixels = (Vec<u8>, u32, u32, (f32, f32));

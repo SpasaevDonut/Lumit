@@ -81,7 +81,7 @@ pub(crate) fn detect_beats(bridge: &mut Bridge, comp_id: &str, sensitivity_perce
     }
     let rate = 48_000u32;
     let duration_s = c.duration.0.to_f64();
-    let samples = lumit_ui::export::mixdown(&inputs.audio, rate, duration_s);
+    let samples = lumit_render::export::mixdown(&inputs.audio, rate, duration_s);
     let percent = sensitivity_percent.clamp(0, 100) as u8;
     let delta = lumit_audio::beat::delta_from_sensitivity(percent);
     let analysis = lumit_audio::beat::analyse_stereo(&samples, rate, delta);
