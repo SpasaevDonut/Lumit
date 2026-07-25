@@ -9,12 +9,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:lumit_flutter/builder/item_builder.dart';
 import 'package:lumit_flutter/builder/layer_builder.dart';
+import 'package:lumit_flutter/panels/panels.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
+import 'package:lumit_flutter/shell/dock_widget.dart';
+import 'package:lumit_flutter/shell/menu_bar.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
+import 'package:lumit_flutter/state/dock.dart';
+import 'package:lumit_flutter/theme/theme.dart';
+import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:provider/provider.dart';
 
 import 'bridge/bridge.dart';
@@ -52,7 +59,8 @@ Future<void> main(List<String> args) async {
   // // (the app and every test must work without the library present).
   // final bridge = LumitBridge.tryLoad();
   var state = LumitState();
-  runApp(LumitAppNew(state));
+  var ui = LumitUiState(state);
+  runApp(LumitAppNew(state, ui));
 }
 
 class LumitState extends ChangeNotifier {
@@ -105,9 +113,53 @@ class LumitState extends ChangeNotifier {
   }
 }
 
+class LumitUiState extends ChangeNotifier {
+  DockSplit split = defaultLayout();
+  ValueNotifier<Panel?> activePanel = ValueNotifier(null);
+  LumitTheme theme = LumitTheme.dark();
+
+  CompositionReference? _selectedComp;
+  CompositionReference? get selectedComp => _selectedComp;
+
+  ViewerTextureController controller = ViewerTextureController();
+  ValueNotifier<int?> viewerFrameid = ValueNotifier(null);
+
+  StreamSubscription? sub;
+
+  LumitUiState(LumitState state) {
+    sub = state.onWorkerResponse.listen((msg) {
+      print("Received worker response: $msg");
+      if (msg case WorkerResponse_RenderedDMABuf frame) {
+        controller
+            .ensureRegistered(
+                frame.field0.fd, frame.field0.width, frame.field0.height,
+                fd: frame.field0.fd,
+                stride: frame.field0.stride,
+                offset: frame.field0.offset,
+                fourcc: frame.field0.drmFourcc,
+                modifier: frame.field0.modifier.toInt())
+            .then((id) {
+          controller.frameReady();
+
+          if (viewerFrameid.value != id) {
+            viewerFrameid.value = id;
+          }
+        });
+      }
+    });
+  }
+
+  void setSelectedComp(CompositionReference? reference) {
+    _selectedComp = reference;
+    notifyListeners();
+  }
+}
+
 class LumitAppNew extends StatelessWidget {
   LumitState state;
-  LumitAppNew(this.state, {super.key});
+  LumitUiState uiState;
+
+  LumitAppNew(this.state, this.uiState, {super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -115,7 +167,16 @@ class LumitAppNew extends StatelessWidget {
         theme: ThemeData.dark(),
         home: ChangeNotifierProvider.value(
           value: state,
-          child: LumitAppView(),
+          child: ChangeNotifierProvider.value(
+              value: uiState,
+              child: ThemeScope(
+                theme: LumitTheme.dark(),
+                animationLevel: AnimationLevel.all,
+                showTooltips: true,
+                child: Overlay(initialEntries: [
+                  OverlayEntry(builder: (context) => LumitAppView())
+                ]),
+              )),
         ));
   }
 }
@@ -128,121 +189,33 @@ class LumitAppView extends StatefulWidget {
 }
 
 class _LumitAppViewState extends State<LumitAppView> {
-  WorkerResponse_RenderedDMABuf? renderedFrame;
-  ViewerTextureController controller = ViewerTextureController();
-  StreamSubscription? sub;
-  int? frameId;
-
   @override
   void initState() {
     final store = Provider.of<LumitState>(context, listen: false);
-
-    sub = store.onWorkerResponse.listen((msg) {
-      if (msg case WorkerResponse_RenderedDMABuf frame) {
-        controller
-            .ensureRegistered(
-                frame.field0.fd, frame.field0.width, frame.field0.height,
-                fd: frame.field0.fd,
-                stride: frame.field0.stride,
-                offset: frame.field0.offset,
-                fourcc: frame.field0.drmFourcc,
-                modifier: frame.field0.modifier.toInt())
-            .then((id) {
-          controller.frameReady();
-          if (id != frameId) {
-            setState(() {
-              print("Frame Id: $id");
-              frameId = id;
-            });
-          }
-        });
-      }
-    });
-
     super.initState();
-  }
-
-  @override
-  void dispose() {
-    sub?.cancel();
-    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     var state = context.watch<LumitState>();
 
+    var uiState = context.watch<LumitUiState>();
+
     return Column(
       children: [
-        if (state.project == null) ...[
-          TextButton(
-              onPressed: () {
-                state.newProject();
-              },
-              child: Text("New Project")),
-          TextButton(
-              onPressed: () async {
-                const XTypeGroup typeGroup = XTypeGroup(
-                  label: 'Lumit File',
-                  extensions: <String>['lum'],
-                );
-
-                final XFile? file = await openFile(
-                  acceptedTypeGroups: <XTypeGroup>[typeGroup],
-                );
-
-                state.openProject(file!.path);
-              },
-              child: Text("Open Project")),
-        ],
-        if (state.project != null) ...[
-          Text(
-            "Project: ${state.project!}",
-            style: Theme.of(context).textTheme.titleLarge,
+        LumitMenuBar(
+          app: state,
+        ),
+        Expanded(
+          child: DockWidget(
+            root: uiState.split,
+            buildPanel: (context, panel) => buildPanelBody(context, panel),
+            onLayoutChanged: () {},
+            activePanel: uiState.activePanel,
+            onPopOut: (p0) {},
+            canPopOut: (panel) => false,
           ),
-          Row(
-            children: [
-              TextButton(
-                  onPressed: () {
-                    state.project?.undo();
-                  },
-                  child: Text(
-                    "Undo",
-                    style: Theme.of(context).textTheme.labelMedium,
-                  )),
-              TextButton(
-                  onPressed: () {
-                    state.project?.redo();
-                  },
-                  child: Text(
-                    "Redo",
-                    style: Theme.of(context).textTheme.labelMedium,
-                  ))
-            ],
-          ),
-          if (frameId != null)
-            SizedBox(
-              height: 200,
-              width: 200,
-              child: Texture(textureId: frameId!),
-            ),
-          Expanded(
-            child: Container(
-                color: ColorScheme.of(context).surfaceContainerLow,
-                child: Column(children: [
-                  Text(
-                    "Items:",
-                    style: Theme.of(context).textTheme.labelMedium,
-                  ),
-                  ...state.project!.getItems().map((i) => ProjectItemBuilder(
-                        item: i,
-                        builder: (context) {
-                          return buildItem(context, i);
-                        },
-                      ))
-                ])),
-          )
-        ]
+        )
       ],
     );
   }

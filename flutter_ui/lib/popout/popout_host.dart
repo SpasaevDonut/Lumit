@@ -132,7 +132,7 @@ class _PopoutBody extends StatelessWidget {
             color: t.surface1,
             child: ListenableBuilder(
               listenable: app,
-              builder: (context, _) => buildPanelBody(context, args.panel, app),
+              builder: (context, _) => Placeholder()// buildPanelBody(context, args.panel, app),
             ),
           ),
         ),

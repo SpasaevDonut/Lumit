@@ -105,6 +105,7 @@ fn render_comp(req: RenderCompRequest, state: &mut WorkerState, stream: &mut Wor
         .render_to_shared_dmabuf(&document, req.comp.id, req.frame)
         .unwrap();
 
+
     println!("Finished rendering!");
 
     stream.add(WorkerResponse::RenderedDMABuf(BridgeSharedFrameInfoLinux {
