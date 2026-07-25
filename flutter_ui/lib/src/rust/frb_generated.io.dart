@@ -4,11 +4,20 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api.dart';
+import 'api/composition.dart';
+import 'api/folder.dart';
+import 'api/footage.dart';
+import 'api/layer.dart';
+import 'api/project.dart';
+import 'api/project_item.dart';
+import 'api/solid.dart';
+import 'api/state.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_io.dart';
+import 'package:uuid/uuid.dart';
 
 abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeLibApiImplPlatform({
@@ -26,21 +35,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       get rust_arc_decrement_strong_count_LumitBridgeStatePtr => wire
           ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeStatePtr;
 
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_LumitCompositionPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitCompositionPtr;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_LumitLayerPtr =>
-      wire._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayerPtr;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_LumitProjectPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectPtr;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_LumitProjectItemPtr => wire
-          ._rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItemPtr;
-
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw);
 
@@ -55,46 +49,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           dynamic raw);
 
   @protected
-  LumitComposition
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          dynamic raw);
-
-  @protected
-  LumitLayer
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw);
-
-  @protected
-  LumitProject
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw);
-
-  @protected
-  LumitProjectItem
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw);
-
-  @protected
-  LumitComposition
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          dynamic raw);
-
-  @protected
-  LumitLayer
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw);
-
-  @protected
-  LumitProject
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw);
-
-  @protected
-  LumitProjectItem
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw);
-
-  @protected
   BridgeError
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           dynamic raw);
@@ -105,26 +59,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           dynamic raw);
 
   @protected
-  LumitComposition
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          dynamic raw);
-
-  @protected
-  LumitLayer
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw);
-
-  @protected
-  LumitProject
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw);
-
-  @protected
-  LumitProjectItem
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw);
-
-  @protected
   RustStreamSink<ScopedChange> dco_decode_StreamSink_scoped_change_Sse(
       dynamic raw);
 
@@ -132,35 +66,56 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   String dco_decode_String(dynamic raw);
 
   @protected
+  UuidValue dco_decode_Uuid(dynamic raw);
+
+  @protected
   bool dco_decode_bool(dynamic raw);
 
   @protected
-  LumitLayer
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw);
+  CompositionReference dco_decode_box_autoadd_composition_reference(
+      dynamic raw);
 
   @protected
-  LumitProject
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw);
+  FolderReference dco_decode_box_autoadd_folder_reference(dynamic raw);
 
   @protected
-  LumitProjectItem
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw);
+  FootageReference dco_decode_box_autoadd_footage_reference(dynamic raw);
+
+  @protected
+  ItemReference dco_decode_box_autoadd_item_reference(dynamic raw);
+
+  @protected
+  LayerReference dco_decode_box_autoadd_layer_reference(dynamic raw);
+
+  @protected
+  ProjectReference dco_decode_box_autoadd_project_reference(dynamic raw);
+
+  @protected
+  SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
+
+  @protected
+  CompositionReference dco_decode_composition_reference(dynamic raw);
+
+  @protected
+  FolderReference dco_decode_folder_reference(dynamic raw);
+
+  @protected
+  FootageReference dco_decode_footage_reference(dynamic raw);
 
   @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
-  List<LumitLayer>
-      dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw);
+  ItemReference dco_decode_item_reference(dynamic raw);
 
   @protected
-  List<LumitProjectItem>
-      dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw);
+  LayerReference dco_decode_layer_reference(dynamic raw);
+
+  @protected
+  List<ItemReference> dco_decode_list_item_reference(dynamic raw);
+
+  @protected
+  List<LayerReference> dco_decode_list_layer_reference(dynamic raw);
 
   @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
@@ -169,32 +124,26 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   LumitMediaStatus dco_decode_lumit_media_status(dynamic raw);
 
   @protected
-  LumitProjectItemInfo dco_decode_lumit_project_item_info(dynamic raw);
-
-  @protected
-  LumitProjectItemType dco_decode_lumit_project_item_type(dynamic raw);
-
-  @protected
   RustStreamSink<ScopedChange>? dco_decode_opt_StreamSink_scoped_change_Sse(
       dynamic raw);
 
   @protected
-  LumitLayer?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw);
+  ItemReference? dco_decode_opt_box_autoadd_item_reference(dynamic raw);
 
   @protected
-  LumitProject?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw);
+  LayerReference? dco_decode_opt_box_autoadd_layer_reference(dynamic raw);
 
   @protected
-  LumitProjectItem?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw);
+  ProjectReference? dco_decode_opt_box_autoadd_project_reference(dynamic raw);
+
+  @protected
+  ProjectReference dco_decode_project_reference(dynamic raw);
 
   @protected
   ScopedChange dco_decode_scoped_change(dynamic raw);
+
+  @protected
+  SolidReference dco_decode_solid_reference(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -219,46 +168,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  LumitComposition
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitLayer
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitProject
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitProjectItem
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitComposition
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitLayer
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitProject
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitProjectItem
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer);
-
-  @protected
   BridgeError
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           SseDeserializer deserializer);
@@ -269,26 +178,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  LumitComposition
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitLayer
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitProject
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer);
-
-  @protected
-  LumitProjectItem
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer);
-
-  @protected
   RustStreamSink<ScopedChange> sse_decode_StreamSink_scoped_change_Sse(
       SseDeserializer deserializer);
 
@@ -296,35 +185,65 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   String sse_decode_String(SseDeserializer deserializer);
 
   @protected
+  UuidValue sse_decode_Uuid(SseDeserializer deserializer);
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
-  LumitLayer
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer);
+  CompositionReference sse_decode_box_autoadd_composition_reference(
+      SseDeserializer deserializer);
 
   @protected
-  LumitProject
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer);
+  FolderReference sse_decode_box_autoadd_folder_reference(
+      SseDeserializer deserializer);
 
   @protected
-  LumitProjectItem
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer);
+  FootageReference sse_decode_box_autoadd_footage_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  ItemReference sse_decode_box_autoadd_item_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  LayerReference sse_decode_box_autoadd_layer_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  ProjectReference sse_decode_box_autoadd_project_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  SolidReference sse_decode_box_autoadd_solid_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  CompositionReference sse_decode_composition_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  FolderReference sse_decode_folder_reference(SseDeserializer deserializer);
+
+  @protected
+  FootageReference sse_decode_footage_reference(SseDeserializer deserializer);
 
   @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
-  List<LumitLayer>
-      sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer);
+  ItemReference sse_decode_item_reference(SseDeserializer deserializer);
 
   @protected
-  List<LumitProjectItem>
-      sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer);
+  LayerReference sse_decode_layer_reference(SseDeserializer deserializer);
+
+  @protected
+  List<ItemReference> sse_decode_list_item_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  List<LayerReference> sse_decode_list_layer_reference(
+      SseDeserializer deserializer);
 
   @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
@@ -333,34 +252,29 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   LumitMediaStatus sse_decode_lumit_media_status(SseDeserializer deserializer);
 
   @protected
-  LumitProjectItemInfo sse_decode_lumit_project_item_info(
-      SseDeserializer deserializer);
-
-  @protected
-  LumitProjectItemType sse_decode_lumit_project_item_type(
-      SseDeserializer deserializer);
-
-  @protected
   RustStreamSink<ScopedChange>? sse_decode_opt_StreamSink_scoped_change_Sse(
       SseDeserializer deserializer);
 
   @protected
-  LumitLayer?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer);
+  ItemReference? sse_decode_opt_box_autoadd_item_reference(
+      SseDeserializer deserializer);
 
   @protected
-  LumitProject?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer);
+  LayerReference? sse_decode_opt_box_autoadd_layer_reference(
+      SseDeserializer deserializer);
 
   @protected
-  LumitProjectItem?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer);
+  ProjectReference? sse_decode_opt_box_autoadd_project_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  ProjectReference sse_decode_project_reference(SseDeserializer deserializer);
 
   @protected
   ScopedChange sse_decode_scoped_change(SseDeserializer deserializer);
+
+  @protected
+  SolidReference sse_decode_solid_reference(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -387,46 +301,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          LumitComposition self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          LumitComposition self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem self, SseSerializer serializer);
-
-  @protected
-  void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           BridgeError self, SseSerializer serializer);
 
@@ -436,26 +310,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           LumitBridgeState self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          LumitComposition self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem self, SseSerializer serializer);
-
-  @protected
   void sse_encode_StreamSink_scoped_change_Sse(
       RustStreamSink<ScopedChange> self, SseSerializer serializer);
 
@@ -463,35 +317,68 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_String(String self, SseSerializer serializer);
 
   @protected
+  void sse_encode_Uuid(UuidValue self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer self, SseSerializer serializer);
+  void sse_encode_box_autoadd_composition_reference(
+      CompositionReference self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject self, SseSerializer serializer);
+  void sse_encode_box_autoadd_folder_reference(
+      FolderReference self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem self, SseSerializer serializer);
+  void sse_encode_box_autoadd_footage_reference(
+      FootageReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_item_reference(
+      ItemReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_layer_reference(
+      LayerReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_project_reference(
+      ProjectReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_solid_reference(
+      SolidReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_composition_reference(
+      CompositionReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_folder_reference(
+      FolderReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_footage_reference(
+      FootageReference self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          List<LumitLayer> self, SseSerializer serializer);
+  void sse_encode_item_reference(ItemReference self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          List<LumitProjectItem> self, SseSerializer serializer);
+  void sse_encode_layer_reference(
+      LayerReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_item_reference(
+      List<ItemReference> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_layer_reference(
+      List<LayerReference> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_8_strict(
@@ -502,34 +389,31 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       LumitMediaStatus self, SseSerializer serializer);
 
   @protected
-  void sse_encode_lumit_project_item_info(
-      LumitProjectItemInfo self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_lumit_project_item_type(
-      LumitProjectItemType self, SseSerializer serializer);
-
-  @protected
   void sse_encode_opt_StreamSink_scoped_change_Sse(
       RustStreamSink<ScopedChange>? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_item_reference(
+      ItemReference? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_layer_reference(
+      LayerReference? self, SseSerializer serializer);
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_project_reference(
+      ProjectReference? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_project_reference(
+      ProjectReference self, SseSerializer serializer);
 
   @protected
   void sse_encode_scoped_change(ScopedChange self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_solid_reference(
+      SolidReference self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
@@ -617,133 +501,5 @@ class BridgeLibWire implements BaseWire {
           'frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState');
   late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState =
       _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeStatePtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
-
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-      ptr,
-    );
-  }
-
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitCompositionPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'frbgen_lumit_flutter_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition');
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition =
-      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitCompositionPtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
-
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-      ptr,
-    );
-  }
-
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitCompositionPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition');
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition =
-      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitCompositionPtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
-
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-      ptr,
-    );
-  }
-
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayerPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'frbgen_lumit_flutter_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer');
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer =
-      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayerPtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
-
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-      ptr,
-    );
-  }
-
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayerPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer');
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer =
-      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayerPtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
-
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-      ptr,
-    );
-  }
-
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'frbgen_lumit_flutter_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject');
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject =
-      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectPtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
-
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-      ptr,
-    );
-  }
-
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject');
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject =
-      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectPtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
-
-  void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-      ptr,
-    );
-  }
-
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItemPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'frbgen_lumit_flutter_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem');
-  late final _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem =
-      _rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItemPtr
-          .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
-
-  void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-    ffi.Pointer<ffi.Void> ptr,
-  ) {
-    return _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-      ptr,
-    );
-  }
-
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItemPtr =
-      _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<ffi.Void>)>>(
-          'frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem');
-  late final _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem =
-      _rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItemPtr
           .asFunction<void Function(ffi.Pointer<ffi.Void>)>();
 }

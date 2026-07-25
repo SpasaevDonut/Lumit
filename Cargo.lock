@@ -161,6 +161,7 @@ dependencies = [
  "anyhow",
  "atomic",
  "backtrace",
+ "uuid",
 ]
 
 [[package]]
@@ -1817,6 +1818,7 @@ dependencies = [
  "portable-atomic",
  "threadpool",
  "tokio",
+ "uuid",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

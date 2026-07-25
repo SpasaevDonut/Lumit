@@ -9,7 +9,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:lumit_flutter/builder/item_builder.dart';
 import 'package:lumit_flutter/builder/layer_builder.dart';
-import 'package:lumit_flutter/src/rust/api.dart';
+import 'package:lumit_flutter/src/rust/api/footage.dart';
+import 'package:lumit_flutter/src/rust/api/project.dart';
+import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:provider/provider.dart';
 
@@ -52,7 +55,7 @@ Future<void> main(List<String> args) async {
 }
 
 class LumitState extends ChangeNotifier {
-  LumitProject? project;
+  ProjectReference? project;
 
   StreamSubscription? currentDocumentStream;
 
@@ -84,9 +87,9 @@ class LumitState extends ChangeNotifier {
     _onChange.add(event);
 
     // Rebuilds should be handled by LayerBuilder, no need to notify
-    if(event.layer != null) return;
-    
-    if(event.item != null) return;
+    if (event.layer != null) return;
+
+    if (event.item != null) return;
 
     // else, not able to identify scope of this change, rebuild everything!
     print("Rebuilding everything!");
@@ -190,13 +193,11 @@ class _LumitAppViewState extends State<LumitAppView> {
     );
   }
 
-  Widget buildItem(BuildContext context, LumitProjectItem item) {
+  Widget buildItem(BuildContext context, ItemReference item) {
     // since this is just a lookup from the project document, it should be really fast, and is okay to be called sync
-    var info = item.getInfo();
 
     // this is bad: since get status reads from disk, its async and we can build its result with FutureBuilder
     // ideally this could be cached somewhere on rust side
-    var status = item.getStatus();
 
     return Padding(
       padding: const EdgeInsets.all(8.0),
@@ -205,15 +206,15 @@ class _LumitAppViewState extends State<LumitAppView> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(switch (info.itemType) {
-                LumitProjectItemType_Footage() => Icons.video_file,
-                LumitProjectItemType_Solid() => Icons.square,
-                LumitProjectItemType_Composition() => Icons.layers,
-                LumitProjectItemType_Folder() => Icons.folder,
+              Icon(switch (item) {
+                ItemReference_Footage() => Icons.video_file,
+                ItemReference_Solid() => Icons.square,
+                ItemReference_Composition() => Icons.layers,
+                ItemReference_Folder() => Icons.folder,
               }),
-              if (info.itemType case LumitProjectItemType_Footage footage) ...[
+              if (item case ItemReference_Footage footage) ...[
                 FutureBuilder(
-                  future: status,
+                  future: footage.field0.getStatus(),
                   builder: (context, snapshot) {
                     return Icon(switch (snapshot.data) {
                       null => Icons.question_mark,
@@ -224,7 +225,7 @@ class _LumitAppViewState extends State<LumitAppView> {
                   },
                 ),
               ],
-              if (info.itemType case LumitProjectItemType_Composition comp) ...[
+              if (item case ItemReference_Composition comp) ...[
                 Text(
                   "Layers:",
                   style: Theme.of(context).textTheme.labelSmall,
@@ -256,7 +257,7 @@ class _LumitAppViewState extends State<LumitAppView> {
                         .toList())
               ],
               Text(
-                info.name,
+                item.name(),
                 style: Theme.of(context).textTheme.labelSmall,
               ),
             ],

@@ -4,12 +4,21 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api.dart';
+import 'api/composition.dart';
+import 'api/folder.dart';
+import 'api/footage.dart';
+import 'api/layer.dart';
+import 'api/project.dart';
+import 'api/project_item.dart';
+import 'api/solid.dart';
+import 'api/state.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:uuid/uuid.dart';
 
 /// Main entrypoint of the Rust API
 class BridgeLib
@@ -69,7 +78,7 @@ class BridgeLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -367177090;
+  int get rustContentHash => -283759240;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -81,40 +90,39 @@ class BridgeLib
 }
 
 abstract class BridgeLibApi extends BaseApi {
-  LumitProject? crateApiLumitBridgeStateGetCurrentProject();
+  ProjectReference? crateApiStateLumitBridgeStateGetCurrentProject();
 
-  LumitProject crateApiLumitBridgeStateNewProject(
+  ProjectReference crateApiStateLumitBridgeStateNewProject(
       {RustStreamSink<ScopedChange>? onChangeStream});
 
-  LumitProject? crateApiLumitBridgeStateOpenProject(
+  ProjectReference? crateApiStateLumitBridgeStateOpenProject(
       {required String path, RustStreamSink<ScopedChange>? onChangeStream});
 
-  List<LumitLayer> crateApiLumitCompositionGetLayers(
-      {required LumitComposition that});
+  List<LayerReference> crateApiCompositionCompositionReferenceGetLayers(
+      {required CompositionReference that});
 
-  bool crateApiLumitLayerEquals(
-      {required LumitLayer that, required LumitLayer layer});
+  Future<LumitMediaStatus> crateApiFootageFootageReferenceGetStatus(
+      {required FootageReference that});
 
-  String crateApiLumitLayerGetName({required LumitLayer that});
+  bool crateApiProjectItemItemReferenceEquals(
+      {required ItemReference that, required ItemReference item});
 
-  void crateApiLumitLayerRename(
-      {required LumitLayer that, required String name});
+  String crateApiProjectItemItemReferenceName({required ItemReference that});
 
-  bool crateApiLumitProjectItemEquals(
-      {required LumitProjectItem that, required LumitProjectItem item});
+  bool crateApiLayerLayerReferenceEquals(
+      {required LayerReference that, required LayerReference layer});
 
-  LumitProjectItemInfo crateApiLumitProjectItemGetInfo(
-      {required LumitProjectItem that});
+  String crateApiLayerLayerReferenceGetName({required LayerReference that});
 
-  Future<LumitMediaStatus> crateApiLumitProjectItemGetStatus(
-      {required LumitProjectItem that});
+  void crateApiLayerLayerReferenceRename(
+      {required LayerReference that, required String name});
 
-  List<LumitProjectItem> crateApiLumitProjectGetItems(
-      {required LumitProject that});
+  List<ItemReference> crateApiProjectProjectReferenceGetItems(
+      {required ProjectReference that});
 
-  void crateApiLumitProjectRedo({required LumitProject that});
+  void crateApiProjectProjectReferenceRedo({required ProjectReference that});
 
-  void crateApiLumitProjectUndo({required LumitProject that});
+  void crateApiProjectProjectReferenceUndo({required ProjectReference that});
 
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_BridgeError;
@@ -132,40 +140,6 @@ abstract class BridgeLibApi extends BaseApi {
 
   CrossPlatformFinalizerArg
       get rust_arc_decrement_strong_count_LumitBridgeStatePtr;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_LumitComposition;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_LumitComposition;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_LumitCompositionPtr;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_LumitLayer;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_LumitLayer;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_LumitLayerPtr;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_LumitProject;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_LumitProject;
-
-  CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_LumitProjectPtr;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_LumitProjectItem;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_LumitProjectItem;
-
-  CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_LumitProjectItemPtr;
 }
 
 class BridgeLibApiImpl extends BridgeLibApiImplPlatform
@@ -178,31 +152,30 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   });
 
   @override
-  LumitProject? crateApiLumitBridgeStateGetCurrentProject() {
+  ProjectReference? crateApiStateLumitBridgeStateGetCurrentProject() {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
       },
       codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject,
+        decodeSuccessData: sse_decode_opt_box_autoadd_project_reference,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiLumitBridgeStateGetCurrentProjectConstMeta,
+      constMeta: kCrateApiStateLumitBridgeStateGetCurrentProjectConstMeta,
       argValues: [],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiLumitBridgeStateGetCurrentProjectConstMeta =>
+  TaskConstMeta get kCrateApiStateLumitBridgeStateGetCurrentProjectConstMeta =>
       const TaskConstMeta(
         debugName: "LumitBridgeState_get_current_project",
         argNames: [],
       );
 
   @override
-  LumitProject crateApiLumitBridgeStateNewProject(
+  ProjectReference crateApiStateLumitBridgeStateNewProject(
       {RustStreamSink<ScopedChange>? onChangeStream}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
@@ -211,24 +184,23 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
       },
       codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject,
+        decodeSuccessData: sse_decode_project_reference,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiLumitBridgeStateNewProjectConstMeta,
+      constMeta: kCrateApiStateLumitBridgeStateNewProjectConstMeta,
       argValues: [onChangeStream],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiLumitBridgeStateNewProjectConstMeta =>
+  TaskConstMeta get kCrateApiStateLumitBridgeStateNewProjectConstMeta =>
       const TaskConstMeta(
         debugName: "LumitBridgeState_new_project",
         argNames: ["onChangeStream"],
       );
 
   @override
-  LumitProject? crateApiLumitBridgeStateOpenProject(
+  ProjectReference? crateApiStateLumitBridgeStateOpenProject(
       {required String path, RustStreamSink<ScopedChange>? onChangeStream}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
@@ -238,246 +210,235 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
       },
       codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject,
+        decodeSuccessData: sse_decode_opt_box_autoadd_project_reference,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiLumitBridgeStateOpenProjectConstMeta,
+      constMeta: kCrateApiStateLumitBridgeStateOpenProjectConstMeta,
       argValues: [path, onChangeStream],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiLumitBridgeStateOpenProjectConstMeta =>
+  TaskConstMeta get kCrateApiStateLumitBridgeStateOpenProjectConstMeta =>
       const TaskConstMeta(
         debugName: "LumitBridgeState_open_project",
         argNames: ["path", "onChangeStream"],
       );
 
   @override
-  List<LumitLayer> crateApiLumitCompositionGetLayers(
-      {required LumitComposition that}) {
+  List<LayerReference> crateApiCompositionCompositionReferenceGetLayers(
+      {required CompositionReference that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-            that, serializer);
+        sse_encode_box_autoadd_composition_reference(that, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
       },
       codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer,
+        decodeSuccessData: sse_decode_list_layer_reference,
         decodeErrorData:
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
-      constMeta: kCrateApiLumitCompositionGetLayersConstMeta,
+      constMeta: kCrateApiCompositionCompositionReferenceGetLayersConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiLumitCompositionGetLayersConstMeta =>
-      const TaskConstMeta(
-        debugName: "LumitComposition_get_layers",
-        argNames: ["that"],
-      );
+  TaskConstMeta
+      get kCrateApiCompositionCompositionReferenceGetLayersConstMeta =>
+          const TaskConstMeta(
+            debugName: "composition_reference_get_layers",
+            argNames: ["that"],
+          );
 
   @override
-  bool crateApiLumitLayerEquals(
-      {required LumitLayer that, required LumitLayer layer}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-            that, serializer);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-            layer, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiLumitLayerEqualsConstMeta,
-      argValues: [that, layer],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiLumitLayerEqualsConstMeta => const TaskConstMeta(
-        debugName: "LumitLayer_equals",
-        argNames: ["that", "layer"],
-      );
-
-  @override
-  String crateApiLumitLayerGetName({required LumitLayer that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_String,
-        decodeErrorData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
-      ),
-      constMeta: kCrateApiLumitLayerGetNameConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiLumitLayerGetNameConstMeta => const TaskConstMeta(
-        debugName: "LumitLayer_get_name",
-        argNames: ["that"],
-      );
-
-  @override
-  void crateApiLumitLayerRename(
-      {required LumitLayer that, required String name}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-            that, serializer);
-        sse_encode_String(name, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_unit,
-        decodeErrorData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
-      ),
-      constMeta: kCrateApiLumitLayerRenameConstMeta,
-      argValues: [that, name],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiLumitLayerRenameConstMeta => const TaskConstMeta(
-        debugName: "LumitLayer_rename",
-        argNames: ["that", "name"],
-      );
-
-  @override
-  bool crateApiLumitProjectItemEquals(
-      {required LumitProjectItem that, required LumitProjectItem item}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-            that, serializer);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-            item, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_bool,
-        decodeErrorData: null,
-      ),
-      constMeta: kCrateApiLumitProjectItemEqualsConstMeta,
-      argValues: [that, item],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiLumitProjectItemEqualsConstMeta =>
-      const TaskConstMeta(
-        debugName: "LumitProjectItem_equals",
-        argNames: ["that", "item"],
-      );
-
-  @override
-  LumitProjectItemInfo crateApiLumitProjectItemGetInfo(
-      {required LumitProjectItem that}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
-        final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-            that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
-      },
-      codec: SseCodec(
-        decodeSuccessData: sse_decode_lumit_project_item_info,
-        decodeErrorData:
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
-      ),
-      constMeta: kCrateApiLumitProjectItemGetInfoConstMeta,
-      argValues: [that],
-      apiImpl: this,
-    ));
-  }
-
-  TaskConstMeta get kCrateApiLumitProjectItemGetInfoConstMeta =>
-      const TaskConstMeta(
-        debugName: "LumitProjectItem_get_info",
-        argNames: ["that"],
-      );
-
-  @override
-  Future<LumitMediaStatus> crateApiLumitProjectItemGetStatus(
-      {required LumitProjectItem that}) {
+  Future<LumitMediaStatus> crateApiFootageFootageReferenceGetStatus(
+      {required FootageReference that}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-            that, serializer);
+        sse_encode_box_autoadd_footage_reference(that, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 10, port: port_);
+            funcId: 5, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_lumit_media_status,
         decodeErrorData:
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
-      constMeta: kCrateApiLumitProjectItemGetStatusConstMeta,
+      constMeta: kCrateApiFootageFootageReferenceGetStatusConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiLumitProjectItemGetStatusConstMeta =>
+  TaskConstMeta get kCrateApiFootageFootageReferenceGetStatusConstMeta =>
       const TaskConstMeta(
-        debugName: "LumitProjectItem_get_status",
+        debugName: "footage_reference_get_status",
         argNames: ["that"],
       );
 
   @override
-  List<LumitProjectItem> crateApiLumitProjectGetItems(
-      {required LumitProject that}) {
+  bool crateApiProjectItemItemReferenceEquals(
+      {required ItemReference that, required ItemReference item}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-            that, serializer);
+        sse_encode_box_autoadd_item_reference(that, serializer);
+        sse_encode_box_autoadd_item_reference(item, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiProjectItemItemReferenceEqualsConstMeta,
+      argValues: [that, item],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiProjectItemItemReferenceEqualsConstMeta =>
+      const TaskConstMeta(
+        debugName: "item_reference_equals",
+        argNames: ["that", "item"],
+      );
+
+  @override
+  String crateApiProjectItemItemReferenceName({required ItemReference that}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_item_reference(that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta: kCrateApiProjectItemItemReferenceNameConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiProjectItemItemReferenceNameConstMeta =>
+      const TaskConstMeta(
+        debugName: "item_reference_name",
+        argNames: ["that"],
+      );
+
+  @override
+  bool crateApiLayerLayerReferenceEquals(
+      {required LayerReference that, required LayerReference layer}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_layer_reference(that, serializer);
+        sse_encode_box_autoadd_layer_reference(layer, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_bool,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiLayerLayerReferenceEqualsConstMeta,
+      argValues: [that, layer],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiLayerLayerReferenceEqualsConstMeta =>
+      const TaskConstMeta(
+        debugName: "layer_reference_equals",
+        argNames: ["that", "layer"],
+      );
+
+  @override
+  String crateApiLayerLayerReferenceGetName({required LayerReference that}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_layer_reference(that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta: kCrateApiLayerLayerReferenceGetNameConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiLayerLayerReferenceGetNameConstMeta =>
+      const TaskConstMeta(
+        debugName: "layer_reference_get_name",
+        argNames: ["that"],
+      );
+
+  @override
+  void crateApiLayerLayerReferenceRename(
+      {required LayerReference that, required String name}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_layer_reference(that, serializer);
+        sse_encode_String(name, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta: kCrateApiLayerLayerReferenceRenameConstMeta,
+      argValues: [that, name],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiLayerLayerReferenceRenameConstMeta =>
+      const TaskConstMeta(
+        debugName: "layer_reference_rename",
+        argNames: ["that", "name"],
+      );
+
+  @override
+  List<ItemReference> crateApiProjectProjectReferenceGetItems(
+      {required ProjectReference that}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_project_reference(that, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
       },
       codec: SseCodec(
-        decodeSuccessData:
-            sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem,
+        decodeSuccessData: sse_decode_list_item_reference,
         decodeErrorData: null,
       ),
-      constMeta: kCrateApiLumitProjectGetItemsConstMeta,
+      constMeta: kCrateApiProjectProjectReferenceGetItemsConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiLumitProjectGetItemsConstMeta =>
+  TaskConstMeta get kCrateApiProjectProjectReferenceGetItemsConstMeta =>
       const TaskConstMeta(
-        debugName: "LumitProject_get_items",
+        debugName: "project_reference_get_items",
         argNames: ["that"],
       );
 
   @override
-  void crateApiLumitProjectRedo({required LumitProject that}) {
+  void crateApiProjectProjectReferenceRedo({required ProjectReference that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-            that, serializer);
+        sse_encode_box_autoadd_project_reference(that, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
       },
       codec: SseCodec(
@@ -485,24 +446,24 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         decodeErrorData:
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
-      constMeta: kCrateApiLumitProjectRedoConstMeta,
+      constMeta: kCrateApiProjectProjectReferenceRedoConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiLumitProjectRedoConstMeta => const TaskConstMeta(
-        debugName: "LumitProject_redo",
+  TaskConstMeta get kCrateApiProjectProjectReferenceRedoConstMeta =>
+      const TaskConstMeta(
+        debugName: "project_reference_redo",
         argNames: ["that"],
       );
 
   @override
-  void crateApiLumitProjectUndo({required LumitProject that}) {
+  void crateApiProjectProjectReferenceUndo({required ProjectReference that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-            that, serializer);
+        sse_encode_box_autoadd_project_reference(that, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
       },
       codec: SseCodec(
@@ -510,14 +471,15 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         decodeErrorData:
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
-      constMeta: kCrateApiLumitProjectUndoConstMeta,
+      constMeta: kCrateApiProjectProjectReferenceUndoConstMeta,
       argValues: [that],
       apiImpl: this,
     ));
   }
 
-  TaskConstMeta get kCrateApiLumitProjectUndoConstMeta => const TaskConstMeta(
-        debugName: "LumitProject_undo",
+  TaskConstMeta get kCrateApiProjectProjectReferenceUndoConstMeta =>
+      const TaskConstMeta(
+        debugName: "project_reference_undo",
         argNames: ["that"],
       );
 
@@ -536,38 +498,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   RustArcDecrementStrongCountFnType
       get rust_arc_decrement_strong_count_LumitBridgeState => wire
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_LumitComposition => wire
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_LumitComposition => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_LumitLayer => wire
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_LumitLayer => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_LumitProject => wire
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_LumitProject => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject;
-
-  RustArcIncrementStrongCountFnType
-      get rust_arc_increment_strong_count_LumitProjectItem => wire
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem;
-
-  RustArcDecrementStrongCountFnType
-      get rust_arc_decrement_strong_count_LumitProjectItem => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem;
 
   @protected
   AnyhowException dco_decode_AnyhowException(dynamic raw) {
@@ -592,70 +522,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  LumitComposition
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitCompositionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitLayer
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitLayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitProject
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitProjectImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitProjectItem
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitProjectItemImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitComposition
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitCompositionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitLayer
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitLayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitProject
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitProjectImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitProjectItem
-      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitProjectItemImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
   BridgeError
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           dynamic raw) {
@@ -672,38 +538,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  LumitComposition
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitCompositionImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitLayer
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitLayerImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitProject
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitProjectImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
-  LumitProjectItem
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return LumitProjectItemImpl.frbInternalDcoDecode(raw as List<dynamic>);
-  }
-
-  @protected
   RustStreamSink<ScopedChange> dco_decode_StreamSink_scoped_change_Sse(
       dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -717,36 +551,94 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  UuidValue dco_decode_Uuid(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return UuidValue.fromByteList(dco_decode_list_prim_u_8_strict(raw));
+  }
+
+  @protected
   bool dco_decode_bool(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw as bool;
   }
 
   @protected
-  LumitLayer
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw) {
+  CompositionReference dco_decode_box_autoadd_composition_reference(
+      dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-        raw);
+    return dco_decode_composition_reference(raw);
   }
 
   @protected
-  LumitProject
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw) {
+  FolderReference dco_decode_box_autoadd_folder_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-        raw);
+    return dco_decode_folder_reference(raw);
   }
 
   @protected
-  LumitProjectItem
-      dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw) {
+  FootageReference dco_decode_box_autoadd_footage_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-        raw);
+    return dco_decode_footage_reference(raw);
+  }
+
+  @protected
+  ItemReference dco_decode_box_autoadd_item_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_item_reference(raw);
+  }
+
+  @protected
+  LayerReference dco_decode_box_autoadd_layer_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_layer_reference(raw);
+  }
+
+  @protected
+  ProjectReference dco_decode_box_autoadd_project_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_project_reference(raw);
+  }
+
+  @protected
+  SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_solid_reference(raw);
+  }
+
+  @protected
+  CompositionReference dco_decode_composition_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return CompositionReference(
+      internalproject: dco_decode_Uuid(arr[0]),
+      internalid: dco_decode_Uuid(arr[1]),
+    );
+  }
+
+  @protected
+  FolderReference dco_decode_folder_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return FolderReference(
+      internalproject: dco_decode_Uuid(arr[0]),
+      internalid: dco_decode_Uuid(arr[1]),
+    );
+  }
+
+  @protected
+  FootageReference dco_decode_footage_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return FootageReference(
+      internalproject: dco_decode_Uuid(arr[0]),
+      internalid: dco_decode_Uuid(arr[1]),
+    );
   }
 
   @protected
@@ -756,25 +648,53 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  List<LumitLayer>
-      dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw) {
+  ItemReference dco_decode_item_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return (raw as List<dynamic>)
-        .map(
-            dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer)
-        .toList();
+    switch (raw[0]) {
+      case 0:
+        return ItemReference_Footage(
+          dco_decode_box_autoadd_footage_reference(raw[1]),
+        );
+      case 1:
+        return ItemReference_Solid(
+          dco_decode_box_autoadd_solid_reference(raw[1]),
+        );
+      case 2:
+        return ItemReference_Composition(
+          dco_decode_box_autoadd_composition_reference(raw[1]),
+        );
+      case 3:
+        return ItemReference_Folder(
+          dco_decode_box_autoadd_folder_reference(raw[1]),
+        );
+      default:
+        throw Exception("unreachable");
+    }
   }
 
   @protected
-  List<LumitProjectItem>
-      dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw) {
+  LayerReference dco_decode_layer_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return (raw as List<dynamic>)
-        .map(
-            dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem)
-        .toList();
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return LayerReference(
+      internalprojectId: dco_decode_Uuid(arr[0]),
+      internalcompId: dco_decode_Uuid(arr[1]),
+      internallayerId: dco_decode_Uuid(arr[2]),
+    );
+  }
+
+  @protected
+  List<ItemReference> dco_decode_list_item_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_item_reference).toList();
+  }
+
+  @protected
+  List<LayerReference> dco_decode_list_layer_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_layer_reference).toList();
   }
 
   @protected
@@ -790,38 +710,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  LumitProjectItemInfo dco_decode_lumit_project_item_info(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    final arr = raw as List<dynamic>;
-    if (arr.length != 2)
-      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
-    return LumitProjectItemInfo(
-      itemType: dco_decode_lumit_project_item_type(arr[0]),
-      name: dco_decode_String(arr[1]),
-    );
-  }
-
-  @protected
-  LumitProjectItemType dco_decode_lumit_project_item_type(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    switch (raw[0]) {
-      case 0:
-        return LumitProjectItemType_Footage();
-      case 1:
-        return LumitProjectItemType_Solid();
-      case 2:
-        return LumitProjectItemType_Composition(
-          dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-              raw[1]),
-        );
-      case 3:
-        return LumitProjectItemType_Folder();
-      default:
-        throw Exception("unreachable");
-    }
-  }
-
-  @protected
   RustStreamSink<ScopedChange>? dco_decode_opt_StreamSink_scoped_change_Sse(
       dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -829,36 +717,32 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  LumitLayer?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          dynamic raw) {
+  ItemReference? dco_decode_opt_box_autoadd_item_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null
-        ? null
-        : dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-            raw);
+    return raw == null ? null : dco_decode_box_autoadd_item_reference(raw);
   }
 
   @protected
-  LumitProject?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          dynamic raw) {
+  LayerReference? dco_decode_opt_box_autoadd_layer_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null
-        ? null
-        : dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-            raw);
+    return raw == null ? null : dco_decode_box_autoadd_layer_reference(raw);
   }
 
   @protected
-  LumitProjectItem?
-      dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          dynamic raw) {
+  ProjectReference? dco_decode_opt_box_autoadd_project_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null
-        ? null
-        : dco_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-            raw);
+    return raw == null ? null : dco_decode_box_autoadd_project_reference(raw);
+  }
+
+  @protected
+  ProjectReference dco_decode_project_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 1)
+      throw Exception('unexpected arr length: expect 1 but see ${arr.length}');
+    return ProjectReference(
+      internalid: dco_decode_Uuid(arr[0]),
+    );
   }
 
   @protected
@@ -868,15 +752,21 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     if (arr.length != 3)
       throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
     return ScopedChange(
-      project:
-          dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-              arr[0]),
-      item:
-          dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-              arr[1]),
-      layer:
-          dco_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-              arr[2]),
+      project: dco_decode_project_reference(arr[0]),
+      item: dco_decode_opt_box_autoadd_item_reference(arr[1]),
+      layer: dco_decode_opt_box_autoadd_layer_reference(arr[2]),
+    );
+  }
+
+  @protected
+  SolidReference dco_decode_solid_reference(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 2)
+      throw Exception('unexpected arr length: expect 2 but see ${arr.length}');
+    return SolidReference(
+      internalproject: dco_decode_Uuid(arr[0]),
+      internalid: dco_decode_Uuid(arr[1]),
     );
   }
 
@@ -924,78 +814,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  LumitComposition
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitCompositionImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitLayer
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitLayerImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitProject
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitProjectImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitProjectItem
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitProjectItemImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitComposition
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitCompositionImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitLayer
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitLayerImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitProject
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitProjectImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitProjectItem
-      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitProjectItemImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
   BridgeError
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           SseDeserializer deserializer) {
@@ -1014,42 +832,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  LumitComposition
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitCompositionImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitLayer
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitLayerImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitProject
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitProjectImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
-  LumitProjectItem
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return LumitProjectItemImpl.frbInternalSseDecode(
-        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
-  }
-
-  @protected
   RustStreamSink<ScopedChange> sse_decode_StreamSink_scoped_change_Sse(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1064,36 +846,93 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  UuidValue sse_decode_Uuid(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var inner = sse_decode_list_prim_u_8_strict(deserializer);
+    return UuidValue.fromByteList(inner);
+  }
+
+  @protected
   bool sse_decode_bool(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return deserializer.buffer.getUint8() != 0;
   }
 
   @protected
-  LumitLayer
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer) {
+  CompositionReference sse_decode_box_autoadd_composition_reference(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-        deserializer));
+    return (sse_decode_composition_reference(deserializer));
   }
 
   @protected
-  LumitProject
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer) {
+  FolderReference sse_decode_box_autoadd_folder_reference(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-        deserializer));
+    return (sse_decode_folder_reference(deserializer));
   }
 
   @protected
-  LumitProjectItem
-      sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer) {
+  FootageReference sse_decode_box_autoadd_footage_reference(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-        deserializer));
+    return (sse_decode_footage_reference(deserializer));
+  }
+
+  @protected
+  ItemReference sse_decode_box_autoadd_item_reference(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_item_reference(deserializer));
+  }
+
+  @protected
+  LayerReference sse_decode_box_autoadd_layer_reference(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_layer_reference(deserializer));
+  }
+
+  @protected
+  ProjectReference sse_decode_box_autoadd_project_reference(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_project_reference(deserializer));
+  }
+
+  @protected
+  SolidReference sse_decode_box_autoadd_solid_reference(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_solid_reference(deserializer));
+  }
+
+  @protected
+  CompositionReference sse_decode_composition_reference(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_internalproject = sse_decode_Uuid(deserializer);
+    var var_internalid = sse_decode_Uuid(deserializer);
+    return CompositionReference(
+        internalproject: var_internalproject, internalid: var_internalid);
+  }
+
+  @protected
+  FolderReference sse_decode_folder_reference(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_internalproject = sse_decode_Uuid(deserializer);
+    var var_internalid = sse_decode_Uuid(deserializer);
+    return FolderReference(
+        internalproject: var_internalproject, internalid: var_internalid);
+  }
+
+  @protected
+  FootageReference sse_decode_footage_reference(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_internalproject = sse_decode_Uuid(deserializer);
+    var var_internalid = sse_decode_Uuid(deserializer);
+    return FootageReference(
+        internalproject: var_internalproject, internalid: var_internalid);
   }
 
   @protected
@@ -1103,33 +942,63 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  List<LumitLayer>
-      sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer) {
+  ItemReference sse_decode_item_reference(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var tag_ = sse_decode_i_32(deserializer);
+    switch (tag_) {
+      case 0:
+        var var_field0 = sse_decode_box_autoadd_footage_reference(deserializer);
+        return ItemReference_Footage(var_field0);
+      case 1:
+        var var_field0 = sse_decode_box_autoadd_solid_reference(deserializer);
+        return ItemReference_Solid(var_field0);
+      case 2:
+        var var_field0 =
+            sse_decode_box_autoadd_composition_reference(deserializer);
+        return ItemReference_Composition(var_field0);
+      case 3:
+        var var_field0 = sse_decode_box_autoadd_folder_reference(deserializer);
+        return ItemReference_Folder(var_field0);
+      default:
+        throw UnimplementedError('');
+    }
+  }
+
+  @protected
+  LayerReference sse_decode_layer_reference(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_internalprojectId = sse_decode_Uuid(deserializer);
+    var var_internalcompId = sse_decode_Uuid(deserializer);
+    var var_internallayerId = sse_decode_Uuid(deserializer);
+    return LayerReference(
+        internalprojectId: var_internalprojectId,
+        internalcompId: var_internalcompId,
+        internallayerId: var_internallayerId);
+  }
+
+  @protected
+  List<ItemReference> sse_decode_list_item_reference(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     var len_ = sse_decode_i_32(deserializer);
-    var ans_ = <LumitLayer>[];
+    var ans_ = <ItemReference>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
-      ans_.add(
-          sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-              deserializer));
+      ans_.add(sse_decode_item_reference(deserializer));
     }
     return ans_;
   }
 
   @protected
-  List<LumitProjectItem>
-      sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer) {
+  List<LayerReference> sse_decode_list_layer_reference(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     var len_ = sse_decode_i_32(deserializer);
-    var ans_ = <LumitProjectItem>[];
+    var ans_ = <LayerReference>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
-      ans_.add(
-          sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-              deserializer));
+      ans_.add(sse_decode_layer_reference(deserializer));
     }
     return ans_;
   }
@@ -1149,38 +1018,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  LumitProjectItemInfo sse_decode_lumit_project_item_info(
-      SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_itemType = sse_decode_lumit_project_item_type(deserializer);
-    var var_name = sse_decode_String(deserializer);
-    return LumitProjectItemInfo(itemType: var_itemType, name: var_name);
-  }
-
-  @protected
-  LumitProjectItemType sse_decode_lumit_project_item_type(
-      SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    var tag_ = sse_decode_i_32(deserializer);
-    switch (tag_) {
-      case 0:
-        return LumitProjectItemType_Footage();
-      case 1:
-        return LumitProjectItemType_Solid();
-      case 2:
-        var var_field0 =
-            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-                deserializer);
-        return LumitProjectItemType_Composition(var_field0);
-      case 3:
-        return LumitProjectItemType_Folder();
-      default:
-        throw UnimplementedError('');
-    }
-  }
-
-  @protected
   RustStreamSink<ScopedChange>? sse_decode_opt_StreamSink_scoped_change_Sse(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1193,60 +1030,64 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  LumitLayer?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          SseDeserializer deserializer) {
+  ItemReference? sse_decode_opt_box_autoadd_item_reference(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          deserializer));
+      return (sse_decode_box_autoadd_item_reference(deserializer));
     } else {
       return null;
     }
   }
 
   @protected
-  LumitProject?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          SseDeserializer deserializer) {
+  LayerReference? sse_decode_opt_box_autoadd_layer_reference(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          deserializer));
+      return (sse_decode_box_autoadd_layer_reference(deserializer));
     } else {
       return null;
     }
   }
 
   @protected
-  LumitProjectItem?
-      sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          SseDeserializer deserializer) {
+  ProjectReference? sse_decode_opt_box_autoadd_project_reference(
+      SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          deserializer));
+      return (sse_decode_box_autoadd_project_reference(deserializer));
     } else {
       return null;
     }
+  }
+
+  @protected
+  ProjectReference sse_decode_project_reference(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_internalid = sse_decode_Uuid(deserializer);
+    return ProjectReference(internalid: var_internalid);
   }
 
   @protected
   ScopedChange sse_decode_scoped_change(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_project =
-        sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-            deserializer);
-    var var_item =
-        sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-            deserializer);
-    var var_layer =
-        sse_decode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-            deserializer);
+    var var_project = sse_decode_project_reference(deserializer);
+    var var_item = sse_decode_opt_box_autoadd_item_reference(deserializer);
+    var var_layer = sse_decode_opt_box_autoadd_layer_reference(deserializer);
     return ScopedChange(project: var_project, item: var_item, layer: var_layer);
+  }
+
+  @protected
+  SolidReference sse_decode_solid_reference(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_internalproject = sse_decode_Uuid(deserializer);
+    var var_internalid = sse_decode_Uuid(deserializer);
+    return SolidReference(
+        internalproject: var_internalproject, internalid: var_internalid);
   }
 
   @protected
@@ -1294,84 +1135,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
 
   @protected
   void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          LumitComposition self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitCompositionImpl).frbInternalSseEncode(move: true),
-        serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitLayerImpl).frbInternalSseEncode(move: true), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitProjectImpl).frbInternalSseEncode(move: true),
-        serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitProjectItemImpl).frbInternalSseEncode(move: true),
-        serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          LumitComposition self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitCompositionImpl).frbInternalSseEncode(move: false),
-        serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitLayerImpl).frbInternalSseEncode(move: false), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitProjectImpl).frbInternalSseEncode(move: false),
-        serializer);
-  }
-
-  @protected
-  void
-      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitProjectItemImpl).frbInternalSseEncode(move: false),
-        serializer);
-  }
-
-  @protected
-  void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           BridgeError self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1386,45 +1149,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
         (self as LumitBridgeStateImpl).frbInternalSseEncode(move: null),
-        serializer);
-  }
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-          LumitComposition self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitCompositionImpl).frbInternalSseEncode(move: null),
-        serializer);
-  }
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitLayerImpl).frbInternalSseEncode(move: null), serializer);
-  }
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitProjectImpl).frbInternalSseEncode(move: null),
-        serializer);
-  }
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_usize(
-        (self as LumitProjectItemImpl).frbInternalSseEncode(move: null),
         serializer);
   }
 
@@ -1448,36 +1172,88 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_Uuid(UuidValue self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_list_prim_u_8_strict(self.toBytes(), serializer);
+  }
+
+  @protected
   void sse_encode_bool(bool self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     serializer.buffer.putUint8(self ? 1 : 0);
   }
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer self, SseSerializer serializer) {
+  void sse_encode_box_autoadd_composition_reference(
+      CompositionReference self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-        self, serializer);
+    sse_encode_composition_reference(self, serializer);
   }
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject self, SseSerializer serializer) {
+  void sse_encode_box_autoadd_folder_reference(
+      FolderReference self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-        self, serializer);
+    sse_encode_folder_reference(self, serializer);
   }
 
   @protected
-  void
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem self, SseSerializer serializer) {
+  void sse_encode_box_autoadd_footage_reference(
+      FootageReference self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-        self, serializer);
+    sse_encode_footage_reference(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_item_reference(
+      ItemReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_item_reference(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_layer_reference(
+      LayerReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_layer_reference(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_project_reference(
+      ProjectReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_project_reference(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_solid_reference(
+      SolidReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_solid_reference(self, serializer);
+  }
+
+  @protected
+  void sse_encode_composition_reference(
+      CompositionReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_Uuid(self.internalproject, serializer);
+    sse_encode_Uuid(self.internalid, serializer);
+  }
+
+  @protected
+  void sse_encode_folder_reference(
+      FolderReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_Uuid(self.internalproject, serializer);
+    sse_encode_Uuid(self.internalid, serializer);
+  }
+
+  @protected
+  void sse_encode_footage_reference(
+      FootageReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_Uuid(self.internalproject, serializer);
+    sse_encode_Uuid(self.internalid, serializer);
   }
 
   @protected
@@ -1487,26 +1263,50 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  void
-      sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          List<LumitLayer> self, SseSerializer serializer) {
+  void sse_encode_item_reference(ItemReference self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_i_32(self.length, serializer);
-    for (final item in self) {
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          item, serializer);
+    switch (self) {
+      case ItemReference_Footage(field0: final field0):
+        sse_encode_i_32(0, serializer);
+        sse_encode_box_autoadd_footage_reference(field0, serializer);
+      case ItemReference_Solid(field0: final field0):
+        sse_encode_i_32(1, serializer);
+        sse_encode_box_autoadd_solid_reference(field0, serializer);
+      case ItemReference_Composition(field0: final field0):
+        sse_encode_i_32(2, serializer);
+        sse_encode_box_autoadd_composition_reference(field0, serializer);
+      case ItemReference_Folder(field0: final field0):
+        sse_encode_i_32(3, serializer);
+        sse_encode_box_autoadd_folder_reference(field0, serializer);
     }
   }
 
   @protected
-  void
-      sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          List<LumitProjectItem> self, SseSerializer serializer) {
+  void sse_encode_layer_reference(
+      LayerReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_Uuid(self.internalprojectId, serializer);
+    sse_encode_Uuid(self.internalcompId, serializer);
+    sse_encode_Uuid(self.internallayerId, serializer);
+  }
+
+  @protected
+  void sse_encode_list_item_reference(
+      List<ItemReference> self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          item, serializer);
+      sse_encode_item_reference(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_layer_reference(
+      List<LayerReference> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_layer_reference(item, serializer);
     }
   }
 
@@ -1526,32 +1326,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  void sse_encode_lumit_project_item_info(
-      LumitProjectItemInfo self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_lumit_project_item_type(self.itemType, serializer);
-    sse_encode_String(self.name, serializer);
-  }
-
-  @protected
-  void sse_encode_lumit_project_item_type(
-      LumitProjectItemType self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    switch (self) {
-      case LumitProjectItemType_Footage():
-        sse_encode_i_32(0, serializer);
-      case LumitProjectItemType_Solid():
-        sse_encode_i_32(1, serializer);
-      case LumitProjectItemType_Composition(field0: final field0):
-        sse_encode_i_32(2, serializer);
-        sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-            field0, serializer);
-      case LumitProjectItemType_Folder():
-        sse_encode_i_32(3, serializer);
-    }
-  }
-
-  @protected
   void sse_encode_opt_StreamSink_scoped_change_Sse(
       RustStreamSink<ScopedChange>? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1563,53 +1337,59 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          LumitLayer? self, SseSerializer serializer) {
+  void sse_encode_opt_box_autoadd_item_reference(
+      ItemReference? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-          self, serializer);
+      sse_encode_box_autoadd_item_reference(self, serializer);
     }
   }
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          LumitProject? self, SseSerializer serializer) {
+  void sse_encode_opt_box_autoadd_layer_reference(
+      LayerReference? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-          self, serializer);
+      sse_encode_box_autoadd_layer_reference(self, serializer);
     }
   }
 
   @protected
-  void
-      sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          LumitProjectItem? self, SseSerializer serializer) {
+  void sse_encode_opt_box_autoadd_project_reference(
+      ProjectReference? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
 
     sse_encode_bool(self != null, serializer);
     if (self != null) {
-      sse_encode_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-          self, serializer);
+      sse_encode_box_autoadd_project_reference(self, serializer);
     }
+  }
+
+  @protected
+  void sse_encode_project_reference(
+      ProjectReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_Uuid(self.internalid, serializer);
   }
 
   @protected
   void sse_encode_scoped_change(ScopedChange self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-        self.project, serializer);
-    sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-        self.item, serializer);
-    sse_encode_opt_box_autoadd_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-        self.layer, serializer);
+    sse_encode_project_reference(self.project, serializer);
+    sse_encode_opt_box_autoadd_item_reference(self.item, serializer);
+    sse_encode_opt_box_autoadd_layer_reference(self.layer, serializer);
+  }
+
+  @protected
+  void sse_encode_solid_reference(
+      SolidReference self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_Uuid(self.internalproject, serializer);
+    sse_encode_Uuid(self.internalid, serializer);
   }
 
   @protected
@@ -1669,127 +1449,4 @@ class LumitBridgeStateImpl extends RustOpaque implements LumitBridgeState {
     rustArcDecrementStrongCountPtr: BridgeLib
         .instance.api.rust_arc_decrement_strong_count_LumitBridgeStatePtr,
   );
-}
-
-@sealed
-class LumitCompositionImpl extends RustOpaque implements LumitComposition {
-  // Not to be used by end users
-  LumitCompositionImpl.frbInternalDcoDecode(List<dynamic> wire)
-      : super.frbInternalDcoDecode(wire, _kStaticData);
-
-  // Not to be used by end users
-  LumitCompositionImpl.frbInternalSseDecode(
-      BigInt ptr, int externalSizeOnNative)
-      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
-
-  static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        BridgeLib.instance.api.rust_arc_increment_strong_count_LumitComposition,
-    rustArcDecrementStrongCount:
-        BridgeLib.instance.api.rust_arc_decrement_strong_count_LumitComposition,
-    rustArcDecrementStrongCountPtr: BridgeLib
-        .instance.api.rust_arc_decrement_strong_count_LumitCompositionPtr,
-  );
-
-  List<LumitLayer> getLayers() =>
-      BridgeLib.instance.api.crateApiLumitCompositionGetLayers(
-        that: this,
-      );
-}
-
-@sealed
-class LumitLayerImpl extends RustOpaque implements LumitLayer {
-  // Not to be used by end users
-  LumitLayerImpl.frbInternalDcoDecode(List<dynamic> wire)
-      : super.frbInternalDcoDecode(wire, _kStaticData);
-
-  // Not to be used by end users
-  LumitLayerImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
-      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
-
-  static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        BridgeLib.instance.api.rust_arc_increment_strong_count_LumitLayer,
-    rustArcDecrementStrongCount:
-        BridgeLib.instance.api.rust_arc_decrement_strong_count_LumitLayer,
-    rustArcDecrementStrongCountPtr:
-        BridgeLib.instance.api.rust_arc_decrement_strong_count_LumitLayerPtr,
-  );
-
-  bool equals({required LumitLayer layer}) =>
-      BridgeLib.instance.api.crateApiLumitLayerEquals(that: this, layer: layer);
-
-  String getName() => BridgeLib.instance.api.crateApiLumitLayerGetName(
-        that: this,
-      );
-
-  void rename({required String name}) =>
-      BridgeLib.instance.api.crateApiLumitLayerRename(that: this, name: name);
-}
-
-@sealed
-class LumitProjectImpl extends RustOpaque implements LumitProject {
-  // Not to be used by end users
-  LumitProjectImpl.frbInternalDcoDecode(List<dynamic> wire)
-      : super.frbInternalDcoDecode(wire, _kStaticData);
-
-  // Not to be used by end users
-  LumitProjectImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
-      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
-
-  static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        BridgeLib.instance.api.rust_arc_increment_strong_count_LumitProject,
-    rustArcDecrementStrongCount:
-        BridgeLib.instance.api.rust_arc_decrement_strong_count_LumitProject,
-    rustArcDecrementStrongCountPtr:
-        BridgeLib.instance.api.rust_arc_decrement_strong_count_LumitProjectPtr,
-  );
-
-  List<LumitProjectItem> getItems() =>
-      BridgeLib.instance.api.crateApiLumitProjectGetItems(
-        that: this,
-      );
-
-  void redo() => BridgeLib.instance.api.crateApiLumitProjectRedo(
-        that: this,
-      );
-
-  void undo() => BridgeLib.instance.api.crateApiLumitProjectUndo(
-        that: this,
-      );
-}
-
-@sealed
-class LumitProjectItemImpl extends RustOpaque implements LumitProjectItem {
-  // Not to be used by end users
-  LumitProjectItemImpl.frbInternalDcoDecode(List<dynamic> wire)
-      : super.frbInternalDcoDecode(wire, _kStaticData);
-
-  // Not to be used by end users
-  LumitProjectItemImpl.frbInternalSseDecode(
-      BigInt ptr, int externalSizeOnNative)
-      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
-
-  static final _kStaticData = RustArcStaticData(
-    rustArcIncrementStrongCount:
-        BridgeLib.instance.api.rust_arc_increment_strong_count_LumitProjectItem,
-    rustArcDecrementStrongCount:
-        BridgeLib.instance.api.rust_arc_decrement_strong_count_LumitProjectItem,
-    rustArcDecrementStrongCountPtr: BridgeLib
-        .instance.api.rust_arc_decrement_strong_count_LumitProjectItemPtr,
-  );
-
-  bool equals({required LumitProjectItem item}) => BridgeLib.instance.api
-      .crateApiLumitProjectItemEquals(that: this, item: item);
-
-  LumitProjectItemInfo getInfo() =>
-      BridgeLib.instance.api.crateApiLumitProjectItemGetInfo(
-        that: this,
-      );
-
-  Future<LumitMediaStatus> getStatus() =>
-      BridgeLib.instance.api.crateApiLumitProjectItemGetStatus(
-        that: this,
-      );
 }

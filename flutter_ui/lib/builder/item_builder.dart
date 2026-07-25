@@ -2,13 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:lumit_flutter/main.dart';
-import 'package:lumit_flutter/src/rust/api.dart';
+import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 class ProjectItemBuilder extends StatefulWidget {
   const ProjectItemBuilder({required this.item, required this.builder, super.key});
 
-  final LumitProjectItem item;
+  final ItemReference item;
   final Widget Function(BuildContext context) builder;
 
   @override

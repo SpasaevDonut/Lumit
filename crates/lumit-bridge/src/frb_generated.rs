@@ -26,6 +26,7 @@
 
 // Section: imports
 
+use crate::api::state::*;
 use crate::api::*;
 use flutter_rust_bridge::for_generated::byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use flutter_rust_bridge::for_generated::{transform_result_dco, Lifetimeable, Lockable};
@@ -39,7 +40,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -367177090;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -283759240;
 
 // Section: executor
 
@@ -47,7 +48,7 @@ flutter_rust_bridge::frb_generated_default_handler!();
 
 // Section: wire_funcs
 
-fn wire__crate__api__LumitBridgeState_get_current_project_impl(
+fn wire__crate__api__state__LumitBridgeState_get_current_project_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
@@ -70,14 +71,15 @@ fn wire__crate__api__LumitBridgeState_get_current_project_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok =
-                    Result::<_, ()>::Ok(crate::api::LumitBridgeState::get_current_project())?;
+                let output_ok = Result::<_, ()>::Ok(
+                    crate::api::state::LumitBridgeState::get_current_project(),
+                )?;
                 Ok(output_ok)
             })())
         },
     )
 }
-fn wire__crate__api__LumitBridgeState_new_project_impl(
+fn wire__crate__api__state__LumitBridgeState_new_project_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
@@ -99,19 +101,22 @@ fn wire__crate__api__LumitBridgeState_new_project_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_on_change_stream = <Option<
-                StreamSink<crate::api::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>,
+                StreamSink<
+                    crate::api::state::ScopedChange,
+                    flutter_rust_bridge::for_generated::SseCodec,
+                >,
             >>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(crate::api::LumitBridgeState::new_project(
-                    api_on_change_stream,
-                ))?;
+                let output_ok = Result::<_, ()>::Ok(
+                    crate::api::state::LumitBridgeState::new_project(api_on_change_stream),
+                )?;
                 Ok(output_ok)
             })())
         },
     )
 }
-fn wire__crate__api__LumitBridgeState_open_project_impl(
+fn wire__crate__api__state__LumitBridgeState_open_project_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
@@ -134,27 +139,31 @@ fn wire__crate__api__LumitBridgeState_open_project_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_path = <String>::sse_decode(&mut deserializer);
             let api_on_change_stream = <Option<
-                StreamSink<crate::api::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>,
+                StreamSink<
+                    crate::api::state::ScopedChange,
+                    flutter_rust_bridge::for_generated::SseCodec,
+                >,
             >>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(crate::api::LumitBridgeState::open_project(
-                    &api_path,
-                    api_on_change_stream,
-                ))?;
+                let output_ok =
+                    Result::<_, ()>::Ok(crate::api::state::LumitBridgeState::open_project(
+                        &api_path,
+                        api_on_change_stream,
+                    ))?;
                 Ok(output_ok)
             })())
         },
     )
 }
-fn wire__crate__api__LumitComposition_get_layers_impl(
+fn wire__crate__api__composition__composition_reference_get_layers_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitComposition_get_layers",
+            debug_name: "composition_reference_get_layers",
             port: None,
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
@@ -168,287 +177,18 @@ fn wire__crate__api__LumitComposition_get_layers_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>,
-            >>::sse_decode(&mut deserializer);
+            let api_that =
+                <crate::api::composition::CompositionReference>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
-                let mut api_that_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let output_ok = crate::api::LumitComposition::get_layers(&*api_that_guard)?;
+                let output_ok =
+                    crate::api::composition::CompositionReference::get_layers(&api_that)?;
                 Ok(output_ok)
             })())
         },
     )
 }
-fn wire__crate__api__LumitLayer_equals_impl(
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitLayer_equals",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>,
-            >>::sse_decode(&mut deserializer);
-            let api_layer = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>,
-            >>::sse_decode(&mut deserializer);
-            deserializer.end();
-            transform_result_sse::<_, ()>((move || {
-                let mut api_that_guard = None;
-                let mut api_layer_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_layer, 1, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        1 => api_layer_guard = Some(api_layer.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let api_layer_guard = api_layer_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok(crate::api::LumitLayer::equals(
-                    &*api_that_guard,
-                    &*api_layer_guard,
-                ))?;
-                Ok(output_ok)
-            })())
-        },
-    )
-}
-fn wire__crate__api__LumitLayer_get_name_impl(
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitLayer_get_name",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>,
-            >>::sse_decode(&mut deserializer);
-            deserializer.end();
-            transform_result_sse::<_, BridgeError>((move || {
-                let mut api_that_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let output_ok = crate::api::LumitLayer::get_name(&*api_that_guard)?;
-                Ok(output_ok)
-            })())
-        },
-    )
-}
-fn wire__crate__api__LumitLayer_rename_impl(
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitLayer_rename",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>,
-            >>::sse_decode(&mut deserializer);
-            let api_name = <String>::sse_decode(&mut deserializer);
-            deserializer.end();
-            transform_result_sse::<_, BridgeError>((move || {
-                let mut api_that_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let output_ok = crate::api::LumitLayer::rename(&*api_that_guard, api_name)?;
-                Ok(output_ok)
-            })())
-        },
-    )
-}
-fn wire__crate__api__LumitProjectItem_equals_impl(
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitProjectItem_equals",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>,
-            >>::sse_decode(&mut deserializer);
-            let api_item = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>,
-            >>::sse_decode(&mut deserializer);
-            deserializer.end();
-            transform_result_sse::<_, ()>((move || {
-                let mut api_that_guard = None;
-                let mut api_item_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_item, 1, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        1 => api_item_guard = Some(api_item.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let api_item_guard = api_item_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok(crate::api::LumitProjectItem::equals(
-                    &*api_that_guard,
-                    &*api_item_guard,
-                ))?;
-                Ok(output_ok)
-            })())
-        },
-    )
-}
-fn wire__crate__api__LumitProjectItem_get_info_impl(
-    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
-    rust_vec_len_: i32,
-    data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
-        flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitProjectItem_get_info",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
-        },
-        move || {
-            let message = unsafe {
-                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
-                    ptr_,
-                    rust_vec_len_,
-                    data_len_,
-                )
-            };
-            let mut deserializer =
-                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>,
-            >>::sse_decode(&mut deserializer);
-            deserializer.end();
-            transform_result_sse::<_, BridgeError>((move || {
-                let mut api_that_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let output_ok = crate::api::LumitProjectItem::get_info(&*api_that_guard)?;
-                Ok(output_ok)
-            })())
-        },
-    )
-}
-fn wire__crate__api__LumitProjectItem_get_status_impl(
+fn wire__crate__api__footage__footage_reference_get_status_impl(
     port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -456,7 +196,7 @@ fn wire__crate__api__LumitProjectItem_get_status_impl(
 ) {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitProjectItem_get_status",
+            debug_name: "footage_reference_get_status",
             port: Some(port_),
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
@@ -470,41 +210,25 @@ fn wire__crate__api__LumitProjectItem_get_status_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>,
-            >>::sse_decode(&mut deserializer);
+            let api_that = <crate::api::footage::FootageReference>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, BridgeError>((move || {
-                    let mut api_that_guard = None;
-                    let decode_indices_ =
-                        flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                            flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                                &api_that, 0, false,
-                            ),
-                        ]);
-                    for i in decode_indices_ {
-                        match i {
-                            0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                            _ => unreachable!(),
-                        }
-                    }
-                    let api_that_guard = api_that_guard.unwrap();
-                    let output_ok = crate::api::LumitProjectItem::get_status(&*api_that_guard)?;
+                    let output_ok = crate::api::footage::FootageReference::get_status(&api_that)?;
                     Ok(output_ok)
                 })())
             }
         },
     )
 }
-fn wire__crate__api__LumitProject_get_items_impl(
+fn wire__crate__api__project_item__item_reference_equals_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitProject_get_items",
+            debug_name: "item_reference_equals",
             port: None,
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
@@ -518,40 +242,26 @@ fn wire__crate__api__LumitProject_get_items_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>,
-            >>::sse_decode(&mut deserializer);
+            let api_that = <crate::api::project_item::ItemReference>::sse_decode(&mut deserializer);
+            let api_item = <crate::api::project_item::ItemReference>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, ()>((move || {
-                let mut api_that_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let output_ok =
-                    Result::<_, ()>::Ok(crate::api::LumitProject::get_items(&*api_that_guard))?;
+                let output_ok = Result::<_, ()>::Ok(
+                    crate::api::project_item::ItemReference::equals(&api_that, &api_item),
+                )?;
                 Ok(output_ok)
             })())
         },
     )
 }
-fn wire__crate__api__LumitProject_redo_impl(
+fn wire__crate__api__project_item__item_reference_name_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitProject_redo",
+            debug_name: "item_reference_name",
             port: None,
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
@@ -565,39 +275,23 @@ fn wire__crate__api__LumitProject_redo_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>,
-            >>::sse_decode(&mut deserializer);
+            let api_that = <crate::api::project_item::ItemReference>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
-                let mut api_that_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let output_ok = crate::api::LumitProject::redo(&*api_that_guard)?;
+                let output_ok = crate::api::project_item::ItemReference::name(&api_that)?;
                 Ok(output_ok)
             })())
         },
     )
 }
-fn wire__crate__api__LumitProject_undo_impl(
+fn wire__crate__api__layer__layer_reference_equals_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
-            debug_name: "LumitProject_undo",
+            debug_name: "layer_reference_equals",
             port: None,
             mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
         },
@@ -611,26 +305,166 @@ fn wire__crate__api__LumitProject_undo_impl(
             };
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
-            let api_that = <RustOpaqueMoi<
-                flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>,
-            >>::sse_decode(&mut deserializer);
+            let api_that = <crate::api::layer::LayerReference>::sse_decode(&mut deserializer);
+            let api_layer = <crate::api::layer::LayerReference>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(crate::api::layer::LayerReference::equals(
+                    &api_that, &api_layer,
+                ))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__layer__layer_reference_get_name_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "layer_reference_get_name",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <crate::api::layer::LayerReference>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
-                let mut api_that_guard = None;
-                let decode_indices_ =
-                    flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
-                        flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, false,
-                        ),
-                    ]);
-                for i in decode_indices_ {
-                    match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
-                        _ => unreachable!(),
-                    }
-                }
-                let api_that_guard = api_that_guard.unwrap();
-                let output_ok = crate::api::LumitProject::undo(&*api_that_guard)?;
+                let output_ok = crate::api::layer::LayerReference::get_name(&api_that)?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__layer__layer_reference_rename_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "layer_reference_rename",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <crate::api::layer::LayerReference>::sse_decode(&mut deserializer);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok = crate::api::layer::LayerReference::rename(&api_that, api_name)?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__project__project_reference_get_items_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "project_reference_get_items",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <crate::api::project::ProjectReference>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok = Result::<_, ()>::Ok(
+                    crate::api::project::ProjectReference::get_items(&api_that),
+                )?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__project__project_reference_redo_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "project_reference_redo",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <crate::api::project::ProjectReference>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok = crate::api::project::ProjectReference::redo(&api_that)?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__project__project_reference_undo_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "project_reference_undo",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <crate::api::project::ProjectReference>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok = crate::api::project::ProjectReference::undo(&api_that)?;
                 Ok(output_ok)
             })())
         },
@@ -644,18 +478,6 @@ flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
 );
 flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
     flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitBridgeState>
-);
-flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
-    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>
-);
-flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
-    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>
-);
-flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
-    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>
-);
-flutter_rust_bridge::frb_generated_moi_arc_impl_value!(
-    flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>
 );
 
 // Section: dart2rust
@@ -688,46 +510,6 @@ impl SseDecode for LumitBridgeState {
     }
 }
 
-impl SseDecode for LumitComposition {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <RustOpaqueMoi<
-            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>,
-        >>::sse_decode(deserializer);
-        return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
-    }
-}
-
-impl SseDecode for LumitLayer {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <RustOpaqueMoi<
-            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>,
-        >>::sse_decode(deserializer);
-        return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
-    }
-}
-
-impl SseDecode for LumitProject {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <RustOpaqueMoi<
-            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>,
-        >>::sse_decode(deserializer);
-        return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
-    }
-}
-
-impl SseDecode for LumitProjectItem {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <RustOpaqueMoi<
-            flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>,
-        >>::sse_decode(deserializer);
-        return flutter_rust_bridge::for_generated::rust_auto_opaque_decode_owned(inner);
-    }
-}
-
 impl SseDecode
     for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<BridgeError>>
 {
@@ -749,47 +531,7 @@ impl SseDecode
 }
 
 impl SseDecode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <usize>::sse_decode(deserializer);
-        return decode_rust_opaque_moi(inner);
-    }
-}
-
-impl SseDecode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <usize>::sse_decode(deserializer);
-        return decode_rust_opaque_moi(inner);
-    }
-}
-
-impl SseDecode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <usize>::sse_decode(deserializer);
-        return decode_rust_opaque_moi(inner);
-    }
-}
-
-impl SseDecode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut inner = <usize>::sse_decode(deserializer);
-        return decode_rust_opaque_moi(inner);
-    }
-}
-
-impl SseDecode
-    for StreamSink<crate::api::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>
+    for StreamSink<crate::api::state::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -806,10 +548,54 @@ impl SseDecode for String {
     }
 }
 
+impl SseDecode for uuid::Uuid {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut inner = <Vec<u8>>::sse_decode(deserializer);
+        return uuid::Uuid::from_slice(&inner).expect("fail to decode uuid");
+    }
+}
+
 impl SseDecode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         deserializer.cursor.read_u8().unwrap() != 0
+    }
+}
+
+impl SseDecode for crate::api::composition::CompositionReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_internalproject = <uuid::Uuid>::sse_decode(deserializer);
+        let mut var_internalid = <uuid::Uuid>::sse_decode(deserializer);
+        return crate::api::composition::CompositionReference {
+            project: var_internalproject,
+            id: var_internalid,
+        };
+    }
+}
+
+impl SseDecode for crate::api::folder::FolderReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_internalproject = <uuid::Uuid>::sse_decode(deserializer);
+        let mut var_internalid = <uuid::Uuid>::sse_decode(deserializer);
+        return crate::api::folder::FolderReference {
+            project: var_internalproject,
+            id: var_internalid,
+        };
+    }
+}
+
+impl SseDecode for crate::api::footage::FootageReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_internalproject = <uuid::Uuid>::sse_decode(deserializer);
+        let mut var_internalid = <uuid::Uuid>::sse_decode(deserializer);
+        return crate::api::footage::FootageReference {
+            project: var_internalproject,
+            id: var_internalid,
+        };
     }
 }
 
@@ -820,25 +606,74 @@ impl SseDecode for i32 {
     }
 }
 
-impl SseDecode for Vec<LumitLayer> {
+impl SseDecode for crate::api::project_item::ItemReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_field0 =
+                    <crate::api::footage::FootageReference>::sse_decode(deserializer);
+                return crate::api::project_item::ItemReference::Footage(var_field0);
+            }
+            1 => {
+                let mut var_field0 = <crate::api::solid::SolidReference>::sse_decode(deserializer);
+                return crate::api::project_item::ItemReference::Solid(var_field0);
+            }
+            2 => {
+                let mut var_field0 =
+                    <crate::api::composition::CompositionReference>::sse_decode(deserializer);
+                return crate::api::project_item::ItemReference::Composition(var_field0);
+            }
+            3 => {
+                let mut var_field0 =
+                    <crate::api::folder::FolderReference>::sse_decode(deserializer);
+                return crate::api::project_item::ItemReference::Folder(var_field0);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::api::layer::LayerReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_internalprojectId = <uuid::Uuid>::sse_decode(deserializer);
+        let mut var_internalcompId = <uuid::Uuid>::sse_decode(deserializer);
+        let mut var_internallayerId = <uuid::Uuid>::sse_decode(deserializer);
+        return crate::api::layer::LayerReference {
+            project_id: var_internalprojectId,
+            comp_id: var_internalcompId,
+            layer_id: var_internallayerId,
+        };
+    }
+}
+
+impl SseDecode for Vec<crate::api::project_item::ItemReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut len_ = <i32>::sse_decode(deserializer);
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
-            ans_.push(<LumitLayer>::sse_decode(deserializer));
+            ans_.push(<crate::api::project_item::ItemReference>::sse_decode(
+                deserializer,
+            ));
         }
         return ans_;
     }
 }
 
-impl SseDecode for Vec<LumitProjectItem> {
+impl SseDecode for Vec<crate::api::layer::LayerReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut len_ = <i32>::sse_decode(deserializer);
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
-            ans_.push(<LumitProjectItem>::sse_decode(deserializer));
+            ans_.push(<crate::api::layer::LayerReference>::sse_decode(
+                deserializer,
+            ));
         }
         return ans_;
     }
@@ -856,63 +691,28 @@ impl SseDecode for Vec<u8> {
     }
 }
 
-impl SseDecode for crate::api::LumitMediaStatus {
+impl SseDecode for crate::api::footage::LumitMediaStatus {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut inner = <i32>::sse_decode(deserializer);
         return match inner {
-            0 => crate::api::LumitMediaStatus::Missing,
-            1 => crate::api::LumitMediaStatus::Ready,
+            0 => crate::api::footage::LumitMediaStatus::Missing,
+            1 => crate::api::footage::LumitMediaStatus::Ready,
             _ => unreachable!("Invalid variant for LumitMediaStatus: {}", inner),
         };
     }
 }
 
-impl SseDecode for crate::api::LumitProjectItemInfo {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_itemType = <crate::api::LumitProjectItemType>::sse_decode(deserializer);
-        let mut var_name = <String>::sse_decode(deserializer);
-        return crate::api::LumitProjectItemInfo {
-            item_type: var_itemType,
-            name: var_name,
-        };
-    }
-}
-
-impl SseDecode for crate::api::LumitProjectItemType {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut tag_ = <i32>::sse_decode(deserializer);
-        match tag_ {
-            0 => {
-                return crate::api::LumitProjectItemType::Footage;
-            }
-            1 => {
-                return crate::api::LumitProjectItemType::Solid;
-            }
-            2 => {
-                let mut var_field0 = <LumitComposition>::sse_decode(deserializer);
-                return crate::api::LumitProjectItemType::Composition(var_field0);
-            }
-            3 => {
-                return crate::api::LumitProjectItemType::Folder;
-            }
-            _ => {
-                unimplemented!("");
-            }
-        }
-    }
-}
-
 impl SseDecode
-    for Option<StreamSink<crate::api::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>>
+    for Option<
+        StreamSink<crate::api::state::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>,
+    >
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
             return Some(<StreamSink<
-                crate::api::ScopedChange,
+                crate::api::state::ScopedChange,
                 flutter_rust_bridge::for_generated::SseCodec,
             >>::sse_decode(deserializer));
         } else {
@@ -921,49 +721,76 @@ impl SseDecode
     }
 }
 
-impl SseDecode for Option<LumitLayer> {
+impl SseDecode for Option<crate::api::project_item::ItemReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
-            return Some(<LumitLayer>::sse_decode(deserializer));
+            return Some(<crate::api::project_item::ItemReference>::sse_decode(
+                deserializer,
+            ));
         } else {
             return None;
         }
     }
 }
 
-impl SseDecode for Option<LumitProject> {
+impl SseDecode for Option<crate::api::layer::LayerReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
-            return Some(<LumitProject>::sse_decode(deserializer));
+            return Some(<crate::api::layer::LayerReference>::sse_decode(
+                deserializer,
+            ));
         } else {
             return None;
         }
     }
 }
 
-impl SseDecode for Option<LumitProjectItem> {
+impl SseDecode for Option<crate::api::project::ProjectReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         if (<bool>::sse_decode(deserializer)) {
-            return Some(<LumitProjectItem>::sse_decode(deserializer));
+            return Some(<crate::api::project::ProjectReference>::sse_decode(
+                deserializer,
+            ));
         } else {
             return None;
         }
     }
 }
 
-impl SseDecode for crate::api::ScopedChange {
+impl SseDecode for crate::api::project::ProjectReference {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_project = <LumitProject>::sse_decode(deserializer);
-        let mut var_item = <Option<LumitProjectItem>>::sse_decode(deserializer);
-        let mut var_layer = <Option<LumitLayer>>::sse_decode(deserializer);
-        return crate::api::ScopedChange {
+        let mut var_internalid = <uuid::Uuid>::sse_decode(deserializer);
+        return crate::api::project::ProjectReference { id: var_internalid };
+    }
+}
+
+impl SseDecode for crate::api::state::ScopedChange {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_project = <crate::api::project::ProjectReference>::sse_decode(deserializer);
+        let mut var_item =
+            <Option<crate::api::project_item::ItemReference>>::sse_decode(deserializer);
+        let mut var_layer = <Option<crate::api::layer::LayerReference>>::sse_decode(deserializer);
+        return crate::api::state::ScopedChange {
             project: var_project,
             item: var_item,
             layer: var_layer,
+        };
+    }
+}
+
+impl SseDecode for crate::api::solid::SolidReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_internalproject = <uuid::Uuid>::sse_decode(deserializer);
+        let mut var_internalid = <uuid::Uuid>::sse_decode(deserializer);
+        return crate::api::solid::SolidReference {
+            project: var_internalproject,
+            id: var_internalid,
         };
     }
 }
@@ -996,7 +823,12 @@ fn pde_ffi_dispatcher_primary_impl(
 ) {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        10 => wire__crate__api__LumitProjectItem_get_status_impl(port, ptr, rust_vec_len, data_len),
+        5 => wire__crate__api__footage__footage_reference_get_status_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
         _ => unreachable!(),
     }
 }
@@ -1009,20 +841,34 @@ fn pde_ffi_dispatcher_sync_impl(
 ) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
     // Codec=Pde (Serialization + dispatch), see doc to use other codecs
     match func_id {
-        1 => {
-            wire__crate__api__LumitBridgeState_get_current_project_impl(ptr, rust_vec_len, data_len)
+        1 => wire__crate__api__state__LumitBridgeState_get_current_project_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        2 => {
+            wire__crate__api__state__LumitBridgeState_new_project_impl(ptr, rust_vec_len, data_len)
         }
-        2 => wire__crate__api__LumitBridgeState_new_project_impl(ptr, rust_vec_len, data_len),
-        3 => wire__crate__api__LumitBridgeState_open_project_impl(ptr, rust_vec_len, data_len),
-        4 => wire__crate__api__LumitComposition_get_layers_impl(ptr, rust_vec_len, data_len),
-        5 => wire__crate__api__LumitLayer_equals_impl(ptr, rust_vec_len, data_len),
-        6 => wire__crate__api__LumitLayer_get_name_impl(ptr, rust_vec_len, data_len),
-        7 => wire__crate__api__LumitLayer_rename_impl(ptr, rust_vec_len, data_len),
-        8 => wire__crate__api__LumitProjectItem_equals_impl(ptr, rust_vec_len, data_len),
-        9 => wire__crate__api__LumitProjectItem_get_info_impl(ptr, rust_vec_len, data_len),
-        11 => wire__crate__api__LumitProject_get_items_impl(ptr, rust_vec_len, data_len),
-        12 => wire__crate__api__LumitProject_redo_impl(ptr, rust_vec_len, data_len),
-        13 => wire__crate__api__LumitProject_undo_impl(ptr, rust_vec_len, data_len),
+        3 => {
+            wire__crate__api__state__LumitBridgeState_open_project_impl(ptr, rust_vec_len, data_len)
+        }
+        4 => wire__crate__api__composition__composition_reference_get_layers_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        6 => {
+            wire__crate__api__project_item__item_reference_equals_impl(ptr, rust_vec_len, data_len)
+        }
+        7 => wire__crate__api__project_item__item_reference_name_impl(ptr, rust_vec_len, data_len),
+        8 => wire__crate__api__layer__layer_reference_equals_impl(ptr, rust_vec_len, data_len),
+        9 => wire__crate__api__layer__layer_reference_get_name_impl(ptr, rust_vec_len, data_len),
+        10 => wire__crate__api__layer__layer_reference_rename_impl(ptr, rust_vec_len, data_len),
+        11 => {
+            wire__crate__api__project__project_reference_get_items_impl(ptr, rust_vec_len, data_len)
+        }
+        12 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
+        13 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -1060,67 +906,125 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<LumitBridgeState>> for LumitBr
 }
 
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for FrbWrapper<LumitComposition> {
+impl flutter_rust_bridge::IntoDart for crate::api::composition::CompositionReference {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
-            .into_dart()
+        [
+            self.project.into_into_dart().into_dart(),
+            self.id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<LumitComposition> {}
-
-impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<LumitComposition>> for LumitComposition {
-    fn into_into_dart(self) -> FrbWrapper<LumitComposition> {
-        self.into()
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::composition::CompositionReference
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::composition::CompositionReference>
+    for crate::api::composition::CompositionReference
+{
+    fn into_into_dart(self) -> crate::api::composition::CompositionReference {
+        self
     }
 }
-
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for FrbWrapper<LumitLayer> {
+impl flutter_rust_bridge::IntoDart for crate::api::folder::FolderReference {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
-            .into_dart()
+        [
+            self.project.into_into_dart().into_dart(),
+            self.id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<LumitLayer> {}
-
-impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<LumitLayer>> for LumitLayer {
-    fn into_into_dart(self) -> FrbWrapper<LumitLayer> {
-        self.into()
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::folder::FolderReference
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::folder::FolderReference>
+    for crate::api::folder::FolderReference
+{
+    fn into_into_dart(self) -> crate::api::folder::FolderReference {
+        self
     }
 }
-
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for FrbWrapper<LumitProject> {
+impl flutter_rust_bridge::IntoDart for crate::api::footage::FootageReference {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
-            .into_dart()
+        [
+            self.project.into_into_dart().into_dart(),
+            self.id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<LumitProject> {}
-
-impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<LumitProject>> for LumitProject {
-    fn into_into_dart(self) -> FrbWrapper<LumitProject> {
-        self.into()
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::footage::FootageReference
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::footage::FootageReference>
+    for crate::api::footage::FootageReference
+{
+    fn into_into_dart(self) -> crate::api::footage::FootageReference {
+        self
     }
 }
-
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for FrbWrapper<LumitProjectItem> {
+impl flutter_rust_bridge::IntoDart for crate::api::project_item::ItemReference {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self.0)
-            .into_dart()
+        match self {
+            crate::api::project_item::ItemReference::Footage(field0) => {
+                [0.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::project_item::ItemReference::Solid(field0) => {
+                [1.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::project_item::ItemReference::Composition(field0) => {
+                [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::project_item::ItemReference::Folder(field0) => {
+                [3.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for FrbWrapper<LumitProjectItem> {}
-
-impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<LumitProjectItem>> for LumitProjectItem {
-    fn into_into_dart(self) -> FrbWrapper<LumitProjectItem> {
-        self.into()
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::project_item::ItemReference
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::project_item::ItemReference>
+    for crate::api::project_item::ItemReference
+{
+    fn into_into_dart(self) -> crate::api::project_item::ItemReference {
+        self
     }
 }
-
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::LumitMediaStatus {
+impl flutter_rust_bridge::IntoDart for crate::api::layer::LayerReference {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.project_id.into_into_dart().into_dart(),
+            self.comp_id.into_into_dart().into_dart(),
+            self.layer_id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::layer::LayerReference
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::layer::LayerReference>
+    for crate::api::layer::LayerReference
+{
+    fn into_into_dart(self) -> crate::api::layer::LayerReference {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::footage::LumitMediaStatus {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         match self {
             Self::Missing => 0.into_dart(),
@@ -1129,64 +1033,36 @@ impl flutter_rust_bridge::IntoDart for crate::api::LumitMediaStatus {
         }
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::LumitMediaStatus {}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::LumitMediaStatus>
-    for crate::api::LumitMediaStatus
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::footage::LumitMediaStatus
 {
-    fn into_into_dart(self) -> crate::api::LumitMediaStatus {
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::footage::LumitMediaStatus>
+    for crate::api::footage::LumitMediaStatus
+{
+    fn into_into_dart(self) -> crate::api::footage::LumitMediaStatus {
         self
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::LumitProjectItemInfo {
+impl flutter_rust_bridge::IntoDart for crate::api::project::ProjectReference {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        [
-            self.item_type.into_into_dart().into_dart(),
-            self.name.into_into_dart().into_dart(),
-        ]
-        .into_dart()
+        [self.id.into_into_dart().into_dart()].into_dart()
     }
 }
 impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::LumitProjectItemInfo
+    for crate::api::project::ProjectReference
 {
 }
-impl flutter_rust_bridge::IntoIntoDart<crate::api::LumitProjectItemInfo>
-    for crate::api::LumitProjectItemInfo
+impl flutter_rust_bridge::IntoIntoDart<crate::api::project::ProjectReference>
+    for crate::api::project::ProjectReference
 {
-    fn into_into_dart(self) -> crate::api::LumitProjectItemInfo {
+    fn into_into_dart(self) -> crate::api::project::ProjectReference {
         self
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::LumitProjectItemType {
-    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
-        match self {
-            crate::api::LumitProjectItemType::Footage => [0.into_dart()].into_dart(),
-            crate::api::LumitProjectItemType::Solid => [1.into_dart()].into_dart(),
-            crate::api::LumitProjectItemType::Composition(field0) => {
-                [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
-            }
-            crate::api::LumitProjectItemType::Folder => [3.into_dart()].into_dart(),
-            _ => {
-                unimplemented!("");
-            }
-        }
-    }
-}
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
-    for crate::api::LumitProjectItemType
-{
-}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::LumitProjectItemType>
-    for crate::api::LumitProjectItemType
-{
-    fn into_into_dart(self) -> crate::api::LumitProjectItemType {
-        self
-    }
-}
-// Codec=Dco (DartCObject based), see doc to use other codecs
-impl flutter_rust_bridge::IntoDart for crate::api::ScopedChange {
+impl flutter_rust_bridge::IntoDart for crate::api::state::ScopedChange {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.project.into_into_dart().into_dart(),
@@ -1196,9 +1072,35 @@ impl flutter_rust_bridge::IntoDart for crate::api::ScopedChange {
         .into_dart()
     }
 }
-impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive for crate::api::ScopedChange {}
-impl flutter_rust_bridge::IntoIntoDart<crate::api::ScopedChange> for crate::api::ScopedChange {
-    fn into_into_dart(self) -> crate::api::ScopedChange {
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::state::ScopedChange
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::state::ScopedChange>
+    for crate::api::state::ScopedChange
+{
+    fn into_into_dart(self) -> crate::api::state::ScopedChange {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::solid::SolidReference {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.project.into_into_dart().into_dart(),
+            self.id.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::solid::SolidReference
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::solid::SolidReference>
+    for crate::api::solid::SolidReference
+{
+    fn into_into_dart(self) -> crate::api::solid::SolidReference {
         self
     }
 }
@@ -1221,34 +1123,6 @@ impl SseEncode for LumitBridgeState {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitBridgeState>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
-    }
-}
-
-impl SseEncode for LumitComposition {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
-    }
-}
-
-impl SseEncode for LumitLayer {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
-    }
-}
-
-impl SseEncode for LumitProject {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
-    }
-}
-
-impl SseEncode for LumitProjectItem {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>>>::sse_encode(flutter_rust_bridge::for_generated::rust_auto_opaque_encode::<_, MoiArc<_>>(self), serializer);
     }
 }
 
@@ -1275,51 +1149,7 @@ impl SseEncode
 }
 
 impl SseEncode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        let (ptr, size) = self.sse_encode_raw();
-        <usize>::sse_encode(ptr, serializer);
-        <i32>::sse_encode(size, serializer);
-    }
-}
-
-impl SseEncode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        let (ptr, size) = self.sse_encode_raw();
-        <usize>::sse_encode(ptr, serializer);
-        <i32>::sse_encode(size, serializer);
-    }
-}
-
-impl SseEncode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        let (ptr, size) = self.sse_encode_raw();
-        <usize>::sse_encode(ptr, serializer);
-        <i32>::sse_encode(size, serializer);
-    }
-}
-
-impl SseEncode
-    for RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>>
-{
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        let (ptr, size) = self.sse_encode_raw();
-        <usize>::sse_encode(ptr, serializer);
-        <i32>::sse_encode(size, serializer);
-    }
-}
-
-impl SseEncode
-    for StreamSink<crate::api::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>
+    for StreamSink<crate::api::state::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -1334,10 +1164,41 @@ impl SseEncode for String {
     }
 }
 
+impl SseEncode for uuid::Uuid {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<u8>>::sse_encode(self.as_bytes().to_vec(), serializer);
+    }
+}
+
 impl SseEncode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u8(self as _).unwrap();
+    }
+}
+
+impl SseEncode for crate::api::composition::CompositionReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <uuid::Uuid>::sse_encode(self.project, serializer);
+        <uuid::Uuid>::sse_encode(self.id, serializer);
+    }
+}
+
+impl SseEncode for crate::api::folder::FolderReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <uuid::Uuid>::sse_encode(self.project, serializer);
+        <uuid::Uuid>::sse_encode(self.id, serializer);
+    }
+}
+
+impl SseEncode for crate::api::footage::FootageReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <uuid::Uuid>::sse_encode(self.project, serializer);
+        <uuid::Uuid>::sse_encode(self.id, serializer);
     }
 }
 
@@ -1348,22 +1209,58 @@ impl SseEncode for i32 {
     }
 }
 
-impl SseEncode for Vec<LumitLayer> {
+impl SseEncode for crate::api::project_item::ItemReference {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <i32>::sse_encode(self.len() as _, serializer);
-        for item in self {
-            <LumitLayer>::sse_encode(item, serializer);
+        match self {
+            crate::api::project_item::ItemReference::Footage(field0) => {
+                <i32>::sse_encode(0, serializer);
+                <crate::api::footage::FootageReference>::sse_encode(field0, serializer);
+            }
+            crate::api::project_item::ItemReference::Solid(field0) => {
+                <i32>::sse_encode(1, serializer);
+                <crate::api::solid::SolidReference>::sse_encode(field0, serializer);
+            }
+            crate::api::project_item::ItemReference::Composition(field0) => {
+                <i32>::sse_encode(2, serializer);
+                <crate::api::composition::CompositionReference>::sse_encode(field0, serializer);
+            }
+            crate::api::project_item::ItemReference::Folder(field0) => {
+                <i32>::sse_encode(3, serializer);
+                <crate::api::folder::FolderReference>::sse_encode(field0, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
         }
     }
 }
 
-impl SseEncode for Vec<LumitProjectItem> {
+impl SseEncode for crate::api::layer::LayerReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <uuid::Uuid>::sse_encode(self.project_id, serializer);
+        <uuid::Uuid>::sse_encode(self.comp_id, serializer);
+        <uuid::Uuid>::sse_encode(self.layer_id, serializer);
+    }
+}
+
+impl SseEncode for Vec<crate::api::project_item::ItemReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
-            <LumitProjectItem>::sse_encode(item, serializer);
+            <crate::api::project_item::ItemReference>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::layer::LayerReference> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::layer::LayerReference>::sse_encode(item, serializer);
         }
     }
 }
@@ -1378,13 +1275,13 @@ impl SseEncode for Vec<u8> {
     }
 }
 
-impl SseEncode for crate::api::LumitMediaStatus {
+impl SseEncode for crate::api::footage::LumitMediaStatus {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <i32>::sse_encode(
             match self {
-                crate::api::LumitMediaStatus::Missing => 0,
-                crate::api::LumitMediaStatus::Ready => 1,
+                crate::api::footage::LumitMediaStatus::Missing => 0,
+                crate::api::footage::LumitMediaStatus::Ready => 1,
                 _ => {
                     unimplemented!("");
                 }
@@ -1394,86 +1291,74 @@ impl SseEncode for crate::api::LumitMediaStatus {
     }
 }
 
-impl SseEncode for crate::api::LumitProjectItemInfo {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <crate::api::LumitProjectItemType>::sse_encode(self.item_type, serializer);
-        <String>::sse_encode(self.name, serializer);
-    }
-}
-
-impl SseEncode for crate::api::LumitProjectItemType {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        match self {
-            crate::api::LumitProjectItemType::Footage => {
-                <i32>::sse_encode(0, serializer);
-            }
-            crate::api::LumitProjectItemType::Solid => {
-                <i32>::sse_encode(1, serializer);
-            }
-            crate::api::LumitProjectItemType::Composition(field0) => {
-                <i32>::sse_encode(2, serializer);
-                <LumitComposition>::sse_encode(field0, serializer);
-            }
-            crate::api::LumitProjectItemType::Folder => {
-                <i32>::sse_encode(3, serializer);
-            }
-            _ => {
-                unimplemented!("");
-            }
-        }
-    }
-}
-
 impl SseEncode
-    for Option<StreamSink<crate::api::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>>
+    for Option<
+        StreamSink<crate::api::state::ScopedChange, flutter_rust_bridge::for_generated::SseCodec>,
+    >
 {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
-            <StreamSink<crate::api::ScopedChange,flutter_rust_bridge::for_generated::SseCodec>>::sse_encode(value, serializer);
+            <StreamSink<
+                crate::api::state::ScopedChange,
+                flutter_rust_bridge::for_generated::SseCodec,
+            >>::sse_encode(value, serializer);
         }
     }
 }
 
-impl SseEncode for Option<LumitLayer> {
+impl SseEncode for Option<crate::api::project_item::ItemReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
-            <LumitLayer>::sse_encode(value, serializer);
+            <crate::api::project_item::ItemReference>::sse_encode(value, serializer);
         }
     }
 }
 
-impl SseEncode for Option<LumitProject> {
+impl SseEncode for Option<crate::api::layer::LayerReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
-            <LumitProject>::sse_encode(value, serializer);
+            <crate::api::layer::LayerReference>::sse_encode(value, serializer);
         }
     }
 }
 
-impl SseEncode for Option<LumitProjectItem> {
+impl SseEncode for Option<crate::api::project::ProjectReference> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
-            <LumitProjectItem>::sse_encode(value, serializer);
+            <crate::api::project::ProjectReference>::sse_encode(value, serializer);
         }
     }
 }
 
-impl SseEncode for crate::api::ScopedChange {
+impl SseEncode for crate::api::project::ProjectReference {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <LumitProject>::sse_encode(self.project, serializer);
-        <Option<LumitProjectItem>>::sse_encode(self.item, serializer);
-        <Option<LumitLayer>>::sse_encode(self.layer, serializer);
+        <uuid::Uuid>::sse_encode(self.id, serializer);
+    }
+}
+
+impl SseEncode for crate::api::state::ScopedChange {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <crate::api::project::ProjectReference>::sse_encode(self.project, serializer);
+        <Option<crate::api::project_item::ItemReference>>::sse_encode(self.item, serializer);
+        <Option<crate::api::layer::LayerReference>>::sse_encode(self.layer, serializer);
+    }
+}
+
+impl SseEncode for crate::api::solid::SolidReference {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <uuid::Uuid>::sse_encode(self.project, serializer);
+        <uuid::Uuid>::sse_encode(self.id, serializer);
     }
 }
 
@@ -1507,6 +1392,7 @@ mod io {
     // Section: imports
 
     use super::*;
+    use crate::api::state::*;
     use crate::api::*;
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
@@ -1545,62 +1431,6 @@ mod io {
     ) {
         MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitBridgeState>>::decrement_strong_count(ptr as _);
     }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_lumit_flutter_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>>::increment_strong_count(ptr as _);
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>>::decrement_strong_count(ptr as _);
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_lumit_flutter_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>>::increment_strong_count(ptr as _);
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>>::decrement_strong_count(ptr as _);
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_lumit_flutter_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>>::increment_strong_count(ptr as _);
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>>::decrement_strong_count(ptr as _);
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_lumit_flutter_rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>>::increment_strong_count(ptr as _);
-    }
-
-    #[unsafe(no_mangle)]
-    pub extern "C" fn frbgen_lumit_flutter_rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>>::decrement_strong_count(ptr as _);
-    }
 }
 #[cfg(not(target_family = "wasm"))]
 pub use io::*;
@@ -1614,6 +1444,7 @@ mod web {
     // Section: imports
 
     use super::*;
+    use crate::api::state::*;
     use crate::api::*;
     use flutter_rust_bridge::for_generated::byteorder::{
         NativeEndian, ReadBytesExt, WriteBytesExt,
@@ -1653,62 +1484,6 @@ mod web {
         ptr: *const std::ffi::c_void,
     ) {
         MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitBridgeState>>::decrement_strong_count(ptr as _);
-    }
-
-    #[wasm_bindgen]
-    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>>::increment_strong_count(ptr as _);
-    }
-
-    #[wasm_bindgen]
-    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitComposition(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitComposition>>::decrement_strong_count(ptr as _);
-    }
-
-    #[wasm_bindgen]
-    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>>::increment_strong_count(ptr as _);
-    }
-
-    #[wasm_bindgen]
-    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitLayer(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitLayer>>::decrement_strong_count(ptr as _);
-    }
-
-    #[wasm_bindgen]
-    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>>::increment_strong_count(ptr as _);
-    }
-
-    #[wasm_bindgen]
-    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProject(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProject>>::decrement_strong_count(ptr as _);
-    }
-
-    #[wasm_bindgen]
-    pub fn rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>>::increment_strong_count(ptr as _);
-    }
-
-    #[wasm_bindgen]
-    pub fn rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitProjectItem(
-        ptr: *const std::ffi::c_void,
-    ) {
-        MoiArc::<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitProjectItem>>::decrement_strong_count(ptr as _);
     }
 }
 #[cfg(target_family = "wasm")]

@@ -2,13 +2,14 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:lumit_flutter/main.dart';
-import 'package:lumit_flutter/src/rust/api.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 class LayerBuilder extends StatefulWidget {
   const LayerBuilder({required this.layer, required this.builder, super.key});
 
-  final LumitLayer layer;
+  final LayerReference layer;
   final Widget Function(BuildContext context) builder;
 
   @override

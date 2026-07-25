@@ -1,0 +1,64 @@
+use std::{sync::Arc, todo};
+
+use flutter_rust_bridge::frb;
+
+use uuid::Uuid;
+
+use crate::api::{
+    layer::LayerReference,
+    state::{LumitBridgeState, PROJECTS},
+    BridgeError,
+};
+
+#[derive(Debug, PartialEq, Eq)]
+#[frb]
+pub struct CompositionReference {
+    #[frb(name = "internalproject")]
+    pub project: Uuid,
+    #[frb(name = "internalid")]
+    pub id: Uuid,
+}
+
+impl CompositionReference {
+    #[frb(ignore)]
+    pub fn new(project: Uuid, id: Uuid) -> CompositionReference {
+        CompositionReference { project, id }
+    }
+
+    #[frb(ignore)]
+    pub fn project_id(&self) -> Uuid {
+        self.project
+    }
+
+    #[frb(ignore)]
+    pub fn id(&self) -> Uuid {
+        self.id
+    }
+
+    #[frb(ignore)]
+    fn project(&self) -> Result<Arc<std::sync::RwLock<LumitBridgeState>>, BridgeError> {
+        let projects = PROJECTS.read().unwrap();
+        let project = projects.get(&self.project);
+
+        let p = project.ok_or(BridgeError::InvalidProject)?;
+        Ok(p.clone())
+    }
+
+    #[frb(sync)]
+    pub fn get_layers(&self) -> Result<Vec<LayerReference>, BridgeError> {
+        let proj = self.project()?;
+        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+
+        let snapshot = proj.store.snapshot();
+        let item = snapshot.item(self.id).unwrap();
+
+        match item {
+            lumit_core::model::ProjectItem::Composition(composition) => Ok(composition
+                .layers
+                .iter()
+                .map(|i| LayerReference::new(self.project.clone(), self.id.clone(), i.id.clone()))
+                .collect()),
+            _ => todo!(),
+        }
+    }
+}
