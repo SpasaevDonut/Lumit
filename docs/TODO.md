@@ -38,8 +38,35 @@ sequence clips.
 - **Click-to-edit timecode** (currently read-only), may want to remove from this bar and
     only keep the one on timeline and add the functionality there.
 
+**Render pipeline ([05-ARCHITECTURE.md](05-ARCHITECTURE.md), K-178):**
+- **Unify the two comp walks — the immediate next job.** `build_comp_draws`
+    (interactive) and `render_comp_linear` (export) do the same thing by different
+    routes and are kept in step by hand; that hand-syncing is what K-031 currently
+    rests on. Make export decode into a `pixels_by_layer` map — it already does
+    exactly this for the temporal re-render, in `collect_below_pixels` — then have
+    it call `build_comp_draws` + `Realiser::realise` like everything else. Deletes
+    ~500 duplicated lines and makes preview == export true by construction.
+    **Gate:** a bit-identity test matrix (plain footage, nested and collapsed
+    precomps, mattes of each source mode, adjustment layers, per-layer and
+    accumulation motion blur, Retime blend/flow) must pass *before* the old walk
+    is deleted. `the_preview_and_export_paths_agree_on_a_solid_comp` is the first
+    row of that matrix.
+- Feed the egui Viewer's live drag through `HeadlessRenderer::render_preview` too,
+    so the retained-pixel path is one implementation rather than two (the shell
+    still has its own `last_comp` patch loop in `shell/app_update.rs`).
+- Surface `DecodePool::comp_decodes` in the bridge's cache stats, so a decode that
+    should not have happened is visible rather than merely slow.
+
 **Bridge ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)):**
 - Replace the bridge code with [Flutter-Rust bridge](https://github.com/fzyzcjy/flutter_rust_bridge)
+- **Effect-param drag preview** - `previewTransform` stages a live transform value
+    so a drag never touches the document; the effect-parameter controls have no
+    equivalent and still call `setEffectParamScalar` on every tick, so each tick is
+    a real commit (and a journal/undo entry). The pixels are already cheap after
+    K-178 - an effect value does not change the decode plan, so the drag
+    re-composites from retained pixels - but the per-tick commit remains. The
+    engine side is ready (`build::patch_layer_effect_param`); it needs a
+    `previewEffectParam` op beside `previewTransform`.
 
 **Shell and onboarding:**
 - **Workspace presets** - only the single default layout exists; the four shipped

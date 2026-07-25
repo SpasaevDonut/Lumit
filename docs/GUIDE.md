@@ -20,7 +20,8 @@ app's departments). They live in `crates/`:
 |---|---|---|
 | `lumit-core` | Time, the document, undo | The project file's brain: what a comp/layer *is*, and every edit that can happen to it |
 | `lumit-project` | `.lum` files, autosave, recovery | Saving and loading, and the "never lose work" machinery |
-| `lumit-ui` | Everything you see | Panels, menus, the theme — the shell around the engine |
+| `lumit-ui` | Everything you see (egui) | Panels, menus, the theme — the shell around the engine |
+| `lumit-render` | Making the picture | The whole path from "here is the project" to "here are the pixels" — decoding, compositing, caching, export |
 | `lumit-app` | The `main()` entry | Ten lines that open the window and start the UI |
 | `lumit-media` | Decoding video | Turning an .mp4 into frames |
 | `lumit-gpu` | The GPU pipeline | Drawing and processing frames on the graphics card |
@@ -43,6 +44,12 @@ names stay plain `lumit-*` — the names are for people, the identifiers are for
 engine for things; the engine doesn't know the UI exists. That's why the UI could be
 replaced entirely without touching the engine — like swapping a car's dashboard without
 opening the engine bay.
+
+That rule is also why `lumit-render` exists. The picture-making code used to live inside
+`lumit-ui`, which meant the Flutter frontend had to reach *through* the egui frontend to
+render anything at all — a dashboard wired into another dashboard. Pulling it into its own
+crate (decision K-178) put it back where it belongs: both frontends now ask the same engine
+for frames, so a comp cannot look different in one than the other.
 
 ## 2. Rust in ten minutes, Lumit edition
 
@@ -1079,7 +1086,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   in the bottom bar ("Grid"): **beats** (the default — detected beats shine through every
   layer so cuts land on the music), **time** (a neutral second grid that subdivides as you
   zoom in, down to 10 ms), or **off**. The bright ruler ticks up top stay regardless.
-- `crates/lumit-ui/src/export.rs` — **writing video files.** Every frame of a comp is
+- `crates/lumit-render/src/export.rs` — **writing video files.** Every frame of a comp is
   rendered through the *exact same* colour engine and compositor the Viewer uses, then
   compressed to an .mp4. Using one shared path isn't laziness — it's the design's central
   promise (what you preview IS what you export), and it runs on its own worker so the app
@@ -1090,7 +1097,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   stray edit can't quietly change what "YouTube 1080p60" means. When the comp's shape
   differs from the preset's, Lumit fits the picture keeping its proportions and adds black
   bars (a wide comp gets bars top and bottom in a vertical export); the fitting maths
-  (`fit_contain` / `letterbox_resize` in `pixels.rs`) is unit-tested. **Sound comes too**:
+  (`fit_contain` / `letterbox_resize` in `lumit-core`'s `pixels.rs`) is unit-tested. **Sound comes too**:
   the comp's audio is mixed by the very same code that plays it back (one shared `mixdown`
   — playback, beat detection, and export literally cannot hear different things), then
   written as an AAC track fed to the file in step with the picture, a video frame's worth
@@ -2585,16 +2592,76 @@ render can't be produced — for instance on a machine with no suitable graphics
 card, where the renderer reports itself unavailable once and the Viewer simply
 stays on the single-layer path (never a crash). A missing layer inside the comp
 comes back already painted as colour bars *inside* the finished frame, so the
-Viewer needs no separate "missing" card on this path. Two honesties remain: the
-picture still travels as a block of pixels through ordinary memory (the faster
-zero-copy path that shares GPU memory with Flutter is a later optimisation, and
-it renders through this same headless renderer), and asking for a smaller scale
-shrinks the *returned* picture but not the work to draw it, because the export
-path always composites at full size. One deliberate wrinkle worth naming: the
-bridge — normally a leaf that depends only on the engine — here depends on the
-egui UI crate, because that is where the compositor still lives. That edge is
-scaffolding, recorded as K-175, and it comes down when the compositor is lifted
-into an engine crate of its own.
+Viewer needs no separate "missing" card on this path. (Both honesties this
+paragraph used to end on — the bridge depending on the egui crate, and a smaller
+scale shrinking the returned picture without reducing the work — are dealt with
+in "The picture-making crate" below.)
+
+**The picture-making crate, and why dragging a value used to stutter (K-178).**
+The paragraph above ended on a wrinkle: to draw anything, the Flutter frontend
+had to reach *through* the egui frontend, because that is where the picture-making
+code lived. That has now been pulled out into a crate of its own, `lumit-render`,
+which both frontends use. The engine no longer contains a dashboard.
+
+It is worth understanding what that code actually does, because the shape of it
+is what fixed a real performance problem. Making one frame is five steps:
+
+1. **Probe** — what is this video file: is it there, how fast does it run, how
+   many frames does it have?
+2. **Plan** — walk the composition at this moment and write down *which layer
+   needs which frame of which file, at what size*. This is quick: it opens no
+   files and does no drawing. It is just a list.
+3. **Decode** — actually read those frames out of the video files. This is the
+   slow step, by a wide margin.
+4. **Build** — turn the project plus those decoded frames into a **draw list**:
+   a plain description of every layer's picture, where it sits, how transparent
+   it is, which blend mode, and what its effects work out to as plain numbers.
+   Still no graphics card involved.
+5. **Realise** — hand the draw list to the graphics card and get the frame.
+
+Now the point. When you drag a blur radius, what changes? Only step 4. The video
+frames underneath are *exactly the same ones* — you have not moved the playhead.
+So the honest thing is to keep the decoded frames from last time and re-run only
+steps 4 and 5, which are fast.
+
+That is what the egui Viewer had always done. The Flutter Viewer did not: it went
+through the *exporter's* path, which sensibly decodes everything afresh every time
+(that is right for writing a file, where each frame is visited once). So every
+single tick of a drag re-read the whole composition off disk, and dragging
+stuttered. Sharing one crate is what made it possible to give the Flutter path the
+good behaviour rather than writing it a second time and hoping the two stayed in
+step.
+
+The mechanism is simple enough to state in a sentence: before decoding, compare
+the *plan* with the plan that produced the frames already in hand; if they ask for
+the same pixels, skip the decode entirely. The comparison deliberately ignores
+placement and effects — those are precisely what the drag is changing. One live
+edit is the exception and gets handled properly rather than glossed over: dragging
+a **Retime** "Time" value genuinely moves to a different frame of the source, so it
+is applied to the plan rather than after it.
+
+This is measured, not asserted. The decoder counts the frames it actually decodes,
+and a test drives ten drag ticks and requires the count not to move — then moves
+the playhead and requires that it *does*, so a broken version that simply never
+decodes cannot sneak through.
+
+Two other things came with it. Footage is now decoded at the size it will be
+*shown* rather than always at full size and thrown away — so the second honesty in
+the paragraph above is gone: a smaller scale now reduces real work, not just the
+size of the answer. And finished frames are now filed under a **name derived from
+their content** — a fingerprint of everything that went into them. Before, the
+Flutter frame cache threw away every frame in the project whenever the document
+changed at all: renaming a layer or nudging the work area, neither of which can
+change a single pixel, emptied it. Now those produce the same names, so nothing is
+discarded, and editing one layer retires only the frames that layer appears in.
+
+One piece of untidiness is left, deliberately and in writing rather than quietly:
+there are still **two** routes through a composition — the interactive one just
+described, and the exporter's older one — doing the same job by different paths,
+kept in agreement by hand and by tests. Merging them is the next job on the
+backlog, and it is gated on a set of tests proving the two produce identical
+pixels across precomps, mattes, adjustment layers and motion blur before the old
+one is deleted.
 
 **The editors starting to come alive (F4, first slice).** Three of the editing
 surfaces move off their placeholders. The **Hierarchy** panel draws the active

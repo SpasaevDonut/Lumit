@@ -22,7 +22,7 @@ The crates that exist today (v1), then the ones the doc reserves for later:
 | Crate | Responsibility |
 |---|---|
 | `lumit-core` | The document model (project, comps, layers, clips, properties, keyframes, Retime segments, markers) **and the rational time types** (`SourceTime`/`ClipTime`/`LayerTime`/`CompTime`/`FrameRate`). Pure data + command application. No IO, no GPU, no threads. |
-| `lumit-eval` | Internal codename **Nova**. Content-hash frame keys, the evaluation-graph *compiler* (structure + identity folding + source dedup), cancellation epochs, and the pure playback-scheduler decision core. NB: the graph's **pixel pass is not here yet** — v1 renders through `lumit-ui` (see below). |
+| `lumit-eval` | Internal codename **Nova**. Content-hash frame keys, the evaluation-graph *compiler* (structure + identity folding + source dedup), cancellation epochs, and the pure playback-scheduler decision core. NB: the graph's **pixel pass is not here yet** — v1 renders through `lumit-render` (see below). |
 | `lumit-gpu` | The one wgpu device, WGSL effect kernels, the compositor, the colour engine, readback. |
 | `lumit-flow` | Optical flow (**DIS**, K-169) — a CPU oracle plus WGSL twin — for Retime flow interpolation and flow motion blur. |
 | `lumit-media` | rsmpeg demux/decode/encode and the frame index. |
@@ -30,9 +30,10 @@ The crates that exist today (v1), then the ones the doc reserves for later:
 | `lumit-cache` | **Nebula**: the frame cache — RAM + disk tiers, content-hash keys, byte-budget eviction. |
 | `lumit-text` | Text rasterisation (v1: single run, embedded Inter). |
 | `lumit-project` | Serialisation: `.lum` container read/write, the operation journal, autosave. Spec: [10-FILE-FORMAT.md](10-FILE-FORMAT.md). |
-| `lumit-ui` | The original egui shell (tiling dock, timeline/graph-editor/viewer widgets, theming per [15-DESIGN.md](15-DESIGN.md) — **and the render/present path** the pixel pass the eval graph will eventually own. Since K-174 the egui shell is the **parity reference**, not the shipping frontend, with the goal of removing it once full functionality has been moved to the new flutter frontend; `lumit-ui` also exposes a **headless renderer** (`lumit_ui::headless`) that the Flutter frontend drives frame by frame through `lumit-bridge` |
+| `lumit-render` | **The pixel pass** the eval graph will eventually own (K-178): media probing abstraction, decode planning, the decode worker and its decoded-frame cache, draw-list building, the GPU compositor, effect dispatch, frame naming and the cache tiers, export, and the headless renderer both frontends drive frame by frame. An engine crate — it names no frontend. |
+| `lumit-ui` | The original egui shell only (tiling dock, timeline/graph-editor/viewer widgets, theming per [15-DESIGN.md](15-DESIGN.md)) plus the egui side of showing a finished frame. Since K-174 it is the **parity reference**, not the shipping frontend, with the goal of removing it once full functionality has moved to the Flutter frontend. Its pixel pass moved to `lumit-render` in K-178. |
 | `lumit-keymap` | Remappable keyboard-shortcut model (pure data + matching logic; the Settings editor over it is not built yet). |
-| `lumit-bridge` | The Flutter/Rust seam (K-174/K-175): a cdylib exporting the C ABI the Flutter frontend calls, plus the JSON snapshot. Depends on `lumit-ui` for its headless renderer - a frontend leaf, not an engine crate. Spec: [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md). | 
+| `lumit-bridge` | The Flutter/Rust seam (K-174): a cdylib exporting the C ABI the Flutter frontend calls, plus the JSON snapshot. A frontend leaf, not an engine crate; since K-178 it depends on `lumit-render` and on **no frontend**. Spec: [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md). | 
 | `lumit-app` | The binary: winit event loop, wiring, session lifecycle (the egui reference app). |
 
 Reserved for later (no crate exists yet):
@@ -52,10 +53,11 @@ Reserved for later (no crate exists yet):
 - Dependencies point **downward only**: `lumit-app` → `lumit-ui` → engine crates →
   `lumit-core` (which holds the rational time types). No engine crate may depend on
   `lumit-ui` or on egui, winit, or any UI crate. This is the K-012 escape hatch: the UI
-  layer MUST be replaceable without touching the engine - which is exactly what K-174 did, 
-  swapping the egui shell for a Flutter frontend. The one sanctioned exception is `lumit-bridge`, 
-  a frontend leaf that depends on `lumit-ui` to borrow its headless renderer (K-175); no engine 
-  crate depends on the bridge, so the engine still never knows a UI exists.
+  layer MUST be replaceable without touching the engine - which is exactly what K-174 did,
+  swapping the egui shell for a Flutter frontend. Both frontends are leaves: `lumit-ui` and
+  `lumit-bridge` each depend on `lumit-render` and on no other frontend (K-178 retired the
+  temporary bridge → `lumit-ui` edge K-175 had recorded). No engine crate depends on either,
+  so the engine still never knows a UI exists.
 - `lumit-core` MUST have no dependency on wgpu, rsmpeg, cpal, or QuickJS. The document model
   (and the time types folded into it) is testable on any machine with no GPU and no codecs.
 - `lumit-eval` depends **only on `lumit-core`** (it reads compiled snapshots). Its seams are

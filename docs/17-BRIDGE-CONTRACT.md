@@ -33,17 +33,18 @@ crates/lumit-bridge (Rust)      the C ABI surface: commands in, JSON/pixels out
     |   plain Rust calls
 crates/lumit-core, -project,    the engine (unchanged by the bridge)
         -media, -eval, -gpu,
-        -audio, -cache, -ui
+        -audio, -cache, -render
 ```
 
 - `lumit-bridge` is a leaf crate. Engine crates never depend on it, and nothing
     in the engine depends on the frontend. The rule from
     [05-ARCHITECTURE.md](05-ARCHITECTURE.md) - engine crates never know the UI
     exists - is unbroken. The bridge is not an engine crate; it is the seam.
-- The one deliberate, emporary exception is the Viewer render path: the bridge
-    borrows `lumit-ui`'s headless compositor through the `lumit_ui::headless` seam
-    to composite a frame (logged as K-175). This is the bridge reaching into the UI
-    crate, not an engine crate doing so, so the dependency rule still holds.
+- The Viewer render path goes through `lumit-render`'s headless renderer
+    (`lumit_render::headless`), an **engine** crate the egui frontend drives too.
+    Until K-178 that compositor lived inside `lumit-ui` and the bridge had to depend
+    on the egui frontend to reach it - a deliberate temporary edge logged as K-175,
+    now retired. The bridge depends on no frontend at all.
 - Long-running work (decode, export, beat detection) runs on worker threads with
     channels inside the engine; the bridge exposes progress through poll functions
     the frontend calls on a cadence.
