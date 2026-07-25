@@ -2,6 +2,32 @@
 
 use super::*;
 
+/// Delete a media file a background probe thread may still hold open.
+///
+/// Windows refuses to unlink a file with an open handle, and the probe threads
+/// these tests deliberately let run are real, so a test that removes footage it
+/// just imported is racing its own probe. Retrying for a moment is the honest
+/// fix — the probe finishes in milliseconds — where an unconditional `unwrap`
+/// turns a lost race into a red CI run. Panics if it never becomes deletable,
+/// so a genuine leak still fails loudly.
+#[cfg(feature = "media")]
+fn remove_when_unlocked(path: &std::path::Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        match std::fs::remove_file(path) {
+            Ok(()) => return,
+            Err(e) if std::time::Instant::now() < deadline => {
+                if !path.exists() {
+                    return; // someone else got there first; that is the goal
+                }
+                let _ = e;
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            Err(e) => panic!("could not delete {}: {e}", path.display()),
+        }
+    }
+}
+
 fn kf(t: f64, interp: lumit_core::anim::SideInterp) -> lumit_core::anim::Keyframe {
     lumit_core::anim::Keyframe {
         time: Rational::from_f64_on_grid(t, Rational::FLICK_DEN).unwrap(),
@@ -1723,7 +1749,10 @@ fn a_reopened_project_with_missing_media_slates_at_every_frame() {
     app.save();
 
     // The file goes away, and the project is reopened exactly as the app does.
-    std::fs::remove_file(&media).unwrap();
+    // `add_footage_to_comp` spawned a real probe thread, and on Windows a file
+    // cannot be deleted while another handle is open — so retry briefly rather
+    // than failing the run on a lost race with our own probe.
+    remove_when_unlocked(&media);
     let mut app = AppState::default();
     app.open_path(&project);
 

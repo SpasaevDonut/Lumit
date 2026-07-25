@@ -1,6 +1,6 @@
 //! Comp audio playback for the Flutter frontend — gated, like beat detection,
 //! behind the `media` + `render` features (the mix needs the decoders and the
-//! audio-jobs walk lumit-ui carries).
+//! audio-jobs walk `lumit-render` carries).
 //!
 //! # In plain terms
 //!
