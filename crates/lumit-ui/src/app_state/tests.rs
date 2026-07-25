@@ -84,57 +84,6 @@ fn linked_axis_partner_maps_x_to_y_only() {
     assert_eq!(linked_axis_partner(TransformProp::Opacity), None);
 }
 
-#[test]
-fn draft_width_caps_for_instant_scrub_but_never_exceeds_specified() {
-    // Full res, dragging: capped at the draft width for a fast decode.
-    assert_eq!(decode_target_width(1920, true, false, 1.0, 1), Some(640));
-    // Draft never coarser than needed: half res (960) already below no cap,
-    // still above 640 -> draft caps to 640.
-    assert_eq!(decode_target_width(1920, true, false, 1.0, 2), Some(640));
-    // Quarter res (480) is finer than the draft cap: keep 480, don't raise.
-    assert_eq!(decode_target_width(1920, true, false, 1.0, 4), Some(480));
-    // Auto res zoomed right out (192) stays 192 under draft.
-    assert_eq!(decode_target_width(1920, true, true, 0.1, 1), Some(192));
-    // A source already smaller than the cap needs no draft decode.
-    assert_eq!(decode_target_width(320, true, false, 1.0, 1), None);
-}
-
-#[test]
-fn fill_walk_is_forward_biased_and_complete() {
-    let order = fill_walk_order(5, 0, 10);
-    assert_eq!(order[0], 5); // the playhead caches first
-    let mut sorted = order.clone();
-    sorted.sort_unstable();
-    assert_eq!(sorted, (0..10).collect::<Vec<_>>()); // every frame once
-                                                     // Of the four frames right after the playhead, at least three are ahead.
-    let ahead = order[1..5].iter().filter(|&&f| f > 5).count();
-    assert!(ahead >= 3, "expected a forward bias: {order:?}");
-    // Playhead at the work-area start: everything is ahead, no panic.
-    assert_eq!(fill_walk_order(0, 0, 4), vec![0, 1, 2, 3]);
-    // Degenerate spans return cleanly.
-    assert_eq!(fill_walk_order(0, 0, 1), vec![0]);
-    assert!(fill_walk_order(0, 0, 0).is_empty());
-}
-
-#[test]
-fn playback_lookahead_is_a_bounded_forward_window() {
-    // Strictly forward, starting just past the playhead.
-    assert_eq!(playback_lookahead(5, 100, 4), vec![6, 7, 8, 9]);
-    // Clamps to the (exclusive) work-area end.
-    assert_eq!(playback_lookahead(8, 10, 4), vec![9]);
-    // Empty at or past the end, and with a zero lookahead.
-    assert!(playback_lookahead(9, 10, 4).is_empty());
-    assert!(playback_lookahead(10, 10, 4).is_empty());
-    assert!(playback_lookahead(5, 100, 0).is_empty());
-}
-
-#[test]
-fn specified_width_is_unchanged_when_not_drafting() {
-    assert_eq!(decode_target_width(1920, false, false, 1.0, 1), None);
-    assert_eq!(decode_target_width(1920, false, false, 1.0, 2), Some(960));
-    assert_eq!(decode_target_width(1000, false, true, 0.5, 1), Some(500));
-}
-
 /// K-068: solids are assets auto-filed into a "Solids" folder that is
 /// followed by id (rename it, it still collects); comps auto-file into
 /// "Compositions"; each creation is one undo step.

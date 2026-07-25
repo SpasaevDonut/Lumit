@@ -432,19 +432,46 @@ mod tests {
         };
         assert_eq!(zoomed.target_width(1920), None);
 
-        // Draft caps a 4K source hard...
+        // A source already finer than every setting decodes natively.
+        let half_of_small = Quality {
+            auto_res: true,
+            display_scale: 0.5,
+            ..Quality::default()
+        };
+        assert_eq!(half_of_small.target_width(1000), Some(500));
+
+        // Draft caps a large source hard...
         let draft = Quality {
             draft: true,
             ..Quality::default()
         };
         assert_eq!(draft.target_width(3840), Some(DRAFT_MAX_WIDTH));
+        assert_eq!(draft.target_width(1920), Some(DRAFT_MAX_WIDTH));
+        // ...still caps when the specified width (960) is above the cap...
+        let draft_half = Quality {
+            draft: true,
+            divisor: 2,
+            ..Quality::default()
+        };
+        assert_eq!(draft_half.target_width(1920), Some(DRAFT_MAX_WIDTH));
         // ...but never RAISES an already-coarser specified width.
         let draft_quarter = Quality {
             draft: true,
             divisor: 4,
             ..Quality::default()
         };
+        assert_eq!(draft_quarter.target_width(1920), Some(480));
         assert_eq!(draft_quarter.target_width(1280), Some(320));
+        // Auto zoomed right out stays where Auto put it, under draft too.
+        let draft_auto = Quality {
+            draft: true,
+            auto_res: true,
+            display_scale: 0.1,
+            ..Quality::default()
+        };
+        assert_eq!(draft_auto.target_width(1920), Some(192));
+        // A source already smaller than the cap needs no draft decode at all.
+        assert_eq!(draft.target_width(320), None);
     }
 
     /// The cache-key tag separates the resolution tiers, and Auto's tag moves

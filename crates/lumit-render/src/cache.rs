@@ -371,8 +371,12 @@ mod tests {
         assert_eq!(order[0], 5, "the playhead's own frame comes first");
         let ahead = order.iter().take(5).filter(|f| **f > 5).count();
         assert!(ahead >= 3, "the walk leans forward, got {order:?}");
+        // Playhead at the work-area start: everything is ahead, no panic.
+        assert_eq!(fill_walk_order(0, 0, 4), vec![0, 1, 2, 3]);
+        assert_eq!(fill_walk_order(0, 0, 1), vec![0]);
         // Degenerate spans are empty rather than a panic.
         assert!(fill_walk_order(5, 0, 0).is_empty());
+        assert!(fill_walk_order(0, 0, 0).is_empty());
         assert!(fill_walk_order(99, 0, 12).is_empty());
     }
 
@@ -383,6 +387,11 @@ mod tests {
         assert_eq!(playback_lookahead(3, 20, 4), vec![4, 5, 6, 7]);
         assert_eq!(playback_lookahead(18, 20, 4), vec![19]);
         assert!(playback_lookahead(19, 20, 4).is_empty());
+        assert!(playback_lookahead(20, 20, 4).is_empty());
+        assert!(
+            playback_lookahead(5, 100, 0).is_empty(),
+            "a zero window warms nothing"
+        );
     }
 
     /// The work area defaults to the whole comp and is otherwise read in

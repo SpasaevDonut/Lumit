@@ -25,11 +25,6 @@ mod project;
 #[cfg(feature = "media")]
 pub mod media;
 
-/// While the user is actively scrubbing or dragging, footage decodes at most
-/// this wide so a frame comes back fast (the specified resolution reloads the
-/// moment they stop). Chosen to keep even 4K sources instant to draft.
-const DRAFT_MAX_WIDTH: u32 = 640;
-
 /// Safety net for realtime playback's render-pull: if the one live render is
 /// lost (an unrelated request superseded it), the tick retries after this long
 /// rather than waiting on a result that will never arrive. Generous — a heavy
@@ -37,77 +32,6 @@ const DRAFT_MAX_WIDTH: u32 = 640;
 /// it exists only so a lost render cannot wedge playback permanently.
 #[cfg(feature = "media")]
 pub const REALTIME_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-
-/// Infallible constructor for small literal rationals.
-/// One decode-width policy for requests AND cache keys — if these ever
-/// disagreed, a cached frame could present at the wrong resolution. `draft`
-/// caps the width for instant feedback and never exceeds the specified tier.
-fn decode_target_width(
-    natural_w: u32,
-    draft: bool,
-    auto_res: bool,
-    display_scale: f32,
-    divisor: u32,
-) -> Option<u32> {
-    let specified = if auto_res {
-        let scale = display_scale.clamp(0.05, 1.0);
-        let w = (natural_w as f32 * scale).round() as u32;
-        (w < natural_w).then_some(w.max(16))
-    } else {
-        (divisor > 1).then(|| natural_w / divisor)
-    };
-    if draft {
-        // Never coarser than needed: cap the specified width, never raise it.
-        let w = specified.unwrap_or(natural_w).min(DRAFT_MAX_WIDTH);
-        return (w < natural_w).then_some(w.max(16));
-    }
-    specified
-}
-
-/// Frame visit order for the idle background cache fill: the playhead first,
-/// then a forward-biased walk — roughly three frames ahead of the playhead for
-/// every one behind — because playback and scrubbing usually head forwards, so
-/// the frames most likely to be viewed next should cache first (Mack). Every
-/// work-area frame appears exactly once.
-fn fill_walk_order(playhead: usize, start: usize, end: usize) -> Vec<usize> {
-    let mut order = Vec::new();
-    if end <= start || playhead < start || playhead >= end {
-        return order;
-    }
-    let span = end - start;
-    order.push(playhead);
-    let (mut ahead, mut behind) = (1usize, 1usize);
-    let mut k = 0usize;
-    while order.len() < span && k < span * 2 + 8 {
-        // One behind for every three ahead; when a side is exhausted the other
-        // takes over so every frame is still visited.
-        let want_behind = k % 4 == 3;
-        let forward = playhead + ahead;
-        if !want_behind && forward < end {
-            order.push(forward);
-            ahead += 1;
-        } else if let Some(f) = playhead.checked_sub(behind).filter(|f| *f >= start) {
-            order.push(f);
-            behind += 1;
-        } else if forward < end {
-            order.push(forward);
-            ahead += 1;
-        }
-        k += 1;
-    }
-    order
-}
-
-/// Frames to warm ahead of the playhead during playback: the bounded forward
-/// window `[playhead + 1, playhead + lookahead]`, clamped to the work-area end
-/// (`end` exclusive). Playback presentation chases the audio clock, so warming
-/// a little ahead of it keeps the work-area loop smooth once frames are cached
-/// (docs/impl/playback-scheduler.md §5). Empty once the playhead reaches the end.
-fn playback_lookahead(playhead: usize, end: usize, lookahead: usize) -> Vec<usize> {
-    let first = playhead.saturating_add(1);
-    let stop = first.saturating_add(lookahead).min(end);
-    (first..stop).collect()
-}
 
 /// Pan-behind: the position that keeps a layer visually fixed when its origin
 /// (anchor) moves from `anchor` to `new_anchor`. Position places the anchor in
@@ -445,32 +369,11 @@ pub enum TimelineGrid {
 #[cfg(feature = "media")]
 type CacheBarKey = (usize, u64, u32, Uuid, usize);
 
-/// A frame's cache-bar tier (docs/06 §5.6): green plays now, blue promotes.
+/// A frame's cache-bar tier and one banked frame both live in `lumit-render`
+/// now (K-178), so this cache bar and the Flutter frontend's cannot disagree
+/// about what green and blue mean.
 #[cfg(feature = "media")]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum CacheTier {
-    None,
-    /// In RAM at current quality — plays in real time now (green).
-    Ram,
-    /// On disk only — promotable, not yet playable (blue).
-    Disk,
-}
-
-/// One display-ready comp frame in Nebula's RAM tier (sRGB bytes as shown and
-/// as exported — the same pixels, K-031).
-#[cfg(feature = "media")]
-pub struct CachedCompFrame {
-    pub width: u32,
-    pub height: u32,
-    pub rgba: Vec<u8>,
-}
-
-#[cfg(feature = "media")]
-impl lumit_cache::ByteSized for CachedCompFrame {
-    fn byte_size(&self) -> usize {
-        self.rgba.len() + 16
-    }
-}
+pub use lumit_render::cache::{CacheTier, CachedCompFrame};
 
 /// A whole-file decoded audio buffer in the byte-budgeted audio cache — the
 /// shared copy playback mixes from and the footage preview plays. Wrapped so
@@ -540,53 +443,6 @@ pub(crate) enum CompAudioMsg {
     /// (The Peaks variant that fed the comp-wide waveform strip left with
     /// it, K-172 — waveforms are per layer now.)
     Baked(Uuid, u64, lumit_media::AudioBuffer),
-}
-
-/// See [`AppState::stamper`].
-#[cfg(feature = "media")]
-pub struct PreviewStamper<'a> {
-    doc: &'a Document,
-    media: &'a media::MediaRegistry,
-    auto_res: bool,
-    display_scale: f32,
-    divisor: u32,
-}
-
-#[cfg(feature = "media")]
-impl lumit_eval::SourceStamper for PreviewStamper<'_> {
-    fn stamp(&self, item: Uuid, lt: f64) -> Option<(String, u64)> {
-        let Some(ProjectItem::Footage(f)) = self.doc.item(item) else {
-            return None;
-        };
-        let status = self.media.map.get(&item)?;
-        // Missing media renders the slate (docs/07 §3.3), which is perfectly
-        // cacheable: it is a pure function of the size. Key it on the state
-        // and the path so relinking retires those frames — returning None
-        // here would instead make every frame of the comp unkeyable, so a
-        // project with one lost file would cache nothing at all.
-        if matches!(status, media::MediaStatus::Missing) {
-            return Some((format!("missing#{}", f.media.relative_path), 0));
-        }
-        let media::MediaStatus::Ready { probe, frames, .. } = status else {
-            return None;
-        };
-        let video = probe.video.as_ref()?;
-        let source_frame =
-            ((lt * video.fps()).round().max(0.0) as usize).min(frames.saturating_sub(1));
-        // Key at the specified resolution: draft frames are never cached, so
-        // the content-hash key always represents the settled resolution.
-        let target = decode_target_width(
-            video.width,
-            false,
-            self.auto_res,
-            self.display_scale,
-            self.divisor,
-        );
-        Some((
-            format!("{}#w{}", f.media.absolute_path, target.unwrap_or(0)),
-            source_frame as u64,
-        ))
-    }
 }
 
 /// A recovery offer: the saved document plus the journal ops beyond it.
