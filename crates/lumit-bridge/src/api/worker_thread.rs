@@ -1,13 +1,12 @@
 use std::{eprintln, ops::ControlFlow, println, sync::mpsc::Receiver};
 
 use flutter_rust_bridge::frb;
-use lumit_ui::{app_state::preview::PreviewEngine, headless::HeadlessRenderer};
+use lumit_core::model::EffectInstance;
+use lumit_render::{HeadlessRenderer, PreviewEngine, Quality};
 use uuid::Uuid;
 
 use crate::api::{
-    composition::CompositionReference,
-    project::ProjectReference,
-    state::{BridgeSharedFrameInfoLinux, WorkerResponse, WorkerResponseStream},
+    composition::CompositionReference, effect, layer::LayerReference, project::ProjectReference, state::{BridgeSharedFrameInfoLinux, WorkerResponse, WorkerResponseStream},
 };
 
 #[frb(ignore)]
@@ -20,12 +19,21 @@ pub struct WorkerState {
 #[frb(ignore)]
 pub enum WorkerRequest {
     RenderComp(RenderCompRequest),
+    RenderCompWithPreview(RenderCompRequestWithPreview)
 }
 
 #[frb(ignore)]
 pub struct RenderCompRequest {
     pub comp: CompositionReference,
     pub frame: u64,
+}
+
+#[frb(ignore)]
+pub struct RenderCompRequestWithPreview {
+    pub comp: CompositionReference,
+    pub frame: u64,
+    pub layer: LayerReference,
+    pub effects: Vec<EffectInstance>,
 }
 
 #[frb(ignore)]
@@ -81,6 +89,11 @@ fn handle_incoming_requests(
                 println!("Rendering comp in worker thread!");
                 render_comp(req, state, stream);
                 ControlFlow::Continue(())
+            },
+            WorkerRequest::RenderCompWithPreview(req) => {
+                println!("Rendering comp in worker thread!");
+                render_comp_with_preview(req, state, stream);
+                ControlFlow::Continue(())
             }
         },
         Err(err) => match err {
@@ -102,7 +115,44 @@ fn render_comp(req: RenderCompRequest, state: &mut WorkerState, stream: &mut Wor
 
     let fd = state
         .renderer
-        .render_to_shared_dmabuf(&document, req.comp.id, req.frame)
+        .render_to_shared_dmabuf(&document, req.comp.id, req.frame, Quality::default())
+        .unwrap();
+
+
+    println!("Finished rendering!");
+
+    stream.add(WorkerResponse::RenderedDMABuf(BridgeSharedFrameInfoLinux {
+        fd: fd.fd,
+        width: fd.width,
+        height: fd.height,
+        stride: fd.stride,
+        offset: fd.offset,
+        drm_fourcc: fd.drm_fourcc,
+        modifier: fd.modifier,
+    }));
+
+    ()
+}
+
+fn render_comp_with_preview(req: RenderCompRequestWithPreview, state: &mut WorkerState, stream: &mut WorkerResponseStream) {
+    let mut document = {
+        let document = state.project.state();
+        let document = document.read().unwrap();
+        let document = document.store.snapshot();
+        (*document).clone()
+    };
+
+    let comp = document.comp_mut(req.layer.comp_id).unwrap();
+
+    let index = comp.layers.iter().position(|i| i.id == req.layer.layer_id).unwrap();
+
+    comp.layers[index].effects = req.effects;
+
+    println!("Rendering frame with modified effects!");
+
+    let fd = state
+        .renderer
+        .render_to_shared_dmabuf(&document, req.comp.id, req.frame, Quality::default())
         .unwrap();
 
 

@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'effect.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
@@ -25,6 +26,11 @@ class LayerReference {
 
   bool equals({required LayerReference layer}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceEquals(that: this, layer: layer);
+
+  List<BridgeEffectInstance> getEffects() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetEffects(
+        that: this,
+      );
 
   String getName() => BridgeLib.instance.api.crateApiLayerLayerReferenceGetName(
         that: this,

@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'effect.dart';
 import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
@@ -27,9 +28,17 @@ class CompositionReference {
         that: this,
       );
 
-  Future<void> renderFrame({required BigInt frame}) =>
+  void renderFrame({required BigInt frame}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
           that: this, frame: frame);
+
+  void renderFrameWithPreview(
+          {required BigInt frame,
+          required LayerReference layer,
+          required List<BridgeEffectInstance> effects}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithPreview(
+              that: this, frame: frame, layer: layer, effects: effects);
 
   @override
   int get hashCode => internalproject.hashCode ^ internalid.hashCode;

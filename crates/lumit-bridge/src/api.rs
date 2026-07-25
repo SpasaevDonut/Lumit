@@ -14,6 +14,8 @@ pub mod layer;
 pub mod folder;
 pub mod solid;
 pub mod footage;
+pub mod effect;
+
 mod worker_thread;
 
 #[derive(Debug)]

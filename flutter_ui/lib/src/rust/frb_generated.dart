@@ -5,6 +5,7 @@
 
 import 'api.dart';
 import 'api/composition.dart';
+import 'api/effect.dart';
 import 'api/folder.dart';
 import 'api/footage.dart';
 import 'api/layer.dart';
@@ -17,6 +18,7 @@ import 'dart:convert';
 import 'frb_generated.dart';
 import 'frb_generated.io.dart'
     if (dart.library.js_interop) 'frb_generated.web.dart';
+import 'lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
@@ -78,7 +80,7 @@ class BridgeLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => 928568818;
+  int get rustContentHash => -2021470981;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -90,6 +92,26 @@ class BridgeLib
 }
 
 abstract class BridgeLibApi extends BaseApi {
+  List<String> crateApiEffectBridgeEffectInstanceGetParameters(
+      {required BridgeEffectInstance that});
+
+  double crateApiEffectBridgeEffectInstanceGetValue(
+      {required BridgeEffectInstance that, required String id});
+
+  String crateApiEffectBridgeEffectInstanceName(
+      {required BridgeEffectInstance that});
+
+  Future<BridgeEffectInstance> crateApiEffectBridgeEffectInstanceNew(
+      {required EffectInstance effect});
+
+  String crateApiEffectBridgeEffectInstanceSerialize(
+      {required BridgeEffectInstance that});
+
+  void crateApiEffectBridgeEffectInstanceSetValue(
+      {required BridgeEffectInstance that,
+      required String id,
+      required double value});
+
   ProjectReference? crateApiStateLumitBridgeStateGetCurrentProject();
 
   ProjectReference crateApiStateLumitBridgeStateNewProject(
@@ -101,8 +123,14 @@ abstract class BridgeLibApi extends BaseApi {
   List<LayerReference> crateApiCompositionCompositionReferenceGetLayers(
       {required CompositionReference that});
 
-  Future<void> crateApiCompositionCompositionReferenceRenderFrame(
+  void crateApiCompositionCompositionReferenceRenderFrame(
       {required CompositionReference that, required BigInt frame});
+
+  void crateApiCompositionCompositionReferenceRenderFrameWithPreview(
+      {required CompositionReference that,
+      required BigInt frame,
+      required LayerReference layer,
+      required List<BridgeEffectInstance> effects});
 
   Future<LumitMediaStatus> crateApiFootageFootageReferenceGetStatus(
       {required FootageReference that});
@@ -114,6 +142,9 @@ abstract class BridgeLibApi extends BaseApi {
 
   bool crateApiLayerLayerReferenceEquals(
       {required LayerReference that, required LayerReference layer});
+
+  List<BridgeEffectInstance> crateApiLayerLayerReferenceGetEffects(
+      {required LayerReference that});
 
   String crateApiLayerLayerReferenceGetName({required LayerReference that});
 
@@ -131,12 +162,30 @@ abstract class BridgeLibApi extends BaseApi {
   void crateApiProjectProjectReferenceUndo({required ProjectReference that});
 
   RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_BridgeEffectInstance;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_BridgeEffectInstance;
+
+  CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_BridgeEffectInstancePtr;
+
+  RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_BridgeError;
 
   RustArcDecrementStrongCountFnType
       get rust_arc_decrement_strong_count_BridgeError;
 
   CrossPlatformFinalizerArg get rust_arc_decrement_strong_count_BridgeErrorPtr;
+
+  RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_EffectInstance;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_EffectInstance;
+
+  CrossPlatformFinalizerArg
+      get rust_arc_decrement_strong_count_EffectInstancePtr;
 
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_LumitBridgeState;
@@ -158,11 +207,174 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   });
 
   @override
+  List<String> crateApiEffectBridgeEffectInstanceGetParameters(
+      {required BridgeEffectInstance that}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_list_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiEffectBridgeEffectInstanceGetParametersConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiEffectBridgeEffectInstanceGetParametersConstMeta =>
+      const TaskConstMeta(
+        debugName: "BridgeEffectInstance_get_parameters",
+        argNames: ["that"],
+      );
+
+  @override
+  double crateApiEffectBridgeEffectInstanceGetValue(
+      {required BridgeEffectInstance that, required String id}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+            that, serializer);
+        sse_encode_String(id, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_f_64,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiEffectBridgeEffectInstanceGetValueConstMeta,
+      argValues: [that, id],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiEffectBridgeEffectInstanceGetValueConstMeta =>
+      const TaskConstMeta(
+        debugName: "BridgeEffectInstance_get_value",
+        argNames: ["that", "id"],
+      );
+
+  @override
+  String crateApiEffectBridgeEffectInstanceName(
+      {required BridgeEffectInstance that}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiEffectBridgeEffectInstanceNameConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiEffectBridgeEffectInstanceNameConstMeta =>
+      const TaskConstMeta(
+        debugName: "BridgeEffectInstance_name",
+        argNames: ["that"],
+      );
+
+  @override
+  Future<BridgeEffectInstance> crateApiEffectBridgeEffectInstanceNew(
+      {required EffectInstance effect}) {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
+            effect, serializer);
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 4, port: port_);
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiEffectBridgeEffectInstanceNewConstMeta,
+      argValues: [effect],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiEffectBridgeEffectInstanceNewConstMeta =>
+      const TaskConstMeta(
+        debugName: "BridgeEffectInstance_new",
+        argNames: ["effect"],
+      );
+
+  @override
+  String crateApiEffectBridgeEffectInstanceSerialize(
+      {required BridgeEffectInstance that}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+            that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 5)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_String,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiEffectBridgeEffectInstanceSerializeConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiEffectBridgeEffectInstanceSerializeConstMeta =>
+      const TaskConstMeta(
+        debugName: "BridgeEffectInstance_serialize",
+        argNames: ["that"],
+      );
+
+  @override
+  void crateApiEffectBridgeEffectInstanceSetValue(
+      {required BridgeEffectInstance that,
+      required String id,
+      required double value}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+            that, serializer);
+        sse_encode_String(id, serializer);
+        sse_encode_f_64(value, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 6)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData: null,
+      ),
+      constMeta: kCrateApiEffectBridgeEffectInstanceSetValueConstMeta,
+      argValues: [that, id, value],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiEffectBridgeEffectInstanceSetValueConstMeta =>
+      const TaskConstMeta(
+        debugName: "BridgeEffectInstance_set_value",
+        argNames: ["that", "id", "value"],
+      );
+
+  @override
   ProjectReference? crateApiStateLumitBridgeStateGetCurrentProject() {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 1)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_project_reference,
@@ -187,7 +399,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_opt_StreamSink_scoped_change_Sse(onChangeStream, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_project_reference,
@@ -213,7 +425,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_String(path, serializer);
         sse_encode_opt_StreamSink_scoped_change_Sse(onChangeStream, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 3)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_project_reference,
@@ -238,7 +450,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_composition_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 4)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_layer_reference,
@@ -259,15 +471,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
           );
 
   @override
-  Future<void> crateApiCompositionCompositionReferenceRenderFrame(
+  void crateApiCompositionCompositionReferenceRenderFrame(
       {required CompositionReference that, required BigInt frame}) {
-    return handler.executeNormal(NormalTask(
-      callFfi: (port_) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_composition_reference(that, serializer);
         sse_encode_u_64(frame, serializer);
-        pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 5, port: port_);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -288,6 +499,41 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
           );
 
   @override
+  void crateApiCompositionCompositionReferenceRenderFrameWithPreview(
+      {required CompositionReference that,
+      required BigInt frame,
+      required LayerReference layer,
+      required List<BridgeEffectInstance> effects}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_composition_reference(that, serializer);
+        sse_encode_u_64(frame, serializer);
+        sse_encode_box_autoadd_layer_reference(layer, serializer);
+        sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+            effects, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_unit,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta:
+          kCrateApiCompositionCompositionReferenceRenderFrameWithPreviewConstMeta,
+      argValues: [that, frame, layer, effects],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiCompositionCompositionReferenceRenderFrameWithPreviewConstMeta =>
+          const TaskConstMeta(
+            debugName: "composition_reference_render_frame_with_preview",
+            argNames: ["that", "frame", "layer", "effects"],
+          );
+
+  @override
   Future<LumitMediaStatus> crateApiFootageFootageReferenceGetStatus(
       {required FootageReference that}) {
     return handler.executeNormal(NormalTask(
@@ -295,7 +541,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_footage_reference(that, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
-            funcId: 6, port: port_);
+            funcId: 13, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_lumit_media_status,
@@ -322,7 +568,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_item_reference(that, serializer);
         sse_encode_box_autoadd_item_reference(item, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 7)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -346,7 +592,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_item_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 8)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -373,7 +619,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_layer_reference(that, serializer);
         sse_encode_box_autoadd_layer_reference(layer, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 9)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 16)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_bool,
@@ -392,12 +638,39 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       );
 
   @override
+  List<BridgeEffectInstance> crateApiLayerLayerReferenceGetEffects(
+      {required LayerReference that}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_layer_reference(that, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 17)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData:
+            sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta: kCrateApiLayerLayerReferenceGetEffectsConstMeta,
+      argValues: [that],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiLayerLayerReferenceGetEffectsConstMeta =>
+      const TaskConstMeta(
+        debugName: "layer_reference_get_effects",
+        argNames: ["that"],
+      );
+
+  @override
   String crateApiLayerLayerReferenceGetName({required LayerReference that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_layer_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 10)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 18)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_String,
@@ -424,7 +697,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_layer_reference(that, serializer);
         sse_encode_String(name, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 11)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 19)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -450,7 +723,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_project_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 12)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 20)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_item_reference,
@@ -474,7 +747,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_project_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 13)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 21)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -502,7 +775,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_project_reference(that, serializer);
         sse_encode_StreamSink_worker_response_Sse(onReponse, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 14)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 22)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -527,7 +800,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_project_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 15)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 23)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -547,12 +820,28 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       );
 
   RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_BridgeEffectInstance => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_BridgeEffectInstance => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance;
+
+  RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_BridgeError => wire
           .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError;
 
   RustArcDecrementStrongCountFnType
       get rust_arc_decrement_strong_count_BridgeError => wire
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError;
+
+  RustArcIncrementStrongCountFnType
+      get rust_arc_increment_strong_count_EffectInstance => wire
+          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance;
+
+  RustArcDecrementStrongCountFnType
+      get rust_arc_decrement_strong_count_EffectInstance => wire
+          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance;
 
   RustArcIncrementStrongCountFnType
       get rust_arc_increment_strong_count_LumitBridgeState => wire
@@ -569,11 +858,27 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeEffectInstance
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return BridgeEffectInstanceImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   BridgeError
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return BridgeErrorImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  EffectInstance
+      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return EffectInstanceImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -585,11 +890,43 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeEffectInstance
+      dco_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return BridgeEffectInstanceImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  BridgeEffectInstance
+      dco_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return BridgeEffectInstanceImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  BridgeEffectInstance
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return BridgeEffectInstanceImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
   BridgeError
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return BridgeErrorImpl.frbInternalDcoDecode(raw as List<dynamic>);
+  }
+
+  @protected
+  EffectInstance
+      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return EffectInstanceImpl.frbInternalDcoDecode(raw as List<dynamic>);
   }
 
   @protected
@@ -713,6 +1050,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  double dco_decode_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
   FolderReference dco_decode_folder_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -778,6 +1121,23 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       internalcompId: dco_decode_Uuid(arr[1]),
       internallayerId: dco_decode_Uuid(arr[2]),
     );
+  }
+
+  @protected
+  List<BridgeEffectInstance>
+      dco_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>)
+        .map(
+            dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance)
+        .toList();
+  }
+
+  @protected
+  List<String> dco_decode_list_String(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return (raw as List<dynamic>).map(dco_decode_String).toList();
   }
 
   @protected
@@ -916,11 +1276,29 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeEffectInstance
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return BridgeEffectInstanceImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   BridgeError
       sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return BridgeErrorImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  EffectInstance
+      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return EffectInstanceImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -934,11 +1312,47 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeEffectInstance
+      sse_decode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return BridgeEffectInstanceImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  BridgeEffectInstance
+      sse_decode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return BridgeEffectInstanceImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  BridgeEffectInstance
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return BridgeEffectInstanceImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
   BridgeError
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return BridgeErrorImpl.frbInternalSseDecode(
+        sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
+  }
+
+  @protected
+  EffectInstance
+      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return EffectInstanceImpl.frbInternalSseDecode(
         sse_decode_usize(deserializer), sse_decode_i_32(deserializer));
   }
 
@@ -1074,6 +1488,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  double sse_decode_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return deserializer.buffer.getFloat64();
+  }
+
+  @protected
   FolderReference sse_decode_folder_reference(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_internalproject = sse_decode_Uuid(deserializer);
@@ -1131,6 +1551,34 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         internalprojectId: var_internalprojectId,
         internalcompId: var_internalcompId,
         internallayerId: var_internallayerId);
+  }
+
+  @protected
+  List<BridgeEffectInstance>
+      sse_decode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <BridgeEffectInstance>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(
+          sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+              deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<String> sse_decode_list_String(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <String>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
   }
 
   @protected
@@ -1299,11 +1747,31 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
 
   @protected
   void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          BridgeEffectInstance self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as BridgeEffectInstanceImpl).frbInternalSseEncode(move: true),
+        serializer);
+  }
+
+  @protected
+  void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           BridgeError self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
         (self as BridgeErrorImpl).frbInternalSseEncode(move: true), serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
+          EffectInstance self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as EffectInstanceImpl).frbInternalSseEncode(move: true),
+        serializer);
   }
 
   @protected
@@ -1318,11 +1786,51 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
 
   @protected
   void
+      sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          BridgeEffectInstance self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as BridgeEffectInstanceImpl).frbInternalSseEncode(move: false),
+        serializer);
+  }
+
+  @protected
+  void
+      sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          BridgeEffectInstance self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as BridgeEffectInstanceImpl).frbInternalSseEncode(move: false),
+        serializer);
+  }
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          BridgeEffectInstance self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as BridgeEffectInstanceImpl).frbInternalSseEncode(move: null),
+        serializer);
+  }
+
+  @protected
+  void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           BridgeError self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_usize(
         (self as BridgeErrorImpl).frbInternalSseEncode(move: null), serializer);
+  }
+
+  @protected
+  void
+      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
+          EffectInstance self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_usize(
+        (self as EffectInstanceImpl).frbInternalSseEncode(move: null),
+        serializer);
   }
 
   @protected
@@ -1457,6 +1965,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    serializer.buffer.putFloat64(self);
+  }
+
+  @protected
   void sse_encode_folder_reference(
       FolderReference self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1504,6 +2018,27 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_Uuid(self.internalprojectId, serializer);
     sse_encode_Uuid(self.internalcompId, serializer);
     sse_encode_Uuid(self.internallayerId, serializer);
+  }
+
+  @protected
+  void
+      sse_encode_list_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          List<BridgeEffectInstance> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+          item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_String(List<String> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_String(item, serializer);
+    }
   }
 
   @protected
@@ -1651,6 +2186,50 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
 }
 
 @sealed
+class BridgeEffectInstanceImpl extends RustOpaque
+    implements BridgeEffectInstance {
+  // Not to be used by end users
+  BridgeEffectInstanceImpl.frbInternalDcoDecode(List<dynamic> wire)
+      : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  BridgeEffectInstanceImpl.frbInternalSseDecode(
+      BigInt ptr, int externalSizeOnNative)
+      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount: BridgeLib
+        .instance.api.rust_arc_increment_strong_count_BridgeEffectInstance,
+    rustArcDecrementStrongCount: BridgeLib
+        .instance.api.rust_arc_decrement_strong_count_BridgeEffectInstance,
+    rustArcDecrementStrongCountPtr: BridgeLib
+        .instance.api.rust_arc_decrement_strong_count_BridgeEffectInstancePtr,
+  );
+
+  List<String> getParameters() =>
+      BridgeLib.instance.api.crateApiEffectBridgeEffectInstanceGetParameters(
+        that: this,
+      );
+
+  double getValue({required String id}) => BridgeLib.instance.api
+      .crateApiEffectBridgeEffectInstanceGetValue(that: this, id: id);
+
+  String name() =>
+      BridgeLib.instance.api.crateApiEffectBridgeEffectInstanceName(
+        that: this,
+      );
+
+  String serialize() =>
+      BridgeLib.instance.api.crateApiEffectBridgeEffectInstanceSerialize(
+        that: this,
+      );
+
+  void setValue({required String id, required double value}) =>
+      BridgeLib.instance.api.crateApiEffectBridgeEffectInstanceSetValue(
+          that: this, id: id, value: value);
+}
+
+@sealed
 class BridgeErrorImpl extends RustOpaque implements BridgeError {
   // Not to be used by end users
   BridgeErrorImpl.frbInternalDcoDecode(List<dynamic> wire)
@@ -1667,6 +2246,26 @@ class BridgeErrorImpl extends RustOpaque implements BridgeError {
         BridgeLib.instance.api.rust_arc_decrement_strong_count_BridgeError,
     rustArcDecrementStrongCountPtr:
         BridgeLib.instance.api.rust_arc_decrement_strong_count_BridgeErrorPtr,
+  );
+}
+
+@sealed
+class EffectInstanceImpl extends RustOpaque implements EffectInstance {
+  // Not to be used by end users
+  EffectInstanceImpl.frbInternalDcoDecode(List<dynamic> wire)
+      : super.frbInternalDcoDecode(wire, _kStaticData);
+
+  // Not to be used by end users
+  EffectInstanceImpl.frbInternalSseDecode(BigInt ptr, int externalSizeOnNative)
+      : super.frbInternalSseDecode(ptr, externalSizeOnNative, _kStaticData);
+
+  static final _kStaticData = RustArcStaticData(
+    rustArcIncrementStrongCount:
+        BridgeLib.instance.api.rust_arc_increment_strong_count_EffectInstance,
+    rustArcDecrementStrongCount:
+        BridgeLib.instance.api.rust_arc_decrement_strong_count_EffectInstance,
+    rustArcDecrementStrongCountPtr: BridgeLib
+        .instance.api.rust_arc_decrement_strong_count_EffectInstancePtr,
   );
 }
 

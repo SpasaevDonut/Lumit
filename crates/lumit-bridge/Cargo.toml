@@ -63,6 +63,7 @@ lumit-audio = { path = "../lumit-audio", optional = true }
 # builder and the compositor the Viewer and export both drive. An engine crate,
 # so the bridge depends on no frontend.
 lumit-render = { path = "../lumit-render", optional = true }
+lumit-ui = { path = "../lumit-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v7", "serde"] }

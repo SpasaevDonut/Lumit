@@ -9,7 +9,6 @@ use lumit_core::{
     Document, DocumentStore,
 };
 use lumit_project::JournalFile;
-use lumit_ui::headless::SharedFrameInfoLinux;
 use serde_json::json;
 use uuid::Uuid;
 

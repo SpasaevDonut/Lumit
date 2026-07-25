@@ -5,9 +5,13 @@ use flutter_rust_bridge::frb;
 use uuid::Uuid;
 
 use crate::api::{
+    effect::BridgeEffectInstance,
     layer::LayerReference,
     state::{LumitBridgeState, PROJECTS},
-    worker_thread::{RenderCompRequest, WorkerRequest::RenderComp},
+    worker_thread::{
+        RenderCompRequest, RenderCompRequestWithPreview,
+        WorkerRequest::{RenderComp, RenderCompWithPreview},
+    },
     BridgeError,
 };
 
@@ -63,6 +67,7 @@ impl CompositionReference {
         }
     }
 
+    #[frb(sync)]
     pub fn render_frame(&self, frame: u64) -> Result<(), BridgeError> {
         let p = self.project()?;
 
@@ -73,6 +78,38 @@ impl CompositionReference {
                 let result = sender.send(RenderComp(RenderCompRequest {
                     comp: self.clone(),
                     frame,
+                }));
+
+                return match result {
+                    Ok(_) => Ok(()),
+                    Err(err) => {
+                        println!("Error while requesting render: {:?}", err);
+                        Err(BridgeError::InvalidWorkerState)
+                    }
+                };
+            }
+            None => Err(BridgeError::InvalidWorkerState),
+        }
+    }
+
+    #[frb(sync)]
+    pub fn render_frame_with_preview(
+        &self,
+        frame: u64,
+        layer: LayerReference,
+        effects: Vec<BridgeEffectInstance>,
+    ) -> Result<(), BridgeError> {
+        let p = self.project()?;
+
+        let p = p.read().map_err(|_| BridgeError::ReadFailed)?;
+
+        match &p.sender {
+            Some(sender) => {
+                let result = sender.send(RenderCompWithPreview(RenderCompRequestWithPreview {
+                    comp: self.clone(),
+                    frame,
+                    layer: layer,
+                    effects: effects.iter().map(|i| i.get_effects()).collect(),
                 }));
 
                 return match result {

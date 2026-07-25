@@ -15,6 +15,7 @@ import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/menu_bar.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
@@ -69,10 +70,12 @@ class LumitState extends ChangeNotifier {
   StreamSubscription? currentDocumentStream;
 
   final StreamController<ScopedChange> _onChange = StreamController.broadcast();
+
   final StreamController<WorkerResponse> _onWorkerResponse =
       StreamController.broadcast();
 
   Stream<ScopedChange> get onChange => _onChange.stream;
+  
   Stream<WorkerResponse> get onWorkerResponse => _onWorkerResponse.stream;
 
   void newProject() {
@@ -123,6 +126,8 @@ class LumitUiState extends ChangeNotifier {
 
   ViewerTextureController controller = ViewerTextureController();
   ValueNotifier<int?> viewerFrameid = ValueNotifier(null);
+  
+  ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
 
   StreamSubscription? sub;
 

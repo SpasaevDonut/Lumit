@@ -1,13 +1,20 @@
 use std::sync::Arc;
 
 use flutter_rust_bridge::frb;
-use lumit_core::model::Layer;
+use lumit_core::{
+    model::{EffectInstance, Layer},
+    Op,
+};
 
 use uuid::Uuid;
 
-use crate::api::{
-    state::{LumitBridgeState, PROJECTS},
-    BridgeError,
+use crate::{
+    api::{
+        effect::BridgeEffectInstance,
+        state::{LumitBridgeState, PROJECTS},
+        BridgeError,
+    },
+    state::Bridge,
 };
 
 #[derive(Debug)]
@@ -33,12 +40,10 @@ impl LayerReference {
         }
     }
 
-
     #[frb(ignore)]
-    pub fn project_id(&self) -> Uuid{
+    pub fn project_id(&self) -> Uuid {
         self.project_id
     }
-
 
     #[frb(ignore)]
     pub fn comp_id(&self) -> Uuid {
@@ -112,5 +117,16 @@ impl LayerReference {
             .map_err(|r| BridgeError::OpError(r))?;
 
         Ok(())
+    }
+
+    #[frb(sync)]
+    pub fn get_effects(&self) -> Result<Vec<BridgeEffectInstance>, BridgeError> {
+        let layer = self.item()?;
+
+        Ok(layer
+            .effects
+            .iter()
+            .map(|f| BridgeEffectInstance::new(f.clone()))
+            .collect())
     }
 }
