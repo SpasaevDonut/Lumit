@@ -112,6 +112,8 @@ impl CompositionReference {
                     effects: effects.iter().map(|i| i.get_effects()).collect(),
                 }));
 
+                // TODO: properly handle generations so that frames which render out of order to not
+                // show up in viewport when they are already out of date
                 return match result {
                     Ok(_) => Ok(()),
                     Err(err) => {
