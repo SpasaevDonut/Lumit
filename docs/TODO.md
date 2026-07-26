@@ -90,24 +90,29 @@ sequence clips.
     panel, delete its v0 path; the Dart suite for that panel is the gate. Roughly
     by dependency:
 
-    1. **Viewer render paths — first, because it is the only outright regression.**
-        The worker only knows Linux DMA-BUF (`render_to_shared_dmabuf`), so on
-        Windows — the platform docs/00 calls first — the frb Viewer renders
-        nothing at all. Wire `render_to_shared` (Windows, `shared-texture`) and
-        a portable read-back beside it, as `WorkerResponse` variants next to
-        `RenderedDMABuf`. The read-back must use `HeadlessRenderer::render_preview`,
-        **not** `render_rgba`: `render_rgba` is the *export* path — it decodes
-        afresh at full resolution and retains nothing, whereas `render_preview`
-        decodes at the requested quality and reuses retained pixels when the
-        decode plan is unchanged, which is the whole drag fast path. v0 uses
-        `render_preview` for both the Viewer and the drag. Then bring across what
-        v0 already had and the worker lacks: latest-wins generations
-        (`render_comp_frame_gen`, `render_cancel_stale`, K-176 — the `TODO` in
-        `render_frame_with_preview` names this), the rendered-frame LRU
-        (`framecache`), a `scale`/`Quality` other than `default()` (there is no
-        scale on the frb path at all), and `render_scope`. Also: the worker loop
-        busy-spins on `try_recv()` with an empty `process_loop`, so it burns a
-        core continuously — make it block on the channel.
+    1. **Viewer render paths.** Done for the basics: all three publish paths are
+        wired (`RenderedDMABuf` / `RenderedSharedTexture` / `RenderedPixels`), so
+        the Viewer draws on Windows again. Still outstanding here:
+        - **The read-back path costs 8.8 ms per 1080p frame in serialisation
+            alone** (37 ms at 4K), because flutter_rust_bridge's SSE codec
+            encodes a `Vec<u8>` *one byte at a time* — the generated Rust
+            `SseEncode for Vec<u8>` is a per-byte loop, while the Dart side
+            already decodes in bulk via `sse_decode_list_prim_u_8_strict`.
+            Measured; that is the whole of budget B1 for 1080p before any
+            rendering happens. So a Windows build should prefer
+            `--features shared-texture` (zero-copy, no pixels cross at all), and
+            the read-back is a correctness fallback rather than the fast path.
+            Fix properly by getting frb to emit the bulk codec on the Rust side
+            too — worth checking whether a bare `Vec<u8>` return rather than a
+            struct field is what triggers it — or by moving that call to the DCO
+            codec, whose `IntoDart` for `Vec<u8>` is already zero-copy.
+        - Bring across what v0 has and the worker lacks: the rendered-frame LRU
+            (`framecache`), and a `scale`/`Quality` other than `default()` —
+            there is no scale on the frb path at all, so no adaptive resolution
+            and no `quality_for`. Then `render_scope`.
+        - The worker loop busy-spins on `try_recv()` with an empty
+            `process_loop`, so it burns a core continuously — make it block on
+            the channel.
     2. **Project panel** — `save_project`, `import_footage`, `new_composition`,
         `delete_item`, `rename_item`, `move_to_root`, `relink`, `thumbnail`,
         plus children/parent on `ItemReference` for the folder tree. Note

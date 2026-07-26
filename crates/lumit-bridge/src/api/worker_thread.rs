@@ -2,18 +2,28 @@ use std::{eprintln, ops::ControlFlow, println, sync::mpsc::Receiver};
 
 use flutter_rust_bridge::frb;
 use lumit_core::model::EffectInstance;
-use lumit_render::{HeadlessRenderer, PreviewEngine};
+// Every `publish_frame` variant needs Quality, so this is unconditional.
+use lumit_render::{HeadlessRenderer, PreviewEngine, Quality};
 use uuid::Uuid;
 
-#[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
-use lumit_render::Quality;
-
+// Each frame type is only constructed by its own platform's `publish_frame`, so
+// importing all three unconditionally would warn on two of them in every build.
+#[cfg(not(any(
+    all(target_os = "linux", feature = "shared-texture-linux"),
+    all(windows, feature = "shared-texture")
+)))]
+use crate::api::state::BridgeRenderedFrame;
+#[cfg(all(windows, feature = "shared-texture"))]
+use crate::api::state::BridgeSharedFrameInfo;
 #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
 use crate::api::state::BridgeSharedFrameInfoLinux;
 
 use crate::api::{
-    composition::CompositionReference, layer::LayerReference, project::ProjectReference,
-    state::WorkerResponseStream, BridgeError,
+    composition::CompositionReference,
+    layer::LayerReference,
+    project::ProjectReference,
+    state::{WorkerResponse, WorkerResponseStream},
+    BridgeError,
 };
 
 #[frb(ignore)]
@@ -23,10 +33,8 @@ pub struct WorkerState {
     /// wired yet — see docs/TODO.md, "Bridge".
     #[allow(dead_code)]
     pub preview_engine: PreviewEngine,
-    /// Only the Linux DMA-BUF `publish_frame` reads this so far, so on every
-    /// other target it is held but unused until the Windows shared-texture and
-    /// read-back paths are wired.
-    #[allow(dead_code)]
+    /// The session's renderer, owned outright by this thread — no lock, because
+    /// nothing else touches it. Every `publish_frame` variant reads it.
     pub renderer: HeadlessRenderer,
     pub project: ProjectReference,
 }
@@ -194,14 +202,21 @@ fn render_comp_with_preview(
 
 /// Render one frame and publish it to Dart.
 ///
-/// Only the Linux DMA-BUF path is wired through this worker so far (K-177) —
-/// the zero-copy Viewer the Flutter shell currently draws. The Windows
-/// shared-texture path (`HeadlessRenderer::render_to_shared`) and the portable
-/// CPU read-back path (`render_preview`) still have to be brought across from the
-/// old bridge, so on those builds there is nothing to publish yet. That is why
-/// this is split by `cfg` rather than calling the DMA-BUF entry point directly:
-/// `render_to_shared_dmabuf` only exists on Linux with `shared-texture-linux`,
-/// and Lumit is Windows-first — the crate has to compile there.
+/// Three implementations, selected at compile time, because the zero-copy entry
+/// points only *exist* under their own platform and feature. The conditions are
+/// mutually exclusive and together exhaustive, so exactly one is compiled:
+///
+/// 1. Linux + `shared-texture-linux` → a DMA-BUF handle (K-177).
+/// 2. Windows + `shared-texture` → a shared D3D12 texture handle (K-177).
+/// 3. anything else → a CPU read-back of the pixels.
+///
+/// The read-back is `render_preview`, deliberately **not** `render_rgba`.
+/// `render_rgba` is the export path: it decodes afresh at full resolution and
+/// retains nothing. `render_preview` decodes at the quality asked for and reuses
+/// retained pixels when the decode plan has not changed, which is what makes a
+/// drag cheap — v0 uses it for both the Viewer and drag previews.
+///
+/// A failed render drops the frame and says so; it never takes the worker down.
 #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
 fn publish_frame(
     state: &mut WorkerState,
@@ -222,8 +237,6 @@ fn publish_frame(
             }
         };
 
-    println!("Finished rendering!");
-
     _ = stream.add(WorkerResponse::RenderedDMABuf(BridgeSharedFrameInfoLinux {
         fd: shared.fd,
         width: shared.width,
@@ -235,16 +248,64 @@ fn publish_frame(
     }));
 }
 
-#[cfg(not(all(target_os = "linux", feature = "shared-texture-linux")))]
+#[cfg(all(windows, feature = "shared-texture"))]
 fn publish_frame(
-    _state: &mut WorkerState,
-    _comp: Uuid,
-    _frame: u64,
-    _document: &lumit_core::Document,
-    _stream: &mut WorkerResponseStream,
+    state: &mut WorkerState,
+    comp: Uuid,
+    frame: u64,
+    document: &lumit_core::Document,
+    stream: &mut WorkerResponseStream,
 ) {
-    eprintln!(
-        "This build has no Viewer render path wired through the worker yet \
-         (only Linux + shared-texture-linux); dropping the frame."
-    );
+    let shared = match state
+        .renderer
+        .render_to_shared(document, comp, frame, Quality::default())
+    {
+        Ok(shared) => shared,
+        Err(err) => {
+            eprintln!("Shared-texture render failed, dropping frame: {err}");
+            return;
+        }
+    };
+
+    _ = stream.add(WorkerResponse::RenderedSharedTexture(
+        BridgeSharedFrameInfo {
+            handle: shared.handle,
+            width: shared.width,
+            height: shared.height,
+        },
+    ));
+}
+
+#[cfg(not(any(
+    all(target_os = "linux", feature = "shared-texture-linux"),
+    all(windows, feature = "shared-texture")
+)))]
+fn publish_frame(
+    state: &mut WorkerState,
+    comp: Uuid,
+    frame: u64,
+    document: &lumit_core::Document,
+    stream: &mut WorkerResponseStream,
+) {
+    // Full resolution and no draft: the frb path carries no scale yet, so there
+    // is nothing to derive a preview quality from. Wiring `scale`/`Quality`
+    // through is tracked in docs/TODO.md.
+    let rendered =
+        state
+            .renderer
+            .render_preview(document, comp, frame, Quality::default(), 1.0, None);
+
+    let (rgba, width, height) = match rendered {
+        Ok(frame) => frame,
+        Err(err) => {
+            eprintln!("Read-back render failed, dropping frame: {err}");
+            return;
+        }
+    };
+
+    _ = stream.add(WorkerResponse::RenderedPixels(BridgeRenderedFrame {
+        width,
+        height,
+        rgba,
+    }));
 }

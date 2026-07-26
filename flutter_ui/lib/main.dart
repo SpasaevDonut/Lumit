@@ -3,6 +3,7 @@
 // see docs/archive/flutter-port/ for the plan and the parity checklist.
 
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -166,33 +167,104 @@ class LumitUiState extends ChangeNotifier {
   CompositionReference? get selectedComp => _selectedComp;
 
   ViewerTextureController controller = ViewerTextureController();
+
+  /// The platform texture the Viewer draws, on either zero-copy path. Null when
+  /// this build renders through the read-back path instead.
   ValueNotifier<int?> viewerFrameid = ValueNotifier(null);
-  
+
+  /// The decoded frame the Viewer draws on the read-back path — the portable
+  /// fallback for a build without one of the zero-copy features, which is the
+  /// default on Windows. Mutually exclusive with [viewerFrameid]: whichever the
+  /// worker last published wins, and the other is cleared, so the Viewer never
+  /// has to guess which is current.
+  ValueNotifier<ui.Image?> viewerImage = ValueNotifier(null);
+
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
 
   StreamSubscription? sub;
 
   LumitUiState(LumitState state) {
     sub = state.onWorkerResponse.listen((msg) {
-      debugPrint('Received worker response: \$msg');
-      if (msg case WorkerResponse_RenderedDMABuf frame) {
-        controller
-            .ensureRegistered(
-                frame.field0.fd, frame.field0.width, frame.field0.height,
-                fd: frame.field0.fd,
-                stride: frame.field0.stride,
-                offset: frame.field0.offset,
-                fourcc: frame.field0.drmFourcc,
-                modifier: frame.field0.modifier.toInt())
-            .then((id) {
-          controller.frameReady();
-
-          if (viewerFrameid.value != id) {
-            viewerFrameid.value = id;
-          }
-        });
+      switch (msg) {
+        case WorkerResponse_RenderedDMABuf frame:
+          _showDmabuf(frame.field0);
+        case WorkerResponse_RenderedSharedTexture frame:
+          _showSharedTexture(frame.field0);
+        case WorkerResponse_RenderedPixels frame:
+          _showPixels(frame.field0);
       }
     });
+  }
+
+  /// Linux zero-copy: register the DMA-BUF and show its texture. The first
+  /// positional argument is the controller's identity key, and on this path the
+  /// fd serves as that key — a non-null `fd` is also what tells the controller to
+  /// send the DMA-BUF argument set rather than the DXGI one.
+  void _showDmabuf(BridgeSharedFrameInfoLinux f) {
+    controller
+        .ensureRegistered(f.fd, f.width, f.height,
+            fd: f.fd,
+            stride: f.stride,
+            offset: f.offset,
+            fourcc: f.drmFourcc,
+            modifier: f.modifier.toInt())
+        .then(_adoptTexture);
+  }
+
+  /// Windows zero-copy: register the shared D3D12 texture by its NT handle.
+  /// Leaving `fd` null is what selects the DXGI argument set.
+  void _showSharedTexture(BridgeSharedFrameInfo f) {
+    controller
+        .ensureRegistered(f.handle.toInt(), f.width, f.height)
+        .then(_adoptTexture);
+  }
+
+  /// A registered texture is now current: mark a frame available and, if the id
+  /// changed, point the Viewer at it. Also drops any held read-back image, since
+  /// the two paths are mutually exclusive.
+  void _adoptTexture(int? id) {
+    if (id == null) return;
+    controller.frameReady();
+    _disposeImage();
+    if (viewerFrameid.value != id) viewerFrameid.value = id;
+  }
+
+  /// The portable path: decode the pixels into a `ui.Image` for the Viewer to
+  /// draw. The previous image is disposed once the new one is in place —
+  /// a `ui.Image` holds native memory and is not collected for us.
+  void _showPixels(BridgeRenderedFrame f) {
+    if (f.width == 0 || f.height == 0) return;
+    ui.decodeImageFromPixels(
+      f.rgba,
+      f.width,
+      f.height,
+      ui.PixelFormat.rgba8888,
+      (image) {
+        final previous = viewerImage.value;
+        viewerImage.value = image;
+        // Whichever path published last wins.
+        viewerFrameid.value = null;
+        previous?.dispose();
+      },
+    );
+  }
+
+  void _disposeImage() {
+    final held = viewerImage.value;
+    if (held == null) return;
+    viewerImage.value = null;
+    held.dispose();
+  }
+
+  @override
+  void dispose() {
+    sub?.cancel();
+    _disposeImage();
+    viewerImage.dispose();
+    viewerFrameid.dispose();
+    selectedLayer.dispose();
+    activePanel.dispose();
+    super.dispose();
   }
 
   void setSelectedComp(CompositionReference? reference) {

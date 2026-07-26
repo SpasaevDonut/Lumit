@@ -37,6 +37,65 @@ abstract class LumitBridgeState implements RustOpaqueInterface {
           path: path, onChangeStream: onChangeStream);
 }
 
+/// A Viewer frame that came back as pixels rather than a GPU handle — the
+/// portable path, used on any build without one of the zero-copy features. Dart
+/// turns `rgba` into a `ui.Image`.
+class BridgeRenderedFrame {
+  final int width;
+  final int height;
+
+  /// Tightly packed, straight (non-premultiplied) RGBA8: `width * height * 4`.
+  final Uint8List rgba;
+
+  const BridgeRenderedFrame({
+    required this.width,
+    required this.height,
+    required this.rgba,
+  });
+
+  @override
+  int get hashCode => width.hashCode ^ height.hashCode ^ rgba.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeRenderedFrame &&
+          runtimeType == other.runtimeType &&
+          width == other.width &&
+          height == other.height &&
+          rgba == other.rgba;
+}
+
+/// The Windows zero-copy Viewer frame (K-177): an NT handle to a shared D3D12
+/// texture the Flutter runner imports directly, so no pixels cross the FFI
+/// boundary. The handle is stable for the session and changes only when the
+/// comp's dimensions do. Format is always RGBA8, so it is not carried.
+class BridgeSharedFrameInfo {
+  /// The NT `HANDLE` value. `u64` because a Windows handle is 64-bit; it
+  /// reaches Dart as a `BigInt`.
+  final BigInt handle;
+  final int width;
+  final int height;
+
+  const BridgeSharedFrameInfo({
+    required this.handle,
+    required this.width,
+    required this.height,
+  });
+
+  @override
+  int get hashCode => handle.hashCode ^ width.hashCode ^ height.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeSharedFrameInfo &&
+          runtimeType == other.runtimeType &&
+          handle == other.handle &&
+          width == other.width &&
+          height == other.height;
+}
+
 class BridgeSharedFrameInfoLinux {
   final int fd;
   final int width;
@@ -112,7 +171,18 @@ class ScopedChange {
 sealed class WorkerResponse with _$WorkerResponse {
   const WorkerResponse._();
 
+  /// Linux, `shared-texture-linux`.
   const factory WorkerResponse.renderedDmaBuf(
     BridgeSharedFrameInfoLinux field0,
   ) = WorkerResponse_RenderedDMABuf;
+
+  /// Windows, `shared-texture`.
+  const factory WorkerResponse.renderedSharedTexture(
+    BridgeSharedFrameInfo field0,
+  ) = WorkerResponse_RenderedSharedTexture;
+
+  /// Everything else: a CPU read-back.
+  const factory WorkerResponse.renderedPixels(
+    BridgeRenderedFrame field0,
+  ) = WorkerResponse_RenderedPixels;
 }

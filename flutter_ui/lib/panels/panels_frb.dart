@@ -4,8 +4,9 @@
 // These are deliberately *not* the shipping panels. They are the worked examples
 // of the frb calling patterns, each one small enough to read in a sitting:
 //
-// - [ViewerPanelFrb] — a `Texture` fed by frames the Rust worker pushes down a
-//   stream, i.e. the zero-copy path with no pixels crossing the FFI boundary.
+// - [ViewerPanelFrb] — frames the Rust worker pushes down a stream: a platform
+//   `Texture` on either zero-copy path, or a decoded image on the portable
+//   read-back one.
 // - [TimelinePanelFrb] — reading a comp's layers off a `CompositionReference`
 //   and selecting one, with no snapshot JSON in between.
 // - [EffectControlsPanelFrb] — the live-drag pattern: parameter values held in
@@ -15,6 +16,8 @@
 // The shipping dispatcher is panels.dart, which routes the full panels (still on
 // the v0 JSON bridge). Panels move across as the frb API grows to cover what
 // they need — see docs/TODO.md, "Bridge".
+
+import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
@@ -49,9 +52,19 @@ Widget buildPanelBodyFrb(BuildContext context, Panel panel) => switch (panel) {
         ),
     };
 
-/// The Viewer: whatever texture the Rust render worker last published. The
-/// frames never cross the FFI boundary as pixels — Rust hands Dart a texture id
-/// and Flutter composites it directly (K-177).
+/// The Viewer: whatever the Rust render worker last published.
+///
+/// Two shapes, because the engine has two ways to hand over a frame and which
+/// one a build uses is decided at compile time:
+///
+/// - a **platform texture id** on either zero-copy path (Windows shared D3D12
+///   texture, Linux DMA-BUF) — the pixels never cross the FFI boundary at all,
+///   Flutter composites the engine's own GPU texture directly (K-177);
+/// - a **decoded image** on the portable read-back path, which is the default
+///   build on Windows until `--features shared-texture` is turned on.
+///
+/// The two are mutually exclusive and `LumitUiState` clears whichever is stale,
+/// so preferring the texture here is just an ordering choice, not a guess.
 class ViewerPanelFrb extends StatelessWidget {
   const ViewerPanelFrb({super.key});
 
@@ -61,15 +74,26 @@ class ViewerPanelFrb extends StatelessWidget {
 
     return ValueListenableBuilder<int?>(
       valueListenable: state.viewerFrameid,
-      builder: (context, value, child) {
-        if (value == null) {
-          return const PlaceholderPanel(
-            icon: LumitIcon.footage,
-            title: 'Viewer',
-            hint: 'No frame rendered yet — render one from the Timeline.',
-          );
-        }
-        return Texture(textureId: value);
+      builder: (context, textureId, child) {
+        if (textureId != null) return Texture(textureId: textureId);
+
+        return ValueListenableBuilder<ui.Image?>(
+          valueListenable: state.viewerImage,
+          builder: (context, image, child) {
+            if (image == null) {
+              return const PlaceholderPanel(
+                icon: LumitIcon.footage,
+                title: 'Viewer',
+                hint: 'No frame rendered yet — render one from the Timeline.',
+              );
+            }
+            // `fit: contain` so a comp of any aspect sits inside the panel
+            // rather than being stretched to it.
+            return Center(
+              child: RawImage(image: image, fit: BoxFit.contain),
+            );
+          },
+        );
       },
     );
   }

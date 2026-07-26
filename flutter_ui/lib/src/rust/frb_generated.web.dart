@@ -118,6 +118,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  BridgeRenderedFrame dco_decode_box_autoadd_bridge_rendered_frame(dynamic raw);
+
+  @protected
+  BridgeSharedFrameInfo dco_decode_box_autoadd_bridge_shared_frame_info(
+      dynamic raw);
+
+  @protected
   BridgeSharedFrameInfoLinux
       dco_decode_box_autoadd_bridge_shared_frame_info_linux(dynamic raw);
 
@@ -145,6 +152,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
+
+  @protected
+  BridgeRenderedFrame dco_decode_bridge_rendered_frame(dynamic raw);
+
+  @protected
+  BridgeSharedFrameInfo dco_decode_bridge_shared_frame_info(dynamic raw);
 
   @protected
   BridgeSharedFrameInfoLinux dco_decode_bridge_shared_frame_info_linux(
@@ -305,6 +318,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  BridgeRenderedFrame sse_decode_box_autoadd_bridge_rendered_frame(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeSharedFrameInfo sse_decode_box_autoadd_bridge_shared_frame_info(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeSharedFrameInfoLinux
       sse_decode_box_autoadd_bridge_shared_frame_info_linux(
           SseDeserializer deserializer);
@@ -338,6 +359,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   SolidReference sse_decode_box_autoadd_solid_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeRenderedFrame sse_decode_bridge_rendered_frame(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeSharedFrameInfo sse_decode_bridge_shared_frame_info(
       SseDeserializer deserializer);
 
   @protected
@@ -506,6 +535,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_rendered_frame(
+      BridgeRenderedFrame self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_shared_frame_info(
+      BridgeSharedFrameInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_shared_frame_info_linux(
       BridgeSharedFrameInfoLinux self, SseSerializer serializer);
 
@@ -539,6 +576,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_solid_reference(
       SolidReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_rendered_frame(
+      BridgeRenderedFrame self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_shared_frame_info(
+      BridgeSharedFrameInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_shared_frame_info_linux(

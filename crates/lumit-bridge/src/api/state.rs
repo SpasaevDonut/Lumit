@@ -49,9 +49,49 @@ pub struct BridgeSharedFrameInfoLinux {
     pub modifier: u64,
 }
 
+/// The Windows zero-copy Viewer frame (K-177): an NT handle to a shared D3D12
+/// texture the Flutter runner imports directly, so no pixels cross the FFI
+/// boundary. The handle is stable for the session and changes only when the
+/// comp's dimensions do. The format is always RGBA8, so it is not carried.
+#[frb(non_opaque)]
+pub struct BridgeSharedFrameInfo {
+    /// The NT `HANDLE` value. `u64` because a Windows handle is 64-bit; it
+    /// reaches Dart as a `BigInt`.
+    pub handle: u64,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A Viewer frame that came back as pixels rather than a GPU handle — the
+/// portable path, used on any build without one of the zero-copy features (the
+/// default on Windows). Dart turns `rgba` into a `ui.Image`.
+///
+/// Costly by construction: flutter_rust_bridge's SSE codec serialises a
+/// `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p frame and 37 ms
+/// at 4K — the whole of budget B1 (docs/13 §2) for the 1080p case, before any
+/// rendering. Prefer a zero-copy build where the platform allows one; see
+/// docs/TODO.md for the fix.
+#[frb(non_opaque)]
+pub struct BridgeRenderedFrame {
+    pub width: u32,
+    pub height: u32,
+    /// Tightly packed, straight (non-premultiplied) RGBA8: `width * height * 4`.
+    pub rgba: Vec<u8>,
+}
+
+/// What the render worker publishes for one frame. Which variant a build can
+/// actually produce is decided at compile time by the zero-copy features — see
+/// `worker_thread::publish_frame` — but all three are always declared, so the
+/// generated Dart is identical on every platform and the Viewer holds one
+/// `switch` over the lot.
 #[frb(non_opaque)]
 pub enum WorkerResponse {
+    /// Linux, `shared-texture-linux`.
     RenderedDMABuf(BridgeSharedFrameInfoLinux),
+    /// Windows, `shared-texture`.
+    RenderedSharedTexture(BridgeSharedFrameInfo),
+    /// Everything else: a CPU read-back.
+    RenderedPixels(BridgeRenderedFrame),
 }
 
 type CallbackStream = StreamSink<ScopedChange>;

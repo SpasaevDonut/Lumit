@@ -14,26 +14,19 @@ T _$identity<T>(T value) => value;
 
 /// @nodoc
 mixin _$WorkerResponse {
-  BridgeSharedFrameInfoLinux get field0;
-
-  /// Create a copy of WorkerResponse
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $WorkerResponseCopyWith<WorkerResponse> get copyWith =>
-      _$WorkerResponseCopyWithImpl<WorkerResponse>(
-          this as WorkerResponse, _$identity);
+  Object get field0;
 
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
         (other.runtimeType == runtimeType &&
             other is WorkerResponse &&
-            (identical(other.field0, field0) || other.field0 == field0));
+            const DeepCollectionEquality().equals(other.field0, field0));
   }
 
   @override
-  int get hashCode => Object.hash(runtimeType, field0);
+  int get hashCode =>
+      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
 
   @override
   String toString() {
@@ -42,36 +35,8 @@ mixin _$WorkerResponse {
 }
 
 /// @nodoc
-abstract mixin class $WorkerResponseCopyWith<$Res> {
-  factory $WorkerResponseCopyWith(
-          WorkerResponse value, $Res Function(WorkerResponse) _then) =
-      _$WorkerResponseCopyWithImpl;
-  @useResult
-  $Res call({BridgeSharedFrameInfoLinux field0});
-}
-
-/// @nodoc
-class _$WorkerResponseCopyWithImpl<$Res>
-    implements $WorkerResponseCopyWith<$Res> {
-  _$WorkerResponseCopyWithImpl(this._self, this._then);
-
-  final WorkerResponse _self;
-  final $Res Function(WorkerResponse) _then;
-
-  /// Create a copy of WorkerResponse
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  @override
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(_self.copyWith(
-      field0: null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as BridgeSharedFrameInfoLinux,
-    ));
-  }
+class $WorkerResponseCopyWith<$Res> {
+  $WorkerResponseCopyWith(WorkerResponse _, $Res Function(WorkerResponse) __);
 }
 
 /// Adds pattern-matching-related methods to [WorkerResponse].
@@ -91,12 +56,20 @@ extension WorkerResponsePatterns on WorkerResponse {
   @optionalTypeArgs
   TResult maybeMap<TResult extends Object?>({
     TResult Function(WorkerResponse_RenderedDMABuf value)? renderedDmaBuf,
+    TResult Function(WorkerResponse_RenderedSharedTexture value)?
+        renderedSharedTexture,
+    TResult Function(WorkerResponse_RenderedPixels value)? renderedPixels,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case WorkerResponse_RenderedDMABuf() when renderedDmaBuf != null:
         return renderedDmaBuf(_that);
+      case WorkerResponse_RenderedSharedTexture()
+          when renderedSharedTexture != null:
+        return renderedSharedTexture(_that);
+      case WorkerResponse_RenderedPixels() when renderedPixels != null:
+        return renderedPixels(_that);
       case _:
         return orElse();
     }
@@ -119,11 +92,19 @@ extension WorkerResponsePatterns on WorkerResponse {
   TResult map<TResult extends Object?>({
     required TResult Function(WorkerResponse_RenderedDMABuf value)
         renderedDmaBuf,
+    required TResult Function(WorkerResponse_RenderedSharedTexture value)
+        renderedSharedTexture,
+    required TResult Function(WorkerResponse_RenderedPixels value)
+        renderedPixels,
   }) {
     final _that = this;
     switch (_that) {
       case WorkerResponse_RenderedDMABuf():
         return renderedDmaBuf(_that);
+      case WorkerResponse_RenderedSharedTexture():
+        return renderedSharedTexture(_that);
+      case WorkerResponse_RenderedPixels():
+        return renderedPixels(_that);
     }
   }
 
@@ -142,11 +123,19 @@ extension WorkerResponsePatterns on WorkerResponse {
   @optionalTypeArgs
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(WorkerResponse_RenderedDMABuf value)? renderedDmaBuf,
+    TResult? Function(WorkerResponse_RenderedSharedTexture value)?
+        renderedSharedTexture,
+    TResult? Function(WorkerResponse_RenderedPixels value)? renderedPixels,
   }) {
     final _that = this;
     switch (_that) {
       case WorkerResponse_RenderedDMABuf() when renderedDmaBuf != null:
         return renderedDmaBuf(_that);
+      case WorkerResponse_RenderedSharedTexture()
+          when renderedSharedTexture != null:
+        return renderedSharedTexture(_that);
+      case WorkerResponse_RenderedPixels() when renderedPixels != null:
+        return renderedPixels(_that);
       case _:
         return null;
     }
@@ -167,12 +156,19 @@ extension WorkerResponsePatterns on WorkerResponse {
   @optionalTypeArgs
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(BridgeSharedFrameInfoLinux field0)? renderedDmaBuf,
+    TResult Function(BridgeSharedFrameInfo field0)? renderedSharedTexture,
+    TResult Function(BridgeRenderedFrame field0)? renderedPixels,
     required TResult orElse(),
   }) {
     final _that = this;
     switch (_that) {
       case WorkerResponse_RenderedDMABuf() when renderedDmaBuf != null:
         return renderedDmaBuf(_that.field0);
+      case WorkerResponse_RenderedSharedTexture()
+          when renderedSharedTexture != null:
+        return renderedSharedTexture(_that.field0);
+      case WorkerResponse_RenderedPixels() when renderedPixels != null:
+        return renderedPixels(_that.field0);
       case _:
         return orElse();
     }
@@ -194,11 +190,18 @@ extension WorkerResponsePatterns on WorkerResponse {
   @optionalTypeArgs
   TResult when<TResult extends Object?>({
     required TResult Function(BridgeSharedFrameInfoLinux field0) renderedDmaBuf,
+    required TResult Function(BridgeSharedFrameInfo field0)
+        renderedSharedTexture,
+    required TResult Function(BridgeRenderedFrame field0) renderedPixels,
   }) {
     final _that = this;
     switch (_that) {
       case WorkerResponse_RenderedDMABuf():
         return renderedDmaBuf(_that.field0);
+      case WorkerResponse_RenderedSharedTexture():
+        return renderedSharedTexture(_that.field0);
+      case WorkerResponse_RenderedPixels():
+        return renderedPixels(_that.field0);
     }
   }
 
@@ -217,11 +220,18 @@ extension WorkerResponsePatterns on WorkerResponse {
   @optionalTypeArgs
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(BridgeSharedFrameInfoLinux field0)? renderedDmaBuf,
+    TResult? Function(BridgeSharedFrameInfo field0)? renderedSharedTexture,
+    TResult? Function(BridgeRenderedFrame field0)? renderedPixels,
   }) {
     final _that = this;
     switch (_that) {
       case WorkerResponse_RenderedDMABuf() when renderedDmaBuf != null:
         return renderedDmaBuf(_that.field0);
+      case WorkerResponse_RenderedSharedTexture()
+          when renderedSharedTexture != null:
+        return renderedSharedTexture(_that.field0);
+      case WorkerResponse_RenderedPixels() when renderedPixels != null:
+        return renderedPixels(_that.field0);
       case _:
         return null;
     }
@@ -238,7 +248,6 @@ class WorkerResponse_RenderedDMABuf extends WorkerResponse {
 
   /// Create a copy of WorkerResponse
   /// with the given fields replaced by the non-null parameter values.
-  @override
   @JsonKey(includeFromJson: false, includeToJson: false)
   @pragma('vm:prefer-inline')
   $WorkerResponse_RenderedDMABufCopyWith<WorkerResponse_RenderedDMABuf>
@@ -269,7 +278,6 @@ abstract mixin class $WorkerResponse_RenderedDMABufCopyWith<$Res>
           WorkerResponse_RenderedDMABuf value,
           $Res Function(WorkerResponse_RenderedDMABuf) _then) =
       _$WorkerResponse_RenderedDMABufCopyWithImpl;
-  @override
   @useResult
   $Res call({BridgeSharedFrameInfoLinux field0});
 }
@@ -284,7 +292,6 @@ class _$WorkerResponse_RenderedDMABufCopyWithImpl<$Res>
 
   /// Create a copy of WorkerResponse
   /// with the given fields replaced by the non-null parameter values.
-  @override
   @pragma('vm:prefer-inline')
   $Res call({
     Object? field0 = null,
@@ -294,6 +301,141 @@ class _$WorkerResponse_RenderedDMABufCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as BridgeSharedFrameInfoLinux,
+    ));
+  }
+}
+
+/// @nodoc
+
+class WorkerResponse_RenderedSharedTexture extends WorkerResponse {
+  const WorkerResponse_RenderedSharedTexture(this.field0) : super._();
+
+  @override
+  final BridgeSharedFrameInfo field0;
+
+  /// Create a copy of WorkerResponse
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $WorkerResponse_RenderedSharedTextureCopyWith<
+          WorkerResponse_RenderedSharedTexture>
+      get copyWith => _$WorkerResponse_RenderedSharedTextureCopyWithImpl<
+          WorkerResponse_RenderedSharedTexture>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is WorkerResponse_RenderedSharedTexture &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'WorkerResponse.renderedSharedTexture(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $WorkerResponse_RenderedSharedTextureCopyWith<$Res>
+    implements $WorkerResponseCopyWith<$Res> {
+  factory $WorkerResponse_RenderedSharedTextureCopyWith(
+          WorkerResponse_RenderedSharedTexture value,
+          $Res Function(WorkerResponse_RenderedSharedTexture) _then) =
+      _$WorkerResponse_RenderedSharedTextureCopyWithImpl;
+  @useResult
+  $Res call({BridgeSharedFrameInfo field0});
+}
+
+/// @nodoc
+class _$WorkerResponse_RenderedSharedTextureCopyWithImpl<$Res>
+    implements $WorkerResponse_RenderedSharedTextureCopyWith<$Res> {
+  _$WorkerResponse_RenderedSharedTextureCopyWithImpl(this._self, this._then);
+
+  final WorkerResponse_RenderedSharedTexture _self;
+  final $Res Function(WorkerResponse_RenderedSharedTexture) _then;
+
+  /// Create a copy of WorkerResponse
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(WorkerResponse_RenderedSharedTexture(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as BridgeSharedFrameInfo,
+    ));
+  }
+}
+
+/// @nodoc
+
+class WorkerResponse_RenderedPixels extends WorkerResponse {
+  const WorkerResponse_RenderedPixels(this.field0) : super._();
+
+  @override
+  final BridgeRenderedFrame field0;
+
+  /// Create a copy of WorkerResponse
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $WorkerResponse_RenderedPixelsCopyWith<WorkerResponse_RenderedPixels>
+      get copyWith => _$WorkerResponse_RenderedPixelsCopyWithImpl<
+          WorkerResponse_RenderedPixels>(this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is WorkerResponse_RenderedPixels &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'WorkerResponse.renderedPixels(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $WorkerResponse_RenderedPixelsCopyWith<$Res>
+    implements $WorkerResponseCopyWith<$Res> {
+  factory $WorkerResponse_RenderedPixelsCopyWith(
+          WorkerResponse_RenderedPixels value,
+          $Res Function(WorkerResponse_RenderedPixels) _then) =
+      _$WorkerResponse_RenderedPixelsCopyWithImpl;
+  @useResult
+  $Res call({BridgeRenderedFrame field0});
+}
+
+/// @nodoc
+class _$WorkerResponse_RenderedPixelsCopyWithImpl<$Res>
+    implements $WorkerResponse_RenderedPixelsCopyWith<$Res> {
+  _$WorkerResponse_RenderedPixelsCopyWithImpl(this._self, this._then);
+
+  final WorkerResponse_RenderedPixels _self;
+  final $Res Function(WorkerResponse_RenderedPixels) _then;
+
+  /// Create a copy of WorkerResponse
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(WorkerResponse_RenderedPixels(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as BridgeRenderedFrame,
     ));
   }
 }

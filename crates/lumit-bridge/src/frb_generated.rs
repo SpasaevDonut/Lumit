@@ -1034,6 +1034,34 @@ impl SseDecode for bool {
     }
 }
 
+impl SseDecode for crate::api::state::BridgeRenderedFrame {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_width = <u32>::sse_decode(deserializer);
+        let mut var_height = <u32>::sse_decode(deserializer);
+        let mut var_rgba = <Vec<u8>>::sse_decode(deserializer);
+        return crate::api::state::BridgeRenderedFrame {
+            width: var_width,
+            height: var_height,
+            rgba: var_rgba,
+        };
+    }
+}
+
+impl SseDecode for crate::api::state::BridgeSharedFrameInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_handle = <u64>::sse_decode(deserializer);
+        let mut var_width = <u32>::sse_decode(deserializer);
+        let mut var_height = <u32>::sse_decode(deserializer);
+        return crate::api::state::BridgeSharedFrameInfo {
+            handle: var_handle,
+            width: var_width,
+            height: var_height,
+        };
+    }
+}
+
 impl SseDecode for crate::api::state::BridgeSharedFrameInfoLinux {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1373,6 +1401,16 @@ impl SseDecode for crate::api::state::WorkerResponse {
                     <crate::api::state::BridgeSharedFrameInfoLinux>::sse_decode(deserializer);
                 return crate::api::state::WorkerResponse::RenderedDMABuf(var_field0);
             }
+            1 => {
+                let mut var_field0 =
+                    <crate::api::state::BridgeSharedFrameInfo>::sse_decode(deserializer);
+                return crate::api::state::WorkerResponse::RenderedSharedTexture(var_field0);
+            }
+            2 => {
+                let mut var_field0 =
+                    <crate::api::state::BridgeRenderedFrame>::sse_decode(deserializer);
+                return crate::api::state::WorkerResponse::RenderedPixels(var_field0);
+            }
             _ => {
                 unimplemented!("");
             }
@@ -1549,6 +1587,50 @@ impl flutter_rust_bridge::IntoIntoDart<FrbWrapper<LumitBridgeState>> for LumitBr
     }
 }
 
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeRenderedFrame {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.width.into_into_dart().into_dart(),
+            self.height.into_into_dart().into_dart(),
+            self.rgba.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::state::BridgeRenderedFrame
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::state::BridgeRenderedFrame>
+    for crate::api::state::BridgeRenderedFrame
+{
+    fn into_into_dart(self) -> crate::api::state::BridgeRenderedFrame {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeSharedFrameInfo {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.handle.into_into_dart().into_dart(),
+            self.width.into_into_dart().into_dart(),
+            self.height.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::state::BridgeSharedFrameInfo
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::state::BridgeSharedFrameInfo>
+    for crate::api::state::BridgeSharedFrameInfo
+{
+    fn into_into_dart(self) -> crate::api::state::BridgeSharedFrameInfo {
+        self
+    }
+}
 // Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeSharedFrameInfoLinux {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
@@ -1781,6 +1863,12 @@ impl flutter_rust_bridge::IntoDart for crate::api::state::WorkerResponse {
             crate::api::state::WorkerResponse::RenderedDMABuf(field0) => {
                 [0.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::state::WorkerResponse::RenderedSharedTexture(field0) => {
+                [1.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::state::WorkerResponse::RenderedPixels(field0) => {
+                [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
             _ => {
                 unimplemented!("");
             }
@@ -1919,6 +2007,24 @@ impl SseEncode for bool {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         serializer.cursor.write_u8(self as _).unwrap();
+    }
+}
+
+impl SseEncode for crate::api::state::BridgeRenderedFrame {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u32>::sse_encode(self.width, serializer);
+        <u32>::sse_encode(self.height, serializer);
+        <Vec<u8>>::sse_encode(self.rgba, serializer);
+    }
+}
+
+impl SseEncode for crate::api::state::BridgeSharedFrameInfo {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <u64>::sse_encode(self.handle, serializer);
+        <u32>::sse_encode(self.width, serializer);
+        <u32>::sse_encode(self.height, serializer);
     }
 }
 
@@ -2199,6 +2305,14 @@ impl SseEncode for crate::api::state::WorkerResponse {
             crate::api::state::WorkerResponse::RenderedDMABuf(field0) => {
                 <i32>::sse_encode(0, serializer);
                 <crate::api::state::BridgeSharedFrameInfoLinux>::sse_encode(field0, serializer);
+            }
+            crate::api::state::WorkerResponse::RenderedSharedTexture(field0) => {
+                <i32>::sse_encode(1, serializer);
+                <crate::api::state::BridgeSharedFrameInfo>::sse_encode(field0, serializer);
+            }
+            crate::api::state::WorkerResponse::RenderedPixels(field0) => {
+                <i32>::sse_encode(2, serializer);
+                <crate::api::state::BridgeRenderedFrame>::sse_encode(field0, serializer);
             }
             _ => {
                 unimplemented!("");

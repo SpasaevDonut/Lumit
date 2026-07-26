@@ -976,6 +976,20 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeRenderedFrame dco_decode_box_autoadd_bridge_rendered_frame(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_bridge_rendered_frame(raw);
+  }
+
+  @protected
+  BridgeSharedFrameInfo dco_decode_box_autoadd_bridge_shared_frame_info(
+      dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return dco_decode_bridge_shared_frame_info(raw);
+  }
+
+  @protected
   BridgeSharedFrameInfoLinux
       dco_decode_box_autoadd_bridge_shared_frame_info_linux(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
@@ -1029,6 +1043,32 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_solid_reference(raw);
+  }
+
+  @protected
+  BridgeRenderedFrame dco_decode_bridge_rendered_frame(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return BridgeRenderedFrame(
+      width: dco_decode_u_32(arr[0]),
+      height: dco_decode_u_32(arr[1]),
+      rgba: dco_decode_list_prim_u_8_strict(arr[2]),
+    );
+  }
+
+  @protected
+  BridgeSharedFrameInfo dco_decode_bridge_shared_frame_info(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    final arr = raw as List<dynamic>;
+    if (arr.length != 3)
+      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    return BridgeSharedFrameInfo(
+      handle: dco_decode_u_64(arr[0]),
+      width: dco_decode_u_32(arr[1]),
+      height: dco_decode_u_32(arr[2]),
+    );
   }
 
   @protected
@@ -1281,6 +1321,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         return WorkerResponse_RenderedDMABuf(
           dco_decode_box_autoadd_bridge_shared_frame_info_linux(raw[1]),
         );
+      case 1:
+        return WorkerResponse_RenderedSharedTexture(
+          dco_decode_box_autoadd_bridge_shared_frame_info(raw[1]),
+        );
+      case 2:
+        return WorkerResponse_RenderedPixels(
+          dco_decode_box_autoadd_bridge_rendered_frame(raw[1]),
+        );
       default:
         throw Exception("unreachable");
     }
@@ -1418,6 +1466,20 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  BridgeRenderedFrame sse_decode_box_autoadd_bridge_rendered_frame(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_bridge_rendered_frame(deserializer));
+  }
+
+  @protected
+  BridgeSharedFrameInfo sse_decode_box_autoadd_bridge_shared_frame_info(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_bridge_shared_frame_info(deserializer));
+  }
+
+  @protected
   BridgeSharedFrameInfoLinux
       sse_decode_box_autoadd_bridge_shared_frame_info_linux(
           SseDeserializer deserializer) {
@@ -1478,6 +1540,28 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_solid_reference(deserializer));
+  }
+
+  @protected
+  BridgeRenderedFrame sse_decode_bridge_rendered_frame(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_width = sse_decode_u_32(deserializer);
+    var var_height = sse_decode_u_32(deserializer);
+    var var_rgba = sse_decode_list_prim_u_8_strict(deserializer);
+    return BridgeRenderedFrame(
+        width: var_width, height: var_height, rgba: var_rgba);
+  }
+
+  @protected
+  BridgeSharedFrameInfo sse_decode_bridge_shared_frame_info(
+      SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    var var_handle = sse_decode_u_64(deserializer);
+    var var_width = sse_decode_u_32(deserializer);
+    var var_height = sse_decode_u_32(deserializer);
+    return BridgeSharedFrameInfo(
+        handle: var_handle, width: var_width, height: var_height);
   }
 
   @protected
@@ -1768,6 +1852,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         var var_field0 =
             sse_decode_box_autoadd_bridge_shared_frame_info_linux(deserializer);
         return WorkerResponse_RenderedDMABuf(var_field0);
+      case 1:
+        var var_field0 =
+            sse_decode_box_autoadd_bridge_shared_frame_info(deserializer);
+        return WorkerResponse_RenderedSharedTexture(var_field0);
+      case 2:
+        var var_field0 =
+            sse_decode_box_autoadd_bridge_rendered_frame(deserializer);
+        return WorkerResponse_RenderedPixels(var_field0);
       default:
         throw UnimplementedError('');
     }
@@ -1923,6 +2015,20 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_box_autoadd_bridge_rendered_frame(
+      BridgeRenderedFrame self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bridge_rendered_frame(self, serializer);
+  }
+
+  @protected
+  void sse_encode_box_autoadd_bridge_shared_frame_info(
+      BridgeSharedFrameInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_bridge_shared_frame_info(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_bridge_shared_frame_info_linux(
       BridgeSharedFrameInfoLinux self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1982,6 +2088,24 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       SolidReference self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_solid_reference(self, serializer);
+  }
+
+  @protected
+  void sse_encode_bridge_rendered_frame(
+      BridgeRenderedFrame self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_32(self.width, serializer);
+    sse_encode_u_32(self.height, serializer);
+    sse_encode_list_prim_u_8_strict(self.rgba, serializer);
+  }
+
+  @protected
+  void sse_encode_bridge_shared_frame_info(
+      BridgeSharedFrameInfo self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_u_64(self.handle, serializer);
+    sse_encode_u_32(self.width, serializer);
+    sse_encode_u_32(self.height, serializer);
   }
 
   @protected
@@ -2232,6 +2356,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         sse_encode_i_32(0, serializer);
         sse_encode_box_autoadd_bridge_shared_frame_info_linux(
             field0, serializer);
+      case WorkerResponse_RenderedSharedTexture(field0: final field0):
+        sse_encode_i_32(1, serializer);
+        sse_encode_box_autoadd_bridge_shared_frame_info(field0, serializer);
+      case WorkerResponse_RenderedPixels(field0: final field0):
+        sse_encode_i_32(2, serializer);
+        sse_encode_box_autoadd_bridge_rendered_frame(field0, serializer);
     }
   }
 }
