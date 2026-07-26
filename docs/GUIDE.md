@@ -2469,6 +2469,46 @@ text-search check in CI (`no-panics-in-frb-api`) stands in for it: nothing in
 `src/api/` may take those shortcuts, and every call must report a problem as an
 ordinary error instead of crashing.
 
+**Reading and writing an effect's parameters.** An effect's controls are not all
+numbers. A blur has a radius, a fill has a colour, a tile has a centre point, a
+noise has a random seed, a dropdown has a chosen option, a displacement effect
+has a file to point at, and a depth blur points at another layer. Any of the
+number-shaped ones can also be *animated* — following a curve of keyframes rather
+than holding one value.
+
+The first version of this part of the new bridge could only say "a number", so
+seven of the eight kinds, and every animated value, came back blank: the panel had
+nothing to draw them with. There is now one type that can be any of them
+(`BridgeEffectValue`), with one variant per kind, and an animated value arrives as
+its actual keys — their times, values and easing — rather than as whatever number
+it happens to equal at the start.
+
+The rule the type is built around is that **reading and writing are exact
+opposites**: whatever comes out can go straight back in, and the document is left
+exactly as it was. That sounds obvious, but it is what makes the panel's ordinary
+way of working safe, which is "read the value, change one part of it, write the
+whole thing back". If reading an animated radius gave back only "12", writing it
+again would delete the animation, and a user would lose work by nudging a slider.
+Two smaller consequences of the same rule: keyframe times cross as exact
+fractions (a key at half a second is "1 over 2", never 0.5, so it lands back on
+the frame it was set on), and any field written by a *newer* version of Lumit that
+this one does not understand is carried through untouched rather than quietly
+dropped.
+
+Writing the **wrong kind** is refused rather than applied. What kind a parameter
+is belongs to the effect, not to the panel: a colour turned into a number would be
+an effect the engine can no longer draw, and the damage would be undoable but not
+obvious on screen.
+
+**Changing which effects a layer has.** Adding, removing, reordering and bypassing
+an effect are four calls on the layer, and each becomes exactly one entry in the
+undo history — pressing Undo once puts the whole stack back as it was. Dragging a
+parameter is the staged path described above: the panel holds its own copy of the
+stack, changes values on that copy, renders previews from it, and commits the copy
+once when the mouse is released. A copy that no longer matches the document — some
+other action removed an effect while the drag was in progress — is refused rather
+than committed, so releasing a slider cannot bring a deleted effect back.
+
 **File dialogues, and why importing doesn't watch the video yet.** Choosing a
 file to open, a place to save, or footage to import needs a real "open file"
 window from the operating system. Flutter doesn't draw those itself — it borrows

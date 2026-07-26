@@ -9,9 +9,19 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use crate::api::{
-    composition::CompositionReference, folder::FolderReference, footage::FootageReference,
-    footage::LumitMediaStatus, project::ProjectReference, project_item::ItemReference,
-    state::LumitBridgeState, BridgeError,
+    composition::CompositionReference,
+    effect::{
+        list_effects, BridgeEffectValue, BridgeKeyframe, BridgeRational, BridgeScalar,
+        BridgeSideInterp,
+    },
+    folder::FolderReference,
+    footage::FootageReference,
+    footage::LumitMediaStatus,
+    layer::LayerReference,
+    project::ProjectReference,
+    project_item::ItemReference,
+    state::LumitBridgeState,
+    BridgeError,
 };
 use lumit_core::model::{Folder, FootageItem, MediaRef, ProjectItem};
 use lumit_core::Op;
@@ -321,4 +331,479 @@ fn import_and_new_composition_land_in_the_item_tree() {
     assert_eq!(children.len(), 1, "the comp is filed into it");
     assert_eq!(children[0].name().expect("name"), "Scene");
     assert_eq!(comp.get_size().expect("size").width, 1920);
+}
+
+// ---------------------------------------------------------------------------
+// Effect controls: the parameter value type and the stack ops.
+// ---------------------------------------------------------------------------
+
+/// A fresh project holding one composition with one adjustment layer in it.
+/// Adjustment is chosen because it needs no media: the effect surface only cares
+/// that a layer exists to hang a stack on.
+fn project_with_layer() -> (ProjectReference, LayerReference) {
+    use lumit_core::model::{LayerKind, TransformGroup};
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = add_comp(&project, "Scene");
+    let layer = crate::edits::base_layer(
+        "Adjust".into(),
+        LayerKind::Adjustment,
+        lumit_core::time::Rational::new(5, 1).expect("5 s"),
+        TransformGroup::default(),
+    );
+    let layer_id = layer.id;
+
+    {
+        let state = project.state().expect("state");
+        let state = state.write().expect("write");
+        state
+            .store
+            .commit(Op::AddLayer {
+                comp: comp.id,
+                index: 0,
+                layer: Box::new(layer),
+            })
+            .expect("layer added");
+    }
+
+    let layer = LayerReference::new(project.id, comp.id, layer_id);
+    (project, layer)
+}
+
+/// An effect instance carrying one parameter of every `EffectValue` kind, plus a
+/// keyframed `Float` beside the static one. `float` also carries an unknown
+/// `extra` field, standing in for a document written by a newer Lumit: the
+/// round-trip assertions below compare whole instances, so anything the bridge
+/// dropped on the way through would show up there.
+fn effect_with_every_kind() -> lumit_core::model::EffectInstance {
+    use lumit_core::anim::{Animation, Keyframe, Property, SideInterp, EASY_EASE};
+    use lumit_core::model::{
+        EffectInstance, EffectKey, EffectNamespace, EffectParam, EffectValue, FileParam,
+    };
+    use lumit_core::time::Rational;
+
+    let param = |id: &str, value: EffectValue| EffectParam {
+        id: id.into(),
+        value,
+        extra: serde_json::Map::new(),
+    };
+
+    let mut carries_extra = serde_json::Map::new();
+    carries_extra.insert("expression".into(), serde_json::json!("time * 2"));
+
+    let curve = Animation::Keyframed(vec![
+        Keyframe {
+            time: Rational::new(0, 1).expect("0 s"),
+            value: 5.0,
+            interp_in: SideInterp::Linear,
+            interp_out: SideInterp::Linear,
+        },
+        Keyframe {
+            // A half-second: exactly the sort of time that would stop landing on
+            // its own frame if it crossed as a float.
+            time: Rational::new(1, 2).expect("half a second"),
+            value: 20.0,
+            interp_in: EASY_EASE,
+            interp_out: SideInterp::Hold,
+        },
+    ]);
+
+    EffectInstance {
+        id: Uuid::now_v7(),
+        effect: EffectKey {
+            namespace: EffectNamespace::Builtin,
+            match_name: "blur".into(),
+            version: 1,
+            extra: serde_json::Map::new(),
+        },
+        enabled: true,
+        params: vec![
+            param(
+                "float",
+                EffectValue::Float(Property {
+                    animation: Animation::Static(4.5),
+                    extra: carries_extra,
+                }),
+            ),
+            param(
+                "animated",
+                EffectValue::Float(Property {
+                    animation: curve,
+                    extra: serde_json::Map::new(),
+                }),
+            ),
+            param(
+                "point",
+                EffectValue::Point(Property::fixed(10.0), Property::fixed(-3.0)),
+            ),
+            param(
+                "colour",
+                EffectValue::Colour([
+                    Property::fixed(0.1),
+                    Property::fixed(0.2),
+                    Property::fixed(0.3),
+                    Property::fixed(1.0),
+                ]),
+            ),
+            param("bool", EffectValue::Bool(true)),
+            param("choice", EffectValue::Choice(2)),
+            param("seed", EffectValue::Seed(77)),
+            param(
+                "file",
+                EffectValue::File(FileParam::single("C:/maps/displace.png")),
+            ),
+            param("layer", EffectValue::Layer(Some(Uuid::now_v7()))),
+        ],
+        sample_temporally: true,
+        extra: serde_json::Map::new(),
+    }
+}
+
+/// Put `effects` on the layer straight through the store, so a test can start
+/// from a stack the frb add path could not have built.
+fn seed_stack(
+    project: &ProjectReference,
+    layer: &LayerReference,
+    effects: Vec<lumit_core::model::EffectInstance>,
+) {
+    let state = project.state().expect("state");
+    let state = state.write().expect("write");
+    state
+        .store
+        .commit(Op::SetLayerEffects {
+            comp: layer.comp_id,
+            layer: layer.layer_id,
+            effects,
+        })
+        .expect("stack seeded");
+}
+
+/// The layer's effect stack as the document holds it.
+fn stack_of(layer: &LayerReference) -> Vec<lumit_core::model::EffectInstance> {
+    layer
+        .get_effects()
+        .expect("stack")
+        .iter()
+        .map(|e| e.get_effects())
+        .collect()
+}
+
+/// Undo exactly one step.
+fn undo_once(project: &ProjectReference) {
+    let state = project.state().expect("state");
+    let state = state.read().expect("read");
+    state
+        .store
+        .undo()
+        .expect("undo applied")
+        .expect("there was something to undo");
+}
+
+/// The whole promise of the value type: whatever a parameter reads as can be
+/// written straight back, for every kind, and the document is left exactly as it
+/// was — keyframes, keyframe interpolation, file paths, layer reference and all.
+/// Without that, "read the value, change one field, write it" — the way every
+/// control in the panel works — would quietly damage the parameters it touched.
+#[test]
+fn every_effect_value_kind_round_trips_through_the_document() {
+    let (project, layer) = project_with_layer();
+    let original = effect_with_every_kind();
+    seed_stack(&project, &layer, vec![original.clone()]);
+
+    let mut staged = layer.get_effects().expect("stack");
+    assert_eq!(staged.len(), 1);
+    let ids = staged[0].get_parameters();
+    assert_eq!(
+        ids.len(),
+        9,
+        "one parameter per kind, plus the animated float"
+    );
+
+    for id in ids {
+        let value = staged[0]
+            .get_value(id.clone())
+            .unwrap_or_else(|e| panic!("every kind reads: {id} answered {e}"));
+        staged[0]
+            .set_value(id.clone(), value)
+            .unwrap_or_else(|e| panic!("every kind writes: {id} answered {e}"));
+    }
+    layer.set_effects(staged).expect("committed");
+
+    assert_eq!(stack_of(&layer), vec![original]);
+}
+
+/// A keyframed Float must read as its curve, not as its value at time zero. The
+/// `f64`-only predecessor could only answer `None` here, which is why an animated
+/// parameter was unreachable; answering a number instead would be worse, because
+/// writing it back would delete the animation.
+#[test]
+fn a_keyframed_float_reads_as_its_keys_and_is_not_flattened() {
+    let (project, layer) = project_with_layer();
+    seed_stack(&project, &layer, vec![effect_with_every_kind()]);
+    let staged = layer.get_effects().expect("stack");
+
+    let value = staged[0].get_value("animated".into()).expect("a value");
+    let BridgeEffectValue::Float(BridgeScalar::Keyframed(keys)) = value else {
+        panic!("a keyframed float must not read as a static number");
+    };
+    assert_eq!(keys.len(), 2);
+    // Exact times, as integers: 1/2 s, not 0.5.
+    assert_eq!((keys[0].time.num, keys[0].time.den), (0, 1));
+    assert_eq!((keys[1].time.num, keys[1].time.den), (1, 2));
+    assert_eq!(keys[1].value, 20.0);
+    assert!(
+        matches!(keys[1].interp_in, BridgeSideInterp::Bezier(_)),
+        "the eased side survives, so the graph editor can draw its handle"
+    );
+    assert!(matches!(keys[1].interp_out, BridgeSideInterp::Hold));
+
+    // The static sibling still reads static — the distinction is per parameter.
+    assert!(matches!(
+        staged[0].get_value("float".into()),
+        Ok(BridgeEffectValue::Float(BridgeScalar::Static(_)))
+    ));
+}
+
+/// A parameter's kind is the effect's schema to declare, not the panel's to
+/// change. Writing the wrong kind is refused and the value left alone, rather
+/// than becoming something the effect's own resolver cannot read.
+#[test]
+fn writing_the_wrong_kind_to_a_parameter_is_refused() {
+    let (project, layer) = project_with_layer();
+    seed_stack(&project, &layer, vec![effect_with_every_kind()]);
+    let mut staged = layer.get_effects().expect("stack");
+
+    let before = staged[0].get_value("colour".into()).expect("a colour");
+    let refused = staged[0].set_value(
+        "colour".into(),
+        BridgeEffectValue::Float(BridgeScalar::Static(1.0)),
+    );
+    assert!(matches!(refused, Err(BridgeError::ParamKindMismatch)));
+    assert_eq!(
+        staged[0]
+            .get_value("colour".into())
+            .expect("still a colour"),
+        before,
+        "a refused write changes nothing"
+    );
+
+    // The other direction refuses too, and an unknown parameter is a calm error
+    // rather than a silent no-op.
+    assert!(matches!(
+        staged[0].set_value("float".into(), BridgeEffectValue::Bool(true)),
+        Err(BridgeError::ParamKindMismatch)
+    ));
+    assert!(matches!(
+        staged[0].get_value("nope".into()),
+        Err(BridgeError::InvalidParam)
+    ));
+}
+
+/// Keys the engine could not evaluate are refused on the way in. `anim::evaluate`
+/// walks the list assuming it is sorted, so an unsorted one would not fail — it
+/// would silently evaluate wrongly, which is far harder to notice.
+#[test]
+fn a_keyframed_value_the_engine_could_not_evaluate_is_refused() {
+    let (project, layer) = project_with_layer();
+    seed_stack(&project, &layer, vec![effect_with_every_kind()]);
+    let mut staged = layer.get_effects().expect("stack");
+
+    let key = |num: i64, den: i64| BridgeKeyframe {
+        time: BridgeRational { num, den },
+        value: 1.0,
+        interp_in: BridgeSideInterp::Linear,
+        interp_out: BridgeSideInterp::Linear,
+    };
+    let write = |staged: &mut Vec<crate::api::effect::BridgeEffectInstance>,
+                 keys: Vec<BridgeKeyframe>| {
+        staged[0].set_value(
+            "animated".into(),
+            BridgeEffectValue::Float(BridgeScalar::Keyframed(keys)),
+        )
+    };
+
+    assert!(matches!(
+        write(&mut staged, Vec::new()),
+        Err(BridgeError::InvalidKeyframes)
+    ));
+    assert!(matches!(
+        write(&mut staged, vec![key(1, 1), key(0, 1)]),
+        Err(BridgeError::InvalidKeyframes)
+    ));
+    assert!(
+        matches!(
+            write(&mut staged, vec![key(0, 1), key(0, 1)]),
+            Err(BridgeError::InvalidKeyframes)
+        ),
+        "two keys at the same time are not a curve either"
+    );
+    assert!(matches!(
+        write(&mut staged, vec![key(1, 0)]),
+        Err(BridgeError::InvalidKeyframes)
+    ));
+
+    // A valid curve still writes, so the guard is not simply refusing everything.
+    write(&mut staged, vec![key(0, 1), key(1, 2)]).expect("an ascending curve writes");
+}
+
+/// The Add-effect menu's source list. It carries the label and the category keys
+/// as well as the match name, because the menu groups by category (K-090) and
+/// draws the label, and a second call to find those out would be wasted.
+#[test]
+fn list_effects_names_the_builtins_with_their_labels_and_categories() {
+    let effects = list_effects();
+    assert!(!effects.is_empty());
+    assert!(
+        effects
+            .iter()
+            .any(|e| e.name == "blur" && e.label == "Gaussian blur"),
+        "the match name and its menu label are distinct, and both are carried"
+    );
+    assert!(effects
+        .iter()
+        .all(|e| !e.category.is_empty() && !e.category_label.is_empty()));
+}
+
+/// Each stack op is one `SetLayerEffects`, so one undo puts the stack back
+/// exactly as it was. A single op that landed as two would leave the stack
+/// half-restored here, which is the failure this is watching for.
+#[test]
+fn each_effect_stack_op_lands_as_one_undo_step() {
+    let (project, layer) = project_with_layer();
+    let builtins = list_effects();
+    let (first, second) = (builtins[0].name.clone(), builtins[1].name.clone());
+
+    // Add.
+    layer.add_effect(first.clone()).expect("added");
+    let added = stack_of(&layer);
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].effect.match_name, first);
+    undo_once(&project);
+    assert!(
+        stack_of(&layer).is_empty(),
+        "one undo unwinds the whole add"
+    );
+
+    layer.add_effect(first.clone()).expect("added again");
+    layer.add_effect(second).expect("a second effect");
+    let two = stack_of(&layer);
+    assert_eq!(two.len(), 2, "an added effect appends to the stack");
+
+    // Bypass.
+    layer
+        .set_effect_enabled(&layer.get_effects().expect("stack")[0], false)
+        .expect("bypassed");
+    assert!(!stack_of(&layer)[0].enabled);
+    undo_once(&project);
+    assert_eq!(stack_of(&layer), two, "one undo restores the whole stack");
+
+    // Reorder.
+    layer
+        .reorder_effect(&layer.get_effects().expect("stack")[0], 1)
+        .expect("reordered");
+    assert_eq!(stack_of(&layer)[1].id, two[0].id);
+    undo_once(&project);
+    assert_eq!(stack_of(&layer), two);
+
+    // Remove.
+    layer
+        .remove_effect(&layer.get_effects().expect("stack")[0])
+        .expect("removed");
+    assert_eq!(stack_of(&layer).len(), 1);
+    undo_once(&project);
+    assert_eq!(stack_of(&layer), two);
+}
+
+/// A drag that overshoots the list is an ordinary thing for a pointer to do, so
+/// the index clamps rather than the reorder failing and leaving the effect where
+/// it started with no explanation.
+#[test]
+fn reorder_effect_clamps_an_index_outside_the_stack() {
+    let (project, layer) = project_with_layer();
+    let names: Vec<String> = list_effects()
+        .iter()
+        .take(3)
+        .map(|e| e.name.clone())
+        .collect();
+    for name in &names {
+        layer.add_effect(name.clone()).expect("added");
+    }
+    let ids: Vec<Uuid> = stack_of(&layer).iter().map(|e| e.id).collect();
+    assert_eq!(ids.len(), 3);
+
+    // Far past the end lands it at the bottom.
+    layer
+        .reorder_effect(&layer.get_effects().expect("stack")[0], 99)
+        .expect("clamped, not refused");
+    assert_eq!(stack_of(&layer)[2].id, ids[0]);
+
+    // Negative lands it back at the top.
+    layer
+        .reorder_effect(&layer.get_effects().expect("stack")[2], -5)
+        .expect("clamped, not refused");
+    assert_eq!(stack_of(&layer)[0].id, ids[0]);
+
+    // And the whole document is still consistent: three effects, no duplicates.
+    let after: Vec<Uuid> = stack_of(&layer).iter().map(|e| e.id).collect();
+    assert_eq!(after.len(), 3);
+    assert_eq!(after[0], ids[0]);
+    let _ = project;
+}
+
+/// Effects that are no longer there, and names that never were, are calm errors.
+#[test]
+fn the_stack_ops_refuse_what_they_cannot_find() {
+    let (project, layer) = project_with_layer();
+    seed_stack(&project, &layer, vec![effect_with_every_kind()]);
+
+    assert!(matches!(
+        layer.add_effect("not-an-effect".into()),
+        Err(BridgeError::UnknownEffectName)
+    ));
+
+    let stale = layer.get_effects().expect("stack");
+    layer.remove_effect(&stale[0]).expect("removed");
+    // The reference now outlives its effect: an error, never a panic.
+    assert!(matches!(
+        layer.remove_effect(&stale[0]),
+        Err(BridgeError::InvalidEffect)
+    ));
+    assert!(matches!(
+        layer.reorder_effect(&stale[0], 0),
+        Err(BridgeError::InvalidEffect)
+    ));
+    assert!(matches!(
+        layer.set_effect_enabled(&stale[0], false),
+        Err(BridgeError::InvalidEffect)
+    ));
+}
+
+/// `set_effects` commits parameter values, and only those. A stack staged before
+/// something else removed an effect from it would otherwise resurrect that
+/// effect on mouse-up — and reorder and delete would have a second, silent path
+/// that cannot say what it meant.
+#[test]
+fn committing_a_staged_stack_that_no_longer_matches_the_document_is_refused() {
+    let (project, layer) = project_with_layer();
+    let mut first = effect_with_every_kind();
+    first.params.clear();
+    let mut second = effect_with_every_kind();
+    second.params.clear();
+    second.id = Uuid::now_v7();
+    seed_stack(&project, &layer, vec![first.clone(), second.clone()]);
+
+    let staged = layer.get_effects().expect("stack");
+    layer
+        .remove_effect(&layer.get_effects().expect("stack")[1])
+        .expect("removed behind the panel's back");
+
+    assert!(matches!(
+        layer.set_effects(staged),
+        Err(BridgeError::StaleEffectStack)
+    ));
+    assert_eq!(
+        stack_of(&layer),
+        vec![first],
+        "the removal stands; nothing is resurrected"
+    );
 }

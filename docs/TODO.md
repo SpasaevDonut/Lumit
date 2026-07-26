@@ -166,12 +166,18 @@ sequence clips.
         exist on `ProjectReference` (they had to, for the Project panel to have
         anything to show). `showCompositionSettingsDialog` needs an frb form, which
         also restores the Project panel's context-menu entry.
-    4. **Effect controls** — `BridgeEffectInstance` is the furthest along and the
-        most provisional: `get_value`/`set_value` speak only static `f64`, so
-        seven of the eight `EffectValue` kinds and every keyframed value are
-        unreachable (they answer `None`). Replace the pair with a sum type
-        mirroring `EffectValue`, then add `add_effect`, `remove_effect`,
-        `reorder_effect`, `set_effect_enabled`, `list_effects` and the presets.
+    4. **Effect controls** — the Rust surface is in. `get_value`/`set_value` speak
+        `BridgeEffectValue`, a sum type mirroring `EffectValue`: all eight kinds,
+        and a keyframed value carries its keys (exact rational times, per-side
+        easing) rather than collapsing to a number, so reading then writing leaves
+        the document untouched. `add_effect`, `remove_effect`, `reorder_effect`,
+        `set_effect_enabled` and `set_effects` (the mouse-up commit for a staged
+        stack) are on `LayerReference`, one `SetLayerEffects` each; `list_effects`
+        is a free function. Outstanding: the Dart panel itself, the effect-param
+        keyframe ops (with item 7), the `.lumfx` presets, and a `preview_effect_param`
+        equivalent — the frb staging path is the panel holding its own stack copy
+        and rendering through `render_frame_with_preview`, so there is nothing
+        engine-side to stage, but that is unproven until a panel drives it.
     5. **Transform rows** — `set_transform`, and `preview_transform` /
         `cancel_transform_preview` for the drag path.
     6. **Timeline** — the largest surface: layer lifecycle (add solid/text/camera/
