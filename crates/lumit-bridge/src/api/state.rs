@@ -1,14 +1,12 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    println,
     sync::{mpsc::Sender, Arc, LazyLock, RwLock},
 };
 
 use flutter_rust_bridge::frb;
 use lumit_core::{store::DocumentChange, Document, DocumentStore};
 use lumit_project::JournalFile;
-use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
@@ -34,6 +32,11 @@ pub struct ScopedChange {
     pub project: ProjectReference,
     pub item: Option<ItemReference>,
     pub layer: Option<LayerReference>,
+    /// The project item list changed: an item was added, removed, renamed,
+    /// refiled or relinked. The Project panel rebuilds on this and ignores
+    /// everything else, so tweaking a layer value no longer re-probes every
+    /// footage file on disk.
+    pub items: bool,
 }
 
 #[frb(non_opaque)]
@@ -108,6 +111,71 @@ pub static PROJECTS: LazyLock<RwLock<BTreeMap<Uuid, Arc<RwLock<LumitBridgeState>
 pub static STREAMS: LazyLock<RwLock<BTreeMap<Uuid, Arc<CallbackStream>>>> =
     LazyLock::new(|| RwLock::new(BTreeMap::new()));
 
+/// The scope of one op: which composition it touches, which layer within it,
+/// and whether it changed the project item list.
+///
+/// Matching the enum rather than sniffing a JSON blob for `comp`/`layer` string
+/// fields is the whole point: every project-level op used to fall through with
+/// nothing set, so the Project panel had no way to tell "an item was added" from
+/// "someone nudged an opacity keyframe" and rebuilt on both.
+///
+/// Structural layer ops (add / remove / reorder) report the comp but not the
+/// layer: what changed is the comp's layer list, not one layer's contents.
+pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool) {
+    use lumit_core::Op;
+    match op {
+        // The project item list itself.
+        Op::AddItem { .. }
+        | Op::RemoveItem { .. }
+        | Op::RenameItem { .. }
+        | Op::SetMediaRef { .. }
+        | Op::SetFolderChildren { .. }
+        | Op::SetAutoFolder { .. }
+        // A solid def is a project item, and its name shows in the panel.
+        | Op::SetSolidDef { .. } => (None, None, true),
+
+        // Comp settings carry the comp's name, so the panel row changes too.
+        Op::SetCompSettings { comp, .. } => (Some(*comp), None, true),
+
+        // The comp, but no one layer.
+        Op::AddLayer { comp, .. }
+        | Op::RemoveLayer { comp, .. }
+        | Op::ReorderLayer { comp, .. }
+        | Op::SetCompMotionBlur { comp, .. }
+        | Op::SetWorkArea { comp, .. }
+        | Op::SetCompMarkers { comp, .. } => (Some(*comp), None, false),
+
+        // One layer's own contents.
+        Op::SetLayerSpan { comp, layer, .. }
+        | Op::RenameLayer { comp, layer, .. }
+        | Op::SetLayerMasks { comp, layer, .. }
+        | Op::SetLayerEffects { comp, layer, .. }
+        | Op::SetLayerFx { comp, layer, .. }
+        | Op::SetLayerThreeD { comp, layer, .. }
+        | Op::SetSequenceClips { comp, layer, .. }
+        | Op::SetLayerAudible { comp, layer, .. }
+        | Op::SetLayerVisible { comp, layer, .. }
+        | Op::SetLayerSolo { comp, layer, .. }
+        | Op::SetLayerMotionBlur { comp, layer, .. }
+        | Op::SetLayerLocked { comp, layer, .. }
+        | Op::SetLayerLabel { comp, layer, .. }
+        | Op::SetLayerCollapse { comp, layer, .. }
+        | Op::SetTextDocument { comp, layer, .. }
+        | Op::SetLayerBlend { comp, layer, .. }
+        | Op::SetLayerMatte { comp, layer, .. }
+        | Op::SetLayerParent { comp, layer, .. }
+        | Op::SetTransformProperty { comp, layer, .. }
+        | Op::SetCameraZoom { comp, layer, .. }
+        | Op::SetLayerVolume { comp, layer, .. }
+        | Op::SetLayerRetime { comp, layer, .. } => (Some(*comp), Some(*layer), false),
+
+        // A batch is as broad as its members: the item flag is the union, and
+        // the reference scope widens to "no one subtree" rather than picking a
+        // member's comp and leaving the others unrefreshed.
+        Op::Batch { ops } => (None, None, ops.iter().any(|o| op_scope(o).2)),
+    }
+}
+
 impl LumitBridgeState {
     #[frb(sync)]
     pub fn new_project(
@@ -149,41 +217,21 @@ impl LumitBridgeState {
     /// Turn a committed op into the narrowest scope Dart can rebuild from.
     ///
     /// This runs inside `DocumentStore`'s observer, which returns nothing, so
-    /// there is no caller to hand an error to. Every failure therefore degrades
-    /// rather than propagating: an op whose scope cannot be read leaves `item`
-    /// and `layer` as `None`, which Dart already treats as "rebuild everything".
-    /// That is slower but always correct — the opposite of panicking inside a
-    /// commit, which would poison the store's lock and take the editor with it.
+    /// there is no caller to hand an error to. It therefore cannot fail: the
+    /// scope comes from matching the `Op` enum, so a new variant is a compile
+    /// error here rather than a silently unscoped change at runtime.
     fn handle_change_callback(document_change: DocumentChange, project_id: Uuid) {
-        let converted = json!(document_change.op);
+        let (comp, layer, items) = op_scope(&document_change.op);
 
-        let mut change = ScopedChange {
+        let change = ScopedChange {
             project: ProjectReference::new(project_id),
-            item: None,
-            layer: None,
+            item: comp
+                .map(|c| ItemReference::Composition(CompositionReference::new(project_id, c))),
+            layer: comp
+                .zip(layer)
+                .map(|(c, l)| LayerReference::new(project_id, c, l)),
+            items,
         };
-
-        // Ops carry their scope as `comp`/`layer` UUID fields; the ones that do
-        // not (project-level edits) fall through with both left as None.
-        if let serde_json::Value::Object(map) = converted {
-            let field = |key: &str| {
-                map.get(key)
-                    .and_then(|f| f.as_str())
-                    .and_then(|f| Uuid::parse_str(f).ok())
-            };
-
-            if let Some(comp) = field("comp") {
-                change.item = Some(ItemReference::Composition(CompositionReference::new(
-                    project_id, comp,
-                )));
-
-                if let Some(layer) = field("layer") {
-                    change.layer = Some(LayerReference::new(project_id, comp, layer));
-                }
-            }
-        }
-
-        println!("Got change: {:#?}", change);
 
         let Ok(streams) = STREAMS.read() else {
             eprintln!("Stream registry poisoned; dropping change for {project_id}");
@@ -193,8 +241,6 @@ impl LumitBridgeState {
         if let Some(stream) = streams.get(&project_id) {
             _ = stream.add(change);
         }
-
-        println!("Document changed! - {project_id}");
     }
 
     #[frb(sync)]

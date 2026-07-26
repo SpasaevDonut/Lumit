@@ -155,13 +155,11 @@ class LumitState extends ChangeNotifier {
   void handleChange(ScopedChange event) {
     _onChange.add(event);
 
-    // Rebuilds should be handled by LayerBuilder, no need to notify
-    if (event.layer != null) return;
+    // A change that names a subtree is that subtree's business: LayerBuilder and
+    // ProjectItemBuilder subscribe to the stream themselves.
+    if (event.layer != null || event.item != null) return;
 
-    if (event.item != null) return;
-
-    // else, not able to identify scope of this change, rebuild everything!
-    debugPrint('Rebuilding everything!');
+    // Nothing narrower to aim at — whoever listens to LumitState rebuilds.
     notifyListeners();
   }
 }

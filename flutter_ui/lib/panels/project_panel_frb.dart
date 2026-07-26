@@ -65,13 +65,19 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     // That is the point of the scoped-change stream: no panel has to be told
     // about an edit it did not make, and none has to poll.
     //
+    // Only `items` changes concern this panel. Rebuilding on every change meant a
+    // layer tweak in the Timeline dropped the whole missing-media cache and
+    // re-probed every footage file on disk — see `op_scope` in api/state.rs.
+    //
     // This panel's own edits do *not* wait for the round trip; each calls
     // `_documentChanged` directly. Waiting would put a Rust→Dart hop between a
     // click and the row updating, for information this panel already had — and it
     // would make the panel untestable without real async, since a fake-async test
     // never delivers an FFI stream event.
     final state = Provider.of<LumitState>(context, listen: false);
-    _changes = state.onChange.listen((_) => _documentChanged());
+    _changes = state.onChange.listen((event) {
+      if (event.items) _documentChanged();
+    });
   }
 
   @override
@@ -91,7 +97,9 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
   ///
   /// Cached because `getStatus` probes the file, which is far too slow to do in a
   /// build — and because the missing-only filter has to know every item's status
-  /// at once to decide what to draw. Refreshed when the document changes.
+  /// at once to decide what to draw. Dropped when the item list changes, and only
+  /// then: a probe of every footage file is far too expensive to repeat because
+  /// someone nudged a layer value.
   final Map<String, bool> _missing = {};
 
   /// Bumped whenever the document changes, to key the thumbnail futures so a

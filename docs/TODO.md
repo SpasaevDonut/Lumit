@@ -137,7 +137,7 @@ sequence clips.
             `realtime::observe`. So a comp too heavy to render at panel size does
             not yet degrade — it just renders slowly.
     2. **Project panel — ported, fully tested.** `project_panel_frb.dart` on the
-        frb API, all 12 tests passing against the *real* engine (see
+        frb API, all 13 tests passing against the *real* engine (see
         `test/frb/frb_test_support.dart` for why these are integration tests: the
         generated types are concrete, so there is nothing to fake, and adding a
         Dart interface purely to allow faking would reintroduce the mirror-class
@@ -145,8 +145,10 @@ sequence clips.
         - **Missing status is cached in the panel**, because `getStatus` probes the
             file so cannot be called from a build, and the missing-only filter needs
             every status at once. v0 got status free from the snapshot because the
-            engine probed and cached. The proper fix is the off-thread probing item
-            under "Threading / platform".
+            engine probed and cached. The cache is now dropped only on an item-list
+            change (`ScopedChange.items`), not on every edit, so a layer tweak no
+            longer re-probes every file — but the proper fix is still the off-thread
+            probing item under "Threading / platform".
         - **Composition settings is absent from the context menu**: its dialog takes
             an `AppStateStub`. Port it with the Timeline; the menu bar still reaches
             the same dialog, so the capability is not lost.
@@ -216,9 +218,6 @@ sequence clips.
     - **No journal or autosave.** `LumitBridgeState.journal` is always `None`, so
         crash recovery does not see work done through frb, and there is no
         `autosave`. v0 appends every commit.
-    - **`ScopedChange` is coarse and lossy.** It re-serialises each `Op` to JSON
-        and looks for `comp`/`layer` string fields, so every project-level edit
-        falls through to "rebuild everything". Match on the `Op` enum instead.
     - **The `PROJECTS`/`STREAMS` global pair** are two `LazyLock<RwLock<BTreeMap>>`
         registries kept apart only by a comment about lock ordering, and
         `ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out.

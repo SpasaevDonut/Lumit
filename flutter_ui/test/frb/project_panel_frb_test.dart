@@ -16,6 +16,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart' show LumitMediaStatus;
+import 'package:lumit_flutter/src/rust/api/project_item.dart' show ItemReference_Footage;
+import 'package:lumit_flutter/src/rust/api/state.dart' show ScopedChange;
 import 'package:lumit_flutter/state/app_state.dart' show FootageDragData;
 
 import 'frb_test_support.dart';
@@ -349,6 +351,49 @@ void main() {
       final status = await tester.runAsync(() => gone.getStatus());
       expect(status, LumitMediaStatus.ready,
           reason: 'the picked path reached the engine, not just the panel');
+    });
+
+    /// The panel used to rebuild on *every* document change, so tweaking a layer
+    /// dropped the whole missing-media cache and re-probed every footage file on
+    /// disk. `ScopedChange.items` is the separation; `op_scope` in api/state.rs
+    /// classifies each op, and its unit tests cover the full table.
+    testWidgets('a layer edit is not an item-list change; a rename is',
+        (tester) async {
+      final p = freshProject();
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addFootageLayer(footage: footage);
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      // Drain the setup's own changes first: the engine's stream only delivers
+      // on real event-loop turns, so without this they arrive after we subscribe.
+      await settleFrb(tester);
+
+      final scopes = <ScopedChange>[];
+      final sub = p.state.onChange.listen(scopes.add);
+      addTearDown(sub.cancel);
+
+      comp.getLayers().single.rename(name: 'Hero');
+      await settleFrb(tester, until: () => scopes.isNotEmpty);
+
+      expect(scopes.single.items, isFalse,
+          reason: 'a layer rename must not make the panel re-probe every file');
+      expect(scopes.single.layer, isNotNull,
+          reason: 'it scopes to the layer that changed');
+
+      // An item rename is the panel's business, and reaches it from outside.
+      scopes.clear();
+      final item = p.state.project!.getItems().whereType<ItemReference_Footage>().single;
+      item.rename(name: 'hero.mov');
+      await settleFrb(tester, until: () => scopes.isNotEmpty);
+
+      expect(scopes.single.items, isTrue);
+      expect(find.text('hero.mov'), findsOneWidget,
+          reason: 'an edit made elsewhere still redraws the row');
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.

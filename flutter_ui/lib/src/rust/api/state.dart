@@ -17,7 +17,7 @@ import 'project_item.dart';
 import 'solid.dart';
 part 'state.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `handle_change_callback`
+// These functions are ignored because they are not marked as `pub`: `handle_change_callback`, `op_scope`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitBridgeState>>
@@ -154,14 +154,22 @@ class ScopedChange {
   final ItemReference? item;
   final LayerReference? layer;
 
+  /// The project item list changed: an item was added, removed, renamed,
+  /// refiled or relinked. The Project panel rebuilds on this and ignores
+  /// everything else, so tweaking a layer value no longer re-probes every
+  /// footage file on disk.
+  final bool items;
+
   const ScopedChange({
     required this.project,
     this.item,
     this.layer,
+    required this.items,
   });
 
   @override
-  int get hashCode => project.hashCode ^ item.hashCode ^ layer.hashCode;
+  int get hashCode =>
+      project.hashCode ^ item.hashCode ^ layer.hashCode ^ items.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -170,7 +178,8 @@ class ScopedChange {
           runtimeType == other.runtimeType &&
           project == other.project &&
           item == other.item &&
-          layer == other.layer;
+          layer == other.layer &&
+          items == other.items;
 }
 
 @freezed

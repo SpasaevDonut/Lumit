@@ -2416,6 +2416,17 @@ because *the handle is the identity*. Alongside that, Rust pushes a small
 tap Dart listens to), so only the part of the interface that actually changed is
 redrawn instead of all of it.
 
+That message is worked out in one place, `op_scope` in
+`crates/lumit-bridge/src/api/state.rs`: it looks at the edit that just happened
+and says which composition it touched, which layer inside it, and whether the
+project's *list of items* changed at all. Getting that last part wrong is
+expensive rather than merely untidy — the Project panel has to ask the operating
+system whether each footage file is still where it was, and that is slow enough
+that it caches the answers. Before the scope told it otherwise, it threw those
+answers away on every edit of any kind, so nudging a value in the Timeline sent
+it back to the disk to re-check every clip in the project. Now it only listens
+for edits that add, remove, rename, refile or relink an item.
+
 *Where to look for the pattern.* Three small files exist purely as readable
 examples of this style, and are the ones to copy when porting a panel:
 `flutter_ui/lib/panels/project_panel_frb.dart` (reading a list through handles),

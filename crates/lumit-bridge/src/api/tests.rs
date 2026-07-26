@@ -927,3 +927,121 @@ fn committing_a_staged_stack_that_no_longer_matches_the_document_is_refused() {
         "the removal stands; nothing is resurrected"
     );
 }
+
+// --- Change scoping -------------------------------------------------------
+//
+// `op_scope` is what stops the Project panel rebuilding — and re-probing every
+// footage file on disk — every time someone nudges a layer value. It used to
+// serialise each op to JSON and look for `comp`/`layer` string fields, so every
+// project-level op fell through unscoped and Dart could not tell the two apart.
+
+/// A layer edit is not a project-item edit. This is the regression: with the
+/// JSON sniffing, `items` did not exist and the panel rebuilt on this op.
+#[test]
+fn a_layer_edit_scopes_to_its_layer_and_not_the_item_list() {
+    let (comp, layer) = (Uuid::now_v7(), Uuid::now_v7());
+
+    assert_eq!(
+        crate::api::state::op_scope(&Op::SetLayerVisible {
+            comp,
+            layer,
+            visible: false,
+        }),
+        (Some(comp), Some(layer), false)
+    );
+
+    // Adding or removing a layer changes the comp's layer list, not one layer's
+    // contents, so it reports the comp alone.
+    assert_eq!(
+        crate::api::state::op_scope(&Op::RemoveLayer { comp, layer }),
+        (Some(comp), None, false)
+    );
+}
+
+/// Every op that adds, removes, renames, refiles or relinks an item sets the
+/// flag the Project panel listens on.
+#[test]
+fn project_item_edits_scope_to_the_item_list() {
+    let (id, folder) = (Uuid::now_v7(), Uuid::now_v7());
+
+    for op in [
+        Op::RemoveItem { id },
+        Op::RenameItem {
+            id,
+            name: "hero".into(),
+        },
+        Op::SetFolderChildren {
+            folder,
+            children: vec![id],
+        },
+        Op::SetAutoFolder {
+            kind: lumit_core::ops::AutoFolderKind::Solids,
+            folder: Some(folder),
+        },
+    ] {
+        assert_eq!(
+            crate::api::state::op_scope(&op),
+            (None, None, true),
+            "{op:?} should reach the Project panel"
+        );
+    }
+
+    // Comp settings carry the comp's name, which is the panel's row label, so
+    // this one is both an item-list change and a comp change.
+    assert_eq!(
+        crate::api::state::op_scope(&Op::SetCompSettings {
+            comp: id,
+            name: "Scene".into(),
+            width: 1920,
+            height: 1080,
+            frame_rate: lumit_core::time::FrameRate::new(25, 1).expect("25 fps"),
+            duration: lumit_core::time::Duration(
+                lumit_core::time::Rational::new(5, 1).expect("5 s")
+            ),
+            background: lumit_core::model::LinearColour::BLACK,
+        }),
+        (Some(id), None, true)
+    );
+}
+
+/// A batch is as broad as its members: `move_to_root` commits a batch of folder
+/// edits and must still reach the panel, while a batch of layer edits must not.
+#[test]
+fn a_batch_takes_the_widest_scope_of_its_members() {
+    let (comp, layer, folder) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+
+    assert_eq!(
+        crate::api::state::op_scope(&Op::Batch {
+            ops: vec![
+                Op::SetLayerVisible {
+                    comp,
+                    layer,
+                    visible: false,
+                },
+                Op::SetFolderChildren {
+                    folder,
+                    children: vec![],
+                },
+            ],
+        }),
+        (None, None, true)
+    );
+
+    assert_eq!(
+        crate::api::state::op_scope(&Op::Batch {
+            ops: vec![
+                Op::SetLayerVisible {
+                    comp,
+                    layer,
+                    visible: false,
+                },
+                Op::RenameLayer {
+                    comp,
+                    layer,
+                    name: "Adjust".into(),
+                },
+            ],
+        }),
+        (None, None, false)
+    );
+}
