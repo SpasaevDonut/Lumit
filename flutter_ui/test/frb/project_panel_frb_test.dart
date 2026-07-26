@@ -29,7 +29,7 @@ import 'frb_test_support.dart';
 /// `relink_does_not_deadlock_against_its_own_read`; what is missing is the widget
 /// half. Tracked in docs/TODO.md.
 /// `testWidgets` takes a bool, not a reason string, so the reason lives above.
-const _asyncStatusSkip = true;
+const _asyncStatusSkip = false;
 
 void main() {
   setUpAll(initEngineForTests);

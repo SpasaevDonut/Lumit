@@ -15,6 +15,50 @@ import 'package:uuid/uuid.dart';
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
+/// Everything the Composition settings dialog reads and writes.
+///
+/// The frame rate is the exact `num`/`den` pair and the duration is a frame count,
+/// never floating-point seconds (docs/14 §2). A dialog that round-tripped 29.97
+/// through a double would not hand it back as 30000/1001.
+class BridgeCompSettings {
+  final String name;
+  final int width;
+  final int height;
+  final int fpsNum;
+  final int fpsDen;
+  final PlatformInt64 durationFrames;
+
+  const BridgeCompSettings({
+    required this.name,
+    required this.width,
+    required this.height,
+    required this.fpsNum,
+    required this.fpsDen,
+    required this.durationFrames,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      fpsNum.hashCode ^
+      fpsDen.hashCode ^
+      durationFrames.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeCompSettings &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          width == other.width &&
+          height == other.height &&
+          fpsNum == other.fpsNum &&
+          fpsDen == other.fpsDen &&
+          durationFrames == other.durationFrames;
+}
+
 /// A composition's pixel dimensions.
 class BridgeCompSize {
   final int width;
@@ -68,6 +112,17 @@ class CompositionReference {
         that: this,
       );
 
+  /// Everything the Composition settings dialog shows.
+  ///
+  /// The frame rate crosses as an exact `{num, den}` pair and the duration as a
+  /// frame count, never as floating-point seconds — docs/14 §2's rational-time
+  /// rule. 29.97 fps is 30000/1001, and a dialog that round-tripped it through a
+  /// double would not give it back.
+  BridgeCompSettings getSettings() =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetSettings(
+        that: this,
+      );
+
   /// The comp's pixel dimensions. The Viewer needs these to work out what
   /// fraction of comp resolution it is actually showing, which is the `scale`
   /// every render request carries — without them it could only ever ask for
@@ -98,6 +153,16 @@ class CompositionReference {
               scale: scale,
               layer: layer,
               effects: effects);
+
+  /// Apply the Composition settings dialog, as one undo step.
+  ///
+  /// Dimensions are clamped to 16..=16384 and the duration to at least one frame,
+  /// so a dialog cannot commit a comp that is zero pixels wide or zero frames
+  /// long. The background colour is preserved: it is not part of this dialog, and
+  /// `SetCompSettings` carries the whole settings block.
+  void setSettings({required BridgeCompSettings settings}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceSetSettings(
+          that: this, settings: settings);
 
   @override
   int get hashCode => internalproject.hashCode ^ internalid.hashCode;

@@ -23,6 +23,21 @@ pub struct BridgeCompSize {
     pub height: u32,
 }
 
+/// Everything the Composition settings dialog reads and writes.
+///
+/// The frame rate is the exact `num`/`den` pair and the duration is a frame count,
+/// never floating-point seconds (docs/14 §2). A dialog that round-tripped 29.97
+/// through a double would not hand it back as 30000/1001.
+#[frb(non_opaque)]
+pub struct BridgeCompSettings {
+    pub name: String,
+    pub width: u32,
+    pub height: u32,
+    pub fps_num: u32,
+    pub fps_den: u32,
+    pub duration_frames: i64,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 #[frb]
 pub struct CompositionReference {
@@ -68,6 +83,62 @@ impl CompositionReference {
             width: comp.width,
             height: comp.height,
         })
+    }
+
+    /// Everything the Composition settings dialog shows.
+    ///
+    /// The frame rate crosses as an exact `{num, den}` pair and the duration as a
+    /// frame count, never as floating-point seconds — docs/14 §2's rational-time
+    /// rule. 29.97 fps is 30000/1001, and a dialog that round-tripped it through a
+    /// double would not give it back.
+    #[frb(sync)]
+    pub fn get_settings(&self) -> Result<BridgeCompSettings, BridgeError> {
+        let comp = self.composition()?;
+        let frames = comp
+            .frame_rate
+            .frame_at(lumit_core::time::CompTime(comp.duration.0));
+        Ok(BridgeCompSettings {
+            name: comp.name.clone(),
+            width: comp.width,
+            height: comp.height,
+            fps_num: comp.frame_rate.num(),
+            fps_den: comp.frame_rate.den(),
+            duration_frames: frames,
+        })
+    }
+
+    /// Apply the Composition settings dialog, as one undo step.
+    ///
+    /// Dimensions are clamped to 16..=16384 and the duration to at least one frame,
+    /// so a dialog cannot commit a comp that is zero pixels wide or zero frames
+    /// long. The background colour is preserved: it is not part of this dialog, and
+    /// `SetCompSettings` carries the whole settings block.
+    #[frb(sync)]
+    pub fn set_settings(&self, settings: BridgeCompSettings) -> Result<(), BridgeError> {
+        use lumit_core::time::{Duration, FrameRate};
+
+        let comp = self.composition()?;
+        let frame_rate = FrameRate::new(settings.fps_num, settings.fps_den)
+            .map_err(|_| BridgeError::InvalidFrameRate)?;
+        let duration = frame_rate
+            .time_of_frame(settings.duration_frames.max(1))
+            .map(|t| Duration(t.0))
+            .map_err(|_| BridgeError::InvalidFrameRate)?;
+
+        let proj = self.project()?;
+        let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+        proj.store
+            .commit(lumit_core::Op::SetCompSettings {
+                comp: self.id,
+                name: settings.name,
+                width: settings.width.clamp(16, 16384),
+                height: settings.height.clamp(16, 16384),
+                frame_rate,
+                duration,
+                background: comp.background,
+            })
+            .map_err(BridgeError::OpError)?;
+        Ok(())
     }
 
     /// The composition this reference names, cloned out of the current snapshot.

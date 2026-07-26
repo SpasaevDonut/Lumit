@@ -12,6 +12,13 @@ use crate::api::{
     worker_thread, BridgeError,
 };
 
+/// Whether undo and redo have anything to do, for greying the menu items.
+#[frb(non_opaque)]
+pub struct BridgeHistory {
+    pub can_undo: bool,
+    pub can_redo: bool,
+}
+
 #[derive(Debug, Clone)]
 #[frb]
 pub struct ProjectReference {
@@ -221,6 +228,65 @@ impl ProjectReference {
             .map_err(BridgeError::OpError)?;
 
         Ok(FootageReference::new(self.id, item_id))
+    }
+
+    /// Save to `path`, or to wherever the project was last saved when `path` is
+    /// empty. Answers the path actually written, so Dart can show it and stop
+    /// asking where to put the file.
+    ///
+    /// Deliberately **not** `#[frb(sync)]`: this writes a whole document to disk
+    /// and fsyncs it, so it must not run on Dart's UI isolate. Budget S5
+    /// (docs/13 §2.1) asks for a stress-document save to be non-blocking, and an
+    /// async frb call is that for free.
+    ///
+    /// Media paths are rebased against the destination directory before writing
+    /// (K-173), so a project saved somewhere new keeps relative links that work.
+    /// A successful save clears the crash journal: the journal covers work
+    /// *between* saves, so once the document is on disk it is redundant.
+    pub fn save(&self, path: String) -> Result<String, BridgeError> {
+        let state = self.state()?;
+        let mut state = state.write().map_err(|_| BridgeError::WriteFailed)?;
+
+        let target = if path.trim().is_empty() {
+            // Never saved and no path given: the caller has to pick one.
+            state.path.clone().ok_or(BridgeError::NoProjectPath)?
+        } else {
+            std::path::PathBuf::from(path)
+        };
+
+        let dir = target.parent().unwrap_or_else(|| std::path::Path::new(""));
+        let doc = lumit_project::rebase_for_save(&state.store.snapshot(), dir);
+        lumit_project::save(&doc, &target).map_err(|_| BridgeError::WriteFailed)?;
+
+        if let Some(journal) = &state.journal {
+            let _ = journal.clear();
+        }
+        let written = target.to_string_lossy().into_owned();
+        state.path = Some(target);
+        Ok(written)
+    }
+
+    /// Where this project was last saved, or null when it never has been. The
+    /// menu bar needs it to decide between Save and Save as.
+    #[frb(sync)]
+    pub fn path(&self) -> Result<Option<String>, BridgeError> {
+        let state = self.state()?;
+        let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(state
+            .path
+            .as_ref()
+            .map(|p| p.to_string_lossy().into_owned()))
+    }
+
+    /// Whether there is anything to undo or redo, for greying the menu items.
+    #[frb(sync)]
+    pub fn history(&self) -> Result<BridgeHistory, BridgeError> {
+        let state = self.state()?;
+        let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(BridgeHistory {
+            can_undo: state.store.can_undo(),
+            can_redo: state.store.can_redo(),
+        })
     }
 
     #[frb(sync)]

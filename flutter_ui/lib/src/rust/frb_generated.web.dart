@@ -118,6 +118,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  BridgeCompSettings dco_decode_box_autoadd_bridge_comp_settings(dynamic raw);
+
+  @protected
   BridgeRenderedFrame dco_decode_box_autoadd_bridge_rendered_frame(dynamic raw);
 
   @protected
@@ -154,7 +157,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
 
   @protected
+  BridgeCompSettings dco_decode_bridge_comp_settings(dynamic raw);
+
+  @protected
   BridgeCompSize dco_decode_bridge_comp_size(dynamic raw);
+
+  @protected
+  BridgeHistory dco_decode_bridge_history(dynamic raw);
 
   @protected
   BridgeRenderedFrame dco_decode_bridge_rendered_frame(dynamic raw);
@@ -185,6 +194,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   int dco_decode_i_32(dynamic raw);
 
   @protected
+  PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
   ItemReference dco_decode_item_reference(dynamic raw);
 
   @protected
@@ -213,6 +225,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   RustStreamSink<ScopedChange>? dco_decode_opt_StreamSink_scoped_change_Sse(
       dynamic raw);
+
+  @protected
+  String? dco_decode_opt_String(dynamic raw);
 
   @protected
   BridgeRenderedFrame? dco_decode_opt_box_autoadd_bridge_rendered_frame(
@@ -328,6 +343,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  BridgeCompSettings sse_decode_box_autoadd_bridge_comp_settings(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeRenderedFrame sse_decode_box_autoadd_bridge_rendered_frame(
       SseDeserializer deserializer);
 
@@ -372,7 +391,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeCompSettings sse_decode_bridge_comp_settings(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeCompSize sse_decode_bridge_comp_size(SseDeserializer deserializer);
+
+  @protected
+  BridgeHistory sse_decode_bridge_history(SseDeserializer deserializer);
 
   @protected
   BridgeRenderedFrame sse_decode_bridge_rendered_frame(
@@ -406,6 +432,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
+  PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
   ItemReference sse_decode_item_reference(SseDeserializer deserializer);
 
   @protected
@@ -436,6 +465,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   RustStreamSink<ScopedChange>? sse_decode_opt_StreamSink_scoped_change_Sse(
       SseDeserializer deserializer);
+
+  @protected
+  String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
   BridgeRenderedFrame? sse_decode_opt_box_autoadd_bridge_rendered_frame(
@@ -555,6 +587,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_comp_settings(
+      BridgeCompSettings self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_rendered_frame(
       BridgeRenderedFrame self, SseSerializer serializer);
 
@@ -598,8 +634,15 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SolidReference self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_comp_settings(
+      BridgeCompSettings self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_comp_size(
       BridgeCompSize self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_history(BridgeHistory self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_rendered_frame(
@@ -635,6 +678,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
+  void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
   void sse_encode_item_reference(ItemReference self, SseSerializer serializer);
 
   @protected
@@ -668,6 +714,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_opt_StreamSink_scoped_change_Sse(
       RustStreamSink<ScopedChange>? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_bridge_rendered_frame(

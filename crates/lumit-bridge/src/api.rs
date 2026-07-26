@@ -25,6 +25,11 @@ pub enum BridgeError {
     InvalidLayer,
     /// A media path could not be resolved, or a relink found nothing to point at.
     MediaPathUnresolved,
+    /// A frame rate of zero, or one whose frame count cannot be expressed.
+    InvalidFrameRate,
+    /// Save was asked to write a project that has never been saved, without being
+    /// told where. The caller has to pick a path.
+    NoProjectPath,
     /// A rename was given a blank name. Refused rather than applied, so a row
     /// cannot lose its label.
     EmptyName,
@@ -50,6 +55,13 @@ impl fmt::Display for BridgeError {
             BridgeError::InvalidItem => write!(f, "Invalid Item"),
             BridgeError::InvalidLayer => write!(f, "Invalid Layer"),
             BridgeError::EmptyName => write!(f, "The name cannot be empty"),
+            BridgeError::InvalidFrameRate => write!(f, "Invalid frame rate"),
+            BridgeError::NoProjectPath => {
+                write!(
+                    f,
+                    "This project has never been saved, so a path is required"
+                )
+            }
             BridgeError::MediaPathUnresolved => write!(f, "Nothing to relink at that path"),
             BridgeError::InvalidParam => write!(f, "No such effect parameter"),
             BridgeError::UnsupportedParamKind => {

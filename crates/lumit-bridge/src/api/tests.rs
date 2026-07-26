@@ -9,9 +9,14 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use crate::api::{
-    composition::CompositionReference, folder::FolderReference, footage::FootageReference,
-    footage::LumitMediaStatus, project::ProjectReference, project_item::ItemReference,
-    state::LumitBridgeState, BridgeError,
+    composition::{BridgeCompSettings, CompositionReference},
+    folder::FolderReference,
+    footage::FootageReference,
+    footage::LumitMediaStatus,
+    project::ProjectReference,
+    project_item::ItemReference,
+    state::LumitBridgeState,
+    BridgeError,
 };
 use lumit_core::model::{Folder, FootageItem, MediaRef, ProjectItem};
 use lumit_core::Op;
@@ -321,4 +326,124 @@ fn import_and_new_composition_land_in_the_item_tree() {
     assert_eq!(children.len(), 1, "the comp is filed into it");
     assert_eq!(children[0].name().expect("name"), "Scene");
     assert_eq!(comp.get_size().expect("size").width, 1920);
+}
+
+/// Composition settings must round-trip exactly, including a non-integer frame
+/// rate. 29.97 fps is 30000/1001; if the pair went through a float anywhere it
+/// would not come back, which is why the settings type carries num and den rather
+/// than a single number (docs/14 §2).
+#[test]
+fn composition_settings_round_trip_including_a_drop_frame_rate() {
+    let (project, ..) = project_with_folder();
+    let comp = add_comp(&project, "Scene");
+
+    let before = comp.get_settings().expect("settings");
+    assert_eq!((before.fps_num, before.fps_den), (30, 1));
+
+    comp.set_settings(BridgeCompSettings {
+        name: "Renamed".into(),
+        width: 1280,
+        height: 720,
+        fps_num: 30000,
+        fps_den: 1001,
+        duration_frames: 240,
+    })
+    .expect("applied");
+
+    let after = comp.get_settings().expect("settings");
+    assert_eq!(after.name, "Renamed");
+    assert_eq!((after.width, after.height), (1280, 720));
+    assert_eq!(
+        (after.fps_num, after.fps_den),
+        (30000, 1001),
+        "the exact rate survives — no float round trip"
+    );
+    assert_eq!(after.duration_frames, 240);
+}
+
+/// A dialog must not be able to commit a comp that is zero pixels wide or zero
+/// frames long, and a zero frame rate is refused outright rather than clamped —
+/// there is no sensible rate to clamp to.
+#[test]
+fn composition_settings_clamp_the_absurd_and_refuse_a_zero_rate() {
+    let (project, ..) = project_with_folder();
+    let comp = add_comp(&project, "Scene");
+
+    comp.set_settings(BridgeCompSettings {
+        name: "Tiny".into(),
+        width: 0,
+        height: 0,
+        fps_num: 30,
+        fps_den: 1,
+        duration_frames: 0,
+    })
+    .expect("applied");
+
+    let after = comp.get_settings().expect("settings");
+    assert_eq!((after.width, after.height), (16, 16), "clamped, not zero");
+    assert_eq!(after.duration_frames, 1, "at least one frame");
+
+    assert!(matches!(
+        comp.set_settings(BridgeCompSettings {
+            name: "Bad".into(),
+            width: 1920,
+            height: 1080,
+            fps_num: 0,
+            fps_den: 1,
+            duration_frames: 10,
+        }),
+        Err(BridgeError::InvalidFrameRate)
+    ));
+}
+
+/// Saving answers where it wrote, and a project that has never been saved refuses
+/// an empty path rather than guessing a location.
+#[test]
+fn save_reports_its_path_and_refuses_to_guess_one() {
+    let (project, ..) = project_with_folder();
+
+    assert!(project.path().expect("path").is_none());
+    assert!(matches!(
+        project.save(String::new()),
+        Err(BridgeError::NoProjectPath)
+    ));
+
+    let dir = std::env::temp_dir().join("lumit-save-probe");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("probe.lum");
+
+    let written = project
+        .save(target.to_string_lossy().into_owned())
+        .expect("saved");
+    assert!(written.ends_with("probe.lum"));
+    assert!(target.is_file(), "the file really exists");
+
+    // Now it knows where it lives, so an empty path saves in place.
+    assert_eq!(
+        project.path().expect("path").as_deref(),
+        Some(written.as_str())
+    );
+    project.save(String::new()).expect("saved in place");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The menu bar greys Undo and Redo from this, so it has to track the store.
+#[test]
+fn history_reports_what_undo_and_redo_can_do() {
+    let project = LumitBridgeState::new_project(None).expect("project");
+
+    let empty = project.history().expect("history");
+    assert!(
+        !empty.can_undo && !empty.can_redo,
+        "a fresh project has none"
+    );
+
+    project.new_composition("Scene".into()).expect("comp");
+    let after_edit = project.history().expect("history");
+    assert!(after_edit.can_undo && !after_edit.can_redo);
+
+    project.undo().expect("undone");
+    let after_undo = project.history().expect("history");
+    assert!(after_undo.can_redo, "undoing makes a redo available");
 }

@@ -17,6 +17,28 @@ import 'state.dart';
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `new`, `state`
 
+/// Whether undo and redo have anything to do, for greying the menu items.
+class BridgeHistory {
+  final bool canUndo;
+  final bool canRedo;
+
+  const BridgeHistory({
+    required this.canUndo,
+    required this.canRedo,
+  });
+
+  @override
+  int get hashCode => canUndo.hashCode ^ canRedo.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeHistory &&
+          runtimeType == other.runtimeType &&
+          canUndo == other.canUndo &&
+          canRedo == other.canRedo;
+}
+
 class ProjectReference {
   final UuidValue internalid;
 
@@ -26,6 +48,12 @@ class ProjectReference {
 
   List<ItemReference> getItems() =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceGetItems(
+        that: this,
+      );
+
+  /// Whether there is anything to undo or redo, for greying the menu items.
+  BridgeHistory history() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceHistory(
         that: this,
       );
 
@@ -50,9 +78,31 @@ class ProjectReference {
       .instance.api
       .crateApiProjectProjectReferenceNewComposition(that: this, name: name);
 
+  /// Where this project was last saved, or null when it never has been. The
+  /// menu bar needs it to decide between Save and Save as.
+  String? path() => BridgeLib.instance.api.crateApiProjectProjectReferencePath(
+        that: this,
+      );
+
   void redo() => BridgeLib.instance.api.crateApiProjectProjectReferenceRedo(
         that: this,
       );
+
+  /// Save to `path`, or to wherever the project was last saved when `path` is
+  /// empty. Answers the path actually written, so Dart can show it and stop
+  /// asking where to put the file.
+  ///
+  /// Deliberately **not** `#[frb(sync)]`: this writes a whole document to disk
+  /// and fsyncs it, so it must not run on Dart's UI isolate. Budget S5
+  /// (docs/13 §2.1) asks for a stress-document save to be non-blocking, and an
+  /// async frb call is that for free.
+  ///
+  /// Media paths are rebased against the destination directory before writing
+  /// (K-173), so a project saved somewhere new keeps relative links that work.
+  /// A successful save clears the crash journal: the journal covers work
+  /// *between* saves, so once the document is on disk it is redundant.
+  Future<String> save({required String path}) => BridgeLib.instance.api
+      .crateApiProjectProjectReferenceSave(that: this, path: path);
 
   Stream<WorkerResponse> startWorker() =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceStartWorker(
