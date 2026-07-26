@@ -126,8 +126,8 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: the keyframe ops, and the graph editor they
-    unblock.** The full ledger:
+    is the gate. **Immediate next: the Timeline — the largest single job, and
+    what every remaining panel is waiting behind.** The full ledger:
 
     **1. The seven docked panels.**
     - **Project** — **done**: ported, 15 tests against the real engine, and the
@@ -145,16 +145,19 @@ sequence clips.
         columns, spans, razor, markers, work area, cache bar, comp tabs, lane
         host/scale/selection, graph editor and its four lens files, keyframe
         clipboard and interp menus.
-    - **Effect controls** — **partial**: the effect stack and the Transform rows
-        are done (`effect_controls_panel_frb.dart`, 8 tests) —
-        add/remove/reorder/bypass, a row per declared parameter in every kind the
-        schema declares, and anchor/position/scale/rotation/opacity with the 3D
-        rows gated on the layer's switch. Both drag paths preview without
-        committing and commit once on release. Still missing: the **stopwatch +
-        keyframe navigator**, blocked on the keyframe ops. An animated property
-        or parameter is deliberately shown as "animated" with no editor until
-        those land — `set_value` and `set_transform` take a whole animation, so
-        a static write over a curve would delete every key on it.
+    - **Effect controls** — **done** for everything but the graph editor
+        (`effect_controls_panel_frb.dart` + `keyframe_controls_frb.dart`, 15
+        tests). Effect stack: add/remove/reorder/bypass and a row per declared
+        parameter in every kind the schema declares. Transform: the five 2D rows
+        plus the three 3D ones, gated on the layer's switch. Both drag paths
+        preview without committing and commit once on release. Every animatable
+        row carries the stopwatch and the ◄ ◆ ► navigator. An animated row shows
+        "animated" in place of its number field, because shaping a curve is the
+        graph editor's job — the stopwatch turns animation off again, keeping
+        the value the curve reads at the playhead, so the row is never a dead
+        end. Outstanding: **`.lumfx` presets**, and a multi-axis row's stopwatch
+        keys only its first axis (x and y animate independently in the model and
+        one stopwatch cannot honestly show two states).
     - **Effects & presets** — **not started**, a `PlaceholderPanel`. Needs
         `list_effects` wiring (the API exists), drag-to-apply, `.lumfx` save/load.
     - **Scopes** — **not started**, a `PlaceholderPanel`. Waiting on `render_scope`
@@ -181,10 +184,15 @@ sequence clips.
     are handle plumbing (`new`, `equals`, id accessors) rather than ops. By op
     count this is roughly a quarter of the way through, and the Timeline alone is
     comparable to everything ported so far. Grouped by subsystem:
-    - **Keyframes** — add/remove/shift/set-interp/toggle-animated,
-        `apply_keyframe_batch`, and the effect-param twin of each. Add the single
-        `set_animation` op rather than porting the granular pair (see below: a key
-        drag that moves time *and* value currently costs two ops).
+    - **Keyframes** — **the ops are done, and there are none.** `set_transform`
+        and `BridgeEffectInstance::set_value` already take a whole animation, so
+        the `set_animation` op this list used to ask for *is* the frb surface:
+        add, remove, retime, re-ease and toggle-animated are each one write of
+        the whole `BridgeScalar`, hence one undo step. v0's granular
+        add/remove/shift/set-interp ops and `apply_keyframe_batch` have no frb
+        counterpart and need none — the key drag that cost two ops there costs
+        one here. What remains is the **graph editor** itself: the curve view,
+        the bezier handles, and the keyframe clipboard.
     - **Layer lifecycle** — add solid/text/camera/adjustment/sequence, delete,
         duplicate, reorder.
     - **Layer properties** — switches, blend mode, matte, parent, motion blur,

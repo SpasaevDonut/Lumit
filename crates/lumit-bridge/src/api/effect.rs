@@ -62,6 +62,42 @@ pub fn list_effects() -> Vec<BridgeEffectInfo> {
         .collect()
 }
 
+/// What `scalar` reads as at `time` — the value the picture is actually showing.
+///
+/// The panel needs this at exactly two moments, and both would be wrong done in
+/// Dart. Turning animation *off* keeps the value the curve currently has, rather
+/// than snapping to whatever the first key holds; adding a key at the playhead
+/// seeds it with the value already on screen, so the act of adding a key never
+/// moves the picture. Bezier keys make either one a real evaluation, not a
+/// lerp — so this is the engine's own [`lumit_core::anim::evaluate`] rather than
+/// a second implementation that would disagree with the renderer.
+///
+/// Sampling is in `f64` seconds, matching the engine: exactness is a property of
+/// key *times* (which cross as integer pairs), not of a sampled value.
+#[frb(sync)]
+pub fn sample_scalar(scalar: BridgeScalar, time: BridgeRational) -> f64 {
+    let seconds = if time.den == 0 {
+        0.0
+    } else {
+        time.num as f64 / time.den as f64
+    };
+    match scalar {
+        BridgeScalar::Static(value) => value,
+        BridgeScalar::Keyframed(keys) => {
+            let keys: Vec<Keyframe> = keys
+                .iter()
+                .map(|k| Keyframe {
+                    time: Rational::new(k.time.num, k.time.den).unwrap_or(Rational::ZERO),
+                    value: k.value,
+                    interp_in: k.interp_in.write(),
+                    interp_out: k.interp_out.write(),
+                })
+                .collect();
+            lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
+        }
+    }
+}
+
 /// One declared parameter of an effect, as the panel needs to *draw* it:
 /// what to call it, what kind of control it is, and the range or option list
 /// that control needs.

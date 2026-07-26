@@ -107,6 +107,12 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceAddFootageLayer(
               that: this, footage: footage);
 
+  /// The frame containing `time` (floored) — the inverse of
+  /// [`Self::time_of_frame`], for drawing a key at a frame position.
+  PlatformInt64 frameAtTime({required BridgeRational time}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceFrameAtTime(
+          that: this, time: time);
+
   List<LayerReference> getLayers() =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetLayers(
         that: this,
@@ -179,6 +185,18 @@ class CompositionReference {
   void setSettings({required BridgeCompSettings settings}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceSetSettings(
           that: this, settings: settings);
+
+  /// The exact time frame `frame` starts at, as the rational the document
+  /// stores.
+  ///
+  /// Exposed rather than left to Dart because keyframe times must be exact
+  /// (docs/14 §2): at 29.97 fps a frame is 1001/30000 s, and a panel that
+  /// worked that out in floating point would place keys that do not land on
+  /// the frame they were set on. This is the engine's own
+  /// `FrameRate::time_of_frame`, so there is one implementation of it.
+  BridgeRational timeOfFrame({required PlatformInt64 frame}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceTimeOfFrame(
+          that: this, frame: frame);
 
   @override
   int get hashCode => internalproject.hashCode ^ internalid.hashCode;

@@ -4,6 +4,7 @@ use flutter_rust_bridge::frb;
 
 use uuid::Uuid;
 
+use crate::api::effect::BridgeRational;
 use crate::api::{
     effect::BridgeEffectInstance,
     footage::FootageReference,
@@ -315,6 +316,39 @@ impl CompositionReference {
             effects: Some(effects.iter().map(|i| i.get_effects()).collect()),
             transform: None,
         }))
+    }
+
+    /// The exact time frame `frame` starts at, as the rational the document
+    /// stores.
+    ///
+    /// Exposed rather than left to Dart because keyframe times must be exact
+    /// (docs/14 §2): at 29.97 fps a frame is 1001/30000 s, and a panel that
+    /// worked that out in floating point would place keys that do not land on
+    /// the frame they were set on. This is the engine's own
+    /// `FrameRate::time_of_frame`, so there is one implementation of it.
+    #[frb(sync)]
+    pub fn time_of_frame(&self, frame: i64) -> Result<BridgeRational, BridgeError> {
+        let comp = self.composition()?;
+        let time = comp
+            .frame_rate
+            .time_of_frame(frame)
+            .map_err(|_| BridgeError::InvalidComp)?;
+        Ok(BridgeRational {
+            num: time.0.num(),
+            den: time.0.den(),
+        })
+    }
+
+    /// The frame containing `time` (floored) — the inverse of
+    /// [`Self::time_of_frame`], for drawing a key at a frame position.
+    #[frb(sync)]
+    pub fn frame_at_time(&self, time: BridgeRational) -> Result<i64, BridgeError> {
+        let comp = self.composition()?;
+        let rational = lumit_core::time::Rational::new(time.num, time.den)
+            .map_err(|_| BridgeError::InvalidComp)?;
+        Ok(comp
+            .frame_rate
+            .frame_at(lumit_core::time::CompTime(rational)))
     }
 
     /// Ask for `frame` with `layer`'s transform replaced by `transform` — the

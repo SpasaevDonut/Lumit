@@ -7,12 +7,11 @@
 // Above the stack sit the Transform rows — anchor, position, scale, rotation,
 // opacity, plus the z and x/y-rotation rows when the layer is 3D.
 //
-// **What is not here.** The stopwatch and the keyframe navigator beside each
-// row, which need the keyframe ops the frb API does not have yet (docs/TODO.md).
-// A property or parameter that is *already* animated is therefore shown as
-// animated and left alone rather than offered an editor: writing a static value
-// over it would silently delete the curve, which is the one thing a panel that
-// cannot yet edit curves must not do.
+// Every animatable row carries the stopwatch and the ◄ ◆ ► navigator
+// (keyframe_controls_frb.dart). An animated row shows "animated" in place of its
+// number field: the value there is a curve, and the graph editor is where a
+// curve is shaped. The stopwatch turns animation off again, keeping the value
+// the curve reads at the playhead — so the row is never a dead end.
 //
 // **How an edit reaches the document.** `getEffects` hands back a *staged* copy
 // of the stack, `setValue` edits that copy, and `LayerReference.setEffects`
@@ -36,6 +35,7 @@ import '../icons/icons.dart';
 import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
+import 'keyframe_controls_frb.dart';
 import 'placeholder.dart';
 
 /// How wide a value cell is, so the rows line up down the panel.
@@ -92,8 +92,23 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     BuildContext context,
     CompositionReference comp,
     LayerReference layer,
+  ) =>
+      // The keyframe controls read the playhead — which key is under it, whether
+      // the diamond is filled — so the rows have to redraw when it moves.
+      ValueListenableBuilder<int>(
+        valueListenable:
+            Provider.of<LumitUiState>(context, listen: false).playheadFrame,
+        builder: (context, playhead, _) => _rows(context, comp, layer, playhead),
+      );
+
+  Widget _rows(
+    BuildContext context,
+    CompositionReference comp,
+    LayerReference layer,
+    int playhead,
   ) {
     final t = ThemeScope.of(context).theme;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
     final effects = _staged ?? layer.getEffects();
 
     return Column(
@@ -114,6 +129,8 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                 key: ValueKey<String>('tf-card-${layer.internallayerId}'),
                 layer: layer,
                 comp: comp,
+                playheadFrame: playhead,
+                onSeek: (frame) => ui.playheadFrame.value = frame,
                 onChanged: () => setState(() {}),
               ),
               if (effects.isEmpty)
@@ -142,6 +159,8 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                     },
                     layer: layer,
                     comp: comp,
+                    playheadFrame: playhead,
+                    onSeek: (frame) => ui.playheadFrame.value = frame,
                   ),
             ],
           ),
@@ -264,6 +283,8 @@ class _EffectCard extends StatelessWidget {
   final int count;
   final LayerReference layer;
   final CompositionReference comp;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
 
   /// The stack itself changed (enabled, reordered, removed) — re-read it.
   final VoidCallback onStackChanged;
@@ -283,6 +304,8 @@ class _EffectCard extends StatelessWidget {
     required this.count,
     required this.layer,
     required this.comp,
+    required this.playheadFrame,
+    required this.onSeek,
     required this.onStackChanged,
     required this.onCommit,
     required this.onLive,
@@ -317,6 +340,8 @@ class _EffectCard extends StatelessWidget {
                       effect: effect,
                       param: param,
                       comp: comp,
+                      playheadFrame: playheadFrame,
+                      onSeek: onSeek,
                       onCommit: onCommit,
                       onLive: onLive,
                       onDragStart: onDragStart,
@@ -430,6 +455,8 @@ class _ParamRow extends StatelessWidget {
   final BridgeEffectInstance effect;
   final BridgeParamInfo param;
   final CompositionReference comp;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
   final VoidCallback onCommit;
   final VoidCallback onLive;
   final VoidCallback onDragStart;
@@ -440,6 +467,8 @@ class _ParamRow extends StatelessWidget {
     required this.effect,
     required this.param,
     required this.comp,
+    required this.playheadFrame,
+    required this.onSeek,
     required this.onCommit,
     required this.onLive,
     required this.onDragStart,
@@ -449,10 +478,23 @@ class _ParamRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    final scalar = _animatableScalar;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
+          // Only the number-shaped kinds animate; a choice or a file has nothing
+          // to interpolate, so those rows carry no stopwatch at all.
+          if (scalar != null)
+            KeyframeControlsFrb(
+              scalar: scalar,
+              comp: comp,
+              playheadFrame: playheadFrame,
+              onSeek: onSeek,
+              rowKey: '${effect.id()}-${param.id}',
+              onWrite: (next) => _set(BridgeEffectValue.float(next)),
+            ),
+          const SizedBox(width: 4),
           Expanded(
             child: Text(param.label,
                 style: t.body, overflow: TextOverflow.ellipsis),
@@ -462,6 +504,17 @@ class _ParamRow extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  /// The scalar behind this row when the kind is one that can animate, else
+  /// null. Float is the only single-scalar animatable kind the schema declares;
+  /// a colour animates per channel, which the swatch has no room to key.
+  BridgeScalar? get _animatableScalar {
+    if (param.kind is! BridgeParamKind_Float) return null;
+    return switch (_value) {
+      BridgeEffectValue_Float(:final field0) => field0,
+      _ => null,
+    };
   }
 
   /// The parameter's current value, or null when the instance does not carry it
@@ -778,12 +831,16 @@ class _Axis {
 class _TransformCard extends StatefulWidget {
   final LayerReference layer;
   final CompositionReference comp;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
 
   const _TransformCard({
     super.key,
     required this.layer,
     required this.comp,
+    required this.playheadFrame,
+    required this.onSeek,
     required this.onChanged,
   });
 
@@ -867,6 +924,26 @@ class _TransformCardState extends State<_TransformCard> {
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
+          // The stopwatch keys the row's *first* axis. A multi-axis row (Anchor,
+          // Position, Scale) keys x and y independently in the model, and one
+          // stopwatch cannot honestly represent two states — so it drives the
+          // first and the graph editor is where the rest is reached. Noted
+          // rather than hidden: v0 keyed every axis at once and paid for it in
+          // one undo step per axis.
+          KeyframeControlsFrb(
+            scalar: _read(transform, axes.first.prop),
+            comp: widget.comp,
+            playheadFrame: widget.playheadFrame,
+            onSeek: widget.onSeek,
+            rowKey: axes.first.prop.name,
+            onWrite: (next) {
+              widget.layer
+                  .setTransform(prop: axes.first.prop, value: next);
+              setState(() => _staged = null);
+              widget.onChanged();
+            },
+          ),
+          const SizedBox(width: 4),
           Expanded(
             child: Text(label, style: t.body, overflow: TextOverflow.ellipsis),
           ),

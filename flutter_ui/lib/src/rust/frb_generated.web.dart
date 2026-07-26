@@ -136,6 +136,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgePoint dco_decode_box_autoadd_bridge_point(dynamic raw);
 
   @protected
+  BridgeRational dco_decode_box_autoadd_bridge_rational(dynamic raw);
+
+  @protected
   BridgeRenderedFrame dco_decode_box_autoadd_bridge_rendered_frame(dynamic raw);
 
   @protected
@@ -445,6 +448,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgePoint sse_decode_box_autoadd_bridge_point(SseDeserializer deserializer);
+
+  @protected
+  BridgeRational sse_decode_box_autoadd_bridge_rational(
+      SseDeserializer deserializer);
 
   @protected
   BridgeRenderedFrame sse_decode_box_autoadd_bridge_rendered_frame(
@@ -782,6 +789,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_bridge_point(
       BridgePoint self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_rational(
+      BridgeRational self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bridge_rendered_frame(

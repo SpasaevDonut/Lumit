@@ -23,6 +23,23 @@ part 'effect.freezed.dart';
 List<BridgeEffectInfo> listEffects() =>
     BridgeLib.instance.api.crateApiEffectListEffects();
 
+/// What `scalar` reads as at `time` — the value the picture is actually showing.
+///
+/// The panel needs this at exactly two moments, and both would be wrong done in
+/// Dart. Turning animation *off* keeps the value the curve currently has, rather
+/// than snapping to whatever the first key holds; adding a key at the playhead
+/// seeds it with the value already on screen, so the act of adding a key never
+/// moves the picture. Bezier keys make either one a real evaluation, not a
+/// lerp — so this is the engine's own [`lumit_core::anim::evaluate`] rather than
+/// a second implementation that would disagree with the renderer.
+///
+/// Sampling is in `f64` seconds, matching the engine: exactness is a property of
+/// key *times* (which cross as integer pairs), not of a sampled value.
+double sampleScalar(
+        {required BridgeScalar scalar, required BridgeRational time}) =>
+    BridgeLib.instance.api
+        .crateApiEffectSampleScalar(scalar: scalar, time: time);
+
 /// Every parameter `effect` declares, in schema order — what the panel draws a
 /// row per.
 ///

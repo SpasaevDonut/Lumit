@@ -1,0 +1,241 @@
+// The stopwatch and keyframe navigator, against the real engine.
+//
+// These drive the controls through the Effect controls panel rather than in
+// isolation, because what is being asserted is that a click reaches the
+// *document* — a keyframe list nothing committed is not a keyframe.
+//
+// New coverage: v0's equivalents keyed through granular add/remove/shift ops
+// that the frb API deliberately does not have (a whole `BridgeScalar` goes
+// across instead), so there is nothing here to translate.
+
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
+
+import 'frb_test_support.dart';
+
+void main() {
+  setUpAll(initEngineForTests);
+
+  group('Keyframe controls (frb)', () {
+    ({
+      LumitState state,
+      LumitUiState uiState,
+      LayerReference layer,
+      CompositionReference comp,
+    }) withLayer() {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      comp.addFootageLayer(footage: footage);
+      final layer = comp.getLayers().single;
+      p.uiState
+        ..setSelectedComp(comp)
+        ..selectedLayer.value = layer;
+      return (state: p.state, uiState: p.uiState, layer: layer, comp: comp);
+    }
+
+    Future<void> mount(WidgetTester tester, dynamic p) async {
+      await tester.pumpWidget(hostPanel(
+        child: const EffectControlsPanelFrb(),
+        state: p.state as LumitState,
+        uiState: p.uiState as LumitUiState,
+      ));
+      await tester.pump();
+    }
+
+    /// The opacity row's animation, whatever shape it is in.
+    BridgeScalar opacityOf(LayerReference layer) =>
+        layer.getTransform().opacity;
+
+    testWidgets('the stopwatch plants one key at the playhead without moving it',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.playheadFrame.value = 24;
+      await mount(tester, p);
+
+      final before = opacityOf(p.layer);
+      expect(before, isA<BridgeScalar_Static>());
+      final value = (before as BridgeScalar_Static).field0;
+
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.pump();
+
+      final after = opacityOf(p.layer);
+      expect(after, isA<BridgeScalar_Keyframed>());
+      final keys = (after as BridgeScalar_Keyframed).field0;
+      expect(keys, hasLength(1), reason: 'one key, not a curve out of nowhere');
+      expect(keys.single.value, value,
+          reason: 'turning animation on must not move the picture');
+      expect(p.comp.frameAtTime(time: keys.single.time), 24,
+          reason: 'the key landed on the playhead');
+    });
+
+    testWidgets('the stopwatch off keeps the value the curve reads there',
+        (tester) async {
+      final p = withLayer();
+
+      // A ramp from 0 at frame 0 to 100 at frame 100.
+      p.layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          BridgeKeyframe(
+            time: p.comp.timeOfFrame(frame: 0),
+            value: 0,
+            interpIn: const BridgeSideInterp.linear(),
+            interpOut: const BridgeSideInterp.linear(),
+          ),
+          BridgeKeyframe(
+            time: p.comp.timeOfFrame(frame: 100),
+            value: 100,
+            interpIn: const BridgeSideInterp.linear(),
+            interpOut: const BridgeSideInterp.linear(),
+          ),
+        ]),
+      );
+      p.uiState.playheadFrame.value = 50;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.pump();
+
+      final after = opacityOf(p.layer);
+      expect(after, isA<BridgeScalar_Static>());
+      expect((after as BridgeScalar_Static).field0, closeTo(50, 0.001),
+          reason: 'the value at the playhead, not the first key');
+    });
+
+    testWidgets('the diamond adds a key, then removes it', (tester) async {
+      final p = withLayer();
+      p.uiState.playheadFrame.value = 0;
+      await mount(tester, p);
+
+      // Animate, then move on and add a second key.
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.pump();
+      p.uiState.playheadFrame.value = 60;
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-opacity')));
+      await tester.pump();
+      var keys = (opacityOf(p.layer) as BridgeScalar_Keyframed).field0;
+      expect(keys, hasLength(2));
+      expect(
+        keys.map((k) => p.comp.frameAtTime(time: k.time)).toList(),
+        [0, 60],
+        reason: 'keys stay strictly ascending in time',
+      );
+
+      // The same button removes the key it just added.
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-opacity')));
+      await tester.pump();
+      keys = (opacityOf(p.layer) as BridgeScalar_Keyframed).field0;
+      expect(keys, hasLength(1));
+      expect(p.comp.frameAtTime(time: keys.single.time), 0);
+    });
+
+    /// An animation with no keys is not a curve anything can evaluate, so
+    /// removing the last one has to land somewhere sensible rather than leaving
+    /// an empty list the engine would refuse.
+    testWidgets('removing the last key falls back to a static value',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.playheadFrame.value = 12;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.pump();
+      final keyed = (opacityOf(p.layer) as BridgeScalar_Keyframed).field0.single;
+
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-opacity')));
+      await tester.pump();
+
+      final after = opacityOf(p.layer);
+      expect(after, isA<BridgeScalar_Static>());
+      expect((after as BridgeScalar_Static).field0, keyed.value,
+          reason: 'it holds what the key held');
+    });
+
+    testWidgets('the arrows jump the playhead to the neighbouring keys',
+        (tester) async {
+      final p = withLayer();
+      p.layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final frame in [10, 40, 90])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: frame),
+              value: frame.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      p.uiState.playheadFrame.value = 40;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('kf-prev-opacity')));
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 10);
+
+      await tester.tap(find.byKey(const ValueKey('kf-next-opacity')));
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 40);
+
+      await tester.tap(find.byKey(const ValueKey('kf-next-opacity')));
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 90);
+
+      // Past the last key there is nowhere to go, and the arrow is inert.
+      await tester.tap(find.byKey(const ValueKey('kf-next-opacity')));
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 90,
+          reason: 'a disabled arrow does nothing rather than wrapping around');
+    });
+
+    /// The whole point of taking a whole animation across the seam: v0 needed
+    /// two ops for a key that moved in time *and* value, so a single drag left
+    /// two entries in the undo history.
+    testWidgets('each keyframe action is exactly one undo step', (tester) async {
+      final p = withLayer();
+      p.uiState.playheadFrame.value = 24;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.pump();
+      expect(opacityOf(p.layer), isA<BridgeScalar_Keyframed>());
+
+      p.state.project!.undo();
+      expect(opacityOf(p.layer), isA<BridgeScalar_Static>(),
+          reason: 'one undo puts the whole thing back');
+    });
+
+    /// Only the number-shaped kinds animate. A dropdown or a file path has
+    /// nothing to interpolate, so those rows carry no stopwatch at all rather
+    /// than one that cannot do anything.
+    testWidgets('a non-animatable parameter has no stopwatch', (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      await mount(tester, p);
+
+      final id = p.layer.getEffects().single.id();
+      expect(find.byKey(ValueKey<String>('kf-stopwatch-$id-radius')),
+          findsOneWidget,
+          reason: 'a float parameter animates');
+
+      final choice = listParameters(effect: 'blur')
+          .where((p) => p.kind is BridgeParamKind_Choice);
+      for (final param in choice) {
+        expect(find.byKey(ValueKey<String>('kf-stopwatch-$id-${param.id}')),
+            findsNothing,
+            reason: '${param.id} is a dropdown, so it cannot animate');
+      }
+    });
+    // Without the built library there is nothing to test against; the harness
+    // throws with the command to run.
+  }, skip: !engineAvailable);
+}

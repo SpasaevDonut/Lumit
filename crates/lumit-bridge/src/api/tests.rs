@@ -1187,3 +1187,53 @@ fn a_transform_edit_on_a_dead_layer_is_a_calm_error() {
         Err(BridgeError::InvalidItem) | Err(BridgeError::InvalidLayer)
     ));
 }
+
+/// Keyframe times must be exact: at 29.97 fps a frame is 1001/30000 s, and a
+/// panel that worked that out in floating point would place keys that do not
+/// land on the frame they were set on. Round-tripping through the pair is the
+/// property that matters.
+#[test]
+fn frame_and_time_round_trip_exactly_at_a_drop_frame_rate() {
+    use crate::api::composition::BridgeCompSettings;
+
+    let (project, layer) = project_with_layer();
+    let _ = layer;
+    let comp = match project
+        .get_items()
+        .expect("roots")
+        .into_iter()
+        .find_map(|i| match i {
+            ItemReference::Folder(folder) => folder.get_children().ok().and_then(|kids| {
+                kids.into_iter().find_map(|k| match k {
+                    ItemReference::Composition(c) => Some(c),
+                    _ => None,
+                })
+            }),
+            ItemReference::Composition(c) => Some(c),
+            _ => None,
+        }) {
+        Some(c) => c,
+        None => panic!("the fixture made a composition"),
+    };
+
+    let settings = comp.get_settings().expect("settings");
+    comp.set_settings(BridgeCompSettings {
+        fps_num: 30000,
+        fps_den: 1001,
+        ..settings
+    })
+    .expect("29.97");
+
+    for frame in [0_i64, 1, 24, 100, 3597] {
+        let time = comp.time_of_frame(frame).expect("time");
+        assert_eq!(
+            comp.frame_at_time(time).expect("frame"),
+            frame,
+            "frame {frame} did not survive the round trip"
+        );
+    }
+
+    // …and the pair really is the exact rational, not a rounded one.
+    let one = comp.time_of_frame(1).expect("time");
+    assert_eq!((one.num, one.den), (1001, 30000));
+}
