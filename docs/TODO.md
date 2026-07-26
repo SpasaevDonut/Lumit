@@ -126,8 +126,8 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next three: menu-bar tests, then the v0
-    Project-panel deletion, then the Effect controls panel.** The full ledger:
+    is the gate. **Immediate next: the v0 Project-panel deletion, then the Effect
+    controls panel.** The full ledger:
 
     **1. The seven docked panels.**
     - **Project** — **done**, ported, 13 tests against the real engine.
@@ -158,7 +158,7 @@ sequence clips.
 
     **2. Shell surfaces** — not panels, but v0-bound. Each of these imports
     `bridge/bridge.dart` or `state/app_state.dart` today.
-    - **Menu bar** — **done**, but **has no tests yet**. Nothing blocks writing them.
+    - **Menu bar** — **done**, 9 tests in `test/frb/menu_bar_frb_test.dart`.
     - **Composition settings dialog** — **done** (`shell/comp_settings_frb.dart`).
     - **Settings window** (665 lines) — cache budget and stats, realtime tier, UI
         scale, theme.
@@ -252,9 +252,8 @@ sequence clips.
             `import_footage`/`new_composition`/`save_project` are shared with the
             menu bar and stay; `media.rs` is shared infrastructure and stays.
 
-    3. **Menu bar and shell** — ported, and **still untested**: writing that suite
-        is the immediate next task, and nothing blocks it. `save_project` plus the
-        recovery, autosave and export entries;
+    3. **Menu bar and shell** — ported and tested (9 tests). `save_project` plus
+        the recovery, autosave and export entries;
         `import_footage`/`new_composition` already existed on `ProjectReference`.
         `showCompositionSettingsDialog` gained its frb form
         (`shell/comp_settings_frb.dart`), which also restored the Project panel's
