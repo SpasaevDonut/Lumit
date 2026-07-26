@@ -116,6 +116,7 @@ pub struct ColourEngine {
     display: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    linear_sampler: wgpu::Sampler,
 }
 
 /// The engine's working format (docs/06-RENDER-PIPELINE.md §3).
@@ -188,11 +189,21 @@ impl ColourEngine {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
+        // Only for [`Self::display_scaled`]. The 1:1 passes must stay Nearest —
+        // exact texel-for-texel sampling is what makes the colour round-trip
+        // golden meaningful — but a downscale sampled Nearest is just aliasing.
+        let linear_sampler = ctx.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("colour-linear"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         Self {
             linearise: make(WORKING_FORMAT, "linearise"),
             display: make(SRGB_FORMAT, "display"),
             layout,
             sampler,
+            linear_sampler,
         }
     }
 
@@ -244,7 +255,32 @@ impl ColourEngine {
         extra_usage: wgpu::TextureUsages,
         label: &str,
     ) -> wgpu::Texture {
-        let size = src.size();
+        self.pass_sized(ctx, pipeline, src, None, format, extra_usage, label)
+    }
+
+    /// [`Self::pass`] with an explicit destination size. A `size` smaller than
+    /// the source resamples through the linear sampler, which is how a preview
+    /// is reduced on the graphics card rather than after it.
+    #[allow(clippy::too_many_arguments)]
+    fn pass_sized(
+        &self,
+        ctx: &GpuContext,
+        pipeline: &wgpu::RenderPipeline,
+        src: &wgpu::Texture,
+        size: Option<(u32, u32)>,
+        format: wgpu::TextureFormat,
+        extra_usage: wgpu::TextureUsages,
+        label: &str,
+    ) -> wgpu::Texture {
+        let scaled = size.is_some();
+        let size = match size {
+            Some((width, height)) => wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            None => src.size(),
+        };
         let dst = ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size,
@@ -269,7 +305,11 @@ impl ColourEngine {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(if scaled {
+                        &self.linear_sampler
+                    } else {
+                        &self.sampler
+                    }),
                 },
             ],
         });
@@ -320,6 +360,31 @@ impl ColourEngine {
             SRGB_FORMAT,
             wgpu::TextureUsages::COPY_SRC,
             "display",
+        )
+    }
+
+    /// Linear working texture → sRGB display texture at `width` x `height`.
+    ///
+    /// The point is what does *not* happen afterwards: a preview shown at a
+    /// third of comp resolution used to be composited full size, read back full
+    /// size — 8 MB off the graphics card for a 1080p comp — and only then
+    /// resized on the processor. Resizing here means the read-back is already
+    /// the size the Viewer wants.
+    pub fn display_scaled(
+        &self,
+        ctx: &GpuContext,
+        src: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> wgpu::Texture {
+        self.pass_sized(
+            ctx,
+            &self.display,
+            src,
+            Some((width, height)),
+            SRGB_FORMAT,
+            wgpu::TextureUsages::COPY_SRC,
+            "display-scaled",
         )
     }
 

@@ -111,6 +111,19 @@ and the transparency grid have landed. Still missing:
       Viewer silently is not in the build. Needs a `cargokit_options.yaml` (or an
       env var read in the CMake) carrying per-platform features.
 
+- **The Viewer composites at full comp resolution whatever the preview scale —
+    the dominant playback cost.** `preview_display_texture` always renders the
+    comp at `(comp.width, comp.height)`; `Quality::divisor` only shrinks the
+    *decode* width (`plan.rs:77`), and the preview `scale` only sizes the output.
+    So a Viewer showing a 1080p comp at a third still composites 1920x1080 every
+    frame. Measured 59.7 ms/frame for a one-solid 1080p comp shown at 0.42
+    (was 74.5 ms before the read-back was reduced on the GPU). Until the comp can
+    be composited at reduced size, the realtime controller has nothing to
+    usefully lower — and note `realtime::observe` is inert for a second reason:
+    it only records a cost when the render was issued at exactly `tier_scale`,
+    while Dart sends the panel-fit scale, so the tier never moves. Both need
+    fixing together; this is an `06-RENDER-PIPELINE` change (every layer
+    transform is in comp pixels), not a patch.
 - **The read-back Viewer path costs 8.8 ms per 1080p frame in serialisation
     alone** (37 ms at 4K), because flutter_rust_bridge's SSE codec encodes a
     `Vec<u8>` *one byte at a time* — the generated Rust `SseEncode for Vec<u8>`

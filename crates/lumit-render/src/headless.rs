@@ -387,10 +387,28 @@ impl HeadlessRenderer {
         let Some(parts) = self.parts.as_ref() else {
             return Err("headless preview: renderer is unavailable after an earlier fault".into());
         };
+
+        // Reduce on the graphics card, before the read-back, not after it.
+        //
+        // This used to composite full size, copy the whole thing down into
+        // ordinary memory — 8 MB per frame for a 1080p comp — and only then
+        // resize on the processor. Both of those costs scaled with the *comp*,
+        // not with what was actually being shown, so a Viewer at a third of comp
+        // resolution paid full price for every frame. Now the read-back is
+        // already the size the Viewer asked for.
+        let (sw, sh) = scaled_size(cw, ch, scale);
+        if (sw, sh) == (cw, ch) {
+            return parts
+                .colour
+                .readback8(&self.gpu, &shown)
+                .map(|rgba| (rgba, cw, ch))
+                .map_err(|e| format!("headless preview: {e}"));
+        }
+        let reduced = parts.colour.display_scaled(&self.gpu, &shown, sw, sh);
         parts
             .colour
-            .readback8(&self.gpu, &shown)
-            .map(|rgba| resize_output(rgba, cw, ch, scale))
+            .readback8(&self.gpu, &reduced)
+            .map(|rgba| (rgba, sw, sh))
             .map_err(|e| format!("headless preview: {e}"))
     }
 
@@ -810,7 +828,7 @@ impl AudioJobsBuilder {
     }
 }
 
-/// Composite once and read the pixels back, then apply the output `scale`.
+/// Composite once and read the pixels back at the output `scale`.
 /// Split out so `render_rgba` can restore the engine pool on either arm.
 #[allow(clippy::too_many_arguments)]
 fn render_to_rgba(
@@ -824,30 +842,35 @@ fn render_to_rgba(
     scale: f32,
 ) -> Result<(Vec<u8>, u32, u32), String> {
     let linear = renderer.render_comp_linear(comp, t, visited)?;
-    let shown = renderer.colour.display(gpu, &linear);
+    let (sw, sh) = scaled_size(width, height, scale);
+    // Reduced on the card before the read-back, as in `render_preview`.
+    let shown = if (sw, sh) == (width, height) {
+        renderer.colour.display(gpu, &linear)
+    } else {
+        renderer.colour.display_scaled(gpu, &linear, sw, sh)
+    };
     let rgba = renderer
         .colour
         .readback8(gpu, &shown)
         .map_err(|e| e.to_string())?;
-    Ok(resize_output(rgba, width, height, scale))
+    Ok((rgba, sw, sh))
 }
 
-/// Shrink a finished frame to `scale` of its size for the trip back to the
-/// frontend, or hand it back untouched at 1.0 (and for any nonsense value).
-///
 /// This is a **transfer** saving, not a render saving: the composite has already
 /// happened at the comp's own size. The saving that reduces real work is the
 /// decode width, which [`crate::plan::Quality`] controls. The resize preserves
 /// aspect (a same-aspect target, so no letterbox bars appear) and reuses the
 /// export path's bilinear resampler, so both render paths downsample alike.
-fn resize_output(rgba: Vec<u8>, width: u32, height: u32, scale: f32) -> (Vec<u8>, u32, u32) {
+/// The size a preview at `scale` should come back at — the same rounding the
+/// processor-side resize used, so nothing downstream sees a different answer.
+fn scaled_size(width: u32, height: u32, scale: f32) -> (u32, u32) {
     if !scale.is_finite() || scale <= 0.0 || (scale - 1.0).abs() < 1e-4 {
-        return (rgba, width, height);
+        return (width, height);
     }
-    let sw = ((width as f32 * scale).round() as u32).max(1);
-    let sh = ((height as f32 * scale).round() as u32).max(1);
-    let scaled = lumit_core::pixels::letterbox_resize(&rgba, width, height, sw, sh);
-    (scaled, sw, sh)
+    (
+        ((width as f32 * scale).round() as u32).max(1),
+        ((height as f32 * scale).round() as u32).max(1),
+    )
 }
 
 /// The on-disk path a footage item points at (absolute when known, else the
@@ -947,6 +970,35 @@ mod tests {
     };
     use lumit_core::store::DocumentStore;
     use lumit_core::time::{CompTime, Duration, FrameRate, Rational};
+
+    /// The size a scaled preview comes back at, which is now also the size that
+    /// is copied off the graphics card. The rounding matches what the
+    /// processor-side resize did, so nothing downstream sees a different answer
+    /// than it used to.
+    #[test]
+    fn a_scaled_preview_reports_the_reduced_size() {
+        assert_eq!(scaled_size(1920, 1080, 0.5), (960, 540));
+        assert_eq!(scaled_size(1920, 1080, 1.0 / 3.0), (640, 360));
+        // Rounded, not truncated.
+        assert_eq!(scaled_size(1919, 1081, 0.5), (960, 541));
+    }
+
+    /// Full scale must stay bit-identical: it takes the untouched path, with no
+    /// resampling pass at all.
+    #[test]
+    fn full_scale_is_left_alone() {
+        assert_eq!(scaled_size(1920, 1080, 1.0), (1920, 1080));
+        // And nonsense is treated as full rather than producing a 0-wide frame.
+        assert_eq!(scaled_size(1920, 1080, 0.0), (1920, 1080));
+        assert_eq!(scaled_size(1920, 1080, f32::NAN), (1920, 1080));
+        assert_eq!(scaled_size(1920, 1080, -1.0), (1920, 1080));
+    }
+
+    /// A scale small enough to round to nothing still has to produce a frame.
+    #[test]
+    fn a_tiny_scale_still_has_a_pixel() {
+        assert_eq!(scaled_size(100, 100, 0.001), (1, 1));
+    }
 
     /// A transform that centres a `w`×`h` object over a `w`×`h` comp (anchor at
     /// the object's middle, position at the comp's middle) — a copy of the
