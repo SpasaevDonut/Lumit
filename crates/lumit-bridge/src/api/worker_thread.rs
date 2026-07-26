@@ -147,38 +147,79 @@ fn worker_loop(
             return;
         };
 
-        // Latest wins. Anything that queued up while the previous frame was
-        // rendering is already superseded — a drag emits a request every ~20 ms
-        // and a render takes longer than that, so without this the worker works
-        // through a backlog of frames nothing will ever see, each one delaying
-        // the only one the user is waiting for. Draining to the newest is what
-        // keeps a fast drag feeling attached to the pointer (docs/13 §2, B3:
-        // the *first* frame after an interaction is what is budgeted).
-        let mut request = request;
-        let mut superseded = 0usize;
-        while let Ok(newer) = receiver.try_recv() {
-            request = newer;
-            superseded += 1;
-        }
+        // Latest wins — but *per kind*, which is the whole point.
+        //
+        // Anything that queued while the previous frame rendered is superseded:
+        // a drag emits a request every ~20 ms and a render takes longer, so
+        // without this the worker works through a backlog nothing will ever
+        // see, each one delaying the only frame the user is waiting for
+        // (docs/13 §2, B3: the *first* frame after an interaction is budgeted).
+        //
+        // What a picture supersedes is another picture. Draining to the single
+        // newest request of any kind meant a Scopes trace threw away every
+        // frame render queued behind it — and during playback the Scopes panel
+        // asks every 120 ms while the Viewer asks every tick, so the picture
+        // froze on its first frame while the scopes kept updating. A trace and
+        // a frame are different jobs; neither is the other's replacement.
+        let (picture, scope, superseded) = drain_to_newest(request, &receiver, |r| {
+            matches!(r, WorkerRequest::TraceScope(_))
+        });
         if superseded > 0 {
             println!("Skipped {superseded} superseded render request(s)");
         }
 
+        // The picture first: it is what the user is looking at, and a trace of
+        // a frame that is about to be replaced is worth less than the frame.
+        //
         // A frame that cannot be rendered is dropped, not fatal: the worker has
         // to survive to serve the next request.
-        let outcome = match request {
-            WorkerRequest::RenderComp(req) => render_comp(req, &mut state, &mut stream),
-            // Named for what it does rather than "render", so the three
-            // variants do not all share a prefix that says nothing.
-            WorkerRequest::TraceScope(req) => trace_scope(req, &mut state, &mut stream),
-            WorkerRequest::RenderCompWithPreview(req) => {
-                render_comp_with_preview(req, &mut state, &mut stream)
+        for request in picture.into_iter().chain(scope) {
+            let outcome = match request {
+                WorkerRequest::RenderComp(req) => render_comp(req, &mut state, &mut stream),
+                // Named for what it does rather than "render", so the three
+                // variants do not all share a prefix that says nothing.
+                WorkerRequest::TraceScope(req) => trace_scope(req, &mut state, &mut stream),
+                WorkerRequest::RenderCompWithPreview(req) => {
+                    render_comp_with_preview(req, &mut state, &mut stream)
+                }
+            };
+            if let Err(err) = outcome {
+                eprintln!("Dropping frame: {err}");
             }
-        };
-        if let Err(err) = outcome {
-            eprintln!("Dropping frame: {err}");
         }
     }
+}
+
+/// Take everything queued and keep only the newest of each kind: the newest
+/// picture, and the newest scope trace.
+///
+/// Generic over the classifier so the policy can be tested on its own — a
+/// `WorkerRequest` needs a live project behind it, and the rule being tested has
+/// nothing to do with rendering.
+///
+/// Returns `(picture, scope, superseded_count)`.
+#[frb(ignore)]
+fn drain_to_newest<T>(
+    first: T,
+    receiver: &Receiver<T>,
+    is_scope: impl Fn(&T) -> bool,
+) -> (Option<T>, Option<T>, usize) {
+    let mut picture = None;
+    let mut scope = None;
+    let mut superseded = 0usize;
+    let mut newest = Some(first);
+    while let Some(item) = newest.take() {
+        let slot = if is_scope(&item) {
+            &mut scope
+        } else {
+            &mut picture
+        };
+        if slot.replace(item).is_some() {
+            superseded += 1;
+        }
+        newest = receiver.try_recv().ok();
+    }
+    (picture, scope, superseded)
 }
 
 fn render_comp(
@@ -433,4 +474,90 @@ fn publish_frame(
         height,
         rgba,
     }));
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::drain_to_newest;
+    use std::sync::mpsc::channel;
+
+    /// The requests these tests queue: a picture carrying a frame number, and a
+    /// scope trace. Standing in for `WorkerRequest`, which needs a live project.
+    #[derive(Debug, PartialEq, Eq, Clone, Copy)]
+    enum Req {
+        Picture(u32),
+        Scope(u32),
+    }
+
+    fn is_scope(r: &Req) -> bool {
+        matches!(r, Req::Scope(_))
+    }
+
+    /// The bug this policy exists to fix: during playback the Viewer asks for a
+    /// frame every tick and the Scopes panel asks for a trace every 120 ms.
+    /// Draining to the single newest request of *any* kind meant one trace threw
+    /// away every frame queued behind it, so the picture froze on its first
+    /// frame while the scopes carried on updating.
+    #[test]
+    fn a_scope_trace_does_not_supersede_a_frame() {
+        let (tx, rx) = channel();
+        for frame in 1..=3 {
+            tx.send(Req::Picture(frame)).unwrap();
+        }
+        // The trace arrives last, which is what used to win outright.
+        tx.send(Req::Scope(9)).unwrap();
+        drop(tx);
+
+        let (picture, scope, superseded) = drain_to_newest(Req::Picture(0), &rx, is_scope);
+        assert_eq!(
+            picture,
+            Some(Req::Picture(3)),
+            "the newest frame survives a trace queued behind it"
+        );
+        assert_eq!(scope, Some(Req::Scope(9)), "and the trace is served too");
+        assert_eq!(superseded, 3, "the three older frames were dropped");
+    }
+
+    /// The behaviour the policy is *for*: a backlog of pictures collapses to the
+    /// newest, because the ones behind it are frames nobody will ever see.
+    #[test]
+    fn pictures_still_collapse_to_the_newest() {
+        let (tx, rx) = channel();
+        for frame in 1..=5 {
+            tx.send(Req::Picture(frame)).unwrap();
+        }
+        drop(tx);
+
+        let (picture, scope, superseded) = drain_to_newest(Req::Picture(0), &rx, is_scope);
+        assert_eq!(picture, Some(Req::Picture(5)));
+        assert_eq!(scope, None, "nothing asked for a trace");
+        assert_eq!(superseded, 5);
+    }
+
+    /// And traces collapse among themselves for the same reason.
+    #[test]
+    fn traces_collapse_to_the_newest_too() {
+        let (tx, rx) = channel();
+        tx.send(Req::Scope(2)).unwrap();
+        tx.send(Req::Scope(3)).unwrap();
+        drop(tx);
+
+        let (picture, scope, superseded) = drain_to_newest(Req::Scope(1), &rx, is_scope);
+        assert_eq!(picture, None);
+        assert_eq!(scope, Some(Req::Scope(3)));
+        assert_eq!(superseded, 2);
+    }
+
+    /// A single request with nothing behind it is served as it is.
+    #[test]
+    fn a_lone_request_is_not_counted_as_superseded() {
+        let (tx, rx) = channel::<Req>();
+        drop(tx);
+
+        let (picture, scope, superseded) = drain_to_newest(Req::Picture(7), &rx, is_scope);
+        assert_eq!(picture, Some(Req::Picture(7)));
+        assert_eq!(scope, None);
+        assert_eq!(superseded, 0);
+    }
 }

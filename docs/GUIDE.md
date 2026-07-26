@@ -2486,6 +2486,19 @@ between frames to get away with it; playback did not, which is why pressing play
 showed one frame and then nothing. The old frame is now thrown away one frame
 later, when nothing can still be holding it.
 
+*Why the Viewer froze while the Scopes kept moving.* One background worker
+serves both: the Viewer asks it for a picture, the Scopes panel asks it for a
+trace of the same frame. When it finishes a job it takes everything that piled up
+meanwhile and keeps only the newest, because a frame nobody will ever see is not
+worth rendering — that is what keeps dragging feel attached to the pointer.
+
+The flaw was that "newest" ignored what kind of job it was. During playback the
+Viewer asks about sixty times a second and the Scopes panel about eight, so a
+trace request regularly landed at the back of the queue and threw away every
+picture behind it. The scopes updated, the playhead moved, and the picture sat on
+its first frame. It now keeps the newest of *each* kind — a trace and a picture
+are different jobs, and neither is a replacement for the other.
+
 *The keyboard works again.* The shell that the port replaced had a key handler —
 space to play, the arrows to step, Ctrl+Z to undo — and the new one had none at
 all, so nothing on the keyboard did anything. It is back, with one correction and
