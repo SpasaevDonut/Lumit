@@ -65,7 +65,7 @@ sequence clips.
     **v0 is FROZEN (decided 2026-07-26).** No new ops, no new surface on the
     hand-rolled bridge — every addition goes to `crates/lumit-bridge/src/api/`.
     Nothing is deleted yet, because v0 still runs the whole UI behind
-    `--v0-shell` and 471 Dart tests cover it; it is removed in **one sweep** once
+    `--v0-shell` and its Dart suite covers it; it is removed in **one sweep** once
     every panel is on frb. The reason for the freeze: work kept landing in v0
     precisely because v0 was the only shell that could display anything, and that
     produced duplicated capability — ABI 12's `preview_effect_param` went into v0
@@ -73,22 +73,40 @@ sequence clips.
     same job by a different idiom. If a task seems to need v0 because only v0 can
     show the result, that is a signal to finish the frb panel first.
 
-    *When the sweep comes*, delete together: `src/{ffi,state,edits,snapshot,
-    framecache,cancel,render,realtime,export,recovery,preset,items,columns,
-    fxkeys,fxparams,retime,sequence,audio,beats,assets,media}.rs`, the `ABI_VERSION`
-    surface, `flutter_ui/lib/bridge/bridge.dart`, `state/app_state.dart`, the
-    v0-only panels and their tests, and the `--v0-shell` switch in `main.dart`.
-    Two things must **move** rather than die with it: `render::quality_for` (the
-    scale-to-decode-size policy, currently shared by the frb worker) and whatever
-    of `framecache`/`cancel` the frb path has adopted by then.
+    *When the sweep comes* — the easy-to-forget mechanics. Delete together:
+    `src/{ffi,state,edits,snapshot,framecache,cancel,render,realtime,export,
+    recovery,preset,items,columns,fxkeys,fxparams,retime,sequence,audio,beats,
+    assets}.rs`, the `ABI_VERSION` surface, `flutter_ui/lib/bridge/bridge.dart`,
+    `state/app_state.dart`, the v0-only panels and their tests, and the
+    `--v0-shell` switch in `main.dart`. But:
+    - **`media.rs` is not v0.** `MediaCache`, probing and decoding are shared
+      infrastructure; `api/footage.rs` calls straight into it. It stays.
+    - **Five helpers must MOVE, not die.** The frb side shares them deliberately
+      rather than copying: `render::quality_for` (the scale-to-decode-size
+      policy, used by `api/worker_thread.rs`), `edits::base_layer` and
+      `edits::centred_transform` (both in `api/composition.rs`),
+      `edits::fx_category_key` (`api/effect.rs`), `media::thumbnail_from_path`
+      (`api/footage.rs`). Plus whatever of `framecache`/`cancel` the frb path
+      has adopted by then.
+    - **`FootageDragData` stays.** The Timeline's drop target consumes it and
+      only the Project panel produces it; changing the payload kills
+      drag-to-timeline silently, with nothing to catch it but a test.
+    - **`shell/dialogs.dart` stays** until the Timeline and menu bar stop
+      reaching for it.
+    - **Never needs porting at all:** `free_string`, `free_buffer`, `snapshot`,
+      `version` — v0 transport artefacts frb handles structurally.
+    - **Already bridge-agnostic, no port needed:** `shell/dock_widget.dart`,
+      `shell/splash.dart` (it takes its lines as a parameter — only the
+      `boot_log` *source* needs an frb form), `theme/`, `icons/`, `widgets/`.
+      Verified: none of them import `bridge/bridge.dart` or `state/app_state.dart`.
 
     *Where it stands.* `crates/lumit-bridge/src/api/` holds the frb surface and
     `flutter_ui/lib/src/rust/` its generated bindings, built through cargokit
     (`flutter_ui/rust_builder/`). The v0 hand-rolled bridge is untouched and still
-    fully exported — `src/ffi.rs`, ABI v11, 110 `extern "C"` functions — so every
+    fully exported — `src/ffi.rs`, ABI v11, 112 `extern "C"` functions — so every
     shipping panel keeps working while the port proceeds. `main.dart` boots
     `LumitAppNew`, the frb shell; `LumitApp`/`LumitShell` is the v0 shell the
-    ~11k-line Dart suite exercises. Regenerate with
+    ~12,700-line Dart suite exercises. Regenerate with
     `flutter_rust_bridge_codegen generate` from `flutter_ui/` after any `api`
     change (config in `flutter_ui/flutter_rust_bridge.yaml`).
 
@@ -106,9 +124,91 @@ sequence clips.
     `layer_builder.dart` seam, which is the point of the exercise and is not yet
     used by the panels.
 
-    *Order of work.* Grow the API until a panel's needs are covered, port that
-    panel, delete its v0 path; the Dart suite for that panel is the gate. Roughly
-    by dependency:
+    *What must exist before v0 can be deleted.* Grow the API until a panel's needs
+    are covered, port that panel, migrate its tests; the Dart suite for that panel
+    is the gate. **Immediate next three: menu-bar tests, then the v0
+    Project-panel deletion, then the Effect controls panel.** The full ledger:
+
+    **1. The seven docked panels.**
+    - **Project** — **done**, ported, 13 tests against the real engine.
+    - **Viewer** — **partial**: transport only. All three render paths work, but
+        `ViewerPanelFrb` is a bare `Texture`/`RawImage`. The real
+        `viewer_panel.dart` (560 lines) needs porting, with `viewer_toolbar.dart`,
+        `viewer_overlays.dart` (gizmos, motion paths), `viewer_layer_map.dart`,
+        `slate.dart`, playback and timecode, zoom/pan, channel view and the
+        transparency grid.
+    - **Timeline** — **not started**, and the largest single job.
+        `TimelinePanelFrb` is layer names and a Render button; the real one is
+        `timeline_panel.dart` (1,279 lines)
+        plus **27** files in `panels/timeline/`: ruler, playhead, layer rows,
+        columns, spans, razor, markers, work area, cache bar, comp tabs, lane
+        host/scale/selection, graph editor and its four lens files, keyframe
+        clipboard and interp menus.
+    - **Effect controls** — **partial**: the API is done, and
+        `EffectControlsPanelFrb` + `EffectEditorFrb` in `panels_frb.dart` are the
+        worked example of the live-drag path — but they are a sketch. Float
+        parameters only (`Map<String, double>`); no transform rows, no effect
+        cards, no per-kind parameter rows, no stopwatch or keyframe navigator.
+    - **Effects & presets** — **not started**, a `PlaceholderPanel`. Needs
+        `list_effects` wiring (the API exists), drag-to-apply, `.lumfx` save/load.
+    - **Scopes** — **not started**, a `PlaceholderPanel`. Waiting on `render_scope`
+        on the frb worker.
+    - **Hierarchy** — **not started**, a `PlaceholderPanel`. Comp tree, precomps
+        expandable.
+
+    **2. Shell surfaces** — not panels, but v0-bound. Each of these imports
+    `bridge/bridge.dart` or `state/app_state.dart` today.
+    - **Menu bar** — **done**, but **has no tests yet**. Nothing blocks writing them.
+    - **Composition settings dialog** — **done** (`shell/comp_settings_frb.dart`).
+    - **Settings window** (665 lines) — cache budget and stats, realtime tier, UI
+        scale, theme.
+    - **Export dialog** (391 lines) — needs the whole export subsystem below.
+    - **Recovery dialog** (264 lines) — autosave listing plus journal restore.
+    - **Command palette** (227 lines).
+    - **Boot log** — `splash.dart` itself is agnostic and takes its lines as a
+        parameter; it is `boot_log` and the frb shell's wiring that are missing.
+    - **Popout windows** — the five files under `lib/popout/`. Multi-window, and
+        the v0 version has a known main-window resync gap.
+
+    **3. Engine subsystems with no frb API whatsoever.** `ffi.rs` exports 112
+    `extern "C"` functions; `api/` has 66 public functions, a good share of which
+    are handle plumbing (`new`, `equals`, id accessors) rather than ops. By op
+    count this is roughly a quarter of the way through, and the Timeline alone is
+    comparable to everything ported so far. Grouped by subsystem:
+    - **Keyframes** — add/remove/shift/set-interp/toggle-animated,
+        `apply_keyframe_batch`, and the effect-param twin of each. Add the single
+        `set_animation` op rather than porting the granular pair (see below: a key
+        drag that moves time *and* value currently costs two ops).
+    - **Layer lifecycle** — add solid/text/camera/adjustment/sequence, delete,
+        duplicate, reorder.
+    - **Layer properties** — switches, blend mode, matte, parent, motion blur,
+        spans, `drag_boundary`, `trim_to_source_end`, `convert_to_sequenced`, the
+        razor, markers, work area, `list_blend_modes`.
+    - **Transform** — `set_transform`, plus `preview_transform` /
+        `cancel_transform_preview` for the drag path.
+    - **Masks** — `add_mask`, `add_mask_geometry`.
+    - **Retime** — all of it: enabled/speed/reverse/interpolation,
+        `segment_to_rate`, `set_segment_preset`.
+    - **Audio** — all of it: prepare/play/pause/seek/stop/clock, `detect_beats`,
+        `clear_beat_markers`.
+    - **Export** — `start_export` / `poll` / `cancel` / `export_preset`.
+    - **Assets** — `set_solid`, `set_text_content`, `set_camera_zoom`.
+    - **Presets** — `save_effect_preset` / `load_effect_preset`, plus the preset
+        *listing*, which was never built on either bridge.
+    - **Infra readouts** — `cache_stats` / `set_cache_budget` / `clear_cache`,
+        `playback_tier` / `reset_realtime`, `boot_log`, `list_autosaves` /
+        `restore_journal`, `autosave`.
+    - **`decode_frame`** — the single-layer decode behind the Viewer's fallback.
+
+    **4. The v0 Dart suite is migrated, not deleted.** 33 files and ~12,700 lines
+    under `flutter_ui/test/`. That suite *is* the parity ledger: it is the only
+    written record of what the shipping UI actually does. Each panel's port moves
+    its tests to `test/frb/` against the real engine (pattern in
+    `frb_test_support.dart`), and only then deletes the v0 originals. Deleting
+    ahead of the port quietly reduces coverage — which is exactly why the Project
+    panel's v0 deletion was held back until its last two tests passed.
+
+    **5. Panel-by-panel notes.**
 
     1. **Viewer render paths.** Done for the basics: all three publish paths are
         wired (`RenderedDMABuf` / `RenderedSharedTexture` / `RenderedPixels`), so
@@ -126,16 +226,12 @@ sequence clips.
             too — worth checking whether a bare `Vec<u8>` return rather than a
             struct field is what triggers it — or by moving that call to the DCO
             codec, whose `IntoDart` for `Vec<u8>` is already zero-copy.
-        - Bring across what v0 has and the worker lacks: the rendered-frame LRU
-            (`framecache`), then `render_scope`. **Done:** the worker blocks on
-            its channel instead of busy-spinning, coalesces queued requests to
-            the newest, and carries a `scale` from which it derives `Quality`
-            through v0's shared `quality_for`.
-        - The adaptive *quality tier* (K-171) is still not ported: the frb scale
-            tracks the Viewer's panel size only, where v0's
-            `effectivePreviewScale` also folds in measured render cost via
-            `realtime::observe`. So a comp too heavy to render at panel size does
-            not yet degrade — it just renders slowly.
+        - `render_scope`, which the Scopes panel is waiting on. **Done:** the
+            worker blocks on its channel instead of busy-spinning, coalesces
+            queued requests to the newest, and carries a `scale` from which it
+            derives `Quality` through v0's shared `quality_for`. The frame cache
+            and quality tier it still lacks are under "Infrastructure the frb
+            path is missing" below.
     2. **Project panel — ported, fully tested.** `project_panel_frb.dart` on the
         frb API, all 13 tests passing against the *real* engine (see
         `test/frb/frb_test_support.dart` for why these are integration tests: the
@@ -149,19 +245,20 @@ sequence clips.
             change (`ScopedChange.items`), not on every edit, so a layer tweak no
             longer re-probes every file — but the proper fix is still the off-thread
             probing item under "Threading / platform".
-        - **Composition settings is absent from the context menu**: its dialog takes
-            an `AppStateStub`. Port it with the Timeline; the menu bar still reaches
-            the same dialog, so the capability is not lost.
-        - Then delete the v0 parts exclusive to it: `rename_item`, `delete_item`,
-            `move_to_root`, `relink`, `thumbnail`, the v0 `ProjectPanel` and its
-            three test files. `import_footage`/`new_composition`/`save_project` are
-            shared with the menu bar and stay.
+        - **Unblocked, and next but one:** delete the v0 parts exclusive to it —
+            `rename_item`, `delete_item`, `move_to_root`, `relink`, `thumbnail`
+            from `ffi.rs`/`items.rs`, the v0 `ProjectPanel` Dart code and its
+            bindings, and its three test files.
+            `import_footage`/`new_composition`/`save_project` are shared with the
+            menu bar and stay; `media.rs` is shared infrastructure and stays.
 
-    3. **Menu bar and shell** — the next panel. `save_project` and the recovery,
-        autosave and export entries; `import_footage` and `new_composition` already
-        exist on `ProjectReference` (they had to, for the Project panel to have
-        anything to show). `showCompositionSettingsDialog` needs an frb form, which
-        also restores the Project panel's context-menu entry.
+    3. **Menu bar and shell** — ported, and **still untested**: writing that suite
+        is the immediate next task, and nothing blocks it. `save_project` plus the
+        recovery, autosave and export entries;
+        `import_footage`/`new_composition` already existed on `ProjectReference`.
+        `showCompositionSettingsDialog` gained its frb form
+        (`shell/comp_settings_frb.dart`), which also restored the Project panel's
+        context-menu entry.
     4. **Effect controls** — the Rust surface is in. `get_value`/`set_value` speak
         `BridgeEffectValue`, a sum type mirroring `EffectValue`: all eight kinds,
         and a keyframed value carries its keys (exact rational times, per-side
@@ -169,24 +266,19 @@ sequence clips.
         the document untouched. `add_effect`, `remove_effect`, `reorder_effect`,
         `set_effect_enabled` and `set_effects` (the mouse-up commit for a staged
         stack) are on `LayerReference`, one `SetLayerEffects` each; `list_effects`
-        is a free function. Outstanding: the Dart panel itself, the effect-param
-        keyframe ops (with item 7), the `.lumfx` presets, and a `preview_effect_param`
-        equivalent — the frb staging path is the panel holding its own stack copy
-        and rendering through `render_frame_with_preview`, so there is nothing
-        engine-side to stage, but that is unproven until a panel drives it.
-    5. **Transform rows** — `set_transform`, and `preview_transform` /
-        `cancel_transform_preview` for the drag path.
-    6. **Timeline** — the largest surface: layer lifecycle (add solid/text/camera/
-        adjustment/sequence/footage, delete, duplicate, reorder), the switch and
-        column ops (`set_layer_switch`, `set_blend_mode`, `set_matte`,
-        `set_parent`, `set_motion_blur`, `list_blend_modes`), spans
-        (`edit_layer_span`, `drag_boundary`, `trim_to_source_end`,
-        `convert_to_sequenced`), the razor, markers, work area, comp settings.
-    7. **Keyframes and the graph editor** — the property ops plus their
-        effect-param twins. Add the single `set_animation` op noted below rather
-        than porting the granular pair.
-    8. **Retime, audio, export, then the performance/infra readouts**
-        (`cache_stats`, `playback_tier`, `boot_log`, recovery).
+        is a free function. Outstanding: the real Dart panel — `EffectEditorFrb`
+        in `panels_frb.dart` is a float-only sketch that proves the live-drag
+        path, not the panel — plus the effect-param keyframe ops, the `.lumfx`
+        presets, and a `preview_effect_param` equivalent. The frb staging path is
+        the panel holding its own stack copy and rendering through
+        `render_frame_with_preview`, so there is nothing engine-side to stage, but
+        that is unproven until a panel drives it.
+
+    Everything after that is grouped by subsystem under **3** above rather than
+    ordered here, because the dependencies are between *ops* and *panels* rather
+    than between panels: the Timeline needs layer lifecycle, properties, spans and
+    markers; the graph editor needs the keyframe ops; Transform rows need
+    `set_transform` and its preview pair.
 
     *cargokit is only wired up for two platforms.* The merge adapted
     `rust_builder/linux/CMakeLists.txt` and left every other platform on the frb
@@ -218,6 +310,15 @@ sequence clips.
     - **No journal or autosave.** `LumitBridgeState.journal` is always `None`, so
         crash recovery does not see work done through frb, and there is no
         `autosave`. v0 appends every commit.
+    - **No frame cache.** v0 has `framecache`, an LRU of rendered frames; the frb
+        worker has none, so every return to a frame re-renders it.
+    - **No adaptive quality tier** (K-171). The frb scale tracks the Viewer's
+        panel size only, where v0's `effectivePreviewScale` also folds in measured
+        render cost via `realtime::observe` — so a comp too heavy to render at
+        panel size does not degrade, it just renders slowly.
+    - **No cancel generation on the render path.** Settled as unnecessary given
+        the worker's queue coalescing, but re-check it if the worker ever becomes
+        multi-threaded.
     - **The `PROJECTS`/`STREAMS` global pair** are two `LazyLock<RwLock<BTreeMap>>`
         registries kept apart only by a comment about lock ordering, and
         `ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out.
