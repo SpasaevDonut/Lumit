@@ -329,6 +329,55 @@ impl LayerReference {
         Ok(())
     }
 
+    /// Serialise this layer's whole effect stack to `.lumfx` JSON.
+    ///
+    /// Returns the text rather than writing a file: choosing where something
+    /// goes is the file picker's job, and the engine has no business opening one.
+    /// A layer with no effects still saves — an empty preset is a valid, if
+    /// unexciting, document.
+    #[frb(sync)]
+    pub fn save_preset(&self, name: String) -> Result<String, BridgeError> {
+        let effects = self.item()?.effects;
+        serde_json::to_string_pretty(&serde_json::json!({
+            "format": 1,
+            "name": name,
+            "effects": effects,
+        }))
+        .map_err(|_| BridgeError::InvalidPreset)
+    }
+
+    /// Append a `.lumfx` preset's effects to this layer's stack, as one op.
+    ///
+    /// Each arrives with a **fresh** instance id (K-065): applying one preset to
+    /// several layers must not give them effects that share an id, since an id
+    /// is instance identity and every op that names an effect uses it.
+    ///
+    /// A document written by a newer Lumit still loads — unknown fields ride
+    /// along in each effect's `extra` map, exactly as the project file tolerates
+    /// additions. Only text that is not a preset at all is refused.
+    #[frb(sync)]
+    pub fn load_preset(&self, text: String) -> Result<(), BridgeError> {
+        #[derive(serde::Deserialize)]
+        struct Preset {
+            effects: Vec<EffectInstance>,
+        }
+
+        let preset: Preset = serde_json::from_str(&text).map_err(|_| BridgeError::InvalidPreset)?;
+        let fresh: Vec<EffectInstance> = preset
+            .effects
+            .into_iter()
+            .map(|mut effect| {
+                effect.id = Uuid::now_v7();
+                effect
+            })
+            .collect();
+
+        self.with_effects(move |effects| {
+            effects.extend(fresh);
+            Ok(())
+        })
+    }
+
     /// The clips on this Sequence layer, in the order it holds them.
     ///
     /// An empty list on a layer that is not a Sequence, rather than an error:

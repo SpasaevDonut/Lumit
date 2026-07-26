@@ -1640,3 +1640,120 @@ fn the_cache_readout_answers_and_the_budget_takes_effect() {
     // Put it back, so a later test in this process is not measuring ours.
     set_cache_budget(before.budget_bytes);
 }
+
+// --- Effect presets -------------------------------------------------------
+
+/// A preset round-trips, and the copy it plants carries fresh instance ids —
+/// applying one preset to two layers must not give them effects that share an
+/// id, since an id is instance identity and every op that names an effect uses
+/// it (K-065).
+#[test]
+fn a_preset_round_trips_with_fresh_instance_ids() {
+    let (project, first) = project_with_layer();
+    let comp = CompositionReference::new(project.id, first.comp_id());
+    first.add_effect("blur".into()).expect("an effect to save");
+
+    let text = first.save_preset("My look".into()).expect("saved");
+    assert!(text.contains("\"format\""), "it is a .lumfx document");
+    assert!(text.contains("My look"), "and carries its name");
+
+    let second = comp.add_adjustment_layer().expect("a second layer");
+    second.load_preset(text.clone()).expect("loaded");
+
+    let source = first.get_effects().expect("effects");
+    let copy = second.get_effects().expect("effects");
+    assert_eq!(copy.len(), source.len());
+    assert_eq!(copy[0].name(), source[0].name(), "the same effect");
+    assert_ne!(copy[0].id(), source[0].id(), "but its own instance");
+
+    // Loading appends, so a second load stacks rather than replacing.
+    second.load_preset(text).expect("loaded again");
+    assert_eq!(second.get_effects().expect("effects").len(), 2);
+
+    // …and it is one undo step per load.
+    project.undo().expect("undone");
+    assert_eq!(second.get_effects().expect("effects").len(), 1);
+}
+
+/// Text that is not a preset is a calm error — a user can pick any file.
+#[test]
+fn a_file_that_is_not_a_preset_is_refused() {
+    let (_project, layer) = project_with_layer();
+    assert!(matches!(
+        layer.load_preset("this is not JSON".into()),
+        Err(BridgeError::InvalidPreset)
+    ));
+    assert!(
+        layer.get_effects().expect("effects").is_empty(),
+        "nothing partial was applied"
+    );
+}
+
+/// A layer with no effects still saves. An empty preset is valid, and refusing
+/// it would be a rule the user has to learn for no benefit.
+#[test]
+fn an_empty_stack_still_saves() {
+    let (_project, layer) = project_with_layer();
+    let text = layer.save_preset("Nothing".into()).expect("saved");
+    layer.load_preset(text).expect("loaded");
+    assert!(layer.get_effects().expect("effects").is_empty());
+}
+
+/// The scope request validates its colours rather than padding out a list the
+/// caller got wrong — a trace drawn in colours nobody chose is worse than none.
+#[test]
+fn a_scope_needs_five_colour_triples() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    for bad in [
+        vec![vec![0_u8, 0, 0]; 4],
+        vec![vec![0_u8, 0, 0]; 6],
+        vec![
+            vec![0_u8, 0],
+            vec![0, 0, 0],
+            vec![0, 0, 0],
+            vec![0, 0, 0],
+            vec![0, 0, 0],
+        ],
+    ] {
+        assert!(matches!(
+            comp.render_scope(0, 1.0, 0, bad),
+            Err(BridgeError::InvalidScopeColours)
+        ));
+    }
+
+    // A well-formed request gets past validation; with no worker running it is
+    // the worker-state error, never a panic.
+    let good = vec![vec![0_u8, 0, 0]; 5];
+    assert!(matches!(
+        comp.render_scope(0, 1.0, 0, good),
+        Err(BridgeError::InvalidWorkerState) | Ok(())
+    ));
+}
+
+/// A comp nests into another as a Precomp layer, and refuses to nest into
+/// itself — the one cycle a user reaches by accident.
+#[test]
+fn a_composition_nests_into_another_but_not_into_itself() {
+    use crate::api::layer::BridgeLayerKind;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let inner = project.new_composition("Inner".into()).expect("comp");
+    let outer = project.new_composition("Outer".into()).expect("comp");
+
+    let placed = outer.add_precomp_layer(&inner).expect("nested");
+    assert_eq!(placed.get_kind().expect("kind"), BridgeLayerKind::Precomp);
+    assert_eq!(placed.get_name().expect("name"), "Inner");
+
+    // The layer points back at the comp it draws, which is what the Hierarchy
+    // panel walks.
+    let source = placed.get_source_item().expect("source").expect("some");
+    assert!(matches!(source, ItemReference::Composition(_)));
+
+    assert!(matches!(
+        outer.add_precomp_layer(&outer),
+        Err(BridgeError::InvalidComp)
+    ));
+    assert_eq!(outer.get_layers().expect("layers").len(), 1);
+}

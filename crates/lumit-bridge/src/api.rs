@@ -54,6 +54,10 @@ pub enum BridgeError {
     InvalidTime,
     /// A blend-mode index outside the list `list_blend_modes` hands out.
     InvalidBlendMode,
+    /// A scope's colour list was not five `[r, g, b]` triples.
+    InvalidScopeColours,
+    /// The text handed to `load_preset` is not a `.lumfx` document.
+    InvalidPreset,
     /// The razor was pointed at a layer that is not a Sequence layer.
     NotSequence,
     /// Only a Footage layer converts to a Sequence layer.
@@ -103,6 +107,10 @@ impl fmt::Display for BridgeError {
             ),
             BridgeError::InvalidTime => write!(f, "That time is not a valid duration"),
             BridgeError::InvalidBlendMode => write!(f, "No blend mode at that index"),
+            BridgeError::InvalidScopeColours => {
+                write!(f, "A scope needs five red/green/blue triples")
+            }
+            BridgeError::InvalidPreset => write!(f, "That is not a valid effect preset"),
             BridgeError::NotSequence => write!(f, "That is not a sequence layer"),
             BridgeError::NotFootage => {
                 write!(f, "Only footage layers convert to sequenced")

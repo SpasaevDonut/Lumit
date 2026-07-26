@@ -47,6 +47,7 @@ pub struct WorkerState {
 pub enum WorkerRequest {
     RenderComp(RenderCompRequest),
     RenderCompWithPreview(RenderCompRequestWithPreview),
+    TraceScope(RenderScopeRequest),
 }
 
 #[frb(ignore)]
@@ -64,6 +65,24 @@ pub struct RenderCompRequest {
 /// Both overrides are optional and independent, so the one request shape serves
 /// an effect drag and a transform drag rather than each growing its own worker
 /// message. `None` means "leave that part of the layer as the document has it".
+/// A scope trace of one frame — the Scopes panel's request.
+///
+/// It renders the comp to CPU pixels and bins them on the GPU, whichever
+/// publish path the Viewer is on: the zero-copy paths never read pixels back, so
+/// the trace cannot borrow the Viewer's frame and asks for its own. That is why
+/// the panel throttles rather than tracing every frame.
+#[frb(ignore)]
+pub struct RenderScopeRequest {
+    pub comp: CompositionReference,
+    pub frame: u64,
+    pub scale: f32,
+    /// Which trace: the codes `lumit_render` reads — 0 waveform, 1 parade,
+    /// 2 vectorscope, 3 histogram.
+    pub kind: u32,
+    /// Background, trace, then the R, G and B channel tints, each `[r, g, b]`.
+    pub colours: [[u8; 3]; 5],
+}
+
 #[frb(ignore)]
 pub struct RenderCompRequestWithPreview {
     pub comp: CompositionReference,
@@ -149,6 +168,9 @@ fn worker_loop(
         // to survive to serve the next request.
         let outcome = match request {
             WorkerRequest::RenderComp(req) => render_comp(req, &mut state, &mut stream),
+            // Named for what it does rather than "render", so the three
+            // variants do not all share a prefix that says nothing.
+            WorkerRequest::TraceScope(req) => trace_scope(req, &mut state, &mut stream),
             WorkerRequest::RenderCompWithPreview(req) => {
                 render_comp_with_preview(req, &mut state, &mut stream)
             }
@@ -215,6 +237,51 @@ fn render_comp_with_preview(
     }
 
     publish_frame(state, req.comp.id, req.frame, req.scale, &document, stream);
+    Ok(())
+}
+
+/// Trace `frame` and publish the result.
+///
+/// Always a CPU read-back even on a zero-copy build: the binning kernel needs
+/// the pixels, and on those builds nothing ever brings them back. A failure
+/// publishes nothing rather than taking the worker down — a scope that cannot
+/// draw is a blank panel, not a lost session.
+#[frb(ignore)]
+fn trace_scope(
+    req: RenderScopeRequest,
+    state: &mut WorkerState,
+    stream: &mut WorkerResponseStream,
+) -> Result<(), BridgeError> {
+    let document = {
+        let document = state.project.state()?;
+        let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
+        document.store.snapshot()
+    };
+
+    let rendered = state.renderer.render_preview(
+        &document,
+        req.comp.id,
+        req.frame,
+        quality_for(req.scale),
+        req.scale,
+        None,
+    );
+    let Ok((rgba, width, height)) = rendered else {
+        eprintln!("Scope render failed, dropping the trace");
+        return Ok(());
+    };
+
+    match state
+        .renderer
+        .render_scope(&rgba, width, height, req.kind, req.colours)
+    {
+        Ok(trace) => {
+            _ = stream.add(WorkerResponse::Scope(crate::api::state::BridgeScopeTrace {
+                rgba: trace,
+            }));
+        }
+        Err(err) => eprintln!("Scope trace failed: {err}"),
+    }
     Ok(())
 }
 

@@ -82,6 +82,15 @@ pub struct BridgeRenderedFrame {
     pub rgba: Vec<u8>,
 }
 
+/// One scope trace: a fixed 256x256 RGBA picture the Scopes panel draws.
+///
+/// Small enough that the per-byte SSE cost `BridgeRenderedFrame` warns about
+/// does not matter here — 256 KiB against a 1080p frame's 8 MiB.
+#[frb(non_opaque)]
+pub struct BridgeScopeTrace {
+    pub rgba: Vec<u8>,
+}
+
 /// What the render worker publishes for one frame. Which variant a build can
 /// actually produce is decided at compile time by the zero-copy features — see
 /// `worker_thread::publish_frame` — but all three are always declared, so the
@@ -95,6 +104,9 @@ pub enum WorkerResponse {
     RenderedSharedTexture(BridgeSharedFrameInfo),
     /// Everything else: a CPU read-back.
     RenderedPixels(BridgeRenderedFrame),
+    /// A scope trace, which rides the same stream as the frames so the panel
+    /// needs no second channel.
+    Scope(BridgeScopeTrace),
 }
 
 type CallbackStream = StreamSink<ScopedChange>;

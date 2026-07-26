@@ -442,6 +442,18 @@ class LayerReference {
         that: this,
       );
 
+  /// Append a `.lumfx` preset's effects to this layer's stack, as one op.
+  ///
+  /// Each arrives with a **fresh** instance id (K-065): applying one preset to
+  /// several layers must not give them effects that share an id, since an id
+  /// is instance identity and every op that names an effect uses it.
+  ///
+  /// A document written by a newer Lumit still loads — unknown fields ride
+  /// along in each effect's `extra` map, exactly as the project file tolerates
+  /// additions. Only text that is not a preset at all is refused.
+  void loadPreset({required String text}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceLoadPreset(that: this, text: text);
+
   /// Remove `effect` from this layer's stack. An effect that is no longer there
   /// is an error rather than a silent success, so a double-click on Remove
   /// cannot look as though it deleted a second effect.
@@ -467,6 +479,15 @@ class LayerReference {
           required PlatformInt64 newIndex}) =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceReorderEffect(
           that: this, effect: effect, newIndex: newIndex);
+
+  /// Serialise this layer's whole effect stack to `.lumfx` JSON.
+  ///
+  /// Returns the text rather than writing a file: choosing where something
+  /// goes is the file picker's job, and the engine has no business opening one.
+  /// A layer with no effects still saves — an empty preset is a valid, if
+  /// unexciting, document.
+  String savePreset({required String name}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSavePreset(that: this, name: name);
 
   void setBlend({required int index}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetBlend(that: this, index: index);

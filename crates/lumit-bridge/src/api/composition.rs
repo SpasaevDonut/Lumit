@@ -12,7 +12,7 @@ use crate::api::{
     layer::LayerReference,
     state::{LumitBridgeState, PROJECTS},
     worker_thread::{
-        RenderCompRequest, RenderCompRequestWithPreview, WorkerRequest,
+        RenderCompRequest, RenderCompRequestWithPreview, RenderScopeRequest, WorkerRequest,
         WorkerRequest::{RenderComp, RenderCompWithPreview},
     },
     BridgeError,
@@ -229,6 +229,38 @@ impl CompositionReference {
 
         self.commit(lumit_core::Op::Batch { ops })?;
         Ok(LayerReference::new(self.project, self.id, id))
+    }
+
+    /// Place another composition into this one as a Precomp layer.
+    ///
+    /// Refuses to nest a comp inside itself. A deeper cycle — A inside B inside
+    /// A — is not checked here, because doing it properly means walking the
+    /// whole tree on every insertion; the render guards defensively against one
+    /// and the Hierarchy panel bounds its own recursion. The one-step case is
+    /// checked because it is the one a user reaches by accident.
+    #[frb(sync)]
+    pub fn add_precomp_layer(
+        &self,
+        comp: &CompositionReference,
+    ) -> Result<LayerReference, BridgeError> {
+        if comp.id == self.id {
+            return Err(BridgeError::InvalidComp);
+        }
+        let inner = comp.composition()?;
+        let outer = self.composition()?;
+
+        let layer = crate::edits::base_layer(
+            inner.name.clone(),
+            lumit_core::model::LayerKind::Precomp { comp: inner.id },
+            outer.duration.0,
+            crate::edits::centred_transform(
+                f64::from(inner.width),
+                f64::from(inner.height),
+                outer.width,
+                outer.height,
+            ),
+        );
+        self.add_at_top(layer)
     }
 
     /// Add a Text layer with the "Text" starter document, centred.
@@ -647,6 +679,39 @@ impl CompositionReference {
         Ok(comp
             .frame_rate
             .frame_at(lumit_core::time::CompTime(rational)))
+    }
+
+    /// Ask the worker for a scope trace of `frame`.
+    ///
+    /// `kind` is the trace: 0 waveform, 1 parade, 2 vectorscope, 3 histogram.
+    /// `colours` is background, trace, then the R, G and B tints, each as
+    /// `[r, g, b]` — the panel's theme decides them, so the engine never has to
+    /// know what a Lumit surface looks like.
+    #[frb(sync)]
+    pub fn render_scope(
+        &self,
+        frame: u64,
+        scale: f32,
+        kind: u32,
+        colours: Vec<Vec<u8>>,
+    ) -> Result<(), BridgeError> {
+        // Five triples, and anything else is a caller bug rather than something
+        // to pad out with a colour nobody chose.
+        if colours.len() != 5 || colours.iter().any(|c| c.len() != 3) {
+            return Err(BridgeError::InvalidScopeColours);
+        }
+        let mut packed = [[0_u8; 3]; 5];
+        for (slot, colour) in packed.iter_mut().zip(&colours) {
+            slot.copy_from_slice(colour);
+        }
+
+        self.dispatch(WorkerRequest::TraceScope(RenderScopeRequest {
+            comp: self.clone(),
+            frame,
+            scale,
+            kind,
+            colours: packed,
+        }))
     }
 
     /// Ask for `frame` with `layer`'s transform replaced by `transform` — the

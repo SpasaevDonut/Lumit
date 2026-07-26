@@ -129,8 +129,9 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: the three placeholder panels — Effects &
-    presets, Scopes, Hierarchy.** The full ledger:
+    is the gate. **All seven panels are ported.** What remains is the shell
+    surfaces under 2, the subsystems under 3, and the v0 sweep itself. The full
+    ledger:
 
     **1. The seven docked panels.**
     - **Viewer** — **partial**: the panel is in (toolbar, magnification, channel
@@ -144,16 +145,11 @@ sequence clips.
         read a different way — v0's `graph_speed_lens.dart` /
         `graph_time_lens.dart`), and **draggable bezier handles** (the interp
         menu sets the AE presets, which covers the easing most of the time).
-    - **Effect controls** — **partial**: what is left is **`.lumfx` presets**.
-        One known limit: a multi-axis row's stopwatch keys only its first axis,
-        because x and y animate independently in the model and one stopwatch
-        cannot honestly show two states.
-    - **Effects & presets** — **not started**, a `PlaceholderPanel`. Needs
-        `list_effects` wiring (the API exists), drag-to-apply, `.lumfx` save/load.
-    - **Scopes** — **not started**, a `PlaceholderPanel`. Waiting on `render_scope`
-        on the frb worker.
-    - **Hierarchy** — **not started**, a `PlaceholderPanel`. Comp tree, precomps
-        expandable.
+    - **Effect controls** — **done**, bar one known limit: a multi-axis row's
+        stopwatch keys only its first axis, because x and y animate
+        independently in the model and one stopwatch cannot honestly show two
+        states. It also has no drop target yet for the effect drag the Effects &
+        presets panel produces (`EffectDragData`).
 
     **2. Shell surfaces** — not panels, but v0-bound. Each of these imports
     `bridge/bridge.dart` or `state/app_state.dart` today.
@@ -186,8 +182,9 @@ sequence clips.
         `clear_beat_markers`.
     - **Export** — `start_export` / `poll` / `cancel` / `export_preset`.
     - **Assets** — `set_solid`, `set_text_content`, `set_camera_zoom`.
-    - **Presets** — `save_effect_preset` / `load_effect_preset`, plus the preset
-        *listing*, which was never built on either bridge.
+    - **Presets** — the preset *listing* (a browsable library of saved
+        `.lumfx` files), which was never built on either bridge. Save and load
+        are in.
     - **Infra readouts** — `playback_tier` / `reset_realtime`, `boot_log`,
         `list_autosaves` / `restore_journal`, `autosave`. The cache trio is in
         (`api/cache.rs`).

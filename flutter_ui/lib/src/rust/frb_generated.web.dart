@@ -149,6 +149,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeScalar dco_decode_box_autoadd_bridge_scalar(dynamic raw);
 
   @protected
+  BridgeScopeTrace dco_decode_box_autoadd_bridge_scope_trace(dynamic raw);
+
+  @protected
   BridgeSharedFrameInfo dco_decode_box_autoadd_bridge_shared_frame_info(
       dynamic raw);
 
@@ -254,6 +257,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeScalar dco_decode_bridge_scalar(dynamic raw);
 
   @protected
+  BridgeScopeTrace dco_decode_bridge_scope_trace(dynamic raw);
+
+  @protected
   BridgeSharedFrameInfo dco_decode_bridge_shared_frame_info(dynamic raw);
 
   @protected
@@ -327,6 +333,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<LayerReference> dco_decode_list_layer_reference(dynamic raw);
+
+  @protected
+  List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
 
   @protected
   Float64List dco_decode_list_prim_f_64_strict(dynamic raw);
@@ -508,6 +517,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeScopeTrace sse_decode_box_autoadd_bridge_scope_trace(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeSharedFrameInfo sse_decode_box_autoadd_bridge_shared_frame_info(
       SseDeserializer deserializer);
 
@@ -626,6 +639,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeScalar sse_decode_bridge_scalar(SseDeserializer deserializer);
 
   @protected
+  BridgeScopeTrace sse_decode_bridge_scope_trace(SseDeserializer deserializer);
+
+  @protected
   BridgeSharedFrameInfo sse_decode_bridge_shared_frame_info(
       SseDeserializer deserializer);
 
@@ -707,6 +723,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<LayerReference> sse_decode_list_layer_reference(
+      SseDeserializer deserializer);
+
+  @protected
+  List<Uint8List> sse_decode_list_list_prim_u_8_strict(
       SseDeserializer deserializer);
 
   @protected
@@ -897,6 +917,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeScalar self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_scope_trace(
+      BridgeScopeTrace self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_shared_frame_info(
       BridgeSharedFrameInfo self, SseSerializer serializer);
 
@@ -1025,6 +1049,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_bridge_scalar(BridgeScalar self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_scope_trace(
+      BridgeScopeTrace self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_shared_frame_info(
       BridgeSharedFrameInfo self, SseSerializer serializer);
 
@@ -1113,6 +1141,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_layer_reference(
       List<LayerReference> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_list_prim_u_8_strict(
+      List<Uint8List> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_f_64_strict(

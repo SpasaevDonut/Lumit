@@ -159,6 +159,18 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceAddFootageLayer(
               that: this, footage: footage);
 
+  /// Place another composition into this one as a Precomp layer.
+  ///
+  /// Refuses to nest a comp inside itself. A deeper cycle — A inside B inside
+  /// A — is not checked here, because doing it properly means walking the
+  /// whole tree on every insertion; the render guards defensively against one
+  /// and the Hierarchy panel bounds its own recursion. The one-step case is
+  /// checked because it is the one a user reaches by accident.
+  LayerReference addPrecompLayer({required CompositionReference comp}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddPrecompLayer(
+              that: this, comp: comp);
+
   /// Add an empty Sequence layer — a clip row spanning the comp.
   LayerReference addSequenceLayer() => BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceAddSequenceLayer(
@@ -260,6 +272,20 @@ class CompositionReference {
               scale: scale,
               layer: layer,
               transform: transform);
+
+  /// Ask the worker for a scope trace of `frame`.
+  ///
+  /// `kind` is the trace: 0 waveform, 1 parade, 2 vectorscope, 3 histogram.
+  /// `colours` is background, trace, then the R, G and B tints, each as
+  /// `[r, g, b]` — the panel's theme decides them, so the engine never has to
+  /// know what a Lumit surface looks like.
+  void renderScope(
+          {required BigInt frame,
+          required double scale,
+          required int kind,
+          required List<Uint8List> colours}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderScope(
+          that: this, frame: frame, scale: scale, kind: kind, colours: colours);
 
   /// Replace the whole marker list — one op, trivially invertible, which is
   /// also how beat detection commits a regenerated set.

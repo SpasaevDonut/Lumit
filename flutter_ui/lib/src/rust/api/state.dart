@@ -72,6 +72,28 @@ class BridgeRenderedFrame {
           rgba == other.rgba;
 }
 
+/// One scope trace: a fixed 256x256 RGBA picture the Scopes panel draws.
+///
+/// Small enough that the per-byte SSE cost `BridgeRenderedFrame` warns about
+/// does not matter here — 256 KiB against a 1080p frame's 8 MiB.
+class BridgeScopeTrace {
+  final Uint8List rgba;
+
+  const BridgeScopeTrace({
+    required this.rgba,
+  });
+
+  @override
+  int get hashCode => rgba.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeScopeTrace &&
+          runtimeType == other.runtimeType &&
+          rgba == other.rgba;
+}
+
 /// The Windows zero-copy Viewer frame (K-177): an NT handle to a shared D3D12
 /// texture the Flutter runner imports directly, so no pixels cross the FFI
 /// boundary. The handle is stable for the session and changes only when the
@@ -200,4 +222,10 @@ sealed class WorkerResponse with _$WorkerResponse {
   const factory WorkerResponse.renderedPixels(
     BridgeRenderedFrame field0,
   ) = WorkerResponse_RenderedPixels;
+
+  /// A scope trace, which rides the same stream as the frames so the panel
+  /// needs no second channel.
+  const factory WorkerResponse.scope(
+    BridgeScopeTrace field0,
+  ) = WorkerResponse_Scope;
 }

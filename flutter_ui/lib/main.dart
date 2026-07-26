@@ -225,6 +225,10 @@ class LumitUiState extends ChangeNotifier {
           _showSharedTexture(frame.field0);
         case WorkerResponse_RenderedPixels frame:
           _showPixels(frame.field0);
+        // Scope traces ride the same stream; the Scopes panel subscribes to it
+        // directly, so there is nothing for the Viewer to do with one.
+        case WorkerResponse_Scope():
+          break;
       }
     });
   }
