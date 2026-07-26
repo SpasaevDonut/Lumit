@@ -2460,6 +2460,39 @@ to be pressed many times to get back past one adjustment. Both symptoms have the
 same cause — something on the drag path is committing when it should be staging.
 That is now a test rather than a hope (`preview_effect_param_never_touches_undo_or_journal`).
 
+**Testing a panel that waits for the engine: one real turn, one fake flush.**
+Worth reading before writing a test for any panel that calls something slow.
+
+Flutter's widget tests run in a *pretend* clock, so a test can advance time
+instantly instead of waiting. That pretend clock is why they are fast — and it is
+also why anything genuinely asynchronous appears never to finish inside one: a
+reply arriving from Rust needs a real turn of the event loop, and the pretend
+clock does not provide any. `tester.runAsync` hands back a slice of real time for
+exactly this, but it is only half the answer, because the *reply* arrives in real
+time while the *code waiting for it* is parked in the pretend clock. Neither
+alone makes progress.
+
+The shape that works is to alternate: one slice of real time so the reply can
+arrive, then one flush of the pretend clock so the waiting code notices. Repeat
+until the screen shows what you were waiting for. The test helper
+`settleFrb` in `flutter_ui/test/frb/frb_test_support.dart` does precisely that,
+and its comment records the traps found the hard way:
+
+- **Never `await` an engine call *inside* `runAsync` unless you also started it
+  there.** It deadlocks outright rather than failing — the real-time slice cannot
+  end until the thing it is waiting for completes, and that thing is waiting for
+  the pretend clock, which cannot run until the slice ends.
+- The same trap applies to **anything else asynchronous, not just the engine.**
+  One test hung for eight minutes on an ordinary "create a temporary file" call.
+  Use the synchronous file operations in tests.
+- **Settling has to repeat.** The engine also pushes document-change messages, and
+  one of those arriving can discard the answer that just came in, so a single
+  round is not enough.
+
+The symptom of getting this wrong is a test that *hangs* rather than fails, which
+is worse than a failure: it stalls the whole file behind a long timeout and reads
+as "slow" rather than "broken".
+
 *One caution worth knowing.* The Rust functions in the frb layer are marked with
 a small annotation (`#[frb(...)]`) that tells the generator to include them. An
 unfortunate side effect is that the automatic checker which normally forbids
@@ -2468,6 +2501,46 @@ safety net does not cover exactly the code the interface calls. A plain
 text-search check in CI (`no-panics-in-frb-api`) stands in for it: nothing in
 `src/api/` may take those shortcuts, and every call must report a problem as an
 ordinary error instead of crashing.
+
+**Reading and writing an effect's parameters.** An effect's controls are not all
+numbers. A blur has a radius, a fill has a colour, a tile has a centre point, a
+noise has a random seed, a dropdown has a chosen option, a displacement effect
+has a file to point at, and a depth blur points at another layer. Any of the
+number-shaped ones can also be *animated* — following a curve of keyframes rather
+than holding one value.
+
+The first version of this part of the new bridge could only say "a number", so
+seven of the eight kinds, and every animated value, came back blank: the panel had
+nothing to draw them with. There is now one type that can be any of them
+(`BridgeEffectValue`), with one variant per kind, and an animated value arrives as
+its actual keys — their times, values and easing — rather than as whatever number
+it happens to equal at the start.
+
+The rule the type is built around is that **reading and writing are exact
+opposites**: whatever comes out can go straight back in, and the document is left
+exactly as it was. That sounds obvious, but it is what makes the panel's ordinary
+way of working safe, which is "read the value, change one part of it, write the
+whole thing back". If reading an animated radius gave back only "12", writing it
+again would delete the animation, and a user would lose work by nudging a slider.
+Two smaller consequences of the same rule: keyframe times cross as exact
+fractions (a key at half a second is "1 over 2", never 0.5, so it lands back on
+the frame it was set on), and any field written by a *newer* version of Lumit that
+this one does not understand is carried through untouched rather than quietly
+dropped.
+
+Writing the **wrong kind** is refused rather than applied. What kind a parameter
+is belongs to the effect, not to the panel: a colour turned into a number would be
+an effect the engine can no longer draw, and the damage would be undoable but not
+obvious on screen.
+
+**Changing which effects a layer has.** Adding, removing, reordering and bypassing
+an effect are four calls on the layer, and each becomes exactly one entry in the
+undo history — pressing Undo once puts the whole stack back as it was. Dragging a
+parameter is the staged path described above: the panel holds its own copy of the
+stack, changes values on that copy, renders previews from it, and commits the copy
+once when the mouse is released. A copy that no longer matches the document — some
+other action removed an effect while the drag was in progress — is refused rather
+than committed, so releasing a slider cannot bring a deleted effect back.
 
 **File dialogues, and why importing doesn't watch the video yet.** Choosing a
 file to open, a place to save, or footage to import needs a real "open file"

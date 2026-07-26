@@ -852,7 +852,11 @@ pub(crate) fn list_effects() -> String {
 
 /// A stable machine key for a [`FxCategory`] (the variant in snake_case) — the
 /// grouping key the Dart Effects browser sorts and headers by.
-fn fx_category_key(cat: lumit_core::fx::FxCategory) -> &'static str {
+///
+/// Shared with the frb surface (`api::effect::list_effects`) rather than
+/// restated there, so the two frontends cannot disagree about a category key.
+/// **It therefore has to move rather than die when v0 is deleted.**
+pub(crate) fn fx_category_key(cat: lumit_core::fx::FxCategory) -> &'static str {
     use lumit_core::fx::FxCategory;
     match cat {
         FxCategory::BlurSharpen => "blur_sharpen",

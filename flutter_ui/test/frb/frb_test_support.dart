@@ -111,6 +111,72 @@ Widget hostPanel({
   return (state: state, uiState: LumitUiState(state));
 }
 
+/// Let an async frb call actually finish inside a `testWidgets` body.
+///
+/// **Why this exists — the fake-async/real-async seam.** `testWidgets` runs its
+/// body inside a `FakeAsync` zone: microtasks and timers are queued, and the
+/// whole body is driven by `fakeAsync.flushMicrotasks()` from
+/// `AutomatedTestWidgetsFlutterBinding.runTest`. The isolate therefore never
+/// returns to the *real* event loop. An async frb call finishes by way of a
+/// native `ReceivePort` message (`BaseHandler.executeNormal` completes a
+/// `Completer` from that port), and a port message is only delivered on a real
+/// event-loop turn — so on its own a `pump` can never complete one.
+///
+/// `tester.runAsync` supplies the real turns, but it is only half the fix,
+/// because the *continuation* is not in the same zone as the delivery:
+///
+/// * The panel's `getStatus().then(…)` is registered during `build`, i.e. in the
+///   fake zone. The port message arriving during `runAsync` completes the
+///   completer synchronously (frb's port uses a sync `StreamController`), but the
+///   `.then` after it is queued in **FakeAsync's** microtask queue. Nothing
+///   drains that queue until the body is back in the fake zone.
+/// * A bare `pump()` is not enough to drain it: it only flushes microtasks
+///   `if (hasScheduledFrame)`, and even then it flushes *before* the frame — so
+///   the `setState` that the flush triggers is drawn a frame late. `pump(Duration
+///   .zero)` goes through `FakeAsync.elapse`, which always flushes microtasks
+///   first, so the same pump draws the result.
+/// * Never `await` a panel's frb future from inside `runAsync`: `runAsync` cannot
+///   return until its callback does, and `runTest` only flushes FakeAsync once
+///   `runAsync` has returned — so a future whose continuation sits in the fake
+///   queue deadlocks the test outright rather than failing. (A future *created*
+///   inside `runAsync` is fine; its continuations are real.)
+///
+/// Hence the loop: one real turn, one fake flush, repeat. [minRounds] rounds
+/// always run, because `LumitState` also carries the engine's `ScopedChange` and
+/// worker streams — their backlog is delivered on those same real turns, and a
+/// `ScopedChange` makes a panel discard cached async results and ask again. So
+/// the first answer is not necessarily the last one, and settling has to be
+/// iterative rather than a single sleep.
+///
+/// [until] stops the loop early once the thing under test has appeared; the
+/// caller still asserts it, so this returns quietly on exhaustion rather than
+/// failing with a message that would only duplicate the caller's `reason`.
+///
+/// The same deadlock catches asynchronous `dart:io` — `await
+/// Directory.systemTemp.createTemp(…)` in a `testWidgets` body hangs the test
+/// rather than failing it. Use the `…Sync` variants in a widget test.
+///
+/// Note also that this deliberately elapses **no fake time**. Anything waiting on
+/// a fake timer — an animation, or a `DoubleTapGestureRecognizer` holding the
+/// gesture arena for `kDoubleTapTimeout` — still needs the test's own
+/// `pump(duration)` or `pumpAndSettle`.
+Future<void> settleFrb(
+  WidgetTester tester, {
+  bool Function()? until,
+  Duration slice = const Duration(milliseconds: 20),
+  int minRounds = 4,
+  int maxRounds = 40,
+}) async {
+  for (var round = 0; round < maxRounds; round++) {
+    // A real event-loop turn: frb port messages land here.
+    await tester.runAsync(() => Future<void>.delayed(slice));
+    // Back in fake async: flush the continuations those messages queued, and
+    // draw the frame their `setState`s asked for.
+    await tester.pump(Duration.zero);
+    if (round + 1 >= minRounds && (until == null || until())) return;
+  }
+}
+
 /// A second tap, far enough after the first to read as two singles rather than a
 /// double-tap — the click-then-click-again rename gesture.
 Future<void> tapAgain(WidgetTester tester, Finder target) async {

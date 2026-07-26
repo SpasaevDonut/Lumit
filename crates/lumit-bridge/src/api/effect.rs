@@ -1,23 +1,399 @@
+//! One effect instance as the Effect controls panel reads and edits it, and the
+//! parameter value type that carries every kind of parameter across the seam.
+//!
+//! # In plain terms
+//!
+//! An effect has parameters, and they are not all numbers: a blur has a radius
+//! (a number), a fill has a colour, a tile has a centre point, a glow has an
+//! on/off switch, a noise has a random seed, a dropdown has a chosen option, a
+//! displacement map has a file, and a depth blur points at another layer. Any of
+//! the number-shaped ones may also be *animated* — following a curve of
+//! keyframes instead of holding one value.
+//!
+//! [`BridgeEffectValue`] is one type that can be any of those things, so the
+//! panel can read a parameter without knowing in advance which kind it is, and
+//! write it back without flattening it. Its rule is that reading and writing are
+//! exact inverses: whatever comes out can go straight back in and the document is
+//! unchanged. That is what lets the panel treat "read the value, change one
+//! field, write it" as safe — the ordinary way every control in it works.
+
 use flutter_rust_bridge::frb;
 pub use lumit_core::model::EffectInstance;
 use lumit_core::{
-    anim::{Animation, Property},
-    model::{EffectParam, EffectValue},
+    anim::{Animation, Keyframe, Property, SideInterp},
+    model::{EffectParam, EffectValue, FileParam},
+    time::Rational,
 };
 use serde_json::json;
+use uuid::Uuid;
 
 use crate::api::BridgeError;
 
+/// One built-in effect as the Add-effect menu needs it: the stable `name` to
+/// pass to [`crate::api::layer::LayerReference::add_effect`], the sentence-case
+/// `label` to draw, and the category to group under. `category` is a stable
+/// machine key the menu sorts by; `category_label` is its heading (K-090).
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeEffectInfo {
+    pub name: String,
+    pub label: String,
+    pub category: String,
+    pub category_label: String,
+}
+
+/// Every built-in effect, in schema order — the Add-effect menu's source of
+/// truth ([`lumit_core::fx::BUILTINS`]), and the frb form of v0's `list_effects`.
+///
+/// Stateless, so it is a free function rather than a method: the menu is
+/// available before any project is open.
+#[frb(sync)]
+pub fn list_effects() -> Vec<BridgeEffectInfo> {
+    lumit_core::fx::BUILTINS
+        .iter()
+        .map(|schema| BridgeEffectInfo {
+            name: schema.match_name.to_owned(),
+            label: schema.label.to_owned(),
+            // Shared with v0 rather than restated, so the two frontends cannot
+            // disagree about which key a category has.
+            category: crate::edits::fx_category_key(schema.category).to_owned(),
+            category_label: schema.category.label().to_owned(),
+        })
+        .collect()
+}
+
+/// An exact rational time in seconds, as `num / den`.
+///
+/// Keyframe times cross as the integer pair the document stores, never as
+/// floating-point seconds (docs/17 "rational time crosses as integers"): a key
+/// at 1/3 s read back as 0.333… and written again would no longer land on the
+/// frame it was set on, and this round trip has to be exact.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeRational {
+    pub num: i64,
+    /// Always positive in anything the engine hands out; a zero or negative
+    /// denominator coming the other way is refused, not normalised.
+    pub den: i64,
+}
+
+/// A bezier side's After Effects-compatible handle: `speed` in value-units per
+/// second, `influence` as a fraction of the gap to the neighbouring key.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BridgeBezierSide {
+    pub speed: f64,
+    pub influence: f64,
+}
+
+/// How a keyframe joins its neighbour on one side ([`SideInterp`]).
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum BridgeSideInterp {
+    Hold,
+    Linear,
+    Bezier(BridgeBezierSide),
+}
+
+impl BridgeSideInterp {
+    #[frb(ignore)]
+    fn read(side: SideInterp) -> BridgeSideInterp {
+        match side {
+            SideInterp::Hold => BridgeSideInterp::Hold,
+            SideInterp::Linear => BridgeSideInterp::Linear,
+            SideInterp::Bezier { speed, influence } => {
+                BridgeSideInterp::Bezier(BridgeBezierSide { speed, influence })
+            }
+        }
+    }
+
+    #[frb(ignore)]
+    fn write(self) -> SideInterp {
+        match self {
+            BridgeSideInterp::Hold => SideInterp::Hold,
+            BridgeSideInterp::Linear => SideInterp::Linear,
+            BridgeSideInterp::Bezier(side) => SideInterp::Bezier {
+                speed: side.speed,
+                influence: side.influence,
+            },
+        }
+    }
+}
+
+/// One keyframe on one scalar channel.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BridgeKeyframe {
+    pub time: BridgeRational,
+    pub value: f64,
+    /// Approaching this key.
+    pub interp_in: BridgeSideInterp,
+    /// Leaving this key.
+    pub interp_out: BridgeSideInterp,
+}
+
+impl BridgeKeyframe {
+    #[frb(ignore)]
+    fn read(key: &Keyframe) -> BridgeKeyframe {
+        BridgeKeyframe {
+            time: BridgeRational {
+                num: key.time.num(),
+                den: key.time.den(),
+            },
+            value: key.value,
+            interp_in: BridgeSideInterp::read(key.interp_in),
+            interp_out: BridgeSideInterp::read(key.interp_out),
+        }
+    }
+
+    #[frb(ignore)]
+    fn write(&self) -> Result<Keyframe, BridgeError> {
+        Ok(Keyframe {
+            time: Rational::new(self.time.num, self.time.den)
+                .map_err(|_| BridgeError::InvalidKeyframes)?,
+            value: self.value,
+            interp_in: self.interp_in.write(),
+            interp_out: self.interp_out.write(),
+        })
+    }
+}
+
+/// One animatable scalar channel: a single number, or the curve it follows.
+///
+/// The two are separate variants rather than a number plus an "animated" flag
+/// because the panel must both tell them apart *and* write either back
+/// unchanged. A keyframed parameter read as its value at time zero, then written
+/// again, would silently delete the animation — which is exactly the trap the
+/// `f64`-only predecessor of this type could not avoid, and why it answered
+/// nothing at all for an animated parameter.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum BridgeScalar {
+    Static(f64),
+    /// At least one key, strictly ascending in time — the invariant the
+    /// engine's keyframe ops maintain, enforced here on the way in.
+    Keyframed(Vec<BridgeKeyframe>),
+}
+
+impl BridgeScalar {
+    #[frb(ignore)]
+    fn read(property: &Property) -> BridgeScalar {
+        match &property.animation {
+            Animation::Static(value) => BridgeScalar::Static(*value),
+            // A keyframed property with no keys is not a curve anything can
+            // evaluate, and the editing ops never produce one (removing the last
+            // key collapses to static). It reads as the value the engine itself
+            // would evaluate it to, so it normalises on write-back rather than
+            // being an unwritable value.
+            Animation::Keyframed(keys) if keys.is_empty() => {
+                BridgeScalar::Static(property.value_at(0.0))
+            }
+            Animation::Keyframed(keys) => {
+                BridgeScalar::Keyframed(keys.iter().map(BridgeKeyframe::read).collect())
+            }
+        }
+    }
+
+    /// This channel as an [`Animation`], or a calm error when the keys are not a
+    /// curve the engine can evaluate.
+    ///
+    /// Deliberately separate from assigning it: a point or a colour has to
+    /// validate every channel *before* writing any of them, or a bad third
+    /// channel would leave the parameter half-updated.
+    #[frb(ignore)]
+    fn animation(&self) -> Result<Animation, BridgeError> {
+        match self {
+            BridgeScalar::Static(value) => Ok(Animation::Static(*value)),
+            BridgeScalar::Keyframed(keys) => {
+                if keys.is_empty() {
+                    return Err(BridgeError::InvalidKeyframes);
+                }
+                let mut out: Vec<Keyframe> = Vec::with_capacity(keys.len());
+                for key in keys {
+                    let key = key.write()?;
+                    // Ascending, unique times: `anim::evaluate` walks the list
+                    // assuming it is sorted, so an unsorted one does not error,
+                    // it silently evaluates wrongly.
+                    if out.last().is_some_and(|previous| key.time <= previous.time) {
+                        return Err(BridgeError::InvalidKeyframes);
+                    }
+                    out.push(key);
+                }
+                Ok(Animation::Keyframed(out))
+            }
+        }
+    }
+}
+
+/// A point parameter: two independently animatable axes.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgePoint {
+    pub x: BridgeScalar,
+    pub y: BridgeScalar,
+}
+
+/// A colour parameter: four independently animatable scene-linear channels.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeColour {
+    pub r: BridgeScalar,
+    pub g: BridgeScalar,
+    pub b: BridgeScalar,
+    pub a: BridgeScalar,
+}
+
+/// A file parameter: the paths it references, and the index that selects which
+/// one is live. Two paths cannot be blended, so the index only ever steps
+/// (hold keyframes, K-111); the common case is one path and a static index.
+/// An empty `paths` means unset, which the consuming effect treats as identity.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeFileParam {
+    pub paths: Vec<String>,
+    pub index: BridgeScalar,
+}
+
+/// One effect parameter's value — the bridge mirror of [`EffectValue`], with one
+/// variant per kind so no parameter is unreachable.
+///
+/// Reading and writing are exact inverses (see the module docs): the write side
+/// replaces only what a value actually carries, leaving each property's
+/// forward-compatibility `extra` fields in place (docs/10 §1.1), so a document
+/// saved by a newer Lumit does not lose anything by being read and written here.
+///
+/// A `Layer` carries a bare id rather than a `LayerReference` because an effect
+/// instance is a detached copy that does not know its own composition; the panel
+/// resolves the id against `CompositionReference::get_layers`.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum BridgeEffectValue {
+    Float(BridgeScalar),
+    Point(BridgePoint),
+    Colour(BridgeColour),
+    Bool(bool),
+    Choice(u32),
+    Seed(u32),
+    File(BridgeFileParam),
+    Layer(Option<Uuid>),
+}
+
+impl BridgeEffectValue {
+    #[frb(ignore)]
+    fn read(value: &EffectValue) -> BridgeEffectValue {
+        match value {
+            EffectValue::Float(property) => BridgeEffectValue::Float(BridgeScalar::read(property)),
+            EffectValue::Point(x, y) => BridgeEffectValue::Point(BridgePoint {
+                x: BridgeScalar::read(x),
+                y: BridgeScalar::read(y),
+            }),
+            EffectValue::Colour(channels) => BridgeEffectValue::Colour(BridgeColour {
+                r: BridgeScalar::read(&channels[0]),
+                g: BridgeScalar::read(&channels[1]),
+                b: BridgeScalar::read(&channels[2]),
+                a: BridgeScalar::read(&channels[3]),
+            }),
+            EffectValue::Bool(value) => BridgeEffectValue::Bool(*value),
+            EffectValue::Choice(index) => BridgeEffectValue::Choice(*index),
+            EffectValue::Seed(seed) => BridgeEffectValue::Seed(*seed),
+            EffectValue::File(file) => BridgeEffectValue::File(BridgeFileParam {
+                paths: file.paths.clone(),
+                index: BridgeScalar::read(&file.index),
+            }),
+            EffectValue::Layer(layer) => BridgeEffectValue::Layer(*layer),
+        }
+    }
+
+    /// Overwrite `target` with this value.
+    ///
+    /// A parameter's *kind* is declared by the effect's schema and is not the
+    /// panel's to change, so a mismatched pair is refused rather than replacing
+    /// the value: writing a number to a colour would leave an instance the
+    /// effect's own resolver cannot read, and it would be undoable but not
+    /// obviously wrong on screen.
+    #[frb(ignore)]
+    fn write(self, target: &mut EffectValue) -> Result<(), BridgeError> {
+        match (self, target) {
+            (BridgeEffectValue::Float(scalar), EffectValue::Float(property)) => {
+                property.animation = scalar.animation()?;
+                Ok(())
+            }
+            (BridgeEffectValue::Point(point), EffectValue::Point(x, y)) => {
+                let (ax, ay) = (point.x.animation()?, point.y.animation()?);
+                x.animation = ax;
+                y.animation = ay;
+                Ok(())
+            }
+            (BridgeEffectValue::Colour(colour), EffectValue::Colour(channels)) => {
+                let animations = [
+                    colour.r.animation()?,
+                    colour.g.animation()?,
+                    colour.b.animation()?,
+                    colour.a.animation()?,
+                ];
+                for (property, animation) in channels.iter_mut().zip(animations) {
+                    property.animation = animation;
+                }
+                Ok(())
+            }
+            (BridgeEffectValue::Bool(value), EffectValue::Bool(target)) => {
+                *target = value;
+                Ok(())
+            }
+            (BridgeEffectValue::Choice(index), EffectValue::Choice(target)) => {
+                *target = index;
+                Ok(())
+            }
+            (BridgeEffectValue::Seed(seed), EffectValue::Seed(target)) => {
+                *target = seed;
+                Ok(())
+            }
+            (BridgeEffectValue::File(file), EffectValue::File(target)) => {
+                let animation = file.index.animation()?;
+                *target = FileParam {
+                    paths: file.paths,
+                    index: Property {
+                        animation,
+                        // The index's own forward-compatibility fields survive a
+                        // path change, as they do for every other property here.
+                        extra: std::mem::take(&mut target.index.extra),
+                    },
+                };
+                Ok(())
+            }
+            (BridgeEffectValue::Layer(layer), EffectValue::Layer(target)) => {
+                *target = layer;
+                Ok(())
+            }
+            _ => Err(BridgeError::ParamKindMismatch),
+        }
+    }
+}
+
+/// One effect in a layer's stack, as the Effect controls panel holds it.
+///
+/// A **detached copy**, not a live handle: reading the stack clones it out of the
+/// document, and [`Self::set_value`] edits that clone without committing
+/// anything. That is what makes a drag cheap — Dart stages a value, renders it
+/// through `CompositionReference::render_frame_with_preview`, and touches the
+/// document, the undo history and the disk exactly once, on release, through
+/// `LayerReference::set_effects` (docs/17 ABI v11/v12; GUIDE "Staging versus
+/// committing").
 #[frb(opaque)]
 pub struct BridgeEffectInstance {
     effect: EffectInstance,
 }
 
-// Temp hacky way to do this quickly, not sure the best way to pass this complex struct
-// over to flutter, this will need improving
 impl BridgeEffectInstance {
     pub fn new(effect: EffectInstance) -> BridgeEffectInstance {
         BridgeEffectInstance { effect }
+    }
+
+    /// This instance's own id — what the stack ops on
+    /// [`crate::api::layer::LayerReference`] address it by.
+    #[frb(sync)]
+    pub fn id(&self) -> Uuid {
+        self.effect.id
     }
 
     #[frb(sync)]
@@ -25,9 +401,16 @@ impl BridgeEffectInstance {
         self.effect.effect.match_name.clone()
     }
 
+    /// False when the effect is individually bypassed (docs/08 §1.5) — the state
+    /// of the checkbox in its title bar.
+    #[frb(sync)]
+    pub fn enabled(&self) -> bool {
+        self.effect.enabled
+    }
+
     #[frb(ignore)]
     pub fn get_effects(&self) -> EffectInstance {
-        return self.effect.clone();
+        self.effect.clone()
     }
 
     #[frb(sync)]
@@ -45,54 +428,29 @@ impl BridgeEffectInstance {
             .collect()
     }
 
-    /// A parameter's static scalar value.
-    ///
-    /// Only `Float` is carried so far, and only its static value: the other
-    /// seven `EffectValue` shapes (point, colour, bool, choice, seed, file,
-    /// layer) and the keyframed case have no Dart-side representation yet, so
-    /// they answer `None` rather than silently reading as 0.0 — a colour
-    /// parameter rendering as "0" is worse than one rendering as blank.
-    ///
-    /// TODO: replace this with a sum type mirroring `EffectValue`, so every
-    /// parameter kind is expressible. Tracked in docs/TODO.md under "Bridge".
+    /// A parameter's value, whatever kind it is. An unknown `id` is an error;
+    /// every parameter an instance actually carries is expressible, so there is
+    /// no "cannot represent this one" answer any more.
     #[frb(sync)]
-    pub fn get_value(&self, id: String) -> Result<Option<f64>, BridgeError> {
-        let param = self.param(&id)?;
-
-        Ok(match &param.value {
-            EffectValue::Float(property) => match &property.animation {
-                Animation::Static(v) => Some(*v),
-                Animation::Keyframed(_) => None,
-            },
-            EffectValue::Point(..)
-            | EffectValue::Colour(_)
-            | EffectValue::Bool(_)
-            | EffectValue::Choice(_)
-            | EffectValue::Seed(_)
-            | EffectValue::File(_)
-            | EffectValue::Layer(_) => None,
-        })
+    pub fn get_value(&self, id: String) -> Result<BridgeEffectValue, BridgeError> {
+        Ok(BridgeEffectValue::read(&self.param(&id)?.value))
     }
 
-    /// Overwrite a parameter with a static scalar. Same limitation as
-    /// [`Self::get_value`]: it can only express `Float`, so calling it on a
-    /// parameter of another kind would change its type. It therefore refuses
-    /// rather than corrupting the effect.
+    /// Overwrite a parameter on this staged copy. Nothing is committed — see the
+    /// type's own documentation; `LayerReference::set_effects` is the commit.
+    ///
+    /// Refused when `value` is of a different kind from the parameter, so a
+    /// control can never quietly change what a parameter *is*.
     #[frb(sync)]
-    pub fn set_value(&mut self, id: String, value: f64) -> Result<(), BridgeError> {
-        let index = self
+    pub fn set_value(&mut self, id: String, value: BridgeEffectValue) -> Result<(), BridgeError> {
+        let param = self
             .effect
             .params
-            .iter()
-            .position(|p| p.id == id)
+            .iter_mut()
+            .find(|p| p.id == id)
             .ok_or(BridgeError::InvalidParam)?;
 
-        if !matches!(self.effect.params[index].value, EffectValue::Float(_)) {
-            return Err(BridgeError::UnsupportedParamKind);
-        }
-
-        self.effect.params[index].value = EffectValue::Float(Property::fixed(value));
-        Ok(())
+        value.write(&mut param.value)
     }
 
     #[frb(ignore)]

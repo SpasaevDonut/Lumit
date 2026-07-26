@@ -116,10 +116,28 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   bool dco_decode_bool(dynamic raw);
 
   @protected
+  BridgeBezierSide dco_decode_box_autoadd_bridge_bezier_side(dynamic raw);
+
+  @protected
+  BridgeColour dco_decode_box_autoadd_bridge_colour(dynamic raw);
+
+  @protected
   BridgeCompSettings dco_decode_box_autoadd_bridge_comp_settings(dynamic raw);
 
   @protected
+  BridgeEffectValue dco_decode_box_autoadd_bridge_effect_value(dynamic raw);
+
+  @protected
+  BridgeFileParam dco_decode_box_autoadd_bridge_file_param(dynamic raw);
+
+  @protected
+  BridgePoint dco_decode_box_autoadd_bridge_point(dynamic raw);
+
+  @protected
   BridgeRenderedFrame dco_decode_box_autoadd_bridge_rendered_frame(dynamic raw);
+
+  @protected
+  BridgeScalar dco_decode_box_autoadd_bridge_scalar(dynamic raw);
 
   @protected
   BridgeSharedFrameInfo dco_decode_box_autoadd_bridge_shared_frame_info(
@@ -132,9 +150,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   CompositionReference dco_decode_box_autoadd_composition_reference(
       dynamic raw);
-
-  @protected
-  double dco_decode_box_autoadd_f_64(dynamic raw);
 
   @protected
   FolderReference dco_decode_box_autoadd_folder_reference(dynamic raw);
@@ -155,16 +170,43 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
 
   @protected
+  BridgeBezierSide dco_decode_bridge_bezier_side(dynamic raw);
+
+  @protected
+  BridgeColour dco_decode_bridge_colour(dynamic raw);
+
+  @protected
   BridgeCompSettings dco_decode_bridge_comp_settings(dynamic raw);
 
   @protected
   BridgeCompSize dco_decode_bridge_comp_size(dynamic raw);
 
   @protected
+  BridgeEffectInfo dco_decode_bridge_effect_info(dynamic raw);
+
+  @protected
+  BridgeEffectValue dco_decode_bridge_effect_value(dynamic raw);
+
+  @protected
+  BridgeFileParam dco_decode_bridge_file_param(dynamic raw);
+
+  @protected
   BridgeHistory dco_decode_bridge_history(dynamic raw);
 
   @protected
+  BridgeKeyframe dco_decode_bridge_keyframe(dynamic raw);
+
+  @protected
+  BridgePoint dco_decode_bridge_point(dynamic raw);
+
+  @protected
+  BridgeRational dco_decode_bridge_rational(dynamic raw);
+
+  @protected
   BridgeRenderedFrame dco_decode_bridge_rendered_frame(dynamic raw);
+
+  @protected
+  BridgeScalar dco_decode_bridge_scalar(dynamic raw);
 
   @protected
   BridgeSharedFrameInfo dco_decode_bridge_shared_frame_info(dynamic raw);
@@ -172,6 +214,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeSharedFrameInfoLinux dco_decode_bridge_shared_frame_info_linux(
       dynamic raw);
+
+  @protected
+  BridgeSideInterp dco_decode_bridge_side_interp(dynamic raw);
 
   @protected
   CompositionReference dco_decode_composition_reference(dynamic raw);
@@ -209,6 +254,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<BridgeEffectInfo> dco_decode_list_bridge_effect_info(dynamic raw);
+
+  @protected
+  List<BridgeKeyframe> dco_decode_list_bridge_keyframe(dynamic raw);
+
+  @protected
   List<ItemReference> dco_decode_list_item_reference(dynamic raw);
 
   @protected
@@ -228,11 +279,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   String? dco_decode_opt_String(dynamic raw);
 
   @protected
-  BridgeRenderedFrame? dco_decode_opt_box_autoadd_bridge_rendered_frame(
-      dynamic raw);
+  UuidValue? dco_decode_opt_Uuid(dynamic raw);
 
   @protected
-  double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
+  BridgeRenderedFrame? dco_decode_opt_box_autoadd_bridge_rendered_frame(
+      dynamic raw);
 
   @protected
   ItemReference? dco_decode_opt_box_autoadd_item_reference(dynamic raw);
@@ -341,11 +392,34 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   bool sse_decode_bool(SseDeserializer deserializer);
 
   @protected
+  BridgeBezierSide sse_decode_box_autoadd_bridge_bezier_side(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeColour sse_decode_box_autoadd_bridge_colour(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeCompSettings sse_decode_box_autoadd_bridge_comp_settings(
       SseDeserializer deserializer);
 
   @protected
+  BridgeEffectValue sse_decode_box_autoadd_bridge_effect_value(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeFileParam sse_decode_box_autoadd_bridge_file_param(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgePoint sse_decode_box_autoadd_bridge_point(SseDeserializer deserializer);
+
+  @protected
   BridgeRenderedFrame sse_decode_box_autoadd_bridge_rendered_frame(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeScalar sse_decode_box_autoadd_bridge_scalar(
       SseDeserializer deserializer);
 
   @protected
@@ -360,9 +434,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   CompositionReference sse_decode_box_autoadd_composition_reference(
       SseDeserializer deserializer);
-
-  @protected
-  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
 
   @protected
   FolderReference sse_decode_box_autoadd_folder_reference(
@@ -389,6 +460,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeBezierSide sse_decode_bridge_bezier_side(SseDeserializer deserializer);
+
+  @protected
+  BridgeColour sse_decode_bridge_colour(SseDeserializer deserializer);
+
+  @protected
   BridgeCompSettings sse_decode_bridge_comp_settings(
       SseDeserializer deserializer);
 
@@ -396,11 +473,33 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeCompSize sse_decode_bridge_comp_size(SseDeserializer deserializer);
 
   @protected
+  BridgeEffectInfo sse_decode_bridge_effect_info(SseDeserializer deserializer);
+
+  @protected
+  BridgeEffectValue sse_decode_bridge_effect_value(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeFileParam sse_decode_bridge_file_param(SseDeserializer deserializer);
+
+  @protected
   BridgeHistory sse_decode_bridge_history(SseDeserializer deserializer);
+
+  @protected
+  BridgeKeyframe sse_decode_bridge_keyframe(SseDeserializer deserializer);
+
+  @protected
+  BridgePoint sse_decode_bridge_point(SseDeserializer deserializer);
+
+  @protected
+  BridgeRational sse_decode_bridge_rational(SseDeserializer deserializer);
 
   @protected
   BridgeRenderedFrame sse_decode_bridge_rendered_frame(
       SseDeserializer deserializer);
+
+  @protected
+  BridgeScalar sse_decode_bridge_scalar(SseDeserializer deserializer);
 
   @protected
   BridgeSharedFrameInfo sse_decode_bridge_shared_frame_info(
@@ -409,6 +508,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeSharedFrameInfoLinux sse_decode_bridge_shared_frame_info_linux(
       SseDeserializer deserializer);
+
+  @protected
+  BridgeSideInterp sse_decode_bridge_side_interp(SseDeserializer deserializer);
 
   @protected
   CompositionReference sse_decode_composition_reference(
@@ -447,6 +549,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
+  List<BridgeEffectInfo> sse_decode_list_bridge_effect_info(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeKeyframe> sse_decode_list_bridge_keyframe(
+      SseDeserializer deserializer);
+
+  @protected
   List<ItemReference> sse_decode_list_item_reference(
       SseDeserializer deserializer);
 
@@ -468,11 +578,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   String? sse_decode_opt_String(SseDeserializer deserializer);
 
   @protected
-  BridgeRenderedFrame? sse_decode_opt_box_autoadd_bridge_rendered_frame(
-      SseDeserializer deserializer);
+  UuidValue? sse_decode_opt_Uuid(SseDeserializer deserializer);
 
   @protected
-  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
+  BridgeRenderedFrame? sse_decode_opt_box_autoadd_bridge_rendered_frame(
+      SseDeserializer deserializer);
 
   @protected
   ItemReference? sse_decode_opt_box_autoadd_item_reference(
@@ -585,12 +695,36 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_bool(bool self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_bezier_side(
+      BridgeBezierSide self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_colour(
+      BridgeColour self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_comp_settings(
       BridgeCompSettings self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_effect_value(
+      BridgeEffectValue self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_file_param(
+      BridgeFileParam self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_point(
+      BridgePoint self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_rendered_frame(
       BridgeRenderedFrame self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_scalar(
+      BridgeScalar self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bridge_shared_frame_info(
@@ -603,9 +737,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_composition_reference(
       CompositionReference self, SseSerializer serializer);
-
-  @protected
-  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_folder_reference(
@@ -632,6 +763,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SolidReference self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_bezier_side(
+      BridgeBezierSide self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_colour(BridgeColour self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_comp_settings(
       BridgeCompSettings self, SseSerializer serializer);
 
@@ -640,11 +778,37 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeCompSize self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_effect_info(
+      BridgeEffectInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_effect_value(
+      BridgeEffectValue self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_file_param(
+      BridgeFileParam self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_history(BridgeHistory self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_keyframe(
+      BridgeKeyframe self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_point(BridgePoint self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_rational(
+      BridgeRational self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_rendered_frame(
       BridgeRenderedFrame self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_scalar(BridgeScalar self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_shared_frame_info(
@@ -653,6 +817,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_shared_frame_info_linux(
       BridgeSharedFrameInfoLinux self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_side_interp(
+      BridgeSideInterp self, SseSerializer serializer);
 
   @protected
   void sse_encode_composition_reference(
@@ -694,6 +862,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_effect_info(
+      List<BridgeEffectInfo> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_keyframe(
+      List<BridgeKeyframe> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_item_reference(
       List<ItemReference> self, SseSerializer serializer);
 
@@ -717,11 +893,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_opt_String(String? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_bridge_rendered_frame(
-      BridgeRenderedFrame? self, SseSerializer serializer);
+  void sse_encode_opt_Uuid(UuidValue? self, SseSerializer serializer);
 
   @protected
-  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
+  void sse_encode_opt_box_autoadd_bridge_rendered_frame(
+      BridgeRenderedFrame? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_item_reference(

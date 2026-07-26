@@ -281,12 +281,15 @@ class _EffectEditorFrbState extends State<EffectEditorFrb> {
     effects = widget.effects;
     final effect = effects[widget.index];
 
-    // A null value means the parameter is not a static scalar — a colour, a
-    // point, a choice, or a keyframed float. The bridge cannot express those
-    // yet, so they are left out rather than shown as a misleading 0.
+    // Only static scalars get a drag field in this harness. Every other kind is
+    // now *expressible* — the value type carries points, colours, choices and
+    // keyframe curves — but drawing them is the shipping panel's job, so they are
+    // left out here rather than shown as a misleading 0.
     for (final p in effect.getParameters()) {
       final value = effect.getValue(id: p);
-      if (value != null) values[p] = value;
+      if (value case BridgeEffectValue_Float(field0: BridgeScalar_Static s)) {
+        values[p] = s.field0;
+      }
     }
   }
 
@@ -334,7 +337,12 @@ class _EffectEditorFrbState extends State<EffectEditorFrb> {
 
     final override = effects;
     for (final p in values.keys) {
-      override[widget.index].setValue(id: p, value: values[p] ?? 0.0);
+      override[widget.index].setValue(
+        id: p,
+        value: BridgeEffectValue.float(
+          BridgeScalar.static_(values[p] ?? 0.0),
+        ),
+      );
     }
 
     comp.renderFrameWithPreview(

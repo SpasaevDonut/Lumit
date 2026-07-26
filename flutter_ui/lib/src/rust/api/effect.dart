@@ -7,25 +7,38 @@ import '../api.dart';
 import '../frb_generated.dart';
 import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
+import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
+import 'package:uuid/uuid.dart';
+part 'effect.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `param`
+// These functions are ignored because they are not marked as `pub`: `animation`, `param`, `read`, `read`, `read`, `read`, `write`, `write`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`
+
+/// Every built-in effect, in schema order — the Add-effect menu's source of
+/// truth ([`lumit_core::fx::BUILTINS`]), and the frb form of v0's `list_effects`.
+///
+/// Stateless, so it is a free function rather than a method: the menu is
+/// available before any project is open.
+List<BridgeEffectInfo> listEffects() =>
+    BridgeLib.instance.api.crateApiEffectListEffects();
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<BridgeEffectInstance>>
 abstract class BridgeEffectInstance implements RustOpaqueInterface {
+  /// False when the effect is individually bypassed (docs/08 §1.5) — the state
+  /// of the checkbox in its title bar.
+  bool enabled();
+
   List<String> getParameters();
 
-  /// A parameter's static scalar value.
-  ///
-  /// Only `Float` is carried so far, and only its static value: the other
-  /// seven `EffectValue` shapes (point, colour, bool, choice, seed, file,
-  /// layer) and the keyframed case have no Dart-side representation yet, so
-  /// they answer `None` rather than silently reading as 0.0 — a colour
-  /// parameter rendering as "0" is worse than one rendering as blank.
-  ///
-  /// TODO: replace this with a sum type mirroring `EffectValue`, so every
-  /// parameter kind is expressible. Tracked in docs/TODO.md under "Bridge".
-  double? getValue({required String id});
+  /// A parameter's value, whatever kind it is. An unknown `id` is an error;
+  /// every parameter an instance actually carries is expressible, so there is
+  /// no "cannot represent this one" answer any more.
+  BridgeEffectValue getValue({required String id});
+
+  /// This instance's own id — what the stack ops on
+  /// [`crate::api::layer::LayerReference`] address it by.
+  UuidValue id();
 
   String name();
 
@@ -37,9 +50,262 @@ abstract class BridgeEffectInstance implements RustOpaqueInterface {
 
   String serialize();
 
-  /// Overwrite a parameter with a static scalar. Same limitation as
-  /// [`Self::get_value`]: it can only express `Float`, so calling it on a
-  /// parameter of another kind would change its type. It therefore refuses
-  /// rather than corrupting the effect.
-  void setValue({required String id, required double value});
+  /// Overwrite a parameter on this staged copy. Nothing is committed — see the
+  /// type's own documentation; `LayerReference::set_effects` is the commit.
+  ///
+  /// Refused when `value` is of a different kind from the parameter, so a
+  /// control can never quietly change what a parameter *is*.
+  void setValue({required String id, required BridgeEffectValue value});
+}
+
+/// A bezier side's After Effects-compatible handle: `speed` in value-units per
+/// second, `influence` as a fraction of the gap to the neighbouring key.
+class BridgeBezierSide {
+  final double speed;
+  final double influence;
+
+  const BridgeBezierSide({
+    required this.speed,
+    required this.influence,
+  });
+
+  @override
+  int get hashCode => speed.hashCode ^ influence.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeBezierSide &&
+          runtimeType == other.runtimeType &&
+          speed == other.speed &&
+          influence == other.influence;
+}
+
+/// A colour parameter: four independently animatable scene-linear channels.
+class BridgeColour {
+  final BridgeScalar r;
+  final BridgeScalar g;
+  final BridgeScalar b;
+  final BridgeScalar a;
+
+  const BridgeColour({
+    required this.r,
+    required this.g,
+    required this.b,
+    required this.a,
+  });
+
+  @override
+  int get hashCode => r.hashCode ^ g.hashCode ^ b.hashCode ^ a.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeColour &&
+          runtimeType == other.runtimeType &&
+          r == other.r &&
+          g == other.g &&
+          b == other.b &&
+          a == other.a;
+}
+
+/// One built-in effect as the Add-effect menu needs it: the stable `name` to
+/// pass to [`crate::api::layer::LayerReference::add_effect`], the sentence-case
+/// `label` to draw, and the category to group under. `category` is a stable
+/// machine key the menu sorts by; `category_label` is its heading (K-090).
+class BridgeEffectInfo {
+  final String name;
+  final String label;
+  final String category;
+  final String categoryLabel;
+
+  const BridgeEffectInfo({
+    required this.name,
+    required this.label,
+    required this.category,
+    required this.categoryLabel,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      label.hashCode ^
+      category.hashCode ^
+      categoryLabel.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeEffectInfo &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          label == other.label &&
+          category == other.category &&
+          categoryLabel == other.categoryLabel;
+}
+
+@freezed
+sealed class BridgeEffectValue with _$BridgeEffectValue {
+  const BridgeEffectValue._();
+
+  const factory BridgeEffectValue.float(
+    BridgeScalar field0,
+  ) = BridgeEffectValue_Float;
+  const factory BridgeEffectValue.point(
+    BridgePoint field0,
+  ) = BridgeEffectValue_Point;
+  const factory BridgeEffectValue.colour(
+    BridgeColour field0,
+  ) = BridgeEffectValue_Colour;
+  const factory BridgeEffectValue.bool(
+    bool field0,
+  ) = BridgeEffectValue_Bool;
+  const factory BridgeEffectValue.choice(
+    int field0,
+  ) = BridgeEffectValue_Choice;
+  const factory BridgeEffectValue.seed(
+    int field0,
+  ) = BridgeEffectValue_Seed;
+  const factory BridgeEffectValue.file(
+    BridgeFileParam field0,
+  ) = BridgeEffectValue_File;
+  const factory BridgeEffectValue.layer([
+    UuidValue? field0,
+  ]) = BridgeEffectValue_Layer;
+}
+
+/// A file parameter: the paths it references, and the index that selects which
+/// one is live. Two paths cannot be blended, so the index only ever steps
+/// (hold keyframes, K-111); the common case is one path and a static index.
+/// An empty `paths` means unset, which the consuming effect treats as identity.
+class BridgeFileParam {
+  final List<String> paths;
+  final BridgeScalar index;
+
+  const BridgeFileParam({
+    required this.paths,
+    required this.index,
+  });
+
+  @override
+  int get hashCode => paths.hashCode ^ index.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeFileParam &&
+          runtimeType == other.runtimeType &&
+          paths == other.paths &&
+          index == other.index;
+}
+
+/// One keyframe on one scalar channel.
+class BridgeKeyframe {
+  final BridgeRational time;
+  final double value;
+
+  /// Approaching this key.
+  final BridgeSideInterp interpIn;
+
+  /// Leaving this key.
+  final BridgeSideInterp interpOut;
+
+  const BridgeKeyframe({
+    required this.time,
+    required this.value,
+    required this.interpIn,
+    required this.interpOut,
+  });
+
+  @override
+  int get hashCode =>
+      time.hashCode ^ value.hashCode ^ interpIn.hashCode ^ interpOut.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeKeyframe &&
+          runtimeType == other.runtimeType &&
+          time == other.time &&
+          value == other.value &&
+          interpIn == other.interpIn &&
+          interpOut == other.interpOut;
+}
+
+/// A point parameter: two independently animatable axes.
+class BridgePoint {
+  final BridgeScalar x;
+  final BridgeScalar y;
+
+  const BridgePoint({
+    required this.x,
+    required this.y,
+  });
+
+  @override
+  int get hashCode => x.hashCode ^ y.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgePoint &&
+          runtimeType == other.runtimeType &&
+          x == other.x &&
+          y == other.y;
+}
+
+/// An exact rational time in seconds, as `num / den`.
+///
+/// Keyframe times cross as the integer pair the document stores, never as
+/// floating-point seconds (docs/17 "rational time crosses as integers"): a key
+/// at 1/3 s read back as 0.333… and written again would no longer land on the
+/// frame it was set on, and this round trip has to be exact.
+class BridgeRational {
+  final PlatformInt64 num;
+
+  /// Always positive in anything the engine hands out; a zero or negative
+  /// denominator coming the other way is refused, not normalised.
+  final PlatformInt64 den;
+
+  const BridgeRational({
+    required this.num,
+    required this.den,
+  });
+
+  @override
+  int get hashCode => num.hashCode ^ den.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeRational &&
+          runtimeType == other.runtimeType &&
+          num == other.num &&
+          den == other.den;
+}
+
+@freezed
+sealed class BridgeScalar with _$BridgeScalar {
+  const BridgeScalar._();
+
+  const factory BridgeScalar.static_(
+    double field0,
+  ) = BridgeScalar_Static;
+
+  /// At least one key, strictly ascending in time — the invariant the
+  /// engine's keyframe ops maintain, enforced here on the way in.
+  const factory BridgeScalar.keyframed(
+    List<BridgeKeyframe> field0,
+  ) = BridgeScalar_Keyframed;
+}
+
+@freezed
+sealed class BridgeSideInterp with _$BridgeSideInterp {
+  const BridgeSideInterp._();
+
+  const factory BridgeSideInterp.hold() = BridgeSideInterp_Hold;
+  const factory BridgeSideInterp.linear() = BridgeSideInterp_Linear;
+  const factory BridgeSideInterp.bezier(
+    BridgeBezierSide field0,
+  ) = BridgeSideInterp_Bezier;
 }

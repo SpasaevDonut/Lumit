@@ -136,18 +136,12 @@ sequence clips.
             `effectivePreviewScale` also folds in measured render cost via
             `realtime::observe`. So a comp too heavy to render at panel size does
             not yet degrade — it just renders slowly.
-    2. **Project panel — ported.** `project_panel_frb.dart` on the frb API, with
-        10 of its 12 tests passing against the *real* engine (see
+    2. **Project panel — ported, fully tested.** `project_panel_frb.dart` on the
+        frb API, all 12 tests passing against the *real* engine (see
         `test/frb/frb_test_support.dart` for why these are integration tests: the
         generated types are concrete, so there is nothing to fake, and adding a
         Dart interface purely to allow faking would reintroduce the mirror-class
         indirection the migration deletes). Outstanding:
-        - **Two skipped widget tests.** `FootageReference.getStatus` is an async
-            frb call, and async frb calls do not resolve inside the fake-async zone
-            `testWidgets` runs in, even under `runAsync` — verified working in a
-            plain `test()`. So the missing-media badge and the relink round trip
-            have no widget coverage; the behaviour itself is covered on the Rust
-            side. Needs either the right pump shape or a synchronous status read.
         - **Missing status is cached in the panel**, because `getStatus` probes the
             file so cannot be called from a build, and the missing-only filter needs
             every status at once. v0 got status free from the snapshot because the
@@ -166,12 +160,18 @@ sequence clips.
         exist on `ProjectReference` (they had to, for the Project panel to have
         anything to show). `showCompositionSettingsDialog` needs an frb form, which
         also restores the Project panel's context-menu entry.
-    4. **Effect controls** — `BridgeEffectInstance` is the furthest along and the
-        most provisional: `get_value`/`set_value` speak only static `f64`, so
-        seven of the eight `EffectValue` kinds and every keyframed value are
-        unreachable (they answer `None`). Replace the pair with a sum type
-        mirroring `EffectValue`, then add `add_effect`, `remove_effect`,
-        `reorder_effect`, `set_effect_enabled`, `list_effects` and the presets.
+    4. **Effect controls** — the Rust surface is in. `get_value`/`set_value` speak
+        `BridgeEffectValue`, a sum type mirroring `EffectValue`: all eight kinds,
+        and a keyframed value carries its keys (exact rational times, per-side
+        easing) rather than collapsing to a number, so reading then writing leaves
+        the document untouched. `add_effect`, `remove_effect`, `reorder_effect`,
+        `set_effect_enabled` and `set_effects` (the mouse-up commit for a staged
+        stack) are on `LayerReference`, one `SetLayerEffects` each; `list_effects`
+        is a free function. Outstanding: the Dart panel itself, the effect-param
+        keyframe ops (with item 7), the `.lumfx` presets, and a `preview_effect_param`
+        equivalent — the frb staging path is the panel holding its own stack copy
+        and rendering through `render_frame_with_preview`, so there is nothing
+        engine-side to stage, but that is unproven until a panel drives it.
     5. **Transform rows** — `set_transform`, and `preview_transform` /
         `cancel_transform_preview` for the drag path.
     6. **Timeline** — the largest surface: layer lifecycle (add solid/text/camera/

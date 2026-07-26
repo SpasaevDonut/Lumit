@@ -35,9 +35,21 @@ pub enum BridgeError {
     EmptyName,
     /// No parameter of that id on the effect.
     InvalidParam,
-    /// The parameter exists but is of a kind this API cannot yet express (see
-    /// `BridgeEffectInstance::get_value`).
-    UnsupportedParamKind,
+    /// No effect of that id in the layer's stack — a reference that outlived the
+    /// effect it named.
+    InvalidEffect,
+    /// No built-in effect goes by that match name.
+    UnknownEffectName,
+    /// The value written to a parameter is of a different kind from the
+    /// parameter. A parameter's kind is the effect's schema to declare, not the
+    /// panel's to change, so this is refused rather than applied.
+    ParamKindMismatch,
+    /// A keyframed value whose keys are not a curve the engine can evaluate:
+    /// none at all, an invalid time, or times that do not strictly ascend.
+    InvalidKeyframes,
+    /// A staged effect stack no longer matches the document's — something else
+    /// added, removed or reordered an effect while it was being edited.
+    StaleEffectStack,
     ReadFailed,
     WriteFailed,
     InvalidWorkerState,
@@ -64,8 +76,17 @@ impl fmt::Display for BridgeError {
             }
             BridgeError::MediaPathUnresolved => write!(f, "Nothing to relink at that path"),
             BridgeError::InvalidParam => write!(f, "No such effect parameter"),
-            BridgeError::UnsupportedParamKind => {
-                write!(f, "That effect parameter is not a scalar")
+            BridgeError::InvalidEffect => write!(f, "No such effect on this layer"),
+            BridgeError::UnknownEffectName => write!(f, "No built-in effect by that name"),
+            BridgeError::ParamKindMismatch => {
+                write!(f, "That value is the wrong kind for this effect parameter")
+            }
+            BridgeError::InvalidKeyframes => write!(
+                f,
+                "A keyframed value needs at least one key, in ascending time order"
+            ),
+            BridgeError::StaleEffectStack => {
+                write!(f, "The effect stack changed while it was being edited")
             }
             BridgeError::WriteFailed => write!(f, "Write Failed"),
             BridgeError::InvalidWorkerState => write!(f, "Invalid worker state"),

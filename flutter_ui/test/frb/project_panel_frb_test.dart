@@ -9,27 +9,16 @@
 // these are integration tests rather than fake-bridge unit tests.
 
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/footage.dart' show LumitMediaStatus;
 import 'package:lumit_flutter/state/app_state.dart' show FootageDragData;
 
 import 'frb_test_support.dart';
-
-/// Why the two status-dependent tests are skipped.
-///
-/// `FootageReference.getStatus` is an async frb call. Async frb calls complete
-/// fine in a plain `test()` — verified — but not inside the fake-async zone
-/// `testWidgets` runs in, even wrapped in `runAsync`. So the row never learns its
-/// file is missing, and the relink case waits out its timeout rather than failing.
-/// The behaviour itself is covered on the Rust side by
-/// `a_footage_item_pointing_at_nothing_reports_missing` and
-/// `relink_does_not_deadlock_against_its_own_read`; what is missing is the widget
-/// half. Tracked in docs/TODO.md.
-/// `testWidgets` takes a bool, not a reason string, so the reason lives above.
-const _asyncStatusSkip = false;
 
 void main() {
   setUpAll(initEngineForTests);
@@ -278,25 +267,30 @@ void main() {
 
     /// Missing-media rows and the filter. The imported path does not exist, so the
     /// engine's probe genuinely fails — no fake status is injected anywhere.
+    ///
+    /// `settleFrb` rather than a plain `pump`: the status probe is an async frb
+    /// call, and only a real event-loop turn can deliver its answer. See
+    /// `frb_test_support.dart` for the full account of that seam — and note that
+    /// pumping *inside* `runAsync` is not the fix, because the panel's own
+    /// `.then` continuation lives in the fake-async queue.
     testWidgets('missing footage wears a badge, a Relink button, and can be '
         'filtered to', (tester) async {
       final p = freshProject();
       p.state.project!.newComposition(name: 'Scene');
       final gone = p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');
 
-      // `runAsync` because the status probe is a real FFI call: fake-async never
-      // completes it, so the row would never learn the file is gone.
-      await tester.runAsync(() async {
-        await tester.pumpWidget(hostPanel(
-          child: const ProjectPanelFrb(),
-          state: p.state,
-          uiState: p.uiState,
-        ));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-      });
-      await tester.pump();
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await settleFrb(
+        tester,
+        until: () => find.text('missing').evaluate().isNotEmpty,
+      );
 
-      expect(find.text('missing'), findsOneWidget);
+      expect(find.text('missing'), findsOneWidget,
+          reason: 'the engine probed the path, found nothing, and said so');
       expect(
         find.byKey(ValueKey<String>('relink-${gone.internalid}')),
         findsOneWidget,
@@ -310,34 +304,52 @@ void main() {
       expect(find.text('gone.mp4'), findsOneWidget);
       expect(find.text('Scene'), findsNothing,
           reason: 'filtered: every visible row is now something to fix');
-    }, skip: _asyncStatusSkip);
+    });
 
     testWidgets('relink routes the picked path to the engine', (tester) async {
       final p = freshProject();
-      p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');
+      final gone = p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');
 
-      // A real file for the relink to land on, so the engine accepts it.
-      final target = await _tempFile('relinked.mp4');
+      // A file the engine's probe genuinely accepts, for the relink to land on.
+      final target = _probeableMediaFile('relinked.wav');
 
-      await tester.runAsync(() async {
-        await tester.pumpWidget(hostPanel(
-          child: ProjectPanelFrb(relinkPicker: () async => target),
-          state: p.state,
-          uiState: p.uiState,
-        ));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-      });
-      await tester.pump();
+      await tester.pumpWidget(hostPanel(
+        child: ProjectPanelFrb(relinkPicker: () async => target),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await settleFrb(
+        tester,
+        until: () => find.text('Relink…').evaluate().isNotEmpty,
+      );
+      expect(find.text('Relink…'), findsOneWidget,
+          reason: 'the inline Relink button is what this test clicks');
 
-      await tester.runAsync(() async {
-        await tester.tap(find.text('Relink…'));
-        await Future<void>.delayed(const Duration(milliseconds: 200));
-      });
-      await tester.pump();
+      // The tap itself is ordinary fake-async work, but it does not fire on the
+      // pointer-up: the *row* under the button offers `onDoubleTap`, and a
+      // `DoubleTapGestureRecognizer` holds the gesture arena for
+      // `kDoubleTapTimeout` so a second tap can still arrive. Until that hold is
+      // released the arena is never swept, so the button's own tap recognizer
+      // never wins and `onPressed` never runs. Fake time has to be advanced past
+      // it — `settleFrb` deliberately elapses none, so this pump is the one that
+      // presses the button.
+      await tester.tap(find.text('Relink…'));
+      await tester.pump(kDoubleTapTimeout + const Duration(milliseconds: 50));
+      // `_doRelink` then awaits the injected picker (a fake-zone future, already
+      // resolved by that pump) and calls the synchronous `relink`, which clears
+      // the panel's status cache — so the row re-probes, and that needs real
+      // event-loop turns again.
+      await settleFrb(tester);
 
       expect(find.text('missing'), findsNothing,
           reason: 'the item resolves now, so the badge is gone');
-    }, skip: _asyncStatusSkip);
+      // …and the engine, not just the widget, agrees. Started inside `runAsync`,
+      // so both the call and its continuation are real async — the one shape
+      // that may be awaited there without deadlocking.
+      final status = await tester.runAsync(() => gone.getStatus());
+      expect(status, LumitMediaStatus.ready,
+          reason: 'the picked path reached the engine, not just the panel');
+    });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
   }, skip: !engineAvailable);
@@ -350,9 +362,56 @@ Future<void> _doubleTap(WidgetTester tester, Finder target) async {
   await tester.pumpAndSettle();
 }
 
-Future<String> _tempFile(String name) async {
-  final dir = await Directory.systemTemp.createTemp('lumit-relink');
+/// A temp file the engine's probe accepts, written **synchronously**.
+///
+/// Two traps are baked into this one small function.
+///
+/// *Synchronous `dart:io` is not a style choice.* An awaited async `dart:io` call
+/// in a `testWidgets` body hangs the test outright. The I/O completes on the real
+/// event loop, but its continuation was registered in the fake-async zone, and by
+/// then `runTest` has done its one `flushMicrotasks` and is merely awaiting the
+/// body — so nothing ever drains that queue. This is the same deadlock described
+/// under `settleFrb`, and it is what made this test run for minutes instead of
+/// failing: it never even reached the widget. `createTempSync`/`writeAsBytesSync`
+/// sidestep it entirely.
+///
+/// *Existing is not the same as resolving.* `get_status` probes the file with
+/// libavformat, so four arbitrary bytes read as missing just like a path that is
+/// not there — the relink would appear to do nothing. This writes a genuinely
+/// valid 8-bit mono PCM WAV, which libavformat opens and reports one audio stream
+/// for, so the item really does resolve afterwards. A WAV rather than a video
+/// because it can be built here byte by byte; a real video would need an ffmpeg
+/// CLI on the machine, which a widget test must not depend on.
+String _probeableMediaFile(String name) {
+  final dir = Directory.systemTemp.createTempSync('lumit-relink');
   final file = File('${dir.path}/$name');
-  await file.writeAsBytes(const [0, 1, 2, 3]);
+  file.writeAsBytesSync(_silentWav());
   return file.path;
+}
+
+/// 0.1 s of 8-bit mono silence, as a WAV byte for byte.
+Uint8List _silentWav() {
+  const sampleRate = 8000;
+  final samples = Uint8List(sampleRate ~/ 10)..fillRange(0, sampleRate ~/ 10, 128);
+  final out = BytesBuilder();
+  void ascii(String s) => out.add(s.codeUnits);
+  void u16(int v) => out.add([v & 0xff, (v >> 8) & 0xff]);
+  void u32(int v) =>
+      out.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
+
+  ascii('RIFF');
+  u32(36 + samples.length); // everything after this field
+  ascii('WAVE');
+  ascii('fmt ');
+  u32(16); // fmt chunk size
+  u16(1); // PCM, uncompressed
+  u16(1); // mono
+  u32(sampleRate);
+  u32(sampleRate); // byte rate: 1 channel × 1 byte × rate
+  u16(1); // block align
+  u16(8); // bits per sample
+  ascii('data');
+  u32(samples.length);
+  out.add(samples);
+  return out.takeBytes();
 }

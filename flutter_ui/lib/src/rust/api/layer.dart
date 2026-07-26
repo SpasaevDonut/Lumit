@@ -9,7 +9,7 @@ import 'effect.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `item`, `project`
+// These functions are ignored because they are not marked as `pub`: `composition`, `item`, `project`, `with_effects`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
@@ -24,6 +24,15 @@ class LayerReference {
     required this.internallayerId,
   });
 
+  /// Append the built-in effect named `name` to this layer's stack.
+  ///
+  /// Seeded at composition size, because a few effects' defaults are positions
+  /// (a transform's anchor and position start at the centre of the frame), and
+  /// a fresh effect should look like identity rather than dragging the picture
+  /// to a corner. An unknown name is refused; nothing partial is committed.
+  void addEffect({required String name}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceAddEffect(that: this, name: name);
+
   bool equals({required LayerReference layer}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceEquals(that: this, layer: layer);
 
@@ -36,8 +45,50 @@ class LayerReference {
         that: this,
       );
 
+  /// Remove `effect` from this layer's stack. An effect that is no longer there
+  /// is an error rather than a silent success, so a double-click on Remove
+  /// cannot look as though it deleted a second effect.
+  void removeEffect({required BridgeEffectInstance effect}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceRemoveEffect(that: this, effect: effect);
+
   void rename({required String name}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceRename(that: this, name: name);
+
+  /// Move `effect` to `new_index` in the stack — drag-to-reorder.
+  ///
+  /// The index clamps into range rather than failing: past the end lands the
+  /// effect at the bottom, negative lands it at the top. A drag that overshoots
+  /// the list is an ordinary thing for a pointer to do, and refusing it would
+  /// leave the effect where it started with no explanation.
+  void reorderEffect(
+          {required BridgeEffectInstance effect,
+          required PlatformInt64 newIndex}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceReorderEffect(
+          that: this, effect: effect, newIndex: newIndex);
+
+  /// Enable or bypass `effect`. A bypassed effect renders as identity and is
+  /// not animatable (docs/08 §1.5 — the effect's own Mix parameter is the
+  /// animatable dial).
+  void setEffectEnabled(
+          {required BridgeEffectInstance effect, required bool enabled}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetEffectEnabled(
+          that: this, effect: effect, enabled: enabled);
+
+  /// Commit a staged effect stack — the mouse-up for a gesture Dart has been
+  /// editing through `BridgeEffectInstance::set_value` and previewing through
+  /// `CompositionReference::render_frame_with_preview`. The whole drag becomes
+  /// one undo step, which is the entire point of staging (docs/17 ABI v12).
+  ///
+  /// Only parameter *values* may cross this way: the staged stack must still
+  /// name the same effects, in the same order, as the document does. Otherwise
+  /// a stack read before some other action removed an effect from it would
+  /// resurrect that effect on mouse-up, and reordering or deleting would have
+  /// two paths — this one, which cannot say what it meant, and the dedicated
+  /// ops above, which can.
+  void setEffects({required List<BridgeEffectInstance> effects}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceSetEffects(that: this, effects: effects);
 
   @override
   int get hashCode =>
