@@ -125,9 +125,9 @@ sequence clips.
     whose `IntoDart` for `Vec<u8>` is already zero-copy.
 
 - **Engine subsystems with no frb API yet.** Masks (`add_mask`,
-    `add_mask_geometry`); Retime (enabled/speed/reverse/interpolation,
-    `segment_to_rate`, `set_segment_preset`) and the two clip commands beside it
-    (`drag_boundary`, `trim_to_source_end`); audio (prepare/play/pause/seek/stop/
+    `add_mask_geometry`); the Retime **graph** — the segment
+    model (`segment_to_rate`, `set_segment_preset`, `drag_boundary`) and the
+    curve view that makes ramps editable; `trim_to_source_end`; audio (prepare/play/pause/seek/stop/
     clock, `detect_beats`, `clear_beat_markers`); the preset *listing*; and `decode_frame`, the
     single-layer decode behind the Viewer's fallback.
 

@@ -108,5 +108,48 @@ void main() {
       expect(find.text('Transform'), findsOneWidget,
           reason: 'but it still has a transform');
     });
+
+    testWidgets('a footage layer retimes, and a ramp refuses a single speed',
+        (tester) async {
+      final p = withComp();
+      final footage =
+          p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.comp.addFootageLayer(footage: footage);
+      final layer = p.comp.getLayers().single;
+      p.uiState.selectedLayer.value = layer;
+      await mount(tester, p);
+
+      // Absent until switched on: "not retimed" and "retimed to 1x" differ.
+      expect(find.text('Retime'), findsOneWidget);
+      expect(find.byKey(const ValueKey('src-retime-speed')), findsNothing);
+      expect(layer.getRetime(), isNull);
+
+      await tester.tap(find.byKey(const ValueKey('src-retime-on')));
+      await tester.pump();
+      expect(layer.getRetime(), isNotNull);
+      expect(find.byKey(const ValueKey('src-retime-speed')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('src-retime-speed')));
+      await tester.pump();
+      await tester.enterText(find.byType(EditableText).first, '50');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(layer.getRetime()!.speedPercent, closeTo(50, 0.5));
+
+      // The gate and the policy are independent of the speed.
+      await tester.tap(find.byKey(const ValueKey('src-retime-reverse')));
+      await tester.pump();
+      expect(layer.getRetime()!.allowReverse, isTrue);
+      expect(layer.getRetime()!.speedPercent, closeTo(50, 0.5),
+          reason: 'opening the gate did not reset the speed');
+    });
+
+    testWidgets('a non-footage layer has no Retime row', (tester) async {
+      final p = withComp();
+      p.uiState.selectedLayer.value = p.comp.addTextLayer();
+      await mount(tester, p);
+      expect(find.text('Retime'), findsNothing,
+          reason: 'only footage plays at a speed other than its own');
+    });
   }, skip: !engineAvailable);
 }

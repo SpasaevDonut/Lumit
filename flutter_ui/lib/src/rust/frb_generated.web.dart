@@ -17,6 +17,7 @@ import 'api/footage.dart';
 import 'api/layer.dart';
 import 'api/project.dart';
 import 'api/project_item.dart';
+import 'api/retime.dart';
 import 'api/shell.dart';
 import 'api/solid.dart';
 import 'api/state.dart';
@@ -149,6 +150,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRenderedFrame dco_decode_box_autoadd_bridge_rendered_frame(dynamic raw);
+
+  @protected
+  BridgeRetime dco_decode_box_autoadd_bridge_retime(dynamic raw);
 
   @protected
   BridgeScalar dco_decode_box_autoadd_bridge_scalar(dynamic raw);
@@ -286,6 +290,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeRenderedFrame dco_decode_bridge_rendered_frame(dynamic raw);
 
   @protected
+  BridgeRetime dco_decode_bridge_retime(dynamic raw);
+
+  @protected
+  BridgeRetimeInterp dco_decode_bridge_retime_interp(dynamic raw);
+
+  @protected
   BridgeScalar dco_decode_bridge_scalar(dynamic raw);
 
   @protected
@@ -406,6 +416,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeRenderedFrame? dco_decode_opt_box_autoadd_bridge_rendered_frame(
       dynamic raw);
+
+  @protected
+  BridgeRetime? dco_decode_opt_box_autoadd_bridge_retime(dynamic raw);
 
   @protected
   BridgeScalar? dco_decode_opt_box_autoadd_bridge_scalar(dynamic raw);
@@ -565,6 +578,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeRetime sse_decode_box_autoadd_bridge_retime(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeScalar sse_decode_box_autoadd_bridge_scalar(
       SseDeserializer deserializer);
 
@@ -720,6 +737,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeRetime sse_decode_bridge_retime(SseDeserializer deserializer);
+
+  @protected
+  BridgeRetimeInterp sse_decode_bridge_retime_interp(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeScalar sse_decode_bridge_scalar(SseDeserializer deserializer);
 
   @protected
@@ -852,6 +876,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRenderedFrame? sse_decode_opt_box_autoadd_bridge_rendered_frame(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeRetime? sse_decode_opt_box_autoadd_bridge_retime(
       SseDeserializer deserializer);
 
   @protected
@@ -1018,6 +1046,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_bridge_rendered_frame(
       BridgeRenderedFrame self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_retime(
+      BridgeRetime self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bridge_scalar(
@@ -1189,6 +1221,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeRenderedFrame self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_retime(BridgeRetime self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_retime_interp(
+      BridgeRetimeInterp self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_scalar(BridgeScalar self, SseSerializer serializer);
 
   @protected
@@ -1334,6 +1373,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_bridge_rendered_frame(
       BridgeRenderedFrame? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_bridge_retime(
+      BridgeRetime? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_bridge_scalar(

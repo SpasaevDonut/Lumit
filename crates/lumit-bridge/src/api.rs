@@ -12,6 +12,7 @@ pub mod footage;
 pub mod layer;
 pub mod project;
 pub mod project_item;
+pub mod retime;
 pub mod shell;
 pub mod solid;
 pub mod state;
@@ -64,6 +65,11 @@ pub enum BridgeError {
     /// The export could not start — already running, no GPU, or a spec the
     /// encoder will not take. Carries the engine's own words.
     ExportFailed(String),
+    /// The layer has no retiming to edit.
+    NotRetimed,
+    /// The retime curve is a ramp or an explicit map, so there is no single
+    /// speed to set — writing one would discard the shape.
+    RetimeVaries,
     /// The edit named a text layer and the layer is not one.
     NotText,
     /// The edit named a camera layer and the layer is not one.
@@ -122,6 +128,10 @@ impl fmt::Display for BridgeError {
             }
             BridgeError::InvalidPreset => write!(f, "That is not a valid effect preset"),
             BridgeError::ExportFailed(why) => write!(f, "{why}"),
+            BridgeError::NotRetimed => write!(f, "That layer is not retimed"),
+            BridgeError::RetimeVaries => {
+                write!(f, "That layer's speed varies; edit it in the Retime graph")
+            }
             BridgeError::NotText => write!(f, "That is not a text layer"),
             BridgeError::NotCamera => write!(f, "That is not a camera layer"),
             BridgeError::NotSequence => write!(f, "That is not a sequence layer"),

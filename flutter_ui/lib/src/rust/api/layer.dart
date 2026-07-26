@@ -13,6 +13,7 @@ import 'footage.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 import 'project_item.dart';
+import 'retime.dart';
 import 'solid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read`, `with_effects`, `write`
@@ -410,6 +411,13 @@ class LayerReference {
         that: this,
       );
 
+  /// This layer's retiming, or `None` when it plays at source rate (or is not
+  /// a footage layer at all).
+  BridgeRetime? getRetime() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetRetime(
+        that: this,
+      );
+
   /// The project item this layer draws from, when it has one.
   ///
   /// `None` for the kinds that have no source of their own — a solid's
@@ -552,6 +560,33 @@ class LayerReference {
   /// dangling matte it cannot be allowed to exist and be ignored later.
   void setParent({UuidValue? parent}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetParent(that: this, parent: parent);
+
+  /// Turn retiming on or off.
+  ///
+  /// On installs the identity map — the same length, playing at source rate —
+  /// so switching it on changes nothing visible and gives the row something to
+  /// edit. Off removes the map entirely rather than setting 100%, because
+  /// "not retimed" and "retimed to exactly 1×" are different states in the
+  /// file and only the first skips the resampler.
+  void setRetimeEnabled({required bool on_}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetRetimeEnabled(that: this, on_: on_);
+
+  /// Choose how in-between frames are found.
+  void setRetimeInterpolation({required BridgeRetimeInterp interpolation}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetRetimeInterpolation(
+          that: this, interpolation: interpolation);
+
+  /// Open or close the reverse gate.
+  void setRetimeReverse({required bool allow}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetRetimeReverse(that: this, allow: allow);
+
+  /// Set one constant speed for the whole layer.
+  ///
+  /// Refused on a layer whose curve varies — see the module note. A speed of
+  /// zero is a freeze, which is legal and useful; a negative one needs the
+  /// reverse gate open, which the engine enforces at evaluation.
+  void setRetimeSpeed({required double percent}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetRetimeSpeed(that: this, percent: percent);
 
   /// Move or trim the layer. One op, so a drag that changes the in point and
   /// the start offset together — a slip edit — is still one undo step.

@@ -2179,3 +2179,152 @@ fn editing_a_solid_changes_every_layer_that_uses_it() {
     ));
     assert_eq!(solid.get_definition().expect("definition").name, "Backdrop");
 }
+
+// --- Retime ---------------------------------------------------------------
+
+/// A footage layer with no retiming is `None`, not 100% — "not retimed" and
+/// "retimed to exactly 1×" are different states in the file, and only the first
+/// skips the resampler.
+#[test]
+fn retiming_is_absent_until_it_is_switched_on() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into()).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+
+    assert!(layer.get_retime().expect("retime").is_none());
+
+    layer.set_retime_enabled(true).expect("on");
+    let retime = layer.get_retime().expect("retime").expect("some");
+    assert!(
+        (retime.speed_percent - 100.0).abs() < 0.001,
+        "switching it on changes nothing visible"
+    );
+    assert!(!retime.varies, "the identity map is one constant segment");
+
+    layer.set_retime_enabled(false).expect("off");
+    assert!(
+        layer.get_retime().expect("retime").is_none(),
+        "off removes the map rather than setting 100%"
+    );
+}
+
+/// The speed, the reverse gate and the interpolation policy are independent —
+/// a speed edit must not silently re-lock reverse or reset the policy.
+#[test]
+fn speed_reverse_and_interpolation_do_not_disturb_each_other() {
+    use crate::api::retime::BridgeRetimeInterp;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into()).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+    layer.set_retime_enabled(true).expect("on");
+
+    layer.set_retime_reverse(true).expect("gate open");
+    layer
+        .set_retime_interpolation(BridgeRetimeInterp::Blend)
+        .expect("policy");
+    layer.set_retime_speed(50.0).expect("half speed");
+
+    let retime = layer.get_retime().expect("retime").expect("some");
+    assert!((retime.speed_percent - 50.0).abs() < 0.5);
+    assert!(retime.allow_reverse, "the speed edit kept the gate open");
+    assert_eq!(
+        retime.interpolation,
+        BridgeRetimeInterp::Blend,
+        "and kept the policy"
+    );
+
+    // A freeze is a legal speed, not an error.
+    layer.set_retime_speed(0.0).expect("freeze");
+    assert!(
+        layer
+            .get_retime()
+            .expect("retime")
+            .expect("some")
+            .speed_percent
+            .abs()
+            < 0.5
+    );
+}
+
+/// Editing a curve that varies would discard its shape, so it is refused rather
+/// than flattened — the same rule the keyframe rows follow.
+#[test]
+fn a_varying_curve_refuses_a_single_speed() {
+    use lumit_core::retime::{Boundary, RateSegment, Retime, RetimeSegment};
+    use lumit_core::time::Rational;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into()).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+    layer.set_retime_enabled(true).expect("on");
+
+    // A ramp, installed behind the row's back the way the Retime graph will.
+    let one = Rational::new(1, 1).expect("1");
+    let two = Rational::new(2, 1).expect("2");
+    let ramp = Retime {
+        boundaries: vec![
+            Boundary::new(Rational::ZERO, Rational::ZERO),
+            Boundary::new(one, two),
+        ],
+        segments: vec![RetimeSegment::Rate(RateSegment::new(
+            Rational::ZERO,
+            two,
+            lumit_core::retime::Ease::Linear,
+        ))],
+        allow_reverse: false,
+        interpolation: Default::default(),
+        extra: serde_json::Map::new(),
+    };
+    {
+        let state = project.state().expect("state");
+        let state = state.write().expect("write");
+        state
+            .store
+            .commit(lumit_core::Op::SetLayerRetime {
+                comp: comp.id,
+                layer: layer.id(),
+                retime: Some(ramp),
+            })
+            .expect("ramp installed");
+    }
+
+    let read = layer.get_retime().expect("retime").expect("some");
+    assert!(read.varies, "a ramp is not one constant speed");
+    assert!(matches!(
+        layer.set_retime_speed(50.0),
+        Err(BridgeError::RetimeVaries)
+    ));
+
+    // …but the gate and the policy are still editable, because neither
+    // discards the shape.
+    layer.set_retime_reverse(true).expect("gate still editable");
+    assert!(layer.get_retime().expect("retime").expect("some").varies);
+}
+
+/// Retiming is a footage-layer idea; every other kind refuses calmly.
+#[test]
+fn only_footage_layers_retime() {
+    let (_project, layer) = project_with_layer();
+    assert!(layer.get_retime().expect("retime").is_none());
+    assert!(matches!(
+        layer.set_retime_enabled(true),
+        Err(BridgeError::NotFootage)
+    ));
+    assert!(matches!(
+        layer.set_retime_speed(50.0),
+        Err(BridgeError::NotFootage)
+    ));
+}

@@ -15,6 +15,7 @@ import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/src/rust/api/retime.dart';
 import 'package:lumit_flutter/src/rust/api/solid.dart';
 
 import '../theme/theme.dart';
@@ -56,6 +57,7 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       if (text != null) ..._textRows(t, text),
       if (zoom != null) _zoomRow(t, zoom),
       if (solid != null) ..._solidRows(t, solid),
+      ..._retimeRows(t),
     ];
     if (rows.isEmpty) return const SizedBox.shrink();
 
@@ -243,6 +245,94 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
         ),
       ),
     ];
+  }
+
+  /// Retiming, on footage layers only. Absent until switched on, because "not
+  /// retimed" and "retimed to exactly 1x" are different states in the file.
+  List<Widget> _retimeRows(LumitTheme t) {
+    // Only footage retimes; every other kind answers null to both.
+    if (widget.layer.getKind() != BridgeLayerKind.footage) return const [];
+    final retime = widget.layer.getRetime();
+
+    final rows = <Widget>[
+      _row(
+        t,
+        'Retime',
+        HouseCheckbox(
+          key: const ValueKey('src-retime-on'),
+          value: retime != null,
+          onChanged: (on) {
+            widget.layer.setRetimeEnabled(on_: on);
+            widget.onChanged();
+          },
+        ),
+      ),
+    ];
+    if (retime == null) return rows;
+
+    rows.add(_row(
+      t,
+      'Speed',
+      retime.varies
+          // A ramp has no single speed to show, and writing one would discard
+          // its shape — the same rule an animated property follows.
+          ? LumitTooltip(
+              message: 'This layer ramps — edit it in the Retime graph',
+              child: Text('varies (${retime.speedPercent.round()}% average)',
+                  style: t.small.copyWith(color: t.textMuted)),
+            )
+          : SizedBox(
+              width: _cellWidth,
+              child: DragValueField(
+                key: const ValueKey('src-retime-speed'),
+                value: retime.speedPercent,
+                min: -400,
+                max: 400,
+                decimals: 0,
+                suffix: '%',
+                onChanged: (v) {
+                  widget.layer.setRetimeSpeed(percent: v.toDouble());
+                  widget.onChanged();
+                },
+              ),
+            ),
+    ));
+
+    rows.add(_row(
+      t,
+      'Allow reverse',
+      HouseCheckbox(
+        key: const ValueKey('src-retime-reverse'),
+        value: retime.allowReverse,
+        onChanged: (on) {
+          widget.layer.setRetimeReverse(allow: on);
+          widget.onChanged();
+        },
+      ),
+    ));
+
+    rows.add(_row(
+      t,
+      'In-between frames',
+      SizedBox(
+        width: _cellWidth + 40,
+        child: BareDropdown<BridgeRetimeInterp>(
+          key: const ValueKey('src-retime-interp'),
+          value: retime.interpolation,
+          options: BridgeRetimeInterp.values,
+          label: (i) => switch (i) {
+            BridgeRetimeInterp.nearest => 'Nearest',
+            BridgeRetimeInterp.blend => 'Blend',
+            BridgeRetimeInterp.flow => 'Optical flow',
+          },
+          onChanged: (i) {
+            widget.layer.setRetimeInterpolation(interpolation: i);
+            widget.onChanged();
+          },
+        ),
+      ),
+    ));
+    return rows;
   }
 
   Widget _swatch(
