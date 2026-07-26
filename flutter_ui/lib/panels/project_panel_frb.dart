@@ -47,7 +47,11 @@ class ProjectPanelFrb extends StatefulWidget {
   /// opens.
   final Future<String?> Function()? relinkPicker;
 
-  const ProjectPanelFrb({super.key, this.relinkPicker});
+  /// The import picker seam, for the footer button and the double-click. Same
+  /// reason: a widget test must never open a plugin channel.
+  final Future<List<String>> Function()? importPicker;
+
+  const ProjectPanelFrb({super.key, this.relinkPicker, this.importPicker});
 
   @override
   State<ProjectPanelFrb> createState() => _ProjectPanelFrbState();
@@ -114,15 +118,25 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     final roots = state.project?.getItems() ?? const <ItemReference>[];
 
     if (roots.isEmpty) {
-      return Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 240),
-          child: Text(
-            'No items yet — import footage or create a composition',
-            style: t.small,
-            textAlign: TextAlign.center,
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Expanded(
+            child: _importOnDoubleTap(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 240),
+                  child: Text(
+                    'No items yet — import footage or create a composition',
+                    style: t.small,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
+          _footer(t),
+        ],
       );
     }
 
@@ -176,13 +190,75 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
             onToggle: () => setState(() => _missingOnly = !_missingOnly),
           ),
         Expanded(
-          child: ListView(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            children: rows,
+          // Wrapping the list rather than sitting behind it: a sibling under a
+          // ListView never sees a pointer, because the list is opaque across
+          // its whole extent. As the parent it gets what the rows leave — and
+          // a row's own double-tap wins the arena on the row itself.
+          child: _importOnDoubleTap(
+            child: ListView(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              children: rows,
+            ),
           ),
         ),
+        _footer(t),
       ],
     );
+  }
+
+  /// Double-clicking the panel's blank space imports, which is the gesture
+  /// every editor has and the one people reach for before finding a menu.
+  Widget _importOnDoubleTap({required Widget child}) => GestureDetector(
+        key: const ValueKey('project-empty-area'),
+        behavior: HitTestBehavior.opaque,
+        onDoubleTap: _import,
+        child: child,
+      );
+
+  /// Import and New composition, where the Project panel can reach them.
+  ///
+  /// They are on the menu bar too, and that is not duplication worth removing:
+  /// the panel is where you are looking when you want them, and a panel that
+  /// can only show what someone else put in it is a dead end.
+  Widget _footer(LumitTheme t) => Container(
+        height: 24,
+        color: t.surface1,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: Row(
+          children: [
+            HouseButton(
+              key: const ValueKey('project-import'),
+              small: true,
+              frameless: true,
+              onPressed: _import,
+              child: Text('Import…', style: t.small),
+            ),
+            const SizedBox(width: 6),
+            HouseButton(
+              key: const ValueKey('project-new-comp'),
+              small: true,
+              frameless: true,
+              onPressed: _newComposition,
+              child: Text('New composition', style: t.small),
+            ),
+          ],
+        ),
+      );
+
+  Future<void> _import() async {
+    final state = Provider.of<LumitState>(context, listen: false);
+    if (await state.importFootagePaths(
+        await (widget.importPicker ?? pickFootage)())) {
+      _documentChanged();
+    }
+  }
+
+  void _newComposition() {
+    // Fronted because a comp you just made is the one you want to work on.
+    final comp = Provider.of<LumitState>(context, listen: false).newComposition();
+    if (comp == null) return;
+    Provider.of<LumitUiState>(context, listen: false).setSelectedComp(comp);
+    _documentChanged();
   }
 
   /// An edit landed: re-probe and re-decode. Bumping the epoch is what makes a

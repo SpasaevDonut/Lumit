@@ -52,9 +52,14 @@ Future<void> main(List<String> args) async {
 
   await BridgeLib.init(handler: CustomHandler());
 
-  var state = LumitState();
-  var ui = LumitUiState(state);
-  runApp(LumitAppNew(state, ui));
+  final state = LumitState();
+  // Start with an empty project rather than nothing at all. Every document
+  // command — import, new composition, save — is disabled while there is no
+  // project, so booting without one left the whole File and Composition menu
+  // dead and no way to make it live: the first thing a user does needs
+  // something to do it *to*.
+  state.newProject();
+  runApp(LumitAppNew(state, LumitUiState(state)));
 }
 
 class LumitState extends ChangeNotifier {
@@ -146,6 +151,30 @@ class LumitState extends ChangeNotifier {
   /// that just performed an op should not wait for a Rust→Dart round trip to see
   /// its own result — see the same reasoning in project_panel_frb.dart.
   void notifyDocumentChanged() => notifyListeners();
+
+  /// Import footage into the open project, and say whether anything landed.
+  ///
+  /// Here rather than in the menu bar because the Project panel offers the same
+  /// command, and two copies of "import each path, then notify" is one copy too
+  /// many for something every new user's first action goes through.
+  Future<bool> importFootagePaths(List<String> paths) async {
+    final project = this.project;
+    if (project == null || paths.isEmpty) return false;
+    for (final path in paths) {
+      project.importFootage(path: path);
+    }
+    notifyDocumentChanged();
+    return true;
+  }
+
+  /// Make a composition. A blank name lets the engine pick the next "Comp N".
+  CompositionReference? newComposition() {
+    final project = this.project;
+    if (project == null) return null;
+    final comp = project.newComposition(name: '');
+    notifyDocumentChanged();
+    return comp;
+  }
 
   void handleChange(ScopedChange event) {
     _onChange.add(event);

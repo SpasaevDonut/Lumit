@@ -462,6 +462,85 @@ void main() {
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
+    /// The reason these exist: the panel used to show "import footage or
+    /// create a composition" and offer no way to do either, so an empty
+    /// project was a dead end unless you found the menu bar.
+    testWidgets('the footer imports footage into the project', (tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: ProjectPanelFrb(
+          importPicker: () async => ['C:/clips/shot.mov'],
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      expect(p.state.project!.getItems(), isEmpty);
+
+      await tester.tap(find.byKey(const ValueKey('project-import')));
+      await tester.pump();
+
+      expect(p.state.project!.getItems(), hasLength(1),
+          reason: 'the import reached the document');
+      expect(find.textContaining('No items yet'), findsNothing,
+          reason: 'and the panel is showing it');
+    });
+
+    testWidgets('the footer makes a composition and fronts it', (tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('project-new-comp')));
+      await tester.pump();
+
+      expect(p.state.project!.getItems(), hasLength(1));
+      expect(p.uiState.selectedComp, isNotNull,
+          reason: 'a comp you just made is the one you want to work on');
+    });
+
+    /// Double-clicking empty space is the gesture people reach for before they
+    /// find a menu, and it has to keep working once the panel has rows in it.
+    testWidgets('double-clicking the empty area imports', (tester) async {
+      final p = freshProject();
+      var asked = 0;
+      await tester.pumpWidget(hostPanel(
+        child: ProjectPanelFrb(
+          importPicker: () async {
+            asked++;
+            return ['C:/clips/shot.mov'];
+          },
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      final area = find.byKey(const ValueKey('project-empty-area'));
+      await tester.tap(area);
+      // A second tap is only a double tap if it lands inside the window, and
+      // only a double *tap* if the first has passed kDoubleTapMinTime.
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(area);
+      await tester.pumpAndSettle();
+
+      expect(asked, 1, reason: 'the double-click opened the picker');
+      expect(p.state.project!.getItems(), hasLength(1));
+
+      // And again, now that the panel is drawing rows rather than the hint.
+      await tester.tap(area, warnIfMissed: false);
+      await tester.pump(const Duration(milliseconds: 50));
+      await tester.tap(area, warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(asked, 2,
+          reason: 'the blank space below the rows takes the gesture too');
+    });
+
   }, skip: !engineAvailable);
 }
 

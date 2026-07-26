@@ -2212,13 +2212,14 @@ house. The Dart code lives in `flutter_ui/` and is a stand-alone application:
 you can build and run it without touching the Rust build, and vice versa.
 
 **How they talk.** Dart cannot call Rust directly, so a bridge crate
-(`lumit-bridge`) sits between them: Dart calls plain C functions that exchange
-JSON text, one call per user action, each returning the refreshed document. The
-Viewer is special: video frames are too large to pass through function calls
-sixty times a second, so the engine draws each frame into a piece of GPU memory
-that Flutter displays directly - the picture never takes a detour through
-ordinary memory. The full contract, including why the bridge is hand-written for
-now rather than generated, is in [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md).
+(`lumit-bridge`) sits between them. Its shape is described further down (§9,
+"The generated bridge"): Dart holds small *handles* naming things in the
+engine — a project, a composition, a layer — and calls methods on them, rather
+than passing whole documents back and forth. The Viewer is special: video frames
+are too large to pass through function calls sixty times a second, so the engine
+draws each frame into a piece of GPU memory that Flutter displays directly — the
+picture never takes a detour through ordinary memory. The full contract is in
+[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md).
 
 **The picture now stays on the graphics card (K-177).** For a while the Viewer
 took exactly that detour: the engine drew the frame on the graphics card, copied
@@ -2453,6 +2454,24 @@ older bridge has been deleted — there is one way to talk to the engine, not tw
 shows the live-drag path that renders a preview without ever committing an edit,
 and `shell/menu_bar_frb.dart` simply calls actions. `docs/TODO.md` records what is
 still missing.
+
+*Why the app opens with a project already made.* Every document command — import,
+new composition, save — needs somewhere to put the result, so each is greyed out
+while no project is open. Starting the app with *nothing* open therefore greyed
+out the entire File and Composition menu, and left no way to make it live: the
+first thing anyone does needs something to do it to. The shell now makes an empty
+project as it boots, exactly as opening a word processor gives you a blank page.
+Opening a file from disk replaces it wholesale, so nothing is left over from the
+one that was made for you.
+
+*Two ways to reach the same two commands.* Import and New composition sit on the
+menu bar and on a small footer strip along the bottom of the Project panel, and
+double-clicking the Project panel's blank space imports as well. That is not
+duplication worth removing: the Project panel is where you are looking when you
+want either of them, and the double-click is the gesture people reach for before
+they go hunting through a menu. All three routes call the same two methods on
+`LumitState` (`importFootagePaths` and `newComposition`), so there is one
+implementation and three doors onto it.
 
 The older bridge is worth one paragraph of history because its shape explains
 several decisions above. It passed whole documents as JSON text over a plain C
