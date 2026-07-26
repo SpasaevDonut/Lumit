@@ -860,6 +860,798 @@ class _$BridgeEffectValue_LayerCopyWithImpl<$Res>
 }
 
 /// @nodoc
+mixin _$BridgeParamKind {
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is BridgeParamKind);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'BridgeParamKind()';
+  }
+}
+
+/// @nodoc
+class $BridgeParamKindCopyWith<$Res> {
+  $BridgeParamKindCopyWith(
+      BridgeParamKind _, $Res Function(BridgeParamKind) __);
+}
+
+/// Adds pattern-matching-related methods to [BridgeParamKind].
+extension BridgeParamKindPatterns on BridgeParamKind {
+  /// A variant of `map` that fallback to returning `orElse`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeMap<TResult extends Object?>({
+    TResult Function(BridgeParamKind_Float value)? float,
+    TResult Function(BridgeParamKind_Choice value)? choice,
+    TResult Function(BridgeParamKind_Bool value)? bool,
+    TResult Function(BridgeParamKind_Colour value)? colour,
+    TResult Function(BridgeParamKind_Seed value)? seed,
+    TResult Function(BridgeParamKind_File value)? file,
+    TResult Function(BridgeParamKind_Layer value)? layer,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeParamKind_Float() when float != null:
+        return float(_that);
+      case BridgeParamKind_Choice() when choice != null:
+        return choice(_that);
+      case BridgeParamKind_Bool() when bool != null:
+        return bool(_that);
+      case BridgeParamKind_Colour() when colour != null:
+        return colour(_that);
+      case BridgeParamKind_Seed() when seed != null:
+        return seed(_that);
+      case BridgeParamKind_File() when file != null:
+        return file(_that);
+      case BridgeParamKind_Layer() when layer != null:
+        return layer(_that);
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// Callbacks receives the raw object, upcasted.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case final Subclass2 value:
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult map<TResult extends Object?>({
+    required TResult Function(BridgeParamKind_Float value) float,
+    required TResult Function(BridgeParamKind_Choice value) choice,
+    required TResult Function(BridgeParamKind_Bool value) bool,
+    required TResult Function(BridgeParamKind_Colour value) colour,
+    required TResult Function(BridgeParamKind_Seed value) seed,
+    required TResult Function(BridgeParamKind_File value) file,
+    required TResult Function(BridgeParamKind_Layer value) layer,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeParamKind_Float():
+        return float(_that);
+      case BridgeParamKind_Choice():
+        return choice(_that);
+      case BridgeParamKind_Bool():
+        return bool(_that);
+      case BridgeParamKind_Colour():
+        return colour(_that);
+      case BridgeParamKind_Seed():
+        return seed(_that);
+      case BridgeParamKind_File():
+        return file(_that);
+      case BridgeParamKind_Layer():
+        return layer(_that);
+    }
+  }
+
+  /// A variant of `map` that fallback to returning `null`.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case final Subclass value:
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? mapOrNull<TResult extends Object?>({
+    TResult? Function(BridgeParamKind_Float value)? float,
+    TResult? Function(BridgeParamKind_Choice value)? choice,
+    TResult? Function(BridgeParamKind_Bool value)? bool,
+    TResult? Function(BridgeParamKind_Colour value)? colour,
+    TResult? Function(BridgeParamKind_Seed value)? seed,
+    TResult? Function(BridgeParamKind_File value)? file,
+    TResult? Function(BridgeParamKind_Layer value)? layer,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeParamKind_Float() when float != null:
+        return float(_that);
+      case BridgeParamKind_Choice() when choice != null:
+        return choice(_that);
+      case BridgeParamKind_Bool() when bool != null:
+        return bool(_that);
+      case BridgeParamKind_Colour() when colour != null:
+        return colour(_that);
+      case BridgeParamKind_Seed() when seed != null:
+        return seed(_that);
+      case BridgeParamKind_File() when file != null:
+        return file(_that);
+      case BridgeParamKind_Layer() when layer != null:
+        return layer(_that);
+      case _:
+        return null;
+    }
+  }
+
+  /// A variant of `when` that fallback to an `orElse` callback.
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return orElse();
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult maybeWhen<TResult extends Object?>({
+    TResult Function(double default_, double sliderMin, double sliderMax,
+            double? hardMin, double? hardMax)?
+        float,
+    TResult Function(
+            List<String> options, int default_, Uint32List dividersAfter)?
+        choice,
+    TResult Function(bool default_)? bool,
+    TResult Function(Float64List default_, double min, double max)? colour,
+    TResult Function()? seed,
+    TResult Function(List<String> filter, String filterName)? file,
+    TResult Function()? layer,
+    required TResult orElse(),
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeParamKind_Float() when float != null:
+        return float(_that.default_, _that.sliderMin, _that.sliderMax,
+            _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Choice() when choice != null:
+        return choice(_that.options, _that.default_, _that.dividersAfter);
+      case BridgeParamKind_Bool() when bool != null:
+        return bool(_that.default_);
+      case BridgeParamKind_Colour() when colour != null:
+        return colour(_that.default_, _that.min, _that.max);
+      case BridgeParamKind_Seed() when seed != null:
+        return seed();
+      case BridgeParamKind_File() when file != null:
+        return file(_that.filter, _that.filterName);
+      case BridgeParamKind_Layer() when layer != null:
+        return layer();
+      case _:
+        return orElse();
+    }
+  }
+
+  /// A `switch`-like method, using callbacks.
+  ///
+  /// As opposed to `map`, this offers destructuring.
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case Subclass2(:final field2):
+  ///     return ...;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult when<TResult extends Object?>({
+    required TResult Function(double default_, double sliderMin,
+            double sliderMax, double? hardMin, double? hardMax)
+        float,
+    required TResult Function(
+            List<String> options, int default_, Uint32List dividersAfter)
+        choice,
+    required TResult Function(bool default_) bool,
+    required TResult Function(Float64List default_, double min, double max)
+        colour,
+    required TResult Function() seed,
+    required TResult Function(List<String> filter, String filterName) file,
+    required TResult Function() layer,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeParamKind_Float():
+        return float(_that.default_, _that.sliderMin, _that.sliderMax,
+            _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Choice():
+        return choice(_that.options, _that.default_, _that.dividersAfter);
+      case BridgeParamKind_Bool():
+        return bool(_that.default_);
+      case BridgeParamKind_Colour():
+        return colour(_that.default_, _that.min, _that.max);
+      case BridgeParamKind_Seed():
+        return seed();
+      case BridgeParamKind_File():
+        return file(_that.filter, _that.filterName);
+      case BridgeParamKind_Layer():
+        return layer();
+    }
+  }
+
+  /// A variant of `when` that fallback to returning `null`
+  ///
+  /// It is equivalent to doing:
+  /// ```dart
+  /// switch (sealedClass) {
+  ///   case Subclass(:final field):
+  ///     return ...;
+  ///   case _:
+  ///     return null;
+  /// }
+  /// ```
+
+  @optionalTypeArgs
+  TResult? whenOrNull<TResult extends Object?>({
+    TResult? Function(double default_, double sliderMin, double sliderMax,
+            double? hardMin, double? hardMax)?
+        float,
+    TResult? Function(
+            List<String> options, int default_, Uint32List dividersAfter)?
+        choice,
+    TResult? Function(bool default_)? bool,
+    TResult? Function(Float64List default_, double min, double max)? colour,
+    TResult? Function()? seed,
+    TResult? Function(List<String> filter, String filterName)? file,
+    TResult? Function()? layer,
+  }) {
+    final _that = this;
+    switch (_that) {
+      case BridgeParamKind_Float() when float != null:
+        return float(_that.default_, _that.sliderMin, _that.sliderMax,
+            _that.hardMin, _that.hardMax);
+      case BridgeParamKind_Choice() when choice != null:
+        return choice(_that.options, _that.default_, _that.dividersAfter);
+      case BridgeParamKind_Bool() when bool != null:
+        return bool(_that.default_);
+      case BridgeParamKind_Colour() when colour != null:
+        return colour(_that.default_, _that.min, _that.max);
+      case BridgeParamKind_Seed() when seed != null:
+        return seed();
+      case BridgeParamKind_File() when file != null:
+        return file(_that.filter, _that.filterName);
+      case BridgeParamKind_Layer() when layer != null:
+        return layer();
+      case _:
+        return null;
+    }
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_Float extends BridgeParamKind {
+  const BridgeParamKind_Float(
+      {required this.default_,
+      required this.sliderMin,
+      required this.sliderMax,
+      this.hardMin,
+      this.hardMax})
+      : super._();
+
+  final double default_;
+
+  /// The slider's travel. Typing may exceed it (docs/08 §1.2); only
+  /// `hard_min`/`hard_max` may not.
+  final double sliderMin;
+  final double sliderMax;
+
+  /// Hard bounds, either side open (K-090: a threshold clamps at zero
+  /// below and runs unbounded above).
+  final double? hardMin;
+  final double? hardMax;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeParamKind_FloatCopyWith<BridgeParamKind_Float> get copyWith =>
+      _$BridgeParamKind_FloatCopyWithImpl<BridgeParamKind_Float>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeParamKind_Float &&
+            (identical(other.default_, default_) ||
+                other.default_ == default_) &&
+            (identical(other.sliderMin, sliderMin) ||
+                other.sliderMin == sliderMin) &&
+            (identical(other.sliderMax, sliderMax) ||
+                other.sliderMax == sliderMax) &&
+            (identical(other.hardMin, hardMin) || other.hardMin == hardMin) &&
+            (identical(other.hardMax, hardMax) || other.hardMax == hardMax));
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      runtimeType, default_, sliderMin, sliderMax, hardMin, hardMax);
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.float(default_: $default_, sliderMin: $sliderMin, sliderMax: $sliderMax, hardMin: $hardMin, hardMax: $hardMax)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeParamKind_FloatCopyWith<$Res>
+    implements $BridgeParamKindCopyWith<$Res> {
+  factory $BridgeParamKind_FloatCopyWith(BridgeParamKind_Float value,
+          $Res Function(BridgeParamKind_Float) _then) =
+      _$BridgeParamKind_FloatCopyWithImpl;
+  @useResult
+  $Res call(
+      {double default_,
+      double sliderMin,
+      double sliderMax,
+      double? hardMin,
+      double? hardMax});
+}
+
+/// @nodoc
+class _$BridgeParamKind_FloatCopyWithImpl<$Res>
+    implements $BridgeParamKind_FloatCopyWith<$Res> {
+  _$BridgeParamKind_FloatCopyWithImpl(this._self, this._then);
+
+  final BridgeParamKind_Float _self;
+  final $Res Function(BridgeParamKind_Float) _then;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? default_ = null,
+    Object? sliderMin = null,
+    Object? sliderMax = null,
+    Object? hardMin = freezed,
+    Object? hardMax = freezed,
+  }) {
+    return _then(BridgeParamKind_Float(
+      default_: null == default_
+          ? _self.default_
+          : default_ // ignore: cast_nullable_to_non_nullable
+              as double,
+      sliderMin: null == sliderMin
+          ? _self.sliderMin
+          : sliderMin // ignore: cast_nullable_to_non_nullable
+              as double,
+      sliderMax: null == sliderMax
+          ? _self.sliderMax
+          : sliderMax // ignore: cast_nullable_to_non_nullable
+              as double,
+      hardMin: freezed == hardMin
+          ? _self.hardMin
+          : hardMin // ignore: cast_nullable_to_non_nullable
+              as double?,
+      hardMax: freezed == hardMax
+          ? _self.hardMax
+          : hardMax // ignore: cast_nullable_to_non_nullable
+              as double?,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_Choice extends BridgeParamKind {
+  const BridgeParamKind_Choice(
+      {required final List<String> options,
+      required this.default_,
+      required this.dividersAfter})
+      : _options = options,
+        super._();
+
+  final List<String> _options;
+  List<String> get options {
+    if (_options is EqualUnmodifiableListView) return _options;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_options);
+  }
+
+  final int default_;
+
+  /// Option indices after which the dropdown draws a group divider (T21).
+  /// Empty for an ungrouped list.
+  final Uint32List dividersAfter;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeParamKind_ChoiceCopyWith<BridgeParamKind_Choice> get copyWith =>
+      _$BridgeParamKind_ChoiceCopyWithImpl<BridgeParamKind_Choice>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeParamKind_Choice &&
+            const DeepCollectionEquality().equals(other._options, _options) &&
+            (identical(other.default_, default_) ||
+                other.default_ == default_) &&
+            const DeepCollectionEquality()
+                .equals(other.dividersAfter, dividersAfter));
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      runtimeType,
+      const DeepCollectionEquality().hash(_options),
+      default_,
+      const DeepCollectionEquality().hash(dividersAfter));
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.choice(options: $options, default_: $default_, dividersAfter: $dividersAfter)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeParamKind_ChoiceCopyWith<$Res>
+    implements $BridgeParamKindCopyWith<$Res> {
+  factory $BridgeParamKind_ChoiceCopyWith(BridgeParamKind_Choice value,
+          $Res Function(BridgeParamKind_Choice) _then) =
+      _$BridgeParamKind_ChoiceCopyWithImpl;
+  @useResult
+  $Res call({List<String> options, int default_, Uint32List dividersAfter});
+}
+
+/// @nodoc
+class _$BridgeParamKind_ChoiceCopyWithImpl<$Res>
+    implements $BridgeParamKind_ChoiceCopyWith<$Res> {
+  _$BridgeParamKind_ChoiceCopyWithImpl(this._self, this._then);
+
+  final BridgeParamKind_Choice _self;
+  final $Res Function(BridgeParamKind_Choice) _then;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? options = null,
+    Object? default_ = null,
+    Object? dividersAfter = null,
+  }) {
+    return _then(BridgeParamKind_Choice(
+      options: null == options
+          ? _self._options
+          : options // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      default_: null == default_
+          ? _self.default_
+          : default_ // ignore: cast_nullable_to_non_nullable
+              as int,
+      dividersAfter: null == dividersAfter
+          ? _self.dividersAfter
+          : dividersAfter // ignore: cast_nullable_to_non_nullable
+              as Uint32List,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_Bool extends BridgeParamKind {
+  const BridgeParamKind_Bool({required this.default_}) : super._();
+
+  final bool default_;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeParamKind_BoolCopyWith<BridgeParamKind_Bool> get copyWith =>
+      _$BridgeParamKind_BoolCopyWithImpl<BridgeParamKind_Bool>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeParamKind_Bool &&
+            (identical(other.default_, default_) ||
+                other.default_ == default_));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, default_);
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.bool(default_: $default_)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeParamKind_BoolCopyWith<$Res>
+    implements $BridgeParamKindCopyWith<$Res> {
+  factory $BridgeParamKind_BoolCopyWith(BridgeParamKind_Bool value,
+          $Res Function(BridgeParamKind_Bool) _then) =
+      _$BridgeParamKind_BoolCopyWithImpl;
+  @useResult
+  $Res call({bool default_});
+}
+
+/// @nodoc
+class _$BridgeParamKind_BoolCopyWithImpl<$Res>
+    implements $BridgeParamKind_BoolCopyWith<$Res> {
+  _$BridgeParamKind_BoolCopyWithImpl(this._self, this._then);
+
+  final BridgeParamKind_Bool _self;
+  final $Res Function(BridgeParamKind_Bool) _then;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? default_ = null,
+  }) {
+    return _then(BridgeParamKind_Bool(
+      default_: null == default_
+          ? _self.default_
+          : default_ // ignore: cast_nullable_to_non_nullable
+              as bool,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_Colour extends BridgeParamKind {
+  const BridgeParamKind_Colour(
+      {required this.default_, required this.min, required this.max})
+      : super._();
+
+  /// Scene-linear RGBA. Channels animate independently in the model, so
+  /// the panel edits four scalars behind one swatch.
+  final Float64List default_;
+
+  /// Per-channel edit range — a linear value may exceed 1 (an HDR tint)
+  /// or dip below 0 (a lift), so each colour declares its own.
+  final double min;
+  final double max;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeParamKind_ColourCopyWith<BridgeParamKind_Colour> get copyWith =>
+      _$BridgeParamKind_ColourCopyWithImpl<BridgeParamKind_Colour>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeParamKind_Colour &&
+            const DeepCollectionEquality().equals(other.default_, default_) &&
+            (identical(other.min, min) || other.min == min) &&
+            (identical(other.max, max) || other.max == max));
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      runtimeType, const DeepCollectionEquality().hash(default_), min, max);
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.colour(default_: $default_, min: $min, max: $max)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeParamKind_ColourCopyWith<$Res>
+    implements $BridgeParamKindCopyWith<$Res> {
+  factory $BridgeParamKind_ColourCopyWith(BridgeParamKind_Colour value,
+          $Res Function(BridgeParamKind_Colour) _then) =
+      _$BridgeParamKind_ColourCopyWithImpl;
+  @useResult
+  $Res call({Float64List default_, double min, double max});
+}
+
+/// @nodoc
+class _$BridgeParamKind_ColourCopyWithImpl<$Res>
+    implements $BridgeParamKind_ColourCopyWith<$Res> {
+  _$BridgeParamKind_ColourCopyWithImpl(this._self, this._then);
+
+  final BridgeParamKind_Colour _self;
+  final $Res Function(BridgeParamKind_Colour) _then;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? default_ = null,
+    Object? min = null,
+    Object? max = null,
+  }) {
+    return _then(BridgeParamKind_Colour(
+      default_: null == default_
+          ? _self.default_
+          : default_ // ignore: cast_nullable_to_non_nullable
+              as Float64List,
+      min: null == min
+          ? _self.min
+          : min // ignore: cast_nullable_to_non_nullable
+              as double,
+      max: null == max
+          ? _self.max
+          : max // ignore: cast_nullable_to_non_nullable
+              as double,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_Seed extends BridgeParamKind {
+  const BridgeParamKind_Seed() : super._();
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is BridgeParamKind_Seed);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.seed()';
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_File extends BridgeParamKind {
+  const BridgeParamKind_File(
+      {required final List<String> filter, required this.filterName})
+      : _filter = filter,
+        super._();
+
+  /// Lower-case extensions without the dot, for the open dialog.
+  final List<String> _filter;
+
+  /// Lower-case extensions without the dot, for the open dialog.
+  List<String> get filter {
+    if (_filter is EqualUnmodifiableListView) return _filter;
+    // ignore: implicit_dynamic_type
+    return EqualUnmodifiableListView(_filter);
+  }
+
+  final String filterName;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeParamKind_FileCopyWith<BridgeParamKind_File> get copyWith =>
+      _$BridgeParamKind_FileCopyWithImpl<BridgeParamKind_File>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeParamKind_File &&
+            const DeepCollectionEquality().equals(other._filter, _filter) &&
+            (identical(other.filterName, filterName) ||
+                other.filterName == filterName));
+  }
+
+  @override
+  int get hashCode => Object.hash(
+      runtimeType, const DeepCollectionEquality().hash(_filter), filterName);
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.file(filter: $filter, filterName: $filterName)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeParamKind_FileCopyWith<$Res>
+    implements $BridgeParamKindCopyWith<$Res> {
+  factory $BridgeParamKind_FileCopyWith(BridgeParamKind_File value,
+          $Res Function(BridgeParamKind_File) _then) =
+      _$BridgeParamKind_FileCopyWithImpl;
+  @useResult
+  $Res call({List<String> filter, String filterName});
+}
+
+/// @nodoc
+class _$BridgeParamKind_FileCopyWithImpl<$Res>
+    implements $BridgeParamKind_FileCopyWith<$Res> {
+  _$BridgeParamKind_FileCopyWithImpl(this._self, this._then);
+
+  final BridgeParamKind_File _self;
+  final $Res Function(BridgeParamKind_File) _then;
+
+  /// Create a copy of BridgeParamKind
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? filter = null,
+    Object? filterName = null,
+  }) {
+    return _then(BridgeParamKind_File(
+      filter: null == filter
+          ? _self._filter
+          : filter // ignore: cast_nullable_to_non_nullable
+              as List<String>,
+      filterName: null == filterName
+          ? _self.filterName
+          : filterName // ignore: cast_nullable_to_non_nullable
+              as String,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeParamKind_Layer extends BridgeParamKind {
+  const BridgeParamKind_Layer() : super._();
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType && other is BridgeParamKind_Layer);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'BridgeParamKind.layer()';
+  }
+}
+
+/// @nodoc
 mixin _$BridgeScalar {
   Object get field0;
 

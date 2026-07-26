@@ -201,8 +201,8 @@ pub(crate) fn trim_to_source_end(bridge: &mut Bridge, comp_id: &str, layer_id: &
 mod tests {
     use super::*;
     use crate::edits::{add_camera_layer, add_footage_layer};
-    use lumit_core::model::ProjectItem;
     use crate::state::{import_footage, new_composition, snapshot, undo};
+    use lumit_core::model::ProjectItem;
     use serde_json::{json, Value};
 
     fn parse(s: &str) -> Value {

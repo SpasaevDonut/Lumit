@@ -2427,6 +2427,25 @@ answers away on every edit of any kind, so nudging a value in the Timeline sent
 it back to the disk to re-check every clip in the project. Now it only listens
 for edits that add, remove, rename, refile or relink an item.
 
+**How an effect edit avoids a hundred undo steps.** Dragging a blur's radius
+produces something like a hundred values a second, and each one is a real change
+to the document — so done naively you get a hundred undo entries and a hundred
+disk writes for what the user thinks of as one adjustment. The Effect controls
+panel avoids that by working on a *copy*: it asks the engine for the layer's
+effects, edits the copy as the pointer moves, and asks for a picture of "the
+document, but with this copy substituted" — which the engine renders without
+changing anything it keeps. Only when the pointer is released does it hand the
+copy over to be committed, once. If some other part of the interface changed the
+same stack while the drag was happening, the engine refuses the commit rather
+than overwriting that change, and the panel re-reads instead.
+
+One rule in that panel is worth knowing because it looks like a missing feature.
+A parameter that is *animated* — following a curve of keyframes rather than
+holding one value — shows the word "animated" instead of a number field. That is
+deliberate: the only way to write a value at the moment replaces the whole curve,
+so offering a field would let a small nudge silently delete every keyframe on it.
+The field comes back when the keyframe editing arrives with the graph editor.
+
 *Where to look for the pattern.* Three small files exist purely as readable
 examples of this style, and are the ones to copy when porting a panel:
 `flutter_ui/lib/panels/project_panel_frb.dart` (reading a list through handles),

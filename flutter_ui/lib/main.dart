@@ -187,6 +187,14 @@ class LumitUiState extends ChangeNotifier {
 
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
 
+  /// The frame every panel renders and previews at.
+  ///
+  /// Held here rather than inside the Timeline because it is not the Timeline's
+  /// alone: the Effect controls panel previews a drag at the playhead, and its
+  /// preview landing on a different frame from the one on screen would show the
+  /// wrong picture. A notifier so a scrub redraws only what watches it.
+  ValueNotifier<int> playheadFrame = ValueNotifier(0);
+
   /// What fraction of comp resolution the Viewer is actually showing, which is
   /// the `scale` every render request carries. 1.0 until the Viewer has been laid
   /// out and can measure itself.

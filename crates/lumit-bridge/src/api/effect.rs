@@ -62,6 +62,136 @@ pub fn list_effects() -> Vec<BridgeEffectInfo> {
         .collect()
 }
 
+/// One declared parameter of an effect, as the panel needs to *draw* it:
+/// what to call it, what kind of control it is, and the range or option list
+/// that control needs.
+///
+/// This is the schema, not the value — [`BridgeEffectValue`] carries what a
+/// particular instance currently holds. The panel needs both: the value to show,
+/// and this to know whether "0.5" wants a slider from 0 to 100 or a colour
+/// channel, and what the third entry in a dropdown is called.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeParamInfo {
+    /// Stable snake_case id — the key [`BridgeEffectInstance::get_value`] and
+    /// `set_value` take.
+    pub id: String,
+    pub label: String,
+    pub kind: BridgeParamKind,
+}
+
+/// What kind of control a parameter wants, and the numbers that control needs.
+///
+/// Mirrors [`lumit_core::fx::ParamKind`]. `Seed` and `Layer` carry nothing: a
+/// seed is any `u32`, and a layer picker's options are the comp's own layers,
+/// which the panel already has.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum BridgeParamKind {
+    Float {
+        default: f64,
+        /// The slider's travel. Typing may exceed it (docs/08 §1.2); only
+        /// `hard_min`/`hard_max` may not.
+        slider_min: f64,
+        slider_max: f64,
+        /// Hard bounds, either side open (K-090: a threshold clamps at zero
+        /// below and runs unbounded above).
+        hard_min: Option<f64>,
+        hard_max: Option<f64>,
+    },
+    Choice {
+        options: Vec<String>,
+        default: u32,
+        /// Option indices after which the dropdown draws a group divider (T21).
+        /// Empty for an ungrouped list.
+        dividers_after: Vec<u32>,
+    },
+    Bool {
+        default: bool,
+    },
+    Colour {
+        /// Scene-linear RGBA. Channels animate independently in the model, so
+        /// the panel edits four scalars behind one swatch.
+        default: Vec<f64>,
+        /// Per-channel edit range — a linear value may exceed 1 (an HDR tint)
+        /// or dip below 0 (a lift), so each colour declares its own.
+        min: f64,
+        max: f64,
+    },
+    Seed,
+    File {
+        /// Lower-case extensions without the dot, for the open dialog.
+        filter: Vec<String>,
+        filter_name: String,
+    },
+    Layer,
+}
+
+/// Every parameter `effect` declares, in schema order — what the panel draws a
+/// row per.
+///
+/// Keyed by the same `match_name` [`list_effects`] hands out and `add_effect`
+/// takes. An unknown name is an empty list rather than an error: a project
+/// carrying an effect this build does not know still opens, and its instance
+/// simply has no rows to draw.
+#[frb(sync)]
+pub fn list_parameters(effect: String) -> Vec<BridgeParamInfo> {
+    use lumit_core::fx::ParamKind;
+
+    let Some(schema) = lumit_core::fx::BUILTINS
+        .iter()
+        .find(|s| s.match_name == effect)
+    else {
+        return Vec::new();
+    };
+
+    schema
+        .params
+        .iter()
+        .map(|param| BridgeParamInfo {
+            id: param.id.to_owned(),
+            label: param.label.to_owned(),
+            kind: match param.kind {
+                ParamKind::Float {
+                    default,
+                    slider,
+                    hard,
+                } => BridgeParamKind::Float {
+                    default,
+                    slider_min: slider.0,
+                    slider_max: slider.1,
+                    hard_min: hard.0,
+                    hard_max: hard.1,
+                },
+                ParamKind::Choice {
+                    options,
+                    default,
+                    dividers_after,
+                } => BridgeParamKind::Choice {
+                    options: options.iter().map(|o| (*o).to_owned()).collect(),
+                    default,
+                    dividers_after: dividers_after.to_vec(),
+                },
+                ParamKind::Bool { default } => BridgeParamKind::Bool { default },
+                ParamKind::Colour { default, range } => BridgeParamKind::Colour {
+                    default: default.to_vec(),
+                    min: range.0,
+                    max: range.1,
+                },
+                ParamKind::Seed => BridgeParamKind::Seed,
+                ParamKind::File {
+                    filter,
+                    filter_name,
+                } => BridgeParamKind::File {
+                    filter: filter.iter().map(|f| (*f).to_owned()).collect(),
+                    filter_name: filter_name.to_owned(),
+                },
+                ParamKind::Layer {} => BridgeParamKind::Layer,
+            },
+        })
+        .collect()
+}
+
 /// An exact rational time in seconds, as `num / den`.
 ///
 /// Keyframe times cross as the integer pair the document stores, never as

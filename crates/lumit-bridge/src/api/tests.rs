@@ -1045,3 +1045,61 @@ fn a_batch_takes_the_widest_scope_of_its_members() {
         (None, None, false)
     );
 }
+
+/// The panel draws a row per declared parameter, so the schema has to come
+/// across whole: labels to show, ranges for the sliders, option names for the
+/// dropdowns. Blur is the check because it declares a Float with a slider and a
+/// half-open hard bound plus a grouped Choice.
+#[test]
+fn list_parameters_carries_the_schema_a_control_needs() {
+    use crate::api::effect::{list_parameters, BridgeParamKind};
+
+    let params = list_parameters("blur".into());
+    assert!(!params.is_empty(), "blur declares parameters");
+
+    let radius = params
+        .iter()
+        .find(|p| p.id == "radius")
+        .expect("blur has a radius");
+    assert_eq!(radius.label, "Radius", "the label is what the row shows");
+    let BridgeParamKind::Float {
+        slider_min,
+        slider_max,
+        hard_min,
+        ..
+    } = &radius.kind
+    else {
+        panic!("radius is a float");
+    };
+    assert!(slider_max > slider_min, "the slider has travel");
+    assert_eq!(*hard_min, Some(0.0), "a blur radius cannot go negative");
+
+    // Every declared parameter is expressible: no kind falls through.
+    for p in &params {
+        assert!(!p.label.is_empty(), "{} has a label", p.id);
+    }
+}
+
+/// An effect this build does not know is an empty list, not an error — a project
+/// carrying one still opens, its instance simply has no rows.
+#[test]
+fn list_parameters_of_an_unknown_effect_is_empty() {
+    assert!(crate::api::effect::list_parameters("not-an-effect".into()).is_empty());
+}
+
+/// Every built-in's parameters survive the crossing. A kind added to the schema
+/// without an arm here would panic in the mapping; this walks the lot so that
+/// cannot reach a user.
+#[test]
+fn every_builtin_lists_its_parameters() {
+    for info in crate::api::effect::list_effects() {
+        let params = crate::api::effect::list_parameters(info.name.clone());
+        let declared = lumit_core::fx::BUILTINS
+            .iter()
+            .find(|s| s.match_name == info.name)
+            .expect("listed effects are built in")
+            .params
+            .len();
+        assert_eq!(params.len(), declared, "{} lost a parameter", info.name);
+    }
+}

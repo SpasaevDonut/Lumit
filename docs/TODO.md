@@ -126,7 +126,8 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: the Effect controls panel.** The full ledger:
+    is the gate. **Immediate next: `set_transform` and the Transform rows, then
+    the keyframe ops.** The full ledger:
 
     **1. The seven docked panels.**
     - **Project** — **done**: ported, 15 tests against the real engine, and the
@@ -144,11 +145,15 @@ sequence clips.
         columns, spans, razor, markers, work area, cache bar, comp tabs, lane
         host/scale/selection, graph editor and its four lens files, keyframe
         clipboard and interp menus.
-    - **Effect controls** — **partial**: the API is done, and
-        `EffectControlsPanelFrb` + `EffectEditorFrb` in `panels_frb.dart` are the
-        worked example of the live-drag path — but they are a sketch. Float
-        parameters only (`Map<String, double>`); no transform rows, no effect
-        cards, no per-kind parameter rows, no stopwatch or keyframe navigator.
+    - **Effect controls** — **partial**: the effect stack is done
+        (`effect_controls_panel_frb.dart`, 6 tests) — add/remove/reorder/bypass
+        and a row per declared parameter in every kind the schema declares, with
+        the live-drag path committing once on release. Still missing, both
+        blocked on ops the API does not have: the **Transform rows**
+        (`set_transform`) and the **stopwatch + keyframe navigator** (the
+        keyframe pair). An animated parameter is deliberately shown as
+        "animated" with no editor until those land — `set_value` takes a whole
+        animation, so a static write over a curve would delete every key on it.
     - **Effects & presets** — **not started**, a `PlaceholderPanel`. Needs
         `list_effects` wiring (the API exists), drag-to-apply, `.lumfx` save/load.
     - **Scopes** — **not started**, a `PlaceholderPanel`. Waiting on `render_scope`
@@ -268,13 +273,14 @@ sequence clips.
         the document untouched. `add_effect`, `remove_effect`, `reorder_effect`,
         `set_effect_enabled` and `set_effects` (the mouse-up commit for a staged
         stack) are on `LayerReference`, one `SetLayerEffects` each; `list_effects`
-        is a free function. Outstanding: the real Dart panel — `EffectEditorFrb`
-        in `panels_frb.dart` is a float-only sketch that proves the live-drag
-        path, not the panel — plus the effect-param keyframe ops, the `.lumfx`
-        presets, and a `preview_effect_param` equivalent. The frb staging path is
-        the panel holding its own stack copy and rendering through
-        `render_frame_with_preview`, so there is nothing engine-side to stage, but
-        that is unproven until a panel drives it.
+        is a free function, and `list_parameters` hands over the *schema* each
+        row is drawn from — labels, slider and hard ranges, choice options, file
+        filters — which the panel needed and nothing had exposed. The staging
+        path is now proven by a real panel: it holds its own stack copy, renders
+        it through `render_frame_with_preview` while the pointer is down, and
+        commits once on release, so nothing engine-side has to stage.
+        Outstanding: the effect-param keyframe ops, the `.lumfx` presets, and the
+        Transform rows.
 
     Everything after that is grouped by subsystem under **3** above rather than
     ordered here, because the dependencies are between *ops* and *panels* rather

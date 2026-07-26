@@ -9,25 +9,23 @@
 //   read-back one.
 // - [TimelinePanelFrb] — reading a comp's layers off a `CompositionReference`
 //   and selecting one, with no snapshot JSON in between.
-// - [EffectControlsPanelFrb] — the live-drag pattern: parameter values held in
-//   Dart, pushed through `renderFrameWithPreview` while the pointer is down, so
-//   the document is never committed to per tick.
 //
-// The shipping dispatcher is panels.dart, which routes the full panels (still on
-// the v0 JSON bridge). Panels move across as the frb API grows to cover what
-// they need — see docs/TODO.md, "Bridge".
+// The ported panels live in files of their own and are routed from here:
+// [ProjectPanelFrb] and [EffectControlsPanelFrb]. The shipping dispatcher for
+// what is still on the v0 JSON bridge is panels.dart. Panels move across as the
+// frb API grows to cover what they need — see docs/TODO.md, "Bridge".
 
 import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
-import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
 import '../state/dock.dart';
 import 'placeholder.dart';
+import 'effect_controls_panel_frb.dart';
 import 'project_panel_frb.dart';
 
 Widget buildPanelBodyFrb(BuildContext context, Panel panel) => switch (panel) {
@@ -137,8 +135,6 @@ class TimelinePanelFrb extends StatefulWidget {
 }
 
 class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
-  int frame = 161;
-
   @override
   Widget build(BuildContext context) {
     final state = Provider.of<LumitUiState>(context);
@@ -166,14 +162,19 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
               HouseButton(
                 frameless: false,
                 onPressed: () => comp.renderFrame(
-                    frame: BigInt.from(frame), scale: state.viewerScale),
+                    frame: BigInt.from(state.playheadFrame.value),
+                    scale: state.viewerScale),
                 child: Text('Render frame:', style: t.small),
               ),
-              DragValueField(
-                value: frame,
-                min: 0,
-                max: 500,
-                onChanged: (value) => setState(() => frame = value.toInt()),
+              ValueListenableBuilder<int>(
+                valueListenable: state.playheadFrame,
+                builder: (context, frame, _) => DragValueField(
+                  value: frame,
+                  min: 0,
+                  max: 500,
+                  onChanged: (value) =>
+                      state.playheadFrame.value = value.toInt(),
+                ),
               ),
             ],
           ),
@@ -192,166 +193,5 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
         ),
       ],
     );
-  }
-}
-
-/// The Effect controls: the selected layer's effect stack.
-class EffectControlsPanelFrb extends StatelessWidget {
-  const EffectControlsPanelFrb({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final state = Provider.of<LumitUiState>(context);
-
-    if (state.selectedComp == null) {
-      return const PlaceholderPanel(
-        icon: LumitIcon.fx,
-        title: 'Effect controls',
-        hint: 'Select a composition, then a layer.',
-      );
-    }
-
-    return ValueListenableBuilder(
-      valueListenable: state.selectedLayer,
-      builder: (context, layer, child) {
-        if (layer == null) {
-          return const PlaceholderPanel(
-            icon: LumitIcon.fx,
-            title: 'Effect controls',
-            hint: 'Select a layer in the Timeline.',
-          );
-        }
-        final effects = layer.getEffects();
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                '${layer.getName()} (${effects.length})',
-                style: ThemeScope.of(context).theme.small,
-              ),
-            ),
-            for (int i = 0; i < effects.length; i++)
-              EffectEditorFrb(
-                effects,
-                i,
-                key: ValueKey(
-                  'effect-editor-${state.selectedComp?.internalid}'
-                  '-${layer.internallayerId}-${effects[i].name()}',
-                ),
-              ),
-          ],
-        );
-      },
-    );
-  }
-}
-
-/// One effect's parameter rows, and the live-drag path.
-///
-/// While a value is being dragged it is held here in Dart and pushed through
-/// `renderFrameWithPreview`, which patches a *clone* of the document engine-side
-/// (see `render_comp_with_preview` in the bridge's worker). So a drag produces
-/// pixels without producing commits — no undo entry and no journal write per
-/// tick — and only the release commits, once. Preview renders are throttled to
-/// roughly one per 20 ms so a fast drag cannot outrun the renderer.
-class EffectEditorFrb extends StatefulWidget {
-  const EffectEditorFrb(this.effects, this.index, {super.key});
-
-  final List<BridgeEffectInstance> effects;
-  final int index;
-
-  @override
-  State<EffectEditorFrb> createState() => _EffectEditorFrbState();
-}
-
-class _EffectEditorFrbState extends State<EffectEditorFrb> {
-  late List<BridgeEffectInstance> effects;
-  Map<String, double> values = {};
-  Duration lastUpdate = Duration.zero;
-  final Stopwatch _since = Stopwatch()..start();
-
-  static const _previewInterval = Duration(milliseconds: 20);
-
-  @override
-  void initState() {
-    super.initState();
-    effects = widget.effects;
-    final effect = effects[widget.index];
-
-    // Only static scalars get a drag field in this harness. Every other kind is
-    // now *expressible* — the value type carries points, colours, choices and
-    // keyframe curves — but drawing them is the shipping panel's job, so they are
-    // left out here rather than shown as a misleading 0.
-    for (final p in effect.getParameters()) {
-      final value = effect.getValue(id: p);
-      if (value case BridgeEffectValue_Float(field0: BridgeScalar_Static s)) {
-        values[p] = s.field0;
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    final effect = effects[widget.index];
-
-    return Column(
-      children: [
-        Text(effect.name(), style: t.small),
-        // Only the parameters the bridge can currently read and write.
-        for (final p in effect.getParameters().where(values.containsKey))
-          Row(
-            children: [
-              Text(p, style: t.mono),
-              DragValueField(
-                value: values[p] ?? 0.0,
-                min: 0,
-                max: 200,
-                onChanged: (value) {},
-                onChangeLive: (value) {
-                  setState(() => values[p] = value.toDouble());
-                  if (_since.elapsed - lastUpdate > _previewInterval) {
-                    doPreview();
-                  }
-                },
-                onChangeEnd: (value) {
-                  // TODO: commit the value to the document on release.
-                },
-              ),
-            ],
-          ),
-      ],
-    );
-  }
-
-  void doPreview() {
-    lastUpdate = _since.elapsed;
-
-    final uiState = Provider.of<LumitUiState>(context, listen: false);
-    final comp = uiState.selectedComp;
-    final layer = uiState.selectedLayer.value;
-    if (comp == null || layer == null) return;
-
-    final override = effects;
-    for (final p in values.keys) {
-      override[widget.index].setValue(
-        id: p,
-        value: BridgeEffectValue.float(
-          BridgeScalar.static_(values[p] ?? 0.0),
-        ),
-      );
-    }
-
-    comp.renderFrameWithPreview(
-      frame: BigInt.from(161),
-      scale: uiState.viewerScale,
-      layer: layer,
-      effects: override,
-    );
-
-    effects = layer.getEffects();
   }
 }

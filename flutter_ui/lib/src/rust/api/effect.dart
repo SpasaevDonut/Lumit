@@ -12,7 +12,7 @@ import 'package:uuid/uuid.dart';
 part 'effect.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `animation`, `param`, `read`, `read`, `read`, `read`, `write`, `write`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`
 
 /// Every built-in effect, in schema order — the Add-effect menu's source of
@@ -22,6 +22,16 @@ part 'effect.freezed.dart';
 /// available before any project is open.
 List<BridgeEffectInfo> listEffects() =>
     BridgeLib.instance.api.crateApiEffectListEffects();
+
+/// Every parameter `effect` declares, in schema order — what the panel draws a
+/// row per.
+///
+/// Keyed by the same `match_name` [`list_effects`] hands out and `add_effect`
+/// takes. An unknown name is an empty list rather than an error: a project
+/// carrying an effect this build does not know still opens, and its instance
+/// simply has no rows to draw.
+List<BridgeParamInfo> listParameters({required String effect}) =>
+    BridgeLib.instance.api.crateApiEffectListParameters(effect: effect);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<BridgeEffectInstance>>
 abstract class BridgeEffectInstance implements RustOpaqueInterface {
@@ -230,6 +240,87 @@ class BridgeKeyframe {
           value == other.value &&
           interpIn == other.interpIn &&
           interpOut == other.interpOut;
+}
+
+/// One declared parameter of an effect, as the panel needs to *draw* it:
+/// what to call it, what kind of control it is, and the range or option list
+/// that control needs.
+///
+/// This is the schema, not the value — [`BridgeEffectValue`] carries what a
+/// particular instance currently holds. The panel needs both: the value to show,
+/// and this to know whether "0.5" wants a slider from 0 to 100 or a colour
+/// channel, and what the third entry in a dropdown is called.
+class BridgeParamInfo {
+  /// Stable snake_case id — the key [`BridgeEffectInstance::get_value`] and
+  /// `set_value` take.
+  final String id;
+  final String label;
+  final BridgeParamKind kind;
+
+  const BridgeParamInfo({
+    required this.id,
+    required this.label,
+    required this.kind,
+  });
+
+  @override
+  int get hashCode => id.hashCode ^ label.hashCode ^ kind.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeParamInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          label == other.label &&
+          kind == other.kind;
+}
+
+@freezed
+sealed class BridgeParamKind with _$BridgeParamKind {
+  const BridgeParamKind._();
+
+  const factory BridgeParamKind.float({
+    required double default_,
+
+    /// The slider's travel. Typing may exceed it (docs/08 §1.2); only
+    /// `hard_min`/`hard_max` may not.
+    required double sliderMin,
+    required double sliderMax,
+
+    /// Hard bounds, either side open (K-090: a threshold clamps at zero
+    /// below and runs unbounded above).
+    double? hardMin,
+    double? hardMax,
+  }) = BridgeParamKind_Float;
+  const factory BridgeParamKind.choice({
+    required List<String> options,
+    required int default_,
+
+    /// Option indices after which the dropdown draws a group divider (T21).
+    /// Empty for an ungrouped list.
+    required Uint32List dividersAfter,
+  }) = BridgeParamKind_Choice;
+  const factory BridgeParamKind.bool({
+    required bool default_,
+  }) = BridgeParamKind_Bool;
+  const factory BridgeParamKind.colour({
+    /// Scene-linear RGBA. Channels animate independently in the model, so
+    /// the panel edits four scalars behind one swatch.
+    required Float64List default_,
+
+    /// Per-channel edit range — a linear value may exceed 1 (an HDR tint)
+    /// or dip below 0 (a lift), so each colour declares its own.
+    required double min,
+    required double max,
+  }) = BridgeParamKind_Colour;
+  const factory BridgeParamKind.seed() = BridgeParamKind_Seed;
+  const factory BridgeParamKind.file({
+    /// Lower-case extensions without the dot, for the open dialog.
+    required List<String> filter,
+    required String filterName,
+  }) = BridgeParamKind_File;
+  const factory BridgeParamKind.layer() = BridgeParamKind_Layer;
 }
 
 /// A point parameter: two independently animatable axes.
