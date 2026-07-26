@@ -11,9 +11,18 @@ import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `composition`, `dispatch`, `footage_span_and_size`, `project`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
+// These functions are ignored because they are not marked as `pub`: `add_at_top`, `commit`, `composition`, `dispatch`, `document`, `footage_span_and_size`, `project`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `add_solid_layer`, `id`, `new`, `project_id`
+
+/// Every blend mode, in the order the Timeline's dropdown shows them. The index
+/// into this list is what `LayerReference::get_blend`/`set_blend` speak, so the
+/// two cannot disagree about what "3" means.
+///
+/// Stateless, so a free function: the dropdown is built before any layer is
+/// selected.
+List<String> listBlendModes() =>
+    BridgeLib.instance.api.crateApiCompositionListBlendModes();
 
 /// Everything the Composition settings dialog reads and writes.
 ///
@@ -81,6 +90,35 @@ class BridgeCompSize {
           height == other.height;
 }
 
+/// One timeline marker (docs/03 §11): a cue on the comp's timebase.
+///
+/// The engine's marker also carries a duration and a kind; neither has a
+/// control yet, so they are not carried across — a marker written back keeps
+/// what the panel can actually edit and does not pretend to round-trip the rest.
+class BridgeMarker {
+  final UuidValue id;
+  final BridgeRational time;
+  final String label;
+
+  const BridgeMarker({
+    required this.id,
+    required this.time,
+    required this.label,
+  });
+
+  @override
+  int get hashCode => id.hashCode ^ time.hashCode ^ label.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeMarker &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          time == other.time &&
+          label == other.label;
+}
+
 class CompositionReference {
   final UuidValue internalproject;
   final UuidValue internalid;
@@ -89,6 +127,20 @@ class CompositionReference {
     required this.internalproject,
     required this.internalid,
   });
+
+  /// Add an Adjustment layer: a comp-sized effect container with no source of
+  /// its own, centred so scale and rotation pivot about the middle.
+  LayerReference addAdjustmentLayer() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddAdjustmentLayer(
+        that: this,
+      );
+
+  /// Add a Camera layer at the comp centre. The default zoom is the After
+  /// Effects 50 mm model, `comp width × 50/36`.
+  LayerReference addCameraLayer() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddCameraLayer(
+        that: this,
+      );
 
   /// Place `footage` into this composition as a new top layer.
   ///
@@ -107,6 +159,18 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceAddFootageLayer(
               that: this, footage: footage);
 
+  /// Add an empty Sequence layer — a clip row spanning the comp.
+  LayerReference addSequenceLayer() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddSequenceLayer(
+        that: this,
+      );
+
+  /// Add a Text layer with the "Text" starter document, centred.
+  LayerReference addTextLayer() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddTextLayer(
+        that: this,
+      );
+
   /// The frame containing `time` (floored) — the inverse of
   /// [`Self::time_of_frame`], for drawing a key at a frame position.
   PlatformInt64 frameAtTime({required BridgeRational time}) =>
@@ -115,6 +179,12 @@ class CompositionReference {
 
   List<LayerReference> getLayers() =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetLayers(
+        that: this,
+      );
+
+  /// Every marker on this comp, in the order the document holds them.
+  List<BridgeMarker> getMarkers() =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetMarkers(
         that: this,
       );
 
@@ -135,6 +205,13 @@ class CompositionReference {
   /// full resolution.
   BridgeCompSize getSize() =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetSize(
+        that: this,
+      );
+
+  /// The comp's work area — the span the Viewer previews and the export
+  /// writes — or `None` for the whole comp.
+  BridgeSpan? getWorkArea() =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetWorkArea(
         that: this,
       );
 
@@ -176,6 +253,12 @@ class CompositionReference {
               layer: layer,
               transform: transform);
 
+  /// Replace the whole marker list — one op, trivially invertible, which is
+  /// also how beat detection commits a regenerated set.
+  void setMarkers({required List<BridgeMarker> markers}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceSetMarkers(
+          that: this, markers: markers);
+
   /// Apply the Composition settings dialog, as one undo step.
   ///
   /// Dimensions are clamped to 16..=16384 and the duration to at least one frame,
@@ -185,6 +268,11 @@ class CompositionReference {
   void setSettings({required BridgeCompSettings settings}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceSetSettings(
           that: this, settings: settings);
+
+  /// Set the work area, or clear it with `None`.
+  void setWorkArea({BridgeSpan? span}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceSetWorkArea(
+          that: this, span: span);
 
   /// The exact time frame `frame` starts at, as the rational the document
   /// stores.

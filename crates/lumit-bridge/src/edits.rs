@@ -113,7 +113,7 @@ fn add_top_layer(bridge: &mut Bridge, comp: Uuid, layer: Layer, ctx: &str) -> St
 /// The ops that guarantee `kind`'s auto-filing folder exists, plus its id —
 /// `lumit-ui`'s `ensure_auto_folder_ops`, tracked by id so renaming or nesting
 /// the folder keeps the habit.
-fn ensure_auto_folder_ops(
+pub(crate) fn ensure_auto_folder_ops(
     doc: &lumit_core::model::Document,
     kind: AutoFolderKind,
 ) -> (Uuid, Vec<Op>) {
@@ -153,7 +153,11 @@ fn ensure_auto_folder_ops(
 
 /// The op that files `item` into `folder` (appended). The folder may have been
 /// created earlier in the same batch, so its children start empty then.
-fn file_into_folder_op(doc: &lumit_core::model::Document, folder: Uuid, item: Uuid) -> Op {
+pub(crate) fn file_into_folder_op(
+    doc: &lumit_core::model::Document,
+    folder: Uuid,
+    item: Uuid,
+) -> Op {
     let mut children = doc
         .folder(folder)
         .map(|f| f.children.clone())

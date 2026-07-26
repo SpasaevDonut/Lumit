@@ -1237,3 +1237,269 @@ fn frame_and_time_round_trip_exactly_at_a_drop_frame_rate() {
     let one = comp.time_of_frame(1).expect("time");
     assert_eq!((one.num, one.den), (1001, 30000));
 }
+
+// --- Timeline -------------------------------------------------------------
+
+/// Every layer kind the Timeline's Layer menu offers actually lands, and each
+/// one is a single undo step. The solid is the interesting one: it is a batch
+/// (the asset, its auto-folder, and the layer), and a batch that undid in
+/// pieces would leave an orphaned SolidDef in the Project panel.
+#[test]
+fn every_layer_kind_adds_and_undoes_as_one_step() {
+    use crate::api::layer::BridgeLayerKind;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    // Matched inside the loop, not collected into an array first: an array of
+    // results would run every adder before the body checked any of them, and
+    // only the last would still be on top.
+    for expected in [
+        BridgeLayerKind::Solid,
+        BridgeLayerKind::Text,
+        BridgeLayerKind::Camera,
+        BridgeLayerKind::Adjustment,
+        BridgeLayerKind::Sequence,
+    ] {
+        let added = match expected {
+            BridgeLayerKind::Solid => comp.add_solid_layer(),
+            BridgeLayerKind::Text => comp.add_text_layer(),
+            BridgeLayerKind::Camera => comp.add_camera_layer(),
+            BridgeLayerKind::Adjustment => comp.add_adjustment_layer(),
+            BridgeLayerKind::Sequence => comp.add_sequence_layer(),
+            other => panic!("{other:?} has no Layer-menu entry"),
+        }
+        .expect("layer added");
+        assert_eq!(added.get_kind().expect("kind"), expected);
+        assert_eq!(
+            comp.get_layers().expect("layers")[0].id(),
+            added.id(),
+            "{expected:?} went to the top of the stack"
+        );
+
+        let before = comp.get_layers().expect("layers").len();
+        project.undo().expect("undone");
+        assert_eq!(
+            comp.get_layers().expect("layers").len(),
+            before - 1,
+            "{expected:?} came off in one undo step"
+        );
+        project.redo().expect("redone");
+    }
+}
+
+/// Each switch is its own op, so a click is one undo step and toggling one
+/// switch never disturbs another.
+#[test]
+fn the_switches_are_independent_and_each_is_one_undo_step() {
+    use crate::api::layer::BridgeLayerSwitch as S;
+
+    let (project, layer) = project_with_layer();
+    assert!(
+        layer.get_switches().expect("switches").visible,
+        "layers start visible"
+    );
+
+    for switch in [
+        S::Visible,
+        S::Audible,
+        S::Locked,
+        S::Solo,
+        S::ThreeD,
+        S::Fx,
+        S::MotionBlur,
+        S::Collapse,
+    ] {
+        let start = layer.get_switches().expect("switches");
+        let now = match switch {
+            S::Visible => start.visible,
+            S::Audible => start.audible,
+            S::Locked => start.locked,
+            S::Solo => start.solo,
+            S::ThreeD => start.three_d,
+            S::Fx => start.fx,
+            S::MotionBlur => start.motion_blur,
+            S::Collapse => start.collapse,
+        };
+        layer.set_switch(switch, !now).expect("toggled");
+        assert_ne!(
+            layer.get_switches().expect("switches"),
+            start,
+            "{switch:?} changed something"
+        );
+        project.undo().expect("undone");
+        assert_eq!(
+            layer.get_switches().expect("switches"),
+            start,
+            "{switch:?} undid cleanly"
+        );
+    }
+}
+
+/// A span is one op even when the drag moved all three edges — a slip edit
+/// changes the in point and the start offset together, and two undo steps for
+/// one gesture is what the whole-value shape exists to avoid.
+#[test]
+fn a_span_edit_is_one_op_and_a_bad_one_is_refused() {
+    use crate::api::effect::BridgeRational;
+    use crate::api::layer::BridgeSpan;
+
+    let (_project, layer) = project_with_layer();
+
+    layer
+        .set_span(BridgeSpan {
+            in_point: BridgeRational { num: 1, den: 1 },
+            out_point: BridgeRational { num: 4, den: 1 },
+            start_offset: BridgeRational { num: 1, den: 2 },
+        })
+        .expect("trimmed and slipped in one op");
+
+    let after = layer.get_span().expect("span");
+    assert_eq!(after.in_point, BridgeRational { num: 1, den: 1 });
+    assert_eq!(after.out_point, BridgeRational { num: 4, den: 1 });
+    assert_eq!(after.start_offset, BridgeRational { num: 1, den: 2 });
+
+    // An out point that is not after the in point is refused by the op, not
+    // clamped: a zero-length layer is not something a drag should produce.
+    assert!(layer
+        .set_span(BridgeSpan {
+            in_point: BridgeRational { num: 4, den: 1 },
+            out_point: BridgeRational { num: 4, den: 1 },
+            start_offset: BridgeRational { num: 0, den: 1 },
+        })
+        .is_err());
+
+    // A denominator of zero is a caller bug; refused rather than normalised.
+    assert!(matches!(
+        layer.set_span(BridgeSpan {
+            in_point: BridgeRational { num: 1, den: 0 },
+            out_point: BridgeRational { num: 4, den: 1 },
+            start_offset: BridgeRational { num: 0, den: 1 },
+        }),
+        Err(BridgeError::InvalidTime)
+    ));
+    assert_eq!(layer.get_span().expect("span").in_point, after.in_point);
+}
+
+/// Blend modes cross as an index into one shared list, so the panel dropdown
+/// and the engine cannot disagree about what a number means.
+#[test]
+fn blend_modes_round_trip_by_index_and_a_bad_index_is_refused() {
+    let (_project, layer) = project_with_layer();
+    let modes = crate::api::composition::list_blend_modes();
+    assert!(modes.len() > 1, "there is more than Normal");
+    assert_eq!(layer.get_blend().expect("blend"), 0, "layers start Normal");
+
+    for index in 0..modes.len() as u32 {
+        layer.set_blend(index).expect("set");
+        assert_eq!(layer.get_blend().expect("blend"), index);
+    }
+
+    assert!(matches!(
+        layer.set_blend(modes.len() as u32),
+        Err(BridgeError::InvalidBlendMode)
+    ));
+}
+
+/// A matte may dangle — its target degrades to "no matte" at render — but a
+/// parent may not, because a parent loop has no defined transform. The two
+/// behave differently on purpose.
+#[test]
+fn a_matte_may_dangle_but_a_parent_loop_is_refused() {
+    use crate::api::layer::BridgeMatte;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let other = comp.add_adjustment_layer().expect("a second layer");
+
+    layer
+        .set_matte(Some(BridgeMatte {
+            layer: other.id(),
+            luma: true,
+            inverted: false,
+        }))
+        .expect("matte set");
+    let matte = layer.get_matte().expect("matte").expect("some");
+    assert_eq!(matte.layer, other.id());
+    assert!(matte.luma);
+
+    other.delete().expect("the target is deleted");
+    assert!(
+        layer.get_matte().expect("matte").is_some(),
+        "the reference stands; it degrades at render rather than being scrubbed"
+    );
+
+    // Parenting to itself would be a loop with no defined transform.
+    assert!(layer.set_parent(Some(layer.id())).is_err());
+    assert!(layer.get_parent().expect("parent").is_none());
+}
+
+/// A duplicate is a fresh layer, not a second reference to the same one: two
+/// layers sharing an id would make every op that names a layer ambiguous.
+#[test]
+fn duplicating_a_layer_gives_it_fresh_ids() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    layer.add_effect("blur".into()).expect("an effect to copy");
+
+    let copy = layer.duplicate().expect("duplicated");
+    assert_ne!(copy.id(), layer.id());
+    assert_eq!(comp.get_layers().expect("layers").len(), 2);
+
+    let original_fx = layer.get_effects().expect("effects");
+    let copied_fx = copy.get_effects().expect("effects");
+    assert_eq!(copied_fx.len(), original_fx.len());
+    assert_ne!(
+        copied_fx[0].id(),
+        original_fx[0].id(),
+        "the copy carries its own effects"
+    );
+}
+
+/// Markers and the work area belong to the comp, not a layer, and both
+/// round-trip through the exact rational the document stores.
+#[test]
+fn markers_and_the_work_area_round_trip() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+    use crate::api::layer::BridgeSpan;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    assert!(comp.get_work_area().expect("work area").is_none());
+    comp.set_work_area(Some(BridgeSpan {
+        in_point: BridgeRational { num: 1, den: 2 },
+        out_point: BridgeRational { num: 3, den: 2 },
+        start_offset: BridgeRational { num: 0, den: 1 },
+    }))
+    .expect("set");
+    let area = comp.get_work_area().expect("work area").expect("some");
+    assert_eq!(area.in_point, BridgeRational { num: 1, den: 2 });
+    assert_eq!(area.out_point, BridgeRational { num: 3, den: 2 });
+
+    comp.set_work_area(None).expect("cleared");
+    assert!(comp.get_work_area().expect("work area").is_none());
+
+    assert!(comp.get_markers().expect("markers").is_empty());
+    comp.set_markers(vec![BridgeMarker {
+        id: Uuid::now_v7(),
+        time: BridgeRational {
+            num: 1001,
+            den: 30000,
+        },
+        label: "Chorus".into(),
+    }])
+    .expect("set");
+    let markers = comp.get_markers().expect("markers");
+    assert_eq!(markers.len(), 1);
+    assert_eq!(markers[0].label, "Chorus");
+    assert_eq!(
+        markers[0].time,
+        BridgeRational {
+            num: 1001,
+            den: 30000
+        },
+        "an exact drop-frame time is not rounded on the way through"
+    );
+}

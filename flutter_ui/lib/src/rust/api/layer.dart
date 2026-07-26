@@ -9,9 +9,156 @@ import 'effect.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `composition`, `core`, `item`, `project`, `read`, `with_effects`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read`, `with_effects`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
+
+/// What kind of source a layer has — what the Timeline draws its bar and its
+/// label colour from. The payloads the model carries (the footage item, the
+/// text document, the clip list) are reached through their own readers rather
+/// than duplicated here.
+enum BridgeLayerKind {
+  footage,
+  solid,
+  precomp,
+  text,
+  camera,
+  sequence,
+  adjustment,
+  ;
+}
+
+/// Which switch an edit names. One enum rather than eight methods so the
+/// Timeline's switch column is one handler, and so a new switch cannot be added
+/// engine-side without the compiler pointing at every arm here.
+enum BridgeLayerSwitch {
+  visible,
+  audible,
+  locked,
+  solo,
+  threeD,
+  fx,
+  motionBlur,
+  collapse,
+  ;
+}
+
+/// A layer's on/off switches, read as a group because the Timeline draws them
+/// as one column block and reading them one at a time would be six crossings
+/// per row per frame.
+class BridgeLayerSwitches {
+  final bool visible;
+  final bool audible;
+  final bool locked;
+  final bool solo;
+
+  /// 2.5D: positions in z and honours the active camera (K-023).
+  final bool threeD;
+
+  /// The fx switch: bypass the whole effect stack (docs/08 §1.5).
+  final bool fx;
+
+  /// Per-layer motion blur (K-120); only blurs when the comp's master
+  /// shutter is also on.
+  final bool motionBlur;
+
+  /// Precomp layers only: collapse transformations (docs/06 §1.4).
+  final bool collapse;
+
+  const BridgeLayerSwitches({
+    required this.visible,
+    required this.audible,
+    required this.locked,
+    required this.solo,
+    required this.threeD,
+    required this.fx,
+    required this.motionBlur,
+    required this.collapse,
+  });
+
+  @override
+  int get hashCode =>
+      visible.hashCode ^
+      audible.hashCode ^
+      locked.hashCode ^
+      solo.hashCode ^
+      threeD.hashCode ^
+      fx.hashCode ^
+      motionBlur.hashCode ^
+      collapse.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeLayerSwitches &&
+          runtimeType == other.runtimeType &&
+          visible == other.visible &&
+          audible == other.audible &&
+          locked == other.locked &&
+          solo == other.solo &&
+          threeD == other.threeD &&
+          fx == other.fx &&
+          motionBlur == other.motionBlur &&
+          collapse == other.collapse;
+}
+
+/// A layer used as another layer's matte (docs/03 §5.1).
+class BridgeMatte {
+  final UuidValue layer;
+
+  /// Whether the matte reads the source's alpha or its luminance.
+  final bool luma;
+  final bool inverted;
+
+  const BridgeMatte({
+    required this.layer,
+    required this.luma,
+    required this.inverted,
+  });
+
+  @override
+  int get hashCode => layer.hashCode ^ luma.hashCode ^ inverted.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeMatte &&
+          runtimeType == other.runtimeType &&
+          layer == other.layer &&
+          luma == other.luma &&
+          inverted == other.inverted;
+}
+
+/// Where a layer sits on the comp timeline, in exact rational seconds.
+///
+/// `start_offset` is where the layer's own time 0 falls, which is what a slip
+/// edit moves and what makes trimming the in point *not* re-time the content.
+class BridgeSpan {
+  final BridgeRational inPoint;
+
+  /// Exclusive; must be after `in_point`.
+  final BridgeRational outPoint;
+  final BridgeRational startOffset;
+
+  const BridgeSpan({
+    required this.inPoint,
+    required this.outPoint,
+    required this.startOffset,
+  });
+
+  @override
+  int get hashCode =>
+      inPoint.hashCode ^ outPoint.hashCode ^ startOffset.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeSpan &&
+          runtimeType == other.runtimeType &&
+          inPoint == other.inPoint &&
+          outPoint == other.outPoint &&
+          startOffset == other.startOffset;
+}
 
 /// A layer's whole transform, one scalar per property.
 ///
@@ -125,15 +272,71 @@ class LayerReference {
   void addEffect({required String name}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceAddEffect(that: this, name: name);
 
+  /// Remove this layer from its composition.
+  void delete() => BridgeLib.instance.api.crateApiLayerLayerReferenceDelete(
+        that: this,
+      );
+
+  /// Copy this layer, inserting the copy directly above the original.
+  ///
+  /// The copy is a fresh layer with fresh effect ids, not a second reference
+  /// to the same one: two layers sharing an id would make every op that names
+  /// a layer ambiguous.
+  LayerReference duplicate() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceDuplicate(
+        that: this,
+      );
+
   bool equals({required LayerReference layer}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceEquals(that: this, layer: layer);
+
+  /// This layer's blend mode, as an index into [`list_blend_modes`].
+  int getBlend() => BridgeLib.instance.api.crateApiLayerLayerReferenceGetBlend(
+        that: this,
+      );
 
   List<BridgeEffectInstance> getEffects() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetEffects(
         that: this,
       );
 
+  /// What kind of source this layer has.
+  BridgeLayerKind getKind() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetKind(
+        that: this,
+      );
+
+  /// The label-colour index: which chip the Timeline draws beside the layer
+  /// number, as an index into the theme's label palette (TL2).
+  int getLabel() => BridgeLib.instance.api.crateApiLayerLayerReferenceGetLabel(
+        that: this,
+      );
+
+  /// The layer used as this one's matte, if any.
+  BridgeMatte? getMatte() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetMatte(
+        that: this,
+      );
+
   String getName() => BridgeLib.instance.api.crateApiLayerLayerReferenceGetName(
+        that: this,
+      );
+
+  /// This layer's transform parent, if any (K-103).
+  UuidValue? getParent() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetParent(
+        that: this,
+      );
+
+  /// Where this layer sits on the comp timeline.
+  BridgeSpan getSpan() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetSpan(
+        that: this,
+      );
+
+  /// All eight switches at once.
+  BridgeLayerSwitches getSwitches() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetSwitches(
         that: this,
       );
 
@@ -164,6 +367,10 @@ class LayerReference {
   void rename({required String name}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceRename(that: this, name: name);
 
+  /// Move this layer to `new_index` in the stack (0 = top).
+  void reorder({required BigInt newIndex}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceReorder(that: this, newIndex: newIndex);
+
   /// Move `effect` to `new_index` in the stack — drag-to-reorder.
   ///
   /// The index clamps into range rather than failing: past the end lands the
@@ -175,6 +382,9 @@ class LayerReference {
           required PlatformInt64 newIndex}) =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceReorderEffect(
           that: this, effect: effect, newIndex: newIndex);
+
+  void setBlend({required int index}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetBlend(that: this, index: index);
 
   /// Enable or bypass `effect`. A bypassed effect renders as identity and is
   /// not animatable (docs/08 §1.5 — the effect's own Mix parameter is the
@@ -198,6 +408,40 @@ class LayerReference {
   void setEffects({required List<BridgeEffectInstance> effects}) =>
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceSetEffects(that: this, effects: effects);
+
+  void setLabel({required int label}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetLabel(that: this, label: label);
+
+  /// Point this layer at another as its matte, or clear it with `None`.
+  ///
+  /// A matte naming a layer that is not there degrades to "no matte" at render
+  /// (docs/03 §5.1 invariants), so this does not refuse one — the Timeline can
+  /// set a matte and delete its target without the document becoming invalid.
+  void setMatte({BridgeMatte? matte}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetMatte(that: this, matte: matte);
+
+  /// Parent this layer to another, or clear it with `None`.
+  ///
+  /// A self-parent, an unknown layer, or one that would close a cycle is
+  /// refused by the op — a parent loop has no defined transform, so unlike a
+  /// dangling matte it cannot be allowed to exist and be ignored later.
+  void setParent({UuidValue? parent}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetParent(that: this, parent: parent);
+
+  /// Move or trim the layer. One op, so a drag that changes the in point and
+  /// the start offset together — a slip edit — is still one undo step.
+  ///
+  /// An out point at or before the in point is refused by the op rather than
+  /// clamped here: a zero-length layer is not something the Timeline should be
+  /// able to produce by accident, and silently widening it would hide the bug
+  /// that produced it.
+  void setSpan({required BridgeSpan span}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetSpan(that: this, span: span);
+
+  /// Set one switch. One op each, so each click is one undo step.
+  void setSwitch({required BridgeLayerSwitch switch_, required bool on_}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetSwitch(
+          that: this, switch_: switch_, on_: on_);
 
   /// Replace one transform property's whole animation, as one
   /// [`lumit_core::Op::SetTransformProperty`].

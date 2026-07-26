@@ -5,6 +5,7 @@ use flutter_rust_bridge::frb;
 use uuid::Uuid;
 
 use crate::api::effect::BridgeRational;
+use crate::api::layer::BridgeSpan;
 use crate::api::{
     effect::BridgeEffectInstance,
     footage::FootageReference,
@@ -16,6 +17,33 @@ use crate::api::{
     },
     BridgeError,
 };
+
+/// One timeline marker (docs/03 §11): a cue on the comp's timebase.
+///
+/// The engine's marker also carries a duration and a kind; neither has a
+/// control yet, so they are not carried across — a marker written back keeps
+/// what the panel can actually edit and does not pretend to round-trip the rest.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeMarker {
+    pub id: Uuid,
+    pub time: BridgeRational,
+    pub label: String,
+}
+
+/// Every blend mode, in the order the Timeline's dropdown shows them. The index
+/// into this list is what `LayerReference::get_blend`/`set_blend` speak, so the
+/// two cannot disagree about what "3" means.
+///
+/// Stateless, so a free function: the dropdown is built before any layer is
+/// selected.
+#[frb(sync)]
+pub fn list_blend_modes() -> Vec<String> {
+    lumit_core::model::BlendMode::ALL
+        .iter()
+        .map(|mode| format!("{mode:?}"))
+        .collect()
+}
 
 /// A composition's pixel dimensions.
 #[frb(non_opaque)]
@@ -144,6 +172,276 @@ impl CompositionReference {
 
     /// The composition this reference names, cloned out of the current snapshot.
     #[frb(ignore)]
+    /// Add a Solid layer backed by a fresh SolidDef filed in the Solids
+    /// auto-folder — one batch, one undo step, matching the egui frontend. The
+    /// solid is comp-sized and white, named "White solid N".
+    #[frb(sync)]
+    pub fn add_solid_layer(&self) -> Result<LayerReference, BridgeError> {
+        use lumit_core::model::{LinearColour, ProjectItem, SolidDef};
+        use lumit_core::ops::AutoFolderKind;
+
+        let comp = self.composition()?;
+        let doc = self.document()?;
+        let (folder, mut ops) = crate::edits::ensure_auto_folder_ops(&doc, AutoFolderKind::Solids);
+
+        let def = Uuid::now_v7();
+        let solids = doc
+            .items
+            .iter()
+            .filter(|i| matches!(i, ProjectItem::Solid(_)))
+            .count();
+        let name = format!("White solid {}", solids + 1);
+
+        // The folder op may itself be an AddItem, so the index has to account
+        // for what this batch has already inserted.
+        let added = ops
+            .iter()
+            .filter(|o| matches!(o, lumit_core::Op::AddItem { .. }))
+            .count();
+        ops.push(lumit_core::Op::AddItem {
+            index: doc.items.len() + added,
+            item: Box::new(ProjectItem::Solid(SolidDef {
+                id: def,
+                name: name.clone(),
+                colour: LinearColour([1.0, 1.0, 1.0, 1.0]),
+                width: comp.width,
+                height: comp.height,
+                extra: serde_json::Map::new(),
+            })),
+        });
+        ops.push(crate::edits::file_into_folder_op(&doc, folder, def));
+
+        let layer = crate::edits::base_layer(
+            name,
+            lumit_core::model::LayerKind::Solid { def },
+            comp.duration.0,
+            crate::edits::centred_transform(
+                f64::from(comp.width),
+                f64::from(comp.height),
+                comp.width,
+                comp.height,
+            ),
+        );
+        let id = layer.id;
+        ops.push(lumit_core::Op::AddLayer {
+            comp: self.id,
+            index: 0,
+            layer: Box::new(layer),
+        });
+
+        self.commit(lumit_core::Op::Batch { ops })?;
+        Ok(LayerReference::new(self.project, self.id, id))
+    }
+
+    /// Add a Text layer with the "Text" starter document, centred.
+    #[frb(sync)]
+    pub fn add_text_layer(&self) -> Result<LayerReference, BridgeError> {
+        use lumit_core::anim::Property;
+        use lumit_core::model::{LinearColour, TextDocument, TransformGroup};
+
+        let comp = self.composition()?;
+        let size = 72.0_f64;
+        let text = "Text";
+        // The anchor sits on the estimated glyph bounds so the layer rotates
+        // and scales about its own middle rather than its top-left corner.
+        let estimated_width = text.chars().count() as f64 * size * 0.5;
+
+        let layer = crate::edits::base_layer(
+            "Text".into(),
+            lumit_core::model::LayerKind::Text {
+                document: TextDocument {
+                    text: text.into(),
+                    size,
+                    fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
+                    extra: serde_json::Map::new(),
+                },
+            },
+            comp.duration.0,
+            TransformGroup {
+                anchor_x: Property::fixed(estimated_width * 0.5),
+                anchor_y: Property::fixed(size * 0.5),
+                position_x: Property::fixed(f64::from(comp.width) * 0.5),
+                position_y: Property::fixed(f64::from(comp.height) * 0.5),
+                ..TransformGroup::default()
+            },
+        );
+        self.add_at_top(layer)
+    }
+
+    /// Add a Camera layer at the comp centre. The default zoom is the After
+    /// Effects 50 mm model, `comp width × 50/36`.
+    #[frb(sync)]
+    pub fn add_camera_layer(&self) -> Result<LayerReference, BridgeError> {
+        use lumit_core::anim::Property;
+        use lumit_core::model::TransformGroup;
+
+        let comp = self.composition()?;
+        let layer = crate::edits::base_layer(
+            "Camera".into(),
+            lumit_core::model::LayerKind::Camera {
+                zoom: Property::fixed(f64::from(comp.width) * 50.0 / 36.0),
+            },
+            comp.duration.0,
+            TransformGroup {
+                position_x: Property::fixed(f64::from(comp.width) * 0.5),
+                position_y: Property::fixed(f64::from(comp.height) * 0.5),
+                ..TransformGroup::default()
+            },
+        );
+        self.add_at_top(layer)
+    }
+
+    /// Add an Adjustment layer: a comp-sized effect container with no source of
+    /// its own, centred so scale and rotation pivot about the middle.
+    #[frb(sync)]
+    pub fn add_adjustment_layer(&self) -> Result<LayerReference, BridgeError> {
+        let comp = self.composition()?;
+        let layer = crate::edits::base_layer(
+            "Adjustment".into(),
+            lumit_core::model::LayerKind::Adjustment,
+            comp.duration.0,
+            crate::edits::centred_transform(
+                f64::from(comp.width),
+                f64::from(comp.height),
+                comp.width,
+                comp.height,
+            ),
+        );
+        self.add_at_top(layer)
+    }
+
+    /// Add an empty Sequence layer — a clip row spanning the comp.
+    #[frb(sync)]
+    pub fn add_sequence_layer(&self) -> Result<LayerReference, BridgeError> {
+        let comp = self.composition()?;
+        let layer = crate::edits::base_layer(
+            "Sequence".into(),
+            lumit_core::model::LayerKind::Sequence { clips: Vec::new() },
+            comp.duration.0,
+            crate::edits::centred_transform(
+                f64::from(comp.width),
+                f64::from(comp.height),
+                comp.width,
+                comp.height,
+            ),
+        );
+        self.add_at_top(layer)
+    }
+
+    /// The comp's work area — the span the Viewer previews and the export
+    /// writes — or `None` for the whole comp.
+    #[frb(sync)]
+    pub fn get_work_area(&self) -> Result<Option<BridgeSpan>, BridgeError> {
+        Ok(self.composition()?.work_area.map(|(a, b)| BridgeSpan {
+            in_point: BridgeRational {
+                num: a.0.num(),
+                den: a.0.den(),
+            },
+            out_point: BridgeRational {
+                num: b.0.num(),
+                den: b.0.den(),
+            },
+            // A work area has no content of its own to slip, so this is always
+            // zero; the field is shared with a layer span for one type.
+            start_offset: BridgeRational { num: 0, den: 1 },
+        }))
+    }
+
+    /// Set the work area, or clear it with `None`.
+    #[frb(sync)]
+    pub fn set_work_area(&self, span: Option<BridgeSpan>) -> Result<(), BridgeError> {
+        use lumit_core::time::{CompTime, Rational};
+        let work_area = match span {
+            None => None,
+            Some(span) => {
+                let a = Rational::new(span.in_point.num, span.in_point.den)
+                    .map_err(|_| BridgeError::InvalidTime)?;
+                let b = Rational::new(span.out_point.num, span.out_point.den)
+                    .map_err(|_| BridgeError::InvalidTime)?;
+                Some((CompTime(a), CompTime(b)))
+            }
+        };
+        self.commit(lumit_core::Op::SetWorkArea {
+            comp: self.id,
+            work_area,
+        })
+    }
+
+    /// Every marker on this comp, in the order the document holds them.
+    #[frb(sync)]
+    pub fn get_markers(&self) -> Result<Vec<BridgeMarker>, BridgeError> {
+        Ok(self
+            .composition()?
+            .markers
+            .iter()
+            .map(|m| BridgeMarker {
+                id: m.id,
+                time: BridgeRational {
+                    num: m.time.0.num(),
+                    den: m.time.0.den(),
+                },
+                label: m.label.clone(),
+            })
+            .collect())
+    }
+
+    /// Replace the whole marker list — one op, trivially invertible, which is
+    /// also how beat detection commits a regenerated set.
+    #[frb(sync)]
+    pub fn set_markers(&self, markers: Vec<BridgeMarker>) -> Result<(), BridgeError> {
+        use lumit_core::markers::Marker;
+        use lumit_core::time::{CompTime, Rational};
+
+        let markers = markers
+            .into_iter()
+            .map(|m| {
+                Ok(Marker {
+                    id: m.id,
+                    time: CompTime(
+                        Rational::new(m.time.num, m.time.den)
+                            .map_err(|_| BridgeError::InvalidTime)?,
+                    ),
+                    duration: None,
+                    label: m.label,
+                    kind: lumit_core::markers::MarkerKind::default(),
+                    extra: serde_json::Map::new(),
+                })
+            })
+            .collect::<Result<Vec<_>, BridgeError>>()?;
+
+        self.commit(lumit_core::Op::SetCompMarkers {
+            comp: self.id,
+            markers,
+        })
+    }
+
+    /// Insert `layer` at the top of the stack.
+    #[frb(ignore)]
+    fn add_at_top(&self, layer: lumit_core::model::Layer) -> Result<LayerReference, BridgeError> {
+        let id = layer.id;
+        self.commit(lumit_core::Op::AddLayer {
+            comp: self.id,
+            index: 0,
+            layer: Box::new(layer),
+        })?;
+        Ok(LayerReference::new(self.project, self.id, id))
+    }
+
+    #[frb(ignore)]
+    fn document(&self) -> Result<std::sync::Arc<lumit_core::Document>, BridgeError> {
+        let proj = self.project()?;
+        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(proj.store.snapshot())
+    }
+
+    #[frb(ignore)]
+    fn commit(&self, op: lumit_core::Op) -> Result<(), BridgeError> {
+        let proj = self.project()?;
+        let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+        proj.store.commit(op).map_err(BridgeError::OpError)?;
+        Ok(())
+    }
+
     fn composition(&self) -> Result<lumit_core::model::Composition, BridgeError> {
         let proj = self.project()?;
         let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;

@@ -47,6 +47,12 @@ pub enum BridgeError {
     /// A keyframed value whose keys are not a curve the engine can evaluate:
     /// none at all, an invalid time, or times that do not strictly ascend.
     InvalidKeyframes,
+    /// A time whose denominator is zero or negative — a span or marker built
+    /// wrongly by the caller. Refused rather than normalised: quietly fixing it
+    /// would put the thing somewhere nobody asked for.
+    InvalidTime,
+    /// A blend-mode index outside the list `list_blend_modes` hands out.
+    InvalidBlendMode,
     /// A staged effect stack no longer matches the document's — something else
     /// added, removed or reordered an effect while it was being edited.
     StaleEffectStack,
@@ -85,6 +91,8 @@ impl fmt::Display for BridgeError {
                 f,
                 "A keyframed value needs at least one key, in ascending time order"
             ),
+            BridgeError::InvalidTime => write!(f, "That time is not a valid duration"),
+            BridgeError::InvalidBlendMode => write!(f, "No blend mode at that index"),
             BridgeError::StaleEffectStack => {
                 write!(f, "The effect stack changed while it was being edited")
             }
