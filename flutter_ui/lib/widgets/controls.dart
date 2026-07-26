@@ -235,7 +235,12 @@ class BareDropdown<T> extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(label(value)),
+          // Ellipsised rather than allowed to overflow: a dropdown sits in
+          // whatever width its caller has, and a label longer than that is a
+          // layout error the user sees as striped tape. `Flexible` keeps the
+          // button intrinsic-width when there is room, so nothing that fits
+          // changes shape.
+          Flexible(child: Text(label(value), overflow: TextOverflow.ellipsis)),
           const SizedBox(width: 4),
           CustomPaint(
             size: const Size(9, 9),

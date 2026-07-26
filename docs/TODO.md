@@ -126,8 +126,8 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: the Timeline — the largest single job, and
-    what every remaining panel is waiting behind.** The full ledger:
+    is the gate. **Immediate next: the rest of the Timeline — the graph editor,
+    the razor, comp tabs.** The full ledger:
 
     **1. The seven docked panels.**
     - **Viewer** — **partial**: transport only. All three render paths work, but
@@ -136,13 +136,14 @@ sequence clips.
         `viewer_overlays.dart` (gizmos, motion paths), `viewer_layer_map.dart`,
         `slate.dart`, playback and timecode, zoom/pan, channel view and the
         transparency grid.
-    - **Timeline** — **not started**, and the largest single job.
-        `TimelinePanelFrb` is layer names and a Render button; the real one is
-        `timeline_panel.dart` (1,279 lines)
-        plus **27** files in `panels/timeline/`: ruler, playhead, layer rows,
-        columns, spans, razor, markers, work area, cache bar, comp tabs, lane
-        host/scale/selection, graph editor and its four lens files, keyframe
-        clipboard and interp menus.
+    - **Timeline** — **partial**: `timeline_panel_frb.dart` has the outline
+        (rows, switches, blend, the row menu), the ruler with the playhead, work
+        area and markers, and draggable/trimmable layer bars. Outstanding, none
+        of it blocked on the engine: the **razor**, **comp tabs**, the **cache
+        bar**, marker and work-area *editing* (both are read-and-clear so far),
+        the **parent column**, layer **search**, and the **lane / graph editor**
+        (v0's `graph_editor.dart` and its four lens files, plus the keyframe
+        clipboard and interp menus).
     - **Effect controls** — **partial**: the panel is in; what is left is the
         **graph editor** (the curve view, bezier handles, keyframe clipboard) and
         **`.lumfx` presets**. One known limit: a multi-axis row's stopwatch keys
@@ -176,11 +177,9 @@ sequence clips.
         write and one undo step. v0's granular add/remove/shift/set-interp pair
         and `apply_keyframe_batch` have no frb counterpart by design. Recorded
         here only so nobody ports them; the work left is the graph editor UI.
-    - **Layer lifecycle** — add solid/text/camera/adjustment/sequence, delete,
-        duplicate, reorder.
-    - **Layer properties** — switches, blend mode, matte, parent, motion blur,
-        spans, `drag_boundary`, `trim_to_source_end`, `convert_to_sequenced`, the
-        razor, markers, work area, `list_blend_modes`.
+    - **Sequence layers** — `drag_boundary`, `trim_to_source_end`,
+        `convert_to_sequenced`, and the razor's cut/delete-clip pair. The only
+        Timeline ops still missing; everything else it needs is in.
     - **Masks** — `add_mask`, `add_mask_geometry`.
     - **Retime** — all of it: enabled/speed/reverse/interpolation,
         `segment_to_rate`, `set_segment_preset`.

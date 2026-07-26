@@ -7,8 +7,6 @@
 // - [ViewerPanelFrb] — frames the Rust worker pushes down a stream: a platform
 //   `Texture` on either zero-copy path, or a decoded image on the portable
 //   read-back one.
-// - [TimelinePanelFrb] — reading a comp's layers off a `CompositionReference`
-//   and selecting one, with no snapshot JSON in between.
 //
 // The ported panels live in files of their own and are routed from here:
 // [ProjectPanelFrb] and [EffectControlsPanelFrb]. The shipping dispatcher for
@@ -19,7 +17,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
-import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
@@ -27,6 +24,7 @@ import '../state/dock.dart';
 import 'placeholder.dart';
 import 'effect_controls_panel_frb.dart';
 import 'project_panel_frb.dart';
+import 'timeline_panel_frb.dart';
 
 Widget buildPanelBodyFrb(BuildContext context, Panel panel) => switch (panel) {
       Panel.project => const ProjectPanelFrb(),
@@ -121,77 +119,5 @@ class ViewerPanelFrb extends StatelessWidget {
     final byWidth = constraints.maxWidth / size.width;
     final byHeight = constraints.maxHeight / size.height;
     state.reportViewerScale(byWidth < byHeight ? byWidth : byHeight);
-  }
-}
-
-/// The Timeline: the front comp's layers, and a button that asks the worker for
-/// one frame. Layers come straight off the `CompositionReference` — the
-/// reference *is* the identity, so there is no snapshot to diff or id to resolve.
-class TimelinePanelFrb extends StatefulWidget {
-  const TimelinePanelFrb({super.key});
-
-  @override
-  State<TimelinePanelFrb> createState() => _TimelinePanelFrbState();
-}
-
-class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
-  @override
-  Widget build(BuildContext context) {
-    final state = Provider.of<LumitUiState>(context);
-    final comp = state.selectedComp;
-
-    if (comp == null) {
-      return const PlaceholderPanel(
-        icon: LumitIcon.comp,
-        title: 'Timeline',
-        hint: 'Select a composition in the Project panel.',
-      );
-    }
-
-    final layers = comp.getLayers();
-    final t = ThemeScope.of(context).theme;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(8),
-          child: Row(
-            spacing: 8,
-            children: [
-              HouseButton(
-                frameless: false,
-                onPressed: () => comp.renderFrame(
-                    frame: BigInt.from(state.playheadFrame.value),
-                    scale: state.viewerScale),
-                child: Text('Render frame:', style: t.small),
-              ),
-              ValueListenableBuilder<int>(
-                valueListenable: state.playheadFrame,
-                builder: (context, frame, _) => DragValueField(
-                  value: frame,
-                  min: 0,
-                  max: 500,
-                  onChanged: (value) =>
-                      state.playheadFrame.value = value.toInt(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: ListView.builder(
-            itemCount: layers.length,
-            itemBuilder: (context, index) {
-              final layer = layers[index];
-              return HouseButton(
-                onPressed: () => state.selectedLayer.value = layer,
-                child: Text(layer.getName(), style: t.small),
-              );
-            },
-          ),
-        ),
-      ],
-    );
   }
 }

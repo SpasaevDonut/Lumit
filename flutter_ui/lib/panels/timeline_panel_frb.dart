@@ -1,0 +1,669 @@
+// The Timeline panel, on the flutter_rust_bridge API.
+//
+// Two columns side by side over one shared time axis: an **outline** on the
+// left (layer number, label chip, name, switches, blend mode, parent) and a
+// **track area** on the right (the ruler, the playhead, one bar per layer, the
+// work area and the markers). Everything reads through reference handles — there
+// is no snapshot to mirror, so a row asks the layer it draws.
+//
+// **What is here.** Adding every layer kind, deleting, duplicating, reordering,
+// the eight switches, blend mode, parenting, dragging and trimming a layer's
+// bar, scrubbing the playhead, the work area and marker cues.
+//
+// **What is not, and why.** The razor, the comp tabs, the cache bar and the lane
+// / graph editor. None is blocked on the engine — they are the next slices of
+// the same panel, kept out so this one stays readable. See docs/TODO.md.
+//
+// **The one rule the drags follow.** A bar drag is a live *preview* of nothing —
+// unlike an effect or transform drag there is no cheap render to show, because
+// moving a layer in time changes what every frame contains. So a bar drag holds
+// its offset in Dart and commits one `set_span` on release: one op, one undo
+// step, even when the gesture moved the in point and the start offset together.
+
+import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:provider/provider.dart';
+
+import '../icons/icons.dart';
+import '../theme/theme.dart';
+import '../widgets/controls.dart';
+import 'placeholder.dart';
+
+/// The outline column's width. Fixed rather than resizable for now — a splitter
+/// is its own slice of work and nothing depends on it yet.
+const double _outlineWidth = 300;
+
+/// One layer row's height, and the ruler's.
+const double _rowHeight = 22;
+const double _rulerHeight = 20;
+
+/// How near the end of a bar counts as grabbing its edge to trim rather than its
+/// middle to move.
+const double _trimGrab = 6;
+
+class TimelinePanelFrb extends StatefulWidget {
+  const TimelinePanelFrb({super.key});
+
+  @override
+  State<TimelinePanelFrb> createState() => _TimelinePanelFrbState();
+}
+
+class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
+  @override
+  Widget build(BuildContext context) {
+    final ui = Provider.of<LumitUiState>(context);
+    final comp = ui.selectedComp;
+    if (comp == null) {
+      return const PlaceholderPanel(
+        icon: LumitIcon.comp,
+        title: 'Timeline',
+        hint: 'Select a composition in the Project panel.',
+      );
+    }
+
+    final settings = comp.getSettings();
+    final layers = comp.getLayers();
+    final frames = settings.durationFrames.toInt();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _Toolbar(comp: comp, onChanged: () => setState(() {})),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // The axis is the panel's own width minus the outline, so a
+              // narrower panel shows the same span more tightly rather than
+              // scrolling — matching the Viewer's fit-to-panel behaviour.
+              final trackWidth =
+                  (constraints.maxWidth - _outlineWidth).clamp(1.0, 1e6);
+              final axis = _Axis(frames: frames, width: trackWidth);
+
+              return ValueListenableBuilder<int>(
+                valueListenable: ui.playheadFrame,
+                builder: (context, playhead, _) => Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    SizedBox(
+                      width: _outlineWidth,
+                      child: _Outline(
+                        comp: comp,
+                        layers: layers,
+                        selected: ui.selectedLayer.value,
+                        onSelect: (l) => setState(() {
+                          ui.selectedLayer.value = l;
+                        }),
+                        onChanged: () => setState(() {}),
+                      ),
+                    ),
+                    Expanded(
+                      child: _Tracks(
+                        comp: comp,
+                        layers: layers,
+                        axis: axis,
+                        playhead: playhead,
+                        onSeek: (f) => ui.playheadFrame.value =
+                            f.clamp(0, frames == 0 ? 0 : frames - 1),
+                        onChanged: () => setState(() {}),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Frames to pixels and back, for one panel width.
+class _Axis {
+  final int frames;
+  final double width;
+  const _Axis({required this.frames, required this.width});
+
+  double get perFrame => frames <= 0 ? 0 : width / frames;
+  double xOf(num frame) => frame * perFrame;
+  int frameAt(double x) => perFrame <= 0 ? 0 : (x / perFrame).round();
+}
+
+/// The Layer menu and the work-area buttons.
+class _Toolbar extends StatelessWidget {
+  final CompositionReference comp;
+  final VoidCallback onChanged;
+  const _Toolbar({required this.comp, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Container(
+      height: 26,
+      color: t.surface1,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Row(
+        children: [
+          HouseButton(
+            key: const ValueKey('tl-add-layer'),
+            small: true,
+            onPressed: () => _showLayerMenu(context, comp, onChanged),
+            child: Text('New layer', style: t.small),
+          ),
+          const SizedBox(width: 6),
+          HouseButton(
+            key: const ValueKey('tl-clear-work-area'),
+            small: true,
+            frameless: true,
+            onPressed: () {
+              comp.setWorkArea(span: null);
+              onChanged();
+            },
+            child: Text('Clear work area', style: t.small),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _showLayerMenu(
+  BuildContext context,
+  CompositionReference comp,
+  VoidCallback onChanged,
+) async {
+  final box = context.findRenderObject();
+  if (box is! RenderBox) return;
+  final picked = await showLumitPopup<String>(
+    context: context,
+    position: box.localToGlobal(Offset(0, box.size.height + 2)),
+    builder: (close) => FloatSurface(
+      width: 190,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final kind in ['Solid', 'Text', 'Camera', 'Adjustment', 'Sequence'])
+            MenuRow(onPressed: () => close(kind), child: Text(kind)),
+        ],
+      ),
+    ),
+  );
+  switch (picked) {
+    case 'Solid':
+      comp.addSolidLayer();
+    case 'Text':
+      comp.addTextLayer();
+    case 'Camera':
+      comp.addCameraLayer();
+    case 'Adjustment':
+      comp.addAdjustmentLayer();
+    case 'Sequence':
+      comp.addSequenceLayer();
+    case _:
+      return;
+  }
+  onChanged();
+}
+
+/// The left column: one row per layer, with its switches and columns.
+class _Outline extends StatelessWidget {
+  final CompositionReference comp;
+  final List<LayerReference> layers;
+  final LayerReference? selected;
+  final ValueChanged<LayerReference> onSelect;
+  final VoidCallback onChanged;
+
+  const _Outline({
+    required this.comp,
+    required this.layers,
+    required this.selected,
+    required this.onSelect,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // Aligns the first row with the first track, under the ruler.
+        Container(height: _rulerHeight, color: t.surface2),
+        for (var i = 0; i < layers.length; i++)
+          _OutlineRow(
+            key: ValueKey<String>('tl-row-${layers[i].internallayerId}'),
+            comp: comp,
+            layer: layers[i],
+            index: i,
+            count: layers.length,
+            selected: selected?.equals(layer: layers[i]) ?? false,
+            onSelect: () => onSelect(layers[i]),
+            onChanged: onChanged,
+          ),
+      ],
+    );
+  }
+}
+
+class _OutlineRow extends StatelessWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final int index;
+  final int count;
+  final bool selected;
+  final VoidCallback onSelect;
+  final VoidCallback onChanged;
+
+  const _OutlineRow({
+    super.key,
+    required this.comp,
+    required this.layer,
+    required this.index,
+    required this.count,
+    required this.selected,
+    required this.onSelect,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final switches = layer.getSwitches();
+    final id = layer.internallayerId.toString();
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onSelect,
+      onSecondaryTapDown: (d) => _showRowMenu(context, d.globalPosition),
+      child: Container(
+        height: _rowHeight,
+        color: selected ? t.surface2 : null,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: Row(
+          children: [
+            SizedBox(
+              width: 20,
+              child: Text('${index + 1}',
+                  style: t.small.copyWith(color: t.textMuted)),
+            ),
+            _switch(context, id, 'visible', LumitIcon.eye, switches.visible,
+                BridgeLayerSwitch.visible),
+            _switch(context, id, 'audible', LumitIcon.audio, switches.audible,
+                BridgeLayerSwitch.audible),
+            // No solo glyph in the icon set; the star reads as isolate.
+            _switch(context, id, 'solo', LumitIcon.star, switches.solo,
+                BridgeLayerSwitch.solo),
+            _switch(context, id, 'locked', LumitIcon.lock, switches.locked,
+                BridgeLayerSwitch.locked),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(layer.getName(),
+                  style: t.body, overflow: TextOverflow.ellipsis),
+            ),
+            _blendPicker(context, t),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _switch(
+    BuildContext context,
+    String id,
+    String name,
+    LumitIcon icon,
+    bool on,
+    BridgeLayerSwitch which,
+  ) {
+    final t = ThemeScope.of(context).theme;
+    return GestureDetector(
+      key: ValueKey<String>('tl-$name-$id'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        layer.setSwitch(switch_: which, on_: !on);
+        onChanged();
+      },
+      child: SizedBox(
+        width: 18,
+        height: _rowHeight,
+        child: Center(
+          child: lumitIcon(icon,
+              size: 11, color: on ? t.textPrimary : t.textDisabled),
+        ),
+      ),
+    );
+  }
+
+  Widget _blendPicker(BuildContext context, LumitTheme t) {
+    final modes = listBlendModes();
+    final current = layer.getBlend();
+    // Wide enough for the longest mode name plus the caret: a dropdown that
+    // overflows its cell is a layout error, not a cosmetic one.
+    return SizedBox(
+      width: 112,
+      child: BareDropdown<int>(
+        key: ValueKey<String>('tl-blend-${layer.internallayerId}'),
+        value: current < modes.length ? current : 0,
+        options: [for (var i = 0; i < modes.length; i++) i],
+        label: (i) => modes[i],
+        onChanged: (i) {
+          layer.setBlend(index: i);
+          onChanged();
+        },
+      ),
+    );
+  }
+
+  Future<void> _showRowMenu(BuildContext context, Offset position) async {
+    final picked = await showLumitPopup<String>(
+      context: context,
+      position: position,
+      builder: (close) => FloatSurface(
+        width: 190,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MenuRow(
+                onPressed: () => close('duplicate'),
+                child: const Text('Duplicate')),
+            if (index > 0)
+              MenuRow(
+                  onPressed: () => close('up'),
+                  child: const Text('Bring forward')),
+            if (index < count - 1)
+              MenuRow(
+                  onPressed: () => close('down'),
+                  child: const Text('Send backward')),
+            MenuRow(
+                onPressed: () => close('delete'), child: const Text('Delete')),
+          ],
+        ),
+      ),
+    );
+    switch (picked) {
+      case 'duplicate':
+        layer.duplicate();
+      case 'up':
+        layer.reorder(newIndex: BigInt.from(index - 1));
+      case 'down':
+        layer.reorder(newIndex: BigInt.from(index + 1));
+      case 'delete':
+        layer.delete();
+      case _:
+        return;
+    }
+    onChanged();
+  }
+}
+
+/// The right column: the ruler, the playhead, and one bar per layer.
+class _Tracks extends StatelessWidget {
+  final CompositionReference comp;
+  final List<LayerReference> layers;
+  final _Axis axis;
+  final int playhead;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const _Tracks({
+    required this.comp,
+    required this.layers,
+    required this.axis,
+    required this.playhead,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Stack(
+      children: [
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _Ruler(
+              comp: comp,
+              axis: axis,
+              onSeek: onSeek,
+            ),
+            for (final layer in layers)
+              _Bar(
+                key: ValueKey<String>('tl-bar-${layer.internallayerId}'),
+                comp: comp,
+                layer: layer,
+                axis: axis,
+                onChanged: onChanged,
+              ),
+          ],
+        ),
+        // The playhead rides above every bar so it is never hidden behind one.
+        Positioned(
+          left: axis.xOf(playhead),
+          top: 0,
+          bottom: 0,
+          child: IgnorePointer(
+            child: Container(width: 1, color: t.accent),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// The ruler: frame ticks, the work area, the markers, and the scrub surface.
+class _Ruler extends StatelessWidget {
+  final CompositionReference comp;
+  final _Axis axis;
+  final ValueChanged<int> onSeek;
+
+  const _Ruler({required this.comp, required this.axis, required this.onSeek});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final work = comp.getWorkArea();
+    final markers = comp.getMarkers();
+
+    return GestureDetector(
+      key: const ValueKey('tl-ruler'),
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (d) => onSeek(axis.frameAt(d.localPosition.dx)),
+      onHorizontalDragUpdate: (d) => onSeek(axis.frameAt(d.localPosition.dx)),
+      child: Container(
+        height: _rulerHeight,
+        color: t.surface2,
+        child: Stack(
+          children: [
+            // The work area, when there is one: the span the Viewer previews
+            // and the export writes.
+            if (work != null)
+              Positioned(
+                left: axis.xOf(comp.frameAtTime(time: work.inPoint)),
+                width: (axis.xOf(comp.frameAtTime(time: work.outPoint)) -
+                        axis.xOf(comp.frameAtTime(time: work.inPoint)))
+                    .clamp(1.0, 1e6),
+                top: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    key: const ValueKey('tl-work-area'),
+                    color: t.accent.withValues(alpha: 0.14),
+                  ),
+                ),
+              ),
+            for (final marker in markers)
+              Positioned(
+                left: axis.xOf(comp.frameAtTime(time: marker.time)) - 3,
+                top: 4,
+                child: IgnorePointer(
+                  child: LumitTooltip(
+                    message: marker.label,
+                    child: Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: t.warning,
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// One layer's bar: drag its middle to move it, its ends to trim.
+class _Bar extends StatefulWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final _Axis axis;
+  final VoidCallback onChanged;
+
+  const _Bar({
+    super.key,
+    required this.comp,
+    required this.layer,
+    required this.axis,
+    required this.onChanged,
+  });
+
+  @override
+  State<_Bar> createState() => _BarState();
+}
+
+class _BarState extends State<_Bar> {
+  /// Frames the gesture has moved so far, held here rather than committed.
+  ///
+  /// A bar drag has no cheap preview to show — moving a layer in time changes
+  /// what every frame contains — so the bar moves in Dart and the document
+  /// learns about it once, on release.
+  int _delta = 0;
+  _Grab? _grab;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final span = widget.layer.getSpan();
+    final inFrame = widget.comp.frameAtTime(time: span.inPoint);
+    final outFrame = widget.comp.frameAtTime(time: span.outPoint);
+
+    final (drawIn, drawOut) = switch (_grab) {
+      _Grab.move => (inFrame + _delta, outFrame + _delta),
+      _Grab.trimIn => (inFrame + _delta, outFrame),
+      _Grab.trimOut => (inFrame, outFrame + _delta),
+      null => (inFrame, outFrame),
+    };
+
+    final left = widget.axis.xOf(drawIn);
+    final width = (widget.axis.xOf(drawOut) - left).clamp(2.0, 1e6);
+
+    return SizedBox(
+      height: _rowHeight,
+      child: Stack(
+        children: [
+          Positioned(
+            left: left,
+            width: width,
+            top: 3,
+            bottom: 3,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onHorizontalDragStart: (d) => setState(() {
+                _delta = 0;
+                _grab = d.localPosition.dx < _trimGrab
+                    ? _Grab.trimIn
+                    : d.localPosition.dx > width - _trimGrab
+                        ? _Grab.trimOut
+                        : _Grab.move;
+              }),
+              onHorizontalDragUpdate: (d) => setState(() {
+                _delta += widget.axis.frameAt(d.delta.dx);
+              }),
+              onHorizontalDragEnd: (_) => _commit(inFrame, outFrame),
+              onHorizontalDragCancel: () => setState(() {
+                _delta = 0;
+                _grab = null;
+              }),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _colourFor(widget.layer.getKind(), t),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// One `set_span` for the whole gesture, so a move that shifted the in point
+  /// and the start offset together is a single undo step.
+  void _commit(int inFrame, int outFrame) {
+    final grab = _grab;
+    final delta = _delta;
+    setState(() {
+      _delta = 0;
+      _grab = null;
+    });
+    if (grab == null || delta == 0) return;
+
+    final span = widget.layer.getSpan();
+    var newIn = inFrame;
+    var newOut = outFrame;
+    var offsetShift = 0;
+    switch (grab) {
+      case _Grab.move:
+        newIn += delta;
+        newOut += delta;
+        // Moving carries the content with the bar, so time 0 travels too.
+        offsetShift = delta;
+      case _Grab.trimIn:
+        newIn += delta;
+      case _Grab.trimOut:
+        newOut += delta;
+    }
+    // A bar cannot be trimmed past itself; the op refuses it, and refusing here
+    // first means the gesture simply stops rather than raising.
+    if (newOut <= newIn) return;
+
+    widget.layer.setSpan(
+      span: BridgeSpan(
+        inPoint: widget.comp.timeOfFrame(frame: newIn),
+        outPoint: widget.comp.timeOfFrame(frame: newOut),
+        startOffset: offsetShift == 0
+            ? span.startOffset
+            : widget.comp.timeOfFrame(
+                frame:
+                    widget.comp.frameAtTime(time: span.startOffset) + offsetShift,
+              ),
+      ),
+    );
+    widget.onChanged();
+  }
+}
+
+enum _Grab { move, trimIn, trimOut }
+
+/// A bar's fill, by what the layer is — the same family of colours the Project
+/// panel gives its row glyphs, so a footage layer reads as footage in both.
+Color _colourFor(BridgeLayerKind kind, LumitTheme t) => switch (kind) {
+      BridgeLayerKind.footage => t.layer.footage,
+      BridgeLayerKind.precomp => t.layer.precomp,
+      BridgeLayerKind.solid => t.layer.solid,
+      BridgeLayerKind.text => t.layer.text,
+      BridgeLayerKind.camera => t.layer.camera,
+      BridgeLayerKind.sequence => t.layer.sequence,
+      // A comp-sized effect container, drawn as a solid — the same choice
+      // layer_style.dart makes, and the egui frontend before it.
+      BridgeLayerKind.adjustment => t.layer.solid,
+    };

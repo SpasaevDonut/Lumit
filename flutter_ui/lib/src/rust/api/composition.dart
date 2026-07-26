@@ -13,7 +13,7 @@ import 'package:uuid/uuid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `add_at_top`, `commit`, `composition`, `dispatch`, `document`, `footage_span_and_size`, `project`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `add_solid_layer`, `id`, `new`, `project_id`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
 /// Every blend mode, in the order the Timeline's dropdown shows them. The index
 /// into this list is what `LayerReference::get_blend`/`set_blend` speak, so the
@@ -162,6 +162,14 @@ class CompositionReference {
   /// Add an empty Sequence layer — a clip row spanning the comp.
   LayerReference addSequenceLayer() => BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceAddSequenceLayer(
+        that: this,
+      );
+
+  /// Add a Solid layer backed by a fresh SolidDef filed in the Solids
+  /// auto-folder — one batch, one undo step, matching the egui frontend. The
+  /// solid is comp-sized and white, named "White solid N".
+  LayerReference addSolidLayer() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddSolidLayer(
         that: this,
       );
 

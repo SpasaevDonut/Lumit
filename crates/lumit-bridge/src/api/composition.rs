@@ -170,8 +170,6 @@ impl CompositionReference {
         Ok(())
     }
 
-    /// The composition this reference names, cloned out of the current snapshot.
-    #[frb(ignore)]
     /// Add a Solid layer backed by a fresh SolidDef filed in the Solids
     /// auto-folder — one batch, one undo step, matching the egui frontend. The
     /// solid is comp-sized and white, named "White solid N".
@@ -442,6 +440,8 @@ impl CompositionReference {
         Ok(())
     }
 
+    /// The composition this reference names, cloned out of the current snapshot.
+    #[frb(ignore)]
     fn composition(&self) -> Result<lumit_core::model::Composition, BridgeError> {
         let proj = self.project()?;
         let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
