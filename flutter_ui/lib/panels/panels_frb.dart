@@ -72,30 +72,57 @@ class ViewerPanelFrb extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = Provider.of<LumitUiState>(context);
 
-    return ValueListenableBuilder<int?>(
-      valueListenable: state.viewerFrameid,
-      builder: (context, textureId, child) {
-        if (textureId != null) return Texture(textureId: textureId);
+    // LayoutBuilder because the Viewer is docked: what matters is this panel's
+    // box, not the window's, and only the panel knows it.
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        _reportScale(state, constraints);
 
-        return ValueListenableBuilder<ui.Image?>(
-          valueListenable: state.viewerImage,
-          builder: (context, image, child) {
-            if (image == null) {
-              return const PlaceholderPanel(
-                icon: LumitIcon.footage,
-                title: 'Viewer',
-                hint: 'No frame rendered yet — render one from the Timeline.',
-              );
-            }
-            // `fit: contain` so a comp of any aspect sits inside the panel
-            // rather than being stretched to it.
-            return Center(
-              child: RawImage(image: image, fit: BoxFit.contain),
+        return ValueListenableBuilder<int?>(
+          valueListenable: state.viewerFrameid,
+          builder: (context, textureId, child) {
+            if (textureId != null) return Texture(textureId: textureId);
+
+            return ValueListenableBuilder<ui.Image?>(
+              valueListenable: state.viewerImage,
+              builder: (context, image, child) {
+                if (image == null) {
+                  return const PlaceholderPanel(
+                    icon: LumitIcon.footage,
+                    title: 'Viewer',
+                    hint:
+                        'No frame rendered yet — render one from the Timeline.',
+                  );
+                }
+                // `fit: contain` so a comp of any aspect sits inside the panel
+                // rather than being stretched to it.
+                return Center(
+                  child: RawImage(image: image, fit: BoxFit.contain),
+                );
+              },
             );
           },
         );
       },
     );
+  }
+
+  /// Work out what fraction of comp resolution this panel is showing, and record
+  /// it so the next render request asks for that much and no more.
+  ///
+  /// A plain field write with no notification, so it cannot loop the build it is
+  /// called from — the value is read at request time, not watched.
+  void _reportScale(LumitUiState state, BoxConstraints constraints) {
+    final comp = state.selectedComp;
+    if (comp == null || !constraints.hasBoundedWidth) return;
+
+    final size = comp.getSize();
+    if (size.width == 0 || size.height == 0) return;
+
+    // Fit: the limiting dimension decides, matching how the frame is drawn.
+    final byWidth = constraints.maxWidth / size.width;
+    final byHeight = constraints.maxHeight / size.height;
+    state.reportViewerScale(byWidth < byHeight ? byWidth : byHeight);
   }
 }
 
@@ -138,7 +165,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
             children: [
               HouseButton(
                 frameless: false,
-                onPressed: () => comp.renderFrame(frame: BigInt.from(frame)),
+                onPressed: () => comp.renderFrame(
+                    frame: BigInt.from(frame), scale: state.viewerScale),
                 child: Text('Render frame:', style: t.small),
               ),
               DragValueField(
@@ -311,6 +339,7 @@ class _EffectEditorFrbState extends State<EffectEditorFrb> {
 
     comp.renderFrameWithPreview(
       frame: BigInt.from(161),
+      scale: uiState.viewerScale,
       layer: layer,
       effects: override,
     );

@@ -181,6 +181,25 @@ class LumitUiState extends ChangeNotifier {
 
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
 
+  /// What fraction of comp resolution the Viewer is actually showing, which is
+  /// the `scale` every render request carries. 1.0 until the Viewer has been laid
+  /// out and can measure itself.
+  ///
+  /// This is why a Viewer in a small panel is cheap: the engine decodes and
+  /// composites at the size being displayed rather than always at comp
+  /// resolution. It is the frb counterpart of v0's `effectivePreviewScale`, minus
+  /// the adaptive quality tier (K-171), which is not ported yet — so this tracks
+  /// the panel size only, not measured render cost.
+  double viewerScale = 1.0;
+
+  /// Called by the Viewer as it lays out. Clamped to (0, 1]: rendering *above*
+  /// comp resolution would cost more for no visible gain, and a zero or negative
+  /// scale is meaningless.
+  void reportViewerScale(double scale) {
+    if (!scale.isFinite || scale <= 0) return;
+    viewerScale = scale > 1.0 ? 1.0 : scale;
+  }
+
   StreamSubscription? sub;
 
   LumitUiState(LumitState state) {

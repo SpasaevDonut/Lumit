@@ -38,8 +38,14 @@ abstract class LumitBridgeState implements RustOpaqueInterface {
 }
 
 /// A Viewer frame that came back as pixels rather than a GPU handle — the
-/// portable path, used on any build without one of the zero-copy features. Dart
-/// turns `rgba` into a `ui.Image`.
+/// portable path, used on any build without one of the zero-copy features (the
+/// default on Windows). Dart turns `rgba` into a `ui.Image`.
+///
+/// Costly by construction: flutter_rust_bridge's SSE codec serialises a
+/// `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p frame and 37 ms
+/// at 4K — the whole of budget B1 (docs/13 §2) for the 1080p case, before any
+/// rendering. Prefer a zero-copy build where the platform allows one; see
+/// docs/TODO.md for the fix.
 class BridgeRenderedFrame {
   final int width;
   final int height;
@@ -69,7 +75,7 @@ class BridgeRenderedFrame {
 /// The Windows zero-copy Viewer frame (K-177): an NT handle to a shared D3D12
 /// texture the Flutter runner imports directly, so no pixels cross the FFI
 /// boundary. The handle is stable for the session and changes only when the
-/// comp's dimensions do. Format is always RGBA8, so it is not carried.
+/// comp's dimensions do. The format is always RGBA8, so it is not carried.
 class BridgeSharedFrameInfo {
   /// The NT `HANDLE` value. `u64` because a Windows handle is 64-bit; it
   /// reaches Dart as a `BigInt`.

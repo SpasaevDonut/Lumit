@@ -62,6 +62,26 @@ sequence clips.
 - **Migrate to [flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge) —
     the frontend's main line of work.** Started; both bridges are live side by side.
 
+    **v0 is FROZEN (decided 2026-07-26).** No new ops, no new surface on the
+    hand-rolled bridge — every addition goes to `crates/lumit-bridge/src/api/`.
+    Nothing is deleted yet, because v0 still runs the whole UI behind
+    `--v0-shell` and 471 Dart tests cover it; it is removed in **one sweep** once
+    every panel is on frb. The reason for the freeze: work kept landing in v0
+    precisely because v0 was the only shell that could display anything, and that
+    produced duplicated capability — ABI 12's `preview_effect_param` went into v0
+    even though the frb worker already had `render_comp_with_preview` doing the
+    same job by a different idiom. If a task seems to need v0 because only v0 can
+    show the result, that is a signal to finish the frb panel first.
+
+    *When the sweep comes*, delete together: `src/{ffi,state,edits,snapshot,
+    framecache,cancel,render,realtime,export,recovery,preset,items,columns,
+    fxkeys,fxparams,retime,sequence,audio,beats,assets,media}.rs`, the `ABI_VERSION`
+    surface, `flutter_ui/lib/bridge/bridge.dart`, `state/app_state.dart`, the
+    v0-only panels and their tests, and the `--v0-shell` switch in `main.dart`.
+    Two things must **move** rather than die with it: `render::quality_for` (the
+    scale-to-decode-size policy, currently shared by the frb worker) and whatever
+    of `framecache`/`cancel` the frb path has adopted by then.
+
     *Where it stands.* `crates/lumit-bridge/src/api/` holds the frb surface and
     `flutter_ui/lib/src/rust/` its generated bindings, built through cargokit
     (`flutter_ui/rust_builder/`). The v0 hand-rolled bridge is untouched and still
@@ -107,12 +127,15 @@ sequence clips.
             struct field is what triggers it — or by moving that call to the DCO
             codec, whose `IntoDart` for `Vec<u8>` is already zero-copy.
         - Bring across what v0 has and the worker lacks: the rendered-frame LRU
-            (`framecache`), and a `scale`/`Quality` other than `default()` —
-            there is no scale on the frb path at all, so no adaptive resolution
-            and no `quality_for`. Then `render_scope`.
-        - The worker loop busy-spins on `try_recv()` with an empty
-            `process_loop`, so it burns a core continuously — make it block on
-            the channel.
+            (`framecache`), then `render_scope`. **Done:** the worker blocks on
+            its channel instead of busy-spinning, coalesces queued requests to
+            the newest, and carries a `scale` from which it derives `Quality`
+            through v0's shared `quality_for`.
+        - The adaptive *quality tier* (K-171) is still not ported: the frb scale
+            tracks the Viewer's panel size only, where v0's
+            `effectivePreviewScale` also folds in measured render cost via
+            `realtime::observe`. So a comp too heavy to render at panel size does
+            not yet degrade — it just renders slowly.
     2. **Project panel** — `save_project`, `import_footage`, `new_composition`,
         `delete_item`, `rename_item`, `move_to_root`, `relink`, `thumbnail`,
         plus children/parent on `ItemReference` for the folder tree. Note

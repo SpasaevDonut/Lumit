@@ -154,6 +154,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
 
   @protected
+  BridgeCompSize dco_decode_bridge_comp_size(dynamic raw);
+
+  @protected
   BridgeRenderedFrame dco_decode_bridge_rendered_frame(dynamic raw);
 
   @protected
@@ -165,6 +168,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   CompositionReference dco_decode_composition_reference(dynamic raw);
+
+  @protected
+  double dco_decode_f_32(dynamic raw);
 
   @protected
   double dco_decode_f_64(dynamic raw);
@@ -362,6 +368,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeCompSize sse_decode_bridge_comp_size(SseDeserializer deserializer);
+
+  @protected
   BridgeRenderedFrame sse_decode_bridge_rendered_frame(
       SseDeserializer deserializer);
 
@@ -376,6 +385,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   CompositionReference sse_decode_composition_reference(
       SseDeserializer deserializer);
+
+  @protected
+  double sse_decode_f_32(SseDeserializer deserializer);
 
   @protected
   double sse_decode_f_64(SseDeserializer deserializer);
@@ -578,6 +590,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SolidReference self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_comp_size(
+      BridgeCompSize self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_rendered_frame(
       BridgeRenderedFrame self, SseSerializer serializer);
 
@@ -592,6 +608,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_composition_reference(
       CompositionReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_f_32(double self, SseSerializer serializer);
 
   @protected
   void sse_encode_f_64(double self, SseSerializer serializer);

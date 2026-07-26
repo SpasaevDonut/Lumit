@@ -10,9 +10,31 @@ import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `project`
+// These functions are ignored because they are not marked as `pub`: `composition`, `dispatch`, `project`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
+
+/// A composition's pixel dimensions.
+class BridgeCompSize {
+  final int width;
+  final int height;
+
+  const BridgeCompSize({
+    required this.width,
+    required this.height,
+  });
+
+  @override
+  int get hashCode => width.hashCode ^ height.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeCompSize &&
+          runtimeType == other.runtimeType &&
+          width == other.width &&
+          height == other.height;
+}
 
 class CompositionReference {
   final UuidValue internalproject;
@@ -28,17 +50,36 @@ class CompositionReference {
         that: this,
       );
 
-  void renderFrame({required BigInt frame}) =>
-      BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
-          that: this, frame: frame);
+  /// The comp's pixel dimensions. The Viewer needs these to work out what
+  /// fraction of comp resolution it is actually showing, which is the `scale`
+  /// every render request carries — without them it could only ever ask for
+  /// full resolution.
+  BridgeCompSize getSize() =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetSize(
+        that: this,
+      );
 
+  /// Ask for `frame` at `scale` — 1.0 meaning "shown at comp resolution".
+  /// Below 1.0 the engine decodes and composites smaller, which is how a
+  /// Viewer that is not filling the screen stays cheap.
+  void renderFrame({required BigInt frame, required double scale}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
+          that: this, frame: frame, scale: scale);
+
+  /// Ask for `frame` with `layer`'s effect stack replaced by `effects` — the
+  /// live drag path, which never touches the document.
   void renderFrameWithPreview(
           {required BigInt frame,
+          required double scale,
           required LayerReference layer,
           required List<BridgeEffectInstance> effects}) =>
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceRenderFrameWithPreview(
-              that: this, frame: frame, layer: layer, effects: effects);
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              effects: effects);
 
   @override
   int get hashCode => internalproject.hashCode ^ internalid.hashCode;

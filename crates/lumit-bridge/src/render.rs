@@ -134,7 +134,11 @@ pub(crate) fn render_comp_frame_gen(
 ///
 /// Auto rather than a fixed divisor because the scale is continuous — it tracks
 /// the viewport and the adaptive tier, not a Full/Half/Quarter picker.
-fn quality_for(scale: f32) -> lumit_render::Quality {
+///
+/// Shared with the frb render worker (`api::worker_thread`) rather than copied:
+/// two implementations of the same quality policy would drift, and then the two
+/// frontends would decode at different sizes for the same on-screen scale.
+pub(crate) fn quality_for(scale: f32) -> lumit_render::Quality {
     let sane = if scale.is_finite() && scale > 0.0 {
         scale
     } else {

@@ -1,9 +1,13 @@
-use std::{eprintln, ops::ControlFlow, println, sync::mpsc::Receiver};
+use std::{eprintln, println, sync::mpsc::Receiver};
 
 use flutter_rust_bridge::frb;
 use lumit_core::model::EffectInstance;
-// Every `publish_frame` variant needs Quality, so this is unconditional.
-use lumit_render::{HeadlessRenderer, PreviewEngine, Quality};
+use lumit_render::{HeadlessRenderer, PreviewEngine};
+
+// The quality policy is v0's, shared rather than copied: two implementations of
+// "what does a scale of 0.5 mean for the decode" would drift, and the two
+// frontends would then decode at different sizes for the same on-screen scale.
+use crate::render::quality_for;
 use uuid::Uuid;
 
 // Each frame type is only constructed by its own platform's `publish_frame`, so
@@ -49,12 +53,17 @@ pub enum WorkerRequest {
 pub struct RenderCompRequest {
     pub comp: CompositionReference,
     pub frame: u64,
+    /// The on-screen scale of the Viewer, 1.0 meaning "shown at comp
+    /// resolution". Below 1.0 the frame is being displayed smaller than the comp,
+    /// so it is decoded smaller too — see [`crate::render::quality_for`].
+    pub scale: f32,
 }
 
 #[frb(ignore)]
 pub struct RenderCompRequestWithPreview {
     pub comp: CompositionReference,
     pub frame: u64,
+    pub scale: f32,
     pub layer: LayerReference,
     pub effects: Vec<EffectInstance>,
 }
@@ -105,46 +114,42 @@ fn worker_loop(
     };
 
     loop {
-        if let ControlFlow::Break(_) = handle_incoming_requests(&receiver, &mut state, &mut stream)
-        {
-            eprintln!("Receiver disconnected");
+        // Block until there is something to do. This used to be `try_recv` in a
+        // bare `loop` beside an empty `process_loop`, which spun a whole core
+        // continuously whether or not anything was rendering.
+        let Ok(request) = receiver.recv() else {
+            eprintln!("Receiver disconnected, stopping the worker");
             return;
+        };
+
+        // Latest wins. Anything that queued up while the previous frame was
+        // rendering is already superseded — a drag emits a request every ~20 ms
+        // and a render takes longer than that, so without this the worker works
+        // through a backlog of frames nothing will ever see, each one delaying
+        // the only one the user is waiting for. Draining to the newest is what
+        // keeps a fast drag feeling attached to the pointer (docs/13 §2, B3:
+        // the *first* frame after an interaction is what is budgeted).
+        let mut request = request;
+        let mut superseded = 0usize;
+        while let Ok(newer) = receiver.try_recv() {
+            request = newer;
+            superseded += 1;
+        }
+        if superseded > 0 {
+            println!("Skipped {superseded} superseded render request(s)");
         }
 
-        process_loop(&mut state);
-    }
-}
-
-fn process_loop(_: &mut WorkerState) {}
-
-fn handle_incoming_requests(
-    receiver: &Receiver<WorkerRequest>,
-    state: &mut WorkerState,
-    stream: &mut WorkerResponseStream,
-) -> ControlFlow<()> {
-    match receiver.try_recv() {
-        Ok(result) => match result {
-            // A frame that cannot be rendered is dropped, not fatal: the worker
-            // has to survive to serve the next request.
-            WorkerRequest::RenderComp(req) => {
-                println!("Rendering comp in worker thread!");
-                if let Err(err) = render_comp(req, state, stream) {
-                    eprintln!("Dropping frame: {err}");
-                }
-                ControlFlow::Continue(())
-            }
+        // A frame that cannot be rendered is dropped, not fatal: the worker has
+        // to survive to serve the next request.
+        let outcome = match request {
+            WorkerRequest::RenderComp(req) => render_comp(req, &mut state, &mut stream),
             WorkerRequest::RenderCompWithPreview(req) => {
-                println!("Rendering comp in worker thread!");
-                if let Err(err) = render_comp_with_preview(req, state, stream) {
-                    eprintln!("Dropping preview frame: {err}");
-                }
-                ControlFlow::Continue(())
+                render_comp_with_preview(req, &mut state, &mut stream)
             }
-        },
-        Err(err) => match err {
-            std::sync::mpsc::TryRecvError::Empty => ControlFlow::Continue(()),
-            std::sync::mpsc::TryRecvError::Disconnected => ControlFlow::Break(()),
-        },
+        };
+        if let Err(err) = outcome {
+            eprintln!("Dropping frame: {err}");
+        }
     }
 }
 
@@ -161,7 +166,7 @@ fn render_comp(
 
     println!("Rendering frame!");
 
-    publish_frame(state, req.comp.id, req.frame, &document, stream);
+    publish_frame(state, req.comp.id, req.frame, req.scale, &document, stream);
     Ok(())
 }
 
@@ -200,7 +205,7 @@ fn render_comp_with_preview(
 
     println!("Rendering frame with modified effects!");
 
-    publish_frame(state, req.comp.id, req.frame, &document, stream);
+    publish_frame(state, req.comp.id, req.frame, req.scale, &document, stream);
     Ok(())
 }
 
@@ -226,13 +231,14 @@ fn publish_frame(
     state: &mut WorkerState,
     comp: Uuid,
     frame: u64,
+    scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
 ) {
     let shared =
         match state
             .renderer
-            .render_to_shared_dmabuf(document, comp, frame, Quality::default())
+            .render_to_shared_dmabuf(document, comp, frame, quality_for(scale))
         {
             Ok(shared) => shared,
             Err(err) => {
@@ -257,12 +263,13 @@ fn publish_frame(
     state: &mut WorkerState,
     comp: Uuid,
     frame: u64,
+    scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
 ) {
     let shared = match state
         .renderer
-        .render_to_shared(document, comp, frame, Quality::default())
+        .render_to_shared(document, comp, frame, quality_for(scale))
     {
         Ok(shared) => shared,
         Err(err) => {
@@ -288,16 +295,19 @@ fn publish_frame(
     state: &mut WorkerState,
     comp: Uuid,
     frame: u64,
+    scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
 ) {
-    // Full resolution and no draft: the frb path carries no scale yet, so there
-    // is nothing to derive a preview quality from. Wiring `scale`/`Quality`
-    // through is tracked in docs/TODO.md.
+    // `scale` twice over, and they mean different things: `quality_for` turns it
+    // into a *decode* size (don't decode 4K footage to fill a 500 px panel), and
+    // the trailing argument resizes the finished buffer. Both matter — the first
+    // is where the time goes, the second is how many bytes then cross to Dart,
+    // which on this path is the expensive part (see `BridgeRenderedFrame`).
     let rendered =
         state
             .renderer
-            .render_preview(document, comp, frame, Quality::default(), 1.0, None);
+            .render_preview(document, comp, frame, quality_for(scale), scale, None);
 
     let (rgba, width, height) = match rendered {
         Ok(frame) => frame,
