@@ -153,7 +153,6 @@ sequence clips.
 
     **2. Shell surfaces** — not panels, but v0-bound. Each of these imports
     `bridge/bridge.dart` or `state/app_state.dart` today.
-    - **Export dialog** (391 lines) — needs the whole export subsystem below.
     - **Popout windows** — the five files under `lib/popout/`. Multi-window, and
         the v0 version has a known main-window resync gap.
 
@@ -174,7 +173,10 @@ sequence clips.
         `segment_to_rate`, `set_segment_preset`.
     - **Audio** — all of it: prepare/play/pause/seek/stop/clock, `detect_beats`,
         `clear_beat_markers`.
-    - **Export** — `start_export` / `poll` / `cancel` / `export_preset`.
+    - **Export presets** — `export_preset` (the suggested file name a delivery
+        preset implies). Start/poll/cancel are in; `export.rs` itself is now
+        shared rather than v0-only, since `start_with_document` takes the
+        document instead of reading the v0 bridge.
     - **Assets** — `set_solid`, `set_text_content`, `set_camera_zoom`.
     - **Presets** — the preset *listing* (a browsable library of saved
         `.lumfx` files), which was never built on either bridge. Save and load

@@ -9,9 +9,11 @@ import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/shell/command_palette_frb.dart';
+import 'package:lumit_flutter/shell/export_dialog_frb.dart';
 import 'package:lumit_flutter/shell/recovery_dialog_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
+import 'package:lumit_flutter/src/rust/api/export.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -187,6 +189,53 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('recover-discard')));
       await tester.pumpAndSettle();
       expect(listAutosaves(project: path), hasLength(1));
+    });
+  }, skip: !engineAvailable);
+
+  group('Export dialogue (frb)', () {
+    testWidgets('Export is inert until somewhere to write is chosen',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addAdjustmentLayer();
+
+      await tester.pumpWidget(hostPanel(
+        child: Builder(
+          builder: (context) => HouseButton(
+            key: const ValueKey('open-export'),
+            onPressed: () => showExportDialogFrb(
+              context: context,
+              comp: comp,
+              picker: () async => '${Directory.systemTemp.path}/out.mp4',
+            ),
+            child: const Text('Open'),
+          ),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('open-export')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Export composition'), findsOneWidget);
+      expect(find.text('Not chosen'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('export-choose')));
+      await tester.pumpAndSettle();
+      expect(find.text('out.mp4'), findsOneWidget,
+          reason: 'the chosen path is shown by its file name');
+
+      // Starting either runs or explains itself — a machine with no GPU says
+      // so where the progress would be, rather than the dialogue looking dead.
+      await tester.tap(find.byKey(const ValueKey('export-start')));
+      await tester.pumpAndSettle(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('export-close')), findsOneWidget,
+          reason: 'the dialogue survives whatever the exporter said');
+
+      exportCancel();
+      await tester.tap(find.byKey(const ValueKey('export-close')));
+      await tester.pumpAndSettle();
     });
   }, skip: !engineAvailable);
 }

@@ -5,6 +5,7 @@ use lumit_core::OpError;
 pub mod cache;
 pub mod composition;
 pub mod effect;
+pub mod export;
 pub mod folder;
 pub mod footage;
 pub mod layer;
@@ -59,6 +60,9 @@ pub enum BridgeError {
     InvalidScopeColours,
     /// The text handed to `load_preset` is not a `.lumfx` document.
     InvalidPreset,
+    /// The export could not start — already running, no GPU, or a spec the
+    /// encoder will not take. Carries the engine's own words.
+    ExportFailed(String),
     /// The razor was pointed at a layer that is not a Sequence layer.
     NotSequence,
     /// Only a Footage layer converts to a Sequence layer.
@@ -112,6 +116,7 @@ impl fmt::Display for BridgeError {
                 write!(f, "A scope needs five red/green/blue triples")
             }
             BridgeError::InvalidPreset => write!(f, "That is not a valid effect preset"),
+            BridgeError::ExportFailed(why) => write!(f, "{why}"),
             BridgeError::NotSequence => write!(f, "That is not a sequence layer"),
             BridgeError::NotFootage => {
                 write!(f, "Only footage layers convert to sequenced")

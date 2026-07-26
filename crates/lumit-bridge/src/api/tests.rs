@@ -1870,3 +1870,55 @@ fn restoring_replaces_the_document_and_keeps_the_change_observer() {
 
     std::fs::remove_dir_all(&dir).ok();
 }
+
+// --- Export ---------------------------------------------------------------
+
+/// The export surface answers safely whatever has happened before it.
+///
+/// One test rather than two, and it never asserts "nothing has run yet": the
+/// exporter's slot is process-wide and the suite runs in parallel, so a test
+/// that assumed a pristine slot would pass or fail on test *order*.
+#[test]
+fn the_export_surface_refuses_calmly_and_never_panics() {
+    use crate::api::export::{export_cancel, export_poll, BridgeExportSpec, BridgeExportState};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let spec = BridgeExportSpec {
+        preset: String::new(),
+        codec: "h264".into(),
+        width: 0,
+        height: 0,
+        bitrate_mbps: 0,
+        include_audio: true,
+        audio_bit_rate: 0,
+    };
+
+    // Nowhere to write is refused before any work starts.
+    assert!(matches!(
+        comp.start_export(spec.clone(), "   ".into()),
+        Err(BridgeError::NoProjectPath)
+    ));
+
+    // With a path it reaches the exporter, which on a machine with no GPU says
+    // so — either way a calm answer, never a panic.
+    let target = std::env::temp_dir().join("lumit-export-probe.mp4");
+    let started = comp.start_export(spec, target.to_string_lossy().into_owned());
+    assert!(
+        started.is_ok() || matches!(started, Err(BridgeError::ExportFailed(_))),
+        "an export either starts or explains itself"
+    );
+
+    // Poll always answers one of the four states, and cancelling is safe
+    // whether or not anything is running.
+    assert!(matches!(
+        export_poll(),
+        BridgeExportState::Idle
+            | BridgeExportState::Running { .. }
+            | BridgeExportState::Done { .. }
+            | BridgeExportState::Failed { .. }
+    ));
+    export_cancel();
+    export_cancel();
+    std::fs::remove_file(&target).ok();
+}

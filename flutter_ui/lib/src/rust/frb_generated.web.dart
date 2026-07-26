@@ -10,6 +10,7 @@ import 'api.dart';
 import 'api/cache.dart';
 import 'api/composition.dart';
 import 'api/effect.dart';
+import 'api/export.dart';
 import 'api/folder.dart';
 import 'api/footage.dart';
 import 'api/layer.dart';
@@ -132,6 +133,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeEffectValue dco_decode_box_autoadd_bridge_effect_value(dynamic raw);
 
   @protected
+  BridgeExportSpec dco_decode_box_autoadd_bridge_export_spec(dynamic raw);
+
+  @protected
   BridgeFileParam dco_decode_box_autoadd_bridge_file_param(dynamic raw);
 
   @protected
@@ -217,6 +221,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeEffectValue dco_decode_bridge_effect_value(dynamic raw);
+
+  @protected
+  BridgeExportSpec dco_decode_bridge_export_spec(dynamic raw);
+
+  @protected
+  BridgeExportState dco_decode_bridge_export_state(dynamic raw);
 
   @protected
   BridgeFileParam dco_decode_bridge_file_param(dynamic raw);
@@ -508,6 +518,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeExportSpec sse_decode_box_autoadd_bridge_export_spec(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeFileParam sse_decode_box_autoadd_bridge_file_param(
       SseDeserializer deserializer);
 
@@ -607,6 +621,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeEffectValue sse_decode_bridge_effect_value(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeExportSpec sse_decode_bridge_export_spec(SseDeserializer deserializer);
+
+  @protected
+  BridgeExportState sse_decode_bridge_export_state(
       SseDeserializer deserializer);
 
   @protected
@@ -920,6 +941,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeEffectValue self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_export_spec(
+      BridgeExportSpec self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_file_param(
       BridgeFileParam self, SseSerializer serializer);
 
@@ -1027,6 +1052,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_effect_value(
       BridgeEffectValue self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_export_spec(
+      BridgeExportSpec self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_export_state(
+      BridgeExportState self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_file_param(

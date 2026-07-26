@@ -6,6 +6,7 @@
 import '../api.dart';
 import '../frb_generated.dart';
 import 'effect.dart';
+import 'export.dart';
 import 'footage.dart';
 import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -307,6 +308,14 @@ class CompositionReference {
   void setWorkArea({BridgeSpan? span}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceSetWorkArea(
           that: this, span: span);
+
+  /// Start writing this composition to `path`.
+  ///
+  /// Returns once the job is *running*, not once it is finished — ask
+  /// [`export_poll`] for that. An export already in flight is a calm error.
+  void startExport({required BridgeExportSpec spec, required String path}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceStartExport(
+          that: this, spec: spec, path: path);
 
   /// The exact time frame `frame` starts at, as the rational the document
   /// stores.

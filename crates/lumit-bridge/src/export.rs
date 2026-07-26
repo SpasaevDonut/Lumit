@@ -344,6 +344,25 @@ pub(crate) fn start_export(comp_id: &str, spec_json: &str, out_path: &str) -> St
     }
 }
 
+/// Start an export of `comp` in `doc` — the frb entry, which brings its own
+/// document rather than reading the process-wide v0 bridge.
+pub(crate) fn start_export_with_document(
+    doc: std::sync::Arc<lumit_core::Document>,
+    comp: uuid::Uuid,
+    spec_json: &str,
+    out_path: &str,
+) -> String {
+    #[cfg(feature = "render")]
+    {
+        driving::start_with_document(doc, comp, spec_json, out_path)
+    }
+    #[cfg(not(feature = "render"))]
+    {
+        let _ = (doc, comp, spec_json, out_path);
+        err_json("export: this build has no exporter (the render feature is off)")
+    }
+}
+
 /// Poll the running export, draining the exporter's event channel. Reply:
 /// `{"ok":true,"state":"idle|running|done|failed","frame":…,"total":…,
 /// "encoder":…,"path"/"error":…}`. `idle` when nothing has run since start-up.
@@ -437,6 +456,21 @@ mod driving {
             Ok(id) => id,
             Err(_) => return err_json("export: composition id is not a valid UUID"),
         };
+        let doc = crate::state::with_bridge(|b| b.store.snapshot());
+        start_with_document(doc, comp, spec_json, out_path)
+    }
+
+    /// The export itself, given the document to render.
+    ///
+    /// Split out from [`start`] so the frb path can drive the same exporter: v0
+    /// reads its document from the process-wide bridge, and an frb project is
+    /// not in it. Everything after this point is shared.
+    pub(super) fn start_with_document(
+        doc: std::sync::Arc<lumit_core::Document>,
+        comp: Uuid,
+        spec_json: &str,
+        out_path: &str,
+    ) -> String {
         let inputs = match parse_inputs(spec_json) {
             Ok(i) => i,
             Err(e) => return err_json(format!("export: {e}")),
@@ -452,13 +486,8 @@ mod driving {
             return err_json("an export is already running");
         }
 
-        // Resolve the spec against the comp's own size (read under the doc lock).
-        let (doc, comp_size) = crate::state::with_bridge(|b| {
-            let doc = b.store.snapshot();
-            let size = doc.comp(comp).map(|c| (c.width, c.height));
-            (doc, size)
-        });
-        let Some((cw, ch)) = comp_size else {
+        // Resolve the spec against the comp's own size.
+        let Some((cw, ch)) = doc.comp(comp).map(|c| (c.width, c.height)) else {
             return err_json("export: unknown composition");
         };
         let resolved = resolve_spec(&inputs, cw, ch);

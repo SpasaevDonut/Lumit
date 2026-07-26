@@ -17,6 +17,7 @@ import '../state/file_dialogs.dart';
 import '../widgets/controls.dart';
 import 'command_palette_frb.dart';
 import 'comp_settings_frb.dart';
+import 'export_dialog_frb.dart';
 import 'recovery_dialog_frb.dart';
 import 'settings_window_frb.dart';
 
@@ -64,6 +65,13 @@ class LumitMenuBarFrb extends StatelessWidget {
             _Item.divider(),
             _Item('Import footage…',
                 project == null ? null : () => _import(context)),
+            _Item.divider(),
+            _Item(
+              'Export…',
+              context.read<LumitUiState>().selectedComp == null
+                  ? null
+                  : () => _export(context),
+            ),
             _Item.divider(),
             _Item('Settings…', () => showSettingsWindowFrb(context)),
             _Item('Recover…',
@@ -148,6 +156,12 @@ class LumitMenuBarFrb extends StatelessWidget {
     if (comp == null) return;
     final applied = await showCompSettingsFrb(context: context, comp: comp);
     if (applied) app.notifyDocumentChanged();
+  }
+
+  Future<void> _export(BuildContext context) async {
+    final comp = context.read<LumitUiState>().selectedComp;
+    if (comp == null) return;
+    await showExportDialogFrb(context: context, comp: comp);
   }
 
   /// Offer to recover work beside the open project.

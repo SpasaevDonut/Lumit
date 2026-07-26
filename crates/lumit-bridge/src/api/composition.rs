@@ -93,7 +93,7 @@ impl CompositionReference {
     }
 
     #[frb(ignore)]
-    fn project(&self) -> Result<Arc<std::sync::RwLock<LumitBridgeState>>, BridgeError> {
+    pub(crate) fn project(&self) -> Result<Arc<std::sync::RwLock<LumitBridgeState>>, BridgeError> {
         let projects = PROJECTS.read().map_err(|_| BridgeError::ReadFailed)?;
         let project = projects.get(&self.project);
 
