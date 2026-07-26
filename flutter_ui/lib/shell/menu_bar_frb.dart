@@ -13,6 +13,9 @@ import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:provider/provider.dart';
 
+import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:uuid/uuid.dart';
+
 import '../state/file_dialogs.dart';
 import '../widgets/controls.dart';
 import 'command_palette_frb.dart';
@@ -60,8 +63,11 @@ class LumitMenuBarFrb extends StatelessWidget {
             // behaves as Save as, which is what the engine's empty-path refusal
             // makes us handle explicitly.
             _Item('Save', project == null ? null : () => _save(context)),
-            _Item('Save as…',
-                project == null ? null : () => _save(context, forcePicker: true)),
+            _Item(
+                'Save as…',
+                project == null
+                    ? null
+                    : () => _save(context, forcePicker: true)),
             _Item.divider(),
             _Item('Import footage…',
                 project == null ? null : () => _import(context)),
@@ -73,9 +79,7 @@ class LumitMenuBarFrb extends StatelessWidget {
                   : () => _export(context),
             ),
             _Item.divider(),
-            _Item('Settings…', () => showSettingsWindowFrb(context)),
-            _Item('Recover…',
-                project == null ? null : () => _recover(context)),
+            _Item('Recover…', project == null ? null : () => _recover(context)),
           ]),
           _menu(context, 'Edit', [
             _Item(
@@ -86,12 +90,40 @@ class LumitMenuBarFrb extends StatelessWidget {
               'Redo',
               (history?.canRedo ?? false) ? () => _redo(context) : null,
             ),
-            _Item.divider(),
-            _Item('Command palette…', () => _palette(context)),
           ]),
           _menu(context, 'Composition', [
             _Item('New composition',
                 project == null ? null : () => _newComposition(context)),
+            _Item.divider(),
+            // Layer creation. Every one of these needs a composition to go
+            // into, so they are disabled together rather than each checking.
+            _Item(
+                'Add solid layer', _onComp(context, (c) => c.addSolidLayer())),
+            _Item('Add text layer', _onComp(context, (c) => c.addTextLayer())),
+            _Item('Add camera layer',
+                _onComp(context, (c) => c.addCameraLayer())),
+            _Item('Add adjustment layer',
+                _onComp(context, (c) => c.addAdjustmentLayer())),
+            _Item('Add sequence layer',
+                _onComp(context, (c) => c.addSequenceLayer())),
+            _Item.divider(),
+            _Item('Cut clip at playhead',
+                _onComp(context, (c) => _cutAtPlayhead(context, c))),
+            _Item('Add marker at playhead',
+                _onComp(context, (c) => _markerAtPlayhead(context, c))),
+            _Item.divider(),
+            // Beat detection reads the whole comp's audio and can take
+            // seconds; a comp with no audio does nothing rather than alarming.
+            _Item(
+                'Detect beats',
+                _onComp(context, (c) {
+                  try {
+                    c.detectBeats(sensitivityPercent: 50);
+                  } catch (_) {}
+                })),
+            _Item('Clear beat markers',
+                _onComp(context, (c) => c.clearBeatMarkers())),
+            _Item.divider(),
             _Item(
               'Composition settings…',
               context.read<LumitUiState>().selectedComp == null
@@ -99,9 +131,51 @@ class LumitMenuBarFrb extends StatelessWidget {
                   : () => _compSettings(context),
             ),
           ]),
+          _menu(context, 'Window', [
+            _Item('Command palette…', () => _palette(context)),
+            _Item('Reset workspace',
+                () => context.read<LumitUiState>().resetLayout()),
+            _Item.divider(),
+            _Item('Settings…', () => showSettingsWindowFrb(context)),
+          ]),
         ],
       ),
     );
+  }
+
+  /// Wrap a composition action: null (so the item greys out) when no
+  /// composition is fronted, else the action followed by a redraw.
+  VoidCallback? _onComp(
+      BuildContext context, void Function(CompositionReference) run) {
+    final comp = context.read<LumitUiState>().selectedComp;
+    if (comp == null) return null;
+    return () {
+      run(comp);
+      app.notifyDocumentChanged();
+    };
+  }
+
+  /// Razor the selected layer at the playhead. Only Sequence layers hold
+  /// clips, so on anything else the engine declines and nothing happens.
+  void _cutAtPlayhead(BuildContext context, CompositionReference comp) {
+    final ui = context.read<LumitUiState>();
+    final layer = ui.selectedLayer.value;
+    if (layer == null) return;
+    try {
+      layer.cutClipAt(frame: ui.playheadFrame.value);
+    } catch (_) {}
+  }
+
+  void _markerAtPlayhead(BuildContext context, CompositionReference comp) {
+    final frame = context.read<LumitUiState>().playheadFrame.value;
+    comp.setMarkers(markers: [
+      ...comp.getMarkers(),
+      BridgeMarker(
+        id: UuidValue.fromString(const Uuid().v4()),
+        time: comp.timeOfFrame(frame: frame),
+        label: '',
+      ),
+    ]);
   }
 
   Future<void> _open(BuildContext context) async {
@@ -275,35 +349,45 @@ class _MenuList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    // A long menu on a short window would otherwise run off the bottom, where
+    // the last items cannot be clicked at all — so it scrolls once it no longer
+    // fits. `- 40` leaves the menu bar itself and a margin.
+    final maxHeight =
+        (MediaQuery.of(context).size.height - 40).clamp(80.0, 1e6);
     return FloatSurface(
       width: 230,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final item in items)
-            if (item.isDivider)
-              Container(
-                height: 1,
-                margin: const EdgeInsets.symmetric(vertical: 4),
-                color: t.hairline,
-              )
-            else
-              MenuRow(
-                onPressed: item.onPressed == null
-                    ? close
-                    : () {
-                        close();
-                        item.onPressed!();
-                      },
-                child: Text(
-                  item.label ?? '',
-                  style: item.onPressed == null
-                      ? t.body.copyWith(color: t.textDisabled)
-                      : null,
-                ),
-              ),
-        ],
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxHeight: maxHeight),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final item in items)
+                if (item.isDivider)
+                  Container(
+                    height: 1,
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    color: t.hairline,
+                  )
+                else
+                  MenuRow(
+                    onPressed: item.onPressed == null
+                        ? close
+                        : () {
+                            close();
+                            item.onPressed!();
+                          },
+                    child: Text(
+                      item.label ?? '',
+                      style: item.onPressed == null
+                          ? t.body.copyWith(color: t.textDisabled)
+                          : null,
+                    ),
+                  ),
+            ],
+          ),
+        ),
       ),
     );
   }

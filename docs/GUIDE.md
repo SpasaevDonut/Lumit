@@ -2464,6 +2464,32 @@ project as it boots, exactly as opening a word processor gives you a blank page.
 Opening a file from disk replaces it wholesale, so nothing is left over from the
 one that was made for you.
 
+*The workspace remembers itself again.* The panel arrangement, the colour
+scheme, the interface scale and the tooltip setting all live in one object
+(`Workspace`) that writes itself to a small settings file and reads it back at
+launch. During the port the shell briefly kept its own separate copies of the
+layout and the scheme, which is why a rearranged workspace did not survive a
+restart and why the scale slider moved nothing: the shell was reading one copy
+and the Settings window writing the other. There is one copy now. Two smaller
+things came back with it — the window's backdrop is the theme's own darkest
+surface rather than Flutter's stock Material grey, and the whole interface is
+drawn through the scale setting so text and hit-targets grow together.
+
+*Dropping footage onto the Timeline.* Dragging a footage item out of the Project
+panel and letting go over the Timeline adds it as a layer. The drag was only ever
+half-built: the Project panel lifted the item and drew it under the cursor, but
+the Timeline had nothing that accepted a drop, so the item fell into nothing.
+What the drag carries is the footage *handle* itself, not a name or a number to
+look it up by — on this bridge the handle is the identity, so the drop hands the
+engine exactly what it was given.
+
+*Menus that are taller than the window.* A menu is drawn in a floating layer over
+everything else, and until now it was simply placed and allowed to be whatever
+height it liked — so a long menu on a short window ran off the bottom with its
+last few rows unreachable. Every floating popup is now capped at the room below
+its own top edge and scrolls inside that if it needs to, which fixes the dropdown
+lists at the same time and for the same reason.
+
 *Two ways to reach the same two commands.* Import and New composition sit on the
 menu bar and on a small footer strip along the bottom of the Project panel, and
 double-clicking the Project panel's blank space imports as well. That is not

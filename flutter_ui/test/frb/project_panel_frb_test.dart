@@ -16,7 +16,8 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart' show LumitMediaStatus;
-import 'package:lumit_flutter/src/rust/api/project_item.dart' show ItemReference_Footage;
+import 'package:lumit_flutter/src/rust/api/project_item.dart'
+    show ItemReference_Footage;
 import 'package:lumit_flutter/src/rust/api/state.dart' show ScopedChange;
 import 'package:lumit_flutter/state/drag_payloads.dart';
 
@@ -94,7 +95,8 @@ void main() {
         of: find.text('Compositions'),
         matching: find.byType(Container),
       );
-      final compRow = find.byKey(ValueKey<String>('project-row-${comp.internalid}'));
+      final compRow =
+          find.byKey(ValueKey<String>('project-row-${comp.internalid}'));
       final folderLeft = tester.getTopLeft(find.text('Compositions')).dx;
       final compLeft = tester.getTopLeft(find.text('Scene')).dx;
       expect(folderRow, findsWidgets);
@@ -106,7 +108,8 @@ void main() {
       );
     });
 
-    testWidgets('clicking a row selects it, and a second click renames in place',
+    testWidgets(
+        'clicking a row selects it, and a second click renames in place',
         (tester) async {
       final p = freshProject();
       p.state.project!.importFootage(path: 'C:/clips/shot.mov');
@@ -275,7 +278,8 @@ void main() {
     /// `frb_test_support.dart` for the full account of that seam — and note that
     /// pumping *inside* `runAsync` is not the fix, because the panel's own
     /// `.then` continuation lives in the fake-async queue.
-    testWidgets('missing footage wears a badge, a Relink button, and can be '
+    testWidgets(
+        'missing footage wears a badge, a Relink button, and can be '
         'filtered to', (tester) async {
       final p = freshProject();
       p.state.project!.newComposition(name: 'Scene');
@@ -452,7 +456,8 @@ void main() {
 
       // An item rename is the panel's business, and reaches it from outside.
       scopes.clear();
-      final item = p.state.project!.getItems().whereType<ItemReference_Footage>().single;
+      final item =
+          p.state.project!.getItems().whereType<ItemReference_Footage>().single;
       item.rename(name: 'hero.mov');
       await settleFrb(tester, until: () => scopes.isNotEmpty);
 
@@ -540,7 +545,6 @@ void main() {
       expect(asked, 2,
           reason: 'the blank space below the rows takes the gesture too');
     });
-
   }, skip: !engineAvailable);
 }
 
@@ -581,7 +585,8 @@ String _probeableMediaFile(String name) {
 /// 0.1 s of 8-bit mono silence, as a WAV byte for byte.
 Uint8List _silentWav() {
   const sampleRate = 8000;
-  final samples = Uint8List(sampleRate ~/ 10)..fillRange(0, sampleRate ~/ 10, 128);
+  final samples = Uint8List(sampleRate ~/ 10)
+    ..fillRange(0, sampleRate ~/ 10, 128);
   final out = BytesBuilder();
   void ascii(String s) => out.add(s.codeUnits);
   void u16(int v) => out.add([v & 0xff, (v >> 8) & 0xff]);

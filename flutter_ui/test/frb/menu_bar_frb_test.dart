@@ -19,6 +19,7 @@ import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/theme/theme.dart';
@@ -69,8 +70,15 @@ void main() {
     /// Two pumps rather than `pumpAndSettle`: the popup is an overlay entry and
     /// the host disables animation, so one frame each is enough — and
     /// `pumpAndSettle` would spin on anything the engine has left in flight.
+    /// Open a menu and pick a row, scrolling to it first.
+    ///
+    /// The Composition menu is taller than an 800x600 test surface, so it
+    /// scrolls — and a row below the fold has to be brought into view before it
+    /// can be tapped, which is what a user does with the wheel.
     Future<void> choose(WidgetTester tester, String menu, String item) async {
       await tester.tap(find.byKey(ValueKey<String>('menu-$menu')));
+      await tester.pump();
+      await tester.ensureVisible(find.text(item));
       await tester.pump();
       await tester.tap(find.text(item));
       await tester.pump();
@@ -222,7 +230,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey<String>('menu-Edit')));
       await tester.pump();
       expect(colourOf('Undo'), isNot(t.textDisabled),
-          reason: 'an item you can see is disabled tells you the document state');
+          reason:
+              'an item you can see is disabled tells you the document state');
       await tester.tap(find.text('Undo'));
       await tester.pump();
 
@@ -242,7 +251,8 @@ void main() {
           reason: 'Redo put it back');
     });
 
-    testWidgets('Save prompts once, then saves in place; Save as always prompts',
+    testWidgets(
+        'Save prompts once, then saves in place; Save as always prompts',
         (tester) async {
       final dir = Directory.systemTemp.createTempSync('lumit-menu-save');
       final first = '${dir.path}/first.lum';
@@ -316,5 +326,86 @@ void main() {
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
+    /// The port shipped a menu with three items per menu where the previous
+    /// frontend had layer creation, clip and marker commands, beat detection
+    /// and a Window menu. Each of these reaches the document.
+    testWidgets('Composition creates every kind of layer', (tester) async {
+      final p = await mount(tester);
+      await choose(tester, 'Composition', 'New composition');
+      final comp = p.uiState.selectedComp!;
+
+      for (final item in [
+        'Add solid layer',
+        'Add text layer',
+        'Add camera layer',
+        'Add adjustment layer',
+        'Add sequence layer',
+      ]) {
+        final before = comp.getLayers().length;
+        await choose(tester, 'Composition', item);
+        await tester.pump();
+        expect(comp.getLayers(), hasLength(before + 1),
+            reason: '$item added one');
+      }
+    });
+
+    testWidgets('the layer items are disabled without a composition',
+        (tester) async {
+      final p = await mount(tester);
+      expect(p.uiState.selectedComp, isNull);
+
+      // Pressing it must be a no-op rather than a crash — a disabled row that
+      // throws when clicked is worse than one that is simply absent.
+      await choose(tester, 'Composition', 'Add solid layer');
+      await tester.pump();
+      expect(p.uiState.selectedComp, isNull);
+    });
+
+    testWidgets('Add marker at playhead marks the fronted comp',
+        (tester) async {
+      final p = await mount(tester);
+      await choose(tester, 'Composition', 'New composition');
+      final comp = p.uiState.selectedComp!;
+      p.uiState.playheadFrame.value = 30;
+
+      await choose(tester, 'Composition', 'Add marker at playhead');
+      await tester.pump();
+
+      expect(comp.getMarkers(), hasLength(1));
+      expect(comp.frameAtTime(time: comp.getMarkers().single.time), 30,
+          reason: 'it landed on the playhead, not at zero');
+    });
+
+    testWidgets('Clear beat markers is calm on a comp with none',
+        (tester) async {
+      final p = await mount(tester);
+      await choose(tester, 'Composition', 'New composition');
+      await choose(tester, 'Composition', 'Clear beat markers');
+      await tester.pump();
+      expect(p.uiState.selectedComp!.getMarkers(), isEmpty);
+    });
+
+    testWidgets('the Window menu offers the palette, reset and settings',
+        (tester) async {
+      final p = await mount(tester);
+
+      await tester.tap(find.byKey(const ValueKey<String>('menu-Window')));
+      await tester.pump();
+      expect(find.text('Command palette…'), findsOneWidget);
+      expect(find.text('Settings…'), findsOneWidget);
+      expect(find.text('Reset workspace'), findsOneWidget);
+      await dismiss(tester);
+
+      // Reset puts a rearranged workspace back to the default.
+      p.uiState.workspace.dock = DockSplit(
+        DockAxis.vertical,
+        [DockPane(Panel.viewer), DockPane(Panel.timeline)],
+        [0.5, 0.5],
+      );
+      await choose(tester, 'Window', 'Reset workspace');
+      await tester.pump();
+      expect(panelsIn(p.uiState.split), panelsIn(defaultLayout()),
+          reason: 'the default arrangement is back');
+    });
   }, skip: !engineAvailable);
 }

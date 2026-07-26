@@ -150,7 +150,8 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     final rows = <Widget>[];
     void walk(ItemReference item, int depth) {
       final id = _idOf(item);
-      final isMissingFootage = item is ItemReference_Footage && (_missing[id] ?? false);
+      final isMissingFootage =
+          item is ItemReference_Footage && (_missing[id] ?? false);
       // In missing-only mode every visible row is something to fix (docs/07 §3.3).
       if (!missingOnly || isMissingFootage) {
         rows.add(_ProjectRowFrb(
@@ -247,15 +248,16 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
 
   Future<void> _import() async {
     final state = Provider.of<LumitState>(context, listen: false);
-    if (await state.importFootagePaths(
-        await (widget.importPicker ?? pickFootage)())) {
+    if (await state
+        .importFootagePaths(await (widget.importPicker ?? pickFootage)())) {
       _documentChanged();
     }
   }
 
   void _newComposition() {
     // Fronted because a comp you just made is the one you want to work on.
-    final comp = Provider.of<LumitState>(context, listen: false).newComposition();
+    final comp =
+        Provider.of<LumitState>(context, listen: false).newComposition();
     if (comp == null) return;
     Provider.of<LumitUiState>(context, listen: false).setSelectedComp(comp);
     _documentChanged();
@@ -471,7 +473,8 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
     final picker = widget.relinkPicker;
     final path = picker != null
         ? await picker()
-        : await pickFootage().then((paths) => paths.isEmpty ? null : paths.first);
+        : await pickFootage()
+            .then((paths) => paths.isEmpty ? null : paths.first);
     if (path == null) return;
     footage.relink(path: path);
     widget.onLocalEdit();
@@ -544,7 +547,7 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
     if (item case ItemReference_Footage(:final field0)) {
       final name = _name();
       return Draggable<FootageDragData>(
-        data: FootageDragData(field0.internalid.toString(), name),
+        data: FootageDragData(field0, name),
         dragAnchorStrategy: pointerDragAnchorStrategy,
         feedback: _DragFeedbackFrb(name: name),
         child: row,
@@ -598,7 +601,8 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
     return Text(_name(), style: t.body, overflow: TextOverflow.ellipsis);
   }
 
-  (LumitIcon, Color) _iconFor(ItemReference item, LumitTheme t) => switch (item) {
+  (LumitIcon, Color) _iconFor(ItemReference item, LumitTheme t) =>
+      switch (item) {
         ItemReference_Footage() => (LumitIcon.footage, t.layer.footage),
         ItemReference_Folder() => (LumitIcon.folder, t.textMuted),
         ItemReference_Composition() => (LumitIcon.comp, t.layer.precomp),
@@ -733,7 +737,13 @@ class _DragFeedbackFrb extends StatelessWidget {
   }
 }
 
-enum _ProjectMenuAction { compSettings, relink, findMissing, moveToRoot, delete }
+enum _ProjectMenuAction {
+  compSettings,
+  relink,
+  findMissing,
+  moveToRoot,
+  delete
+}
 
 /// The project context menu.
 Future<void> showProjectMenuFrb({

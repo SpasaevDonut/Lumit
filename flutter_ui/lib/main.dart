@@ -17,8 +17,10 @@ import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/dock.dart';
+import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
+import 'package:lumit_flutter/widgets/ui_scale.dart';
 import 'package:provider/provider.dart';
 
 import 'popout/popout_main.dart';
@@ -77,7 +79,7 @@ class LumitState extends ChangeNotifier {
       StreamController.broadcast();
 
   Stream<ScopedChange> get onChange => _onChange.stream;
-  
+
   Stream<WorkerResponse> get onWorkerResponse => _onWorkerResponse.stream;
 
   void newProject() {
@@ -189,27 +191,37 @@ class LumitState extends ChangeNotifier {
 }
 
 class LumitUiState extends ChangeNotifier {
-  DockSplit split = defaultLayout();
+  /// Everything that outlives the session: the panel layout, the appearance,
+  /// UI scale, tooltips, autosave and export defaults.
+  ///
+  /// This is the same [Workspace] the shell has always used, loaded from disk
+  /// on construction — the port briefly kept its own copies of the layout and
+  /// the colour scheme here instead, which is why arrangements stopped
+  /// surviving a restart and the Settings window's scale slider moved nothing.
+  final Workspace workspace;
+
+  DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
+
   /// The appearance the shell is drawing in.
   ///
   /// Scheme and shape are held rather than the built theme, because the theme is
   /// derived from them — keeping the composed object as the source of truth
   /// would make "what did the user choose?" a question you answer by comparing
   /// colours.
-  LumitColorScheme scheme = LumitColorScheme.dark;
-  ThemeShape shape = ThemeShape.sharp;
-  LumitTheme get theme => LumitTheme.forScheme(scheme, shape);
+  LumitColorScheme get scheme => workspace.colorScheme;
+  ThemeShape get shape => workspace.themeShape;
+  LumitTheme get theme => workspace.theme;
 
-  void setScheme(LumitColorScheme next) {
-    scheme = next;
-    notifyListeners();
-  }
+  /// Put the panels back where they started (Window → Reset workspace).
+  void resetLayout() => workspace.resetWorkspaceLayout();
 
-  void setShape(ThemeShape next) {
-    shape = next;
-    notifyListeners();
-  }
+  /// Remember a layout the user changed by dragging a panel.
+  void saveLayout() => workspace.save();
+
+  void setScheme(LumitColorScheme next) => workspace.setScheme(next);
+
+  void setShape(ThemeShape next) => workspace.setShape(next);
 
   CompositionReference? _selectedComp;
   CompositionReference? get selectedComp => _selectedComp;
@@ -258,7 +270,11 @@ class LumitUiState extends ChangeNotifier {
 
   StreamSubscription? sub;
 
-  LumitUiState(LumitState state) {
+  LumitUiState(LumitState state, {Workspace? workspace})
+      : workspace = workspace ?? (Workspace()..load()) {
+    // Appearance and layout live in the workspace, so a change there is a
+    // change here as far as any listening widget is concerned.
+    this.workspace.addListener(notifyListeners);
     sub = state.onWorkerResponse.listen((msg) {
       switch (msg) {
         case WorkerResponse_RenderedDMABuf frame:
@@ -360,21 +376,45 @@ class LumitAppNew extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // WidgetsApp-level infrastructure only — no Material chrome
+    // (docs/archive/flutter-port/04 "Why not Material chrome"). `ThemeData.dark()`
+    // was doing real damage here: Material's own greys showed through wherever a
+    // panel did not paint, so the shell read as a Material app with Lumit panels
+    // in it rather than as Lumit. The backdrop is `surface0` from the theme.
     return MaterialApp(
-        theme: ThemeData.dark(),
-        home: ChangeNotifierProvider.value(
-          value: state,
-          child: ChangeNotifierProvider.value(
-              value: uiState,
-              child: ThemeScope(
-                theme: uiState.theme,
-                animationLevel: AnimationLevel.all,
-                showTooltips: true,
-                child: Overlay(initialEntries: [
-                  OverlayEntry(builder: (context) => const LumitAppView())
-                ]),
-              )),
-        ));
+      debugShowCheckedModeBanner: false,
+      home: ChangeNotifierProvider.value(
+        value: state,
+        child: ChangeNotifierProvider.value(
+          value: uiState,
+          // Rebuilt when the workspace changes, so the scale slider and the
+          // scheme picker take effect as they are moved.
+          child: ListenableBuilder(
+            listenable: uiState,
+            builder: (context, _) => ThemeScope(
+              theme: uiState.theme,
+              animationLevel: uiState.workspace.animationLevel,
+              showTooltips: uiState.workspace.interface.showTooltips,
+              child: Directionality(
+                textDirection: TextDirection.ltr,
+                child: ColoredBox(
+                  color: uiState.theme.surface0,
+                  // Settings → Interface → UI scale, the Flutter counterpart of
+                  // egui's `set_pixels_per_point`: layout and hit-testing scale
+                  // together (see widgets/ui_scale.dart).
+                  child: UiScaleView(
+                    scale: uiState.workspace.interface.uiScale,
+                    child: Overlay(initialEntries: [
+                      OverlayEntry(builder: (context) => const LumitAppView())
+                    ]),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
@@ -399,7 +439,8 @@ class _LumitAppViewState extends State<LumitAppView> {
           child: DockWidget(
             root: uiState.split,
             buildPanel: (context, panel) => buildPanelBodyFrb(context, panel),
-            onLayoutChanged: () {},
+            // Persisted, so an arrangement survives a restart.
+            onLayoutChanged: uiState.saveLayout,
             activePanel: uiState.activePanel,
             onPopOut: (p0) {},
             canPopOut: (panel) => false,
@@ -408,5 +449,4 @@ class _LumitAppViewState extends State<LumitAppView> {
       ],
     );
   }
-
 }

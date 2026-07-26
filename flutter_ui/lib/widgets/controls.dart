@@ -104,7 +104,9 @@ class _HouseButtonState extends State<HouseButton> {
             border: edge == null ? null : Border.all(color: edge, width: 1),
           ),
           child: DefaultTextStyle(
-            style: enabled ? t.bodyPrimary : t.body.copyWith(color: t.textDisabled),
+            style: enabled
+                ? t.bodyPrimary
+                : t.body.copyWith(color: t.textDisabled),
             child: widget.child,
           ),
         ),
@@ -377,21 +379,36 @@ Future<T?> showLumitPopup<T>({
   }
 
   entry = OverlayEntry(
-    builder: (_) => Stack(
-      children: [
-        Positioned.fill(
-          child: GestureDetector(
-            behavior: HitTestBehavior.opaque,
-            onTap: () => close(null),
-            onSecondaryTap: () => close(null),
+    // LayoutBuilder, not MediaQuery: what matters is the room the overlay
+    // actually has, and the two disagree wherever a MediaQuery has been
+    // overridden. A popup taller than that room would run off the bottom of the
+    // window with its last rows unreachable — so it is capped at the space
+    // below its own top edge, and scrolls inside that if it needs to.
+    builder: (_) => LayoutBuilder(
+      builder: (context, constraints) => Stack(
+        children: [
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => close(null),
+              onSecondaryTap: () => close(null),
+            ),
           ),
-        ),
-        Positioned(
-          left: position.dx,
-          top: position.dy,
-          child: builder(close),
-        ),
-      ],
+          Positioned(
+            left: position.dx,
+            top: position.dy,
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight:
+                    (constraints.maxHeight - position.dy - 8).clamp(80.0, 1e6),
+              ),
+              // Scrolls only when it has to: a shorter popup shrink-wraps and
+              // behaves exactly as before.
+              child: SingleChildScrollView(child: builder(close)),
+            ),
+          ),
+        ],
+      ),
     ),
   );
   overlay.insert(entry);
@@ -415,7 +432,8 @@ class _PopupCompleter<T> {
 class HouseCheckbox extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
-  const HouseCheckbox({super.key, required this.value, required this.onChanged});
+  const HouseCheckbox(
+      {super.key, required this.value, required this.onChanged});
 
   @override
   Widget build(BuildContext context) {
@@ -431,9 +449,7 @@ class HouseCheckbox extends StatelessWidget {
           borderRadius: BorderRadius.circular(3),
           border: Border.all(color: value ? t.accent : t.hairlineStrong),
         ),
-        child: value
-            ? CustomPaint(painter: _TickPainter(t.surface0))
-            : null,
+        child: value ? CustomPaint(painter: _TickPainter(t.surface0)) : null,
       ),
     );
   }
@@ -744,7 +760,8 @@ class _HouseSliderState extends State<HouseSlider> {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     const width = 140.0;
-    final frac = ((_shown - widget.min) / (widget.max - widget.min)).clamp(0.0, 1.0);
+    final frac =
+        ((_shown - widget.min) / (widget.max - widget.min)).clamp(0.0, 1.0);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [

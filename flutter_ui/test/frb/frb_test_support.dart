@@ -25,6 +25,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -108,7 +109,10 @@ Widget hostPanel({
 /// clears that registry wholesale.
 ({LumitState state, LumitUiState uiState}) freshProject() {
   final state = LumitState()..newProject();
-  return (state: state, uiState: LumitUiState(state));
+  // A default workspace, deliberately NOT loaded from disk: `Workspace()..load()`
+  // reads the developer's own settings file, so a test would assert against
+  // whatever colour scheme the machine happened to be set to.
+  return (state: state, uiState: LumitUiState(state, workspace: Workspace()));
 }
 
 /// Let an async frb call actually finish inside a `testWidgets` body.

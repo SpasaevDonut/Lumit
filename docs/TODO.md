@@ -24,11 +24,9 @@ Flutter frontend does not yet match, from the 2026-07-24 doc/code parity pass.
 - **Timeline audio waveforms** - no waveform lane on audio/footage layers or in
 sequence clips.
 
-**Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2 - 9 of 11 controls missing):**
-- Magnification picker,
+**Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):** magnification, channel view
+and the transparency grid have landed. Still missing:
 - re-introduce zooming via scrolling (focused on mouse position)
-- channel view (RGB/R/G/B/A)
-- transparency-grid toggle
 - wireframe/overlay menu
 - guides menu
 - region-of-interest
@@ -136,12 +134,17 @@ sequence clips.
     scratch whenever the comp's audio signature changes rather than patched.
 
 - **Panel work left.** The graph editor's speed and time lenses and draggable
-    bezier handles; the Viewer's scale and rotate gizmo handles, motion paths,
-    masks and shape tools; a multi-axis transform row's stopwatch keys only its
-    first axis; and the Effect controls panel has no drop target yet for the
-    effect drag the Effects & presets panel produces.
+    bezier handles; and the Viewer's scale and rotate gizmo handles, motion
+    paths, masks and shape tools.
 
 **Shell and onboarding:**
+- **Status line and splash are not in the frb shell.** The port's shell rebuilt
+  the menu bar and dock but not the bottom status line (notices, export progress
+  and its cancel button) or the boot splash; `boot_log` and the export poll both
+  exist on the frb API, so this is Dart-side only.
+- **Pop-out panel windows are switched off** in the frb shell (`canPopOut` is
+  hard-coded false). `popout_host_frb.dart` and `popout_main.dart` are ported and
+  the multi-window plugin is wired; only the shell's wiring is missing.
 - **Workspace presets** - only the single default layout exists; the four shipped
 presets (Edit/Effects/Colour/Audio) are not built ([07-UI-SPEC.md](07-UI-SPEC.md) §1.6).
 - **First-run setup screen** (Vegas/AE preference primer, K-006) - absent
@@ -163,15 +166,10 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
 - **Graph editor / Lane Editor / keyframes ([04-RETIMING.md](04-RETIMING.md), archive/flutter-port/06 §C):**
     - Re-introduce ability to move layer before comp start
     - Re-introduce ability to drag start/end of layer to adjust/crop length
-    - A key drag that moves both time and value currently commits two ops (`shiftKeyframes` then
-        `addKeyframe`) because the bridge exposes only granular keyframe ops - add a
-        single `set_animation` bridge op.
     - All Retime specific's are to be implemented later, currently it should behave and have exact parity
         as all other properties in graph view, same value/speed graph etc. Nothing extra
-    - **Value-key marquee multi-select** (single-key selection landed).
     - Currently marquee/selection box for dragging doesn't happen in flutter ui, needs adding
-    - **Effect-param interpolation menu** on the fx keyframe lane
-        (`setEffectParamKeyframeInterp` op exists; the menu does not).
+    - **Effect-param interpolation menu** on the fx keyframe lane.
 
 **Effects & presets / popout:**
 - **Preset browser listing** - save/load a `.lumfx` works, but saved presets are

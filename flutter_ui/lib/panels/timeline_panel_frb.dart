@@ -2,7 +2,7 @@
 //
 // Two columns side by side over one shared time axis: an **outline** on the
 // left (layer number, label chip, name, switches, blend mode, parent) and a
-// **track area** on the right (the ruler, the playhead, one bar per layer, the
+// **layer area** on the right (the ruler, the playhead, one bar per layer, the
 // work area and the markers). Everything reads through reference handles — there
 // is no snapshot to mirror, so a row asks the layer it draws.
 //
@@ -10,7 +10,7 @@
 // the eight switches, blend mode, parenting, dragging and trimming a layer's
 // bar, scrubbing the playhead, the work area and marker cues.
 //
-// The **Graph** button swaps the track area for the graph editor
+// The **Graph** button swaps the layer area for the graph editor
 // (graph_editor_frb.dart), which shapes the selected layer's curves.
 //
 // **The one rule the drags follow.** A bar drag is a live *preview* of nothing —
@@ -26,6 +26,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../state/drag_payloads.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'placeholder.dart';
@@ -56,7 +57,7 @@ class TimelinePanelFrb extends StatefulWidget {
 class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   String _search = '';
 
-  /// The graph editor replaces the track area rather than sitting beside it:
+  /// The graph editor replaces the layer area rather than sitting beside it:
   /// the two want the same width, and a curve squeezed into half a panel is not
   /// a curve you can shape.
   bool _graph = false;
@@ -104,57 +105,77 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           onChanged: () => setState(() {}),
         ),
         Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              // The axis is the panel's own width minus the outline, so a
-              // narrower panel shows the same span more tightly rather than
-              // scrolling — matching the Viewer's fit-to-panel behaviour.
-              final trackWidth =
-                  (constraints.maxWidth - _outlineWidth).clamp(1.0, 1e6);
-              final axis = _Axis(frames: frames, width: trackWidth);
-
-              return ValueListenableBuilder<int>(
-                valueListenable: ui.playheadFrame,
-                builder: (context, playhead, _) => Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: _outlineWidth,
-                      child: _Outline(
-                        comp: comp,
-                        layers: layers,
-                        selected: ui.selectedLayer.value,
-                        onSelect: (l) => setState(() {
-                          ui.selectedLayer.value = l;
-                        }),
-                        onChanged: () => setState(() {}),
-                      ),
-                    ),
-                    Expanded(
-                      child: _graph
-                          ? GraphEditorFrb(
-                              comp: comp,
-                              layer: ui.selectedLayer.value,
-                              frames: frames,
-                              playheadFrame: playhead,
-                              onSeek: (f) => ui.playheadFrame.value = f,
-                              onChanged: () => setState(() {}),
-                            )
-                          : _Tracks(
-                        comp: comp,
-                        layers: layers,
-                        axis: axis,
-                        playhead: playhead,
-                        razor: _razor,
-                        onSeek: (f) => ui.playheadFrame.value =
-                            f.clamp(0, frames == 0 ? 0 : frames - 1),
-                        onChanged: () => setState(() {}),
-                            ),
-                    ),
-                  ],
-                ),
-              );
+          // Dropping footage from the Project panel adds it as a layer. The
+          // target wraps the whole body — outline and layer area both — because
+          // "onto the Timeline" is what the gesture means; asking the user to
+          // hit one half of it would be a rule with no reason behind it.
+          child: DragTarget<FootageDragData>(
+            onAcceptWithDetails: (details) {
+              comp.addFootageLayer(footage: details.data.footage);
+              setState(() {});
             },
+            builder: (context, candidate, _) => Container(
+              // A live outline while something is over it, so the drop is
+              // visibly going to land rather than being taken on faith.
+              foregroundDecoration: candidate.isEmpty
+                  ? null
+                  : BoxDecoration(
+                      border: Border.all(
+                          color: ThemeScope.of(context).theme.accent, width: 2),
+                    ),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  // The axis is the panel's own width minus the outline, so a
+                  // narrower panel shows the same span more tightly rather than
+                  // scrolling — matching the Viewer's fit-to-panel behaviour.
+                  final layerAreaWidth =
+                      (constraints.maxWidth - _outlineWidth).clamp(1.0, 1e6);
+                  final axis = _Axis(frames: frames, width: layerAreaWidth);
+
+                  return ValueListenableBuilder<int>(
+                    valueListenable: ui.playheadFrame,
+                    builder: (context, playhead, _) => Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SizedBox(
+                          width: _outlineWidth,
+                          child: _Outline(
+                            comp: comp,
+                            layers: layers,
+                            selected: ui.selectedLayer.value,
+                            onSelect: (l) => setState(() {
+                              ui.selectedLayer.value = l;
+                            }),
+                            onChanged: () => setState(() {}),
+                          ),
+                        ),
+                        Expanded(
+                          child: _graph
+                              ? GraphEditorFrb(
+                                  comp: comp,
+                                  layer: ui.selectedLayer.value,
+                                  frames: frames,
+                                  playheadFrame: playhead,
+                                  onSeek: (f) => ui.playheadFrame.value = f,
+                                  onChanged: () => setState(() {}),
+                                )
+                              : _LayerArea(
+                                  comp: comp,
+                                  layers: layers,
+                                  axis: axis,
+                                  playhead: playhead,
+                                  razor: _razor,
+                                  onSeek: (f) => ui.playheadFrame.value =
+                                      f.clamp(0, frames == 0 ? 0 : frames - 1),
+                                  onChanged: () => setState(() {}),
+                                ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
         ),
         const CacheBarFrb(),
@@ -214,88 +235,88 @@ class _Toolbar extends StatelessWidget {
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
-        children: [
-          HouseButton(
-            key: const ValueKey('tl-add-layer'),
-            small: true,
-            onPressed: () => _showLayerMenu(context, comp, onChanged),
-            child: Text('New layer', style: t.small),
-          ),
-          const SizedBox(width: 6),
-          HouseButton(
-            key: const ValueKey('tl-graph'),
-            small: true,
-            onPressed: onToggleGraph,
-            child: Text('Graph',
-                style: t.small.copyWith(color: graph ? t.accent : null)),
-          ),
-          const SizedBox(width: 6),
-          LumitTooltip(
-            message: razor
-                ? 'Razor armed — click a clip to cut it'
-                : 'Razor: cut a clip at the playhead',
-            child: HouseButton(
-              key: const ValueKey('tl-razor'),
+          children: [
+            HouseButton(
+              key: const ValueKey('tl-add-layer'),
               small: true,
-              onPressed: onToggleRazor,
-              // HouseButton has no selected state, so the armed razor says so
-              // in the accent — the same colour the stopwatch uses for "this
-              // is on".
-              child: Text('Razor',
-                  style: t.small.copyWith(color: razor ? t.accent : null)),
+              onPressed: () => _showLayerMenu(context, comp, onChanged),
+              child: Text('New layer', style: t.small),
             ),
-          ),
-          const SizedBox(width: 6),
-          _workAreaButton(context, t, 'Set in', isStart: true),
-          _workAreaButton(context, t, 'Set out', isStart: false),
-          HouseButton(
-            key: const ValueKey('tl-clear-work-area'),
-            small: true,
-            frameless: true,
-            onPressed: () {
-              comp.setWorkArea(span: null);
-              onChanged();
-            },
-            child: Text('Clear', style: t.small),
-          ),
-          const SizedBox(width: 6),
-          HouseButton(
-            key: const ValueKey('tl-markers'),
-            small: true,
-            frameless: true,
-            onPressed: () async {
-              await showMarkerEditorFrb(
-                context: context,
-                comp: comp,
-                playheadFrame: playheadFrame(),
-              );
-              onChanged();
-            },
-            child: Text('Markers', style: t.small),
-          ),
-          LumitTooltip(
-            message: 'Find the beat in this composition and mark it',
-            child: HouseButton(
-              key: const ValueKey('tl-detect-beats'),
+            const SizedBox(width: 6),
+            HouseButton(
+              key: const ValueKey('tl-graph'),
+              small: true,
+              onPressed: onToggleGraph,
+              child: Text('Graph',
+                  style: t.small.copyWith(color: graph ? t.accent : null)),
+            ),
+            const SizedBox(width: 6),
+            LumitTooltip(
+              message: razor
+                  ? 'Razor armed — click a clip to cut it'
+                  : 'Razor: cut a clip at the playhead',
+              child: HouseButton(
+                key: const ValueKey('tl-razor'),
+                small: true,
+                onPressed: onToggleRazor,
+                // HouseButton has no selected state, so the armed razor says so
+                // in the accent — the same colour the stopwatch uses for "this
+                // is on".
+                child: Text('Razor',
+                    style: t.small.copyWith(color: razor ? t.accent : null)),
+              ),
+            ),
+            const SizedBox(width: 6),
+            _workAreaButton(context, t, 'Set in', isStart: true),
+            _workAreaButton(context, t, 'Set out', isStart: false),
+            HouseButton(
+              key: const ValueKey('tl-clear-work-area'),
               small: true,
               frameless: true,
               onPressed: () {
-                // Synchronous and seconds-long on a long comp; a comp with no
-                // audio, or a machine with no pipeline, says so by doing
-                // nothing rather than by an alarm.
-                try {
-                  comp.detectBeats(sensitivityPercent: 50);
-                } catch (_) {
-                  return;
-                }
+                comp.setWorkArea(span: null);
                 onChanged();
               },
-              child: Text('Detect beats', style: t.small),
+              child: Text('Clear', style: t.small),
             ),
-          ),
-          const SizedBox(width: 10),
-          LayerSearchFrb(onChanged: onSearch),
-        ],
+            const SizedBox(width: 6),
+            HouseButton(
+              key: const ValueKey('tl-markers'),
+              small: true,
+              frameless: true,
+              onPressed: () async {
+                await showMarkerEditorFrb(
+                  context: context,
+                  comp: comp,
+                  playheadFrame: playheadFrame(),
+                );
+                onChanged();
+              },
+              child: Text('Markers', style: t.small),
+            ),
+            LumitTooltip(
+              message: 'Find the beat in this composition and mark it',
+              child: HouseButton(
+                key: const ValueKey('tl-detect-beats'),
+                small: true,
+                frameless: true,
+                onPressed: () {
+                  // Synchronous and seconds-long on a long comp; a comp with no
+                  // audio, or a machine with no pipeline, says so by doing
+                  // nothing rather than by an alarm.
+                  try {
+                    comp.detectBeats(sensitivityPercent: 50);
+                  } catch (_) {
+                    return;
+                  }
+                  onChanged();
+                },
+                child: Text('Detect beats', style: t.small),
+              ),
+            ),
+            const SizedBox(width: 10),
+            LayerSearchFrb(onChanged: onSearch),
+          ],
         ),
       ),
     );
@@ -342,7 +363,13 @@ Future<void> _showLayerMenu(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          for (final kind in ['Solid', 'Text', 'Camera', 'Adjustment', 'Sequence'])
+          for (final kind in [
+            'Solid',
+            'Text',
+            'Camera',
+            'Adjustment',
+            'Sequence'
+          ])
             MenuRow(onPressed: () => close(kind), child: Text(kind)),
         ],
       ),
@@ -387,7 +414,7 @@ class _Outline extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Aligns the first row with the first track, under the ruler.
+        // Aligns the first row with the first layer bar, under the ruler.
         Container(height: _rulerHeight, color: t.surface2),
         for (var i = 0; i < layers.length; i++)
           _OutlineRow(
@@ -564,7 +591,7 @@ class _OutlineRow extends StatelessWidget {
 }
 
 /// The right column: the ruler, the playhead, and one bar per layer.
-class _Tracks extends StatelessWidget {
+class _LayerArea extends StatelessWidget {
   final CompositionReference comp;
   final List<LayerReference> layers;
   final _Axis axis;
@@ -573,7 +600,7 @@ class _Tracks extends StatelessWidget {
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
 
-  const _Tracks({
+  const _LayerArea({
     required this.comp,
     required this.layers,
     required this.axis,
@@ -755,8 +782,7 @@ class _BarState extends State<_Bar> {
               onTap: widget.razor
                   ? () {
                       try {
-                        widget.layer.cutClipAt(
-                            frame: widget.playhead);
+                        widget.layer.cutClipAt(frame: widget.playhead);
                       } catch (_) {
                         return;
                       }
@@ -766,7 +792,7 @@ class _BarState extends State<_Bar> {
               onHorizontalDragStart: widget.razor
                   ? null
                   : (d) => setState(() {
-                _delta = 0;
+                        _delta = 0;
                         _grab = d.localPosition.dx < _trimGrab
                             ? _Grab.trimIn
                             : d.localPosition.dx > width - _trimGrab
@@ -852,8 +878,8 @@ class _BarState extends State<_Bar> {
         startOffset: offsetShift == 0
             ? span.startOffset
             : widget.comp.timeOfFrame(
-                frame:
-                    widget.comp.frameAtTime(time: span.startOffset) + offsetShift,
+                frame: widget.comp.frameAtTime(time: span.startOffset) +
+                    offsetShift,
               ),
       ),
     );

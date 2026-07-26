@@ -166,8 +166,13 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
   void _requestIfDue(LumitUiState state, int frame) {
     final comp = state.selectedComp;
     if (comp == null) return;
-    if (frame == _lastFrame && _since.elapsed - _lastRequest < _throttle) return;
-    if (_since.elapsed - _lastRequest < _throttle) return;
+    // Same frame, and too soon — nothing to ask for. A *different* frame is
+    // always worth a request, and so is `_lastFrame = -1`, which is how the
+    // kind picker forces one through without waiting out the throttle. A second
+    // unconditional throttle check used to sit here and swallow both.
+    if (frame == _lastFrame && _since.elapsed - _lastRequest < _throttle) {
+      return;
+    }
 
     _lastFrame = frame;
     _lastRequest = _since.elapsed;

@@ -9,6 +9,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -52,7 +53,13 @@ void main() {
       final p = withComp();
       await mount(tester, p);
 
-      for (final kind in ['Solid', 'Text', 'Camera', 'Adjustment', 'Sequence']) {
+      for (final kind in [
+        'Solid',
+        'Text',
+        'Camera',
+        'Adjustment',
+        'Sequence'
+      ]) {
         await tester.tap(find.byKey(const ValueKey('tl-add-layer')));
         await tester.pumpAndSettle();
         await tester.tap(find.text(kind));
@@ -63,7 +70,9 @@ void main() {
       expect(layers, hasLength(5));
       expect(layers.first.getKind(), BridgeLayerKind.sequence,
           reason: 'the newest layer is at the top of the stack');
-      expect(find.byKey(ValueKey<String>('tl-row-${layers.first.internallayerId}')),
+      expect(
+          find.byKey(
+              ValueKey<String>('tl-row-${layers.first.internallayerId}')),
           findsOneWidget);
     });
 
@@ -102,10 +111,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(layer.getBlend(), 2,
-          reason: 'the index the dropdown shows is the index the engine stores');
+          reason:
+              'the index the dropdown shows is the index the engine stores');
     });
 
-    testWidgets('the row menu duplicates, reorders and deletes', (tester) async {
+    testWidgets('the row menu duplicates, reorders and deletes',
+        (tester) async {
       final p = withComp();
       p.comp.addAdjustmentLayer();
       await mount(tester, p);
@@ -171,7 +182,8 @@ void main() {
       final before = layer.getSpan();
       final beforeIn = p.comp.frameAtTime(time: before.inPoint);
 
-      final bar = find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
       final rect = tester.getRect(bar);
       // Well inside the bar, so this is a move rather than a trim.
       await tester.dragFrom(
@@ -211,5 +223,49 @@ void main() {
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
+    /// The gesture the whole Project panel drag exists for. It had no drop
+    /// target at all: the drag lifted, showed feedback, and dropped into
+    /// nothing, which reads as the app ignoring you.
+    testWidgets('footage dragged from the Project panel becomes a layer',
+        (tester) async {
+      final p = withComp();
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+
+      // Both panels in one tree, so the drag is the real one rather than a
+      // DragTarget poked directly.
+      await tester.pumpWidget(hostPanel(
+        child: const Row(
+          children: [
+            SizedBox(width: 300, child: ProjectPanelFrb()),
+            Expanded(child: TimelinePanelFrb()),
+          ],
+        ),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1400, 700),
+      ));
+      await tester.pump();
+
+      expect(p.comp.getLayers(), isEmpty);
+
+      final row =
+          find.byKey(ValueKey<String>('project-row-${footage.internalid}'));
+      expect(row, findsOneWidget, reason: 'the footage row is there to drag');
+
+      final gesture = await tester.startGesture(tester.getCenter(row));
+      await tester.pump(const Duration(milliseconds: 200));
+      // Stepped, because one large move leaves the gesture arena resolving the
+      // drag against the row's own recognisers.
+      for (var i = 0; i < 10; i++) {
+        await gesture.moveBy(const Offset(40, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getLayers(), hasLength(1),
+          reason: 'the drop reached the document');
+      expect(p.comp.getLayers().single.getName(), contains('shot'));
+    });
   }, skip: !engineAvailable);
 }
