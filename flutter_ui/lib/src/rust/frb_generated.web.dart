@@ -7,6 +7,7 @@
 // ignore_for_file: argument_type_not_assignable
 
 import 'api.dart';
+import 'api/cache.dart';
 import 'api/composition.dart';
 import 'api/effect.dart';
 import 'api/folder.dart';
@@ -190,6 +191,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeBezierSide dco_decode_bridge_bezier_side(dynamic raw);
 
   @protected
+  BridgeCacheStats dco_decode_bridge_cache_stats(dynamic raw);
+
+  @protected
+  BridgeClip dco_decode_bridge_clip(dynamic raw);
+
+  @protected
   BridgeColour dco_decode_bridge_colour(dynamic raw);
 
   @protected
@@ -299,6 +306,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<BridgeClip> dco_decode_list_bridge_clip(dynamic raw);
 
   @protected
   List<BridgeEffectInfo> dco_decode_list_bridge_effect_info(dynamic raw);
@@ -548,6 +558,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeBezierSide sse_decode_bridge_bezier_side(SseDeserializer deserializer);
 
   @protected
+  BridgeCacheStats sse_decode_bridge_cache_stats(SseDeserializer deserializer);
+
+  @protected
+  BridgeClip sse_decode_bridge_clip(SseDeserializer deserializer);
+
+  @protected
   BridgeColour sse_decode_bridge_colour(SseDeserializer deserializer);
 
   @protected
@@ -665,6 +681,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<BridgeClip> sse_decode_list_bridge_clip(SseDeserializer deserializer);
 
   @protected
   List<BridgeEffectInfo> sse_decode_list_bridge_effect_info(
@@ -929,6 +948,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeBezierSide self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_cache_stats(
+      BridgeCacheStats self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_clip(BridgeClip self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_colour(BridgeColour self, SseSerializer serializer);
 
   @protected
@@ -1059,6 +1085,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_clip(
+      List<BridgeClip> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_effect_info(

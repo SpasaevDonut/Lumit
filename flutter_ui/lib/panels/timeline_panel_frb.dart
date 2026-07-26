@@ -10,9 +10,8 @@
 // the eight switches, blend mode, parenting, dragging and trimming a layer's
 // bar, scrubbing the playhead, the work area and marker cues.
 //
-// **What is not, and why.** The razor, the comp tabs, the cache bar and the lane
-// / graph editor. None is blocked on the engine — they are the next slices of
-// the same panel, kept out so this one stays readable. See docs/TODO.md.
+// **What is not, and why.** The lane / graph editor, which is its own panel-sized
+// piece of work. See docs/TODO.md.
 //
 // **The one rule the drags follow.** A bar drag is a live *preview* of nothing —
 // unlike an effect or transform drag there is no cheap render to show, because
@@ -30,10 +29,13 @@ import '../icons/icons.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'placeholder.dart';
+import 'timeline_extras_frb.dart';
 
-/// The outline column's width. Fixed rather than resizable for now — a splitter
-/// is its own slice of work and nothing depends on it yet.
-const double _outlineWidth = 300;
+/// The outline column's width. Wide enough for the number, four switches, a
+/// name worth reading, and the blend and parent pickers side by side — about
+/// what After Effects gives its own outline. Fixed rather than resizable for
+/// now: a splitter is its own slice of work and nothing depends on it yet.
+const double _outlineWidth = 400;
 
 /// One layer row's height, and the ruler's.
 const double _rowHeight = 22;
@@ -51,6 +53,13 @@ class TimelinePanelFrb extends StatefulWidget {
 }
 
 class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
+  String _search = '';
+
+  /// With the razor armed, a click on a bar cuts it rather than selecting it.
+  /// Modal on purpose — it is how every editor does the tool, and it is the one
+  /// gesture where "what does a click do here" has two answers.
+  bool _razor = false;
+
   @override
   Widget build(BuildContext context) {
     final ui = Provider.of<LumitUiState>(context);
@@ -64,13 +73,28 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
 
     final settings = comp.getSettings();
-    final layers = comp.getLayers();
     final frames = settings.durationFrames.toInt();
+    final needle = _search.trim().toLowerCase();
+    final layers = [
+      for (final l in comp.getLayers())
+        if (needle.isEmpty || l.getName().toLowerCase().contains(needle)) l,
+    ];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _Toolbar(comp: comp, onChanged: () => setState(() {})),
+        CompTabsFrb(
+          state: Provider.of<LumitState>(context, listen: false),
+          uiState: ui,
+        ),
+        _Toolbar(
+          comp: comp,
+          razor: _razor,
+          playheadFrame: () => ui.playheadFrame.value,
+          onToggleRazor: () => setState(() => _razor = !_razor),
+          onSearch: (v) => setState(() => _search = v),
+          onChanged: () => setState(() {}),
+        ),
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
@@ -104,6 +128,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                         layers: layers,
                         axis: axis,
                         playhead: playhead,
+                        razor: _razor,
                         onSeek: (f) => ui.playheadFrame.value =
                             f.clamp(0, frames == 0 ? 0 : frames - 1),
                         onChanged: () => setState(() {}),
@@ -115,6 +140,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
             },
           ),
         ),
+        const CacheBarFrb(),
       ],
     );
   }
@@ -131,11 +157,27 @@ class _Axis {
   int frameAt(double x) => perFrame <= 0 ? 0 : (x / perFrame).round();
 }
 
-/// The Layer menu and the work-area buttons.
+/// The Layer menu, the razor, the work-area buttons, markers and search.
 class _Toolbar extends StatelessWidget {
   final CompositionReference comp;
+  final bool razor;
+
+  /// Read at click time, not at build time: the toolbar sits above the
+  /// playhead's listener and does not rebuild when it moves, so a captured
+  /// value would be whatever it was when the panel last drew.
+  final int Function() playheadFrame;
+  final VoidCallback onToggleRazor;
+  final ValueChanged<String> onSearch;
   final VoidCallback onChanged;
-  const _Toolbar({required this.comp, required this.onChanged});
+
+  const _Toolbar({
+    required this.comp,
+    required this.razor,
+    required this.playheadFrame,
+    required this.onToggleRazor,
+    required this.onSearch,
+    required this.onChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -153,6 +195,24 @@ class _Toolbar extends StatelessWidget {
             child: Text('New layer', style: t.small),
           ),
           const SizedBox(width: 6),
+          LumitTooltip(
+            message: razor
+                ? 'Razor armed — click a clip to cut it'
+                : 'Razor: cut a clip at the playhead',
+            child: HouseButton(
+              key: const ValueKey('tl-razor'),
+              small: true,
+              onPressed: onToggleRazor,
+              // HouseButton has no selected state, so the armed razor says so
+              // in the accent — the same colour the stopwatch uses for "this
+              // is on".
+              child: Text('Razor',
+                  style: t.small.copyWith(color: razor ? t.accent : null)),
+            ),
+          ),
+          const SizedBox(width: 6),
+          _workAreaButton(context, t, 'Set in', isStart: true),
+          _workAreaButton(context, t, 'Set out', isStart: false),
           HouseButton(
             key: const ValueKey('tl-clear-work-area'),
             small: true,
@@ -161,12 +221,53 @@ class _Toolbar extends StatelessWidget {
               comp.setWorkArea(span: null);
               onChanged();
             },
-            child: Text('Clear work area', style: t.small),
+            child: Text('Clear', style: t.small),
           ),
+          const SizedBox(width: 6),
+          HouseButton(
+            key: const ValueKey('tl-markers'),
+            small: true,
+            frameless: true,
+            onPressed: () async {
+              await showMarkerEditorFrb(
+                context: context,
+                comp: comp,
+                playheadFrame: playheadFrame(),
+              );
+              onChanged();
+            },
+            child: Text('Markers', style: t.small),
+          ),
+          const Spacer(),
+          LayerSearchFrb(onChanged: onSearch),
         ],
       ),
     );
   }
+
+  Widget _workAreaButton(
+    BuildContext context,
+    LumitTheme t,
+    String label, {
+    required bool isStart,
+  }) =>
+      HouseButton(
+        key: ValueKey<String>('tl-work-${isStart ? 'in' : 'out'}'),
+        small: true,
+        frameless: true,
+        onPressed: () {
+          comp.setWorkArea(
+            span: workAreaWith(
+              comp: comp,
+              current: comp.getWorkArea(),
+              frame: playheadFrame(),
+              isStart: isStart,
+            ),
+          );
+          onChanged();
+        },
+        child: Text(label, style: t.small),
+      );
 }
 
 Future<void> _showLayerMenu(
@@ -304,6 +405,12 @@ class _OutlineRow extends StatelessWidget {
                   style: t.body, overflow: TextOverflow.ellipsis),
             ),
             _blendPicker(context, t),
+            const SizedBox(width: 4),
+            ParentPickerFrb(
+              comp: comp,
+              layer: layer,
+              onChanged: onChanged,
+            ),
           ],
         ),
       ),
@@ -406,6 +513,7 @@ class _Tracks extends StatelessWidget {
   final List<LayerReference> layers;
   final _Axis axis;
   final int playhead;
+  final bool razor;
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
 
@@ -414,6 +522,7 @@ class _Tracks extends StatelessWidget {
     required this.layers,
     required this.axis,
     required this.playhead,
+    required this.razor,
     required this.onSeek,
     required this.onChanged,
   });
@@ -437,6 +546,8 @@ class _Tracks extends StatelessWidget {
                 comp: comp,
                 layer: layer,
                 axis: axis,
+                razor: razor,
+                playhead: playhead,
                 onChanged: onChanged,
               ),
           ],
@@ -526,6 +637,8 @@ class _Bar extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;
   final _Axis axis;
+  final bool razor;
+  final int playhead;
   final VoidCallback onChanged;
 
   const _Bar({
@@ -533,6 +646,8 @@ class _Bar extends StatefulWidget {
     required this.comp,
     required this.layer,
     required this.axis,
+    required this.razor,
+    required this.playhead,
     required this.onChanged,
   });
 
@@ -577,26 +692,64 @@ class _BarState extends State<_Bar> {
             bottom: 3,
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onHorizontalDragStart: (d) => setState(() {
+              // Armed razor: a click cuts the clip under the playhead rather
+              // than starting a drag. A layer with no clip there says so
+              // through the engine's calm error, which is nothing on screen —
+              // the cut simply does not happen.
+              onTap: widget.razor
+                  ? () {
+                      try {
+                        widget.layer.cutClipAt(
+                            frame: widget.playhead);
+                      } catch (_) {
+                        return;
+                      }
+                      widget.onChanged();
+                    }
+                  : null,
+              onHorizontalDragStart: widget.razor
+                  ? null
+                  : (d) => setState(() {
                 _delta = 0;
-                _grab = d.localPosition.dx < _trimGrab
-                    ? _Grab.trimIn
-                    : d.localPosition.dx > width - _trimGrab
-                        ? _Grab.trimOut
-                        : _Grab.move;
-              }),
-              onHorizontalDragUpdate: (d) => setState(() {
-                _delta += widget.axis.frameAt(d.delta.dx);
-              }),
-              onHorizontalDragEnd: (_) => _commit(inFrame, outFrame),
-              onHorizontalDragCancel: () => setState(() {
-                _delta = 0;
-                _grab = null;
-              }),
+                        _grab = d.localPosition.dx < _trimGrab
+                            ? _Grab.trimIn
+                            : d.localPosition.dx > width - _trimGrab
+                                ? _Grab.trimOut
+                                : _Grab.move;
+                      }),
+              onHorizontalDragUpdate: widget.razor
+                  ? null
+                  : (d) => setState(() {
+                        _delta += widget.axis.frameAt(d.delta.dx);
+                      }),
+              onHorizontalDragEnd:
+                  widget.razor ? null : (_) => _commit(inFrame, outFrame),
+              onHorizontalDragCancel: widget.razor
+                  ? null
+                  : () => setState(() {
+                        _delta = 0;
+                        _grab = null;
+                      }),
               child: Container(
                 decoration: BoxDecoration(
                   color: _colourFor(widget.layer.getKind(), t),
                   borderRadius: BorderRadius.circular(2),
+                ),
+                // A Sequence layer draws its clip splits, so the razor has
+                // something to aim at and a cut is visible once made.
+                child: Stack(
+                  children: [
+                    for (final clip in widget.layer.getClips())
+                      Positioned(
+                        left: widget.axis.xOf(
+                              widget.comp.frameAtTime(time: clip.placeStart),
+                            ) -
+                            0.5,
+                        top: 0,
+                        bottom: 0,
+                        child: Container(width: 1, color: t.surface0),
+                      ),
+                  ],
                 ),
               ),
             ),

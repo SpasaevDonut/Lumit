@@ -777,19 +777,23 @@ class _ParamRow extends StatelessWidget {
   /// first-class choice rather than an error state.
   Widget _layerPicker(BuildContext context, UuidValue? current) {
     final layers = comp.getLayers();
-    final ids = <String?>[null, for (final l in layers) l.internallayerId.toString()];
     final names = {
       for (final l in layers) l.internallayerId.toString(): l.getName(),
     };
+    // The empty string stands for "unset", not `null`: `showLumitPopup`
+    // completes with null when its barrier is tapped, so a nullable option is
+    // indistinguishable from dismissing the menu and can never be chosen.
+    const unset = '';
+    final chosen = current?.toString();
     return SizedBox(
       width: _cellWidth + 40,
-      child: BareDropdown<String?>(
+      child: BareDropdown<String>(
         key: ValueKey<String>('fx-layer-${effect.id()}-${param.id}'),
-        value: current?.toString(),
-        options: ids,
-        label: (id) => id == null ? 'None' : (names[id] ?? 'Missing layer'),
+        value: names.containsKey(chosen) ? chosen! : unset,
+        options: [unset, ...names.keys],
+        label: (id) => id == unset ? 'None' : (names[id] ?? 'Missing layer'),
         onChanged: (id) => _set(BridgeEffectValue.layer(
-          id == null ? null : UuidValue.fromString(id),
+          id == unset ? null : UuidValue.fromString(id),
         )),
       ),
     );

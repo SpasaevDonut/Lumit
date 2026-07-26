@@ -9,9 +9,40 @@ import 'effect.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read`, `with_effects`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read`, `with_effects`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
+
+/// One clip on a Sequence layer, as the Timeline needs to draw it: where it
+/// starts on the layer's own timeline and how long it occupies there.
+///
+/// The source trim and the retime map are not carried: nothing draws them yet,
+/// and a value type that pretends to round-trip what no control can edit is how
+/// a write quietly loses information.
+class BridgeClip {
+  final UuidValue id;
+  final BridgeRational placeStart;
+  final BridgeRational placeDuration;
+
+  const BridgeClip({
+    required this.id,
+    required this.placeStart,
+    required this.placeDuration,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ placeStart.hashCode ^ placeDuration.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeClip &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          placeStart == other.placeStart &&
+          placeDuration == other.placeDuration;
+}
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
 /// label colour from. The payloads the model carries (the footage item, the
@@ -272,10 +303,38 @@ class LayerReference {
   void addEffect({required String name}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceAddEffect(that: this, name: name);
 
+  /// Turn a Footage layer into a Sequence layer holding one clip of the whole
+  /// source — the way into the clip-editing surface.
+  ///
+  /// Remove-then-add at the same index rather than an in-place kind change,
+  /// because a layer's kind is not something any single op edits; the batch
+  /// makes it one undo step. Only footage converts.
+  void convertToSequenced() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceConvertToSequenced(
+        that: this,
+      );
+
+  /// Razor: cut the clip under `frame` in two, at the playhead.
+  ///
+  /// The two halves keep their places — a cut must not shift what comes after
+  /// it, which is the beat-sync covenant (K-071). An eased ramp that cannot be
+  /// split cleanly at this time is a calm error, exactly as the egui razor
+  /// reports it, rather than a cut that silently changes the speed curve.
+  void cutClipAt({required PlatformInt64 frame}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceCutClipAt(that: this, frame: frame);
+
   /// Remove this layer from its composition.
   void delete() => BridgeLib.instance.api.crateApiLayerLayerReferenceDelete(
         that: this,
       );
+
+  /// Delete the clip under `frame`, leaving a gap.
+  ///
+  /// A gap is legal on the Vegas surface (K-071), so the clips after it stay
+  /// where they are rather than rippling back — again so a cut never moves
+  /// anything that was already in time with the music.
+  void deleteClipAt({required PlatformInt64 frame}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceDeleteClipAt(that: this, frame: frame);
 
   /// Copy this layer, inserting the copy directly above the original.
   ///
@@ -292,6 +351,16 @@ class LayerReference {
 
   /// This layer's blend mode, as an index into [`list_blend_modes`].
   int getBlend() => BridgeLib.instance.api.crateApiLayerLayerReferenceGetBlend(
+        that: this,
+      );
+
+  /// The clips on this Sequence layer, in the order it holds them.
+  ///
+  /// An empty list on a layer that is not a Sequence, rather than an error:
+  /// the Timeline asks every row whether it has clips to draw, and a footage
+  /// row simply has none.
+  List<BridgeClip> getClips() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetClips(
         that: this,
       );
 

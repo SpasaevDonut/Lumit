@@ -126,8 +126,7 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: the rest of the Timeline — the graph editor,
-    the razor, comp tabs.** The full ledger:
+    is the gate. **Immediate next: the graph editor.** The full ledger:
 
     **1. The seven docked panels.**
     - **Viewer** — **partial**: transport only. All three render paths work, but
@@ -136,14 +135,11 @@ sequence clips.
         `viewer_overlays.dart` (gizmos, motion paths), `viewer_layer_map.dart`,
         `slate.dart`, playback and timecode, zoom/pan, channel view and the
         transparency grid.
-    - **Timeline** — **partial**: `timeline_panel_frb.dart` has the outline
-        (rows, switches, blend, the row menu), the ruler with the playhead, work
-        area and markers, and draggable/trimmable layer bars. Outstanding, none
-        of it blocked on the engine: the **razor**, **comp tabs**, the **cache
-        bar**, marker and work-area *editing* (both are read-and-clear so far),
-        the **parent column**, layer **search**, and the **lane / graph editor**
-        (v0's `graph_editor.dart` and its four lens files, plus the keyframe
-        clipboard and interp menus).
+    - **Timeline** — **partial**: everything but the curves. The outline,
+        ruler, playhead, bars, razor, comp tabs, cache bar, search, parent
+        column, markers and work area are in. Outstanding: the **lane / graph
+        editor** — v0's `graph_editor.dart` and its four lens files, the
+        keyframe clipboard and the interp menus.
     - **Effect controls** — **partial**: the panel is in; what is left is the
         **graph editor** (the curve view, bezier handles, keyframe clipboard) and
         **`.lumfx` presets**. One known limit: a multi-axis row's stopwatch keys
@@ -177,9 +173,9 @@ sequence clips.
         write and one undo step. v0's granular add/remove/shift/set-interp pair
         and `apply_keyframe_batch` have no frb counterpart by design. Recorded
         here only so nobody ports them; the work left is the graph editor UI.
-    - **Sequence layers** — `drag_boundary`, `trim_to_source_end`,
-        `convert_to_sequenced`, and the razor's cut/delete-clip pair. The only
-        Timeline ops still missing; everything else it needs is in.
+    - **Sequence layers** — `drag_boundary` and `trim_to_source_end`, the two
+        Retime-adjacent clip commands. `convert_to_sequenced` and the razor pair
+        are in.
     - **Masks** — `add_mask`, `add_mask_geometry`.
     - **Retime** — all of it: enabled/speed/reverse/interpolation,
         `segment_to_rate`, `set_segment_preset`.
@@ -189,9 +185,9 @@ sequence clips.
     - **Assets** — `set_solid`, `set_text_content`, `set_camera_zoom`.
     - **Presets** — `save_effect_preset` / `load_effect_preset`, plus the preset
         *listing*, which was never built on either bridge.
-    - **Infra readouts** — `cache_stats` / `set_cache_budget` / `clear_cache`,
-        `playback_tier` / `reset_realtime`, `boot_log`, `list_autosaves` /
-        `restore_journal`, `autosave`.
+    - **Infra readouts** — `playback_tier` / `reset_realtime`, `boot_log`,
+        `list_autosaves` / `restore_journal`, `autosave`. The cache trio is in
+        (`api/cache.rs`).
     - **`decode_frame`** — the single-layer decode behind the Viewer's fallback.
 
     **4. The v0 Dart suite is migrated, not deleted.** 33 files and ~12,450 lines

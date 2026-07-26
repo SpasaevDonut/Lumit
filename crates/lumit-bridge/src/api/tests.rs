@@ -1503,3 +1503,140 @@ fn markers_and_the_work_area_round_trip() {
         "an exact drop-frame time is not rounded on the way through"
     );
 }
+
+// --- Sequence layers, the razor, and the cache readout --------------------
+
+/// Converting gives the layer one clip covering its whole span, and it is one
+/// undo step even though the kind change is a remove-then-add pair.
+#[test]
+fn a_footage_layer_converts_to_a_sequence_layer_in_one_step() {
+    use crate::api::layer::BridgeLayerKind;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into()).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+
+    assert_eq!(layer.get_kind().expect("kind"), BridgeLayerKind::Footage);
+    assert!(layer.get_clips().expect("clips").is_empty());
+
+    layer.convert_to_sequenced().expect("converted");
+    let converted = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(
+        converted.get_kind().expect("kind"),
+        BridgeLayerKind::Sequence
+    );
+    assert_eq!(
+        converted.get_clips().expect("clips").len(),
+        1,
+        "one clip covering the source"
+    );
+    assert_eq!(
+        comp.get_layers().expect("layers").len(),
+        1,
+        "converted in place, not added beside itself"
+    );
+
+    project.undo().expect("undone");
+    assert_eq!(
+        comp.get_layers().expect("layers")[0]
+            .get_kind()
+            .expect("kind"),
+        BridgeLayerKind::Footage,
+        "the remove-and-add pair is one undo step"
+    );
+}
+
+/// Only footage converts, and the razor only cuts a Sequence layer. Both are
+/// calm errors rather than panics, because both are reachable by pointing a
+/// tool at the wrong row.
+#[test]
+fn the_sequence_ops_refuse_the_wrong_kind_of_layer() {
+    let (_project, layer) = project_with_layer();
+
+    assert!(matches!(
+        layer.convert_to_sequenced(),
+        Err(BridgeError::NotFootage)
+    ));
+    assert!(matches!(
+        layer.cut_clip_at(0),
+        Err(BridgeError::NotSequence)
+    ));
+    assert!(matches!(
+        layer.delete_clip_at(0),
+        Err(BridgeError::NotSequence)
+    ));
+    assert!(
+        layer.get_clips().expect("clips").is_empty(),
+        "a non-sequence layer has no clips rather than erroring — the Timeline\
+         asks every row"
+    );
+}
+
+/// The razor cuts in two without moving anything: a cut that shifted what comes
+/// after it would break every edit already in time with the music (K-071).
+#[test]
+fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into()).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+    layer.convert_to_sequenced().expect("converted");
+    let layer = comp.get_layers().expect("layers").remove(0);
+
+    let before = layer.get_clips().expect("clips");
+    assert_eq!(before.len(), 1);
+
+    layer.cut_clip_at(30).expect("cut");
+    let after = layer.get_clips().expect("clips");
+    assert_eq!(after.len(), 2, "one clip became two");
+    assert_eq!(
+        after[0].place_start, before[0].place_start,
+        "the left half starts where the original did"
+    );
+
+    // Nowhere near the clip: a calm error, not a cut in the wrong place.
+    assert!(matches!(
+        layer.cut_clip_at(100_000),
+        Err(BridgeError::NoClipThere)
+    ));
+
+    layer.delete_clip_at(30).expect("deleted");
+    let remaining = layer.get_clips().expect("clips");
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(
+        remaining[0].place_start, after[0].place_start,
+        "deleting leaves a gap; the survivor does not ripple back"
+    );
+}
+
+/// The cache readout answers without a project and never panics — the Settings
+/// window can show it before anything is open.
+#[test]
+fn the_cache_readout_answers_and_the_budget_takes_effect() {
+    use crate::api::cache::{cache_stats, clear_cache, set_cache_budget};
+
+    let before = cache_stats();
+    assert!(before.budget_bytes > 0, "there is a budget by default");
+
+    let resized = set_cache_budget(64 << 20);
+    assert_eq!(resized.budget_bytes, 64 << 20);
+    assert_eq!(
+        cache_stats().budget_bytes,
+        64 << 20,
+        "the new budget is what the next read sees"
+    );
+
+    let cleared = clear_cache();
+    assert_eq!(cleared.entries, 0);
+    assert_eq!(cleared.used_bytes, 0);
+
+    // Put it back, so a later test in this process is not measuring ours.
+    set_cache_budget(before.budget_bytes);
+}

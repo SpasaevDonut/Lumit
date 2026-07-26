@@ -77,6 +77,20 @@ pub enum BridgeLayerKind {
     Adjustment,
 }
 
+/// One clip on a Sequence layer, as the Timeline needs to draw it: where it
+/// starts on the layer's own timeline and how long it occupies there.
+///
+/// The source trim and the retime map are not carried: nothing draws them yet,
+/// and a value type that pretends to round-trip what no control can edit is how
+/// a write quietly loses information.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeClip {
+    pub id: Uuid,
+    pub place_start: BridgeRational,
+    pub place_duration: BridgeRational,
+}
+
 /// A layer used as another layer's matte (docs/03 §5.1).
 #[frb(non_opaque)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -312,6 +326,157 @@ impl LayerReference {
             .map_err(BridgeError::OpError)?;
 
         Ok(())
+    }
+
+    /// The clips on this Sequence layer, in the order it holds them.
+    ///
+    /// An empty list on a layer that is not a Sequence, rather than an error:
+    /// the Timeline asks every row whether it has clips to draw, and a footage
+    /// row simply has none.
+    #[frb(sync)]
+    pub fn get_clips(&self) -> Result<Vec<BridgeClip>, BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Ok(Vec::new());
+        };
+        Ok(clips
+            .iter()
+            .map(|c| BridgeClip {
+                id: c.id,
+                place_start: rational_of(c.place_start),
+                place_duration: rational_of(c.place_duration),
+            })
+            .collect())
+    }
+
+    /// Razor: cut the clip under `frame` in two, at the playhead.
+    ///
+    /// The two halves keep their places — a cut must not shift what comes after
+    /// it, which is the beat-sync covenant (K-071). An eased ramp that cannot be
+    /// split cleanly at this time is a calm error, exactly as the egui razor
+    /// reports it, rather than a cut that silently changes the speed curve.
+    #[frb(sync)]
+    pub fn cut_clip_at(&self, frame: i64) -> Result<(), BridgeError> {
+        let (mut clips, index, tau) = self.clip_under(frame)?;
+        let (left, right) = clips[index].cut(tau).ok_or(BridgeError::UncuttableClip)?;
+        clips.splice(index..=index, [left, right]);
+        self.commit_clips(clips)
+    }
+
+    /// Delete the clip under `frame`, leaving a gap.
+    ///
+    /// A gap is legal on the Vegas surface (K-071), so the clips after it stay
+    /// where they are rather than rippling back — again so a cut never moves
+    /// anything that was already in time with the music.
+    #[frb(sync)]
+    pub fn delete_clip_at(&self, frame: i64) -> Result<(), BridgeError> {
+        let (mut clips, index, _) = self.clip_under(frame)?;
+        clips.remove(index);
+        self.commit_clips(clips)
+    }
+
+    /// Turn a Footage layer into a Sequence layer holding one clip of the whole
+    /// source — the way into the clip-editing surface.
+    ///
+    /// Remove-then-add at the same index rather than an in-place kind change,
+    /// because a layer's kind is not something any single op edits; the batch
+    /// makes it one undo step. Only footage converts.
+    #[frb(sync)]
+    pub fn convert_to_sequenced(&self) -> Result<(), BridgeError> {
+        use lumit_core::model::LayerKind;
+        use lumit_core::sequence::{Clip, ClipSource};
+        use lumit_core::time::Rational;
+
+        let layer = self.item()?;
+        let LayerKind::Footage { item, retime } = &layer.kind else {
+            return Err(BridgeError::NotFootage);
+        };
+        let comp = self.composition()?;
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| l.id == self.layer_id)
+            .ok_or(BridgeError::InvalidLayer)?;
+
+        // The layer's own span length is the fallback when the media has not
+        // probed; a quarter-second floor keeps a clip from being unclickable.
+        let span = (layer.out_point.0.to_f64() - layer.in_point.0.to_f64()).max(0.04);
+        let duration =
+            Rational::from_f64_on_grid(span, Rational::FLICK_DEN).unwrap_or(layer.out_point.0);
+
+        let mut converted = layer.clone();
+        converted.kind = LayerKind::Sequence {
+            clips: vec![Clip {
+                id: Uuid::now_v7(),
+                source: ClipSource::Footage(*item),
+                source_in: Rational::ZERO,
+                source_out: duration,
+                place_start: Rational::ZERO,
+                place_duration: duration,
+                retime: retime.clone().unwrap_or_else(|| {
+                    lumit_core::retime::Retime::identity(duration, Rational::ZERO)
+                }),
+                interpolation: Default::default(),
+                extra: serde_json::Map::new(),
+            }],
+        };
+
+        self.commit(lumit_core::Op::Batch {
+            ops: vec![
+                lumit_core::Op::RemoveLayer {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                },
+                lumit_core::Op::AddLayer {
+                    comp: self.comp_id,
+                    index,
+                    layer: Box::new(converted),
+                },
+            ],
+        })
+    }
+
+    /// The clips, the index of the one under `frame`, and the layer-local time
+    /// there.
+    #[frb(ignore)]
+    fn clip_under(
+        &self,
+        frame: i64,
+    ) -> Result<
+        (
+            Vec<lumit_core::sequence::Clip>,
+            usize,
+            lumit_core::time::Rational,
+        ),
+        BridgeError,
+    > {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let comp = self.composition()?;
+        let at = comp
+            .frame_rate
+            .time_of_frame(frame)
+            .map_err(|_| BridgeError::InvalidTime)?;
+        // Layer-local: the playhead less where this layer's own time 0 sits.
+        let tau =
+            at.0.checked_sub(layer.start_offset.0)
+                .map_err(|_| BridgeError::InvalidTime)?;
+        let index = clips
+            .iter()
+            .position(|c| c.contains(tau.to_f64()))
+            .ok_or(BridgeError::NoClipThere)?;
+        Ok((clips.clone(), index, tau))
+    }
+
+    #[frb(ignore)]
+    fn commit_clips(&self, clips: Vec<lumit_core::sequence::Clip>) -> Result<(), BridgeError> {
+        self.commit(lumit_core::Op::SetSequenceClips {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            clips,
+        })
     }
 
     /// What kind of source this layer has.

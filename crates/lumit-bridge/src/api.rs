@@ -2,6 +2,7 @@ use std::{error::Error, fmt};
 
 use lumit_core::OpError;
 
+pub mod cache;
 pub mod composition;
 pub mod effect;
 pub mod folder;
@@ -53,6 +54,15 @@ pub enum BridgeError {
     InvalidTime,
     /// A blend-mode index outside the list `list_blend_modes` hands out.
     InvalidBlendMode,
+    /// The razor was pointed at a layer that is not a Sequence layer.
+    NotSequence,
+    /// Only a Footage layer converts to a Sequence layer.
+    NotFootage,
+    /// No clip sits under the playhead.
+    NoClipThere,
+    /// The clip under the playhead is an eased ramp that cannot be split
+    /// cleanly at this time — cutting it would silently change its speed curve.
+    UncuttableClip,
     /// A staged effect stack no longer matches the document's — something else
     /// added, removed or reordered an effect while it was being edited.
     StaleEffectStack,
@@ -93,6 +103,14 @@ impl fmt::Display for BridgeError {
             ),
             BridgeError::InvalidTime => write!(f, "That time is not a valid duration"),
             BridgeError::InvalidBlendMode => write!(f, "No blend mode at that index"),
+            BridgeError::NotSequence => write!(f, "That is not a sequence layer"),
+            BridgeError::NotFootage => {
+                write!(f, "Only footage layers convert to sequenced")
+            }
+            BridgeError::NoClipThere => write!(f, "No clip under the playhead"),
+            BridgeError::UncuttableClip => {
+                write!(f, "That eased ramp cannot be cut here yet")
+            }
             BridgeError::StaleEffectStack => {
                 write!(f, "The effect stack changed while it was being edited")
             }
