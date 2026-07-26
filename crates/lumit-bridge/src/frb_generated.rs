@@ -124,26 +124,23 @@ fn wire__crate__api__effect__BridgeEffectInstance_get_value_impl(
             >>::sse_decode(&mut deserializer);
             let api_id = <String>::sse_decode(&mut deserializer);
             deserializer.end();
-            transform_result_sse::<_, ()>((move || {
+            transform_result_sse::<_, BridgeError>((move || {
                 let mut api_that_guard = None;
                 let decode_indices_ =
                     flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
                         flutter_rust_bridge::for_generated::LockableOrderInfo::new(
-                            &api_that, 0, true,
+                            &api_that, 0, false,
                         ),
                     ]);
                 for i in decode_indices_ {
                     match i {
-                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref_mut()),
+                        0 => api_that_guard = Some(api_that.lockable_decode_sync_ref()),
                         _ => unreachable!(),
                     }
                 }
-                let mut api_that_guard = api_that_guard.unwrap();
+                let api_that_guard = api_that_guard.unwrap();
                 let output_ok =
-                    Result::<_, ()>::Ok(crate::api::effect::BridgeEffectInstance::get_value(
-                        &mut *api_that_guard,
-                        api_id,
-                    ))?;
+                    crate::api::effect::BridgeEffectInstance::get_value(&*api_that_guard, api_id)?;
                 Ok(output_ok)
             })())
         },
@@ -307,7 +304,7 @@ fn wire__crate__api__effect__BridgeEffectInstance_set_value_impl(
             let api_id = <String>::sse_decode(&mut deserializer);
             let api_value = <f64>::sse_decode(&mut deserializer);
             deserializer.end();
-            transform_result_sse::<_, ()>((move || {
+            transform_result_sse::<_, BridgeError>((move || {
                 let mut api_that_guard = None;
                 let decode_indices_ =
                     flutter_rust_bridge::for_generated::lockable_compute_decode_order(vec![
@@ -322,13 +319,11 @@ fn wire__crate__api__effect__BridgeEffectInstance_set_value_impl(
                     }
                 }
                 let mut api_that_guard = api_that_guard.unwrap();
-                let output_ok = Result::<_, ()>::Ok({
-                    crate::api::effect::BridgeEffectInstance::set_value(
-                        &mut *api_that_guard,
-                        api_id,
-                        api_value,
-                    );
-                })?;
+                let output_ok = crate::api::effect::BridgeEffectInstance::set_value(
+                    &mut *api_that_guard,
+                    api_id,
+                    api_value,
+                )?;
                 Ok(output_ok)
             })())
         },
@@ -356,10 +351,8 @@ fn wire__crate__api__state__LumitBridgeState_get_current_project_impl(
             let mut deserializer =
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             deserializer.end();
-            transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(
-                    crate::api::state::LumitBridgeState::get_current_project(),
-                )?;
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok = crate::api::state::LumitBridgeState::get_current_project()?;
                 Ok(output_ok)
             })())
         },
@@ -393,10 +386,9 @@ fn wire__crate__api__state__LumitBridgeState_new_project_impl(
                 >,
             >>::sse_decode(&mut deserializer);
             deserializer.end();
-            transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(
-                    crate::api::state::LumitBridgeState::new_project(api_on_change_stream),
-                )?;
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok =
+                    crate::api::state::LumitBridgeState::new_project(api_on_change_stream)?;
                 Ok(output_ok)
             })())
         },
@@ -431,12 +423,11 @@ fn wire__crate__api__state__LumitBridgeState_open_project_impl(
                 >,
             >>::sse_decode(&mut deserializer);
             deserializer.end();
-            transform_result_sse::<_, ()>((move || {
-                let output_ok =
-                    Result::<_, ()>::Ok(crate::api::state::LumitBridgeState::open_project(
-                        &api_path,
-                        api_on_change_stream,
-                    ))?;
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok = crate::api::state::LumitBridgeState::open_project(
+                    &api_path,
+                    api_on_change_stream,
+                )?;
                 Ok(output_ok)
             })())
         },
@@ -791,10 +782,8 @@ fn wire__crate__api__project__project_reference_get_items_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_that = <crate::api::project::ProjectReference>::sse_decode(&mut deserializer);
             deserializer.end();
-            transform_result_sse::<_, ()>((move || {
-                let output_ok = Result::<_, ()>::Ok(
-                    crate::api::project::ProjectReference::get_items(&api_that),
-                )?;
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok = crate::api::project::ProjectReference::get_items(&api_that)?;
                 Ok(output_ok)
             })())
         },
@@ -1250,6 +1239,17 @@ impl SseDecode
                 crate::api::state::ScopedChange,
                 flutter_rust_bridge::for_generated::SseCodec,
             >>::sse_decode(deserializer));
+        } else {
+            return None;
+        }
+    }
+}
+
+impl SseDecode for Option<f64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<f64>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -2088,6 +2088,16 @@ impl SseEncode
                 crate::api::state::ScopedChange,
                 flutter_rust_bridge::for_generated::SseCodec,
             >>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<f64> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <f64>::sse_encode(value, serializer);
         }
     }
 }

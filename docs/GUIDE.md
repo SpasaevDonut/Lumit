@@ -2380,6 +2380,62 @@ just shows its "arrives with the engine bridge" hint again. `lumit-bridge`
 depends only on the engine crates, and nothing depends on it, so it stays a leaf
 that the rest of the project never has to know about.
 
+**The code generator that is now replacing that glue.** The "later" above has
+arrived: the generator is in the tree, and the two bridges run side by side while
+the work moves across. It is worth understanding what changed, because it changes
+how the panels are written.
+
+*What the generator does.* `flutter_rust_bridge` — "frb" for short — reads the
+Rust functions in `crates/lumit-bridge/src/api/` and writes, automatically, both
+halves of the plumbing: the Rust side that packs values up
+(`crates/lumit-bridge/src/frb_generated.rs`) and the Dart side that unpacks them
+(`flutter_ui/lib/src/rust/`). Those generated files are checked in but never
+edited by hand — the command `flutter_rust_bridge_codegen generate`, run from
+`flutter_ui/`, rewrites them from scratch, so any manual change is simply lost
+next time. If you add a Rust function and Dart cannot see it, that command is
+almost always what is missing. A second tool, **cargokit**, sits under
+`flutter_ui/rust_builder/` and does an unglamorous but useful job: it compiles
+the Rust library automatically as part of the normal `flutter run`, so there is
+no separate build step to forget.
+
+*Why this is a rewrite and not a translation.* Bridge v0 worked the way a website
+does: Dart asked one big question (`lumit_bridge_snapshot`), got the entire
+document back as text, and rebuilt its own copy of everything from it. To change
+one layer's name, Dart looked the layer up by its identifier, sent an edit, then
+asked for the whole document again to see the result. That is simple, but it
+means every small edit costs a full document read, and Dart has to keep its own
+mirror of the document faithfully in step.
+
+frb allows something better: Rust can hand Dart a **handle** — a small opaque
+token standing for one thing in the document. So Dart holds a `LayerReference`
+rather than a layer's identifier and a copy of its data, and renaming becomes
+`layer.rename(name: 'hero shot')` — a method on the layer itself. There is no
+snapshot to re-read, no mirror to keep in step, and no identifier to look up,
+because *the handle is the identity*. Alongside that, Rust pushes a small
+"something changed, and here is which layer it was" message down a **stream** (a
+tap Dart listens to), so only the part of the interface that actually changed is
+redrawn instead of all of it.
+
+*Where to look for the pattern.* Three small files exist purely as readable
+examples of this style, and are the ones to copy when porting a panel:
+`flutter_ui/lib/panels/project_panel_frb.dart` (reading a list through handles),
+`flutter_ui/lib/panels/panels_frb.dart` (a Viewer fed by the stream, and the
+live-drag path that renders a preview without ever committing an edit), and
+`flutter_ui/lib/shell/menu_bar_frb.dart` (calling an action). They are
+deliberately tiny. The full panels beside them — `project_panel.dart`,
+`timeline_panel.dart` and the rest — are still the shipping ones and still speak
+bridge v0; each moves across once the new bridge covers what it needs.
+`docs/TODO.md` holds the running order.
+
+*One caution worth knowing.* The Rust functions in the frb layer are marked with
+a small annotation (`#[frb(...)]`) that tells the generator to include them. An
+unfortunate side effect is that the automatic checker which normally forbids
+crash-prone shortcuts in Rust cannot see inside those functions — so the usual
+safety net does not cover exactly the code the interface calls. A plain
+text-search check in CI (`no-panics-in-frb-api`) stands in for it: nothing in
+`src/api/` may take those shortcuts, and every call must report a problem as an
+ordinary error instead of crashing.
+
 **File dialogues, and why importing doesn't watch the video yet.** Choosing a
 file to open, a place to save, or footage to import needs a real "open file"
 window from the operating system. Flutter doesn't draw those itself — it borrows

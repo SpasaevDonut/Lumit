@@ -307,6 +307,91 @@ mod tests {
         assert_eq!(json(&store.snapshot()), final_json, "redo-all == final");
     }
 
+    /// The change observer is optional: the egui shell never sets one and reads
+    /// snapshots directly, so `commit`/`undo`/`redo` must all be no-ops on that
+    /// front. Fails without the fix — `undo` and `redo` each had a `todo!()`
+    /// where the "no observer" arm belongs, so the first undo of the session
+    /// panicked (and `todo` is denied workspace-wide, docs/14 §4).
+    #[test]
+    fn undo_and_redo_do_not_panic_without_a_change_observer() {
+        let store = DocumentStore::new(Document::new());
+        let (ops, _) = scripted_ops(&store.snapshot());
+        for op in ops {
+            store.commit(op).unwrap();
+        }
+
+        // Nothing registered a callback, so both directions must simply work.
+        assert!(store.undo().unwrap().is_some(), "undo with no observer");
+        assert!(store.redo().unwrap().is_some(), "redo with no observer");
+    }
+
+    /// The observer sees every op that moved the document, in order, and an
+    /// undo reports the *inverse* — the op actually applied — not the op being
+    /// undone. It is also called with the journal lock released, so a callback
+    /// that commits (the Flutter bridge reaches back into the store) cannot
+    /// deadlock: this test would hang rather than fail if `notify` ran under it.
+    #[test]
+    fn the_change_observer_sees_each_op_and_can_re_enter_the_store() {
+        let store = Arc::new(Mutex::new(Vec::<Op>::new()));
+        let seen = store.clone();
+
+        let mut doc_store = DocumentStore::new(Document::new());
+        doc_store.set_callback(Arc::new(move |change| {
+            seen.lock().push(change.op);
+        }));
+
+        let (ops, _) = scripted_ops(&doc_store.snapshot());
+        let committed = ops.len();
+        for op in ops {
+            doc_store.commit(op).unwrap();
+        }
+        assert_eq!(store.lock().len(), committed, "one notify per commit");
+
+        doc_store.undo().unwrap();
+        assert_eq!(
+            store.lock().len(),
+            committed + 1,
+            "undo notifies as well as commit"
+        );
+    }
+
+    /// An observer that reads back into the store must not deadlock.
+    ///
+    /// `journal_ops` takes the very mutex `commit` holds, and `parking_lot`'s
+    /// `Mutex` is not reentrant, so this hangs forever if `notify` is called
+    /// before the guard is dropped. Reaching the assertions at all is the
+    /// result. `Arc::new_cyclic` is what lets the callback hold a `Weak` back to
+    /// the store it is attached to.
+    #[test]
+    fn a_re_entrant_observer_does_not_deadlock() {
+        let observed = Arc::new(Mutex::new(0usize));
+        let count = observed.clone();
+
+        let store = Arc::new_cyclic(|weak: &std::sync::Weak<DocumentStore>| {
+            let mut store = DocumentStore::new(Document::new());
+            let weak = weak.clone();
+            store.set_callback(Arc::new(move |_| {
+                if let Some(store) = weak.upgrade() {
+                    // Re-entry: locks the journal that commit just released.
+                    *count.lock() = store.journal_ops().len();
+                }
+            }));
+            store
+        });
+
+        let (ops, _) = scripted_ops(&store.snapshot());
+        let committed = ops.len();
+        for op in ops {
+            store.commit(op).unwrap();
+        }
+
+        assert_eq!(
+            *observed.lock(),
+            committed,
+            "the observer read the journal back from inside the callback"
+        );
+    }
+
     /// docs/14 §5: the undo history is compacted to [`MAX_UNDO_DEPTH`], and
     /// compaction never changes the document — it only limits how far back an
     /// undo can reach. Fails without the cap (the history would grow to every

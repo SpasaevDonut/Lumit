@@ -1,10 +1,12 @@
-use std::sync::Arc;
-
 use flutter_rust_bridge::frb;
 pub use lumit_core::model::EffectInstance;
-use lumit_core::{anim::Property, model::EffectValue};
+use lumit_core::{
+    anim::{Animation, Property},
+    model::{EffectParam, EffectValue},
+};
 use serde_json::json;
-use uuid::Uuid;
+
+use crate::api::BridgeError;
 
 #[frb(opaque)]
 pub struct BridgeEffectInstance {
@@ -15,7 +17,7 @@ pub struct BridgeEffectInstance {
 // over to flutter, this will need improving
 impl BridgeEffectInstance {
     pub fn new(effect: EffectInstance) -> BridgeEffectInstance {
-        return BridgeEffectInstance { effect };
+        BridgeEffectInstance { effect }
     }
 
     #[frb(sync)]
@@ -43,37 +45,62 @@ impl BridgeEffectInstance {
             .collect()
     }
 
-    // TODO: properly handle this with a data type that can be sent to flutter
+    /// A parameter's static scalar value.
+    ///
+    /// Only `Float` is carried so far, and only its static value: the other
+    /// seven `EffectValue` shapes (point, colour, bool, choice, seed, file,
+    /// layer) and the keyframed case have no Dart-side representation yet, so
+    /// they answer `None` rather than silently reading as 0.0 — a colour
+    /// parameter rendering as "0" is worse than one rendering as blank.
+    ///
+    /// TODO: replace this with a sum type mirroring `EffectValue`, so every
+    /// parameter kind is expressible. Tracked in docs/TODO.md under "Bridge".
     #[frb(sync)]
-    pub fn get_value(&mut self, id: String) -> f64 {
-        let param = &self
+    pub fn get_value(&self, id: String) -> Result<Option<f64>, BridgeError> {
+        let param = self.param(&id)?;
+
+        Ok(match &param.value {
+            EffectValue::Float(property) => match &property.animation {
+                Animation::Static(v) => Some(*v),
+                Animation::Keyframed(_) => None,
+            },
+            EffectValue::Point(..)
+            | EffectValue::Colour(_)
+            | EffectValue::Bool(_)
+            | EffectValue::Choice(_)
+            | EffectValue::Seed(_)
+            | EffectValue::File(_)
+            | EffectValue::Layer(_) => None,
+        })
+    }
+
+    /// Overwrite a parameter with a static scalar. Same limitation as
+    /// [`Self::get_value`]: it can only express `Float`, so calling it on a
+    /// parameter of another kind would change its type. It therefore refuses
+    /// rather than corrupting the effect.
+    #[frb(sync)]
+    pub fn set_value(&mut self, id: String, value: f64) -> Result<(), BridgeError> {
+        let index = self
             .effect
             .params
             .iter()
-            .filter(|f| f.id == id)
-            .nth(0)
-            .unwrap();
+            .position(|p| p.id == id)
+            .ok_or(BridgeError::InvalidParam)?;
 
-        match &param.value {
-            lumit_core::model::EffectValue::Float(property) => match &property.animation {
-                lumit_core::anim::Animation::Static(v) => v.clone(),
-                lumit_core::anim::Animation::Keyframed(keyframes) => 0.0,
-            },
-            lumit_core::model::EffectValue::Point(property, property1) => 0.0,
-            lumit_core::model::EffectValue::Colour(_) => 0.0,
-            lumit_core::model::EffectValue::Bool(_) => 0.0,
-            lumit_core::model::EffectValue::Choice(_) => 0.0,
-            lumit_core::model::EffectValue::Seed(_) => 0.0,
-            lumit_core::model::EffectValue::File(file_param) => 0.0,
-            lumit_core::model::EffectValue::Layer(uuid) => 0.0,
+        if !matches!(self.effect.params[index].value, EffectValue::Float(_)) {
+            return Err(BridgeError::UnsupportedParamKind);
         }
+
+        self.effect.params[index].value = EffectValue::Float(Property::fixed(value));
+        Ok(())
     }
 
-    // TODO: properly handle this with a data type that can be sent to flutter
-    #[frb(sync)]
-    pub fn set_value(&mut self, id: String, value: f64) {
-        let i = self.effect.params.iter().position(|i| i.id == id).unwrap();
-
-        self.effect.params[i].value = EffectValue::Float(Property::fixed(value))
+    #[frb(ignore)]
+    fn param(&self, id: &str) -> Result<&EffectParam, BridgeError> {
+        self.effect
+            .params
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or(BridgeError::InvalidParam)
     }
 }

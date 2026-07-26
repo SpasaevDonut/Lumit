@@ -58,7 +58,97 @@ sequence clips.
     should not have happened is visible rather than merely slow.
 
 **Bridge ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)):**
-- Replace the bridge code with [Flutter-Rust bridge](https://github.com/fzyzcjy/flutter_rust_bridge)
+
+- **Migrate to [flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge) —
+    the frontend's main line of work.** Started; both bridges are live side by side.
+
+    *Where it stands.* `crates/lumit-bridge/src/api/` holds the frb surface and
+    `flutter_ui/lib/src/rust/` its generated bindings, built through cargokit
+    (`flutter_ui/rust_builder/`). The v0 hand-rolled bridge is untouched and still
+    fully exported — `src/ffi.rs`, ABI v11, 110 `extern "C"` functions — so every
+    shipping panel keeps working while the port proceeds. `main.dart` boots
+    `LumitAppNew`, the frb shell; `LumitApp`/`LumitShell` is the v0 shell the
+    ~11k-line Dart suite exercises. Regenerate with
+    `flutter_rust_bridge_codegen generate` from `flutter_ui/` after any `api`
+    change (config in `flutter_ui/flutter_rust_bridge.yaml`).
+
+    *The design to follow*, set by the three worked examples — `panels_frb.dart`,
+    `project_panel_frb.dart`, `menu_bar_frb.dart` — and the reason this is a
+    rewrite rather than a transliteration: **the reference types are the
+    identity.** v0 shipped one big `snapshot()` JSON blob that Dart mirrored into
+    `BridgeItem`/`BridgeLayer` classes and re-read wholesale on every change, then
+    addressed edits by UUID string. frb instead hands Dart opaque
+    `ProjectReference`/`CompositionReference`/`LayerReference`/`ItemReference`
+    handles with methods on them, so there is no snapshot to diff, no mirror class
+    to keep in step, and no id lookup. Ops become methods on the thing they act
+    on (`layer.rename(name:)`), and `ScopedChange` tells Dart *which* reference
+    changed so only that subtree rebuilds — the `item_builder.dart` /
+    `layer_builder.dart` seam, which is the point of the exercise and is not yet
+    used by the panels.
+
+    *Order of work.* Grow the API until a panel's needs are covered, port that
+    panel, delete its v0 path; the Dart suite for that panel is the gate. Roughly
+    by dependency:
+
+    1. **Viewer render paths — first, because it is the only outright regression.**
+        The worker only knows Linux DMA-BUF (`render_to_shared_dmabuf`), so on
+        Windows — the platform docs/00 calls first — the frb Viewer renders
+        nothing at all. Wire `render_to_shared` (Windows, `shared-texture`) and
+        the portable `render_rgba` read-back beside it, as `WorkerResponse`
+        variants next to `RenderedDMABuf`. Then bring across what v0 already had
+        and the worker lacks: latest-wins generations (`render_comp_frame_gen`,
+        `render_cancel_stale`, K-176 — the `TODO` in
+        `render_frame_with_preview` names this), the rendered-frame LRU
+        (`framecache`), `Quality` other than `default()`, and `render_scope`.
+    2. **Project panel** — `save_project`, `import_footage`, `new_composition`,
+        `delete_item`, `rename_item`, `move_to_root`, `relink`, `thumbnail`,
+        plus children/parent on `ItemReference` for the folder tree. Note
+        `FootageReference::get_status` probes synchronously on every build, so the
+        off-thread probing item under "Threading / platform" lands with this.
+    3. **Effect controls** — `BridgeEffectInstance` is the furthest along and the
+        most provisional: `get_value`/`set_value` speak only static `f64`, so
+        seven of the eight `EffectValue` kinds and every keyframed value are
+        unreachable (they answer `None`). Replace the pair with a sum type
+        mirroring `EffectValue`, then add `add_effect`, `remove_effect`,
+        `reorder_effect`, `set_effect_enabled`, `list_effects` and the presets.
+    4. **Transform rows** — `set_transform`, and `preview_transform` /
+        `cancel_transform_preview` for the drag path.
+    5. **Timeline** — the largest surface: layer lifecycle (add solid/text/camera/
+        adjustment/sequence/footage, delete, duplicate, reorder), the switch and
+        column ops (`set_layer_switch`, `set_blend_mode`, `set_matte`,
+        `set_parent`, `set_motion_blur`, `list_blend_modes`), spans
+        (`edit_layer_span`, `drag_boundary`, `trim_to_source_end`,
+        `convert_to_sequenced`), the razor, markers, work area, comp settings.
+    6. **Keyframes and the graph editor** — the property ops plus their
+        effect-param twins. Add the single `set_animation` op noted below rather
+        than porting the granular pair.
+    7. **Retime, audio, export, then the performance/infra readouts**
+        (`cache_stats`, `playback_tier`, `boot_log`, recovery).
+
+    *Infrastructure the frb path is missing and v0 had.* Each is a correctness
+    gap, not a nicety:
+    - **No `catch_unwind`.** Every v0 export wrapped its body so a panic became an
+        error reply rather than unwinding across the FFI boundary (`lib.rs`
+        "No exported function crosses the C boundary with a panic"). The frb
+        surface has no equivalent.
+    - **clippy is blind to the frb surface.** `#[frb(...)]` is a proc-macro
+        attribute and clippy's restriction lints skip macro-expanded code, so
+        `unwrap_used`/`panic`/`todo` do not fire on any annotated function — the
+        crate's `deny` silently does not apply to the code Dart calls. Covered for
+        now by the `no-panics-in-frb-api` CI grep; the real fix is to stop needing
+        it.
+    - **No journal or autosave.** `LumitBridgeState.journal` is always `None`, so
+        crash recovery does not see work done through frb, and there is no
+        `autosave`. v0 appends every commit.
+    - **`ScopedChange` is coarse and lossy.** It re-serialises each `Op` to JSON
+        and looks for `comp`/`layer` string fields, so every project-level edit
+        falls through to "rebuild everything". Match on the `Op` enum instead.
+    - **The `PROJECTS`/`STREAMS` global pair** are two `LazyLock<RwLock<BTreeMap>>`
+        registries kept apart only by a comment about lock ordering, and
+        `ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out.
+    - **`DocumentStore::set_callback` takes `&mut self`**, so the observer can only
+        be attached before the store is shared — workable, but it means the
+        callback cannot be changed or removed for the store's lifetime.
 - **Effect-param drag preview** - `previewTransform` stages a live transform value
     so a drag never touches the document; the effect-parameter controls have no
     equivalent and still call `setEffectParamScalar` on every tick, so each tick is

@@ -229,8 +229,12 @@ class _EffectEditorFrbState extends State<EffectEditorFrb> {
     effects = widget.effects;
     final effect = effects[widget.index];
 
+    // A null value means the parameter is not a static scalar — a colour, a
+    // point, a choice, or a keyframed float. The bridge cannot express those
+    // yet, so they are left out rather than shown as a misleading 0.
     for (final p in effect.getParameters()) {
-      values[p] = effect.getValue(id: p);
+      final value = effect.getValue(id: p);
+      if (value != null) values[p] = value;
     }
   }
 
@@ -242,7 +246,8 @@ class _EffectEditorFrbState extends State<EffectEditorFrb> {
     return Column(
       children: [
         Text(effect.name(), style: t.small),
-        for (final p in effect.getParameters())
+        // Only the parameters the bridge can currently read and write.
+        for (final p in effect.getParameters().where(values.containsKey))
           Row(
             children: [
               Text(p, style: t.mono),

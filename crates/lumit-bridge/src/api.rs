@@ -20,6 +20,11 @@ pub enum BridgeError {
     InvalidComp,
     InvalidItem,
     InvalidLayer,
+    /// No parameter of that id on the effect.
+    InvalidParam,
+    /// The parameter exists but is of a kind this API cannot yet express (see
+    /// `BridgeEffectInstance::get_value`).
+    UnsupportedParamKind,
     ReadFailed,
     WriteFailed,
     InvalidWorkerState,
@@ -36,6 +41,10 @@ impl fmt::Display for BridgeError {
             BridgeError::InvalidComp => write!(f, "Invalid Comp"),
             BridgeError::InvalidItem => write!(f, "Invalid Item"),
             BridgeError::InvalidLayer => write!(f, "Invalid Layer"),
+            BridgeError::InvalidParam => write!(f, "No such effect parameter"),
+            BridgeError::UnsupportedParamKind => {
+                write!(f, "That effect parameter is not a scalar")
+            }
             BridgeError::WriteFailed => write!(f, "Write Failed"),
             BridgeError::InvalidWorkerState => write!(f, "Invalid worker state"),
             BridgeError::OpError(op_error) => write!(f, "{}", op_error),

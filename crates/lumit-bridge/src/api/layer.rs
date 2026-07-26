@@ -1,20 +1,14 @@
 use std::sync::Arc;
 
 use flutter_rust_bridge::frb;
-use lumit_core::{
-    model::{EffectInstance, Layer},
-    Op,
-};
+use lumit_core::model::Layer;
 
 use uuid::Uuid;
 
-use crate::{
-    api::{
-        effect::BridgeEffectInstance,
-        state::{LumitBridgeState, PROJECTS},
-        BridgeError,
-    },
-    state::Bridge,
+use crate::api::{
+    effect::BridgeEffectInstance,
+    state::{LumitBridgeState, PROJECTS},
+    BridgeError,
 };
 
 #[derive(Debug)]
@@ -57,7 +51,7 @@ impl LayerReference {
 
     #[frb(ignore)]
     fn project(&self) -> Result<Arc<std::sync::RwLock<LumitBridgeState>>, BridgeError> {
-        let projects = PROJECTS.read().unwrap();
+        let projects = PROJECTS.read().map_err(|_| BridgeError::ReadFailed)?;
         let project = projects.get(&self.project_id);
 
         let p = project.ok_or(BridgeError::InvalidProject)?;

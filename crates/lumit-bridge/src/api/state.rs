@@ -1,7 +1,6 @@
-use core::panic;
 use std::{
     collections::BTreeMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     println,
     sync::{mpsc::Sender, Arc, LazyLock, RwLock},
 };
@@ -15,7 +14,7 @@ use uuid::Uuid;
 use crate::{
     api::{
         composition::CompositionReference, layer::LayerReference, project::ProjectReference,
-        project_item::ItemReference, worker_thread::WorkerRequest,
+        project_item::ItemReference, worker_thread::WorkerRequest, BridgeError,
     },
     frb_generated::StreamSink,
     media::MediaCache,
@@ -71,10 +70,12 @@ pub static STREAMS: LazyLock<RwLock<BTreeMap<Uuid, Arc<CallbackStream>>>> =
 
 impl LumitBridgeState {
     #[frb(sync)]
-    pub fn new_project(on_change_stream: Option<CallbackStream>) -> ProjectReference {
+    pub fn new_project(
+        on_change_stream: Option<CallbackStream>,
+    ) -> Result<ProjectReference, BridgeError> {
         let id = Uuid::now_v7();
 
-        let mut p = PROJECTS.write().unwrap();
+        let mut p = PROJECTS.write().map_err(|_| BridgeError::WriteFailed)?;
 
         let mut state = LumitBridgeState {
             store: DocumentStore::new(Document::new()),
@@ -84,32 +85,25 @@ impl LumitBridgeState {
             sender: None,
         };
 
-        match on_change_stream {
-            Some(stream) => {
-                let mut s = STREAMS.write().unwrap();
-                s.insert(id.clone(), Arc::new(stream));
-            }
-            None => (),
+        if let Some(stream) = on_change_stream {
+            let mut s = STREAMS.write().map_err(|_| BridgeError::WriteFailed)?;
+            s.insert(id, Arc::new(stream));
         }
 
-        state.store.set_callback(Arc::new(move |c| {
-            Self::handle_change_callback(c, id.clone())
-        }));
+        state
+            .store
+            .set_callback(Arc::new(move |c| Self::handle_change_callback(c, id)));
 
-        p.insert(id.clone(), Arc::new(RwLock::new(state)));
+        p.insert(id, Arc::new(RwLock::new(state)));
 
-        ProjectReference::new(id)
+        Ok(ProjectReference::new(id))
     }
 
     #[frb(sync)]
-    pub fn get_current_project() -> Option<ProjectReference> {
-        let p = PROJECTS.read().unwrap();
-        let item = p.iter().next();
+    pub fn get_current_project() -> Result<Option<ProjectReference>, BridgeError> {
+        let p = PROJECTS.read().map_err(|_| BridgeError::ReadFailed)?;
 
-        match item {
-            Some(i) => Some(ProjectReference::new(i.0.clone())),
-            None => None,
-        }
+        Ok(p.keys().next().map(|id| ProjectReference::new(*id)))
     }
 
     /// Turn a committed op into the narrowest scope Dart can rebuild from.
@@ -167,53 +161,57 @@ impl LumitBridgeState {
     pub fn open_project(
         path: &str,
         on_change_stream: Option<CallbackStream>,
-    ) -> Option<ProjectReference> {
+    ) -> Result<Option<ProjectReference>, BridgeError> {
         let path = PathBuf::from(path);
-        match lumit_project::open(&path) {
-            Ok((mut doc, _manifest)) => {
-                let id = Uuid::now_v7();
+        let Ok((mut doc, _manifest)) = lumit_project::open(&path) else {
+            // Not an error to report: a `.lum` that will not open is the file
+            // picker's problem, and Dart shows its own notice for None.
+            return Ok(None);
+        };
 
-                let project_dir = path.parent().unwrap();
-                let (_relinked, _missing) =
-                    lumit_project::resolve_all_media(&mut doc, project_dir, &[]);
+        let id = Uuid::now_v7();
 
-                let mut state = LumitBridgeState {
-                    store: DocumentStore::new(doc),
-                    path: Some(path),
-                    media: MediaCache::default(),
-                    journal: None,
-                    sender: None,
-                };
-                state.store.set_callback(Arc::new(move |c| {
-                    Self::handle_change_callback(c, id.clone())
-                }));
+        // Relative media paths resolve against the project's own directory. A
+        // path with no parent (a bare filename) resolves against the working
+        // directory, which `Path::new("")` gives us — nothing to relink from,
+        // rather than a panic.
+        let project_dir = path.parent().unwrap_or_else(|| Path::new(""));
+        let (_relinked, _missing) = lumit_project::resolve_all_media(&mut doc, project_dir, &[]);
 
-                match on_change_stream {
-                    Some(stream) => {
-                        let mut s = STREAMS.write().unwrap();
-                        s.insert(id.clone(), Arc::new(stream));
-                    }
-                    None => (),
-                }
+        let mut state = LumitBridgeState {
+            store: DocumentStore::new(doc),
+            path: Some(path),
+            media: MediaCache::default(),
+            journal: None,
+            sender: None,
+        };
+        state
+            .store
+            .set_callback(Arc::new(move |c| Self::handle_change_callback(c, id)));
 
-                {
-                    let mut p = PROJECTS.write().unwrap();
-
-                    for entry in p.iter_mut() {
-                        let mut e = entry.1.write().unwrap();
-                        e.media.clear()
-                    }
-
-                    // Clear any other project that is currently open
-                    // Will also prevent any existing references from working
-                    p.clear();
-
-                    p.insert(id.clone(), Arc::new(RwLock::new(state)));
-                }
-
-                Some(ProjectReference::new(id))
-            }
-            Err(_) => None,
+        if let Some(stream) = on_change_stream {
+            let mut s = STREAMS.write().map_err(|_| BridgeError::WriteFailed)?;
+            s.insert(id, Arc::new(stream));
         }
+
+        {
+            let mut p = PROJECTS.write().map_err(|_| BridgeError::WriteFailed)?;
+
+            for entry in p.values() {
+                // A project whose lock is poisoned is being discarded anyway,
+                // so a failed cache clear is not worth refusing the open over.
+                if let Ok(mut e) = entry.write() {
+                    e.media.clear();
+                }
+            }
+
+            // Clear any other project that is currently open
+            // Will also prevent any existing references from working
+            p.clear();
+
+            p.insert(id, Arc::new(RwLock::new(state)));
+        }
+
+        Ok(Some(ProjectReference::new(id)))
     }
 }

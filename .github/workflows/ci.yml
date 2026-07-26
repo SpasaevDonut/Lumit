@@ -297,3 +297,30 @@ jobs:
             echo "$hits"
             exit 1
           fi
+
+  # clippy cannot enforce the no-panic rule (docs/14 §4) on the bridge's frb
+  # API. `#[frb(...)]` is a proc-macro attribute, and clippy's restriction lints
+  # (unwrap_used, expect_used, panic, todo, unimplemented) skip code that comes
+  # out of a macro expansion — so every function annotated with it is invisible
+  # to the crate's own `deny`. Verified by removing the attribute from one
+  # function: the lints fire immediately, and are silent again once it is back.
+  #
+  # That exempts exactly the wrong code. crates/lumit-bridge/src/api is the
+  # surface Dart calls, where an `unwrap` is an unguarded panic unwinding across
+  # the FFI boundary. This grep covers the blind spot until the lints see
+  # through the macro; every call there must return Result<_, BridgeError> or
+  # degrade deliberately.
+  no-panics-in-frb-api:
+    name: bridge lint (no panic paths in the frb API surface)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          hits=$(grep -rnE '\.unwrap\(\)|\.expect\(|\btodo!\(|\bunimplemented!\(|\bpanic!\(' \
+            crates/lumit-bridge/src/api crates/lumit-bridge/src/api.rs --include='*.rs' || true)
+          if [ -n "$hits" ]; then
+            echo "Panic paths in the frb API surface, which clippy cannot see"
+            echo "(docs/14-ENGINEERING-RULES.md §4). Return Result<_, BridgeError>:"
+            echo "$hits"
+            exit 1
+          fi

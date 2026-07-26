@@ -95,7 +95,7 @@ abstract class BridgeLibApi extends BaseApi {
   List<String> crateApiEffectBridgeEffectInstanceGetParameters(
       {required BridgeEffectInstance that});
 
-  double crateApiEffectBridgeEffectInstanceGetValue(
+  double? crateApiEffectBridgeEffectInstanceGetValue(
       {required BridgeEffectInstance that, required String id});
 
   String crateApiEffectBridgeEffectInstanceName(
@@ -233,19 +233,20 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       );
 
   @override
-  double crateApiEffectBridgeEffectInstanceGetValue(
+  double? crateApiEffectBridgeEffectInstanceGetValue(
       {required BridgeEffectInstance that, required String id}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
-        sse_encode_Auto_RefMut_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
+        sse_encode_Auto_Ref_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeEffectInstance(
             that, serializer);
         sse_encode_String(id, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 2)!;
       },
       codec: SseCodec(
-        decodeSuccessData: sse_decode_f_64,
-        decodeErrorData: null,
+        decodeSuccessData: sse_decode_opt_box_autoadd_f_64,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiEffectBridgeEffectInstanceGetValueConstMeta,
       argValues: [that, id],
@@ -355,7 +356,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
-        decodeErrorData: null,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiEffectBridgeEffectInstanceSetValueConstMeta,
       argValues: [that, id, value],
@@ -378,7 +380,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_project_reference,
-        decodeErrorData: null,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiStateLumitBridgeStateGetCurrentProjectConstMeta,
       argValues: [],
@@ -403,7 +406,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_project_reference,
-        decodeErrorData: null,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiStateLumitBridgeStateNewProjectConstMeta,
       argValues: [onChangeStream],
@@ -429,7 +433,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_opt_box_autoadd_project_reference,
-        decodeErrorData: null,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiStateLumitBridgeStateOpenProjectConstMeta,
       argValues: [path, onChangeStream],
@@ -727,7 +732,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_list_item_reference,
-        decodeErrorData: null,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiProjectProjectReferenceGetItemsConstMeta,
       argValues: [that],
@@ -984,6 +990,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  double dco_decode_box_autoadd_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw as double;
+  }
+
+  @protected
   FolderReference dco_decode_box_autoadd_folder_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return dco_decode_folder_reference(raw);
@@ -1169,6 +1181,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return raw == null ? null : dco_decode_StreamSink_scoped_change_Sse(raw);
+  }
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_64(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    return raw == null ? null : dco_decode_box_autoadd_f_64(raw);
   }
 
   @protected
@@ -1415,6 +1433,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    return (sse_decode_f_64(deserializer));
+  }
+
+  @protected
   FolderReference sse_decode_box_autoadd_folder_reference(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -1628,6 +1652,17 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
 
     if (sse_decode_bool(deserializer)) {
       return (sse_decode_StreamSink_scoped_change_Sse(deserializer));
+    } else {
+      return null;
+    }
+  }
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    if (sse_decode_bool(deserializer)) {
+      return (sse_decode_box_autoadd_f_64(deserializer));
     } else {
       return null;
     }
@@ -1902,6 +1937,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_f_64(self, serializer);
+  }
+
+  @protected
   void sse_encode_box_autoadd_folder_reference(
       FolderReference self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2088,6 +2129,16 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    sse_encode_bool(self != null, serializer);
+    if (self != null) {
+      sse_encode_box_autoadd_f_64(self, serializer);
+    }
+  }
+
+  @protected
   void sse_encode_opt_box_autoadd_item_reference(
       ItemReference? self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -2211,7 +2262,17 @@ class BridgeEffectInstanceImpl extends RustOpaque
         that: this,
       );
 
-  double getValue({required String id}) => BridgeLib.instance.api
+  /// A parameter's static scalar value.
+  ///
+  /// Only `Float` is carried so far, and only its static value: the other
+  /// seven `EffectValue` shapes (point, colour, bool, choice, seed, file,
+  /// layer) and the keyframed case have no Dart-side representation yet, so
+  /// they answer `None` rather than silently reading as 0.0 — a colour
+  /// parameter rendering as "0" is worse than one rendering as blank.
+  ///
+  /// TODO: replace this with a sum type mirroring `EffectValue`, so every
+  /// parameter kind is expressible. Tracked in docs/TODO.md under "Bridge".
+  double? getValue({required String id}) => BridgeLib.instance.api
       .crateApiEffectBridgeEffectInstanceGetValue(that: this, id: id);
 
   String name() =>
@@ -2224,6 +2285,10 @@ class BridgeEffectInstanceImpl extends RustOpaque
         that: this,
       );
 
+  /// Overwrite a parameter with a static scalar. Same limitation as
+  /// [`Self::get_value`]: it can only express `Float`, so calling it on a
+  /// parameter of another kind would change its type. It therefore refuses
+  /// rather than corrupting the effect.
   void setValue({required String id, required double value}) =>
       BridgeLib.instance.api.crateApiEffectBridgeEffectInstanceSetValue(
           that: this, id: id, value: value);

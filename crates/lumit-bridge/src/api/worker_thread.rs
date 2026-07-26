@@ -12,16 +12,21 @@ use lumit_render::Quality;
 use crate::api::state::BridgeSharedFrameInfoLinux;
 
 use crate::api::{
-    composition::CompositionReference,
-    layer::LayerReference,
-    project::ProjectReference,
-    state::{WorkerResponse, WorkerResponseStream},
-    BridgeError,
+    composition::CompositionReference, layer::LayerReference, project::ProjectReference,
+    state::WorkerResponseStream, BridgeError,
 };
 
 #[frb(ignore)]
 pub struct WorkerState {
+    /// The realtime preview-tier controller (K-030/K-171). Held so the worker
+    /// can feed it measured render costs and read the tier back, which is not
+    /// wired yet — see docs/TODO.md, "Bridge".
+    #[allow(dead_code)]
     pub preview_engine: PreviewEngine,
+    /// Only the Linux DMA-BUF `publish_frame` reads this so far, so on every
+    /// other target it is held but unused until the Windows shared-texture and
+    /// read-back paths are wired.
+    #[allow(dead_code)]
     pub renderer: HeadlessRenderer,
     pub project: ProjectReference,
 }
@@ -51,7 +56,10 @@ pub fn run_worker(project: ProjectReference, stream: WorkerResponseStream) {
     let (send_to_worker, receive_from_app) = std::sync::mpsc::channel::<WorkerRequest>();
 
     {
-        let state = project.state();
+        let Ok(state) = project.state() else {
+            eprintln!("No such project; not starting the render worker");
+            return;
+        };
         let Ok(mut state) = state.write() else {
             eprintln!("Project state poisoned; not starting the render worker");
             return;
@@ -106,7 +114,7 @@ fn handle_incoming_requests(
     state: &mut WorkerState,
     stream: &mut WorkerResponseStream,
 ) -> ControlFlow<()> {
-    return match receiver.try_recv() {
+    match receiver.try_recv() {
         Ok(result) => match result {
             // A frame that cannot be rendered is dropped, not fatal: the worker
             // has to survive to serve the next request.
@@ -129,7 +137,7 @@ fn handle_incoming_requests(
             std::sync::mpsc::TryRecvError::Empty => ControlFlow::Continue(()),
             std::sync::mpsc::TryRecvError::Disconnected => ControlFlow::Break(()),
         },
-    };
+    }
 }
 
 fn render_comp(
@@ -138,7 +146,7 @@ fn render_comp(
     stream: &mut WorkerResponseStream,
 ) -> Result<(), BridgeError> {
     let document = {
-        let document = state.project.state();
+        let document = state.project.state()?;
         let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
         document.store.snapshot()
     };
@@ -161,7 +169,7 @@ fn render_comp_with_preview(
     stream: &mut WorkerResponseStream,
 ) -> Result<(), BridgeError> {
     let mut document = {
-        let document = state.project.state();
+        let document = state.project.state()?;
         let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
         (*document.store.snapshot()).clone()
     };

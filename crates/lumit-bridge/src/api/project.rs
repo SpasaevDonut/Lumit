@@ -28,11 +28,13 @@ impl ProjectReference {
     }
 
     #[frb(ignore)]
-    pub fn state(&self) -> Arc<std::sync::RwLock<super::state::LumitBridgeState>> {
-        let projects = PROJECTS.read().unwrap();
-        let project = projects.get(&self.id);
+    pub fn state(
+        &self,
+    ) -> Result<Arc<std::sync::RwLock<super::state::LumitBridgeState>>, BridgeError> {
+        let projects = PROJECTS.read().map_err(|_| BridgeError::ReadFailed)?;
+        let project = projects.get(&self.id).ok_or(BridgeError::InvalidProject)?;
 
-        project.unwrap().clone()
+        Ok(project.clone())
     }
 
     #[frb(sync)]
@@ -41,48 +43,46 @@ impl ProjectReference {
     }
 
     #[frb(sync)]
-    pub fn get_items(&self) -> Vec<ItemReference> {
-        let s = self.state();
-        let s = s.read().unwrap();
+    pub fn get_items(&self) -> Result<Vec<ItemReference>, BridgeError> {
+        let s = self.state()?;
+        let s = s.read().map_err(|_| BridgeError::ReadFailed)?;
 
         let snapshot = s.store.snapshot();
 
-        snapshot
+        Ok(snapshot
             .items
             .iter()
             .map(|i| match i {
                 ProjectItem::Composition(_) => {
-                    ItemReference::Composition(CompositionReference::new(self.id.clone(), i.id()))
+                    ItemReference::Composition(CompositionReference::new(self.id, i.id()))
                 }
                 ProjectItem::Folder(_) => {
-                    ItemReference::Folder(FolderReference::new(self.id.clone(), i.id()))
+                    ItemReference::Folder(FolderReference::new(self.id, i.id()))
                 }
-                ProjectItem::Solid(_) => {
-                    ItemReference::Solid(SolidReference::new(self.id.clone(), i.id()))
-                }
+                ProjectItem::Solid(_) => ItemReference::Solid(SolidReference::new(self.id, i.id())),
                 ProjectItem::Footage(_) => {
-                    ItemReference::Footage(FootageReference::new(self.id.clone(), i.id()))
+                    ItemReference::Footage(FootageReference::new(self.id, i.id()))
                 }
             })
-            .collect()
+            .collect())
     }
 
     #[frb(sync)]
     pub fn undo(&self) -> Result<(), BridgeError> {
-        let s = self.state();
-        let s = s.read().unwrap();
+        let s = self.state()?;
+        let s = s.read().map_err(|_| BridgeError::ReadFailed)?;
 
-        s.store.undo().map_err(|e| BridgeError::OpError(e))?;
+        s.store.undo().map_err(BridgeError::OpError)?;
 
         Ok(())
     }
 
     #[frb(sync)]
     pub fn redo(&self) -> Result<(), BridgeError> {
-        let s = self.state();
-        let s = s.read().unwrap();
+        let s = self.state()?;
+        let s = s.read().map_err(|_| BridgeError::ReadFailed)?;
 
-        s.store.redo().map_err(|e| BridgeError::OpError(e))?;
+        s.store.redo().map_err(BridgeError::OpError)?;
 
         Ok(())
     }

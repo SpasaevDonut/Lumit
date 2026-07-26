@@ -3,17 +3,29 @@
 
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
+import '../api.dart';
 import '../frb_generated.dart';
 import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
+// These functions are ignored because they are not marked as `pub`: `param`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<BridgeEffectInstance>>
 abstract class BridgeEffectInstance implements RustOpaqueInterface {
   List<String> getParameters();
 
-  double getValue({required String id});
+  /// A parameter's static scalar value.
+  ///
+  /// Only `Float` is carried so far, and only its static value: the other
+  /// seven `EffectValue` shapes (point, colour, bool, choice, seed, file,
+  /// layer) and the keyframed case have no Dart-side representation yet, so
+  /// they answer `None` rather than silently reading as 0.0 — a colour
+  /// parameter rendering as "0" is worse than one rendering as blank.
+  ///
+  /// TODO: replace this with a sum type mirroring `EffectValue`, so every
+  /// parameter kind is expressible. Tracked in docs/TODO.md under "Bridge".
+  double? getValue({required String id});
 
   String name();
 
@@ -25,5 +37,9 @@ abstract class BridgeEffectInstance implements RustOpaqueInterface {
 
   String serialize();
 
+  /// Overwrite a parameter with a static scalar. Same limitation as
+  /// [`Self::get_value`]: it can only express `Float`, so calling it on a
+  /// parameter of another kind would change its type. It therefore refuses
+  /// rather than corrupting the effect.
   void setValue({required String id, required double value});
 }

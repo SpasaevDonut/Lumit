@@ -1,4 +1,4 @@
-use std::{println, sync::Arc, todo};
+use std::{println, sync::Arc};
 
 use flutter_rust_bridge::frb;
 
@@ -42,7 +42,7 @@ impl CompositionReference {
 
     #[frb(ignore)]
     fn project(&self) -> Result<Arc<std::sync::RwLock<LumitBridgeState>>, BridgeError> {
-        let projects = PROJECTS.read().unwrap();
+        let projects = PROJECTS.read().map_err(|_| BridgeError::ReadFailed)?;
         let project = projects.get(&self.project);
 
         let p = project.ok_or(BridgeError::InvalidProject)?;
@@ -55,15 +55,17 @@ impl CompositionReference {
         let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
 
         let snapshot = proj.store.snapshot();
-        let item = snapshot.item(self.id).unwrap();
+        let item = snapshot.item(self.id).ok_or(BridgeError::InvalidComp)?;
 
         match item {
             lumit_core::model::ProjectItem::Composition(composition) => Ok(composition
                 .layers
                 .iter()
-                .map(|i| LayerReference::new(self.project.clone(), self.id.clone(), i.id.clone()))
+                .map(|i| LayerReference::new(self.project, self.id, i.id))
                 .collect()),
-            _ => todo!(),
+            // A CompositionReference pointing at a non-composition item means
+            // the id was reused or the reference outlived its item.
+            _ => Err(BridgeError::InvalidComp),
         }
     }
 

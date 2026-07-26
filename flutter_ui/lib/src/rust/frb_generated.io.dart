@@ -124,6 +124,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dynamic raw);
 
   @protected
+  double dco_decode_box_autoadd_f_64(dynamic raw);
+
+  @protected
   FolderReference dco_decode_box_autoadd_folder_reference(dynamic raw);
 
   @protected
@@ -189,6 +192,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   RustStreamSink<ScopedChange>? dco_decode_opt_StreamSink_scoped_change_Sse(
       dynamic raw);
+
+  @protected
+  double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
   @protected
   ItemReference? dco_decode_opt_box_autoadd_item_reference(dynamic raw);
@@ -306,6 +312,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  double sse_decode_box_autoadd_f_64(SseDeserializer deserializer);
+
+  @protected
   FolderReference sse_decode_box_autoadd_folder_reference(
       SseDeserializer deserializer);
 
@@ -380,6 +389,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   RustStreamSink<ScopedChange>? sse_decode_opt_StreamSink_scoped_change_Sse(
       SseDeserializer deserializer);
+
+  @protected
+  double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
 
   @protected
   ItemReference? sse_decode_opt_box_autoadd_item_reference(
@@ -500,6 +512,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       CompositionReference self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_f_64(double self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_folder_reference(
       FolderReference self, SseSerializer serializer);
 
@@ -579,6 +594,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_opt_StreamSink_scoped_change_Sse(
       RustStreamSink<ScopedChange>? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_item_reference(
