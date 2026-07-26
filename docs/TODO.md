@@ -126,7 +126,8 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: the graph editor.** The full ledger:
+    is the gate. **Immediate next: the Viewer — the last panel with a real
+    surface still on v0.** The full ledger:
 
     **1. The seven docked panels.**
     - **Viewer** — **partial**: transport only. All three render paths work, but
@@ -135,16 +136,15 @@ sequence clips.
         `viewer_overlays.dart` (gizmos, motion paths), `viewer_layer_map.dart`,
         `slate.dart`, playback and timecode, zoom/pan, channel view and the
         transparency grid.
-    - **Timeline** — **partial**: everything but the curves. The outline,
-        ruler, playhead, bars, razor, comp tabs, cache bar, search, parent
-        column, markers and work area are in. Outstanding: the **lane / graph
-        editor** — v0's `graph_editor.dart` and its four lens files, the
-        keyframe clipboard and the interp menus.
-    - **Effect controls** — **partial**: the panel is in; what is left is the
-        **graph editor** (the curve view, bezier handles, keyframe clipboard) and
-        **`.lumfx` presets**. One known limit: a multi-axis row's stopwatch keys
-        only its first axis, because x and y animate independently in the model
-        and one stopwatch cannot honestly show two states.
+    - **Timeline** — **partial**: the panel is in, graph editor included.
+        Outstanding: the graph editor's **speed and time lenses** (the same curve
+        read a different way — v0's `graph_speed_lens.dart` /
+        `graph_time_lens.dart`), and **draggable bezier handles** (the interp
+        menu sets the AE presets, which covers the easing most of the time).
+    - **Effect controls** — **partial**: what is left is **`.lumfx` presets**.
+        One known limit: a multi-axis row's stopwatch keys only its first axis,
+        because x and y animate independently in the model and one stopwatch
+        cannot honestly show two states.
     - **Effects & presets** — **not started**, a `PlaceholderPanel`. Needs
         `list_effects` wiring (the API exists), drag-to-apply, `.lumfx` save/load.
     - **Scopes** — **not started**, a `PlaceholderPanel`. Waiting on `render_scope`

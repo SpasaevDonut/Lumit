@@ -10,8 +10,8 @@
 // the eight switches, blend mode, parenting, dragging and trimming a layer's
 // bar, scrubbing the playhead, the work area and marker cues.
 //
-// **What is not, and why.** The lane / graph editor, which is its own panel-sized
-// piece of work. See docs/TODO.md.
+// The **Graph** button swaps the track area for the graph editor
+// (graph_editor_frb.dart), which shapes the selected layer's curves.
 //
 // **The one rule the drags follow.** A bar drag is a live *preview* of nothing —
 // unlike an effect or transform drag there is no cheap render to show, because
@@ -29,6 +29,7 @@ import '../icons/icons.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'placeholder.dart';
+import 'graph_editor_frb.dart';
 import 'timeline_extras_frb.dart';
 
 /// The outline column's width. Wide enough for the number, four switches, a
@@ -54,6 +55,11 @@ class TimelinePanelFrb extends StatefulWidget {
 
 class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   String _search = '';
+
+  /// The graph editor replaces the track area rather than sitting beside it:
+  /// the two want the same width, and a curve squeezed into half a panel is not
+  /// a curve you can shape.
+  bool _graph = false;
 
   /// With the razor armed, a click on a bar cuts it rather than selecting it.
   /// Modal on purpose — it is how every editor does the tool, and it is the one
@@ -89,6 +95,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
         ),
         _Toolbar(
           comp: comp,
+          graph: _graph,
+          onToggleGraph: () => setState(() => _graph = !_graph),
           razor: _razor,
           playheadFrame: () => ui.playheadFrame.value,
           onToggleRazor: () => setState(() => _razor = !_razor),
@@ -123,7 +131,16 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                       ),
                     ),
                     Expanded(
-                      child: _Tracks(
+                      child: _graph
+                          ? GraphEditorFrb(
+                              comp: comp,
+                              layer: ui.selectedLayer.value,
+                              frames: frames,
+                              playheadFrame: playhead,
+                              onSeek: (f) => ui.playheadFrame.value = f,
+                              onChanged: () => setState(() {}),
+                            )
+                          : _Tracks(
                         comp: comp,
                         layers: layers,
                         axis: axis,
@@ -132,7 +149,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                         onSeek: (f) => ui.playheadFrame.value =
                             f.clamp(0, frames == 0 ? 0 : frames - 1),
                         onChanged: () => setState(() {}),
-                      ),
+                            ),
                     ),
                   ],
                 ),
@@ -160,6 +177,8 @@ class _Axis {
 /// The Layer menu, the razor, the work-area buttons, markers and search.
 class _Toolbar extends StatelessWidget {
   final CompositionReference comp;
+  final bool graph;
+  final VoidCallback onToggleGraph;
   final bool razor;
 
   /// Read at click time, not at build time: the toolbar sits above the
@@ -172,6 +191,8 @@ class _Toolbar extends StatelessWidget {
 
   const _Toolbar({
     required this.comp,
+    required this.graph,
+    required this.onToggleGraph,
     required this.razor,
     required this.playheadFrame,
     required this.onToggleRazor,
@@ -193,6 +214,14 @@ class _Toolbar extends StatelessWidget {
             small: true,
             onPressed: () => _showLayerMenu(context, comp, onChanged),
             child: Text('New layer', style: t.small),
+          ),
+          const SizedBox(width: 6),
+          HouseButton(
+            key: const ValueKey('tl-graph'),
+            small: true,
+            onPressed: onToggleGraph,
+            child: Text('Graph',
+                style: t.small.copyWith(color: graph ? t.accent : null)),
           ),
           const SizedBox(width: 6),
           LumitTooltip(
