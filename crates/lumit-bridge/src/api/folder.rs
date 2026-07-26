@@ -11,14 +11,13 @@ pub struct FolderReference {
 }
 
 impl FolderReference {
-
     #[frb(ignore)]
     pub fn new(project: Uuid, id: Uuid) -> FolderReference {
         FolderReference { project, id }
     }
 
     #[frb(ignore)]
-    pub fn project_id(&self) -> Uuid{
+    pub fn project_id(&self) -> Uuid {
         self.project
     }
 

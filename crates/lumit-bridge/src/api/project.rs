@@ -5,7 +5,13 @@ use lumit_core::model::ProjectItem;
 use uuid::Uuid;
 
 use crate::api::{
-    BridgeError, composition::CompositionReference, folder::FolderReference, footage::FootageReference, project_item::ItemReference, solid::SolidReference, state::{PROJECTS, WorkerResponseStream}, worker_thread,
+    composition::CompositionReference,
+    folder::FolderReference,
+    footage::FootageReference,
+    project_item::ItemReference,
+    solid::SolidReference,
+    state::{WorkerResponseStream, PROJECTS},
+    worker_thread, BridgeError,
 };
 
 #[derive(Debug, Clone)]
@@ -20,7 +26,7 @@ impl ProjectReference {
     pub fn new(id: Uuid) -> ProjectReference {
         ProjectReference { id }
     }
-    
+
     #[frb(ignore)]
     pub fn state(&self) -> Arc<std::sync::RwLock<super::state::LumitBridgeState>> {
         let projects = PROJECTS.read().unwrap();

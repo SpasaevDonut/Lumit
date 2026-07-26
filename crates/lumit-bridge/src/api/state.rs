@@ -1,21 +1,24 @@
-use core::{panic};
+use core::panic;
 use std::{
-    collections::BTreeMap, path::PathBuf, println, sync::{Arc, LazyLock, RwLock, mpsc::Sender},
+    collections::BTreeMap,
+    path::PathBuf,
+    println,
+    sync::{mpsc::Sender, Arc, LazyLock, RwLock},
 };
 
 use flutter_rust_bridge::frb;
-use lumit_core::{
-    store::DocumentChange,
-    Document, DocumentStore,
-};
+use lumit_core::{store::DocumentChange, Document, DocumentStore};
 use lumit_project::JournalFile;
 use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
     api::{
-        composition::CompositionReference, layer::LayerReference, project::ProjectReference, project_item::ItemReference, worker_thread::WorkerRequest,
-    }, frb_generated::StreamSink, media::MediaCache,
+        composition::CompositionReference, layer::LayerReference, project::ProjectReference,
+        project_item::ItemReference, worker_thread::WorkerRequest,
+    },
+    frb_generated::StreamSink,
+    media::MediaCache,
 };
 #[frb(ignore_all)]
 pub struct LumitBridgeState {
@@ -49,7 +52,7 @@ pub struct BridgeSharedFrameInfoLinux {
 
 #[frb(non_opaque)]
 pub enum WorkerResponse {
-    RenderedDMABuf(BridgeSharedFrameInfoLinux)
+    RenderedDMABuf(BridgeSharedFrameInfoLinux),
 }
 
 type CallbackStream = StreamSink<ScopedChange>;
@@ -78,7 +81,7 @@ impl LumitBridgeState {
             path: None,
             media: MediaCache::default(),
             journal: None,
-            sender: None
+            sender: None,
         };
 
         match on_change_stream {
@@ -134,7 +137,10 @@ impl LumitBridgeState {
                 });
 
                 if let Some(comp) = comp {
-                    change.item = Some(ItemReference::Composition(CompositionReference::new(project_id.clone(),comp.clone())));
+                    change.item = Some(ItemReference::Composition(CompositionReference::new(
+                        project_id.clone(),
+                        comp.clone(),
+                    )));
 
                     if let Some(layer) = layer {
                         change.layer = Some(LayerReference::new(
@@ -171,7 +177,8 @@ impl LumitBridgeState {
                 let id = Uuid::now_v7();
 
                 let project_dir = path.parent().unwrap();
-                let (_relinked, _missing) = lumit_project::resolve_all_media(&mut doc, project_dir, &[]);
+                let (_relinked, _missing) =
+                    lumit_project::resolve_all_media(&mut doc, project_dir, &[]);
 
                 let mut state = LumitBridgeState {
                     store: DocumentStore::new(doc),

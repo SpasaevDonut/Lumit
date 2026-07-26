@@ -4,8 +4,11 @@ version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-only"
 
-# A cdylib the Flutter Windows runner loads over dart:ffi, plus an rlib so the
-# in-crate tests (and any future Rust consumer) can link the same code.
+# A cdylib the Flutter desktop runners load over dart:ffi, plus a staticlib for
+# the platforms cargokit links statically (iOS, and Android's release builds).
+# `rlib` is deliberately absent: flutter_rust_bridge's generated code is only
+# ever reached through the C ABI, and cargo still builds the lib separately for
+# the in-crate unit tests, so `cargo test -p lumit_bridge` keeps working.
 [lib]
 crate-type = ["cdylib", "staticlib"]
 
@@ -23,7 +26,12 @@ crate-type = ["cdylib", "staticlib"]
 # the crate still builds and tests without FFmpeg or a GPU (CI parity) — render
 # calls then return null.
 [features]
-default = ["media", "render", "shared-texture", "shared-texture-linux" ]
+# The two zero-copy Viewer paths stay out of this set: each is single-platform
+# (D3D12 on Windows, Vulkan/DMA-BUF on Linux) and the comments below record them
+# as opt-in, so having them on by default would both contradict that and put
+# platform-specific code in every gate. Enable one explicitly for a dev build,
+# e.g. `--features shared-texture-linux` on Linux.
+default = ["media", "render"]
 media = ["dep:lumit-media"]
 # `render` also pulls lumit-audio: beat detection (docs/09 §5) mixes the comp's
 # audio through the headless input builder and runs onset/tempo analysis, so it
@@ -63,7 +71,6 @@ lumit-audio = { path = "../lumit-audio", optional = true }
 # builder and the compositor the Viewer and export both drive. An engine crate,
 # so the bridge depends on no frontend.
 lumit-render = { path = "../lumit-render", optional = true }
-lumit-ui = { path = "../lumit-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v7", "serde"] }

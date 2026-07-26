@@ -5,7 +5,10 @@ use uuid::Uuid;
 
 use flutter_rust_bridge::frb;
 
-use crate::api::{BridgeError, state::{LumitBridgeState, PROJECTS}};
+use crate::api::{
+    state::{LumitBridgeState, PROJECTS},
+    BridgeError,
+};
 
 #[derive(Debug, PartialEq, Eq)]
 #[frb]
@@ -22,14 +25,13 @@ pub enum LumitMediaStatus {
 }
 
 impl FootageReference {
-    
     #[frb(ignore)]
     pub fn new(project: Uuid, id: Uuid) -> FootageReference {
         FootageReference { project, id }
     }
 
     #[frb(ignore)]
-    pub fn project_id(&self) -> Uuid{
+    pub fn project_id(&self) -> Uuid {
         self.project
     }
 
@@ -80,7 +82,7 @@ impl FootageReference {
                     Err(_) => Ok(LumitMediaStatus::Missing),
                 }
             }
-            _ => Err(BridgeError::InvalidItem)
+            _ => Err(BridgeError::InvalidItem),
         }
     }
 }

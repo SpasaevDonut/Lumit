@@ -1,20 +1,16 @@
-
-use std::{
-    error::Error,
-    fmt,
-};
+use std::{error::Error, fmt};
 
 use lumit_core::OpError;
 
-pub mod state;
+pub mod composition;
+pub mod effect;
+pub mod folder;
+pub mod footage;
+pub mod layer;
 pub mod project;
 pub mod project_item;
-pub mod composition;
-pub mod layer;
-pub mod folder;
 pub mod solid;
-pub mod footage;
-pub mod effect;
+pub mod state;
 
 mod worker_thread;
 

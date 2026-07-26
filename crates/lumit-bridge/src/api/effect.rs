@@ -25,7 +25,7 @@ impl BridgeEffectInstance {
 
     #[frb(ignore)]
     pub fn get_effects(&self) -> EffectInstance {
-        return self.effect.clone()
+        return self.effect.clone();
     }
 
     #[frb(sync)]

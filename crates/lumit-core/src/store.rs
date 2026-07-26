@@ -42,6 +42,9 @@ struct Journal {
     redo: Vec<JournalEntry>,
 }
 
+/// What an observer is told after the store publishes a new snapshot: the op
+/// that actually moved the document. The Flutter bridge turns this into a
+/// scoped change so only the affected panels rebuild, rather than the whole UI.
 pub struct DocumentChange {
     pub op: Op,
 }
@@ -63,8 +66,22 @@ impl DocumentStore {
         }
     }
 
+    /// Register the change observer. Optional by construction: the egui shell
+    /// never sets one and reads snapshots directly, so every commit/undo/redo
+    /// path must stay a no-op when it is absent.
     pub fn set_callback(&mut self, callback: ChangeCallback) {
         self.on_change = Some(callback);
+    }
+
+    /// Tell the observer, if there is one. Callers must drop the journal lock
+    /// first: the callback crosses into the frontend (the Flutter bridge pushes
+    /// it down a Dart stream over FFI), and docs/14 §3 forbids holding a lock
+    /// across FFI. Dropping it also lets the observer re-enter the store —
+    /// notifying under the lock would deadlock on its first `commit`.
+    fn notify(&self, op: Op) {
+        if let Some(callback) = &self.on_change {
+            callback(DocumentChange { op });
+        }
     }
 
     /// Lock-free snapshot for readers (render jobs capture this at schedule time).
@@ -78,7 +95,7 @@ impl DocumentStore {
         let mut doc = Document::clone(&self.snapshot());
         let inverse = apply(&mut doc, &op)?;
 
-        let o = op.clone();
+        let observed = op.clone();
         journal.undo.push(JournalEntry { op, inverse });
         journal.redo.clear();
         // Compaction (docs/14 §5): keep the history bounded by dropping the
@@ -90,11 +107,8 @@ impl DocumentStore {
         }
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
-
-        match &self.on_change {
-            Some(callback) => callback(DocumentChange { op: o }),
-            None => (),
-        }
+        drop(journal);
+        self.notify(observed);
 
         Ok(arc)
     }
@@ -108,18 +122,17 @@ impl DocumentStore {
         let mut doc = Document::clone(&self.snapshot());
         // Applying the inverse yields the original op again — symmetry by construction.
         let op = apply(&mut doc, &entry.inverse)?;
-        let o = entry.inverse.clone();
+        let observed = entry.inverse.clone();
         journal.redo.push(JournalEntry {
             op,
             inverse: entry.inverse.clone(),
         });
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
-
-        match &self.on_change {
-            Some(callback) => callback(DocumentChange {op: o}),
-            None => todo!(),
-        }
+        drop(journal);
+        // The observer sees the *inverse* — the op that actually moved the
+        // document — not the op being undone.
+        self.notify(observed);
 
         Ok(Some(arc))
     }
@@ -131,9 +144,7 @@ impl DocumentStore {
             return Ok(None);
         };
         let mut doc = Document::clone(&self.snapshot());
-
-        let o = entry.op.clone();
-        
+        let observed = entry.op.clone();
         let inverse = apply(&mut doc, &entry.op)?;
         journal.undo.push(JournalEntry {
             op: entry.op,
@@ -141,11 +152,8 @@ impl DocumentStore {
         });
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
-
-        match &self.on_change {
-            Some(callback) => callback(DocumentChange {op: o}),
-            None => todo!(),
-        }
+        drop(journal);
+        self.notify(observed);
 
         Ok(Some(arc))
     }

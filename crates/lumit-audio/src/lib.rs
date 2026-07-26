@@ -63,13 +63,23 @@ impl AudioEngine {
     pub fn new() -> Result<Self, AudioError> {
         let host = cpal::default_host();
 
-        let mut devices = host.output_devices().map_err(|_| AudioError::NoDevice)?;
-        let device = devices.nth(0).ok_or(AudioError::NoDevice)?;
+        // The system default is what the user expects to hear from. Some hosts
+        // report no default while still enumerating usable outputs (seen on
+        // Linux/ALSA), so fall back to the first enumerated device rather than
+        // failing outright — playback with sound beats a hard NoDevice error.
+        let device = match host.default_output_device() {
+            Some(device) => device,
+            None => host
+                .output_devices()
+                .map_err(|_| AudioError::NoDevice)?
+                .next()
+                .ok_or(AudioError::NoDevice)?,
+        };
 
         let config = device
             .default_output_config()
             .map_err(|e| AudioError::Device(e.to_string()))?;
-        
+
         let device_rate = config.sample_rate().0;
         let channels = usize::from(config.channels());
 
