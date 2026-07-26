@@ -18,7 +18,7 @@ import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart' show LumitMediaStatus;
 import 'package:lumit_flutter/src/rust/api/project_item.dart' show ItemReference_Footage;
 import 'package:lumit_flutter/src/rust/api/state.dart' show ScopedChange;
-import 'package:lumit_flutter/state/app_state.dart' show FootageDragData;
+import 'package:lumit_flutter/state/drag_payloads.dart';
 
 import 'frb_test_support.dart';
 

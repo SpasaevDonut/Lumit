@@ -79,116 +79,22 @@
 )]
 mod frb_generated;
 
-mod assets;
-#[cfg(all(feature = "media", feature = "render"))]
-mod audio;
-mod beats;
-mod cancel;
-mod columns;
+// Pure defaults over lumit-core — no decoder, no GPU. It was gated on
+// media+render when it also held the v0 ops that needed them.
 mod edits;
 mod export;
-mod ffi;
 mod framecache;
-mod fxkeys;
-mod fxparams;
-mod items;
 mod media;
-mod preset;
 mod realtime;
-mod recovery;
 #[cfg(feature = "render")]
 mod render;
-mod retime;
-mod sequence;
-mod snapshot;
-mod state;
 
 pub mod api;
 
 use serde_json::json;
 
-/// The C ABI generation. Bumped only when the exported function set or the JSON
-/// shapes change incompatibly, so Dart can refuse a mismatched library.
-///
-/// v2 added the composition/layer/media detail to the snapshot and the
-/// layer/transform/marker ops. v3 added the transform read-back, identity links,
-/// work area and effect stack to the snapshot, plus the layer lifecycle,
-/// comp-settings, keyframe, work-area and effect ops. v4 added export
-/// (start/poll/cancel + the preset resolver), keyframe interpolation read-back
-/// and set, the Retime read-back and its ops, and the blend-mode, matte, parent,
-/// motion-blur and add-mask columns. v5 added footage placement
-/// (`add_footage_layer`) and layer reorder (`reorder_layer`). v6 added the
-/// Windows zero-copy Viewer path (`shared_supported`, `render_to_shared`,
-/// K-177) — present but answering "unsupported" unless the `.dll` was built with
-/// the `shared-texture` feature. v7 (this build) burns down the parity ledger's
-/// bridge-ops section: the razor (`cut_clip_at_playhead`/`delete_clip_at_playhead`),
-/// beat detection (`detect_beats`/`clear_beat_markers`), the project-item ops
-/// (`delete_item`/`rename_item`/`move_to_root`/`relink`), the layer ops
-/// (`rename_layer`/`convert_to_sequenced`/`trim_to_source_end`), the Retime
-/// reverse/interpolation setters, the dedicated `autosave`, the text/solid/camera
-/// property ops, recovery (`list_autosaves`/`restore_journal`), the `boot_log`,
-/// the enum/bool/seed/point effect-param setters plus `reorder_effect`, the
-/// param **ranges** and effect **category** in the snapshot, and the single-undo
-/// `apply_keyframe_batch`. v8 (this build) burns down the parity ledger's
-/// performance section: the bridge-side rendered-frame cache and its controls
-/// (`set_cache_budget`/`clear_cache`/`cache_stats`), engine-side render
-/// cancellation (`render_comp_frame_gen` carrying a latest-wins generation, and
-/// `render_cancel_stale`), and the Project-panel thumbnail path (`thumbnail`).
-/// v9 (this build) closes the last engine-surface parity blockers. Snapshot
-/// completions (all additive): sequence-layer `clips`, layer `start_offset`
-/// (frame + seconds) and local in/out seconds (the overrun-hatch ingredients),
-/// `marker_details` (marker kind + beat confidence), the text/solid-size/
-/// camera-zoom asset read-back, and effect `EffectKey` identity (namespace +
-/// version) plus each animatable parameter's animation state. New ops:
-/// `add_mask_geometry` (a mask from a drawn drag rect), the effect-param
-/// keyframe ops (`toggle`/`add`/`remove`/`shift`/`set_interp`), the effect
-/// preset ops (`save_effect_preset`/`load_effect_preset`, byte-compatible with
-/// the egui `.lumfx`), and the realtime tier readout (`playback_tier`/
-/// `reset_realtime`). Journal-append is now wired into every bridge commit, so
-/// `restore_journal` recovers this frontend's own unsaved work. Every addition
-/// is *additive*, so an older Dart client still reads every field it knew, but
-/// the ABI number rises so a client that needs the new calls can insist on them.
-/// v10 (this build) adds comp audio playback (docs/09; tester round 5 — the
-/// Flutter frontend had no sound): `audio_prepare`/`audio_play`/`audio_pause`/
-/// `audio_seek`/`audio_stop` and the per-tick `audio_clock` poll. The sound
-/// card's clock is the playback master and the Dart Viewer chases it; a machine
-/// with no output device answers calmly (`loaded` false) and playback simply
-/// has no sound. Present but answering "no audio" unless the library was built
-/// with the `media` + `render` features (the default set).
-/// v11 (this build) adds the transform-preview fast path (the drag-a-numeric-
-/// field lag report: every drag tick was running the full commit — undo push,
-/// journal fsync, whole-document JSON serialise — once per pixel of mouse
-/// movement). `preview_transform` stages an in-memory-only edit (no undo entry,
-/// no journal write, no snapshot); `render_comp_frame_preview` renders a frame
-/// under it, deliberately bypassing the rendered-frame cache so a throwaway
-/// preview document can never evict real cached frames; `cancel_transform_preview`
-/// drops the overlay without committing (Escape / drag-cancel); the existing
-/// `set_transform` commits it for real, once, on drag-release, exactly as
-/// before this fix. `preview_transform_supported` is the stateless capability
-/// flag. Purely additive — an older Dart client that never calls the new
-/// symbols behaves exactly as before — but the ABI rises so a client that
-/// needs the fast path can insist on it.
-/// v12 (this build) extends that fast path to effect parameters, which v11 left
-/// out: `preview_effect_param` stages a scalar effect value the same way
-/// `preview_transform` stages a transform one, so a drag renders without
-/// committing. The effect rows had no live path at all before, so every tick ran
-/// the full `set_effect_param_scalar` commit — document clone, undo entry,
-/// synchronous journal `fsync`, whole-document JSON serialise — measured at
-/// 2.5 ms per tick with 91% of it the `fsync`, against budget B1's 8 ms
-/// interaction frame (docs/13 §2), and leaving hundreds of undo steps per drag.
-/// `cancel_transform_preview` already covers both kinds (there is only ever one
-/// live drag), so no new cancel symbol. Purely additive.
-pub(crate) const ABI_VERSION: u32 = 12;
-
 /// `{"ok":false,"error":"…"}`. serde escapes any control character, so the
 /// resulting string never carries an interior NUL and always makes a `CString`.
 pub(crate) fn err_json(message: impl AsRef<str>) -> String {
     json!({ "ok": false, "error": message.as_ref() }).to_string()
-}
-
-/// `{"ok":true}` — the tiny stateless ack for calls that succeed without a
-/// document change to report. `preview_transform`/`cancel_transform_preview`
-/// callers must not treat this as a snapshot.
-pub(crate) fn ok_json() -> String {
-    json!({ "ok": true }).to_string()
 }

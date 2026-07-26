@@ -37,6 +37,20 @@ pub struct BridgeExportSpec {
     pub audio_bit_rate: i64,
 }
 
+/// What a delivery preset fills the export dialogue with.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeExportPreset {
+    pub codec: String,
+    /// Zero means "the composition's own size".
+    pub width: u32,
+    pub height: u32,
+    /// Zero means the encoder's own default.
+    pub bitrate_mbps: u32,
+    /// The file name to suggest in the picker.
+    pub default_name: String,
+}
+
 /// How a running export is getting on.
 #[frb(non_opaque)]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +115,51 @@ impl CompositionReference {
         reply_ok(&reply).then_some(()).ok_or_else(|| {
             BridgeError::ExportFailed(reply_error(&reply).unwrap_or_else(|| "export".into()))
         })
+    }
+}
+
+/// What a delivery preset stamps into the dialogue, and what to call the file.
+///
+/// A blank `preset` gives the custom defaults. `template` drives the
+/// `{comp}`/`{preset}`/`{date}` substitution (K-119); blank yields the preset's
+/// own suggested name.
+#[frb(sync)]
+pub fn export_preset(preset: String, comp_name: String, template: String) -> BridgeExportPreset {
+    let reply = crate::export::export_preset(&preset, &comp_name, &template);
+    let Ok(Value::Object(map)) = serde_json::from_str::<Value>(&reply) else {
+        return BridgeExportPreset {
+            codec: "h264".into(),
+            width: 0,
+            height: 0,
+            bitrate_mbps: 0,
+            default_name: String::new(),
+        };
+    };
+    let size = map.get("size").and_then(Value::as_array);
+    BridgeExportPreset {
+        codec: map
+            .get("codec")
+            .and_then(|v| v.as_str())
+            .unwrap_or("h264")
+            .to_owned(),
+        width: size
+            .and_then(|a| a.first())
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+        height: size
+            .and_then(|a| a.get(1))
+            .and_then(Value::as_u64)
+            .unwrap_or(0) as u32,
+        bitrate_mbps: map
+            .get("bitrate_mbps")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0),
+        default_name: map
+            .get("default_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_owned(),
     }
 }
 

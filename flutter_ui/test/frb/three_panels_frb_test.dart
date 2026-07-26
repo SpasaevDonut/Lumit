@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effects_presets_panel_frb.dart';
+import 'package:lumit_flutter/state/drag_payloads.dart';
 import 'package:lumit_flutter/panels/hierarchy_panel_frb.dart';
 import 'package:lumit_flutter/panels/scopes_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';

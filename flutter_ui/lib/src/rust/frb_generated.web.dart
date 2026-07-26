@@ -22,7 +22,6 @@ import 'api/state.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';
-import 'lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated_web.dart';
 import 'package:uuid/uuid.dart';
 
@@ -221,6 +220,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeEffectValue dco_decode_bridge_effect_value(dynamic raw);
+
+  @protected
+  BridgeExportPreset dco_decode_bridge_export_preset(dynamic raw);
 
   @protected
   BridgeExportSpec dco_decode_bridge_export_spec(dynamic raw);
@@ -621,6 +623,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeEffectValue sse_decode_bridge_effect_value(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeExportPreset sse_decode_bridge_export_preset(
       SseDeserializer deserializer);
 
   @protected
@@ -1052,6 +1058,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_effect_value(
       BridgeEffectValue self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_export_preset(
+      BridgeExportPreset self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_export_spec(

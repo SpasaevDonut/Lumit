@@ -17,12 +17,17 @@ shared library (a `.dll` on Windows) which the Flutter runner loads at start-up.
 
 Two kinds of information cross the boundary:
 
-**Commands and state** travel as **JSON text over a C ABI**. Dart calls a plain
-C function, passes a JSON string in, and gets a JSON string back. Every reply
-is either `{"ok": true, ... }` or `{"ok":false, "error":" ... "}`.
-**Video frames** are far too large to encode as text, so they travel as **raw
-pixel buffers** - or, on the fast path, are never copied at all and are shared
-as GPU memory the frontend displays directly.
+**Commands and readings** cross through generated bindings
+([flutter_rust_bridge](https://github.com/fzyzcjy/flutter_rust_bridge), K-179).
+Dart never holds a copy of the document. It holds **handles** — small opaque
+tokens standing for one thing in it — and calls methods on them:
+`layer.rename(name: 'hero shot')`. Rust pushes a small "something changed, and
+here is which layer" message down a stream, so only the part of the interface
+that actually changed is redrawn.
+
+**Video frames** are far too large to send field by field, so they travel as
+**raw pixel buffers** — or, on the fast path, are never copied at all and are
+shared as GPU memory the frontend displays directly.
 
 ## The layering
 
@@ -49,116 +54,136 @@ crates/lumit-core, -project,    the engine (unchanged by the bridge)
     channels inside the engine; the bridge exposes progress through poll functions
     the frontend calls on a cadence.
 
-## The transport: JSON over a C ABI ("bridge v0")
+## The transport: flutter_rust_bridge (K-179)
 
-The current seam is a hand-written `extern "C"` surface, not generated code. This
-is a deliberate interim choice ("bridge v0"): it keeps the toolchain simple - no
-code generation, no build step - while the command surface is still changing.
-`flutter_rust_bridge` remains the intended target once the API stabilises; see
-[TODO.md](TODO.md) and the migration note below.
+The seam is generated, not hand-written. `crates/lumit-bridge/src/api/` declares
+the surface in Rust; `flutter_rust_bridge_codegen generate`, run from
+`flutter_ui/`, writes the Rust glue (`frb_generated.rs`) and the Dart bindings
+(`flutter_ui/lib/src/rust/`). **Never edit generated files** — change `api/**`
+and regenerate, and check the output is idempotent before committing.
 
-The exported functions live in [`ffi.rs`](../crates/lumit-bridge/src/ffi.rs) and
-are named `lumit_bridge_*`. Dart binds them in
-[bridge.dart ](../flutter_ui/lib/bridge/bridge.dart).
+**The reference types are the identity.** Dart holds opaque handles —
+`ProjectReference`, `CompositionReference`, `LayerReference`, `ItemReference` —
+with methods on them: `layer.rename(name:)`, `item.delete()`. There is no
+document snapshot crossing the boundary, so there is nothing to diff, no mirror
+class to keep in step, and no id to resolve. Alongside them a `ScopedChange`
+stream names *which* reference an edit touched, so a panel rebuilds its own
+subtree rather than everything.
+
+Two consequences are binding, because both exist to make one gesture cost one
+undo step:
+
+- **An op takes a whole value, not a granular delta.** `set_transform` takes an
+    entire animation; `set_value` takes an entire `BridgeEffectValue`;
+    `set_span` carries all three edges. A keyframe drag that moves a key in time
+    *and* value is therefore one write. The predecessor's granular
+    add/remove/shift ops are deliberately absent and should not be reintroduced.
+- **A drag stages rather than commits.** `render_frame_with_preview` renders a
+    patched *clone* of the document engine-side, so a hundred drag ticks produce
+    pixels without producing a hundred commits, journal writes and undo entries.
+    Only the release commits.
+
+The predecessor — a hand-written `extern "C"` surface passing whole documents as
+JSON text — was deleted once every panel had moved across (K-179). Its shape
+explains the two rules above: it is exactly what they exist to avoid.
 
 ### The four binding rules
 
-These are the contract. They do not change when generated code eventually
-replaces the hand-written seam.
+These are the contract. Three of them survived the change of transport unchanged
+(K-179); the fourth did not, and the difference matters.
 
-1. **No panic crosses the boundary.** Every exported function body runs inside
-    `std::panic::catch_unwind`. A panic becomes an ordinary
-    `{"ok": false, "error":"..."}` reply, never an unwind into Dart
-    ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)). The error string is a
-    calm sentence fit for the status line.
+1. **No panic crosses the boundary.** A panic must become an ordinary error
+    reply, never an unwind into Dart
+    ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)). Every function on the
+    `api` surface returns `Result<_, BridgeError>` and every error is a calm
+    sentence fit for the status line. **This rule is currently enforced by
+    convention and a CI grep, not by the code**: the generated glue has no
+    `catch_unwind`, where the hand-written surface wrapped every body in one.
+    Recorded as an outstanding gap in [TODO.md](TODO.md).
 
-2. **Rust owns the strings.** Each JSON function returns a Rust-allocated,
-    NUL-terminated UTF-8 pointer. Dart copies the bytes out and immediately hands
-    the pointer back to `lumit_bridge_free_string` so Rust frees it. Dart never
-    frees Rust memory itself; Rust never reads a freed pointer.
+2. **Memory ownership is the generator's.** flutter_rust_bridge marshals every
+    value; nothing is hand-freed on either side, and the raw-pointer discipline
+    the previous transport needed is gone. The one thing that still crosses as
+    bulk bytes is a rendered frame — see "The frame paths" below.
 
-3. **One client, one lock.** The engine-side document and its undo store live
-    behind a single process-wide `Mutex` (there is exactly one Flutter window
-    driving it). The lock is held only for the duration of one state transition,
-    never across re-entry, an await, or a GPU/FFI call
-    ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)).
+3. **One lock, held briefly.** Each open project's state lives behind its own
+    `RwLock` in a process-wide registry. The lock is held only for the duration
+    of one state transition, never across re-entry, an await, or a GPU call
+    ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)). The change observer is
+    notified *after* the store's own lock is dropped, because it crosses into
+    Dart and a lock held across that boundary is forbidden.
 
-4. **An absent library degrades, it does not crash.** Dart's
-    `LumitBridge.tryLoad()` returns null when the `.dll` cannot be found or bound,
-    and the whole frontend keeps its placeholder behaviour. The bridge is an
-    enhancement, never a hard dependency of the chrome. Every Flutter widget test
-    runs without the library present, and stays green.
+4. **The library is required, not optional.** The previous transport bound
+    symbols by name and degraded to placeholder behaviour when the `.dll` was
+    absent; flutter_rust_bridge compares a content hash at start-up and refuses
+    to run against a mismatched or missing library. So `cargo build -p
+    lumit_bridge` is a build dependency of the Flutter tests, and a stale library
+    fails loudly rather than misbehaving quietly. Widget tests therefore drive
+    the **real engine** — see `flutter_ui/test/frb/frb_test_support.dart` for why
+    that is better coverage than a fake and not merely a constraint.
 
-### Commands down, state up
+### Commands down, references up
 
 The engine owns the document; the frontend never mutates it directly.
 
-- **Commands down.** Every user action becomes one bridge call. Each edit maps
-    onto a real, unit-tested `lumit_core` op (`AddLayer`, `SetTransformProperty`,
-    `SetLayerEffects`, and so on), so undo/redo journalling is one clean step and
-    is untouched by the existence of the bridge.
-- **State up.** A successful edit returns the full refreshed **snapshot** - the
-    document as the panels need to read it (project tree, comp outlines, layers,
-    transforms, effects, retime, work area). The frontend holds it in
-    `ChangeNotifier`s the widgets watch.
+- **Commands down.** Every user action becomes one call on a reference handle.
+    Each edit maps onto a real, unit-tested `lumit_core` op (`AddLayer`,
+    `SetTransformProperty`, `SetLayerEffects`, and so on), so undo/redo
+    journalling is one clean step and is untouched by the existence of the
+    bridge.
+- **References up, not state.** Nothing returns a document. A reader asks the
+    handle it already holds (`layer.getSwitches()`, `comp.getLayers()`), and a
+    `ScopedChange` on the change stream names which reference an edit touched so
+    only that subtree rebuilds. This is the whole difference from the previous
+    transport, which returned a refreshed snapshot of the entire document after
+    every edit.
 - **Rational time crosses as integers.** Frame counts and rates cross as exact
     `{num, den}` pairs or integer frame indices derived from a composition's own
     frame rate, never as floating-point seconds
     ([04-RETIMING.md](04-RETIMING.md), [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)).
+    `CompositionReference::time_of_frame`/`frame_at_time` exist so no frontend
+    has to do that arithmetic itself: at 29.97 fps a frame is 1001/30000 s, and a
+    keyframe placed in floating point does not land on the frame it was set on.
 
-### The ABI version and additive evolution
+### Versioning
 
-The bridge reports an integer `abi` from `lumit_bridge_version`. The snapshot has
-grown additively across versions - each revision keeps every field the previous
-one had, so an older reader never breaks:
-
-ABI | Adds |
-|---|---|
-| v0 | Project lifecycle, ops dispatch, the snapshot, the JSON contract |
-| v0.2 | Per-comp comp' block, footage `status`/`media`, the binary frame buffer|
-| v0.3 | Transform read-back, identity links, effects, work area, layer lifecycle ops |
-| v0.4 | Export, keyframe interpolation, Retime read-back and ops, the last timeline columns |
-| v0.9 | Beat markers, sequence clips, overrun data, asset read-back, effect-param animation, `.lumfx` presets, mask geometry, the realtime (Auto) tier |
-| v10 | Comp audio playback (`audio_prepare`/`play`/`pause`/`seek`/`stop` + the per-tick `audio_clock`); the sound card's clock is the playback master |
-| v11 | The transform drag-preview fast path: `preview_transform` stages an in-memory-only value, `render_comp_frame_preview` renders under it (deliberately outside the frame cache), `cancel_transform_preview` discards it |
-| v12 | `preview_effect_param`, the effect-parameter sibling of v11 — the effect rows had no live path, so every drag tick was a full commit including a synchronous journal `fsync` (2.5 ms/tick measured, against budget B1's 8 ms). Cancel is shared with v11: one overlay covers whichever drag is live |
-
-
-
-
-
-When adding surface: keep it additive, bump `abi`, and never remove a field a
-shipped snapshot promised.
+There is no ABI number to gate on. flutter_rust_bridge embeds a content hash of
+the declared surface in both the Rust glue and the Dart bindings and checks them
+at start-up, so a Dart side built against a different `api/**` than the loaded
+library refuses to start rather than calling into the wrong function. The
+practical rule that follows: **after any change under `api/**`, regenerate and
+rebuild**, and check the generated output is idempotent before committing.
 
 ## The frame paths (pixels, not JSON)
 
-A video frame is too large to encode as text, so frames have their own ownership
-contract, documented beside the functions in
-[`ffi.rs`](../crates/lumit-bridge/src/ffi.rs).
+A video frame is too large to marshal field by field, so frames have their own
+path, documented beside the types in
+[`api/state.rs`](../crates/lumit-bridge/src/api/state.rs).
 
-- **CPU buffer path.** `lumit_bridge_decode_frame` and
-    lumit_bridge_render_comp_frame' return a Rust-owned block of tightly packed
-    RGBA8 bytes (null on failure, with the out-pointers zeroed), writing the
-    frame's width, height, and length into out-pointers. Dart copies the pixels out
-    and hands the pointer **and its exact length** back to
-    `lumit_bridge_free_buffer` - the mirror of the string contract, one boxed slice
-    freed as a whole. The length must be exactly the `out_len` the decode wrote.
-- **Zero-copy shared-texture path (Windows, opt-in, K-177).** The per-frame CPU
-round trip (render on the GPU, read pixels down to the CPU, copy across FFI,
-upload back to the GPU) is the recorded top performance cost (K-176). The
-shared-texture path removes it: the engine renders into a shared D3D12 texture
-and hands the frontend an NT handle (`lumit_bridge_render_to_shared`), which the
-Windows runner registers as a Flutter external texture - no pixels copied. It is
-an opt-in `shared-texture` cargo feature, off by default so every existing build
-and CI gate is unchanged. See [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) and
-[lumit-gpu/src/shared.rs ](../crates/lumit-gpu/src/shared.rs).
+- **CPU read-back path.** The render worker publishes a `BridgeRenderedFrame` —
+    width, height and tightly packed RGBA8 — down its response stream. This is
+    the portable fallback and it is **expensive**: flutter_rust_bridge's SSE
+    codec encodes a `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p
+    frame. Prefer a zero-copy build where the platform allows one; the fix is
+    recorded in [TODO.md](TODO.md).
+- **Zero-copy shared-texture path (Windows and Linux, opt-in, K-177).** The
+    per-frame CPU round trip (render on the GPU, read pixels down, copy across,
+    upload back) is the recorded top performance cost (K-176). The shared-texture
+    path removes it: the engine renders into a shared texture and hands the
+    frontend a handle, which the runner registers as a Flutter external texture —
+    no pixels copied. Opt-in cargo features (`shared-texture`,
+    `shared-texture-linux`). All three publish variants are always *declared*, so
+    the generated Dart is one shape on every platform and the Viewer holds one
+    `switch` over the lot.
 
 ## Feature gates
 
 - **`media`** (default on) pulls `lumit-media` (FFmpeg) for probing and decoding.
-    `--no-default-features` drops it: the crate still builds and tests without
-    FFmpeg (CI parity), footage reports `unprobed`, and the frame functions return
-    null.
+    Without it, footage does not probe and thumbnails are absent.
+- **Note.** `--no-default-features` does **not** currently build: the render
+    worker is part of the API surface, which is deliberately identical whatever
+    the features are so the generated Dart is one shape everywhere. Recorded in
+    [TODO.md](TODO.md).
 - **`render`** (default on) enables the composited-comp Viewer path and export
 through the headless seam.
 - **`shared-texture`** (default off) enables the zero-copy path above; the shipped
@@ -167,24 +192,14 @@ Windows .dll is built with it.
 ## Threading and long-running work
 
 - **Export** runs on its own encode thread inside `lumit-ui::export` (K-017). The
-    bridge holds the handle and drains progress on `lumit_bridge_export_poll`.
+    bridge holds the handle and drains progress on `api::export::export_poll`.
 - **Playback / realtime tier.** A genuine render reports its measured cost to
     `lumit-eval`'s realtime controller (K-171); the frontend reads the current tier
-    and scale back through `lumit_bridge_playback_tier` to drive the Auto
+    and scale back through `api::shell::playback_tier` to drive the Auto
     resolution setting.
 - **Known synchronous seams** (probing on import, beat detection) still run on the
 calling thread and are honest follow-ups in [TODO.md](TODO.md); they function
 today, the conversion is a threading refactor, not a missing capability.
-
-## The migration to generated bindings
-
-`flutter_rust_bridge` is purpose-built for this seam and is the intended endpoint.
-It is deliberately deferred until the command surface stops changing, because
-code generation mid-flux means constant regeneration churn. The four binding
-rules above are written so the contract survives the switch unchanged: only the
-mechanism that marshals a call changes, not the ownership, the degradation rule,
-the version gate, or the rational-time convention. Track this under
-[TODO.md](TODO.md) -> "Bridge and platform".
 
 ## See also
 

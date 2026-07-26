@@ -18,18 +18,9 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../state/drag_payloads.dart';
 import '../state/file_dialogs.dart';
 import '../widgets/controls.dart';
-
-/// What a dragged effect carries. The Effect controls panel's drop target
-/// consumes exactly this type and nothing else produces it, so the payload is
-/// load-bearing — the same contract `FootageDragData` has with the Timeline.
-class EffectDragData {
-  /// The stable match name `addEffect` takes.
-  final String name;
-  final String label;
-  const EffectDragData(this.name, this.label);
-}
 
 class EffectsPresetsPanelFrb extends StatefulWidget {
   /// The preset file seams, injected by tests so no plugin channel opens.

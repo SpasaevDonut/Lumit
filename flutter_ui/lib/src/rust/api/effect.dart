@@ -5,7 +5,6 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
-import '../lib.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 import 'package:uuid/uuid.dart';
@@ -84,6 +83,9 @@ abstract class BridgeEffectInstance implements RustOpaqueInterface {
   /// control can never quietly change what a parameter *is*.
   void setValue({required String id, required BridgeEffectValue value});
 }
+
+// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<EffectInstance>>
+abstract class EffectInstance implements RustOpaqueInterface {}
 
 /// A bezier side's After Effects-compatible handle: `speed` in value-units per
 /// second, `influence` as a fraction of the gap to the neighbouring key.

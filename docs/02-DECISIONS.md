@@ -2326,3 +2326,29 @@ the recorded next step (docs/TODO.md, Now), gated on a bit-identity matrix acros
 mattes, adjustments, collapse and motion blur; a solid-comp identity test is in place already.
 This entry supersedes K-175's temporary arrangement; K-175 stays as the record of why the edge
 existed.
+
+**K-179 · DECIDED · flutter_rust_bridge is the only front/back seam; the hand-written
+`extern "C"` bridge is deleted.** The interim transport ("bridge v0" in
+[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)) passed whole documents as JSON text over 107
+hand-written `extern "C"` functions. It was always described as a deliberate interim choice
+with flutter_rust_bridge as the intended target once the command surface stabilised; this
+entry records that arriving. Everything the frontend does now goes through
+`crates/lumit-bridge/src/api/`, which hands Dart opaque reference handles
+(`ProjectReference`, `CompositionReference`, `LayerReference`, `ItemReference`) with methods on
+them, plus a scoped-change stream naming which reference an edit touched. **The reference types
+are the identity**: there is no snapshot to diff, no mirror class to keep in step, and no id
+lookup, which is what removes the whole-document JSON round trip per edit. Two shapes follow
+from that and are binding: an op takes a **whole value** rather than a granular delta (a
+keyframe drag that moves time *and* value is one write and therefore one undo step), and a
+*staged* edit — a drag — renders through a patched clone engine-side and commits once on
+release. The two bridges ran side by side while each panel moved across, then v0 was removed in
+one sweep so the two never had to be kept in step; the migration's running order and the
+capability gaps that remain are in [TODO.md](TODO.md). What survived the sweep is shared
+infrastructure, not transport: the layer and asset defaults both frontends build from
+(`edits.rs`), the scale-to-decode-size policy (`render::quality_for`), the rendered-frame cache,
+the realtime controller, media probing/decoding, and the exporter — whose entry point now takes
+the document as an argument rather than reading a process-wide bridge, which is what let one
+exporter serve both frontends. This supersedes 17-BRIDGE-CONTRACT.md's "JSON over a C ABI"
+transport section; the four binding rules in it (no panic crosses the boundary, no lock held
+across the boundary, rational time crosses as integers, the engine never depends on the
+frontend) are unchanged and still bind.

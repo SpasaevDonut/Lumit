@@ -2446,16 +2446,22 @@ deliberate: the only way to write a value at the moment replaces the whole curve
 so offering a field would let a small nudge silently delete every keyframe on it.
 The field comes back when the keyframe editing arrives with the graph editor.
 
-*Where to look for the pattern.* Three small files exist purely as readable
-examples of this style, and are the ones to copy when porting a panel:
-`flutter_ui/lib/panels/project_panel_frb.dart` (reading a list through handles),
-`flutter_ui/lib/panels/panels_frb.dart` (a Viewer fed by the stream, and the
-live-drag path that renders a preview without ever committing an edit), and
-`flutter_ui/lib/shell/menu_bar_frb.dart` (calling an action). They are
-deliberately tiny. The full panels beside them — `project_panel.dart`,
-`timeline_panel.dart` and the rest — are still the shipping ones and still speak
-bridge v0; each moves across once the new bridge covers what it needs.
-`docs/TODO.md` holds the running order.
+*Where to look for the pattern.* Every panel now works this way, and the whole
+older bridge has been deleted — there is one way to talk to the engine, not two.
+`flutter_ui/lib/panels/project_panel_frb.dart` reads a list through handles,
+`viewer_panel_frb.dart` is fed by the frame stream, `effect_controls_panel_frb.dart`
+shows the live-drag path that renders a preview without ever committing an edit,
+and `shell/menu_bar_frb.dart` simply calls actions. `docs/TODO.md` records what is
+still missing.
+
+The older bridge is worth one paragraph of history because its shape explains
+several decisions above. It passed whole documents as JSON text over a plain C
+interface, so every edit meant serialising the project, sending it across, and
+parsing it back — which is why so much of the design here is about *not* doing
+that: handles instead of copies, one scoped message instead of a fresh document,
+a whole value instead of a granular op. It was deleted once every panel had
+moved across, in one sweep, so the two never had to be kept in step with each
+other.
 
 **Staging versus committing, and why dragging used to lag.** This one is worth
 understanding, because it explains a whole class of sluggishness.

@@ -240,6 +240,22 @@ fn render_comp_with_preview(
     Ok(())
 }
 
+/// The cache key for one rendered frame: the comp, the frame, and the scale it
+/// was made at, packed into the `u128` the cache keys on.
+///
+/// The scale is quantised to a thousandth, because a panel resized by half a
+/// pixel produces a scale that differs in the last bits and would miss every
+/// time — a cache that never hits is worse than none, since it also holds the
+/// memory.
+#[frb(ignore)]
+fn frame_key(comp: Uuid, frame: u64, scale: f32) -> crate::framecache::FrameKey {
+    let quantised = (scale * 1000.0).round() as u64;
+    // The comp id's low 64 bits, then the frame and scale — collisions would
+    // need two comps agreeing in 64 bits *and* the same frame at the same scale.
+    let low = comp.as_u128() as u64;
+    (u128::from(low) << 64) | (u128::from(frame) << 16) | u128::from(quantised & 0xFFFF)
+}
+
 /// Trace `frame` and publish the result.
 ///
 /// Always a CPU read-back even on a zero-copy build: the binning kernel needs
@@ -380,18 +396,37 @@ fn publish_frame(
     // the trailing argument resizes the finished buffer. Both matter — the first
     // is where the time goes, the second is how many bytes then cross to Dart,
     // which on this path is the expensive part (see `BridgeRenderedFrame`).
-    let rendered =
+    //
+    // Served through the rendered-frame cache, so scrubbing back to a frame
+    // already made does not render it again. The key names the *content*: comp,
+    // frame, and the scale it was made at — two requests that agree on all three
+    // produce identical pixels, and one that does not must not be served the
+    // other's.
+    let key = frame_key(comp, frame, scale);
+    let started = std::time::Instant::now();
+    let rendered = crate::framecache::get_or_render(key, || {
         state
             .renderer
-            .render_preview(document, comp, frame, quality_for(scale), scale, None);
+            .render_preview(document, comp, frame, quality_for(scale), scale, None)
+            .ok()
+            .map(|(rgba, width, height)| (width, height, rgba))
+    });
 
-    let (rgba, width, height) = match rendered {
-        Ok(frame) => frame,
-        Err(err) => {
-            eprintln!("Read-back render failed, dropping frame: {err}");
-            return;
-        }
+    let Some((width, height, rgba)) = rendered else {
+        eprintln!("Read-back render failed, dropping frame");
+        return;
     };
+
+    // Tell the realtime controller what that cost, so playback can drop to a
+    // coarser tier when the comp is too heavy to keep up (K-171). Only a genuine
+    // render counts: a cache hit measures the cache, not the comp.
+    if started.elapsed().as_secs_f64() > 0.001 {
+        let fps = document
+            .comp(comp)
+            .map(|c| c.frame_rate.fps())
+            .unwrap_or(0.0);
+        crate::realtime::observe(started.elapsed().as_secs_f64(), fps, scale);
+    }
 
     _ = stream.add(WorkerResponse::RenderedPixels(BridgeRenderedFrame {
         width,

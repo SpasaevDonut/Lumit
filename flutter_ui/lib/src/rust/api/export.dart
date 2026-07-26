@@ -9,7 +9,19 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'export.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `reply_error`, `reply_ok`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
+
+/// What a delivery preset stamps into the dialogue, and what to call the file.
+///
+/// A blank `preset` gives the custom defaults. `template` drives the
+/// `{comp}`/`{preset}`/`{date}` substitution (K-119); blank yields the preset's
+/// own suggested name.
+BridgeExportPreset exportPreset(
+        {required String preset,
+        required String compName,
+        required String template}) =>
+    BridgeLib.instance.api.crateApiExportExportPreset(
+        preset: preset, compName: compName, template: template);
 
 /// How the running export is getting on. Safe to call on the interface's own
 /// cadence: it drains a channel and reads a few numbers.
@@ -20,6 +32,48 @@ BridgeExportState exportPoll() =>
 /// reports `Failed` with "cancelled" — a cancelled export leaves no half-file
 /// pretending to be a finished one.
 void exportCancel() => BridgeLib.instance.api.crateApiExportExportCancel();
+
+/// What a delivery preset fills the export dialogue with.
+class BridgeExportPreset {
+  final String codec;
+
+  /// Zero means "the composition's own size".
+  final int width;
+  final int height;
+
+  /// Zero means the encoder's own default.
+  final int bitrateMbps;
+
+  /// The file name to suggest in the picker.
+  final String defaultName;
+
+  const BridgeExportPreset({
+    required this.codec,
+    required this.width,
+    required this.height,
+    required this.bitrateMbps,
+    required this.defaultName,
+  });
+
+  @override
+  int get hashCode =>
+      codec.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      bitrateMbps.hashCode ^
+      defaultName.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeExportPreset &&
+          runtimeType == other.runtimeType &&
+          codec == other.codec &&
+          width == other.width &&
+          height == other.height &&
+          bitrateMbps == other.bitrateMbps &&
+          defaultName == other.defaultName;
+}
 
 /// What the export dialogue is asking for.
 ///

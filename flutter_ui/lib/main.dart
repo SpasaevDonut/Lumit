@@ -21,11 +21,7 @@ import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:provider/provider.dart';
 
-import 'bridge/bridge.dart';
 import 'popout/popout_main.dart';
-import 'shell/shell.dart';
-import 'state/workspace.dart';
-import 'widgets/ui_scale.dart';
 
 /// Traces every call that crosses into Rust, so the frb seam can be watched
 /// while it is being built out. `debugPrint` rather than `print`: it compiles
@@ -48,30 +44,11 @@ class CustomHandler extends BaseHandler {
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Two shells live here while the bridge is migrated (docs/TODO.md, "Bridge").
-  //
-  // The default is the flutter_rust_bridge shell — the direction of travel, but
-  // still a small test harness: a handful of panels, and no Viewer at all off
-  // Linux until the Windows render path is wired.
-  //
-  // `--v0-shell` boots the full frontend instead: every panel, on the v0 JSON
-  // bridge, which is still compiled into the same `lumit_bridge` library. It is
-  // the parity reference to judge the frb shell against, and the only way to see
-  // the whole interface on Windows today. Remove this switch once the frb shell
-  // has overtaken it.
-  if (args.contains('--v0-shell')) {
-    // A popped-out panel runs through this same entrypoint in its own engine
-    // (multi-window, same process). If this engine is a popout, it takes over
-    // here; otherwise — the main window, or any build without the multi-window
-    // plugin — this is a swallowed no-op and the normal shell boots below.
-    if (await maybeRunPopout(args)) return;
-    final workspace = Workspace()..load();
-    // Try the engine bridge; a null result keeps the F0 placeholder behaviour
-    // (the app and every test must work without the library present).
-    final bridge = LumitBridge.tryLoad();
-    runApp(LumitApp(workspace: workspace, bridge: bridge));
-    return;
-  }
+  // A popped-out panel runs through this same entrypoint in its own engine
+  // (multi-window, same process). If this engine is a popout it takes over here;
+  // otherwise — the main window, or any build without the multi-window plugin —
+  // this is a swallowed no-op and the shell boots below.
+  if (await maybeRunPopout(args)) return;
 
   await BridgeLib.init(handler: CustomHandler());
 
@@ -403,35 +380,4 @@ class _LumitAppViewState extends State<LumitAppView> {
     );
   }
 
-}
-
-class LumitApp extends StatelessWidget {
-  final Workspace workspace;
-  final LumitBridge? bridge;
-  const LumitApp({super.key, required this.workspace, this.bridge});
-
-  @override
-  Widget build(BuildContext context) {
-    // WidgetsApp-level infrastructure only — no Material chrome
-    // (docs/archive/flutter-port/04 "Why not Material chrome"). Settings → Interface →
-    // UI scale is applied here via [UiScaleView], the Flutter counterpart of
-    // egui's `ctx.set_pixels_per_point` — layout and hit-testing scale together
-    // (see widgets/ui_scale.dart for why this mechanism, not a devicePixelRatio
-    // override). The slider commits on release; this just reflects the value.
-    return MaterialApp(
-      home: ListenableBuilder(
-        listenable: workspace,
-        builder: (context, _) => Directionality(
-          textDirection: TextDirection.ltr,
-          child: ColoredBox(
-            color: workspace.theme.surface0,
-            child: UiScaleView(
-              scale: workspace.interface.uiScale,
-              child: LumitShell(workspace: workspace, bridge: bridge),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

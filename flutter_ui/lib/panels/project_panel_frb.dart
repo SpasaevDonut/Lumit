@@ -28,7 +28,7 @@ import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
-import '../state/app_state.dart' show FootageDragData;
+import '../state/drag_payloads.dart';
 import '../shell/comp_settings_frb.dart';
 import '../state/file_dialogs.dart';
 import '../theme/theme.dart';
