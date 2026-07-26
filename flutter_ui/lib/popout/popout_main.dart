@@ -18,9 +18,8 @@
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/widgets.dart';
 
-import '../bridge/bridge.dart';
 import 'popout_arguments.dart';
-import 'popout_host.dart';
+import 'popout_host_frb.dart';
 
 /// If this engine is a popped-out panel, run its app and return true. Otherwise
 /// (the main window, or no multi-window plugin present) return false so the
@@ -42,8 +41,8 @@ Future<bool> maybeRunPopout(List<String> args) async {
 }
 
 void _runPopout(PopoutArguments args) {
-  // This engine's own bridge handle: same process → same `lumit_bridge.dll` →
-  // the same document behind the engine's process-wide mutex.
-  final bridge = LumitBridge.tryLoad();
-  runApp(PopoutHost(args: args, bridge: bridge));
+  // No bridge handle to load and no document to open: the engine's project
+  // registry is process-wide, so the host adopts what the main window already
+  // has open.
+  runApp(PopoutHostFrb(args: args));
 }

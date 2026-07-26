@@ -151,10 +151,8 @@ sequence clips.
         states. It also has no drop target yet for the effect drag the Effects &
         presets panel produces (`EffectDragData`).
 
-    **2. Shell surfaces** — not panels, but v0-bound. Each of these imports
-    `bridge/bridge.dart` or `state/app_state.dart` today.
-    - **Popout windows** — the five files under `lib/popout/`. Multi-window, and
-        the v0 version has a known main-window resync gap.
+    **2. Shell surfaces.** All ported. `popout_host.dart` (the v0 host) is the
+    only one left to delete in the sweep; `popout_host_frb.dart` replaces it.
 
     **3. Engine subsystems with no frb API yet.** `ffi.rs` exports 107 `extern "C"`
     functions; `api/` has 74 public functions, a good share of which are handle

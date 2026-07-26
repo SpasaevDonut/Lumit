@@ -102,6 +102,24 @@ class LumitState extends ChangeNotifier {
     _adopt(LumitBridgeState.newProject(onChangeStream: _changeSink()));
   }
 
+  /// Take over the project this process already has open, without making one.
+  ///
+  /// What a popout window does. `desktop_multi_window` runs each window in the
+  /// same process, so the engine's project registry is the *same* registry —
+  /// the popout points at the document the main window is editing rather than
+  /// loading its own copy, which is what made v0's popouts drift out of step.
+  ///
+  /// No render worker is started: a second worker rendering the same comp would
+  /// compete with the main window's for the GPU, and every poppable panel is
+  /// read-mostly. Returns false when nothing is open.
+  bool adoptCurrentProject() {
+    final current = LumitBridgeState.getCurrentProject();
+    if (current == null) return false;
+    project = current;
+    notifyListeners();
+    return true;
+  }
+
   void openProject(String path) {
     // Null means the file would not open; the previous project stays loaded
     // rather than the app being left with none.
