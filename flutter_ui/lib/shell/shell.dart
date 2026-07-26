@@ -348,18 +348,20 @@ class _ShellBodyState extends State<_ShellBody> {
         children: [
           Column(
             children: [
-              // LumitMenuBar(
-              //   app: app,
-              //   workspace: ws,
-              //   onOpenSettings: () => setState(() => settingsOpen = true),
-              //   onOpenPalette: () => setState(() => paletteOpen = true),
-              // ),
+              LumitMenuBar(
+                app: app,
+                workspace: ws,
+                onOpenSettings: () => setState(() => settingsOpen = true),
+                onOpenPalette: () => setState(() => paletteOpen = true),
+              ),
               Expanded(
                 child: DockWidget(
                   root: ws.dock,
                   // A floating panel keeps its dock slot but shows a
                   // placeholder; its real body lives in the popped-out window.
-                  buildPanel: (context, panel) => Placeholder(),
+                  buildPanel: (context, panel) => _floating.contains(panel)
+                      ? _FloatingPanelSlot(panel: panel)
+                      : buildPanelBody(context, panel, app),
                   onLayoutChanged: ws.save,
                   activePanel: activePanel,
                   // Pop-out opens the panel in its own OS window (multi-window,

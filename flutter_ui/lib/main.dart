@@ -4,20 +4,15 @@
 
 import 'dart:async';
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
-import 'package:lumit_flutter/builder/item_builder.dart';
-import 'package:lumit_flutter/builder/layer_builder.dart';
-import 'package:lumit_flutter/panels/panels.dart';
+import 'package:lumit_flutter/panels/panels_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
-import 'package:lumit_flutter/shell/menu_bar.dart';
+import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
-import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
-import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/dock.dart';
@@ -30,17 +25,20 @@ import 'shell/shell.dart';
 import 'state/workspace.dart';
 import 'widgets/ui_scale.dart';
 
+/// Traces every call that crosses into Rust, so the frb seam can be watched
+/// while it is being built out. `debugPrint` rather than `print`: it compiles
+/// away in release, where a log per bridge call would be far too costly.
 class CustomHandler extends BaseHandler {
   @override
   Future<S> executeNormal<S, E extends Object>(NormalTask<S, E> task) {
-    print("Rust Async Call: ${task.argMap}");
+    debugPrint('Rust async call: ${task.argMap}');
     return super.executeNormal(task);
   }
 
   @override
   S executeSync<S, E extends Object, WireSyncType>(
       SyncTask<S, E, WireSyncType> task) {
-    print("Rust Sync Call: ${task.argMap}");
+    debugPrint('Rust sync call: ${task.argMap}');
     return super.executeSync(task);
   }
 }
@@ -111,7 +109,7 @@ class LumitState extends ChangeNotifier {
     if (event.item != null) return;
 
     // else, not able to identify scope of this change, rebuild everything!
-    print("Rebuilding everything!");
+    debugPrint('Rebuilding everything!');
     notifyListeners();
   }
 }
@@ -133,7 +131,7 @@ class LumitUiState extends ChangeNotifier {
 
   LumitUiState(LumitState state) {
     sub = state.onWorkerResponse.listen((msg) {
-      print("Received worker response: $msg");
+      debugPrint('Received worker response: \$msg');
       if (msg case WorkerResponse_RenderedDMABuf frame) {
         controller
             .ensureRegistered(
@@ -161,10 +159,10 @@ class LumitUiState extends ChangeNotifier {
 }
 
 class LumitAppNew extends StatelessWidget {
-  LumitState state;
-  LumitUiState uiState;
+  final LumitState state;
+  final LumitUiState uiState;
 
-  LumitAppNew(this.state, this.uiState, {super.key});
+  const LumitAppNew(this.state, this.uiState, {super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -179,7 +177,7 @@ class LumitAppNew extends StatelessWidget {
                 animationLevel: AnimationLevel.all,
                 showTooltips: true,
                 child: Overlay(initialEntries: [
-                  OverlayEntry(builder: (context) => LumitAppView())
+                  OverlayEntry(builder: (context) => const LumitAppView())
                 ]),
               )),
         ));
@@ -195,12 +193,6 @@ class LumitAppView extends StatefulWidget {
 
 class _LumitAppViewState extends State<LumitAppView> {
   @override
-  void initState() {
-    final store = Provider.of<LumitState>(context, listen: false);
-    super.initState();
-  }
-
-  @override
   Widget build(BuildContext context) {
     var state = context.watch<LumitState>();
 
@@ -208,13 +200,13 @@ class _LumitAppViewState extends State<LumitAppView> {
 
     return Column(
       children: [
-        LumitMenuBar(
+        LumitMenuBarFrb(
           app: state,
         ),
         Expanded(
           child: DockWidget(
             root: uiState.split,
-            buildPanel: (context, panel) => buildPanelBody(context, panel),
+            buildPanel: (context, panel) => buildPanelBodyFrb(context, panel),
             onLayoutChanged: () {},
             activePanel: uiState.activePanel,
             onPopOut: (p0) {},
@@ -225,91 +217,6 @@ class _LumitAppViewState extends State<LumitAppView> {
     );
   }
 
-  static int frame = 161;
-
-  Widget buildItem(BuildContext context, ItemReference item) {
-    // since this is just a lookup from the project document, it should be really fast, and is okay to be called sync
-
-    // this is bad: since get status reads from disk, its async and we can build its result with FutureBuilder
-    // ideally this could be cached somewhere on rust side
-
-    return Padding(
-      padding: const EdgeInsets.all(8.0),
-      child: Container(
-          color: ColorScheme.of(context).surfaceContainer,
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Icon(switch (item) {
-                ItemReference_Footage() => Icons.video_file,
-                ItemReference_Solid() => Icons.square,
-                ItemReference_Composition() => Icons.layers,
-                ItemReference_Folder() => Icons.folder,
-              }),
-              if (item case ItemReference_Footage footage) ...[
-                FutureBuilder(
-                  future: footage.field0.getStatus(),
-                  builder: (context, snapshot) {
-                    return Icon(switch (snapshot.data) {
-                      null => Icons.question_mark,
-                      LumitMediaStatus.missing =>
-                        Icons.signal_cellular_connected_no_internet_0_bar,
-                      LumitMediaStatus.ready => Icons.check,
-                    });
-                  },
-                ),
-              ],
-              if (item case ItemReference_Composition comp) ...[
-                Text(
-                  "Layers:",
-                  style: Theme.of(context).textTheme.labelSmall,
-                ),
-                SizedBox(
-                  width: 8,
-                ),
-                TextButton(
-                    onPressed: () {
-                      print(
-                        "Rendering frame: $frame",
-                      );
-                      comp.field0.renderFrame(frame: BigInt.from(frame));
-                      frame += 5;
-                    },
-                    child: Text(
-                      "Render",
-                      style: Theme.of(context).textTheme.labelSmall,
-                    )),
-                Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.start,
-                    children: comp.field0
-                        .getLayers()
-                        .map((i) => LayerBuilder(
-                              layer: i,
-                              builder: (context) {
-                                return TextButton(
-                                  child: Text(
-                                    i.getName(),
-                                    style:
-                                        Theme.of(context).textTheme.labelSmall,
-                                  ),
-                                  onPressed: () {
-                                    print(i);
-                                    i.rename(name: "Renamed layer!");
-                                  },
-                                );
-                              },
-                            ))
-                        .toList())
-              ],
-              Text(
-                item.name(),
-                style: Theme.of(context).textTheme.labelSmall,
-              ),
-            ],
-          )),
-    );
-  }
 }
 
 class LumitApp extends StatelessWidget {

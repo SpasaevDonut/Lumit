@@ -16,6 +16,7 @@ use crate::api::{
     layer::LayerReference,
     project::ProjectReference,
     state::{WorkerResponse, WorkerResponseStream},
+    BridgeError,
 };
 
 #[frb(ignore)]
@@ -51,7 +52,10 @@ pub fn run_worker(project: ProjectReference, stream: WorkerResponseStream) {
 
     {
         let state = project.state();
-        let mut state = state.write().unwrap();
+        let Ok(mut state) = state.write() else {
+            eprintln!("Project state poisoned; not starting the render worker");
+            return;
+        };
 
         state.sender = Some(send_to_worker);
     }
@@ -68,9 +72,19 @@ fn worker_loop(
     println!("Worker thread started");
     let mut stream = stream;
 
+    // No renderer means no Viewer, but the editor itself stays usable — the
+    // worker just stops instead of taking the process down with it.
+    let renderer = match HeadlessRenderer::new() {
+        Ok(renderer) => renderer,
+        Err(err) => {
+            eprintln!("Could not create the renderer, stopping the worker: {err}");
+            return;
+        }
+    };
+
     let mut state = WorkerState {
-        project: project,
-        renderer: HeadlessRenderer::new().unwrap(),
+        project,
+        renderer,
         preview_engine: PreviewEngine::default(),
     };
 
@@ -94,14 +108,20 @@ fn handle_incoming_requests(
 ) -> ControlFlow<()> {
     return match receiver.try_recv() {
         Ok(result) => match result {
+            // A frame that cannot be rendered is dropped, not fatal: the worker
+            // has to survive to serve the next request.
             WorkerRequest::RenderComp(req) => {
                 println!("Rendering comp in worker thread!");
-                render_comp(req, state, stream);
+                if let Err(err) = render_comp(req, state, stream) {
+                    eprintln!("Dropping frame: {err}");
+                }
                 ControlFlow::Continue(())
             }
             WorkerRequest::RenderCompWithPreview(req) => {
                 println!("Rendering comp in worker thread!");
-                render_comp_with_preview(req, state, stream);
+                if let Err(err) = render_comp_with_preview(req, state, stream) {
+                    eprintln!("Dropping preview frame: {err}");
+                }
                 ControlFlow::Continue(())
             }
         },
@@ -112,44 +132,56 @@ fn handle_incoming_requests(
     };
 }
 
-fn render_comp(req: RenderCompRequest, state: &mut WorkerState, stream: &mut WorkerResponseStream) {
+fn render_comp(
+    req: RenderCompRequest,
+    state: &mut WorkerState,
+    stream: &mut WorkerResponseStream,
+) -> Result<(), BridgeError> {
     let document = {
         let document = state.project.state();
-        let document = document.read().unwrap();
-        let document = document.store.snapshot();
-        document
+        let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
+        document.store.snapshot()
     };
 
     println!("Rendering frame!");
 
     publish_frame(state, req.comp.id, req.frame, &document, stream);
+    Ok(())
 }
 
+/// Render a frame under effect values the user is still dragging.
+///
+/// The effect stack is patched on a *clone* of the snapshot, so a drag never
+/// touches the document — no commit, no undo entry, no journal write. This is
+/// the effect-parameter counterpart of the existing `preview_transform` path
+/// (docs/TODO.md, "Effect-param drag preview").
 fn render_comp_with_preview(
     req: RenderCompRequestWithPreview,
     state: &mut WorkerState,
     stream: &mut WorkerResponseStream,
-) {
+) -> Result<(), BridgeError> {
     let mut document = {
         let document = state.project.state();
-        let document = document.read().unwrap();
-        let document = document.store.snapshot();
-        (*document).clone()
+        let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
+        (*document.store.snapshot()).clone()
     };
 
-    let comp = document.comp_mut(req.layer.comp_id).unwrap();
+    let comp = document
+        .comp_mut(req.layer.comp_id)
+        .ok_or(BridgeError::InvalidComp)?;
 
     let index = comp
         .layers
         .iter()
         .position(|i| i.id == req.layer.layer_id)
-        .unwrap();
+        .ok_or(BridgeError::InvalidLayer)?;
 
     comp.layers[index].effects = req.effects;
 
     println!("Rendering frame with modified effects!");
 
     publish_frame(state, req.comp.id, req.frame, &document, stream);
+    Ok(())
 }
 
 /// Render one frame and publish it to Dart.

@@ -112,58 +112,55 @@ impl LumitBridgeState {
         }
     }
 
+    /// Turn a committed op into the narrowest scope Dart can rebuild from.
+    ///
+    /// This runs inside `DocumentStore`'s observer, which returns nothing, so
+    /// there is no caller to hand an error to. Every failure therefore degrades
+    /// rather than propagating: an op whose scope cannot be read leaves `item`
+    /// and `layer` as `None`, which Dart already treats as "rebuild everything".
+    /// That is slower but always correct — the opposite of panicking inside a
+    /// commit, which would poison the store's lock and take the editor with it.
     fn handle_change_callback(document_change: DocumentChange, project_id: Uuid) {
-        let p = STREAMS.read().unwrap();
-        let p = p.get(&project_id);
-
         let converted = json!(document_change.op);
 
         let mut change = ScopedChange {
-            project: ProjectReference::new(project_id.clone()),
+            project: ProjectReference::new(project_id),
             item: None,
             layer: None,
         };
 
-        match converted {
-            serde_json::Value::Object(map) => {
-                let layer = map.get("layer").map_or(None, |f| {
-                    f.as_str()
-                        .map_or(None, |f| Some(Uuid::parse_str(f).unwrap()))
-                });
+        // Ops carry their scope as `comp`/`layer` UUID fields; the ones that do
+        // not (project-level edits) fall through with both left as None.
+        if let serde_json::Value::Object(map) = converted {
+            let field = |key: &str| {
+                map.get(key)
+                    .and_then(|f| f.as_str())
+                    .and_then(|f| Uuid::parse_str(f).ok())
+            };
 
-                let comp = map.get("comp").map_or(None, |f| {
-                    f.as_str()
-                        .map_or(None, |f| Some(Uuid::parse_str(f).unwrap()))
-                });
+            if let Some(comp) = field("comp") {
+                change.item = Some(ItemReference::Composition(CompositionReference::new(
+                    project_id, comp,
+                )));
 
-                if let Some(comp) = comp {
-                    change.item = Some(ItemReference::Composition(CompositionReference::new(
-                        project_id.clone(),
-                        comp.clone(),
-                    )));
-
-                    if let Some(layer) = layer {
-                        change.layer = Some(LayerReference::new(
-                            project_id.clone(),
-                            comp.clone(),
-                            layer.clone(),
-                        ))
-                    }
+                if let Some(layer) = field("layer") {
+                    change.layer = Some(LayerReference::new(project_id, comp, layer));
                 }
             }
-            _ => panic!(),
         }
 
         println!("Got change: {:#?}", change);
 
-        match &p {
-            Some(stream) => {
-                _ = stream.add(change);
-            }
-            None => (),
+        let Ok(streams) = STREAMS.read() else {
+            eprintln!("Stream registry poisoned; dropping change for {project_id}");
+            return;
+        };
+
+        if let Some(stream) = streams.get(&project_id) {
+            _ = stream.add(change);
         }
 
-        println!("Document changed! - {}", project_id.clone());
+        println!("Document changed! - {project_id}");
     }
 
     #[frb(sync)]

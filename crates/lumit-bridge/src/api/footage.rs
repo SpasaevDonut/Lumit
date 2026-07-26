@@ -42,7 +42,7 @@ impl FootageReference {
 
     #[frb(ignore)]
     fn project(&self) -> Result<Arc<std::sync::RwLock<LumitBridgeState>>, BridgeError> {
-        let projects = PROJECTS.read().unwrap();
+        let projects = PROJECTS.read().map_err(|_| BridgeError::ReadFailed)?;
         let project = projects.get(&self.project);
 
         let p = project.ok_or(BridgeError::InvalidProject)?;
@@ -51,15 +51,20 @@ impl FootageReference {
 
     // copy pasted from lumit-ui/src/headless.rs
     // would be good if these could be shared
-    fn footage_path(p: &LumitBridgeState, f: &FootageItem) -> PathBuf {
+    //
+    /// Where this footage's file actually is. `None` when the path cannot be
+    /// resolved at all — a relative path in a project that has never been saved
+    /// (so there is no directory to resolve against), or one that no longer
+    /// exists on disk. The caller reports that as missing media, which is what
+    /// it is; it is not an error worth surfacing separately.
+    fn footage_path(p: &LumitBridgeState, f: &FootageItem) -> Option<PathBuf> {
         if f.media.absolute_path.is_empty() {
-            let path = p.path.clone().unwrap();
-            let path = path.parent().unwrap();
-            println!("current path: {}", path.to_str().unwrap());
+            let path = p.path.clone()?;
+            let path = path.parent()?;
             let path = path.join(PathBuf::from(&f.media.relative_path));
-            path.canonicalize().unwrap()
+            path.canonicalize().ok()
         } else {
-            PathBuf::from(&f.media.absolute_path)
+            Some(PathBuf::from(&f.media.absolute_path))
         }
     }
 
@@ -68,11 +73,15 @@ impl FootageReference {
         let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
 
         let snapshot = proj.store.snapshot();
-        let item = snapshot.item(self.id).unwrap();
+        let item = snapshot.item(self.id).ok_or(BridgeError::InvalidItem)?;
 
         match item {
             lumit_core::model::ProjectItem::Footage(footage_item) => {
-                let path = Self::footage_path(&proj, &footage_item);
+                // An unresolvable path is missing media, same as one that
+                // resolves but no longer decodes.
+                let Some(path) = Self::footage_path(&proj, footage_item) else {
+                    return Ok(LumitMediaStatus::Missing);
+                };
 
                 let probe = lumit_media::probe::probe(&path);
 

@@ -2,9 +2,7 @@
 // verbatim from shell/app_update.rs — File, Edit, Composition, Window.
 // Engine-backed items dispatch to the stub and surface an honest notice.
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/widgets.dart';
-import 'package:lumit_flutter/main.dart';
 
 import '../icons/icons.dart';
 import '../state/app_state.dart';
@@ -15,11 +13,17 @@ import 'dialogs.dart';
 import 'export_dialog.dart';
 
 class LumitMenuBar extends StatelessWidget {
-  final LumitState app;
+  final AppStateStub app;
+  final Workspace workspace;
+  final VoidCallback onOpenSettings;
+  final VoidCallback onOpenPalette;
 
   const LumitMenuBar({
     super.key,
     required this.app,
+    required this.workspace,
+    required this.onOpenSettings,
+    required this.onOpenPalette,
   });
 
   @override
@@ -33,23 +37,71 @@ class LumitMenuBar extends StatelessWidget {
           const SizedBox(width: 4),
           _menu(context, 'File', [
             _Item('New project', app.newProject),
-            _Item('Open project…', () async {
-
-                const XTypeGroup typeGroup = XTypeGroup(
-                  label: 'Lumit File',
-                  extensions: <String>['lum'],
-                );
-
-                final XFile? file = await openFile(
-                  acceptedTypeGroups: <XTypeGroup>[typeGroup],
-                );
-
-                app.openProject(file!.path);
-            }),
+            _Item('Open project…', app.openProject),
+            _Item('Import footage…', app.importFootage),
+            _Item('Save', app.save),
+            _Item.divider(),
+            _Item(
+                'Export comp…',
+                () => _openExport(context, workspace.export.defaultPreset,
+                    'Export comp (${workspace.export.defaultPreset.label})')),
+            _Item.submenu('Export preset', [
+              // Custom is the "Export comp…" default; the submenu lists the
+              // delivery presets, mirroring app_update.rs.
+              for (final p in ExportPreset.values.where(
+                  (p) => p != ExportPreset.custom))
+                _Item(p.label,
+                    () => _openExport(context, p, 'Export (${p.label})')),
+            ]),
+            _Item.submenu('Export for sharing', [
+              _Item('Discord 50 MB',
+                  () => _shareExport(50.0, 'Share export 50 MB')),
+              _Item('Small 10 MB',
+                  () => _shareExport(10.0, 'Share export 10 MB')),
+            ]),
           ]),
           _menu(context, 'Edit', [
-            _Item('Undo', app.project?.undo),
-            _Item('Redo', app.project?.redo),
+            _Item('Undo', app.canUndo ? app.undo : null),
+            _Item('Redo', app.canRedo ? app.redo : null),
+          ]),
+          _menu(context, 'Composition', [
+            _Item('New composition',
+                () => showNewCompositionDialog(context, app)),
+            _Item('Add solid layer', () => _addLayer(app.addSolidLayer)),
+            _Item('Add text layer', () => _addLayer(app.addTextLayer)),
+            _Item('Add camera layer', () => _addLayer(app.addCameraLayer)),
+            _Item('Add adjustment layer',
+                () => _addLayer(app.addAdjustmentLayer)),
+            _Item('Add sequence layer', () => _addLayer(app.addSequenceLayer)),
+            _Item.divider(),
+            _Item('Cut clip at playhead', () => app.engine('Cut clip at playhead')),
+            _Item('Delete clip at playhead', () => app.engine('Delete clip at playhead')),
+            _Item('Add marker at playhead', () {
+              final compId = app.frontCompIdResolved;
+              if (compId != null) {
+                app.addMarker(compId, app.previewFrame);
+              } else {
+                app.engine('Add marker at playhead');
+              }
+            }),
+            _Item.submenu('Detect beats', [
+              _Item('Detect', () => app.engine('Detect beats (sensitivity ${app.beatSensitivity})')),
+            ]),
+            _Item('Clear beat markers', () => app.engine('Clear beat markers')),
+            _Item.submenu('Add mask', [
+              _Item('Rectangle', () => app.addMaskToSelected('rectangle')),
+              _Item('Ellipse', () => app.addMaskToSelected('ellipse')),
+              _Item('Star', () => app.addMaskToSelected('star')),
+            ]),
+            _Item.divider(),
+            _Item('Composition settings…',
+                () => showCompositionSettingsDialog(context, app)),
+          ]),
+          _menu(context, 'Window', [
+            _Item('Command palette…', onOpenPalette),
+            _Item('Reset workspace', workspace.resetWorkspaceLayout),
+            _Item.divider(),
+            _Item('Settings…', onOpenSettings),
           ]),
         ],
       ),
@@ -58,6 +110,40 @@ class LumitMenuBar extends StatelessWidget {
 
   Widget _menu(BuildContext context, String title, List<_Item> items) =>
       _MenuButton(title: title, items: items);
+
+  /// Run an add-layer op against the front composition, resolving its id first;
+  /// with no composition open, surface a calm notice rather than doing nothing.
+  void _addLayer(void Function(String compId) op) {
+    final compId = app.frontCompIdResolved;
+    if (compId == null) {
+      app.setNotice('Open a composition to add a layer to');
+      return;
+    }
+    op(compId);
+  }
+
+  /// Open the export dialogue stamped with [preset] when a bridge is present;
+  /// without one, keep the F0 notice ([fallbackNotice]) so the placeholder
+  /// build behaves exactly as before.
+  void _openExport(
+      BuildContext context, ExportPreset preset, String fallbackNotice) {
+    if (app.bridge == null) {
+      app.engine(fallbackNotice);
+      return;
+    }
+    showExportDialog(context, app,
+        preset: preset, template: workspace.export.filenameTemplate ?? '');
+  }
+
+  /// Start a size-targeted share export when a bridge is present; without one,
+  /// keep the F0 notice ([fallbackNotice]).
+  void _shareExport(double targetMb, String fallbackNotice) {
+    if (app.bridge == null) {
+      app.engine(fallbackNotice);
+      return;
+    }
+    app.startShareExport(targetMb);
+  }
 }
 
 class _Item {

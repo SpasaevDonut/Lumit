@@ -41,10 +41,10 @@ impl ItemReference {
             ItemReference::Folder(folder_reference) => folder_reference.project_id(),
         };
 
-        let projects = PROJECTS.read().unwrap();
-        let project = projects.get(&proj_id);
+        let projects = PROJECTS.read().map_err(|_| BridgeError::ReadFailed)?;
+        let project = projects.get(&proj_id).ok_or(BridgeError::InvalidProject)?;
 
-        Ok(project.unwrap().clone())
+        Ok(project.clone())
     }
 
     fn item(&self) -> Result<ProjectItem, BridgeError> {
@@ -59,7 +59,8 @@ impl ItemReference {
 
         let p = proj.read().map_err(|_| BridgeError::ReadFailed)?;
         let snapshot = p.store.snapshot();
-        Ok(snapshot.item(item_id).unwrap().clone())
+        let item = snapshot.item(item_id).ok_or(BridgeError::InvalidItem)?;
+        Ok(item.clone())
     }
 
     #[frb(sync)]

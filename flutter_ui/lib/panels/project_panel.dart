@@ -19,9 +19,6 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
-import 'package:lumit_flutter/main.dart';
-import 'package:lumit_flutter/src/rust/api/project_item.dart';
-import 'package:provider/provider.dart';
 
 import '../bridge/bridge.dart';
 import '../icons/icons.dart';
@@ -32,12 +29,14 @@ import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
 class ProjectPanel extends StatefulWidget {
+  final AppStateStub app;
+
   /// The relink file picker seam (path chosen → its path, or null when
   /// cancelled). Defaults to the real footage picker's single-file variant;
   /// tests inject their own so no plugin channel opens.
   final Future<String?> Function()? relinkPicker;
 
-  const ProjectPanel({super.key, this.relinkPicker});
+  const ProjectPanel({super.key, required this.app, this.relinkPicker});
 
   @override
   State<ProjectPanel> createState() => _ProjectPanelState();
@@ -45,6 +44,8 @@ class ProjectPanel extends StatefulWidget {
 
 class _ProjectPanelState extends State<ProjectPanel> {
   bool _missingOnly = false;
+
+  AppStateStub get app => widget.app;
 
   Future<String?> _relink() async {
     final picker = widget.relinkPicker;
@@ -75,113 +76,72 @@ class _ProjectPanelState extends State<ProjectPanel> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final state = Provider.of<LumitState>(context);
-    final uiState = Provider.of<LumitUiState>(context);
-    final items = state.project?.getItems();
-
-    return ListView.builder(
-      itemBuilder: (context, index) {
-        var item = items![index];
-        return SizedBox(
-          height: 24,
-          child: HouseButton(
-            child: Row(
-              spacing: 8,
-              children: [
-                lumitIcon(
-                    switch (item) {
-                      ItemReference_Footage() => LumitIcon.footage,
-                      ItemReference_Solid() => LumitIcon.solid,
-                      ItemReference_Composition() => LumitIcon.comp,
-                      ItemReference_Folder() => LumitIcon.folder,
-                    },
-                    size: 16,
-                    color: t.accent),
-                Text(
-                  item.name(),
-                  style: t.small,
-                ),
-              ],
+    return ListenableBuilder(
+      listenable: app,
+      builder: (context, _) {
+        final snapshot = app.snapshot;
+        final items = snapshot?.items ?? const <BridgeItem>[];
+        if (items.isEmpty) {
+          return Center(
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 240),
+              child: Text(
+                'No items yet — import footage or create a composition',
+                style: t.small,
+                textAlign: TextAlign.center,
+              ),
             ),
-            onPressed: () {
-              if (item case ItemReference_Composition comp) {
-                uiState.setSelectedComp(comp.field0);
-              } else {
-                uiState.setSelectedComp(null);
-              }
-            },
-          ),
+          );
+        }
+        final missing = _missingIds(items);
+        // The filter only bites while something is missing; a healthy project
+        // never traps the user behind an empty "missing only" view.
+        final missingOnly = _missingOnly && missing.isNotEmpty;
+
+        final rows = <Widget>[];
+        void walk(BridgeItem item, int depth) {
+          // In missing-only mode, show only the missing footage rows (every
+          // visible row is then something to fix, docs/07 §3.3).
+          final show = !missingOnly ||
+              (item.kind == BridgeItemKind.footage && missing.contains(item.id));
+          if (show) {
+            rows.add(_ProjectRow(
+              key: ValueKey<String>('project-row-${item.id}'),
+              app: app,
+              item: item,
+              depth: depth,
+              missing: missing.contains(item.id),
+              relink: _relink,
+              onFindMissing: () => setState(() => _missingOnly = true),
+            ));
+          }
+          for (final child in item.children) {
+            walk(child, depth + 1);
+          }
+        }
+
+        for (final item in items) {
+          walk(item, 0);
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (missing.isNotEmpty)
+              _MissingHeader(
+                count: missing.length,
+                active: missingOnly,
+                onToggle: () => setState(() => _missingOnly = !_missingOnly),
+              ),
+            Expanded(
+              child: ListView(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                children: rows,
+              ),
+            ),
+          ],
         );
       },
-      itemCount: items?.length ?? 0,
     );
-
-    // return ListenableBuilder(
-    //   listenable: app,
-    //   builder: (context, _) {
-    //     final snapshot = app.snapshot;
-    //     final items = snapshot?.items ?? const <BridgeItem>[];
-    //     if (items.isEmpty) {
-    //       return Center(
-    //         child: ConstrainedBox(
-    //           constraints: const BoxConstraints(maxWidth: 240),
-    //           child: Text(
-    //             'No items yet — import footage or create a composition',
-    //             style: t.small,
-    //             textAlign: TextAlign.center,
-    //           ),
-    //         ),
-    //       );
-    //     }
-    //     final missing = _missingIds(items);
-    //     // The filter only bites while something is missing; a healthy project
-    //     // never traps the user behind an empty "missing only" view.
-    //     final missingOnly = _missingOnly && missing.isNotEmpty;
-
-    //     final rows = <Widget>[];
-    //     void walk(BridgeItem item, int depth) {
-    //       // In missing-only mode, show only the missing footage rows (every
-    //       // visible row is then something to fix, docs/07 §3.3).
-    //       final show = !missingOnly ||
-    //           (item.kind == BridgeItemKind.footage && missing.contains(item.id));
-    //       if (show) {
-    //         rows.add(_ProjectRow(
-    //           key: ValueKey<String>('project-row-${item.id}'),
-    //           app: app,
-    //           item: item,
-    //           depth: depth,
-    //           missing: missing.contains(item.id),
-    //           relink: _relink,
-    //           onFindMissing: () => setState(() => _missingOnly = true),
-    //         ));
-    //       }
-    //       for (final child in item.children) {
-    //         walk(child, depth + 1);
-    //       }
-    //     }
-
-    //     for (final item in items) {
-    //       walk(item, 0);
-    //     }
-    //     return Column(
-    //       crossAxisAlignment: CrossAxisAlignment.stretch,
-    //       children: [
-    //         if (missing.isNotEmpty)
-    //           _MissingHeader(
-    //             count: missing.length,
-    //             active: missingOnly,
-    //             onToggle: () => setState(() => _missingOnly = !_missingOnly),
-    //           ),
-    //         Expanded(
-    //           child: ListView(
-    //             padding: const EdgeInsets.symmetric(vertical: 4),
-    //             children: rows,
-    //           ),
-    //         ),
-    //       ],
-    //     );
-    //   },
-    // );
   }
 }
 
@@ -358,7 +318,8 @@ class _ProjectRowState extends State<_ProjectRow> {
               Expanded(child: _nameOrEditor(t)),
               if (widget.missing) ...[
                 const SizedBox(width: 6),
-                Text('missing', style: t.small.copyWith(color: t.warning)),
+                Text('missing',
+                    style: t.small.copyWith(color: t.warning)),
                 const SizedBox(width: 6),
                 LumitTooltip(
                   message: 'Relink this file to its new location',
