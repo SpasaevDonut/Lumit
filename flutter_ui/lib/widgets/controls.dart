@@ -268,6 +268,96 @@ class _CaretPainter extends CustomPainter {
 
 /// Show a positioned popup and complete with the value handed to `close`.
 /// Clicking outside (or Escape, via the route) dismisses with null.
+/// A centred modal on the app Overlay, with a dimmed click-to-dismiss backdrop.
+/// Completes with whatever `close` was given, or null when dismissed.
+///
+/// The value-returning sibling of [showLumitPopup]. `dialogs.dart` has a private
+/// `_showModal` that returns nothing, which is fine for a dialog that commits
+/// through a callback but not for one whose caller needs to know whether anything
+/// was applied — hence this, in the house-controls file where both can reach it.
+Future<T?> showLumitModal<T>({
+  required BuildContext context,
+  required Widget Function(void Function(T?) close) builder,
+}) {
+  final overlay = Overlay.of(context);
+  final completer = _PopupCompleter<T>();
+  late OverlayEntry entry;
+  void close(T? v) {
+    completer.complete(v);
+    entry.remove();
+  }
+
+  entry = OverlayEntry(
+    builder: (_) => Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => close(null),
+            child: ColoredBox(
+              color: const Color(0x99000000),
+            ),
+          ),
+        ),
+        Center(child: builder(close)),
+      ],
+    ),
+  );
+  overlay.insert(entry);
+  return completer.future;
+}
+
+/// A single-line text box in the house style. The dialogs each grew their own
+/// copy of this; it belongs here.
+class HouseTextField extends StatefulWidget {
+  final TextEditingController controller;
+  final double width;
+  final ValueChanged<String>? onSubmitted;
+
+  const HouseTextField({
+    super.key,
+    required this.controller,
+    this.width = 200,
+    this.onSubmitted,
+  });
+
+  @override
+  State<HouseTextField> createState() => _HouseTextFieldState();
+}
+
+class _HouseTextFieldState extends State<HouseTextField> {
+  final FocusNode _focus = FocusNode();
+
+  @override
+  void dispose() {
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Container(
+      width: widget.width,
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+      decoration: BoxDecoration(
+        color: t.surface0,
+        borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+        border: Border.all(color: t.hairline),
+      ),
+      child: EditableText(
+        controller: widget.controller,
+        focusNode: _focus,
+        style: t.bodyPrimary,
+        cursorColor: t.accent,
+        backgroundCursorColor: t.surface2,
+        selectionColor: t.accent.withValues(alpha: 0.5),
+        onSubmitted: widget.onSubmitted,
+      ),
+    );
+  }
+}
+
 Future<T?> showLumitPopup<T>({
   required BuildContext context,
   required Offset position,

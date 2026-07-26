@@ -1,31 +1,47 @@
-// The menu bar of the flutter_rust_bridge test shell — the File and Edit items
-// reachable from `LumitAppNew` in main.dart.
+// The menu bar, on the flutter_rust_bridge API — the second panel port.
 //
-// This is deliberately *not* the shipping menu bar. It is the worked example of
-// the frb calling pattern (a `LumitState` holding a `ProjectReference`, methods
-// invoked straight on the generated reference types) against which the real
-// menu_bar.dart is being ported. The full item set — Composition, Window, the
-// export and settings dialogs, the shortcut hints — lives in menu_bar.dart and
-// still runs on the v0 JSON bridge; it moves across as the frb API grows to
-// cover it (docs/TODO.md, "Bridge").
+// File / Edit / Composition, with the item set taken from the egui menu
+// (shell/app_update.rs) and the v0 menu_bar.dart. Every engine-backed item calls
+// straight through a reference handle, and the file pickers are injectable seams
+// so a widget test never opens a plugin channel.
+//
+// Undo and Redo grey out from `ProjectReference.history()` rather than being
+// always-enabled: an item you can see is disabled tells you the state of the
+// document, where one that does nothing when pressed does not.
 
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:provider/provider.dart';
 
+import '../state/file_dialogs.dart';
 import '../widgets/controls.dart';
+import 'comp_settings_frb.dart';
 
 class LumitMenuBarFrb extends StatelessWidget {
   final LumitState app;
 
+  /// File-picker seams. Defaulted to the real dialogues; a test injects its own,
+  /// because a plugin channel cannot open in a widget test.
+  final Future<String?> Function()? openPicker;
+  final Future<String?> Function()? savePicker;
+  final Future<List<String>> Function()? footagePicker;
+
   const LumitMenuBarFrb({
     super.key,
     required this.app,
+    this.openPicker,
+    this.savePicker,
+    this.footagePicker,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    final project = app.project;
+    // Null while no project is loaded, so every document item is disabled rather
+    // than throwing when pressed.
+    final history = project?.history();
+
     return Container(
       height: 26,
       color: t.surface2,
@@ -34,42 +50,123 @@ class LumitMenuBarFrb extends StatelessWidget {
           const SizedBox(width: 4),
           _menu(context, 'File', [
             _Item('New project', app.newProject),
-            _Item('Open project…', () async {
-              const XTypeGroup typeGroup = XTypeGroup(
-                label: 'Lumit File',
-                extensions: <String>['lum'],
-              );
-
-              final XFile? file = await openFile(
-                acceptedTypeGroups: <XTypeGroup>[typeGroup],
-              );
-
-              // Null means the user dismissed the picker — nothing to open.
-              if (file == null) return;
-              app.openProject(file.path);
-            }),
+            _Item('Open project…', () => _open(context)),
+            _Item.divider(),
+            // Save is only meaningful once there is a project; without a path it
+            // behaves as Save as, which is what the engine's empty-path refusal
+            // makes us handle explicitly.
+            _Item('Save', project == null ? null : () => _save(context)),
+            _Item('Save as…',
+                project == null ? null : () => _save(context, forcePicker: true)),
+            _Item.divider(),
+            _Item('Import footage…',
+                project == null ? null : () => _import(context)),
           ]),
           _menu(context, 'Edit', [
-            _Item('Undo', app.project?.undo),
-            _Item('Redo', app.project?.redo),
+            _Item(
+              'Undo',
+              (history?.canUndo ?? false) ? () => _undo(context) : null,
+            ),
+            _Item(
+              'Redo',
+              (history?.canRedo ?? false) ? () => _redo(context) : null,
+            ),
+          ]),
+          _menu(context, 'Composition', [
+            _Item('New composition',
+                project == null ? null : () => _newComposition(context)),
+            _Item(
+              'Composition settings…',
+              context.read<LumitUiState>().selectedComp == null
+                  ? null
+                  : () => _compSettings(context),
+            ),
           ]),
         ],
       ),
     );
   }
 
+  Future<void> _open(BuildContext context) async {
+    final path = await (openPicker ?? pickProjectToOpen)();
+    if (path == null) return;
+    app.openProject(path);
+  }
+
+  /// Save, asking for a location only when there is not one already — or always,
+  /// for Save as.
+  ///
+  /// The engine refuses an empty path on a project that has never been saved, so
+  /// the decision of whether to prompt is made here from `path()` rather than by
+  /// trying and handling the failure.
+  Future<void> _save(BuildContext context, {bool forcePicker = false}) async {
+    final project = app.project;
+    if (project == null) return;
+
+    var target = '';
+    if (forcePicker || project.path() == null) {
+      final picked = await (savePicker ?? pickProjectSaveLocation)();
+      if (picked == null) return;
+      target = picked;
+    }
+    await project.save(path: target);
+    app.notifyDocumentChanged();
+  }
+
+  Future<void> _import(BuildContext context) async {
+    final project = app.project;
+    if (project == null) return;
+    final paths = await (footagePicker ?? pickFootage)();
+    for (final path in paths) {
+      project.importFootage(path: path);
+    }
+    app.notifyDocumentChanged();
+  }
+
+  void _newComposition(BuildContext context) {
+    final project = app.project;
+    if (project == null) return;
+    // A blank name lets the engine pick the next "Comp N".
+    final comp = project.newComposition(name: '');
+    // Front it, which is what the egui menu does — a comp you just made is the
+    // one you want to work on.
+    context.read<LumitUiState>().setSelectedComp(comp);
+    app.notifyDocumentChanged();
+  }
+
+  Future<void> _compSettings(BuildContext context) async {
+    final comp = context.read<LumitUiState>().selectedComp;
+    if (comp == null) return;
+    final applied = await showCompSettingsFrb(context: context, comp: comp);
+    if (applied) app.notifyDocumentChanged();
+  }
+
+  void _undo(BuildContext context) {
+    app.project?.undo();
+    app.notifyDocumentChanged();
+  }
+
+  void _redo(BuildContext context) {
+    app.project?.redo();
+    app.notifyDocumentChanged();
+  }
+
   Widget _menu(BuildContext context, String title, List<_Item> items) =>
       _MenuButton(title: title, items: items);
 }
 
-/// One menu row. The shipping menu bar also has submenus and dividers; this
-/// example needs neither, so it carries only a label and an action — a null
-/// action renders the row disabled.
+/// One menu row: a label and an action, or a divider. A null action renders the
+/// row disabled rather than hiding it, so the menu's shape does not shift.
 class _Item {
-  final String label;
+  final String? label;
   final VoidCallback? onPressed;
+  final bool isDivider;
 
-  _Item(this.label, this.onPressed);
+  _Item(this.label, this.onPressed) : isDivider = false;
+  _Item.divider()
+      : label = null,
+        onPressed = null,
+        isDivider = true;
 }
 
 class _MenuButton extends StatelessWidget {
@@ -80,6 +177,7 @@ class _MenuButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return HouseButton(
+      key: ValueKey<String>('menu-$title'),
       frameless: true,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       onPressed: () => _open(context),
@@ -88,7 +186,8 @@ class _MenuButton extends StatelessWidget {
   }
 
   void _open(BuildContext context) {
-    final box = context.findRenderObject()! as RenderBox;
+    final box = context.findRenderObject();
+    if (box is! RenderBox) return;
     final origin = box.localToGlobal(Offset(0, box.size.height));
     showLumitPopup<void>(
       context: context,
@@ -113,20 +212,27 @@ class _MenuList extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (final item in items)
-            MenuRow(
-              onPressed: item.onPressed == null
-                  ? close
-                  : () {
-                      close();
-                      item.onPressed!();
-                    },
-              child: Text(
-                item.label,
-                style: item.onPressed == null
-                    ? t.body.copyWith(color: t.textDisabled)
-                    : null,
+            if (item.isDivider)
+              Container(
+                height: 1,
+                margin: const EdgeInsets.symmetric(vertical: 4),
+                color: t.hairline,
+              )
+            else
+              MenuRow(
+                onPressed: item.onPressed == null
+                    ? close
+                    : () {
+                        close();
+                        item.onPressed!();
+                      },
+                child: Text(
+                  item.label ?? '',
+                  style: item.onPressed == null
+                      ? t.body.copyWith(color: t.textDisabled)
+                      : null,
+                ),
               ),
-            ),
         ],
       ),
     );

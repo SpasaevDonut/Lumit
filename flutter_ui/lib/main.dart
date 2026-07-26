@@ -144,6 +144,14 @@ class LumitState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Tell the app an edit landed, for callers that made one themselves rather
+  /// than learning about it from the engine's change stream.
+  ///
+  /// The stream is the right mechanism for edits made *elsewhere*, but a caller
+  /// that just performed an op should not wait for a Rust→Dart round trip to see
+  /// its own result — see the same reasoning in project_panel_frb.dart.
+  void notifyDocumentChanged() => notifyListeners();
+
   void handleChange(ScopedChange event) {
     _onChange.add(event);
 
@@ -334,9 +342,7 @@ class _LumitAppViewState extends State<LumitAppView> {
 
     return Column(
       children: [
-        LumitMenuBarFrb(
-          app: state,
-        ),
+        LumitMenuBarFrb(app: state),
         Expanded(
           child: DockWidget(
             root: uiState.split,

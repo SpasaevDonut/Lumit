@@ -29,6 +29,7 @@ import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
 import '../state/app_state.dart' show FootageDragData;
+import '../shell/comp_settings_frb.dart';
 import '../state/file_dialogs.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -648,15 +649,9 @@ class _DragFeedbackFrb extends StatelessWidget {
   }
 }
 
-enum _ProjectMenuAction { relink, findMissing, moveToRoot, delete }
+enum _ProjectMenuAction { compSettings, relink, findMissing, moveToRoot, delete }
 
 /// The project context menu.
-///
-/// Composition settings is deliberately absent for now: the dialog it opens takes
-/// an `AppStateStub`, so it cannot be reached from an frb panel until it is
-/// ported with the Timeline. The menu bar's own Composition ▸ Composition
-/// settings… still reaches it, so the capability is not lost — only this shortcut
-/// to it. Tracked in docs/TODO.md.
 Future<void> showProjectMenuFrb({
   required BuildContext context,
   required ItemReference item,
@@ -667,6 +662,7 @@ Future<void> showProjectMenuFrb({
   Future<void> Function()? onRelink,
 }) async {
   final isFootage = item is ItemReference_Footage;
+  final isComp = item is ItemReference_Composition;
   final action = await showLumitPopup<_ProjectMenuAction>(
     context: context,
     position: position,
@@ -676,6 +672,11 @@ Future<void> showProjectMenuFrb({
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (isComp)
+            MenuRow(
+              onPressed: () => close(_ProjectMenuAction.compSettings),
+              child: const Text('Composition settings…'),
+            ),
           // Relink is offered only on a row that is actually broken.
           if (isFootage && missing)
             MenuRow(
@@ -701,7 +702,16 @@ Future<void> showProjectMenuFrb({
   );
   if (action == null) return;
 
+  if (!context.mounted) return;
   switch (action) {
+    case _ProjectMenuAction.compSettings:
+      if (item case ItemReference_Composition(:final field0)) {
+        // Reachable now that the dialog takes a CompositionReference rather than
+        // an AppStateStub; the port had to drop this entry until it did.
+        if (await showCompSettingsFrb(context: context, comp: field0)) {
+          onLocalEdit();
+        }
+      }
     case _ProjectMenuAction.relink:
       await onRelink?.call();
     case _ProjectMenuAction.findMissing:
