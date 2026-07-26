@@ -101,3 +101,42 @@ impl crate::api::composition::CompositionReference {
         crate::framecache::cached_tiers(self.id, frames, scale)
     }
 }
+
+/// Which route a rendered frame takes from the engine to the Viewer.
+///
+/// Worth reporting rather than assuming: the zero-copy paths are build features,
+/// and a build without one silently falls back. That fallback is four trips for
+/// a picture that never needed to leave the graphics card — composite, copy down
+/// to ordinary memory, serialise a byte at a time across the boundary, upload
+/// back to the card to draw — so "which one am I on?" is the first question to
+/// ask when playback feels heavy, and it should not need a rebuild to answer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BridgeViewerTransport {
+    /// Windows: a D3D12 texture shared by handle. No pixels cross.
+    SharedTexture,
+    /// Linux: a DMA-BUF shared by file descriptor. No pixels cross.
+    DmaBuf,
+    /// Every pixel copied down, serialised, and uploaded again.
+    ReadBack,
+}
+
+/// What this build compiles to. It reports the *build*, not the run — a machine
+/// that cannot provide a shared texture still falls back at runtime.
+#[frb(sync)]
+pub fn viewer_transport() -> BridgeViewerTransport {
+    #[cfg(all(windows, feature = "shared-texture"))]
+    {
+        BridgeViewerTransport::SharedTexture
+    }
+    #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+    {
+        BridgeViewerTransport::DmaBuf
+    }
+    #[cfg(not(any(
+        all(windows, feature = "shared-texture"),
+        all(target_os = "linux", feature = "shared-texture-linux")
+    )))]
+    {
+        BridgeViewerTransport::ReadBack
+    }
+}

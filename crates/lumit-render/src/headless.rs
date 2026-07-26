@@ -861,8 +861,11 @@ fn render_to_rgba(
 /// decode width, which [`crate::plan::Quality`] controls. The resize preserves
 /// aspect (a same-aspect target, so no letterbox bars appear) and reuses the
 /// export path's bilinear resampler, so both render paths downsample alike.
-/// The size a preview at `scale` should come back at — the same rounding the
-/// processor-side resize used, so nothing downstream sees a different answer.
+/// The size a preview at `scale` should come back at, and so the size it is
+/// reduced to on the graphics card before the read-back.
+///
+/// The rounding is the same the processor-side resize used before this moved to
+/// the card, so nothing downstream sees a different answer than it used to.
 fn scaled_size(width: u32, height: u32, scale: f32) -> (u32, u32) {
     if !scale.is_finite() || scale <= 0.0 || (scale - 1.0).abs() < 1e-4 {
         return (width, height);
@@ -1429,5 +1432,43 @@ mod tests {
         r.render_preview(&doc, comp_id, 0, q, 1.0, None)
             .expect("still fine");
         assert_eq!(r.decoded_frames(), decodes);
+    }
+
+    /// Not a correctness test — a stopwatch, run by hand:
+    /// `cargo test -p lumit-render --release -- --ignored --nocapture preview_cost`
+    ///
+    /// It exists because a Dart-side measurement of this cannot be trusted: the
+    /// widget-test harness settles in 20 ms slices, so anything measured through
+    /// it reports the polling granularity rather than the render.
+    #[test]
+    #[ignore = "timing, not correctness"]
+    fn preview_cost() {
+        let Ok(mut renderer) = HeadlessRenderer::new() else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([0.2, 0.4, 0.8, 1.0]), 1920, 1080);
+        let doc = store.snapshot();
+
+        for (label, scale) in [("full", 1.0f32), ("fit-0.42", 0.42), ("quarter", 0.25)] {
+            let quality = Quality {
+                draft: false,
+                auto_res: scale < 1.0,
+                display_scale: scale,
+                divisor: 1,
+            };
+            // Warm: the first render builds pipelines and probes.
+            let _ = renderer.render_preview(&doc, comp_id, 0, quality, scale, None);
+
+            let n = 30u32;
+            let started = std::time::Instant::now();
+            for frame in 0..n {
+                let out =
+                    renderer.render_preview(&doc, comp_id, u64::from(frame), quality, scale, None);
+                assert!(out.is_ok(), "{label} frame {frame} failed");
+            }
+            let each = started.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
+            println!("PREVIEW {label:>10} scale={scale:<5} {each:>7.2} ms/frame");
+        }
     }
 }

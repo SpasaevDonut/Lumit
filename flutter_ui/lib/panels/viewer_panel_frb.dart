@@ -24,6 +24,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/audio.dart';
+import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
@@ -32,6 +33,7 @@ import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../state/settings.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'placeholder.dart';
@@ -128,6 +130,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
         playing: playing,
         frame: frame,
         settings: settings,
+        comp: comp,
         onZoom: (z) => setState(() {
           _zoom = z;
           _pan = Offset.zero;
@@ -246,7 +249,13 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     if (frame == null) return;
     _awaitingFrame = frame;
     try {
-      comp.renderFrame(frame: BigInt.from(frame), scale: state.viewerScale);
+      comp.renderFrame(
+        frame: BigInt.from(frame),
+        scale: state.viewerScale,
+        mode: state.workspace.performance.playback == PlaybackMode.adaptive
+            ? BridgePlaybackMode.adaptive
+            : BridgePlaybackMode.everyFrame,
+      );
     } catch (_) {
       // A refused request is never answered, so holding the in-flight slot for
       // it would wedge the Viewer for the rest of the session — every later
@@ -266,6 +275,23 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     final ui = _boundUi;
     final comp = ui?.selectedComp;
     if (ui == null || comp == null) return;
+
+    // Every-frame playback is driven by delivery, not by a clock: the next
+    // frame is asked for when the last one arrives, so nothing is ever skipped
+    // however long each takes. That is the whole point of the mode — you are
+    // watching every frame and filling the cache, not keeping time.
+    if (playing &&
+        ui.workspace.performance.playback == PlaybackMode.everyFrame) {
+      final last = comp.getSettings().durationFrames.toInt() - 1;
+      final next = ui.playheadFrame.value + 1;
+      if (next > last) {
+        _ticker?.stop();
+        setState(() {});
+        return;
+      }
+      ui.playheadFrame.value = next;
+      return;
+    }
 
     _wantedFrame = ui.playheadFrame.value;
     if (_wantedFrame == delivered) {
@@ -323,6 +349,22 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
         ? 60.0
         : settings.fpsNum.toDouble() / settings.fpsDen.toDouble();
     final last = settings.durationFrames.toInt() - 1;
+
+    // Every-frame playback cannot keep time by definition, so it plays silent.
+    // Sound that drifts against the picture is worse than no sound, and worse
+    // than being told there will not be any.
+    if (state.workspace.performance.playback == PlaybackMode.everyFrame) {
+      audioStop();
+      _startedFrom = state.playheadFrame.value;
+      // The ticker exists only so `playing` is true and the transport shows
+      // its stop button; delivery drives the playhead (see `_onFrameArrived`).
+      _ticker?.dispose();
+      _ticker = createTicker((_) {});
+      _ticker!.start();
+      _requestRender(comp, state);
+      setState(() {});
+      return;
+    }
 
     _startedFrom = state.playheadFrame.value;
     // Ask for the sound before the first tick, so the mix is being built while
@@ -791,6 +833,7 @@ class _Toolbar extends StatelessWidget {
   final bool playing;
   final int frame;
   final BridgeCompSettings settings;
+  final CompositionReference comp;
   final ValueChanged<double?> onZoom;
   final ValueChanged<ViewerChannel> onChannel;
   final VoidCallback onGrid;
@@ -808,6 +851,7 @@ class _Toolbar extends StatelessWidget {
     required this.playing,
     required this.frame,
     required this.settings,
+    required this.comp,
     required this.onZoom,
     required this.onChannel,
     required this.onGrid,
@@ -870,6 +914,8 @@ class _Toolbar extends StatelessWidget {
                     style: t.small.copyWith(color: grid ? t.accent : null)),
               ),
             ),
+            const SizedBox(width: 6),
+            _PlaybackModeButton(comp: comp),
             // A fixed gap, not a Spacer: the bar scrolls when the panel is
             // narrow, and a flex child cannot live inside a scroll view.
             const SizedBox(width: 24),
@@ -947,4 +993,69 @@ String timecodeOf(int frame, BridgeCompSettings settings) {
 
   String two(int v) => v.toString().padLeft(2, '0');
   return '${two(hours)}:${two(minutes)}:${two(seconds)}:${two(frames)}';
+}
+
+
+/// Which playback behaviour is in force, and a click to change it.
+///
+/// **Why this is on the bar rather than buried in Settings.** The two modes
+/// disagree about what playback *is* — one keeps time and lets the picture go
+/// soft, the other shows every frame and takes as long as it takes — so a
+/// picture that looks wrong or a transport that runs slow is explained by which
+/// one you are in. Being unable to see that from the Viewer is what makes it
+/// feel broken rather than chosen.
+///
+/// In adaptive mode the tier it has settled on is shown beside the name, so
+/// "why is it soft?" is answered on screen: Full, Half, Third or Quarter.
+class _PlaybackModeButton extends StatelessWidget {
+  final CompositionReference comp;
+  const _PlaybackModeButton({required this.comp});
+
+  static const _tierNames = ['Full', 'Full', 'Half', 'Third', 'Quarter'];
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final ui = Provider.of<LumitUiState>(context);
+    final adaptive =
+        ui.workspace.performance.playback == PlaybackMode.adaptive;
+    final tier = comp.playbackTier();
+    final label = adaptive
+        ? 'Adaptive · ${_tierNames[tier.clamp(0, _tierNames.length - 1)]}'
+        : 'Every frame';
+
+    // Which route frames take to get here. A build without a zero-copy path
+    // copies every pixel down, serialises it a byte at a time and uploads it
+    // again, which is the difference between playback feeling immediate and
+    // feeling heavy — so it is worth being able to read off the screen.
+    final transport = switch (viewerTransport()) {
+      BridgeViewerTransport.sharedTexture => 'shared texture, no copy',
+      BridgeViewerTransport.dmaBuf => 'DMA-BUF, no copy',
+      BridgeViewerTransport.readBack => 'read-back (pixels copied)',
+    };
+
+    return LumitTooltip(
+      message: adaptive
+          ? 'Playback keeps time and lowers the resolution when it has to. '
+              'Click for every frame instead. '
+              'Frames arrive by $transport.'
+          : 'Playback shows every frame at full resolution and caches it, '
+              'however long that takes, with the sound silenced. '
+              'Click for adaptive instead. '
+              'Frames arrive by $transport.',
+      child: HouseButton(
+        key: const ValueKey('viewer-playback-mode'),
+        small: true,
+        onPressed: () {
+          ui.workspace.performance.playback =
+              adaptive ? PlaybackMode.everyFrame : PlaybackMode.adaptive;
+          ui.workspace.touch();
+        },
+        child: Text(
+          label,
+          style: t.small.copyWith(color: adaptive ? null : t.accent),
+        ),
+      ),
+    );
+  }
 }

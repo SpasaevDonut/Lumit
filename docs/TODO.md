@@ -126,6 +126,14 @@ and the transparency grid have landed. Still missing:
 - **No disk or VRAM frame cache**, so the cache bar can only ever show the RAM
     tier. The design language's steel blue for "on disk only" and the future VRAM
     tier have nothing behind them yet ([15-DESIGN.md](15-DESIGN.md) §6.3).
+- **The Dart suite only ever exercises the read-back transport.** The harness
+    loads `target/debug/lumit_bridge.dll`, which a plain `cargo build` produces
+    without `shared-texture` — while the *shipped* Windows build now has it
+    (`crates/lumit-bridge/cargokit.yaml`). So the zero-copy path, and the
+    mode-picks-the-transport routing in `publish_frame`, are compiled by CI but
+    not behaviourally covered. A texture cannot be registered in a widget test at
+    all (no platform channel), so covering it needs an integration test on a real
+    window.
 - **The Viewer composites at full comp resolution whatever the preview scale —
     the dominant playback cost.** `preview_display_texture` always renders the
     comp at `(comp.width, comp.height)`; `Quality::divisor` only shrinks the
@@ -139,6 +147,15 @@ and the transparency grid have landed. Still missing:
     while Dart sends the panel-fit scale, so the tier never moves. Both need
     fixing together; this is an `06-RENDER-PIPELINE` change (every layer
     transform is in comp pixels), not a patch.
+- **The Viewer's zero-copy path was never actually in a shipped build until
+    2026-07-26.** `shared-texture` is off by default and was meant to be switched
+    on for the built application, but nothing switched it on: `flutter build
+    windows` drives cargo through cargokit rather than a command line. The claim
+    recorded here that "cargokit has no hook for cargo features" was **wrong** —
+    `extra_flags` is exactly that hook (`options.dart`,
+    `CargoBuildOptions.parse`), and `cargokit.yaml` now uses it. Linux still has
+    no equivalent switched on, deliberately: that path has never run on a Linux
+    machine (K-033).
 - **The read-back Viewer path costs 8.8 ms per 1080p frame in serialisation
     alone** (37 ms at 4K), because flutter_rust_bridge's SSE codec encodes a
     `Vec<u8>` *one byte at a time* — the generated Rust `SseEncode for Vec<u8>`

@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/src/rust/api/audio.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
@@ -376,6 +377,46 @@ void main() {
       await settleFrb(tester, minRounds: 20, maxRounds: 20);
       expect(frames, settled,
           reason: 'nothing moved, so nothing should have been rendered');
+    });
+
+    /// The two playback behaviours, and the fact that you can see which is on.
+    testWidgets('the playback mode is shown on the bar and toggles',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      final button = find.byKey(const ValueKey('viewer-playback-mode'));
+      expect(button, findsOneWidget, reason: 'the mode is visible, not buried');
+      expect(find.textContaining('Adaptive'), findsOneWidget,
+          reason: 'adaptive is the mode that always plays, so it is the default');
+
+      await tester.tap(button);
+      await tester.pump();
+      expect(find.text('Every frame'), findsOneWidget);
+      expect(p.uiState.workspace.performance.playback,
+          PlaybackMode.everyFrame,
+          reason: 'and the choice is remembered, not just drawn');
+
+      await tester.tap(button);
+      await tester.pump();
+      expect(find.textContaining('Adaptive'), findsOneWidget);
+    });
+
+    /// Every-frame playback runs on delivery rather than a clock, so it must not
+    /// skip — and it plays silent, because sound that cannot keep time is worse
+    /// than none.
+    testWidgets('every-frame playback silences the sound', (tester) async {
+      final p = withLayer();
+      p.uiState.workspace.performance.playback = PlaybackMode.everyFrame;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
+      expect(audioClock().playing, isFalse,
+          reason: 'no sound in every-frame mode');
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
     });
 
     testWidgets('stepping takes the sound with it', (tester) async {

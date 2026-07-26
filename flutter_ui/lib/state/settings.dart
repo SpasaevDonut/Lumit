@@ -35,12 +35,18 @@ class PerformanceSettings {
   /// empty Viewer, so the read-back path must be reachable from Settings).
   bool useSharedTexture;
 
+  /// Which playback behaviour the Viewer uses. Kept here rather than only in
+  /// the Viewer's own state so the choice survives a restart — it is a working
+  /// preference, not a per-session toggle.
+  PlaybackMode playback;
+
   PerformanceSettings({
     int? ramBudgetMb,
     this.diskCacheMb = 50 * 1024,
     this.vramCacheMb = 512,
     this.backgroundFill = true,
     this.useSharedTexture = true,
+    this.playback = PlaybackMode.adaptive,
     this.cacheRoot,
   }) : ramBudgetMb = ramBudgetMb ?? defaultRamBudgetMb();
 
@@ -88,6 +94,7 @@ class PerformanceSettings {
         'vram_cache_mb': vramCacheMb,
         'background_fill': backgroundFill,
         'use_shared_texture': useSharedTexture,
+        'playback': playback.name,
         'cache_root': cacheRoot,
       };
 
@@ -98,6 +105,12 @@ class PerformanceSettings {
         vramCacheMb: j['vram_cache_mb'] as int? ?? 512,
         backgroundFill: j['background_fill'] as bool? ?? true,
         useSharedTexture: j['use_shared_texture'] as bool? ?? true,
+        // An unknown name (an older or newer build) falls back to adaptive,
+        // which is the mode that always plays.
+        playback: PlaybackMode.values.firstWhere(
+          (m) => m.name == j['playback'],
+          orElse: () => PlaybackMode.adaptive,
+        ),
         cacheRoot: j['cache_root'] as String?,
       );
 }
@@ -117,6 +130,19 @@ class AutosaveSettings {
 }
 
 /// Interface (Settings → Interface): UI scale and tooltips (K-117).
+/// Which of the two playback behaviours the Viewer uses (docs/13 §B5).
+///
+/// Mirrors the engine's `BridgePlaybackMode`. Held separately rather than using
+/// that type directly so the settings file does not depend on generated code,
+/// and so a value written by an older build still loads.
+enum PlaybackMode {
+  /// Keep time, lower the resolution.
+  adaptive,
+
+  /// Every frame at full resolution, cached, sound silenced.
+  everyFrame,
+}
+
 class InterfaceSettings {
   double uiScale;
   bool showTooltips;

@@ -279,6 +279,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeParamKind dco_decode_bridge_param_kind(dynamic raw);
 
   @protected
+  BridgePlaybackMode dco_decode_bridge_playback_mode(dynamic raw);
+
+  @protected
   BridgePlaybackTier dco_decode_bridge_playback_tier(dynamic raw);
 
   @protected
@@ -329,6 +332,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeTransformProp dco_decode_bridge_transform_prop(dynamic raw);
+
+  @protected
+  BridgeViewerTransport dco_decode_bridge_viewer_transport(dynamic raw);
 
   @protected
   CompositionReference dco_decode_composition_reference(dynamic raw);
@@ -733,6 +739,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeParamKind sse_decode_bridge_param_kind(SseDeserializer deserializer);
 
   @protected
+  BridgePlaybackMode sse_decode_bridge_playback_mode(
+      SseDeserializer deserializer);
+
+  @protected
   BridgePlaybackTier sse_decode_bridge_playback_tier(
       SseDeserializer deserializer);
 
@@ -788,6 +798,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeTransformProp sse_decode_bridge_transform_prop(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeViewerTransport sse_decode_bridge_viewer_transport(
       SseDeserializer deserializer);
 
   @protected
@@ -1227,6 +1241,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeParamKind self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_playback_mode(
+      BridgePlaybackMode self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_playback_tier(
       BridgePlaybackTier self, SseSerializer serializer);
 
@@ -1289,6 +1307,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_transform_prop(
       BridgeTransformProp self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_viewer_transport(
+      BridgeViewerTransport self, SseSerializer serializer);
 
   @protected
   void sse_encode_composition_reference(

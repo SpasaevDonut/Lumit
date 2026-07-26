@@ -6,6 +6,8 @@
 // once — kept together because they are all "the chrome around the tracks"
 // rather than because they share anything.
 
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
@@ -581,12 +583,18 @@ class _CacheBarPainter extends CustomPainter {
     final paint = Paint();
     for (final (start, end, tier) in cacheBarRuns(tiers)) {
       paint.color = tier >= 2 ? ready : coarse;
-      final left = axis.xOf(start);
+      final left = axis.xOf(start).clamp(0.0, size.width);
       // The run's right edge is the left edge of the frame after it, so a run
-      // covers its last frame rather than stopping at that frame's start.
-      final right = axis.xOf(end);
+      // covers its last frame rather than stopping at that frame's start. At
+      // least a hairline wide so a single held frame still shows, but never
+      // wider than the bar — and never expressed as a clamp whose lower bound
+      // could exceed its upper, because `num.clamp` throws outright when it
+      // does. A composition longer than the panel is wide in pixels reaches
+      // exactly that case at its last frame.
+      final right = axis.xOf(end).clamp(left, size.width);
       canvas.drawRect(
-          Rect.fromLTRB(left, 0, right.clamp(left + 1, size.width), size.height),
+          Rect.fromLTRB(
+              left, 0, max(right, min(left + 1, size.width)), size.height),
           paint);
     }
   }

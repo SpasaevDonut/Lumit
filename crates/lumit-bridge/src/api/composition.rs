@@ -76,6 +76,28 @@ pub struct CompositionReference {
     pub id: Uuid,
 }
 
+/// How playback should behave when the machine cannot render at the
+/// composition's own rate — the choice the Viewer offers, and shows.
+///
+/// The two are genuinely different jobs, not a quality slider:
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BridgePlaybackMode {
+    /// **Keep time; lower the resolution.** The realtime controller measures
+    /// each frame and drops to a coarser preview tier until playback keeps up,
+    /// so the picture stays in step with the sound and goes soft rather than
+    /// stuttering. Frames are kept under the tier they were actually made at, so
+    /// the cache bar can show them dimmed — held, but coarser than you are
+    /// watching — and a second pass over the same stretch is served rather than
+    /// rendered again.
+    Adaptive,
+    /// **Every frame, at the resolution asked for, however long it takes** — and
+    /// kept, so the second pass over the same stretch plays properly. Playback
+    /// runs at whatever rate the renderer manages rather than on the clock, so
+    /// the caller silences the sound: sound that cannot keep time is worse than
+    /// no sound.
+    EveryFrame,
+}
+
 impl CompositionReference {
     #[frb(ignore)]
     pub fn new(project: Uuid, id: Uuid) -> CompositionReference {
@@ -620,12 +642,26 @@ impl CompositionReference {
     /// Below 1.0 the engine decodes and composites smaller, which is how a
     /// Viewer that is not filling the screen stays cheap.
     #[frb(sync)]
-    pub fn render_frame(&self, frame: u64, scale: f32) -> Result<(), BridgeError> {
+    pub fn render_frame(
+        &self,
+        frame: u64,
+        scale: f32,
+        mode: BridgePlaybackMode,
+    ) -> Result<(), BridgeError> {
         self.dispatch(RenderComp(RenderCompRequest {
             comp: self.clone(),
             frame,
             scale,
+            mode,
         }))
+    }
+
+    /// The preview tier adaptive playback has settled on: 1 Full, 2 Half,
+    /// 3 Third, 4 Quarter. Shown beside the mode so "why is it soft?" has an
+    /// answer on screen rather than in a log.
+    #[frb(sync)]
+    pub fn playback_tier(&self) -> u32 {
+        crate::realtime::tier()
     }
 
     /// Ask for `frame` with `layer`'s effect stack replaced by `effects` — the

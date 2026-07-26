@@ -1,0 +1,33 @@
+# How the Flutter build compiles this crate (cargokit reads this file from
+# beside Cargo.toml).
+#
+# **Why this exists: the Viewer's zero-copy path was never in a shipped build.**
+# `shared-texture` is off by default and is meant to be switched on for the built
+# application (see the feature's own comment in Cargo.toml) — but nothing was
+# switching it on, because `flutter build windows` drives cargo through cargokit
+# rather than through a command line anyone types. So every build took the slow
+# path: composite on the graphics card, copy every pixel down into ordinary
+# memory, serialise them one byte at a time across the boundary, and have Flutter
+# upload the same pixels back to the graphics card to draw them. Four trips for a
+# picture that never needed to leave the card.
+#
+# `extra_flags` is cargokit's hook for exactly this (`options.dart`,
+# `CargoBuildOptions.parse`). It applies to both configurations, so a debug run
+# and the shipped build take the same path — a performance path that only exists
+# in one of them is a path nobody can trust.
+#
+# The feature is `cfg(windows)`-gated inside the crate, so this is inert when
+# building for anything else, and the engine falls back to the copy-the-bytes
+# path by itself if the machine cannot provide a shared texture. Linux has its
+# own flag (`shared-texture-linux`) which is not set here: that code has never
+# been run on a Linux machine (K-033), and turning on an untested fast path by
+# default is how you ship a black Viewer.
+cargo:
+  debug:
+    extra_flags:
+      - --features
+      - shared-texture
+  release:
+    extra_flags:
+      - --features
+      - shared-texture

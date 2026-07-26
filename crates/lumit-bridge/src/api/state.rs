@@ -295,12 +295,15 @@ impl LumitBridgeState {
         let (comp, layer, items) = op_scope(&document_change.op);
 
         // Frames are filed by position, not by content, so the edit that just
-        // landed did not change any frame's name — drop this composition's held
-        // frames or the Viewer would be served the picture from before it.
-        // Scoped to the one composition: nothing else's pixels moved.
-        if let Some(comp) = comp {
-            crate::framecache::invalidate_comp(comp);
-        }
+        // landed did not change any frame's name — drop the held frames or the
+        // Viewer would be served the picture from before it.
+        //
+        // All of them, not the scope's composition: `op_scope` answers "which
+        // panel redraws", which is a different and narrower question. A batched
+        // edit names no composition, a solid or a relink belongs to the project
+        // rather than to one comp, and a precomp layer means an edit to one
+        // composition changes every composition that contains it.
+        crate::framecache::invalidate_all();
 
         let change = ScopedChange {
             project: ProjectReference::new(project_id),

@@ -21,8 +21,8 @@
 //! change any frame's name, so without help the cache would keep serving the
 //! picture from before the edit. It did exactly that until this was written —
 //! changing a layer's opacity and scrubbing back gave you the old frame, byte
-//! for byte. [`invalidate_comp`] is the answer: a committed change to a
-//! composition drops that composition's frames, and nothing else's.
+//! for byte. [`invalidate_all`] is the answer: a committed change drops every
+//! held frame.
 //!
 //! The design K-178 describes is better and is still the goal: file each frame
 //! under a **content hash** ([`lumit_render::cache::frame_key`]) covering every
@@ -124,25 +124,35 @@ pub(crate) fn cached_tiers(comp: uuid::Uuid, frames: u64, scale: f32) -> Vec<u8>
     out
 }
 
-/// Drop every frame held for `comp`.
+/// Drop every held frame, because the document changed.
 ///
-/// Called when a committed edit changes that composition. Positional keys do not
-/// change when the picture does, so without this the cache would answer with the
-/// frame from before the edit — which it did, until this existed.
-pub(crate) fn invalidate_comp(comp: uuid::Uuid) {
-    let comp_low = comp.as_u128() as u64;
+/// **Why all of them, and not just the composition that was edited.** Deciding
+/// which frames an edit can reach is a harder question than it looks, and
+/// getting it wrong means silently showing a picture the document no longer
+/// describes:
+///
+/// * a batched edit (a two-axis position drag, adding a solid) names no single
+///   composition at all;
+/// * changing a solid's colour or relinking footage edits a *project item*,
+///   which any number of compositions may draw;
+/// * a precomp layer means editing composition A changes every composition that
+///   contains A, at any depth.
+///
+/// The scope attached to a change answers a different question — which panel
+/// should redraw — and using it here would leave every case above stale. So this
+/// is deliberately blunt. It is also why content keying is worth doing (see the
+/// module docs): under it none of this reasoning is needed, because an edit
+/// simply gives new names to the frames it changed.
+///
+/// The hit and miss counters survive: they describe the session, not the
+/// contents, and resetting them on every keystroke would make the meter useless.
+pub(crate) fn invalidate_all() {
     with_cache(|c| {
-        let doomed: Vec<FrameKey> = c
-            .map
-            .keys()
-            .filter(|k| (*k >> 64) as u64 == comp_low)
-            .copied()
-            .collect();
-        for key in doomed {
-            if let Some(entry) = c.map.remove(&key) {
-                c.used = c.used.saturating_sub(entry.rgba.len());
-            }
-        }
+        c.map.clear();
+        c.used = 0;
+        // Anything a render is holding right now was planned against the
+        // document as it was before this edit, so it must not be banked.
+        c.generation = c.generation.wrapping_add(1);
     });
 }
 
@@ -165,6 +175,11 @@ pub(crate) struct Cache {
     clock: u64,
     hits: u64,
     misses: u64,
+    /// Bumped by [`invalidate_all`]. A render that began before the bump is of
+    /// the document as it was, so its pixels are dropped rather than stored —
+    /// otherwise an edit landing mid-render would be undone by that render
+    /// finishing, and the stale frame would stay for good.
+    generation: u64,
 }
 
 impl Cache {
@@ -176,6 +191,7 @@ impl Cache {
             clock: 0,
             hits: 0,
             misses: 0,
+            generation: 0,
         }
     }
 
@@ -289,11 +305,20 @@ pub(crate) fn get_or_render(
     key: FrameKey,
     render: impl FnOnce() -> Option<(u32, u32, Vec<u8>)>,
 ) -> Option<(u32, u32, Vec<u8>)> {
-    if let Some(hit) = with_cache(|c| c.get(&key)) {
-        return Some(hit);
-    }
+    let generation = match with_cache(|c| (c.get(&key), c.generation)) {
+        (Some(hit), _) => return Some(hit),
+        (None, generation) => generation,
+    };
     let (w, h, rgba) = render()?;
-    with_cache(|c| c.put(key, w, h, rgba.clone()));
+    with_cache(|c| {
+        // An edit landed while this was rendering, so these pixels are of the
+        // document as it *was*. Hand them back — the caller asked for them, and
+        // a newer frame is already on its way — but do not file them, or the
+        // invalidation would be quietly undone and the stale frame kept for good.
+        if c.generation == generation {
+            c.put(key, w, h, rgba.clone());
+        }
+    });
     Some((w, h, rgba))
 }
 
@@ -501,34 +526,103 @@ mod tests {
     }
 
     /// Positional keys do not change when the picture does, so a committed edit
-    /// has to drop the composition's frames by hand. Until this existed the
-    /// Viewer was served the frame from before the edit, byte for byte.
+    /// has to drop held frames by hand. Until this existed the Viewer was served
+    /// the frame from before the edit, byte for byte.
+    ///
+    /// Every composition's frames go, not just the edited one: a batched edit
+    /// names no composition, a solid or a footage relink is a project item many
+    /// compositions may draw, and a precomp means editing one composition
+    /// changes every composition that contains it.
     #[test]
-    fn invalidating_a_comp_leaves_other_comps_alone() {
+    fn invalidating_drops_every_composition() {
         let comp = uuid::Uuid::now_v7();
         let other = uuid::Uuid::now_v7();
         clear();
         with_cache(|c| {
             c.put(frame_key(comp, 0, 1.0), 2, 2, vec![0; 16]);
-            c.put(frame_key(comp, 1, 1.0), 2, 2, vec![0; 16]);
             c.put(frame_key(other, 0, 1.0), 2, 2, vec![0; 16]);
         });
 
-        invalidate_comp(comp);
+        invalidate_all();
 
-        assert_eq!(
-            cached_tiers(comp, 2, 1.0),
-            vec![0, 0],
-            "its frames are gone"
-        );
+        assert_eq!(cached_tiers(comp, 1, 1.0), vec![0]);
         assert_eq!(
             cached_tiers(other, 1, 1.0),
-            vec![2],
-            "the other comp kept its own"
+            vec![0],
+            "a precomp or a shared solid could have reached it"
         );
-        // The freed bytes were returned to the budget, or the cache would
-        // slowly report itself full of frames it no longer holds.
-        with_cache(|c| assert_eq!(c.used, 16));
+        with_cache(|c| assert_eq!(c.used, 0));
         clear();
+    }
+
+    /// The race: an edit landing while a frame is being rendered must not be
+    /// undone by that render finishing and banking pre-edit pixels.
+    #[test]
+    fn a_render_in_flight_when_an_edit_lands_is_not_banked() {
+        let comp = uuid::Uuid::now_v7();
+        clear();
+
+        let out = get_or_render(frame_key(comp, 0, 1.0), || {
+            invalidate_all();
+            Some((2, 2, vec![9; 16]))
+        });
+
+        assert!(
+            out.is_some(),
+            "the caller still gets the pixels it asked for"
+        );
+        assert_eq!(
+            cached_tiers(comp, 1, 1.0),
+            vec![0],
+            "but they are not kept, or the invalidation would be undone"
+        );
+        clear();
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod transport_cost {
+    /// A stopwatch for the pixel path's serialisation, run by hand:
+    /// `cargo test -p lumit_bridge --release -- --ignored --nocapture encode_cost`
+    ///
+    /// It reproduces the generated `SseEncode for Vec<u8>` exactly — a per-byte
+    /// `write_u8` loop (`frb_generated.rs`, `impl SseEncode for Vec<u8>`) —
+    /// against the bulk copy the same bytes could have had. The generated code
+    /// itself is not callable from a test (the trait is private to the generated
+    /// module), so this measures the identical loop rather than the code.
+    #[test]
+    #[ignore = "timing, not correctness"]
+    fn encode_cost() {
+        use flutter_rust_bridge::for_generated::byteorder::WriteBytesExt;
+
+        for (label, w, h) in [("800x450", 800u32, 450u32), ("1920x1080", 1920, 1080)] {
+            let bytes = (w * h * 4) as usize;
+            let frame = vec![7u8; bytes];
+            let n = 20;
+
+            let started = std::time::Instant::now();
+            for _ in 0..n {
+                let mut out: Vec<u8> = Vec::new();
+                for item in &frame {
+                    out.write_u8(*item).unwrap();
+                }
+                std::hint::black_box(out);
+            }
+            let per_byte = started.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
+
+            let started = std::time::Instant::now();
+            for _ in 0..n {
+                let mut out: Vec<u8> = Vec::new();
+                out.extend_from_slice(&frame);
+                std::hint::black_box(out);
+            }
+            let bulk = started.elapsed().as_secs_f64() * 1000.0 / f64::from(n);
+
+            println!(
+                "ENCODE {label:>10} {:>5.1} MB  per-byte {per_byte:>7.2} ms  bulk {bulk:>7.2} ms",
+                bytes as f64 / 1e6
+            );
+        }
     }
 }

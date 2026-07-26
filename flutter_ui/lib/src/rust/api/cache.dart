@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `read`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
 
 /// The cache's live numbers.
 ///
@@ -29,6 +29,11 @@ BridgeCacheStats setCacheBudget({required BigInt bytes}) =>
 /// deliberate act rather than something to do on a timer.
 BridgeCacheStats clearCache() =>
     BridgeLib.instance.api.crateApiCacheClearCache();
+
+/// What this build compiles to. It reports the *build*, not the run — a machine
+/// that cannot provide a shared texture still falls back at runtime.
+BridgeViewerTransport viewerTransport() =>
+    BridgeLib.instance.api.crateApiCacheViewerTransport();
 
 /// What the cache currently holds, for the Timeline's cache bar and the
 /// Settings window's budget control.
@@ -69,4 +74,24 @@ class BridgeCacheStats {
           entries == other.entries &&
           hits == other.hits &&
           misses == other.misses;
+}
+
+/// Which route a rendered frame takes from the engine to the Viewer.
+///
+/// Worth reporting rather than assuming: the zero-copy paths are build features,
+/// and a build without one silently falls back. That fallback is four trips for
+/// a picture that never needed to leave the graphics card — composite, copy down
+/// to ordinary memory, serialise a byte at a time across the boundary, upload
+/// back to the card to draw — so "which one am I on?" is the first question to
+/// ask when playback feels heavy, and it should not need a rebuild to answer.
+enum BridgeViewerTransport {
+  /// Windows: a D3D12 texture shared by handle. No pixels cross.
+  sharedTexture,
+
+  /// Linux: a DMA-BUF shared by file descriptor. No pixels cross.
+  dmaBuf,
+
+  /// Every pixel copied down, serialised, and uploaded again.
+  readBack,
+  ;
 }

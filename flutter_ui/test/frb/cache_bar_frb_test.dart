@@ -11,6 +11,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
 
 import 'frb_test_support.dart';
 
@@ -38,6 +39,12 @@ void main() {
 
   group('Cache bar against the engine', () {
     setUpAll(initEngineForTests);
+
+    // These run against the read-back transport, which is what a plain
+    // `cargo build -p lumit_bridge` produces and what the test harness loads.
+    // The shipped Windows build adds `shared-texture`, where adaptive playback
+    // hands over a texture instead of bytes and so keeps nothing — the cache
+    // bar fills in Every frame mode there. See `publish_frame`.
 
     /// The whole point of the bar: a frame that has been rendered reads back as
     /// held, and one that has not reads as nothing. Before this the bridge could
@@ -120,6 +127,40 @@ void main() {
         everyElement(0),
         reason: 'and never held any of the other one\'s',
       );
+    });
+
+    /// A composition far longer than the panel is wide gives a run whose right
+    /// edge lands past the bar. `num.clamp` throws when the lower bound exceeds
+    /// the upper, so the naive clamp crashed the paint outright.
+    testWidgets('a run at the far end of a long comp does not crash the paint',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Long');
+      final settings = comp.getSettings();
+      comp.setSettings(
+        settings: BridgeCompSettings(
+          name: settings.name,
+          width: settings.width,
+          height: settings.height,
+          fpsNum: settings.fpsNum,
+          fpsDen: settings.fpsDen,
+          durationFrames: 4000,
+        ),
+      );
+      comp.addSolidLayer();
+      p.uiState.setSelectedComp(comp);
+
+      await tester.pumpWidget(hostPanel(
+        child: const TimelinePanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1000, 500),
+      ));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 10, maxRounds: 60);
+
+      expect(tester.takeException(), isNull,
+          reason: '4000 frames across 1000 px must not throw in paint');
     });
 
     testWidgets('the bar is drawn under the ruler', (tester) async {

@@ -13,7 +13,7 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `add_at_top`, `commit`, `composition`, `dispatch`, `document`, `footage_span_and_size`, `project`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
 /// Every blend mode, in the order the Timeline's dropdown shows them. The index
@@ -118,6 +118,29 @@ class BridgeMarker {
           id == other.id &&
           time == other.time &&
           label == other.label;
+}
+
+/// How playback should behave when the machine cannot render at the
+/// composition's own rate — the choice the Viewer offers, and shows.
+///
+/// The two are genuinely different jobs, not a quality slider:
+enum BridgePlaybackMode {
+  /// **Keep time; lower the resolution.** The realtime controller measures
+  /// each frame and drops to a coarser preview tier until playback keeps up,
+  /// so the picture stays in step with the sound and goes soft rather than
+  /// stuttering. Frames are kept under the tier they were actually made at, so
+  /// the cache bar can show them dimmed — held, but coarser than you are
+  /// watching — and a second pass over the same stretch is served rather than
+  /// rendered again.
+  adaptive,
+
+  /// **Every frame, at the resolution asked for, however long it takes** — and
+  /// kept, so the second pass over the same stretch plays properly. Playback
+  /// runs at whatever rate the renderer manages rather than on the clock, so
+  /// the caller silences the sound: sound that cannot keep time is worse than
+  /// no sound.
+  everyFrame,
+  ;
 }
 
 class CompositionReference {
@@ -286,12 +309,23 @@ class CompositionReference {
         that: this,
       );
 
+  /// The preview tier adaptive playback has settled on: 1 Full, 2 Half,
+  /// 3 Third, 4 Quarter. Shown beside the mode so "why is it soft?" has an
+  /// answer on screen rather than in a log.
+  int playbackTier() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferencePlaybackTier(
+        that: this,
+      );
+
   /// Ask for `frame` at `scale` — 1.0 meaning "shown at comp resolution".
   /// Below 1.0 the engine decodes and composites smaller, which is how a
   /// Viewer that is not filling the screen stays cheap.
-  void renderFrame({required BigInt frame, required double scale}) =>
+  void renderFrame(
+          {required BigInt frame,
+          required double scale,
+          required BridgePlaybackMode mode}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
-          that: this, frame: frame, scale: scale);
+          that: this, frame: frame, scale: scale, mode: mode);
 
   /// Ask for `frame` with `layer`'s effect stack replaced by `effects` — the
   /// live drag path, which never touches the document.
