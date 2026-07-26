@@ -130,8 +130,6 @@ sequence clips.
     what every remaining panel is waiting behind.** The full ledger:
 
     **1. The seven docked panels.**
-    - **Project** — **done**: ported, 15 tests against the real engine, and the
-        v0 panel and its ops are deleted.
     - **Viewer** — **partial**: transport only. All three render paths work, but
         `ViewerPanelFrb` is a bare `Texture`/`RawImage`. The real
         `viewer_panel.dart` (560 lines) needs porting, with `viewer_toolbar.dart`,
@@ -145,19 +143,11 @@ sequence clips.
         columns, spans, razor, markers, work area, cache bar, comp tabs, lane
         host/scale/selection, graph editor and its four lens files, keyframe
         clipboard and interp menus.
-    - **Effect controls** — **done** for everything but the graph editor
-        (`effect_controls_panel_frb.dart` + `keyframe_controls_frb.dart`, 15
-        tests). Effect stack: add/remove/reorder/bypass and a row per declared
-        parameter in every kind the schema declares. Transform: the five 2D rows
-        plus the three 3D ones, gated on the layer's switch. Both drag paths
-        preview without committing and commit once on release. Every animatable
-        row carries the stopwatch and the ◄ ◆ ► navigator. An animated row shows
-        "animated" in place of its number field, because shaping a curve is the
-        graph editor's job — the stopwatch turns animation off again, keeping
-        the value the curve reads at the playhead, so the row is never a dead
-        end. Outstanding: **`.lumfx` presets**, and a multi-axis row's stopwatch
-        keys only its first axis (x and y animate independently in the model and
-        one stopwatch cannot honestly show two states).
+    - **Effect controls** — **partial**: the panel is in; what is left is the
+        **graph editor** (the curve view, bezier handles, keyframe clipboard) and
+        **`.lumfx` presets**. One known limit: a multi-axis row's stopwatch keys
+        only its first axis, because x and y animate independently in the model
+        and one stopwatch cannot honestly show two states.
     - **Effects & presets** — **not started**, a `PlaceholderPanel`. Needs
         `list_effects` wiring (the API exists), drag-to-apply, `.lumfx` save/load.
     - **Scopes** — **not started**, a `PlaceholderPanel`. Waiting on `render_scope`
@@ -167,8 +157,6 @@ sequence clips.
 
     **2. Shell surfaces** — not panels, but v0-bound. Each of these imports
     `bridge/bridge.dart` or `state/app_state.dart` today.
-    - **Menu bar** — **done**, 9 tests in `test/frb/menu_bar_frb_test.dart`.
-    - **Composition settings dialog** — **done** (`shell/comp_settings_frb.dart`).
     - **Settings window** (665 lines) — cache budget and stats, realtime tier, UI
         scale, theme.
     - **Export dialog** (391 lines) — needs the whole export subsystem below.
@@ -179,20 +167,15 @@ sequence clips.
     - **Popout windows** — the five files under `lib/popout/`. Multi-window, and
         the v0 version has a known main-window resync gap.
 
-    **3. Engine subsystems with no frb API whatsoever.** `ffi.rs` exports 112
-    `extern "C"` functions; `api/` has 66 public functions, a good share of which
-    are handle plumbing (`new`, `equals`, id accessors) rather than ops. By op
-    count this is roughly a quarter of the way through, and the Timeline alone is
-    comparable to everything ported so far. Grouped by subsystem:
-    - **Keyframes** — **the ops are done, and there are none.** `set_transform`
-        and `BridgeEffectInstance::set_value` already take a whole animation, so
-        the `set_animation` op this list used to ask for *is* the frb surface:
-        add, remove, retime, re-ease and toggle-animated are each one write of
-        the whole `BridgeScalar`, hence one undo step. v0's granular
-        add/remove/shift/set-interp ops and `apply_keyframe_batch` have no frb
-        counterpart and need none — the key drag that cost two ops there costs
-        one here. What remains is the **graph editor** itself: the curve view,
-        the bezier handles, and the keyframe clipboard.
+    **3. Engine subsystems with no frb API yet.** `ffi.rs` exports 107 `extern "C"`
+    functions; `api/` has 74 public functions, a good share of which are handle
+    plumbing (`new`, `equals`, id accessors) rather than ops. The Timeline alone
+    is comparable to everything ported so far. Grouped by subsystem:
+    - **Keyframes** — no ops are needed and none will be added: `set_transform`
+        and `set_value` take a whole animation, so every keyframe edit is one
+        write and one undo step. v0's granular add/remove/shift/set-interp pair
+        and `apply_keyframe_batch` have no frb counterpart by design. Recorded
+        here only so nobody ports them; the work left is the graph editor UI.
     - **Layer lifecycle** — add solid/text/camera/adjustment/sequence, delete,
         duplicate, reorder.
     - **Layer properties** — switches, blend mode, matte, parent, motion blur,
