@@ -2486,6 +2486,40 @@ between frames to get away with it; playback did not, which is why pressing play
 showed one frame and then nothing. The old frame is now thrown away one frame
 later, when nothing can still be holding it.
 
+*The cache bar, and the bug finding it uncovered.* The stripe under the time
+ruler shows which frames have already been rendered and kept, so you can see at a
+glance what will play. Mint means the frame is held at the resolution you are
+watching — it plays now. A dimmed mint means it is held only at a coarser
+resolution: there is something, but it would be rendered again to show at this
+size. Nothing drawn means nothing kept. The design language reserves a blue for
+frames kept on disk; there is no disk cache in this engine yet, so that state
+cannot happen and is not drawn.
+
+Building it meant asking the engine a question it could not answer. The bridge
+reported only totals — how many megabytes, how many hits — never *which* frames,
+so the old frontend had guessed by watching what it had asked for. The engine now
+answers directly.
+
+Asking that question exposed something worse. Each kept frame was filed under
+*where* it was — which composition, which frame number, at what size — rather
+than what was in it. An edit does not change any of those, so after changing a
+layer the cache happily handed back the picture from before the edit, byte for
+byte. Confirmed by rendering a frame, setting the layer to five per cent opacity,
+scrubbing away and back, and getting an identical picture. A committed change now
+retires that composition's kept frames.
+
+That fix is blunter than it should be: renaming a layer cannot change a pixel, and
+it throws the frames away all the same. The better answer — already written down
+as the design — is to file each frame under a fingerprint of what is actually in
+it, so an edit simply produces different names for the frames it changed and
+everything else survives untouched. That needs machinery the bridge does not have
+yet, and is in the backlog. A cold cache is a nuisance; a cache that lies is a
+bug.
+
+One more thing that could not be right and was: a frame rendered *during* a drag,
+showing values not yet committed, was being filed as though it were the
+document's own. It is no longer kept at all.
+
 *One place decides what the picture shows.* The playhead is a number several
 things can move: the Timeline's ruler, an arrow key, the transport, playback
 itself. Rendering, though, was the transport's own private business — so dragging

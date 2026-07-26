@@ -213,18 +213,18 @@ void main() {
           reason: 'the armed razor cut the clip at the playhead');
     });
 
-    testWidgets('the cache bar reads the engine and clears on click',
+    testWidgets('the cache meter reads the engine and clears on click',
         (tester) async {
       final p = withComp();
       p.comp.addAdjustmentLayer();
       await mount(tester, p);
 
-      expect(find.byKey(const ValueKey('tl-cache-bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tl-cache-meter')), findsOneWidget);
       // Clicking empties it; the readout is live, so this must not throw with
       // no project rendered yet.
-      await tester.tap(find.byKey(const ValueKey('tl-cache-bar')));
+      await tester.tap(find.byKey(const ValueKey('tl-cache-meter')));
       await tester.pump();
-      expect(find.byKey(const ValueKey('tl-cache-bar')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tl-cache-meter')), findsOneWidget);
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.

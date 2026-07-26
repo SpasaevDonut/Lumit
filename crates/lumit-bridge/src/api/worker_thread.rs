@@ -236,7 +236,15 @@ fn render_comp(
         document.store.snapshot()
     };
 
-    publish_frame(state, req.comp.id, req.frame, req.scale, &document, stream);
+    publish_frame(
+        state,
+        req.comp.id,
+        req.frame,
+        req.scale,
+        &document,
+        stream,
+        true,
+    );
     Ok(())
 }
 
@@ -278,24 +286,20 @@ fn render_comp_with_preview(
         transform.write(&mut comp.layers[index].transform)?;
     }
 
-    publish_frame(state, req.comp.id, req.frame, req.scale, &document, stream);
+    // Never cached. These pixels are of values the user has not committed, and
+    // the key names only (comp, frame, scale) — so filing them would hand the
+    // half-way state of a drag back as the document's own frame once the drag
+    // ended.
+    publish_frame(
+        state,
+        req.comp.id,
+        req.frame,
+        req.scale,
+        &document,
+        stream,
+        false,
+    );
     Ok(())
-}
-
-/// The cache key for one rendered frame: the comp, the frame, and the scale it
-/// was made at, packed into the `u128` the cache keys on.
-///
-/// The scale is quantised to a thousandth, because a panel resized by half a
-/// pixel produces a scale that differs in the last bits and would miss every
-/// time — a cache that never hits is worse than none, since it also holds the
-/// memory.
-#[frb(ignore)]
-fn frame_key(comp: Uuid, frame: u64, scale: f32) -> crate::framecache::FrameKey {
-    let quantised = (scale * 1000.0).round() as u64;
-    // The comp id's low 64 bits, then the frame and scale — collisions would
-    // need two comps agreeing in 64 bits *and* the same frame at the same scale.
-    let low = comp.as_u128() as u64;
-    (u128::from(low) << 64) | (u128::from(frame) << 16) | u128::from(quantised & 0xFFFF)
 }
 
 /// Trace `frame` and publish the result.
@@ -368,7 +372,11 @@ fn publish_frame(
     scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
+    cache: bool,
 ) {
+    // The zero-copy paths hand out a texture rather than bytes, so there is
+    // nothing here for a byte cache to hold.
+    let _ = cache;
     let shared =
         match state
             .renderer
@@ -400,7 +408,9 @@ fn publish_frame(
     scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
+    cache: bool,
 ) {
+    let _ = cache;
     let shared = match state
         .renderer
         .render_to_shared(document, comp, frame, quality_for(scale))
@@ -432,6 +442,7 @@ fn publish_frame(
     scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
+    cache: bool,
 ) {
     // `scale` twice over, and they mean different things: `quality_for` turns it
     // into a *decode* size (don't decode 4K footage to fill a 500 px panel), and
@@ -444,15 +455,19 @@ fn publish_frame(
     // frame, and the scale it was made at — two requests that agree on all three
     // produce identical pixels, and one that does not must not be served the
     // other's.
-    let key = frame_key(comp, frame, scale);
     let started = std::time::Instant::now();
-    let rendered = crate::framecache::get_or_render(key, || {
+    let mut render = || {
         state
             .renderer
             .render_preview(document, comp, frame, quality_for(scale), scale, None)
             .ok()
             .map(|(rgba, width, height)| (width, height, rgba))
-    });
+    };
+    let rendered = if cache {
+        crate::framecache::get_or_render(crate::framecache::frame_key(comp, frame, scale), render)
+    } else {
+        render()
+    };
 
     let Some((width, height, rgba)) = rendered else {
         eprintln!("Read-back render failed, dropping frame");

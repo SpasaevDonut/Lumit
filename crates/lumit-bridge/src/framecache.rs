@@ -12,24 +12,25 @@
 //! named by what is actually *in* them, so a re-scrubbed frame is served from
 //! memory without touching the GPU.
 //!
-//! ## Keying by content
+//! ## Keying by position, and what that costs
 //!
-//! Each entry is filed under the **content hash** of the frame
-//! ([`lumit_render::cache::frame_key`]): a hash of every layer's transform,
-//! effects, masks, blend and switches, which file each footage layer reads and
-//! which frame of it, plus the resolution tier. Two frames with the same name
-//! are the same picture, so no invalidation step is needed at all — an edit
-//! simply produces different names for the frames it changed.
+//! Each entry is filed under `(comp, frame, scale)` — see [`frame_key`]. The
+//! name says *where* a frame is, not what is in it.
 //!
-//! That is a real behavioural improvement over what this cache did before
-//! K-178, when it keyed on `(comp, frame, scale)` and pinned the *identity* of
-//! the current document snapshot, clearing everything whenever the document
-//! changed. Renaming a layer, nudging the work area or toggling a solo — none of
-//! which can change a pixel — threw away every cached frame in the project.
-//! Now they change no frame's name, so nothing is thrown away; and an edit to
-//! one layer retires only the frames that layer actually appears in. Frames
-//! whose footage is still unprobed have no name and are simply not cached, so a
-//! frame can never be filed under a promise it did not keep.
+//! That has one consequence which has to be handled explicitly: an edit does not
+//! change any frame's name, so without help the cache would keep serving the
+//! picture from before the edit. It did exactly that until this was written —
+//! changing a layer's opacity and scrubbing back gave you the old frame, byte
+//! for byte. [`invalidate_comp`] is the answer: a committed change to a
+//! composition drops that composition's frames, and nothing else's.
+//!
+//! The design K-178 describes is better and is still the goal: file each frame
+//! under a **content hash** ([`lumit_render::cache::frame_key`]) covering every
+//! layer's transform, effects, masks, blend and switches, and which source frame
+//! each footage layer reads. Then an edit simply produces different names for
+//! the frames it changed, nothing is thrown away unnecessarily, and renaming a
+//! layer costs nothing. Reaching it needs the probe view here, which the bridge
+//! does not have yet (docs/TODO.md).
 //!
 //! ## Budget and eviction
 //!
@@ -67,11 +68,83 @@ use std::sync::{Mutex, OnceLock};
 /// [`set_budget`].
 pub(crate) const DEFAULT_BUDGET_BYTES: usize = 512 * 1024 * 1024;
 
-/// One frame's cache identity: the content hash
-/// [`lumit_render::cache::frame_key`] computed for it. A plain `u128`, because
-/// the hash already carries everything that distinguishes one frame from
-/// another — including the resolution tier.
+/// One frame's cache identity: `(comp, frame, scale)` packed into a `u128` by
+/// [`frame_key`].
 pub(crate) type FrameKey = u128;
+
+/// A preview scale as it appears in a key: thousandths, so a panel resized by
+/// half a pixel does not produce a scale that misses every time.
+pub(crate) fn scale_quantised(scale: f32) -> u16 {
+    ((scale * 1000.0).round().clamp(0.0, f32::from(u16::MAX)) as u32 & 0xFFFF) as u16
+}
+
+/// The cache key for one rendered frame: the comp, the frame, and the scale it
+/// was made at.
+///
+/// The comp's low 64 bits occupy the top half; the frame takes the next 48 bits
+/// and the quantised scale the low 16. The frame is masked to its 48 bits so a
+/// preposterous frame number cannot run up into the comp's half and name a
+/// different composition's picture.
+pub(crate) fn frame_key(comp: uuid::Uuid, frame: u64, scale: f32) -> FrameKey {
+    let low = comp.as_u128() as u64;
+    (u128::from(low) << 64)
+        | (u128::from(frame & 0xFFFF_FFFF_FFFF) << 16)
+        | u128::from(scale_quantised(scale))
+}
+
+/// Which of `frames` frames of `comp` are held, and at what resolution relative
+/// to `scale` — the answer the Timeline's cache bar draws.
+///
+/// `0` = not cached, `1` = cached only at a coarser scale than asked for (still
+/// something to show, but it would be re-rendered to display at this size),
+/// `2` = cached at this scale, ready now.
+///
+/// One pass over the key set rather than one lookup per frame, so the cost is
+/// the number of *cached* frames rather than the length of the composition.
+pub(crate) fn cached_tiers(comp: uuid::Uuid, frames: u64, scale: f32) -> Vec<u8> {
+    let wanted = scale_quantised(scale);
+    let comp_low = comp.as_u128() as u64;
+    let mut out = vec![0u8; frames as usize];
+    with_cache(|c| {
+        for key in c.map.keys() {
+            if (key >> 64) as u64 != comp_low {
+                continue;
+            }
+            let frame = ((key >> 16) & 0xFFFF_FFFF_FFFF) as u64;
+            if frame >= frames {
+                continue;
+            }
+            // A coarser render is a smaller number; equal or finer will serve.
+            let held = (key & 0xFFFF) as u16;
+            let tier = if held >= wanted { 2u8 } else { 1u8 };
+            let slot = &mut out[frame as usize];
+            *slot = (*slot).max(tier);
+        }
+    });
+    out
+}
+
+/// Drop every frame held for `comp`.
+///
+/// Called when a committed edit changes that composition. Positional keys do not
+/// change when the picture does, so without this the cache would answer with the
+/// frame from before the edit — which it did, until this existed.
+pub(crate) fn invalidate_comp(comp: uuid::Uuid) {
+    let comp_low = comp.as_u128() as u64;
+    with_cache(|c| {
+        let doomed: Vec<FrameKey> = c
+            .map
+            .keys()
+            .filter(|k| (*k >> 64) as u64 == comp_low)
+            .copied()
+            .collect();
+        for key in doomed {
+            if let Some(entry) = c.map.remove(&key) {
+                c.used = c.used.saturating_sub(entry.rgba.len());
+            }
+        }
+    });
+}
 
 /// One cached frame: its dimensions and the tightly-packed RGBA8 bytes, plus the
 /// LRU clock value of its last use.
@@ -364,5 +437,98 @@ mod tests {
         assert_eq!(used, 0);
         // Restore the default so other tests see a sane budget.
         set_budget(DEFAULT_BUDGET_BYTES);
+    }
+
+    /// The key's three fields survive a round trip and stay in their own bits.
+    /// The frame is masked to 48 bits so an absurd frame number cannot run up
+    /// into the composition's half and name another comp's picture.
+    #[test]
+    fn a_key_keeps_its_fields_apart() {
+        let comp = uuid::Uuid::from_u128(0x1234_5678_9abc_def0_1122_3344_5566_7788);
+        let key = frame_key(comp, 42, 0.5);
+        assert_eq!(
+            (key >> 64) as u64,
+            comp.as_u128() as u64,
+            "comp in the top half"
+        );
+        assert_eq!(
+            ((key >> 16) & 0xFFFF_FFFF_FFFF) as u64,
+            42,
+            "frame in the middle"
+        );
+        assert_eq!((key & 0xFFFF) as u16, 500, "scale in thousandths");
+
+        let absurd = frame_key(comp, u64::MAX, 1.0);
+        assert_eq!(
+            (absurd >> 64) as u64,
+            comp.as_u128() as u64,
+            "a huge frame number must not corrupt the composition"
+        );
+    }
+
+    /// Two comps that differ only above the low 64 bits of their id would share
+    /// a key. Vanishingly unlikely with v7 uuids, but worth stating: this is the
+    /// one collision the packing permits.
+    #[test]
+    fn scale_is_quantised_to_thousandths() {
+        assert_eq!(scale_quantised(1.0), 1000);
+        assert_eq!(scale_quantised(0.3333), 333);
+        // A panel resized by half a pixel must land on the same number.
+        assert_eq!(scale_quantised(0.500_01), scale_quantised(0.499_99));
+        // Nonsense cannot wrap into a plausible scale.
+        assert_eq!(scale_quantised(-1.0), 0);
+    }
+
+    /// The cache bar's answer: nothing, coarser than asked for, or ready.
+    #[test]
+    fn cached_tiers_reports_what_is_held_and_how_fine() {
+        let comp = uuid::Uuid::now_v7();
+        let other = uuid::Uuid::now_v7();
+        clear();
+
+        with_cache(|c| {
+            // Frame 1 at the wanted scale, frame 2 only coarser, frame 4 finer.
+            c.put(frame_key(comp, 1, 0.5), 2, 2, vec![0; 16]);
+            c.put(frame_key(comp, 2, 0.25), 2, 2, vec![0; 16]);
+            c.put(frame_key(comp, 4, 1.0), 2, 2, vec![0; 16]);
+            // Another composition's frame must not appear in this one's bar.
+            c.put(frame_key(other, 3, 0.5), 2, 2, vec![0; 16]);
+        });
+
+        let tiers = cached_tiers(comp, 6, 0.5);
+        assert_eq!(tiers, vec![0, 2, 1, 0, 2, 0]);
+        clear();
+    }
+
+    /// Positional keys do not change when the picture does, so a committed edit
+    /// has to drop the composition's frames by hand. Until this existed the
+    /// Viewer was served the frame from before the edit, byte for byte.
+    #[test]
+    fn invalidating_a_comp_leaves_other_comps_alone() {
+        let comp = uuid::Uuid::now_v7();
+        let other = uuid::Uuid::now_v7();
+        clear();
+        with_cache(|c| {
+            c.put(frame_key(comp, 0, 1.0), 2, 2, vec![0; 16]);
+            c.put(frame_key(comp, 1, 1.0), 2, 2, vec![0; 16]);
+            c.put(frame_key(other, 0, 1.0), 2, 2, vec![0; 16]);
+        });
+
+        invalidate_comp(comp);
+
+        assert_eq!(
+            cached_tiers(comp, 2, 1.0),
+            vec![0, 0],
+            "its frames are gone"
+        );
+        assert_eq!(
+            cached_tiers(other, 1, 1.0),
+            vec![2],
+            "the other comp kept its own"
+        );
+        // The freed bytes were returned to the budget, or the cache would
+        // slowly report itself full of frames it no longer holds.
+        with_cache(|c| assert_eq!(c.used, 16));
+        clear();
     }
 }

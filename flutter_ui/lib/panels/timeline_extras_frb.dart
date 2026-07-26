@@ -6,12 +6,14 @@
 // once — kept together because they are all "the chrome around the tracks"
 // rather than because they share anything.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
@@ -116,10 +118,15 @@ class _CompTab extends StatelessWidget {
 ///
 /// Polled on the panel's own rebuilds rather than on a timer: the numbers only
 /// change when something renders, and a timer would wake the interface up to
-/// redraw a bar nobody is watching. Never read per paint — the lock it takes is
-/// the one a render holds.
-class CacheBarFrb extends StatelessWidget {
-  const CacheBarFrb({super.key});
+/// redraw a meter nobody is watching. Never read per paint — the lock it takes
+/// is the one a render holds.
+///
+/// Named a *meter*, not a bar: the **cache bar** is the stripe under the time
+/// ruler showing which frames are held ([`TimelineCacheBar`], and the glossary's
+/// own definition). This measures how full the store is, which is a different
+/// question.
+class CacheMeterFrb extends StatelessWidget {
+  const CacheMeterFrb({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -135,7 +142,7 @@ class CacheBarFrb extends StatelessWidget {
           ? 'Nothing rendered yet'
           : '${stats.hits} served from the cache, ${stats.misses} rendered',
       child: GestureDetector(
-        key: const ValueKey('tl-cache-bar'),
+        key: const ValueKey('tl-cache-meter'),
         behavior: HitTestBehavior.opaque,
         onTap: () => clearCache(),
         child: Container(
@@ -465,3 +472,126 @@ LumitIcon iconForKind(BridgeLayerKind kind) => switch (kind) {
       // the same choice layer_style.dart and the egui frontend make.
       BridgeLayerKind.solid || BridgeLayerKind.adjustment => LumitIcon.solid,
     };
+
+/// The cache bar: a thin stripe under the time ruler showing which frames are
+/// already rendered and held (docs/07-UI-SPEC.md §3.2, docs/15-DESIGN.md §6.3).
+///
+/// **What the colours mean.** Mint means the frame is held at the resolution the
+/// Viewer is showing — it plays now, which is the promise the bar exists to make
+/// (docs/13 §B5). A dimmed mint means it is held only at a coarser resolution
+/// than is being displayed: there is something, but it would be rendered again
+/// to show it at this size. Nothing drawn means nothing held. No amber, no red,
+/// no pulsing — an empty cache is not a fault.
+///
+/// The design language reserves steel blue for frames on disk only. There is no
+/// disk frame cache in this engine yet, so that state cannot occur and is not
+/// drawn; when one arrives it is a third value from `cachedFrames` and a third
+/// colour here.
+///
+/// **It never polls.** The cache's lock is the one a render holds, so reading it
+/// per paint would put the interface behind the renderer. `revision` is bumped
+/// when a frame arrives, and only then is the cache asked again.
+class TimelineCacheBar extends StatelessWidget {
+  final CompositionReference comp;
+  final CacheBarAxis axis;
+  final ValueListenable<int> revision;
+
+  /// Two logical pixels, per docs/15 §6.3.
+  static const double height = 2;
+
+  const TimelineCacheBar({
+    super.key,
+    required this.comp,
+    required this.axis,
+    required this.revision,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return ValueListenableBuilder<int>(
+      valueListenable: revision,
+      builder: (context, _, __) {
+        final frames = axis.frames;
+        final tiers = frames <= 0
+            ? Uint8List(0)
+            : comp.cachedFrames(
+                frames: BigInt.from(frames),
+                scale: Provider.of<LumitUiState>(context, listen: false)
+                    .viewerScale,
+              );
+        return SizedBox(
+          height: height,
+          child: CustomPaint(
+            key: const ValueKey('tl-cache-bar'),
+            painter: _CacheBarPainter(
+              tiers: tiers,
+              axis: axis,
+              ready: t.success,
+              coarse: t.success.withValues(alpha: 0.4),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// What the cache bar needs from the Timeline's frames-to-pixels mapping. Named
+/// separately so the painter can be tested without building a Timeline.
+abstract class CacheBarAxis {
+  int get frames;
+  double xOf(int frame);
+}
+
+/// Collapse per-frame tiers into the fewest contiguous runs, so a 3000-frame
+/// composition draws a handful of rectangles rather than three thousand.
+///
+/// Returns `(startFrame, endFrameExclusive, tier)`, skipping tier 0.
+List<(int, int, int)> cacheBarRuns(List<int> tiers) {
+  final runs = <(int, int, int)>[];
+  var start = 0;
+  while (start < tiers.length) {
+    final tier = tiers[start];
+    var end = start + 1;
+    while (end < tiers.length && tiers[end] == tier) {
+      end++;
+    }
+    if (tier != 0) runs.add((start, end, tier));
+    start = end;
+  }
+  return runs;
+}
+
+class _CacheBarPainter extends CustomPainter {
+  final Uint8List tiers;
+  final CacheBarAxis axis;
+  final Color ready;
+  final Color coarse;
+
+  const _CacheBarPainter({
+    required this.tiers,
+    required this.axis,
+    required this.ready,
+    required this.coarse,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint();
+    for (final (start, end, tier) in cacheBarRuns(tiers)) {
+      paint.color = tier >= 2 ? ready : coarse;
+      final left = axis.xOf(start);
+      // The run's right edge is the left edge of the frame after it, so a run
+      // covers its last frame rather than stopping at that frame's start.
+      final right = axis.xOf(end);
+      canvas.drawRect(
+          Rect.fromLTRB(left, 0, right.clamp(left + 1, size.width), size.height),
+          paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_CacheBarPainter old) =>
+      old.tiers != tiers || old.ready != ready || old.coarse != coarse;
+}

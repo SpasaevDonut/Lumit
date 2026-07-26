@@ -207,6 +207,22 @@ class CompositionReference {
         that: this,
       );
 
+  /// Which frames of this composition are held in the cache, one byte each:
+  /// `0` nothing, `1` held only at a coarser resolution than `scale`, `2` held
+  /// at `scale` or finer and ready to show now.
+  ///
+  /// This is what the Timeline's cache bar draws (docs/07-UI-SPEC.md §3.2,
+  /// docs/06-RENDER-PIPELINE.md §5.6). It is a snapshot, not a subscription:
+  /// the caller redraws when it has reason to, rather than the cache pushing.
+  ///
+  /// Only the RAM tier exists in this engine — there is no disk or VRAM frame
+  /// cache yet — so the "on disk only" state the design language reserves blue
+  /// for cannot occur, and is not reported.
+  Uint8List cachedFrames({required BigInt frames, required double scale}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceCachedFrames(
+              that: this, frames: frames, scale: scale);
+
   /// Remove every detected beat marker, keeping the ones a person made.
   ///
   /// A comp with none is a calm no-op rather than an error — clearing twice is

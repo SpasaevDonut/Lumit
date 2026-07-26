@@ -19,6 +19,7 @@
 // its offset in Dart and commits one `set_span` on release: one op, one undo
 // step, even when the gesture moved the in point and the start offset together.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -168,6 +169,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                   onSeek: (f) => ui.playheadFrame.value =
                                       f.clamp(0, frames == 0 ? 0 : frames - 1),
                                   onChanged: () => setState(() {}),
+                                  cacheRevision: ui.frameArrived,
                                 ),
                         ),
                       ],
@@ -178,19 +180,21 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
             ),
           ),
         ),
-        const CacheBarFrb(),
+        const CacheMeterFrb(),
       ],
     );
   }
 }
 
 /// Frames to pixels and back, for one panel width.
-class _Axis {
+class _Axis implements CacheBarAxis {
+  @override
   final int frames;
   final double width;
   const _Axis({required this.frames, required this.width});
 
   double get perFrame => frames <= 0 ? 0 : width / frames;
+  @override
   double xOf(num frame) => frame * perFrame;
   int frameAt(double x) => perFrame <= 0 ? 0 : (x / perFrame).round();
 }
@@ -600,6 +604,10 @@ class _LayerArea extends StatelessWidget {
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
 
+  /// Bumped when something may have changed which frames are held, so the bar
+  /// repaints then rather than polling the cache on every frame it draws.
+  final ValueListenable<int> cacheRevision;
+
   const _LayerArea({
     required this.comp,
     required this.layers,
@@ -608,6 +616,7 @@ class _LayerArea extends StatelessWidget {
     required this.razor,
     required this.onSeek,
     required this.onChanged,
+    required this.cacheRevision,
   });
 
   @override
@@ -623,6 +632,9 @@ class _LayerArea extends StatelessWidget {
               axis: axis,
               onSeek: onSeek,
             ),
+            // Directly under the ruler and above the lanes, which is where the
+            // interface spec puts it (docs/07 §3.2).
+            TimelineCacheBar(comp: comp, axis: axis, revision: cacheRevision),
             for (final layer in layers)
               _Bar(
                 key: ValueKey<String>('tl-bar-${layer.internallayerId}'),

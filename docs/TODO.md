@@ -111,6 +111,21 @@ and the transparency grid have landed. Still missing:
       Viewer silently is not in the build. Needs a `cargokit_options.yaml` (or an
       env var read in the CMake) carrying per-platform features.
 
+- **The frame cache keys by position, not by content (K-178's design).** Each
+    entry is filed under `(comp, frame, scale)`, so an edit does not change any
+    frame's name and the cache must be told to drop the composition's frames on
+    every committed change — which it now is. The cost is that a change which
+    cannot alter a pixel (a rename, a work-area nudge, a solo toggle) still
+    retires every held frame of that comp, and the cache bar goes blank with it.
+    The fix is the documented one: file frames under
+    `lumit_render::cache::frame_key`, a hash of what is actually in them. That
+    needs a `SourceProbes` view on the bridge side, which is why it was not done
+    here. Note the cache bar's per-frame query (`cached_frames`) depends on being
+    able to name a frame from its position — under content keying it would
+    compute the same hash per frame instead, which works but needs the probes too.
+- **No disk or VRAM frame cache**, so the cache bar can only ever show the RAM
+    tier. The design language's steel blue for "on disk only" and the future VRAM
+    tier have nothing behind them yet ([15-DESIGN.md](15-DESIGN.md) §6.3).
 - **The Viewer composites at full comp resolution whatever the preview scale —
     the dominant playback cost.** `preview_display_texture` always renders the
     comp at `(comp.width, comp.height)`; `Quality::divisor` only shrinks the
