@@ -2495,6 +2495,25 @@ widget and would not have caught it. The addition: focus now falls back to the
 shell when a field gives it up, without which every shortcut stopped working
 after the first rename.
 
+*Two small things that made the interface feel wrong.* A hint that stuck on
+screen, and controls that twitched when the pointer crossed them. Neither was
+cosmetic in origin.
+
+The hint waits half a second before appearing, so the interface is not covered in
+labels the moment the pointer moves. Nothing was cancelling that wait: move onto
+a control and straight off again, and the hint appeared *after* the pointer had
+already gone — and since it is dismissed by the pointer leaving, and the pointer
+had already left, it stayed there. Hovering the control would clear it and moving
+away would bring it back, which is the loop it was stuck in. The wait is now
+cancelled on leaving.
+
+The twitch was a border. In Flutter a border drawn as part of a box's decoration
+takes up room *inside* the box, so a border that only exists while hovered makes
+the control two pixels bigger in each direction the instant the pointer arrives —
+and everything beside it shifts to make room. The border is now always there and
+merely transparent when it should not be seen, so the space it occupies never
+changes.
+
 *Where the transport sits.* Under the picture, where a transport goes. In the
 rounded theme it is a detached bar floating over the bottom of the frame — the
 rounded language treats it as an object sitting on the picture — while the sharp

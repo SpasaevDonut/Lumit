@@ -101,7 +101,12 @@ class _HouseButtonState extends State<HouseButton> {
           decoration: BoxDecoration(
             color: fill,
             borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-            border: edge == null ? null : Border.all(color: edge, width: 1),
+            // Always a border, transparent when there is nothing to show. A
+            // BoxDecoration's border insets its child, so appearing on hover
+            // grew the control by 2 px each way and nudged everything beside
+            // it — the whole row visibly shifting as the pointer crossed it.
+            border:
+                Border.all(color: edge ?? const Color(0x00000000), width: 1),
           ),
           child: DefaultTextStyle(
             style: enabled
@@ -731,8 +736,10 @@ class _DragValueFieldState extends State<DragValueField> {
           decoration: BoxDecoration(
             color: _hover ? t.surface4 : t.surface3,
             borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-            border:
-                _hover ? Border.all(color: t.hairlineStrong, width: 1) : null,
+            // Reserved even when not hovered — see HouseButton above.
+            border: Border.all(
+                color: _hover ? t.hairlineStrong : const Color(0x00000000),
+                width: 1),
           ),
           child: Text(_format(widget.value), style: t.bodyPrimary),
         ),
@@ -891,8 +898,22 @@ class _HoverTip extends StatefulWidget {
 class _HoverTipState extends State<_HoverTip> {
   OverlayEntry? _entry;
 
-  void _show(PointerEnterEvent e) async {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
+  /// The pending show, so leaving cancels it.
+  ///
+  /// Without this a tooltip could appear *after* the pointer had already gone:
+  /// the delay ran to completion regardless, and the `onExit` that should have
+  /// stopped it had come and gone while nothing was showing yet. The tip then
+  /// stuck on screen with no pointer left to leave and dismiss it — hovering
+  /// the control again would clear it, and moving off would bring it back,
+  /// which is the loop this was stuck in.
+  Timer? _pending;
+
+  void _show(PointerEnterEvent e) {
+    _pending?.cancel();
+    _pending = Timer(const Duration(milliseconds: 500), _present);
+  }
+
+  void _present() {
     if (!mounted || _entry != null) return;
     final box = context.findRenderObject() as RenderBox?;
     if (box == null || !box.attached) return;
@@ -900,19 +921,23 @@ class _HoverTipState extends State<_HoverTip> {
     final scope = ThemeScope.of(context);
     final t = scope.theme;
     _entry = OverlayEntry(
-      builder: (_) => Positioned(
-        left: origin.dx,
-        top: origin.dy,
+      builder: (_) => Positioned.fill(
         child: IgnorePointer(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: t.surface3,
-              borderRadius: BorderRadius.circular(t.tokens.floatRadius),
-              border: Border.all(color: t.hairline),
-              boxShadow: t.floatShadow,
+          // Pulled back on screen when it would hang off an edge — a control
+          // near the bottom (the Viewer's transport) would otherwise tip below
+          // the window entirely.
+          child: CustomSingleChildLayout(
+            delegate: _PopupLayout(origin),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: t.surface3,
+                borderRadius: BorderRadius.circular(t.tokens.floatRadius),
+                border: Border.all(color: t.hairline),
+                boxShadow: t.floatShadow,
+              ),
+              child: Text(widget.message, style: t.body),
             ),
-            child: Text(widget.message, style: t.body),
           ),
         ),
       ),
@@ -921,6 +946,8 @@ class _HoverTipState extends State<_HoverTip> {
   }
 
   void _hide() {
+    _pending?.cancel();
+    _pending = null;
     _entry?.remove();
     _entry = null;
   }
