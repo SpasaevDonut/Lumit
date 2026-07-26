@@ -1991,3 +1991,34 @@ fn journalling_does_not_deadlock_against_the_commit_lock() {
     }
     assert!(!project.get_items().expect("roots").is_empty());
 }
+
+/// Two threads opening projects and editing them at once must not deadlock.
+///
+/// frb runs calls on a worker pool, so this is a real arrangement rather than a
+/// contrived one. It guards the lock order recorded beside `PROJECTS`: before
+/// that was written down, `new_project` held the project registry while taking
+/// the stream registry and `open_project` did the reverse, which two threads
+/// could interleave into a deadlock. Like the journal test, this hangs rather
+/// than fails on a regression — which is what a lock-order test can do.
+#[test]
+fn concurrent_project_creation_and_editing_does_not_deadlock() {
+    let threads: Vec<_> = (0..4)
+        .map(|t| {
+            std::thread::spawn(move || {
+                let project = LumitBridgeState::new_project(None).expect("a new project");
+                for i in 0..6 {
+                    project
+                        .new_composition(format!("T{t} comp {i}"))
+                        .expect("committed");
+                }
+                // Reading through a reference takes the registry and then the
+                // project, which is the ordinary order the rule protects.
+                assert!(!project.get_items().expect("roots").is_empty());
+            })
+        })
+        .collect();
+
+    for thread in threads {
+        thread.join().expect("no thread panicked or hung");
+    }
+}

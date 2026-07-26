@@ -93,9 +93,10 @@ sequence clips.
         attribute and clippy's restriction lints skip macro-expanded code, so
         `unwrap_used`/`panic`/`todo` do not fire on any annotated function.
         Covered by that same grep; the real fix is to stop needing it.
-    - **The `PROJECTS`/`STREAMS` global pair** are two `LazyLock<RwLock<BTreeMap>>`
-        registries kept apart only by a comment about lock ordering, and
-        `ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out.
+    - **`ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out**, so a
+        caller can hold a project lock for as long as it likes and in any order.
+        The lock order itself is now written down and tested beside `PROJECTS`;
+        what is left is that nothing *enforces* it at the type level.
     - **`DocumentStore::set_callback` takes `&mut self`**, so the observer can
         only be attached before the store is shared.
 

@@ -132,13 +132,30 @@ type CallbackStream = StreamSink<ScopedChange>;
 
 pub type WorkerResponseStream = StreamSink<WorkerResponse>;
 
-// Global Singleton for storing bridged state.
-// Supports storing multiple projects, but for now should only ever have one
-// just in case one day we want to support having multiple projects open at a time
+// The open projects, and the change stream each one publishes to.
+//
+// Two registries rather than one struct, because the change observer needs the
+// stream *while a project's own lock is held* — it fires from inside `commit`.
+// Keeping them apart is what lets it reach the stream without touching the lock
+// the committing thread already has.
+//
+// **The lock order is a rule, not a coincidence**, and frb calls run on a worker
+// pool so two threads really can be in here at once:
+//
+//   1. `PROJECTS` or `STREAMS` — the registries. Take what you need, clone the
+//      `Arc` out, and *drop the guard*. Never hold one across step 2, and never
+//      hold both at once.
+//   2. One project's `RwLock`. Held across a commit.
+//   3. Inside the observer, from within step 2: `STREAMS` for the sink, and the
+//      project's journal `Mutex`. Both are leaves — nothing taken here may ever
+//      reach back for a project lock.
+//
+// Anything that takes these in another order can deadlock against an ordinary
+// edit. `new_project` and `open_project` disagreed about steps 1 and 2 until
+// this was written down.
 pub static PROJECTS: LazyLock<RwLock<BTreeMap<Uuid, Arc<RwLock<LumitBridgeState>>>>> =
     LazyLock::new(|| RwLock::new(BTreeMap::new()));
 
-// Guarded by different lock, so we dont deadlock if called while PROJECTS is locked
 pub static STREAMS: LazyLock<RwLock<BTreeMap<Uuid, Arc<CallbackStream>>>> =
     LazyLock::new(|| RwLock::new(BTreeMap::new()));
 
@@ -214,7 +231,14 @@ impl LumitBridgeState {
     ) -> Result<ProjectReference, BridgeError> {
         let id = Uuid::now_v7();
 
-        let mut p = PROJECTS.write().map_err(|_| BridgeError::WriteFailed)?;
+        // The stream first, and its guard dropped before the registry is
+        // touched — see the lock-order note above. Registering it before the
+        // project exists is safe: the observer cannot fire until the store has
+        // one, and the store is built below.
+        if let Some(stream) = on_change_stream {
+            let mut s = STREAMS.write().map_err(|_| BridgeError::WriteFailed)?;
+            s.insert(id, Arc::new(stream));
+        }
 
         let document = Document::new();
         let journal = journal_for(&document);
@@ -226,16 +250,14 @@ impl LumitBridgeState {
             sender: None,
         };
 
-        if let Some(stream) = on_change_stream {
-            let mut s = STREAMS.write().map_err(|_| BridgeError::WriteFailed)?;
-            s.insert(id, Arc::new(stream));
-        }
-
         state.store.set_callback(Arc::new(move |c| {
             Self::handle_change_callback(c, id, &journal)
         }));
 
-        p.insert(id, Arc::new(RwLock::new(state)));
+        PROJECTS
+            .write()
+            .map_err(|_| BridgeError::WriteFailed)?
+            .insert(id, Arc::new(RwLock::new(state)));
 
         Ok(ProjectReference::new(id))
     }
