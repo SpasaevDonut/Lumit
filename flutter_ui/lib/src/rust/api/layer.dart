@@ -623,6 +623,21 @@ class LayerReference {
       BridgeLib.instance.api.crateApiLayerLayerReferenceSetTransform(
           that: this, prop: prop, value: value);
 
+  /// Replace several transform properties at once, as one undoable step.
+  ///
+  /// For a control that acts on a whole row: Position's stopwatch has to key
+  /// x and y together, and two ops would be two undo steps for one click.
+  /// They are separate properties in the model — that is what makes a
+  /// per-axis curve possible — so a batch is how one gesture stays one step.
+  ///
+  /// An empty list is a no-op rather than an empty commit, so a caller need
+  /// not check before calling.
+  void setTransforms(
+          {required List<BridgeTransformProp> props,
+          required List<BridgeScalar> values}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetTransforms(
+          that: this, props: props, values: values);
+
   @override
   int get hashCode =>
       internalprojectId.hashCode ^

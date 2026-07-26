@@ -30,11 +30,19 @@ import '../icons/icons.dart';
 import '../widgets/controls.dart';
 
 class KeyframeControlsFrb extends StatelessWidget {
-  /// The property or parameter's current animation.
-  final BridgeScalar scalar;
+  /// The animations this control covers — one for a single value, several for a
+  /// row that spans axes (Position's x and y).
+  ///
+  /// A multi-axis row keys its axes *together*: they are separate properties in
+  /// the model, which is what makes a per-axis curve possible, but one stopwatch
+  /// covering them has to act on all of them or it is lying about what it
+  /// controls.
+  final List<BridgeScalar> scalars;
 
-  /// Commit a new animation for it. One call, one op, one undo step.
-  final ValueChanged<BridgeScalar> onWrite;
+  /// Commit a new animation for each — in ONE undo step. A caller spanning
+  /// several properties must batch them; two ops for one click is what the
+  /// whole-value shape exists to avoid.
+  final ValueChanged<List<BridgeScalar>> onWrite;
 
   /// The comp, for turning frames into the exact rational times keys carry.
   final CompositionReference comp;
@@ -47,7 +55,7 @@ class KeyframeControlsFrb extends StatelessWidget {
 
   const KeyframeControlsFrb({
     super.key,
-    required this.scalar,
+    required this.scalars,
     required this.onWrite,
     required this.comp,
     required this.playheadFrame,
@@ -55,17 +63,31 @@ class KeyframeControlsFrb extends StatelessWidget {
     required this.rowKey,
   });
 
-  List<BridgeKeyframe> get _keys => switch (scalar) {
+  /// The row's first animation, which is what the navigator reads.
+  ///
+  /// A multi-axis row keys every axis at the same times, so its axes agree about
+  /// *where* the keys are even when they disagree about the values. Reading one
+  /// is therefore enough to draw the diamonds and find the neighbours.
+  BridgeScalar get _lead => scalars.first;
+
+  List<BridgeKeyframe> _keysOf(BridgeScalar scalar) => switch (scalar) {
         BridgeScalar_Keyframed(:final field0) => field0,
         BridgeScalar_Static() => const [],
       };
 
-  bool get _animated => _keys.isNotEmpty;
+  List<BridgeKeyframe> get _keys => _keysOf(_lead);
 
-  /// The value the picture is showing at the playhead — what a new key takes, so
+  /// True when *any* axis is animated. A row half-animated by the graph editor
+  /// still shows its stopwatch lit, because turning it off is then the useful
+  /// action.
+  bool get _animated => scalars.any((s) => _keysOf(s).isNotEmpty);
+
+  /// What each axis reads at the playhead — what a new key on it takes, so
   /// adding one never moves anything.
-  double get _valueNow =>
-      sampleScalar(scalar: scalar, time: comp.timeOfFrame(frame: playheadFrame));
+  List<double> get _valuesNow {
+    final time = comp.timeOfFrame(frame: playheadFrame);
+    return [for (final s in scalars) sampleScalar(scalar: s, time: time)];
+  }
 
   /// The key sitting exactly on the playhead, if there is one.
   ///
@@ -160,11 +182,15 @@ class KeyframeControlsFrb extends StatelessWidget {
   /// Animation off: the value the curve reads at the playhead, so turning it off
   /// leaves the picture where it is rather than jumping to the first key.
   void _toggleAnimated() {
+    final values = _valuesNow;
     if (_animated) {
-      onWrite(BridgeScalar.static_(_valueNow));
+      onWrite([for (final v in values) BridgeScalar.static_(v)]);
       return;
     }
-    onWrite(BridgeScalar.keyframed([_newKeyAt(playheadFrame, _valueNow)]));
+    onWrite([
+      for (final v in values)
+        BridgeScalar.keyframed([_newKeyAt(playheadFrame, v)])
+    ]);
   }
 
   /// Add a key at the playhead, or remove the one there.
@@ -173,21 +199,33 @@ class KeyframeControlsFrb extends StatelessWidget {
   /// keys is not a curve anything can evaluate — so it falls back to a static
   /// value holding what that key held.
   void _toggleKeyHere() {
-    final here = _keyAtPlayhead;
-    if (here != null) {
-      final rest = [for (final k in _keys) if (k != here) k];
-      onWrite(rest.isEmpty
-          ? BridgeScalar.static_(here.value)
-          : BridgeScalar.keyframed(rest));
-      return;
-    }
+    final removing = _keyAtPlayhead != null;
+    final values = _valuesNow;
+    final next = <BridgeScalar>[];
 
-    // Keys must stay strictly ascending in time — the engine enforces it on the
-    // way in, so this inserts in order rather than appending and hoping.
-    final added = [..._keys, _newKeyAt(playheadFrame, _valueNow)]
-      ..sort((a, b) =>
-          comp.frameAtTime(time: a.time).compareTo(comp.frameAtTime(time: b.time)));
-    onWrite(BridgeScalar.keyframed(added));
+    for (var axis = 0; axis < scalars.length; axis++) {
+      final keys = _keysOf(scalars[axis]);
+      if (removing) {
+        final rest = [
+          for (final k in keys)
+            if (comp.frameAtTime(time: k.time) != playheadFrame) k,
+        ];
+        // A curve with no keys is not something the engine can evaluate, so the
+        // last one removed leaves a static value holding what it held.
+        next.add(rest.isEmpty
+            ? BridgeScalar.static_(values[axis])
+            : BridgeScalar.keyframed(rest));
+        continue;
+      }
+      // Keys must stay strictly ascending in time — the engine enforces it on
+      // the way in, so this inserts in order rather than appending and hoping.
+      final added = [...keys, _newKeyAt(playheadFrame, values[axis])]
+        ..sort((a, b) => comp
+            .frameAtTime(time: a.time)
+            .compareTo(comp.frameAtTime(time: b.time)));
+      next.add(BridgeScalar.keyframed(added));
+    }
+    onWrite(next);
   }
 
   BridgeKeyframe _newKeyAt(int frame, double value) => BridgeKeyframe(

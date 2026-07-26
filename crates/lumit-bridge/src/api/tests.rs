@@ -2421,3 +2421,41 @@ fn clearing_beats_keeps_the_markers_a_person_made() {
     comp.clear_beat_markers().expect("no-op");
     assert_eq!(comp.get_markers().expect("markers").len(), 1);
 }
+
+/// A row's stopwatch keys every axis it covers, and that has to be ONE undo
+/// step — two ops for one click is exactly what the whole-value shape exists to
+/// avoid everywhere else.
+#[test]
+fn setting_several_transform_properties_is_one_undo_step() {
+    use crate::api::layer::BridgeTransformProp;
+
+    let (project, layer) = project_with_layer();
+    let before = layer.get_transform().expect("transform");
+
+    layer
+        .set_transforms(
+            vec![
+                BridgeTransformProp::PositionX,
+                BridgeTransformProp::PositionY,
+            ],
+            vec![BridgeScalar::Static(10.0), BridgeScalar::Static(20.0)],
+        )
+        .expect("both axes");
+
+    let after = layer.get_transform().expect("transform");
+    assert_eq!(after.position_x, BridgeScalar::Static(10.0));
+    assert_eq!(after.position_y, BridgeScalar::Static(20.0));
+
+    project.undo().expect("undone");
+    let undone = layer.get_transform().expect("transform");
+    assert_eq!(undone.position_x, before.position_x, "one step, both axes");
+    assert_eq!(undone.position_y, before.position_y);
+
+    // Mismatched lists are a caller bug, and an empty one is a no-op so a
+    // caller need not check before calling.
+    assert!(matches!(
+        layer.set_transforms(vec![BridgeTransformProp::Opacity], vec![]),
+        Err(BridgeError::MismatchedTransforms)
+    ));
+    layer.set_transforms(vec![], vec![]).expect("no-op");
+}

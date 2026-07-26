@@ -59,6 +59,8 @@ pub enum BridgeError {
     /// wrongly by the caller. Refused rather than normalised: quietly fixing it
     /// would put the thing somewhere nobody asked for.
     InvalidTime,
+    /// `set_transforms` was given a different number of properties and values.
+    MismatchedTransforms,
     /// A blend-mode index outside the list `list_blend_modes` hands out.
     InvalidBlendMode,
     /// A scope's colour list was not five `[r, g, b]` triples.
@@ -129,6 +131,9 @@ impl fmt::Display for BridgeError {
                 "A keyframed value needs at least one key, in ascending time order"
             ),
             BridgeError::InvalidTime => write!(f, "That time is not a valid duration"),
+            BridgeError::MismatchedTransforms => {
+                write!(f, "One value is needed per transform property")
+            }
             BridgeError::InvalidBlendMode => write!(f, "No blend mode at that index"),
             BridgeError::InvalidScopeColours => {
                 write!(f, "A scope needs five red/green/blue triples")

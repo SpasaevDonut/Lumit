@@ -36,6 +36,7 @@ import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 import 'keyframe_controls_frb.dart';
+import '../state/drag_payloads.dart';
 import 'placeholder.dart';
 import 'source_rows_frb.dart';
 
@@ -123,7 +124,25 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
           },
         ),
         Expanded(
-          child: ListView(
+          // The drop target for an effect dragged from Effects & presets.
+          // Nothing else produces an `EffectDragData`, and this is the only
+          // thing that accepts one — the same contract `FootageDragData` has
+          // with the Timeline.
+          child: DragTarget<EffectDragData>(
+            onAcceptWithDetails: (details) {
+              layer.addEffect(name: details.data.name);
+              setState(() {});
+            },
+            builder: (context, candidate, _) => Container(
+              // While something is over it, say so: a drop with no feedback is
+              // indistinguishable from a drop that did nothing.
+              decoration: candidate.isEmpty
+                  ? null
+                  : BoxDecoration(
+                      border: Border.all(color: t.accent),
+                      color: t.accent.withValues(alpha: 0.06),
+                    ),
+              child: ListView(
             padding: const EdgeInsets.symmetric(vertical: 4),
             children: [
               // What the layer is made of comes before where it sits: a text
@@ -171,6 +190,8 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                     onSeek: (frame) => ui.playheadFrame.value = frame,
                   ),
             ],
+              ),
+            ),
           ),
         ),
       ],
@@ -495,12 +516,13 @@ class _ParamRow extends StatelessWidget {
           // to interpolate, so those rows carry no stopwatch at all.
           if (scalar != null)
             KeyframeControlsFrb(
-              scalar: scalar,
+              // An effect parameter is one value, so one channel.
+              scalars: [scalar],
               comp: comp,
               playheadFrame: playheadFrame,
               onSeek: onSeek,
               rowKey: '${effect.id()}-${param.id}',
-              onWrite: (next) => _set(BridgeEffectValue.float(next)),
+              onWrite: (next) => _set(BridgeEffectValue.float(next.single)),
             ),
           const SizedBox(width: 4),
           Expanded(
@@ -936,21 +958,22 @@ class _TransformCardState extends State<_TransformCard> {
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
         children: [
-          // The stopwatch keys the row's *first* axis. A multi-axis row (Anchor,
-          // Position, Scale) keys x and y independently in the model, and one
-          // stopwatch cannot honestly represent two states — so it drives the
-          // first and the graph editor is where the rest is reached. Noted
-          // rather than hidden: v0 keyed every axis at once and paid for it in
-          // one undo step per axis.
+          // One stopwatch, every axis in the row — and one undo step, because
+          // `setTransforms` commits them as a batch. They are separate
+          // properties in the model (which is what makes a per-axis curve
+          // possible), but a control that says "Position" has to act on
+          // Position.
           KeyframeControlsFrb(
-            scalar: _read(transform, axes.first.prop),
+            scalars: [for (final axis in axes) _read(transform, axis.prop)],
             comp: widget.comp,
             playheadFrame: widget.playheadFrame,
             onSeek: widget.onSeek,
             rowKey: axes.first.prop.name,
             onWrite: (next) {
-              widget.layer
-                  .setTransform(prop: axes.first.prop, value: next);
+              widget.layer.setTransforms(
+                props: [for (final axis in axes) axis.prop],
+                values: next,
+              );
               setState(() => _staged = null);
               widget.onChanged();
             },

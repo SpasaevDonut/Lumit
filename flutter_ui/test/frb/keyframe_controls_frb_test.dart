@@ -235,6 +235,67 @@ void main() {
             reason: '${param.id} is a dropdown, so it cannot animate');
       }
     });
+    /// One stopwatch on a multi-axis row keys every axis it covers, and does
+    /// it in one undo step — two ops for one click is what the whole-value
+    /// shape exists to avoid.
+    testWidgets('a multi-axis row keys all its axes as one step',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.playheadFrame.value = 12;
+      await mount(tester, p);
+
+      final before = p.layer.getTransform();
+      expect(before.positionX, isA<BridgeScalar_Static>());
+      expect(before.positionY, isA<BridgeScalar_Static>());
+
+      // Position's stopwatch — one control, two properties.
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-positionX')));
+      await tester.pump();
+
+      final after = p.layer.getTransform();
+      expect(after.positionX, isA<BridgeScalar_Keyframed>(),
+          reason: 'x was keyed');
+      expect(after.positionY, isA<BridgeScalar_Keyframed>(),
+          reason: 'and so was y — the row is one control');
+      expect(
+        p.comp.frameAtTime(
+            time: (after.positionY as BridgeScalar_Keyframed).field0.single.time),
+        12,
+        reason: 'both landed on the playhead',
+      );
+
+      p.state.project!.undo();
+      final undone = p.layer.getTransform();
+      expect(undone.positionX, isA<BridgeScalar_Static>());
+      expect(undone.positionY, isA<BridgeScalar_Static>(),
+          reason: 'one undo put both back — a batch, not two ops');
+    });
+
+    testWidgets('the diamond adds and removes on every axis together',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.playheadFrame.value = 0;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-positionX')));
+      await tester.pump();
+      p.uiState.playheadFrame.value = 40;
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-positionX')));
+      await tester.pump();
+      var tf = p.layer.getTransform();
+      expect((tf.positionX as BridgeScalar_Keyframed).field0, hasLength(2));
+      expect((tf.positionY as BridgeScalar_Keyframed).field0, hasLength(2),
+          reason: 'the axes keep the same key times');
+
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-positionX')));
+      await tester.pump();
+      tf = p.layer.getTransform();
+      expect((tf.positionX as BridgeScalar_Keyframed).field0, hasLength(1));
+      expect((tf.positionY as BridgeScalar_Keyframed).field0, hasLength(1));
+    });
+
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
   }, skip: !engineAvailable);

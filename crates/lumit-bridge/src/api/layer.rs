@@ -836,6 +836,51 @@ impl LayerReference {
         Ok(BridgeTransform::read(&self.item()?.transform))
     }
 
+    /// Replace several transform properties at once, as one undoable step.
+    ///
+    /// For a control that acts on a whole row: Position's stopwatch has to key
+    /// x and y together, and two ops would be two undo steps for one click.
+    /// They are separate properties in the model — that is what makes a
+    /// per-axis curve possible — so a batch is how one gesture stays one step.
+    ///
+    /// An empty list is a no-op rather than an empty commit, so a caller need
+    /// not check before calling.
+    #[frb(sync)]
+    pub fn set_transforms(
+        &self,
+        props: Vec<BridgeTransformProp>,
+        values: Vec<BridgeScalar>,
+    ) -> Result<(), BridgeError> {
+        // Two parallel lists rather than a list of pairs: frb has no tuple, and
+        // a struct for two fields used in one place is more ceremony than the
+        // length check it saves.
+        if props.len() != values.len() {
+            return Err(BridgeError::MismatchedTransforms);
+        }
+        if props.is_empty() {
+            return Ok(());
+        }
+        self.item()?;
+
+        let mut ops = Vec::with_capacity(props.len());
+        for (prop, value) in props.into_iter().zip(values) {
+            ops.push(lumit_core::Op::SetTransformProperty {
+                comp: self.comp_id,
+                layer: self.layer_id,
+                prop: prop.core(),
+                animation: value.animation()?,
+            });
+        }
+        // One op stays one op; a batch of one would undo the same but reads
+        // worse in the journal.
+        let op = if ops.len() == 1 {
+            ops.into_iter().next().ok_or(BridgeError::InvalidLayer)?
+        } else {
+            lumit_core::Op::Batch { ops }
+        };
+        self.commit(op)
+    }
+
     /// Replace one transform property's whole animation, as one
     /// [`lumit_core::Op::SetTransformProperty`].
     ///

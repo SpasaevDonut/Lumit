@@ -382,6 +382,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<BridgeParamInfo> dco_decode_list_bridge_param_info(dynamic raw);
 
   @protected
+  List<BridgeScalar> dco_decode_list_bridge_scalar(dynamic raw);
+
+  @protected
+  List<BridgeTransformProp> dco_decode_list_bridge_transform_prop(dynamic raw);
+
+  @protected
   List<ItemReference> dco_decode_list_item_reference(dynamic raw);
 
   @protected
@@ -839,6 +845,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeParamInfo> sse_decode_list_bridge_param_info(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeScalar> sse_decode_list_bridge_scalar(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeTransformProp> sse_decode_list_bridge_transform_prop(
       SseDeserializer deserializer);
 
   @protected
@@ -1336,6 +1350,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_bridge_param_info(
       List<BridgeParamInfo> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_scalar(
+      List<BridgeScalar> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_transform_prop(
+      List<BridgeTransformProp> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_item_reference(
