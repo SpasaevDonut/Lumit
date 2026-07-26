@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::api::{
     effect::{BridgeEffectInstance, BridgeRational, BridgeScalar},
+    project_item::ItemReference,
     state::{LumitBridgeState, PROJECTS},
     BridgeError,
 };
@@ -477,6 +478,34 @@ impl LayerReference {
             layer: self.layer_id,
             clips,
         })
+    }
+
+    /// The project item this layer draws from, when it has one.
+    ///
+    /// `None` for the kinds that have no source of their own — a solid's
+    /// definition, an adjustment layer, a camera, a text layer. The Viewer needs
+    /// it to ask whether a footage layer's file is still there, which is what
+    /// puts the missing-media slate on screen instead of a black frame.
+    #[frb(sync)]
+    pub fn get_source_item(&self) -> Result<Option<ItemReference>, BridgeError> {
+        use lumit_core::model::LayerKind;
+        let layer = self.item()?;
+        let id = match layer.kind {
+            LayerKind::Footage { item, .. } => item,
+            LayerKind::Precomp { comp } => comp,
+            LayerKind::Solid { def } => def,
+            LayerKind::Text { .. }
+            | LayerKind::Camera { .. }
+            | LayerKind::Sequence { .. }
+            | LayerKind::Adjustment => return Ok(None),
+        };
+
+        let proj = self.project()?;
+        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+        let doc = proj.store.snapshot();
+        Ok(doc
+            .item(id)
+            .map(|item| crate::api::project_item::item_reference(self.project_id, item)))
     }
 
     /// What kind of source this layer has.

@@ -91,6 +91,9 @@ sequence clips.
     - **`FootageDragData` stays.** The Timeline's drop target consumes it and
       only the Project panel produces it; changing the payload kills
       drag-to-timeline silently, with nothing to catch it but a test.
+    - **`panels/viewer_layer_map.dart` stays.** Pure, unit-tested maths over
+      plain doubles — it imports neither bridge and the frb Viewer's gizmo uses
+      it as it stands.
     - **`shell/dialogs.dart` stays** until the Timeline and menu bar stop
       reaching for it.
     - **Never needs porting at all:** `free_string`, `free_buffer`, `snapshot`,
@@ -126,16 +129,16 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: the Viewer — the last panel with a real
-    surface still on v0.** The full ledger:
+    is the gate. **Immediate next: the three placeholder panels — Effects &
+    presets, Scopes, Hierarchy.** The full ledger:
 
     **1. The seven docked panels.**
-    - **Viewer** — **partial**: transport only. All three render paths work, but
-        `ViewerPanelFrb` is a bare `Texture`/`RawImage`. The real
-        `viewer_panel.dart` (560 lines) needs porting, with `viewer_toolbar.dart`,
-        `viewer_overlays.dart` (gizmos, motion paths), `viewer_layer_map.dart`,
-        `slate.dart`, playback and timecode, zoom/pan, channel view and the
-        transparency grid.
+    - **Viewer** — **partial**: the panel is in (toolbar, magnification, channel
+        view, transparency grid, transport, timecode, zoom/pan, the
+        missing-media badge, and a move gizmo). Outstanding: the **scale and
+        rotate gizmo handles**, **motion paths**, masks and the shape tools, and
+        the Viewer-bar items under "Viewer bar" above — guides, region of
+        interest, the colour-management indicator and the degradation badge.
     - **Timeline** — **partial**: the panel is in, graph editor included.
         Outstanding: the graph editor's **speed and time lenses** (the same curve
         read a different way — v0's `graph_speed_lens.dart` /

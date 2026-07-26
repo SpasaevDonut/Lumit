@@ -5,9 +5,14 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'composition.dart';
 import 'effect.dart';
+import 'folder.dart';
+import 'footage.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
+import 'project_item.dart';
+import 'solid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read`, `with_effects`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
@@ -394,6 +399,17 @@ class LayerReference {
   /// This layer's transform parent, if any (K-103).
   UuidValue? getParent() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetParent(
+        that: this,
+      );
+
+  /// The project item this layer draws from, when it has one.
+  ///
+  /// `None` for the kinds that have no source of their own — a solid's
+  /// definition, an adjustment layer, a camera, a text layer. The Viewer needs
+  /// it to ask whether a footage layer's file is still there, which is what
+  /// puts the missing-media slate on screen instead of a black frame.
+  ItemReference? getSourceItem() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetSourceItem(
         that: this,
       );
 
