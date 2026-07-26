@@ -2328,3 +2328,96 @@ fn only_footage_layers_retime() {
         Err(BridgeError::NotFootage)
     ));
 }
+
+// --- Audio and beats ------------------------------------------------------
+
+/// The transport answers on a machine with no sound device — a CI runner, a
+/// container — rather than failing. Silence must never stop the picture, so
+/// `loaded` reads false and the caller keeps its own clock.
+#[test]
+fn the_audio_transport_answers_without_a_device() {
+    use crate::api::audio::{audio_clock, audio_pause, audio_seek, audio_stop};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    // Preparing and playing a comp with no audible source is a no-op, not an
+    // error: a comp with nothing to hear is an ordinary comp.
+    comp.audio_prepare().expect("prepare");
+    comp.audio_play(0.0).expect("play");
+
+    let clock = audio_clock();
+    assert!(
+        !clock.loaded || clock.seconds >= 0.0,
+        "either nothing is loaded, or the clock reads a real time"
+    );
+
+    // The rest of the transport is safe whatever the device did.
+    audio_seek(1.5);
+    audio_pause();
+    audio_stop();
+    assert!(!audio_clock().playing, "stop leaves it stopped");
+}
+
+/// Detection needs something to listen to. A comp with no audio says so rather
+/// than placing zero markers and looking like it worked.
+#[test]
+fn detecting_beats_in_a_silent_composition_says_so() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    // On a machine with no GPU the pipeline itself is unavailable, which is a
+    // different — and equally calm — answer.
+    assert!(matches!(
+        comp.detect_beats(50),
+        Err(BridgeError::NoAudio) | Err(BridgeError::NoAudioPipeline)
+    ));
+}
+
+/// Clearing keeps the markers a person made. Re-running detection at a
+/// different sensitivity is ordinary, and losing your own notes to it would not
+/// be.
+#[test]
+fn clearing_beats_keeps_the_markers_a_person_made() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    comp.set_markers(vec![BridgeMarker {
+        id: Uuid::now_v7(),
+        time: BridgeRational { num: 1, den: 2 },
+        label: "Chorus".into(),
+    }])
+    .expect("a marker of my own");
+
+    // A beat marker, placed the way detection places them.
+    {
+        let mut markers = comp.composition().expect("comp").markers;
+        markers.push(lumit_core::markers::Marker::beat(
+            Uuid::now_v7(),
+            lumit_core::Rational::new(1, 1).expect("1 s"),
+            0.9,
+        ));
+        let state = project.state().expect("state");
+        let state = state.write().expect("write");
+        state
+            .store
+            .commit(lumit_core::Op::SetCompMarkers {
+                comp: comp.id,
+                markers,
+            })
+            .expect("seeded");
+    }
+    assert_eq!(comp.get_markers().expect("markers").len(), 2);
+
+    comp.clear_beat_markers().expect("cleared");
+    let left = comp.get_markers().expect("markers");
+    assert_eq!(left.len(), 1, "the beat went");
+    assert_eq!(left[0].label, "Chorus", "and mine stayed");
+
+    // Clearing again is a calm no-op — something a user does without thinking.
+    comp.clear_beat_markers().expect("no-op");
+    assert_eq!(comp.get_markers().expect("markers").len(), 1);
+}

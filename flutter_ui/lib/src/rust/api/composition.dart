@@ -192,6 +192,40 @@ class CompositionReference {
         that: this,
       );
 
+  /// Start playing this comp's audio from `start` seconds.
+  void audioPlay({required double start}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceAudioPlay(
+          that: this, start: start);
+
+  /// Build or refresh this comp's mix in the background.
+  ///
+  /// Call it after an edit while audio is loaded or playing. An edit that does
+  /// not change what the comp sounds like — moving a silent layer, renaming
+  /// something — is recognised by a signature and costs nothing.
+  void audioPrepare() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAudioPrepare(
+        that: this,
+      );
+
+  /// Remove every detected beat marker, keeping the ones a person made.
+  ///
+  /// A comp with none is a calm no-op rather than an error — clearing twice is
+  /// something a user does without thinking about it.
+  void clearBeatMarkers() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceClearBeatMarkers(
+        that: this,
+      );
+
+  /// Detect beats and replace this comp's beat markers.
+  ///
+  /// `sensitivity_percent` runs 0..100, where 50 is the standard setting and
+  /// higher finds more. Returns how many markers were placed — zero is a
+  /// legitimate answer for quiet or arrhythmic audio, and worth showing as
+  /// such rather than as a failure.
+  int detectBeats({required int sensitivityPercent}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceDetectBeats(
+          that: this, sensitivityPercent: sensitivityPercent);
+
   /// The frame containing `time` (floored) — the inverse of
   /// [`Self::time_of_frame`], for drawing a key at a frame position.
   PlatformInt64 frameAtTime({required BridgeRational time}) =>

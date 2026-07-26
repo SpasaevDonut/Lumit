@@ -127,9 +127,13 @@ sequence clips.
 - **Engine subsystems with no frb API yet.** Masks (`add_mask`,
     `add_mask_geometry`); the Retime **graph** — the segment
     model (`segment_to_rate`, `set_segment_preset`, `drag_boundary`) and the
-    curve view that makes ramps editable; `trim_to_source_end`; audio (prepare/play/pause/seek/stop/
-    clock, `detect_beats`, `clear_beat_markers`); the preset *listing*; and `decode_frame`, the
+    curve view that makes ramps editable; `trim_to_source_end`; the preset *listing*; and `decode_frame`, the
     single-layer decode behind the Viewer's fallback.
+
+- **Audio is in, with one honest limit.** Playback, the transport and beat
+    detection all work. What is *not* here: an audio waveform on the Timeline
+    (the lane the "Now" list above still asks for), and the mix is rebuilt from
+    scratch whenever the comp's audio signature changes rather than patched.
 
 - **Panel work left.** The graph editor's speed and time lenses and draggable
     bezier handles; the Viewer's scale and rotate gizmo handles, motion paths,

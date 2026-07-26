@@ -207,7 +207,13 @@ class _Toolbar extends StatelessWidget {
       height: 26,
       color: t.surface1,
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Row(
+      // Scrolls rather than overflows. The toolbar has grown a button at a
+      // time and a docked Timeline can be any width; an overflow is striped
+      // tape across the row, and every button here is reachable by scrolling to
+      // it instead.
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
         children: [
           HouseButton(
             key: const ValueKey('tl-add-layer'),
@@ -267,9 +273,30 @@ class _Toolbar extends StatelessWidget {
             },
             child: Text('Markers', style: t.small),
           ),
-          const Spacer(),
+          LumitTooltip(
+            message: 'Find the beat in this composition and mark it',
+            child: HouseButton(
+              key: const ValueKey('tl-detect-beats'),
+              small: true,
+              frameless: true,
+              onPressed: () {
+                // Synchronous and seconds-long on a long comp; a comp with no
+                // audio, or a machine with no pipeline, says so by doing
+                // nothing rather than by an alarm.
+                try {
+                  comp.detectBeats(sensitivityPercent: 50);
+                } catch (_) {
+                  return;
+                }
+                onChanged();
+              },
+              child: Text('Detect beats', style: t.small),
+            ),
+          ),
+          const SizedBox(width: 10),
           LayerSearchFrb(onChanged: onSearch),
         ],
+        ),
       ),
     );
   }

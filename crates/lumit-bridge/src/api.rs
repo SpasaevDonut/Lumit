@@ -3,6 +3,9 @@ use std::{error::Error, fmt};
 use lumit_core::OpError;
 
 pub mod assets;
+pub mod audio;
+#[cfg(feature = "media")]
+pub mod beats;
 pub mod cache;
 pub mod composition;
 pub mod effect;
@@ -65,6 +68,10 @@ pub enum BridgeError {
     /// The export could not start — already running, no GPU, or a spec the
     /// encoder will not take. Carries the engine's own words.
     ExportFailed(String),
+    /// No audio pipeline on this machine (no adapter, or a build without one).
+    NoAudioPipeline,
+    /// The composition has no audible sources to analyse.
+    NoAudio,
     /// The layer has no retiming to edit.
     NotRetimed,
     /// The retime curve is a ramp or an explicit map, so there is no single
@@ -128,6 +135,12 @@ impl fmt::Display for BridgeError {
             }
             BridgeError::InvalidPreset => write!(f, "That is not a valid effect preset"),
             BridgeError::ExportFailed(why) => write!(f, "{why}"),
+            BridgeError::NoAudioPipeline => {
+                write!(f, "This machine has no audio pipeline")
+            }
+            BridgeError::NoAudio => {
+                write!(f, "There is no audio in this composition")
+            }
             BridgeError::NotRetimed => write!(f, "That layer is not retimed"),
             BridgeError::RetimeVaries => {
                 write!(f, "That layer's speed varies; edit it in the Retime graph")

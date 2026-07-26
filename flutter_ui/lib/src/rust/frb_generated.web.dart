@@ -8,6 +8,7 @@
 
 import 'api.dart';
 import 'api/assets.dart';
+import 'api/audio.dart';
 import 'api/cache.dart';
 import 'api/composition.dart';
 import 'api/effect.dart';
@@ -204,6 +205,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
+
+  @protected
+  BridgeAudioClock dco_decode_bridge_audio_clock(dynamic raw);
 
   @protected
   BridgeAutosave dco_decode_bridge_autosave(dynamic raw);
@@ -643,6 +647,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   SolidReference sse_decode_box_autoadd_solid_reference(
       SseDeserializer deserializer);
+
+  @protected
+  BridgeAudioClock sse_decode_bridge_audio_clock(SseDeserializer deserializer);
 
   @protected
   BridgeAutosave sse_decode_bridge_autosave(SseDeserializer deserializer);
@@ -1113,6 +1120,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_solid_reference(
       SolidReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_audio_clock(
+      BridgeAudioClock self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_autosave(

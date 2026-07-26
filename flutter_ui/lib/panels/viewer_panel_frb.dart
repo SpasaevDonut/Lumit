@@ -23,6 +23,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/src/rust/api/audio.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
@@ -159,23 +160,37 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
   }
 
   void _seek(CompositionReference comp, LumitUiState state, int frame) {
-    final last = comp.getSettings().durationFrames.toInt() - 1;
+    final settings = comp.getSettings();
+    final last = settings.durationFrames.toInt() - 1;
     state.playheadFrame.value = frame.clamp(0, last < 0 ? 0 : last);
     comp.renderFrame(
       frame: BigInt.from(state.playheadFrame.value),
       scale: state.viewerScale,
     );
+    // Take the sound with it. Seeking while playing keeps playing, which is
+    // what makes scrubbing during playback usable rather than a stutter.
+    final fps = settings.fpsDen == 0
+        ? 60.0
+        : settings.fpsNum.toDouble() / settings.fpsDen.toDouble();
+    audioSeek(secs: state.playheadFrame.value / fps);
   }
 
-  /// Play from the playhead at the comp's own rate.
+  /// Play from the playhead at the comp's own rate, with sound.
   ///
-  /// The frame is derived from elapsed wall time rather than counted up per
-  /// tick, so a frame the renderer could not deliver in time is *skipped*
-  /// rather than the playback drifting slower and slower behind real time —
-  /// which is what makes it possible to judge timing at all.
+  /// **The sound is the master once it is playing.** A mix is handed to the
+  /// operating system and plays on its own; the picture asks where that
+  /// actually got to and draws that frame. Counting frames instead would drift
+  /// against the audio, and drift between picture and sound is the one timing
+  /// error everybody notices.
+  ///
+  /// Until a mix is loaded — while it is still decoding, or on a machine with
+  /// no sound device — the frame comes from elapsed wall time instead, so a
+  /// frame the renderer could not deliver is skipped rather than playback
+  /// falling further behind real time. Silence never stops the picture.
   void _togglePlay(CompositionReference comp, LumitUiState state) {
     if (playing) {
       _ticker?.stop();
+      audioPause();
       setState(() {});
       return;
     }
@@ -187,14 +202,22 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     final last = settings.durationFrames.toInt() - 1;
 
     _startedFrom = state.playheadFrame.value;
+    // Ask for the sound before the first tick, so the mix is being built while
+    // the picture is already running on the wall clock.
+    comp.audioPlay(start: _startedFrom / fps);
     _ticker?.dispose();
     // A `Ticker`'s elapsed already counts from when it started, so there is no
     // baseline to subtract — and taking one would throw away the first tick.
     _ticker = createTicker((elapsed) {
-      final seconds = elapsed.inMicroseconds / 1e6;
-      final frame = _startedFrom + (seconds * fps).floor();
+      // The audio clock when there is one, the wall clock until then.
+      final clock = audioClock();
+      final seconds = clock.loaded && clock.playing
+          ? clock.seconds
+          : elapsed.inMicroseconds / 1e6 + _startedFrom / fps;
+      final frame = (seconds * fps).floor();
       if (frame > last) {
         _ticker?.stop();
+        audioStop();
         setState(() {});
         return;
       }

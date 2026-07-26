@@ -228,5 +228,20 @@ void main() {
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
+    testWidgets('Detect beats is offered and is calm without audio',
+        (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      await mount(tester, p);
+
+      expect(find.byKey(const ValueKey('tl-detect-beats')), findsOneWidget);
+
+      // No audio in this comp — and on CI no pipeline either. Either way the
+      // button does nothing rather than raising, and no markers appear.
+      await tester.tap(find.byKey(const ValueKey('tl-detect-beats')));
+      await tester.pumpAndSettle();
+      expect(p.comp.getMarkers(), isEmpty);
+    });
+
   }, skip: !engineAvailable);
 }

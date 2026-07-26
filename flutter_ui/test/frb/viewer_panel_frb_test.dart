@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/audio.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -246,5 +247,36 @@ void main() {
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
+
+    /// Silence must never stop the picture: on a machine with no sound device
+    /// the transport still runs, on the wall clock.
+    testWidgets('playback works without a sound device', (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+
+      expect(p.uiState.playheadFrame.value, greaterThan(0),
+          reason: 'no audio device, so the wall clock drives it');
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
+      expect(audioClock().playing, isFalse,
+          reason: 'pausing the transport pauses the sound too');
+    });
+
+    testWidgets('stepping takes the sound with it', (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      // The seek must not throw whatever the device situation is — it is on the
+      // path of every arrow key.
+      await tester.tap(find.byKey(const ValueKey('viewer-step-forward')));
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 1);
+      expect(audioClock().seconds, greaterThanOrEqualTo(0));
+    });
   }, skip: !engineAvailable);
 }

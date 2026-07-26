@@ -81,6 +81,8 @@ mod frb_generated;
 
 // Pure defaults over lumit-core — no decoder, no GPU. It was gated on
 // media+render when it also held the v0 ops that needed them.
+#[cfg(feature = "media")]
+mod audio;
 mod edits;
 mod export;
 mod framecache;

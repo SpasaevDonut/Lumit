@@ -474,7 +474,7 @@ impl CompositionReference {
 
     /// The composition this reference names, cloned out of the current snapshot.
     #[frb(ignore)]
-    fn composition(&self) -> Result<lumit_core::model::Composition, BridgeError> {
+    pub(crate) fn composition(&self) -> Result<lumit_core::model::Composition, BridgeError> {
         let proj = self.project()?;
         let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
         let snapshot = proj.store.snapshot();
