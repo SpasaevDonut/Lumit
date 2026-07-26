@@ -10,6 +10,7 @@ pub mod footage;
 pub mod layer;
 pub mod project;
 pub mod project_item;
+pub mod shell;
 pub mod solid;
 pub mod state;
 

@@ -167,7 +167,25 @@ class LumitState extends ChangeNotifier {
 class LumitUiState extends ChangeNotifier {
   DockSplit split = defaultLayout();
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
-  LumitTheme theme = LumitTheme.dark();
+  /// The appearance the shell is drawing in.
+  ///
+  /// Scheme and shape are held rather than the built theme, because the theme is
+  /// derived from them — keeping the composed object as the source of truth
+  /// would make "what did the user choose?" a question you answer by comparing
+  /// colours.
+  LumitColorScheme scheme = LumitColorScheme.dark;
+  ThemeShape shape = ThemeShape.sharp;
+  LumitTheme get theme => LumitTheme.forScheme(scheme, shape);
+
+  void setScheme(LumitColorScheme next) {
+    scheme = next;
+    notifyListeners();
+  }
+
+  void setShape(ThemeShape next) {
+    shape = next;
+    notifyListeners();
+  }
 
   CompositionReference? _selectedComp;
   CompositionReference? get selectedComp => _selectedComp;
@@ -325,7 +343,7 @@ class LumitAppNew extends StatelessWidget {
           child: ChangeNotifierProvider.value(
               value: uiState,
               child: ThemeScope(
-                theme: LumitTheme.dark(),
+                theme: uiState.theme,
                 animationLevel: AnimationLevel.all,
                 showTooltips: true,
                 child: Overlay(initialEntries: [

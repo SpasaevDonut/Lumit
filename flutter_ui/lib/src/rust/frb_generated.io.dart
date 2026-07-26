@@ -12,6 +12,7 @@ import 'api/footage.dart';
 import 'api/layer.dart';
 import 'api/project.dart';
 import 'api/project_item.dart';
+import 'api/shell.dart';
 import 'api/solid.dart';
 import 'api/state.dart';
 import 'dart:async';
@@ -189,6 +190,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
 
   @protected
+  BridgeAutosave dco_decode_bridge_autosave(dynamic raw);
+
+  @protected
   BridgeBezierSide dco_decode_bridge_bezier_side(dynamic raw);
 
   @protected
@@ -243,10 +247,16 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeParamKind dco_decode_bridge_param_kind(dynamic raw);
 
   @protected
+  BridgePlaybackTier dco_decode_bridge_playback_tier(dynamic raw);
+
+  @protected
   BridgePoint dco_decode_bridge_point(dynamic raw);
 
   @protected
   BridgeRational dco_decode_bridge_rational(dynamic raw);
+
+  @protected
+  BridgeRecovery dco_decode_bridge_recovery(dynamic raw);
 
   @protected
   BridgeRenderedFrame dco_decode_bridge_rendered_frame(dynamic raw);
@@ -310,6 +320,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<String> dco_decode_list_String(dynamic raw);
+
+  @protected
+  List<BridgeAutosave> dco_decode_list_bridge_autosave(dynamic raw);
 
   @protected
   List<BridgeClip> dco_decode_list_bridge_clip(dynamic raw);
@@ -566,6 +579,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeAutosave sse_decode_bridge_autosave(SseDeserializer deserializer);
+
+  @protected
   BridgeBezierSide sse_decode_bridge_bezier_side(SseDeserializer deserializer);
 
   @protected
@@ -624,10 +640,17 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeParamKind sse_decode_bridge_param_kind(SseDeserializer deserializer);
 
   @protected
+  BridgePlaybackTier sse_decode_bridge_playback_tier(
+      SseDeserializer deserializer);
+
+  @protected
   BridgePoint sse_decode_bridge_point(SseDeserializer deserializer);
 
   @protected
   BridgeRational sse_decode_bridge_rational(SseDeserializer deserializer);
+
+  @protected
+  BridgeRecovery sse_decode_bridge_recovery(SseDeserializer deserializer);
 
   @protected
   BridgeRenderedFrame sse_decode_bridge_rendered_frame(
@@ -695,6 +718,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<BridgeAutosave> sse_decode_list_bridge_autosave(
+      SseDeserializer deserializer);
 
   @protected
   List<BridgeClip> sse_decode_list_bridge_clip(SseDeserializer deserializer);
@@ -966,6 +993,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SolidReference self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_autosave(
+      BridgeAutosave self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_bezier_side(
       BridgeBezierSide self, SseSerializer serializer);
 
@@ -1033,11 +1064,19 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeParamKind self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_playback_tier(
+      BridgePlaybackTier self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_point(BridgePoint self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_rational(
       BridgeRational self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_recovery(
+      BridgeRecovery self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_rendered_frame(
@@ -1111,6 +1150,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_autosave(
+      List<BridgeAutosave> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_clip(

@@ -84,6 +84,24 @@ impl DocumentStore {
         }
     }
 
+    /// Replace the whole document, keeping the observer and clearing the
+    /// history.
+    ///
+    /// For the one case that is not an edit: crash recovery, which opens a file
+    /// and replays a journal over it. Going *through* the store rather than
+    /// building a new one is what keeps the change observer attached — a
+    /// recovered document installed into a fresh store would leave every panel
+    /// listening to a store nothing commits to any more.
+    ///
+    /// The history is cleared rather than kept, because an undo stack built
+    /// against the previous document cannot be applied to this one.
+    pub fn replace_document(&self, doc: Document) {
+        let mut journal = self.journal.lock();
+        journal.undo.clear();
+        journal.redo.clear();
+        self.current.store(Arc::new(doc));
+    }
+
     /// Lock-free snapshot for readers (render jobs capture this at schedule time).
     pub fn snapshot(&self) -> Arc<Document> {
         self.current.load_full()

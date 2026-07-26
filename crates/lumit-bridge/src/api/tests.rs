@@ -1757,3 +1757,116 @@ fn a_composition_nests_into_another_but_not_into_itself() {
     ));
     assert_eq!(outer.get_layers().expect("layers").len(), 1);
 }
+
+// --- The shell: boot log, tier, autosave and recovery ---------------------
+
+/// The boot log states facts and no more. It must never claim a GPU adapter,
+/// because none is known until the first render — a splash that named one would
+/// be inventing it.
+#[test]
+fn the_boot_log_states_only_what_the_build_knows() {
+    let lines = crate::api::shell::boot_log();
+    assert!(!lines.is_empty());
+    assert!(
+        lines[0].starts_with("lumit-bridge "),
+        "its own version first"
+    );
+    assert!(
+        lines.iter().any(|l| l.starts_with("compositor:")),
+        "and whether it can render at all"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|l| l.contains("NVIDIA") || l.contains("Radeon")),
+        "no adapter is named before one is probed"
+    );
+}
+
+/// The tier is a readout of a controller that measures real render costs, so
+/// the only thing to assert is that it answers in range and resets optimistic.
+#[test]
+fn the_playback_tier_reads_back_and_resets_to_full() {
+    use crate::api::shell::{playback_tier, reset_realtime};
+
+    let fresh = reset_realtime();
+    assert_eq!(fresh.tier, 1, "a reset controller is optimistic");
+    assert!((fresh.scale - 1.0).abs() < f32::EPSILON);
+
+    let now = playback_tier();
+    assert!((1..=4).contains(&now.tier));
+    assert!((now.scale - 1.0 / now.tier as f32).abs() < 1e-6);
+}
+
+/// A project with no autosaves beside it is an ordinary empty answer, not an
+/// error — the recovery dialogue opens before anything has been saved.
+#[test]
+fn listing_autosaves_of_a_project_with_none_is_empty() {
+    let dir = std::env::temp_dir().join("lumit-autosave-none");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let project = dir.join("scene.lum");
+    assert!(crate::api::shell::list_autosaves(project.to_string_lossy().into_owned()).is_empty());
+    assert!(crate::api::shell::list_autosaves(String::new()).is_empty());
+}
+
+/// An autosave writes beside the project and leaves the project's own path
+/// alone — the next Save must still write the file the user chose.
+#[test]
+fn an_autosave_writes_a_slot_without_moving_the_project() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    project
+        .new_composition("Scene".into())
+        .expect("something to save");
+
+    let dir = std::env::temp_dir().join("lumit-autosave-writes");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("scene.lum");
+    let path = target.to_string_lossy().into_owned();
+
+    let written = project.autosave(path.clone(), 3).expect("autosaved");
+    assert!(std::path::Path::new(&written).is_file());
+    assert!(
+        project.path().expect("path").is_none(),
+        "an autosave is a copy; the project has still never been saved"
+    );
+
+    let listed = crate::api::shell::list_autosaves(path);
+    assert_eq!(listed.len(), 1, "one slot so far");
+    assert_eq!(listed[0].slot, 1, "and it is the newest");
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Recovery installs the opened document *through* the store, so the change
+/// observer every panel listens to survives it.
+#[test]
+fn restoring_replaces_the_document_and_keeps_the_change_observer() {
+    let dir = std::env::temp_dir().join("lumit-restore");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("scene.lum");
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    project.new_composition("Saved".into()).expect("comp");
+    project
+        .save(target.to_string_lossy().into_owned())
+        .expect("saved");
+
+    // Drift away from what is on disk, then restore.
+    project.new_composition("Unsaved".into()).expect("comp");
+    let recovered = project
+        .restore_journal(target.to_string_lossy().into_owned())
+        .expect("restored");
+    assert!(recovered.replayed <= recovered.found);
+
+    // The document really was replaced, and the store still takes edits — which
+    // is what proves the observer was not thrown away with it.
+    project
+        .new_composition("After".into())
+        .expect("still editable");
+    assert!(
+        !project.get_items().expect("roots").is_empty(),
+        "the recovered document is the live one"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

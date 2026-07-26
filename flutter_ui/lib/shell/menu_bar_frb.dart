@@ -15,7 +15,10 @@ import 'package:provider/provider.dart';
 
 import '../state/file_dialogs.dart';
 import '../widgets/controls.dart';
+import 'command_palette_frb.dart';
 import 'comp_settings_frb.dart';
+import 'recovery_dialog_frb.dart';
+import 'settings_window_frb.dart';
 
 class LumitMenuBarFrb extends StatelessWidget {
   final LumitState app;
@@ -61,6 +64,10 @@ class LumitMenuBarFrb extends StatelessWidget {
             _Item.divider(),
             _Item('Import footage…',
                 project == null ? null : () => _import(context)),
+            _Item.divider(),
+            _Item('Settings…', () => showSettingsWindowFrb(context)),
+            _Item('Recover…',
+                project == null ? null : () => _recover(context)),
           ]),
           _menu(context, 'Edit', [
             _Item(
@@ -71,6 +78,8 @@ class LumitMenuBarFrb extends StatelessWidget {
               'Redo',
               (history?.canRedo ?? false) ? () => _redo(context) : null,
             ),
+            _Item.divider(),
+            _Item('Command palette…', () => _palette(context)),
           ]),
           _menu(context, 'Composition', [
             _Item('New composition',
@@ -139,6 +148,63 @@ class LumitMenuBarFrb extends StatelessWidget {
     if (comp == null) return;
     final applied = await showCompSettingsFrb(context: context, comp: comp);
     if (applied) app.notifyDocumentChanged();
+  }
+
+  /// Offer to recover work beside the open project.
+  ///
+  /// Only meaningful once the project has a path — recovery is about a *file*,
+  /// and a project that has never been saved has nothing beside it.
+  Future<void> _recover(BuildContext context) async {
+    final path = app.project?.path();
+    if (path == null) return;
+    await showRecoveryDialogFrb(
+      context: context,
+      state: app,
+      projectPath: path,
+    );
+  }
+
+  /// The palette's commands are declared here, where the menu items are, so the
+  /// two cannot drift apart into different ideas of what "New composition" does.
+  Future<void> _palette(BuildContext context) async {
+    final project = app.project;
+    await showCommandPaletteFrb(
+      context: context,
+      commands: [
+        PaletteCommand(
+          label: 'New project',
+          category: 'File',
+          run: app.newProject,
+        ),
+        if (project != null) ...[
+          PaletteCommand(
+            label: 'Save',
+            category: 'File',
+            run: () => _save(context),
+          ),
+          PaletteCommand(
+            label: 'Save as…',
+            category: 'File',
+            run: () => _save(context, forcePicker: true),
+          ),
+          PaletteCommand(
+            label: 'Import footage…',
+            category: 'File',
+            run: () => _import(context),
+          ),
+          PaletteCommand(
+            label: 'New composition',
+            category: 'Composition',
+            run: () => _newComposition(context),
+          ),
+        ],
+        PaletteCommand(
+          label: 'Settings…',
+          category: 'File',
+          run: () => showSettingsWindowFrb(context),
+        ),
+      ],
+    );
   }
 
   void _undo(BuildContext context) {

@@ -153,13 +153,7 @@ sequence clips.
 
     **2. Shell surfaces** — not panels, but v0-bound. Each of these imports
     `bridge/bridge.dart` or `state/app_state.dart` today.
-    - **Settings window** (665 lines) — cache budget and stats, realtime tier, UI
-        scale, theme.
     - **Export dialog** (391 lines) — needs the whole export subsystem below.
-    - **Recovery dialog** (264 lines) — autosave listing plus journal restore.
-    - **Command palette** (227 lines).
-    - **Boot log** — `splash.dart` itself is agnostic and takes its lines as a
-        parameter; it is `boot_log` and the frb shell's wiring that are missing.
     - **Popout windows** — the five files under `lib/popout/`. Multi-window, and
         the v0 version has a known main-window resync gap.
 
@@ -185,9 +179,11 @@ sequence clips.
     - **Presets** — the preset *listing* (a browsable library of saved
         `.lumfx` files), which was never built on either bridge. Save and load
         are in.
-    - **Infra readouts** — `playback_tier` / `reset_realtime`, `boot_log`,
-        `list_autosaves` / `restore_journal`, `autosave`. The cache trio is in
-        (`api/cache.rs`).
+    - **Journalling.** `LumitBridgeState.journal` is still always `None`, so
+        edits made through frb are not written to the crash journal as they
+        happen — `restore_journal` replays whatever *is* there, but nothing puts
+        it there. The autosave and the recovery dialogue are in; this is the leg
+        that makes them worth having.
     - **`decode_frame`** — the single-layer decode behind the Viewer's fallback.
 
     **4. The v0 Dart suite is migrated, not deleted.** 33 files and ~12,450 lines

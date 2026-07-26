@@ -11,6 +11,7 @@ import 'footage.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 import 'project_item.dart';
+import 'shell.dart';
 import 'solid.dart';
 import 'state.dart';
 
@@ -45,6 +46,17 @@ class ProjectReference {
   const ProjectReference({
     required this.internalid,
   });
+
+  /// Write a rotating autosave beside `project_path`, keeping `keep` slots.
+  ///
+  /// Deliberately does **not** move the project's own path: an autosave is a
+  /// safety copy, and the next Save must still write the file the user chose.
+  /// The document is rebased against the project folder first, so no
+  /// machine-specific path is written into a copy that may be opened
+  /// elsewhere.
+  String autosave({required String projectPath, required int keep}) =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceAutosave(
+          that: this, projectPath: projectPath, keep: keep);
 
   List<ItemReference> getItems() =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceGetItems(
@@ -87,6 +99,15 @@ class ProjectReference {
   void redo() => BridgeLib.instance.api.crateApiProjectProjectReferenceRedo(
         that: this,
       );
+
+  /// Open `project_path` and replay its crash journal on top of it.
+  ///
+  /// This is the whole point of the journal: a session that ended badly left
+  /// its edits there, and this is what puts them back. The replay stops at the
+  /// first op that no longer applies — see [`BridgeRecovery::replayed`].
+  BridgeRecovery restoreJournal({required String projectPath}) =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceRestoreJournal(
+          that: this, projectPath: projectPath);
 
   /// Save to `path`, or to wherever the project was last saved when `path` is
   /// empty. Answers the path actually written, so Dart can show it and stop
