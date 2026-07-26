@@ -1336,8 +1336,9 @@ fn render_scope_buffer(
 }
 
 // ---------------------------------------------------------------------------
-// Bridge v0.8 (ABI 8): the rendered-frame cache (K-176) and its controls,
-// engine-side render cancellation, and the Project-panel thumbnail path.
+// Bridge v0.8 (ABI 8): the rendered-frame cache (K-176) and its controls, and
+// engine-side render cancellation. The Project-panel thumbnail path that landed
+// alongside them went with the frb port of that panel.
 // ---------------------------------------------------------------------------
 
 /// Render composition `comp_id` at `frame` to RGBA8 with a latest-wins
@@ -1485,82 +1486,6 @@ fn cache_stats_json(stats: (usize, usize, usize, u64, u64)) -> String {
 /// `{"ok":true}` — the shared reply for a stateless success with no payload.
 fn json_ok() -> String {
     serde_json::json!({ "ok": true }).to_string()
-}
-
-/// Decode a representative frame of footage item `item_id` and downscale it so
-/// its longer edge is at most `max_edge`, returning tightly-packed RGBA8 (the
-/// Project-panel thumbnail path). Same ownership contract as
-/// [`lumit_bridge_decode_frame`] (free with [`lumit_bridge_free_buffer`] passing
-/// the exact length). The result is cached on the bridge, so each thumbnail
-/// decodes once. Null with zeroed outs on any failure (unknown/non-footage item,
-/// missing/unreadable file), and always null without the `media` feature.
-///
-/// # Safety
-/// `item_id` must be null or a valid NUL-terminated UTF-8 C string. `out_w`,
-/// `out_h` and `out_len` must each be null or a valid, writable pointer.
-#[no_mangle]
-pub unsafe extern "C" fn lumit_bridge_thumbnail(
-    item_id: *const c_char,
-    max_edge: u32,
-    out_w: *mut u32,
-    out_h: *mut u32,
-    out_len: *mut usize,
-) -> *mut u8 {
-    let write_zero = || {
-        if !out_w.is_null() {
-            *out_w = 0;
-        }
-        if !out_h.is_null() {
-            *out_h = 0;
-        }
-        if !out_len.is_null() {
-            *out_len = 0;
-        }
-    };
-
-    let Some(id) = c_str_to_string(item_id) else {
-        write_zero();
-        return ptr::null_mut();
-    };
-
-    let thumb = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        thumbnail_to_buffer(&id, max_edge)
-    }))
-    .ok()
-    .flatten();
-
-    match thumb {
-        Some((w, h, bytes)) => {
-            let len = bytes.len();
-            let raw = Box::into_raw(bytes.into_boxed_slice()) as *mut u8;
-            if !out_w.is_null() {
-                *out_w = w;
-            }
-            if !out_h.is_null() {
-                *out_h = h;
-            }
-            if !out_len.is_null() {
-                *out_len = len;
-            }
-            raw
-        }
-        None => {
-            write_zero();
-            ptr::null_mut()
-        }
-    }
-}
-
-/// Resolve `id` to a thumbnail `(width, height, rgba)`. `None` on any failure.
-/// Without the `media` feature there is no decoder, so this is always `None`.
-#[cfg(feature = "media")]
-fn thumbnail_to_buffer(id: &str, max_edge: u32) -> Option<(u32, u32, Vec<u8>)> {
-    with_bridge(|b| crate::media::thumbnail(b, id, max_edge))
-}
-
-#[cfg(not(feature = "media"))]
-fn thumbnail_to_buffer(_id: &str, _max_edge: u32) -> Option<(u32, u32, Vec<u8>)> {
-    None
 }
 
 // ---------------------------------------------------------------------------
@@ -2002,68 +1927,6 @@ pub unsafe extern "C" fn lumit_bridge_clear_beat_markers(comp_id: *const c_char)
         ));
     };
     guard(move || with_bridge(|b| crate::beats::clear_beat_markers(b, &comp)))
-}
-
-/// Delete a project item.
-///
-/// # Safety
-/// `item_id` must be null or a valid NUL-terminated UTF-8 C string.
-#[no_mangle]
-pub unsafe extern "C" fn lumit_bridge_delete_item(item_id: *const c_char) -> *mut c_char {
-    let Some(item) = c_str_to_string(item_id) else {
-        return to_c_string(err_json(
-            "delete item: the item id was null or not valid UTF-8",
-        ));
-    };
-    guard(move || with_bridge(|b| crate::items::delete_item(b, &item)))
-}
-
-/// Rename a project item.
-///
-/// # Safety
-/// The two string pointers must each be null or a valid NUL-terminated UTF-8 C
-/// string alive for the call.
-#[no_mangle]
-pub unsafe extern "C" fn lumit_bridge_rename_item(
-    item_id: *const c_char,
-    name: *const c_char,
-) -> *mut c_char {
-    let (Some(item), Some(name)) = (c_str_to_string(item_id), c_str_to_string(name)) else {
-        return to_c_string(err_json(
-            "rename item: an argument was null or not valid UTF-8",
-        ));
-    };
-    guard(move || with_bridge(|b| crate::items::rename_item(b, &item, &name)))
-}
-
-/// Move a project item back to the panel root.
-///
-/// # Safety
-/// `item_id` must be null or a valid NUL-terminated UTF-8 C string.
-#[no_mangle]
-pub unsafe extern "C" fn lumit_bridge_move_to_root(item_id: *const c_char) -> *mut c_char {
-    let Some(item) = c_str_to_string(item_id) else {
-        return to_c_string(err_json(
-            "move to root: the item id was null or not valid UTF-8",
-        ));
-    };
-    guard(move || with_bridge(|b| crate::items::move_to_root(b, &item)))
-}
-
-/// Relink a missing footage item (and same-folder missing siblings) at `path`.
-///
-/// # Safety
-/// The two string pointers must each be null or a valid NUL-terminated UTF-8 C
-/// string alive for the call.
-#[no_mangle]
-pub unsafe extern "C" fn lumit_bridge_relink(
-    item_id: *const c_char,
-    path: *const c_char,
-) -> *mut c_char {
-    let (Some(item), Some(path)) = (c_str_to_string(item_id), c_str_to_string(path)) else {
-        return to_c_string(err_json("relink: an argument was null or not valid UTF-8"));
-    };
-    guard(move || with_bridge(|b| crate::items::relink(b, &item, &path)))
 }
 
 /// Rename a layer.
@@ -3147,16 +3010,6 @@ mod tests {
         let reply = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_owned();
         unsafe { lumit_bridge_free_string(ptr) };
         assert_eq!(parse(&reply)["ok"], json!(true));
-    }
-
-    #[test]
-    fn thumbnail_with_a_null_id_returns_null_and_zeroes_outs() {
-        let mut w: u32 = 7;
-        let mut h: u32 = 7;
-        let mut len: usize = 7;
-        let ptr = unsafe { lumit_bridge_thumbnail(ptr::null(), 128, &mut w, &mut h, &mut len) };
-        assert!(ptr.is_null());
-        assert_eq!((w, h, len), (0, 0, 0));
     }
 
     #[test]

@@ -1326,22 +1326,6 @@ class AppStateStub extends ChangeNotifier {
     _editOp((e) => e.clearBeatMarkers(compId));
   }
 
-  // Project-item ops.
-
-  /// Delete a project item.
-  void deleteItem(String itemId) => _editOp((e) => e.deleteItem(itemId));
-
-  /// Rename a project item.
-  void renameItem(String itemId, String name) =>
-      _editOp((e) => e.renameItem(itemId, name));
-
-  /// Move a project item back to the panel root.
-  void moveToRoot(String itemId) => _editOp((e) => e.moveToRoot(itemId));
-
-  /// Relink a missing footage item (and same-folder missing siblings) at [path].
-  void relink(String itemId, String path) =>
-      _editOp((e) => e.relink(itemId, path));
-
   // Layer-identity ops.
 
   /// Rename a layer.
@@ -1847,7 +1831,7 @@ class AppStateStub extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- Bridge v0.8: rendered-frame cache + thumbnails ---------------------
+  // --- Bridge v0.8: the rendered-frame cache ------------------------------
 
   /// A hook the [PreviewSource] registers so "Clear cache" also empties the
   /// Dart-side decoded-frame LRU (the engine cache and the Dart image cache are
@@ -1861,38 +1845,6 @@ class AppStateStub extends ChangeNotifier {
     return b is CacheControlBridge && (b as CacheControlBridge).supportsCacheControl
         ? b as CacheControlBridge
         : null;
-  }
-
-  /// The thumbnail capability, or null when there is no bridge or the loaded
-  /// library predates ABI 8. Exposed so the Project panel (another agent) can
-  /// decode a footage row's thumbnail through one seam.
-  ThumbnailBridge? get thumbnails {
-    final b = bridge;
-    return b is ThumbnailBridge && (b as ThumbnailBridge).supportsThumbnail
-        ? b as ThumbnailBridge
-        : null;
-  }
-
-  /// A cached thumbnail of footage [itemId] whose longer edge is at most
-  /// [maxEdge], or null without the capability. Decoded and cached engine-side,
-  /// so repeated calls are cheap. Synchronous — the Project panel goes through
-  /// [requestThumbnail] instead so a COLD decode never runs on the UI isolate;
-  /// this remains as the inline fallback the [SynchronousFrameRenderer] uses.
-  DecodedFrame? thumbnail(String itemId, int maxEdge) =>
-      thumbnails?.thumbnail(itemId, maxEdge);
-
-  /// Request a footage thumbnail through the shared [previewSource]'s renderer
-  /// seam — on the render worker isolate when one is running, so a cold video
-  /// thumbnail decode (a synchronous FFI call under the bridge lock) never
-  /// janks the UI (TF round 5). [onFrame] receives the decoded frame, or null
-  /// without the capability / on failure.
-  void requestThumbnail(
-      String itemId, int maxEdge, void Function(DecodedFrame?) onFrame) {
-    if (thumbnails == null) {
-      onFrame(null);
-      return;
-    }
-    previewSource.requestThumbnail(itemId, maxEdge, onFrame);
   }
 
   /// The rendered-frame cache's live stats, or the empty default without the
@@ -2332,9 +2284,9 @@ class AppStateStub extends ChangeNotifier {
   }
 
   /// A monotonic document epoch, bumped whenever a fresh snapshot is adopted (a
-  /// new engine document identity). The Project-panel thumbnails key their cache
-  /// on it so a relink (or any edit) re-decodes rather than showing a stale
-  /// picture; egui keys its own rendered-frame invalidation the same way.
+  /// new engine document identity). Cached renders key on it so an edit
+  /// re-renders rather than showing a stale picture; egui keys its own
+  /// rendered-frame invalidation the same way.
   int documentEpoch = 0;
 
   /// Adopt a snapshot into the held state (undo/redo flags follow it). Keeps the
@@ -2351,9 +2303,8 @@ class AppStateStub extends ChangeNotifier {
     // a snapshot, so this cannot fire mid-drag — and it means no exit path from a
     // drag can leave an entry behind to mask the document with a stale number.
     _effectParamPreviews.clear();
-    // A document edit invalidates the engine's rendered frames (and any
-    // thumbnails a relink changed), so the cache bar's warm set resets and the
-    // thumbnail epoch advances.
+    // A document edit invalidates the engine's rendered frames, so the cache
+    // bar's warm set resets and the epoch advances.
     documentEpoch++;
     _invalidateWarmFrames();
     final fc = frontComp;

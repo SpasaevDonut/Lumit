@@ -1327,12 +1327,10 @@ class _QueuedRenderer implements FrameRenderer {
   final List<String> compRequests = [];
   final List<String> decodeRequests = [];
   final List<String> scopeRequests = [];
-  final List<String> thumbRequests = [];
   final List<(String, void Function())> _pending = [];
   DecodedFrame? compResult;
   DecodedFrame? decodeResult;
   Uint8List? scopeResult;
-  DecodedFrame? thumbResult;
 
   @override
   void requestComp(String compId, int frame, double scale, int generation,
@@ -1366,13 +1364,6 @@ class _QueuedRenderer implements FrameRenderer {
       void Function(Uint8List?) onTrace) {
     scopeRequests.add('$kind:$compId@$frame');
     _pending.add(('scope', () => onTrace(scopeResult)));
-  }
-
-  @override
-  void requestThumbnail(String itemId, int maxEdge, int generation,
-      void Function(DecodedFrame?) onFrame) {
-    thumbRequests.add('$itemId@$maxEdge');
-    _pending.add(('thumb', () => onFrame(thumbResult)));
   }
 
   /// Answer the queued requests — all of them, or (with [only]) just the ones

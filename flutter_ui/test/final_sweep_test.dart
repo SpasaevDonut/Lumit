@@ -12,7 +12,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/bridge/bridge.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel.dart';
 import 'package:lumit_flutter/panels/preview_source.dart';
-import 'package:lumit_flutter/panels/project_panel.dart';
 import 'package:lumit_flutter/panels/timeline/cache_bar.dart';
 import 'package:lumit_flutter/panels/timeline_panel.dart';
 import 'package:lumit_flutter/state/app_state.dart';
@@ -29,8 +28,7 @@ class _Fake
         DocumentBridge,
         EditOpsBridge,
         CompRenderBridge,
-        CacheControlBridge,
-        ThumbnailBridge {
+        CacheControlBridge {
   final List<String> ops = [];
   final List<double> renderScales = [];
   int cacheEntries = 0;
@@ -124,13 +122,6 @@ class _Fake
   BridgeCacheStats cacheStats() =>
       BridgeCacheStats(entries: cacheEntries, budgetBytes: 512 << 20);
 
-  // --- ThumbnailBridge (a solid 2×2 thumbnail) ----------------------------
-  @override
-  bool get supportsThumbnail => true;
-  @override
-  DecodedFrame? thumbnail(String itemId, int maxEdge) => DecodedFrame(
-      width: 2, height: 2, rgba: Uint8List(2 * 2 * 4)..fillRange(0, 16, 180));
-
   @override
   dynamic noSuchMethod(Invocation invocation) => _snap();
 }
@@ -140,7 +131,6 @@ class _Fake
 /// the thumbnail seam are observable without a real engine.
 class _RecordingRenderer implements FrameRenderer {
   final List<double> scales = [];
-  final List<String> thumbRequests = [];
 
   @override
   bool get supportsCompRender => true;
@@ -172,14 +162,6 @@ class _RecordingRenderer implements FrameRenderer {
           int bg, int trace, int red, int green, int blue, int generation,
           void Function(Uint8List?) onTrace) =>
       onTrace(null);
-  @override
-  void requestThumbnail(String itemId, int maxEdge, int generation,
-      void Function(DecodedFrame?) onFrame) {
-    thumbRequests.add('$itemId@$maxEdge');
-    onFrame(DecodedFrame(
-        width: 2, height: 2, rgba: Uint8List(2 * 2 * 4)..fillRange(0, 16, 180)));
-  }
-
   @override
   void dispose() {}
 }
@@ -404,49 +386,5 @@ void main() {
     });
   });
 
-  group('Project-panel thumbnails', () {
-    testWidgets('a footage row decodes and shows a thumbnail image',
-        (tester) async {
-      await tester.binding.setSurfaceSize(const Size(360, 500));
-      final app = AppStateStub(bridge: _Fake());
-      // The decode is genuinely async (a microtask then the engine's
-      // decodeImageFromPixels), so mount and let real async run inside runAsync,
-      // then pump the resulting frame.
-      await tester.runAsync(() async {
-        await tester.pumpWidget(_host(ProjectPanel(app: app)));
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      });
-      await tester.pump();
-      expect(find.byType(RawImage), findsWidgets);
-    });
 
-    testWidgets(
-        'the decode rides the renderer seam and re-decodes on an epoch bump '
-        '(TF round 5)', (tester) async {
-      await tester.binding.setSurfaceSize(const Size(360, 500));
-      final renderer = _RecordingRenderer();
-      final app = AppStateStub(
-        bridge: _Fake(),
-        previewRendererFactory: (_) => renderer,
-      );
-      await tester.runAsync(() async {
-        await tester.pumpWidget(_host(ProjectPanel(app: app)));
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      });
-      await tester.pump();
-      expect(renderer.thumbRequests, contains('f1@56'),
-          reason: 'the thumbnail decode went through the off-thread seam, '
-              'never a synchronous FFI call on the UI isolate');
-
-      final before = renderer.thumbRequests.length;
-      await tester.runAsync(() async {
-        app.undo(); // adopts a fresh snapshot → the document epoch bumps
-        await tester.pump();
-        await Future<void>.delayed(const Duration(milliseconds: 100));
-      });
-      await tester.pump();
-      expect(renderer.thumbRequests.length, greaterThan(before),
-          reason: 'the epoch bump re-decodes the row thumbnail');
-    });
-  });
 }

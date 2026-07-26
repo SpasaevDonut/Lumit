@@ -59,14 +59,6 @@ class _EditFake implements DocumentBridge, EditOpsBridge {
   @override
   BridgeReply clearBeatMarkers(String c) => _ok('clear_beats:$c');
   @override
-  BridgeReply deleteItem(String id) => _ok('del_item:$id');
-  @override
-  BridgeReply renameItem(String id, String n) => _ok('rename_item:$id:$n');
-  @override
-  BridgeReply moveToRoot(String id) => _ok('to_root:$id');
-  @override
-  BridgeReply relink(String id, String p) => _ok('relink:$id:$p');
-  @override
   BridgeReply renameLayer(String c, String l, String n) =>
       _ok('rename_layer:$c:$l:$n');
   @override
@@ -221,10 +213,6 @@ void main() {
       final app = AppStateStub(bridge: fake);
       expect(app.editOps, isNotNull);
 
-      app.deleteItem('item-1');
-      app.renameItem('item-1', 'Renamed');
-      app.moveToRoot('item-1');
-      app.relink('item-1', '/new/clip.mp4');
       app.renameLayer('c1', 'l1', 'Hero');
       app.convertToSequenced('c1', 'l1');
       app.trimToSourceEnd('c1', 'l1');
@@ -243,10 +231,6 @@ void main() {
       expect(
         fake.ops,
         containsAll(<String>[
-          'del_item:item-1',
-          'rename_item:item-1:Renamed',
-          'to_root:item-1',
-          'relink:item-1:/new/clip.mp4',
           'rename_layer:c1:l1:Hero',
           'convert:c1:l1',
           'trim:c1:l1',
@@ -280,13 +264,13 @@ void main() {
     test('a library without the capability surfaces a calm notice', () {
       final app = AppStateStub(bridge: _DocOnlyFake());
       expect(app.editOps, isNull);
-      app.deleteItem('item-1');
+      app.renameLayer('c0', 'l0', 'Hero');
       expect(app.errorNotice, contains('missing the edit ops'));
     });
 
     test('no bridge is a quiet no-op (no notice)', () {
       final app = AppStateStub();
-      app.deleteItem('item-1');
+      app.renameLayer('c0', 'l0', 'Hero');
       expect(app.errorNotice, isNull);
       expect(app.editOps, isNull);
     });
@@ -301,7 +285,7 @@ void main() {
         ..autosaveInterval = const Duration(minutes: 5)
         ..autosaveKeep = 3;
       // Dirty the document through a real edit op.
-      app.deleteItem('item-1');
+      app.renameLayer('c0', 'l0', 'Hero');
       // A due tick writes a copy through the dedicated autosave op.
       expect(app.autosaveTick(start.add(const Duration(minutes: 10))), isTrue);
       expect(fake.autosaveCalls, 1,

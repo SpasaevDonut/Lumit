@@ -11,24 +11,20 @@ import 'effect_controls_panel.dart';
 import 'effects_presets_panel.dart';
 import 'hierarchy_panel.dart';
 import 'placeholder.dart';
-import 'project_panel.dart';
 import 'scopes_panel.dart';
 import 'timeline_panel.dart';
 import 'viewer_panel.dart';
 
 Widget buildPanelBody(BuildContext context, Panel panel, AppStateStub app) =>
     switch (panel) {
-      // The Project panel goes live when the bridge is present: it renders the
-      // real document tree instead of the placeholder (phase F1). Without a
-      // bridge the placeholder stays.
-      Panel.project => (app.bridge != null && app.snapshot != null)
-          ? ProjectPanel(app: app)
-          : const PlaceholderPanel(
-              icon: LumitIcon.folder,
-              title: 'Project',
-              hint:
-                  'Project items, thumbnails and relink arrive with the engine bridge (phase F1).',
-            ),
+      // Ported to frb and deleted from here: `ProjectPanelFrb` is the Project
+      // panel now, and it needs the reference handles this shell does not carry.
+      // The v0 shell keeps a placeholder rather than a second implementation.
+      Panel.project => const PlaceholderPanel(
+          icon: LumitIcon.folder,
+          title: 'Project',
+          hint: 'The Project panel has moved to the frb shell.',
+        ),
       Panel.viewer => ViewerPanel(app: app),
       Panel.timeline => TimelinePanel(app: app),
       // The Effect controls panel goes live with a comp in the snapshot: it

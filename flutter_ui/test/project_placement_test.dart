@@ -4,11 +4,9 @@
 // composition double-click fronts it; and the project right-click menu renders
 // the egui item set with Composition settings opening the dialogue.
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/bridge/bridge.dart';
-import 'package:lumit_flutter/panels/project_panel.dart';
 import 'package:lumit_flutter/shell/menu_bar.dart';
 import 'package:lumit_flutter/state/app_state.dart';
 import 'package:lumit_flutter/state/workspace.dart';
@@ -206,14 +204,6 @@ Widget _host(Widget child) => Directionality(
       ),
     );
 
-/// Perform a double-tap on [finder].
-Future<void> _doubleTap(WidgetTester tester, Finder finder) async {
-  await tester.tap(finder);
-  await tester.pump(kDoubleTapMinTime);
-  await tester.tap(finder);
-  await tester.pump();
-}
-
 void main() {
   group('Menu bar add-layer', () {
     testWidgets('Composition ▸ Add solid layer calls addSolidLayer on the front '
@@ -235,68 +225,5 @@ void main() {
     });
   });
 
-  group('Project panel interaction', () {
-    testWidgets('double-clicking a footage item places it into the front comp',
-        (tester) async {
-      final fake = _Fake();
-      final app = AppStateStub(bridge: fake);
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await _doubleTap(tester, find.text('clip.mp4'));
-      await tester.pumpAndSettle();
-      expect(fake.ops, contains('add_footage:c0/f0'));
-    });
 
-    testWidgets('double-clicking a composition fronts it', (tester) async {
-      final app = AppStateStub(bridge: _Fake());
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await _doubleTap(tester, find.text('Titles'));
-      await tester.pumpAndSettle();
-      expect(app.frontCompId, 'c1');
-    });
-
-    testWidgets('clicking a row selects it (highlight)', (tester) async {
-      final app = AppStateStub(bridge: _Fake());
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await tester.tap(find.text('clip.mp4'));
-      // onTap is deferred while the row disambiguates from a double-tap; pump
-      // past the double-tap timeout so the single tap resolves.
-      await tester.pump(const Duration(milliseconds: 400));
-      expect(app.selectedProjectItem, 'f0');
-    });
-
-    testWidgets('a composition right-click shows the comp item set and '
-        'Composition settings opens the dialogue', (tester) async {
-      final app = AppStateStub(bridge: _Fake());
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await tester.tap(find.text('Scene'), buttons: kSecondaryButton);
-      await tester.pumpAndSettle();
-      // A composition row: Composition settings, Move to root, Delete. Relink
-      // and Find missing footage are footage-only (egui panels.rs:916).
-      expect(find.text('Composition settings…'), findsOneWidget);
-      expect(find.text('Relink…'), findsNothing);
-      expect(find.text('Find missing footage'), findsNothing);
-      expect(find.text('Move to root'), findsOneWidget);
-      expect(find.text('Delete'), findsOneWidget);
-      // Composition settings opens the settings dialogue (title + Apply button).
-      await tester.tap(find.text('Composition settings…'));
-      await tester.pumpAndSettle();
-      expect(find.text('Composition settings'), findsOneWidget);
-      expect(find.text('Apply'), findsOneWidget);
-    });
-
-    testWidgets('a footage right-click shows Find missing / Move to root / '
-        'Delete, and no Relink for a present file', (tester) async {
-      final app = AppStateStub(bridge: _Fake());
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await tester.tap(find.text('clip.mp4'), buttons: kSecondaryButton);
-      await tester.pumpAndSettle();
-      // A present footage row: Find missing footage, Move to root, Delete. No
-      // Relink (that appears only on a missing file) and no Composition settings.
-      expect(find.text('Composition settings…'), findsNothing);
-      expect(find.text('Relink…'), findsNothing);
-      expect(find.text('Find missing footage'), findsOneWidget);
-      expect(find.text('Move to root'), findsOneWidget);
-      expect(find.text('Delete'), findsOneWidget);
-    });
-  });
 }

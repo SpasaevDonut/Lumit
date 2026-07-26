@@ -185,34 +185,12 @@ pub(crate) fn decode_frame(
     decoder.frame_rgba(n, None).ok()
 }
 
-/// Decode a representative frame of footage item `item_id` and downscale it so
-/// its longer edge is at most `max_edge`, caching the result on the bridge's
-/// [`MediaCache`] so the Project panel decodes each thumbnail exactly once
-/// (`media` feature only). Frame 0 is the representative frame. `None` on any
-/// failure (unknown/non-footage item, missing/unreadable file, empty index) —
-/// the null the FFI turns into "no thumbnail". A `max_edge` of 0 is treated as
-/// 1; oversized values are clamped so a thumbnail never allocates unbounded.
-///
-/// The downscale never *upscales*: a source already within `max_edge` is
-/// returned at its own size, so a tiny clip is not blown up.
-#[cfg(feature = "media")]
-pub(crate) fn thumbnail(
-    bridge: &mut crate::state::Bridge,
-    item_id: &str,
-    max_edge: u32,
-) -> Option<(u32, u32, Vec<u8>)> {
-    let id = Uuid::parse_str(item_id).ok()?;
-    let path = crate::state::footage_path(bridge, item_id)?;
-    thumbnail_from_path(&mut bridge.media, id, max_edge, &path)
-}
-
 /// Decode a thumbnail for `id` from `path`, memoised in `cache`.
 ///
-/// The bridge-agnostic core: it takes the cache and the resolved path rather than
-/// a whole bridge, so the v0 wrapper above and the frb `FootageReference` both
-/// drive the same decode, the same box filter and the same cache. Shared rather
-/// than copied because a second implementation would quietly produce differently
-/// scaled thumbnails for the same request.
+/// It takes the cache and the resolved path rather than a whole bridge, which is
+/// what let the v0 wrapper and the frb `FootageReference` drive the same decode,
+/// the same box filter and the same cache. The v0 wrapper went with the Project
+/// panel's port; `FootageReference::thumbnail` is the only caller now.
 ///
 /// `max_edge` is clamped to 1..=4096: a request for a zero-pixel or absurd
 /// thumbnail is a caller bug, not something to allocate for.
@@ -415,14 +393,19 @@ mod tests {
         assert_eq!(out, src);
     }
 
-    /// The thumbnail cache round-trips through the bridge: an unknown item is
-    /// `None` (never a panic), and the cache stores keyed on `(item, max_edge)`.
+    /// A file that is not there is `None`, never a panic — the decode runs on
+    /// whatever path a relink or a moved project hands it.
     #[cfg(feature = "media")]
     #[test]
-    fn thumbnail_of_an_unknown_item_is_none() {
-        let mut bridge = crate::state::Bridge::new();
-        assert!(thumbnail(&mut bridge, "not-a-uuid", 128).is_none());
-        let unknown = Uuid::now_v7().to_string();
-        assert!(thumbnail(&mut bridge, &unknown, 128).is_none());
+    fn thumbnail_of_a_missing_file_is_none() {
+        let mut cache = MediaCache::default();
+        let id = Uuid::now_v7();
+        assert!(thumbnail_from_path(
+            &mut cache,
+            id,
+            128,
+            std::path::Path::new("/nowhere/absent.mp4")
+        )
+        .is_none());
     }
 }

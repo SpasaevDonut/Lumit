@@ -1,206 +1,26 @@
-//! The bridge v0.5 project-item and layer-identity ops: deleting, renaming and
-//! re-homing project items, relinking missing footage, and the layer commands
-//! (rename, convert-to-sequenced, trim-to-source-end).
+//! The bridge v0.5 layer-identity ops: rename, convert-to-sequenced, and
+//! trim-to-source-end.
 //!
 //! # In plain terms
 //!
-//! These are the right-click actions the Project panel and the layer outline
-//! offer: throw an item away, rename it, drag it back to the panel root, or
-//! point a moved-away footage file at its new home on disk. Plus the three
-//! layer commands the timeline menu exposes — rename a layer, convert a footage
-//! layer into an editable Sequence layer, and trim a retimed clip to where its
-//! source runs out. Each routes through the same [`lumit_core::ops::Op`] the
-//! egui frontend commits (`RemoveItem`, `RenameItem`, `SetFolderChildren`,
-//! `SetMediaRef`, `RenameLayer`, the convert batch, `SetLayerSpan`), so undo is
-//! one clean step and the two frontends cannot drift.
+//! These are three of the commands the timeline's layer menu offers — rename a
+//! layer, convert a footage layer into an editable Sequence layer, and trim a
+//! retimed clip to where its source runs out. Each routes through the same
+//! [`lumit_core::ops::Op`] the egui frontend commits (`RenameLayer`, the
+//! convert batch, `SetLayerSpan`), so undo is one clean step and the two
+//! frontends cannot drift.
+//!
+//! The project-item ops that shared this file — delete, rename, move-to-root
+//! and relink — went with the frb port of the Project panel; their replacements
+//! are methods on `api::project_item::ItemReference`.
 
 use crate::err_json;
 use crate::state::{commit, parse_comp_layer, Bridge};
-use lumit_core::model::{Composition, Layer, LayerKind, ProjectItem};
+use lumit_core::model::{Composition, Layer, LayerKind};
 use lumit_core::ops::Op;
 use lumit_core::sequence::{Clip, ClipSource};
 use lumit_core::time::Rational;
 use uuid::Uuid;
-
-// ---------------------------------------------------------------------------
-// Project-item ops.
-// ---------------------------------------------------------------------------
-
-/// Delete a project item — `lumit-ui`'s project-panel Delete
-/// ([`Op::RemoveItem`]). One undo step; the op restores the item and every
-/// folder listing on undo. An unknown id is a calm error.
-pub(crate) fn delete_item(bridge: &mut Bridge, item_id: &str) -> String {
-    let id = match Uuid::parse_str(item_id) {
-        Ok(id) => id,
-        Err(_) => return err_json("delete item: item id is not a valid UUID"),
-    };
-    if bridge.store.snapshot().item(id).is_none() {
-        return err_json("delete item: unknown item");
-    }
-    commit(bridge, Op::RemoveItem { id }, "delete item")
-}
-
-/// Rename a project item — the panel's inline rename ([`Op::RenameItem`]). A
-/// blank name is refused calmly (the egui field keeps the old name); an unknown
-/// id is a calm error.
-pub(crate) fn rename_item(bridge: &mut Bridge, item_id: &str, name: &str) -> String {
-    let id = match Uuid::parse_str(item_id) {
-        Ok(id) => id,
-        Err(_) => return err_json("rename item: item id is not a valid UUID"),
-    };
-    if name.trim().is_empty() {
-        return err_json("rename item: the name cannot be empty");
-    }
-    if bridge.store.snapshot().item(id).is_none() {
-        return err_json("rename item: unknown item");
-    }
-    commit(
-        bridge,
-        Op::RenameItem {
-            id,
-            name: name.to_owned(),
-        },
-        "rename item",
-    )
-}
-
-/// Move an item back to the panel root — `lumit-ui`'s `move_item_to_folder(item,
-/// None)`: remove it from every folder that lists it, as one undo step. Already
-/// at the root (no folder lists it) is a calm no-op that still refreshes.
-pub(crate) fn move_to_root(bridge: &mut Bridge, item_id: &str) -> String {
-    let id = match Uuid::parse_str(item_id) {
-        Ok(id) => id,
-        Err(_) => return err_json("move to root: item id is not a valid UUID"),
-    };
-    let doc = bridge.store.snapshot();
-    if doc.item(id).is_none() {
-        return err_json("move to root: unknown item");
-    }
-    let mut ops: Vec<Op> = Vec::new();
-    for pi in &doc.items {
-        if let ProjectItem::Folder(f) = pi {
-            if f.children.contains(&id) {
-                ops.push(Op::SetFolderChildren {
-                    folder: f.id,
-                    children: f.children.iter().copied().filter(|c| *c != id).collect(),
-                });
-            }
-        }
-    }
-    // Already at the root — nothing lists it. Still return a fresh snapshot.
-    match ops.len() {
-        0 => crate::state::snapshot(bridge),
-        1 => commit(bridge, ops.remove(0), "move to root"),
-        _ => commit(bridge, Op::Batch { ops }, "move to root"),
-    }
-}
-
-/// Relink a missing footage item at `path`, and every *other* missing footage
-/// item whose file name turns up in the same folder — `lumit-ui`'s
-/// `relink_item_dialog` without the dialog (the path is chosen Dart-side, TF-37).
-/// The chosen file's absolute path is stored (and the relative path rebased
-/// against the project folder when one is known); the fingerprint is refreshed.
-/// One undo step for the whole relink, siblings included. `item_id` must be a
-/// footage item, else a calm error.
-pub(crate) fn relink(bridge: &mut Bridge, item_id: &str, path: &str) -> String {
-    let ctx = "relink";
-    let id = match Uuid::parse_str(item_id) {
-        Ok(id) => id,
-        Err(_) => return err_json(format!("{ctx}: item id is not a valid UUID")),
-    };
-    if path.trim().is_empty() {
-        return err_json(format!("{ctx}: no path given"));
-    }
-    let picked = std::path::PathBuf::from(path);
-    let doc = bridge.store.snapshot();
-    let Some(ProjectItem::Footage(_)) = doc.item(id) else {
-        return err_json(format!("{ctx}: unknown footage item"));
-    };
-    let folder = picked.parent().map(std::path::Path::to_path_buf);
-    let project_dir = bridge
-        .path
-        .as_deref()
-        .and_then(|p| p.parent())
-        .map(std::path::Path::to_path_buf);
-
-    let mut ops: Vec<Op> = Vec::new();
-    for pi in &doc.items {
-        let ProjectItem::Footage(other) = pi else {
-            continue;
-        };
-        let is_target = other.id == id;
-        // A sibling relinks only when it is currently missing (media feature);
-        // without the feature nothing probes, so only the explicit target moves.
-        if !is_target && !sibling_is_missing(bridge, other.id) {
-            continue;
-        }
-        let candidate = if is_target {
-            picked.clone()
-        } else {
-            let Some(folder) = &folder else { continue };
-            let name = std::path::Path::new(&other.media.relative_path)
-                .file_name()
-                .map(std::ffi::OsString::from)
-                .unwrap_or_else(|| std::ffi::OsString::from(&other.name));
-            let candidate = folder.join(name);
-            if !candidate.is_file() {
-                continue;
-            }
-            candidate
-        };
-        let mut media = other.media.clone();
-        media.absolute_path = candidate.to_string_lossy().into_owned();
-        if let Some(dir) = &project_dir {
-            if let Some(rel) = lumit_project::relative_between(dir, &candidate) {
-                media.relative_path = rel;
-            }
-        }
-        media.fingerprint = lumit_project::fingerprint_path(&candidate).ok();
-        ops.push(Op::SetMediaRef {
-            id: other.id,
-            media: Box::new(media),
-        });
-    }
-    if ops.is_empty() {
-        return err_json(format!("{ctx}: nothing to relink at that path"));
-    }
-    let reply = match ops.len() {
-        1 => commit(bridge, ops.remove(0), ctx),
-        _ => commit(bridge, Op::Batch { ops }, ctx),
-    };
-    // Re-probe the relinked items so the snapshot reflects the new files.
-    reprobe(bridge);
-    reply
-}
-
-/// Whether a footage item currently probes "missing" (media feature). Without
-/// the feature nothing probes, so no sibling is treated as missing.
-fn sibling_is_missing(bridge: &Bridge, id: Uuid) -> bool {
-    #[cfg(feature = "media")]
-    {
-        matches!(
-            bridge.media.get(&id),
-            Some(crate::media::MediaStatus::Missing)
-        )
-    }
-    #[cfg(not(feature = "media"))]
-    {
-        let _ = (bridge, id);
-        false
-    }
-}
-
-/// Clear and re-probe the media cache after a relink (media feature only), so
-/// the freshly-linked files report "ok" in the next snapshot.
-fn reprobe(bridge: &mut Bridge) {
-    #[cfg(feature = "media")]
-    {
-        bridge.media.clear();
-        crate::state::refresh_media(bridge);
-    }
-    #[cfg(not(feature = "media"))]
-    let _ = bridge;
-}
 
 // ---------------------------------------------------------------------------
 // Layer-identity ops.
@@ -381,6 +201,7 @@ pub(crate) fn trim_to_source_end(bridge: &mut Bridge, comp_id: &str, layer_id: &
 mod tests {
     use super::*;
     use crate::edits::{add_camera_layer, add_footage_layer};
+    use lumit_core::model::ProjectItem;
     use crate::state::{import_footage, new_composition, snapshot, undo};
     use serde_json::{json, Value};
 
@@ -413,87 +234,6 @@ mod tests {
             }
         }
         panic!("no composition in snapshot");
-    }
-
-    #[test]
-    fn rename_item_changes_the_name_and_undoes() {
-        let mut b = Bridge::new();
-        import_footage(&mut b, "/media/clip.mp4");
-        let doc = b.store.snapshot();
-        let id = doc
-            .items
-            .iter()
-            .find_map(|i| match i {
-                ProjectItem::Footage(f) => Some(f.id),
-                _ => None,
-            })
-            .unwrap()
-            .to_string();
-        let snap = parse(&rename_item(&mut b, &id, "Renamed"));
-        assert_eq!(snap["items"][0]["name"], json!("Renamed"));
-        let after = parse(&undo(&mut b));
-        assert_eq!(after["items"][0]["name"], json!("clip.mp4"));
-    }
-
-    #[test]
-    fn rename_item_rejects_a_blank_name() {
-        let mut b = Bridge::new();
-        import_footage(&mut b, "/media/clip.mp4");
-        let id = b
-            .store
-            .snapshot()
-            .items
-            .iter()
-            .find_map(|i| match i {
-                ProjectItem::Footage(f) => Some(f.id),
-                _ => None,
-            })
-            .unwrap()
-            .to_string();
-        let reply = parse(&rename_item(&mut b, &id, "   "));
-        assert_eq!(reply["ok"], json!(false));
-        assert!(reply["error"].as_str().unwrap().contains("cannot be empty"));
-    }
-
-    #[test]
-    fn delete_item_removes_it_and_undoes() {
-        let mut b = Bridge::new();
-        import_footage(&mut b, "/media/clip.mp4");
-        let id = b
-            .store
-            .snapshot()
-            .items
-            .iter()
-            .find_map(|i| match i {
-                ProjectItem::Footage(f) => Some(f.id),
-                _ => None,
-            })
-            .unwrap()
-            .to_string();
-        let snap = parse(&delete_item(&mut b, &id));
-        assert_eq!(snap["items"], json!([]));
-        let after = parse(&undo(&mut b));
-        assert_eq!(after["items"].as_array().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn move_to_root_lifts_a_comp_out_of_the_auto_folder() {
-        // new_composition files the comp under a "Compositions" folder. Moving it
-        // to the root leaves it as a top-level item.
-        let mut b = Bridge::new();
-        new_composition(&mut b, "Scene");
-        let snap = parse(&snapshot(&b));
-        // The comp is nested under the folder.
-        let folder = &snap["items"][0];
-        assert_eq!(folder["kind"], json!("folder"));
-        let comp = folder["children"][0]["id"].as_str().unwrap().to_owned();
-        let after = parse(&move_to_root(&mut b, &comp));
-        // The folder now has no children and the comp is a root item.
-        assert!(after["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|i| i["kind"] == json!("composition")));
     }
 
     #[test]

@@ -1471,16 +1471,11 @@ typedef _RenderScopeC = Pointer<Uint8> Function(Uint32, Pointer<Char>, Uint64,
 typedef _RenderScopeDart = Pointer<Uint8> Function(int, Pointer<Char>, int,
     double, int, int, int, int, int, Pointer<Size>);
 
-// Bridge v0.8 (ABI 8): cache controls, render cancellation, thumbnails. The
-// cache controls and render_cancel_stale take/return JSON like the other ops;
-// set_cache_budget and render_cancel_stale take a single u64. thumbnail mirrors
-// decode but takes a u32 max-edge instead of a u64 frame.
+// Bridge v0.8 (ABI 8): cache controls and render cancellation. Both take/return
+// JSON like the other ops; set_cache_budget and render_cancel_stale take a
+// single u64.
 typedef _U64ArgC = Pointer<Char> Function(Uint64);
 typedef _U64ArgDart = Pointer<Char> Function(int);
-typedef _ThumbC = Pointer<Uint8> Function(
-    Pointer<Char>, Uint32, Pointer<Uint32>, Pointer<Uint32>, Pointer<Size>);
-typedef _ThumbDart = Pointer<Uint8> Function(
-    Pointer<Char>, int, Pointer<Uint32>, Pointer<Uint32>, Pointer<Size>);
 
 // Bridge v0.10 (audio playback): play takes the comp id + start seconds, seek
 // a bare double; the per-tick clock poll writes through out-pointers and
@@ -2018,21 +2013,6 @@ abstract class RenderCancelBridge {
   void renderCancelStale(int generation);
 }
 
-/// The Project-panel thumbnail path (ABI 8): decode + downscale a footage item's
-/// representative frame once, caching it engine-side. Its own capability so the
-/// many `implements DocumentBridge` fakes need no change; a panel builds its UI
-/// against this and a fake supplies a synthetic thumbnail.
-abstract class ThumbnailBridge {
-  /// True when the loaded library exports `thumbnail` (ABI 8+).
-  bool get supportsThumbnail;
-
-  /// A thumbnail of footage [itemId] whose longer edge is at most [maxEdge],
-  /// or null on failure (unknown/non-footage item, missing/unreadable file, an
-  /// older library). The pixels are copied out of the engine buffer, which is
-  /// freed immediately, so the returned frame owns them.
-  DecodedFrame? thumbnail(String itemId, int maxEdge);
-}
-
 /// The bridge v0.5 edit ops, kept as their own capability interface (like
 /// [CompRenderBridge]) so the many `implements DocumentBridge` fakes across the
 /// suite need no change: a bridge either offers this capability or it does not.
@@ -2047,12 +2027,6 @@ abstract class EditOpsBridge {
   // Beats.
   BridgeReply detectBeats(String compId, int sensitivity);
   BridgeReply clearBeatMarkers(String compId);
-
-  // Project-item ops.
-  BridgeReply deleteItem(String itemId);
-  BridgeReply renameItem(String itemId, String name);
-  BridgeReply moveToRoot(String itemId);
-  BridgeReply relink(String itemId, String path);
 
   // Layer-identity ops.
   BridgeReply renameLayer(String compId, String layerId, String name);
@@ -2141,7 +2115,6 @@ class LumitBridge
         SharedTextureBridge,
         CacheControlBridge,
         RenderCancelBridge,
-        ThumbnailBridge,
         ScopeTraceBridge,
         EditOpsBridge,
         PresetJsonBridge,
@@ -2203,10 +2176,6 @@ class LumitBridge
   final _Str2IntDart _deleteClipAtPlayhead;
   final _MarkerDart _detectBeats;
   final _StrArgDart _clearBeatMarkers;
-  final _StrArgDart _deleteItem;
-  final _Str2Dart _renameItem;
-  final _StrArgDart _moveToRoot;
-  final _Str2Dart _relink;
   final _Str3Dart _renameLayer;
   final _Str2Dart _convertToSequenced;
   final _Str2Dart _trimToSourceEnd;
@@ -2277,14 +2246,13 @@ class LumitBridge
   /// [supportsScopeTrace] is false, keeping the Scopes panel on its CPU path.
   _RenderScopeDart? _renderScope;
 
-  /// The ABI-8 cache-control, render-cancellation and thumbnail symbols. Bound
+  /// The ABI-8 cache-control and render-cancellation symbols. Bound
   /// defensively: an older `.dll` lacks them, so each capability reports itself
-  /// off and its methods degrade (empty stats / no-op / null thumbnail).
+  /// off and its methods degrade (empty stats / no-op).
   _NoArgDart? _clearCache;
   _U64ArgDart? _setCacheBudget;
   _NoArgDart? _cacheStats;
   _U64ArgDart? _renderCancelStale;
-  _ThumbDart? _thumbnail;
 
   /// The ABI-10 audio playback symbols, bound as a group (all or none): an
   /// older `.dll` lacks them, so [supportsAudioPlayback] reports false and
@@ -2477,18 +2445,6 @@ class LumitBridge
         _clearBeatMarkers = lib.lookupFunction<_StrArgC, _StrArgDart>(
           'lumit_bridge_clear_beat_markers',
         ),
-        _deleteItem = lib.lookupFunction<_StrArgC, _StrArgDart>(
-          'lumit_bridge_delete_item',
-        ),
-        _renameItem = lib.lookupFunction<_Str2C, _Str2Dart>(
-          'lumit_bridge_rename_item',
-        ),
-        _moveToRoot = lib.lookupFunction<_StrArgC, _StrArgDart>(
-          'lumit_bridge_move_to_root',
-        ),
-        _relink = lib.lookupFunction<_Str2C, _Str2Dart>(
-          'lumit_bridge_relink',
-        ),
         _renameLayer = lib.lookupFunction<_Str3C, _Str3Dart>(
           'lumit_bridge_rename_layer',
         ),
@@ -2616,7 +2572,7 @@ class LumitBridge
     } catch (_) {
       _renderToSharedDmabuf = null;
     }
-    // The ABI-8 cache/cancel/thumbnail symbols are optional (an older library
+    // The ABI-8 cache and cancel symbols are optional (an older library
     // omits them). Bind each independently so a partial upgrade still offers
     // what it can.
     try {
@@ -2640,13 +2596,6 @@ class LumitBridge
       );
     } catch (_) {
       _renderCancelStale = null;
-    }
-    try {
-      _thumbnail = lib.lookupFunction<_ThumbC, _ThumbDart>(
-        'lumit_bridge_thumbnail',
-      );
-    } catch (_) {
-      _thumbnail = null;
     }
     // The GPU scope-pass symbol (K-096 v1) is optional: an older library omits
     // it, so bind defensively and keep the Scopes panel on its CPU trace then.
@@ -3687,7 +3636,7 @@ class LumitBridge
     }
   }
 
-  // --- Bridge v0.8: cache controls, render cancellation, thumbnails ------
+  // --- Bridge v0.8: cache controls and render cancellation ---------------
 
   @override
   bool get supportsCacheControl =>
@@ -3734,39 +3683,6 @@ class LumitBridge
     // Frees the small {"ok":true} reply; the effect is the engine-side atomic.
     _readReply(fn(generation));
   }
-
-  @override
-  bool get supportsThumbnail => _thumbnail != null;
-
-  @override
-  DecodedFrame? thumbnail(String itemId, int maxEdge) {
-    final fn = _thumbnail;
-    if (fn == null) return null;
-    final id = itemId.toNativeUtf8();
-    final outW = malloc<Uint32>();
-    final outH = malloc<Uint32>();
-    final outLen = malloc<Size>();
-    try {
-      final ptr = fn(id.cast(), maxEdge, outW, outH, outLen);
-      if (ptr == nullptr) return null;
-      final len = outLen.value;
-      try {
-        // Copy the pixels out before the buffer is freed back to Rust — the same
-        // contract as decodeFrame (one boxed slice, freed as a whole).
-        final rgba = Uint8List.fromList(ptr.asTypedList(len));
-        return DecodedFrame(width: outW.value, height: outH.value, rgba: rgba);
-      } finally {
-        _freeBuffer(ptr, len);
-      }
-    } finally {
-      malloc.free(id);
-      malloc.free(outW);
-      malloc.free(outH);
-      malloc.free(outLen);
-    }
-  }
-
-  // --- Bridge v0.10: comp audio playback (docs/09) ------------------------
 
   @override
   bool get supportsAudioPlayback =>
@@ -3876,20 +3792,6 @@ class LumitBridge
   @override
   BridgeReply clearBeatMarkers(String compId) =>
       _oneStrOp(_clearBeatMarkers, compId);
-
-  @override
-  BridgeReply deleteItem(String itemId) => _oneStrOp(_deleteItem, itemId);
-
-  @override
-  BridgeReply renameItem(String itemId, String name) =>
-      _twoStrOp(_renameItem, itemId, name);
-
-  @override
-  BridgeReply moveToRoot(String itemId) => _oneStrOp(_moveToRoot, itemId);
-
-  @override
-  BridgeReply relink(String itemId, String path) =>
-      _twoStrOp(_relink, itemId, path);
 
   @override
   BridgeReply renameLayer(String compId, String layerId, String name) =>

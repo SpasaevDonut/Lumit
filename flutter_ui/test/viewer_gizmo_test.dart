@@ -118,10 +118,6 @@ class _NullRenderer implements FrameRenderer {
           void Function(Uint8List?) onTrace) =>
       onTrace(null);
   @override
-  void requestThumbnail(String itemId, int maxEdge, int generation,
-          void Function(DecodedFrame?) onFrame) =>
-      onFrame(null);
-  @override
   void dispose() {}
 }
 

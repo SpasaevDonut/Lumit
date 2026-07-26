@@ -353,6 +353,71 @@ void main() {
           reason: 'the picked path reached the engine, not just the panel');
     });
 
+    /// The menu offers a different set per item kind, and offering the wrong one
+    /// is how a user ends up with a Relink that cannot mean anything.
+    ///
+    /// Migrated from the v0 suite (project_placement_test.dart), which is the
+    /// only place this was asserted before.
+    testWidgets('the context menu shows the item set for the row it opened on',
+        (tester) async {
+      final p = freshProject();
+      p.state.project!.newComposition(name: 'Scene');
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      // A composition: settings, move, delete. Relink and Find missing are
+      // footage-only (egui panels.rs).
+      await tester.tapAt(tester.getCenter(find.text('Scene')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      expect(find.text('Composition settings…'), findsOneWidget);
+      expect(find.text('Move to root'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+      expect(find.text('Relink…'), findsNothing);
+      expect(find.text('Find missing footage'), findsNothing);
+      await tester.tapAt(const Offset(400, 560));
+      await tester.pumpAndSettle();
+
+      // Present footage: no settings, and no Relink — that appears only on a
+      // row that is actually broken.
+      await tester.tapAt(tester.getCenter(find.text('shot.mov')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      expect(find.text('Composition settings…'), findsNothing);
+      expect(find.text('Relink…'), findsNothing);
+      expect(find.text('Find missing footage'), findsOneWidget);
+      expect(find.text('Move to root'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+    });
+
+    /// Migrated from the v0 suite (final_sweep_test.dart). v0 needed an isolate,
+    /// a wire protocol and a generation map to keep a cold decode off the UI
+    /// thread; `FootageReference.thumbnail` is simply async, so the whole
+    /// mechanism here is one `FutureBuilder`-shaped load.
+    testWidgets('a footage row decodes and shows a thumbnail', (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: _probeableImageFile('still.bmp'));
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await settleFrb(
+        tester,
+        until: () => find.byType(RawImage).evaluate().isNotEmpty,
+      );
+
+      expect(find.byType(RawImage), findsOneWidget,
+          reason: 'the row drew the decoded picture, not the type glyph');
+    });
+
     /// The panel used to rebuild on *every* document change, so tweaking a layer
     /// dropped the whole missing-media cache and re-probed every footage file on
     /// disk. `ScopedChange.items` is the separation; `op_scope` in api/state.rs
@@ -458,5 +523,54 @@ Uint8List _silentWav() {
   ascii('data');
   u32(samples.length);
   out.add(samples);
+  return out.takeBytes();
+}
+
+/// A file with a genuinely decodable picture in it, for the thumbnail path.
+///
+/// A 2×2 24-bit BMP rather than a video: it can be built here byte by byte,
+/// where a real video would need an ffmpeg CLI on the machine — which a widget
+/// test must not depend on. libavformat opens it as a one-frame video stream,
+/// which is all `thumbnail` asks for. The WAV that [_probeableMediaFile] writes
+/// will not do: it resolves, but has no picture to decode.
+String _probeableImageFile(String name) {
+  final dir = Directory.systemTemp.createTempSync('lumit-thumb');
+  final file = File('${dir.path}/$name');
+  file.writeAsBytesSync(_tinyBmp());
+  return file.path;
+}
+
+/// A 2×2 24-bit BMP, bottom-up, rows padded to a 4-byte boundary.
+Uint8List _tinyBmp() {
+  final out = BytesBuilder();
+  void ascii(String s) => out.add(s.codeUnits);
+  void u16(int v) => out.add([v & 0xff, (v >> 8) & 0xff]);
+  void u32(int v) =>
+      out.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
+
+  // Two pixels per row is 6 bytes, padded to 8; two rows.
+  const pixelBytes = 16;
+  ascii('BM');
+  u32(14 + 40 + pixelBytes); // file size
+  u32(0); // reserved
+  u32(14 + 40); // offset to the pixel array
+
+  u32(40); // BITMAPINFOHEADER
+  u32(2); // width
+  u32(2); // height
+  u16(1); // planes
+  u16(24); // bits per pixel
+  u32(0); // BI_RGB, uncompressed
+  u32(pixelBytes);
+  u32(2835); // ~72 dpi
+  u32(2835);
+  u32(0); // palette colours used
+  u32(0); // all colours important
+
+  // BGR triples: two rows of orange/blue, each padded to four bytes.
+  for (var row = 0; row < 2; row++) {
+    out.add([20, 120, 220, 220, 120, 20]);
+    out.add([0, 0]); // row padding
+  }
   return out.takeBytes();
 }

@@ -103,10 +103,10 @@ sequence clips.
     *Where it stands.* `crates/lumit-bridge/src/api/` holds the frb surface and
     `flutter_ui/lib/src/rust/` its generated bindings, built through cargokit
     (`flutter_ui/rust_builder/`). The v0 hand-rolled bridge is untouched and still
-    fully exported — `src/ffi.rs`, ABI v11, 112 `extern "C"` functions — so every
+    fully exported — `src/ffi.rs`, ABI v12, 107 `extern "C"` functions — so every
     shipping panel keeps working while the port proceeds. `main.dart` boots
     `LumitAppNew`, the frb shell; `LumitApp`/`LumitShell` is the v0 shell the
-    ~12,700-line Dart suite exercises. Regenerate with
+    ~12,450-line Dart suite exercises. Regenerate with
     `flutter_rust_bridge_codegen generate` from `flutter_ui/` after any `api`
     change (config in `flutter_ui/flutter_rust_bridge.yaml`).
 
@@ -126,11 +126,11 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: the v0 Project-panel deletion, then the Effect
-    controls panel.** The full ledger:
+    is the gate. **Immediate next: the Effect controls panel.** The full ledger:
 
     **1. The seven docked panels.**
-    - **Project** — **done**, ported, 13 tests against the real engine.
+    - **Project** — **done**: ported, 15 tests against the real engine, and the
+        v0 panel and its ops are deleted.
     - **Viewer** — **partial**: transport only. All three render paths work, but
         `ViewerPanelFrb` is a bare `Texture`/`RawImage`. The real
         `viewer_panel.dart` (560 lines) needs porting, with `viewer_toolbar.dart`,
@@ -200,7 +200,7 @@ sequence clips.
         `restore_journal`, `autosave`.
     - **`decode_frame`** — the single-layer decode behind the Viewer's fallback.
 
-    **4. The v0 Dart suite is migrated, not deleted.** 33 files and ~12,700 lines
+    **4. The v0 Dart suite is migrated, not deleted.** 33 files and ~12,450 lines
     under `flutter_ui/test/`. That suite *is* the parity ledger: it is the only
     written record of what the shipping UI actually does. Each panel's port moves
     its tests to `test/frb/` against the real engine (pattern in
@@ -245,12 +245,15 @@ sequence clips.
             change (`ScopedChange.items`), not on every edit, so a layer tweak no
             longer re-probes every file — but the proper fix is still the off-thread
             probing item under "Threading / platform".
-        - **Unblocked, and next but one:** delete the v0 parts exclusive to it —
-            `rename_item`, `delete_item`, `move_to_root`, `relink`, `thumbnail`
-            from `ffi.rs`/`items.rs`, the v0 `ProjectPanel` Dart code and its
-            bindings, and its three test files.
+        - **Done:** the v0 parts exclusive to it are deleted — `rename_item`,
+            `delete_item`, `move_to_root`, `relink` and `thumbnail` from
+            `ffi.rs`/`items.rs`/`media.rs`, the v0 `ProjectPanel`, its bindings
+            in `bridge.dart`/`app_state.dart`, the thumbnail leg of the
+            off-thread renderer seam (`preview_isolate.dart`/`preview_source.dart`
+            — its only caller was that panel), and the v0 test groups. The v0
+            shell's Project slot is a placeholder now.
             `import_footage`/`new_composition`/`save_project` are shared with the
-            menu bar and stay; `media.rs` is shared infrastructure and stays.
+            menu bar and stayed; so did `media::thumbnail_from_path`.
 
     3. **Menu bar and shell** — ported and tested (9 tests). `save_project` plus
         the recovery, autosave and export entries;

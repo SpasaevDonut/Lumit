@@ -212,7 +212,10 @@ void main() {
       final fake = _FakeBridge(_sceneJson('Scene'));
       await tester.pumpWidget(PopoutHost(
         args: const PopoutArguments(
-          panel: Panel.project,
+          // Hierarchy rather than Project: this asserts the popout *host*, and
+          // needs any hostable panel that draws a document name. The Project
+          // panel moved to frb, which this shell does not carry.
+          panel: Panel.hierarchy,
           scheme: LumitColorScheme.dark,
           shape: ThemeShape.sharp,
         ),
@@ -229,7 +232,10 @@ void main() {
       final fake = _FakeBridge(_sceneJson('Scene'));
       await tester.pumpWidget(PopoutHost(
         args: const PopoutArguments(
-          panel: Panel.project,
+          // Hierarchy rather than Project: this asserts the popout *host*, and
+          // needs any hostable panel that draws a document name. The Project
+          // panel moved to frb, which this shell does not carry.
+          panel: Panel.hierarchy,
           scheme: LumitColorScheme.dark,
           shape: ThemeShape.sharp,
         ),

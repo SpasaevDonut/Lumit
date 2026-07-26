@@ -3010,9 +3010,12 @@ worker was mid-render on an uncached frame, the whole window stopped until that
 render finished. The worker now serves those too: the Scopes panel's trace
 (which reads the engine every time a new frame lands, so with the panel open
 every uncached frame used to freeze the window for the length of its render)
-and the Project panel's little footage thumbnails both ride the same background
+and the Project panel's little footage thumbnails both rode the same background
 worker, ask-and-carry-on style with the same "only the newest request matters"
-manner. Beat detection — which listens through the whole composition's audio
+manner. (The thumbnail half of that has since gone: the Project panel moved to
+the new bridge, where asking for a thumbnail is simply an ordinary background
+request, so the hand-built worker route for it was deleted rather than kept in
+two versions.) Beat detection — which listens through the whole composition's audio
 and can take seconds — now runs in its own short-lived background worker: a
 quiet "Detecting beats…" note shows while it listens, and the markers appear
 when it is done, with the window live the whole time. And the colour

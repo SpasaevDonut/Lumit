@@ -756,11 +756,11 @@ class PreviewSource extends ChangeNotifier {
 
   // --- Forwarders onto the renderer seam (the perf pass, TF round 5) ------
   //
-  // The Scopes panel, the Project-panel thumbnails and the eyedropper reach
-  // the OFF-THREAD renderer through these, so their engine calls never block
-  // the UI isolate behind the render lock. Each rides its own caller-side
-  // guard and its own generation; none of them touches [_pendingKey], so a
-  // scope trace or a thumbnail can never delay the Viewer's own picture.
+  // The Scopes panel and the eyedropper reach the OFF-THREAD renderer through
+  // these, so their engine calls never block the UI isolate behind the render
+  // lock. Each rides its own caller-side guard and its own generation; neither
+  // touches [_pendingKey], so a scope trace can never delay the Viewer's own
+  // picture.
 
   /// Forward a scope-trace request to the renderer (the K-096 GPU pass, served
   /// off the UI isolate by the worker). The panel holds its own latest-wins
@@ -772,14 +772,6 @@ class PreviewSource extends ChangeNotifier {
     _renderer.requestScopeTrace(
         kind, compId, frame, scale, bg, trace, red, green, blue, ++_seq,
         onTrace);
-  }
-
-  /// Forward a thumbnail decode to the renderer (off the UI isolate on the
-  /// worker; the engine caches it, so repeats are cheap). The Project panel's
-  /// rows hold their own epoch guard.
-  void requestThumbnail(
-      String itemId, int maxEdge, void Function(DecodedFrame?) onFrame) {
-    _renderer.requestThumbnail(itemId, maxEdge, ++_seq, onFrame);
   }
 
   /// A one-off full-scale comp readback for the eyedropper, off the UI isolate.
@@ -886,13 +878,6 @@ abstract class FrameRenderer {
       int bg, int trace, int red, int green, int blue, int generation,
       void Function(Uint8List?) onTrace);
 
-  /// Decode the cached thumbnail of footage [itemId] (longer edge at most
-  /// [maxEdge]) — [ThumbnailBridge.thumbnail] through the same seam, so a cold
-  /// video thumbnail decode never runs on the UI isolate. [onFrame] receives
-  /// the frame, or null without the capability / on failure.
-  void requestThumbnail(String itemId, int maxEdge, int generation,
-      void Function(DecodedFrame?) onFrame);
-
   /// Release any worker/isolate the renderer owns.
   void dispose();
 }
@@ -960,12 +945,6 @@ class SynchronousFrameRenderer implements FrameRenderer {
         ? (b as ScopeTraceBridge)
             .renderScope(kind, compId, frame, scale, bg, trace, red, green, blue)
         : null);
-  }
-
-  @override
-  void requestThumbnail(String itemId, int maxEdge, int generation,
-      void Function(DecodedFrame?) onFrame) {
-    onFrame(app.thumbnail(itemId, maxEdge));
   }
 
   @override

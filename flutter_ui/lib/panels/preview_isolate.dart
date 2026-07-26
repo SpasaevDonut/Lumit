@@ -15,7 +15,7 @@
 // deadlock). That mutex is exactly what makes a render on the worker isolate
 // safe while the UI isolate keeps driving document ops — the two serialise
 // through the lock rather than racing. Only the read-only calls ride the worker
-// — comp renders, footage decodes, scope traces and thumbnails (TF round 5:
+// — comp renders, footage decodes and scope traces (TF round 5:
 // the latter two used to run on the UI isolate and froze the interface waiting
 // on the render lock); document mutations stay on the UI isolate's handle.
 //
@@ -55,13 +55,6 @@ typedef _DecodeDart = Pointer<Uint8> Function(
     Pointer<Char>, int, Pointer<Uint32>, Pointer<Uint32>, Pointer<Size>);
 typedef _FreeBufferC = Void Function(Pointer<Uint8>, Size);
 typedef _FreeBufferDart = void Function(Pointer<Uint8>, int);
-// The cached-thumbnail decode (ABI 8): like decode, but a u32 max-edge instead
-// of a u64 frame. Served on the worker so a cold video thumbnail never blocks
-// the UI isolate (TF round 5).
-typedef _ThumbC = Pointer<Uint8> Function(
-    Pointer<Char>, Uint32, Pointer<Uint32>, Pointer<Uint32>, Pointer<Size>);
-typedef _ThumbDart = Pointer<Uint8> Function(
-    Pointer<Char>, int, Pointer<Uint32>, Pointer<Uint32>, Pointer<Size>);
 // The GPU scope pass (K-096 v1): kind + comp + frame/scale + five packed
 // 0x00RRGGBB colours → the fixed 256×256 RGBA trace. Served on the worker for
 // the same reason (even a cache-served trace waits on the render lock).
@@ -268,9 +261,6 @@ class IsolateFrameRenderer implements FrameRenderer {
       case 'preview':
         _fallback.requestPreview(wire[1] as String, wire[2] as int,
             wire[3] as double, wire[4] as int, onFrame);
-      case 'thumb':
-        _fallback.requestThumbnail(
-            wire[1] as String, wire[2] as int, wire[4] as int, onFrame);
       case 'scope':
         // The trace bytes ride the shared DecodedFrame reply shape (the
         // requestScopeTrace adapter unwraps them again).
@@ -352,12 +342,6 @@ class IsolateFrameRenderer implements FrameRenderer {
         generation,
         ['scope', compId, frame, scale, generation, kind, bg, trace, red, green, blue],
         (frame) => onTrace(frame?.rgba));
-  }
-
-  @override
-  void requestThumbnail(String itemId, int maxEdge, int generation,
-      void Function(DecodedFrame?) onFrame) {
-    _dispatch(generation, ['thumb', itemId, maxEdge, 1.0, generation], onFrame);
   }
 
   @override
@@ -464,16 +448,9 @@ void _workerMain(_WorkerInit init) {
   } catch (_) {
     freeBuffer = null;
   }
-  // The ABI-8 thumbnail and the K-096 scope pass are optional symbols (an older
-  // library omits them); a missing one simply answers null, and the UI isolate
-  // falls back (glyph / CPU trace).
-  _ThumbDart? thumbnail;
-  try {
-    thumbnail =
-        lib.lookupFunction<_ThumbC, _ThumbDart>('lumit_bridge_thumbnail');
-  } catch (_) {
-    thumbnail = null;
-  }
+  // The K-096 scope pass is an optional symbol (an older library omits it); a
+  // missing one simply answers null and the UI isolate falls back to the CPU
+  // trace.
   _RenderScopeDart? renderScope;
   try {
     renderScope = lib.lookupFunction<_RenderScopeC, _RenderScopeDart>(
@@ -508,8 +485,6 @@ void _workerMain(_WorkerInit init) {
       'comp' =>
         _renderOne(render, renderGen, freeBuffer, id, frame, scale, generation),
       'preview' => _renderPreviewOne(renderPreview, freeBuffer, id, frame, scale),
-      // On the thumb wire the `frame` slot carries the max edge.
-      'thumb' => _thumbOne(thumbnail, freeBuffer, id, frame),
       _ => _decodeOne(decode, freeBuffer, id, frame),
     };
     init.mainPort.send([generation, reply.$1, reply.$2, reply.$3]);
@@ -672,33 +647,7 @@ List<Object?> _renderShared(_RenderSharedDart? renderShared,
   }
 }
 
-/// Decode one cached thumbnail on the worker; returns `(width, height, ttd?)`.
 /// Mirrors [_decodeOne] with the ABI-8 max-edge argument in the frame slot.
-(int, int, TransferableTypedData?) _thumbOne(_ThumbDart? thumbnail,
-    _FreeBufferDart? freeBuffer, String itemId, int maxEdge) {
-  if (thumbnail == null || freeBuffer == null) return (0, 0, null);
-  final id = itemId.toNativeUtf8();
-  final outW = malloc<Uint32>();
-  final outH = malloc<Uint32>();
-  final outLen = malloc<Size>();
-  try {
-    final ptr = thumbnail(id.cast(), maxEdge, outW, outH, outLen);
-    if (ptr == nullptr) return (0, 0, null);
-    final len = outLen.value;
-    try {
-      final bytes = Uint8List.fromList(ptr.asTypedList(len));
-      return (outW.value, outH.value, TransferableTypedData.fromList([bytes]));
-    } finally {
-      freeBuffer(ptr, len);
-    }
-  } finally {
-    malloc.free(id);
-    malloc.free(outW);
-    malloc.free(outH);
-    malloc.free(outLen);
-  }
-}
-
 /// Compute one scope trace on the worker (the K-096 GPU pass); returns
 /// `(side, side, ttd?)` — the trace is the engine's fixed 256×256.
 (int, int, TransferableTypedData?) _scopeOne(

@@ -14,7 +14,6 @@ import 'package:lumit_flutter/bridge/bridge.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel.dart';
 import 'package:lumit_flutter/panels/effects_presets_panel.dart';
 import 'package:lumit_flutter/panels/hierarchy_panel.dart';
-import 'package:lumit_flutter/panels/project_panel.dart';
 import 'package:lumit_flutter/panels/viewer_toolbar.dart';
 import 'package:lumit_flutter/state/app_state.dart';
 import 'package:lumit_flutter/theme/theme.dart';
@@ -130,14 +129,6 @@ class _Fake implements DocumentBridge, EditOpsBridge {
   BridgeReply setCameraZoom(String c, String l, double zoom) =>
       _op('camera:$c/$l/$zoom');
   @override
-  BridgeReply renameItem(String id, String name) => _op('rename:$id/"$name"');
-  @override
-  BridgeReply deleteItem(String id) => _op('delete:$id');
-  @override
-  BridgeReply moveToRoot(String id) => _op('moveroot:$id');
-  @override
-  BridgeReply relink(String id, String path) => _op('relink:$id/$path');
-  @override
   BridgeReply setEffectParamBool(String c, String l, String e, String p, bool v) =>
       _op('fxbool:$c/$l/$e/$p=$v');
   @override
@@ -160,13 +151,6 @@ Widget _host(Widget child) => Directionality(
         ),
       ),
     );
-
-Future<void> _secondTap(WidgetTester tester, Finder f) async {
-  await tester.tap(f);
-  await tester.pump(const Duration(milliseconds: 350));
-  await tester.tap(f);
-  await tester.pump(const Duration(milliseconds: 350));
-}
 
 void main() {
   group('Property editors beyond Transform', () {
@@ -255,80 +239,6 @@ void main() {
       app.setPreviewScale(PreviewScale.third);
       expect(app.previewScale, PreviewScale.third);
       expect(app.previewScale.factor, closeTo(1 / 3, 1e-9));
-    });
-  });
-
-  group('Project panel', () {
-    testWidgets('a missing footage row shows the badge and a Relink button',
-        (tester) async {
-      await tester.binding.setSurfaceSize(const Size(480, 760));
-      final app = AppStateStub(bridge: _Fake());
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await tester.pump();
-
-      expect(find.text('missing'), findsOneWidget);
-      expect(find.byKey(const ValueKey('relink-fmiss')), findsOneWidget);
-    });
-
-    test('relink routes the chosen path through the relink op', () {
-      final fake = _Fake();
-      final app = AppStateStub(bridge: fake);
-      app.relink('fmiss', '/new/gone.mp4');
-      expect(fake.ops, contains('relink:fmiss//new/gone.mp4'));
-    });
-
-    testWidgets('the missing-only toggle filters to missing rows',
-        (tester) async {
-      await tester.binding.setSurfaceSize(const Size(480, 760));
-      final app = AppStateStub(bridge: _Fake());
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await tester.pump();
-
-      expect(find.text('Scene'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('missing-toggle')));
-      await tester.pump();
-      // Only the missing footage row remains; the comps are hidden.
-      expect(find.text('Scene'), findsNothing);
-      expect(find.text('gone.mp4'), findsOneWidget);
-    });
-
-    testWidgets('a second click renames a row in place → renameItem',
-        (tester) async {
-      await tester.binding.setSurfaceSize(const Size(480, 760));
-      final fake = _Fake();
-      final app = AppStateStub(bridge: fake);
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await tester.pump();
-
-      await _secondTap(tester, find.text('Scene'));
-      await tester.pump();
-      expect(find.byKey(const ValueKey('rename-field')), findsOneWidget);
-      await tester.enterText(
-          find.byKey(const ValueKey('rename-field')), 'Intro');
-      await tester.testTextInput.receiveAction(TextInputAction.done);
-      await tester.pump();
-      expect(fake.ops, contains('rename:c1/"Intro"'));
-    });
-
-    testWidgets('the context menu Delete and Move to root call their ops',
-        (tester) async {
-      await tester.binding.setSurfaceSize(const Size(480, 760));
-      final fake = _Fake();
-      final app = AppStateStub(bridge: fake);
-      await tester.pumpWidget(_host(ProjectPanel(app: app)));
-      await tester.pump();
-
-      await tester.tap(find.text('gone.mp4'), buttons: kSecondaryButton);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Move to root'));
-      await tester.pumpAndSettle();
-      expect(fake.ops, contains('moveroot:fmiss'));
-
-      await tester.tap(find.text('gone.mp4'), buttons: kSecondaryButton);
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('Delete'));
-      await tester.pumpAndSettle();
-      expect(fake.ops, contains('delete:fmiss'));
     });
   });
 
