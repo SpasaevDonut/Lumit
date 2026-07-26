@@ -138,6 +138,10 @@ and the transparency grid have landed. Still missing:
     paths, masks and shape tools.
 
 **Shell and onboarding:**
+- **Several panel toolbars overflow when docked narrow.** The Scopes toolbar and
+  others lay out as a plain `Row` with fixed-width controls, so a narrow dock
+  shows the overflow stripe. The Timeline toolbar, the Viewer transport and the
+  Project panel footer scroll horizontally instead; the rest need the same.
 - **Status line and splash are not in the frb shell.** The port's shell rebuilt
   the menu bar and dock but not the bottom status line (notices, export progress
   and its cancel button) or the boot splash; `boot_log` and the export poll both

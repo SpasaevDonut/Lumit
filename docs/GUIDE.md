@@ -2475,6 +2475,32 @@ things came back with it — the window's backdrop is the theme's own darkest
 surface rather than Flutter's stock Material grey, and the whole interface is
 drawn through the scale setting so text and hit-targets grow together.
 
+*Why playback froze on its first frame.* A rendered frame arrives from the
+engine as raw pixels, which Flutter turns into an image object that has to be
+explicitly thrown away — nothing collects it for you. The Viewer was throwing the
+*previous* frame away the instant the new one arrived, but the part of Flutter
+that actually draws had not caught up yet and was still holding the old one. It
+then tried to draw a picture that no longer existed, which fails, and once
+drawing fails the Viewer stops updating. Scrubbing by hand left enough time
+between frames to get away with it; playback did not, which is why pressing play
+showed one frame and then nothing. The old frame is now thrown away one frame
+later, when nothing can still be holding it.
+
+*The keyboard works again.* The shell that the port replaced had a key handler —
+space to play, the arrows to step, Ctrl+Z to undo — and the new one had none at
+all, so nothing on the keyboard did anything. It is back, with one correction and
+one addition. The correction: a field with focus has to keep its own keys, or
+typing a layer name would also run commands; the old check looked at the wrong
+widget and would not have caught it. The addition: focus now falls back to the
+shell when a field gives it up, without which every shortcut stopped working
+after the first rename.
+
+*Where the transport sits.* Under the picture, where a transport goes. In the
+rounded theme it is a detached bar floating over the bottom of the frame — the
+rounded language treats it as an object sitting on the picture — while the sharp
+theme keeps it welded to the panel edge, so the two read as two deliberate
+designs rather than one with a gap.
+
 *Dropping footage onto the Timeline.* Dragging a footage item out of the Project
 panel and letting go over the Timeline adds it as a layer. The drag was only ever
 half-built: the Project panel lifted the item and drew it under the cursor, but

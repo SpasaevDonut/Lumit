@@ -394,14 +394,9 @@ Future<T?> showLumitPopup<T>({
               onSecondaryTap: () => close(null),
             ),
           ),
-          Positioned(
-            left: position.dx,
-            top: position.dy,
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight:
-                    (constraints.maxHeight - position.dy - 8).clamp(80.0, 1e6),
-              ),
+          Positioned.fill(
+            child: CustomSingleChildLayout(
+              delegate: _PopupLayout(position),
               // Scrolls only when it has to: a shorter popup shrink-wraps and
               // behaves exactly as before.
               child: SingleChildScrollView(child: builder(close)),
@@ -413,6 +408,37 @@ Future<T?> showLumitPopup<T>({
   );
   overlay.insert(entry);
   return completer.future;
+}
+
+/// Places a popup at its anchor, then pulls it back on screen if it would hang
+/// off an edge.
+///
+/// Anchoring alone was enough while every popup opened from the top of the
+/// window. A control near the bottom — the Viewer's transport, now that it sits
+/// under the picture — opens a list that would run off the bottom entirely, so
+/// the whole thing is shifted up until it fits. The same applies sideways for a
+/// control near the right edge.
+class _PopupLayout extends SingleChildLayoutDelegate {
+  final Offset anchor;
+  const _PopupLayout(this.anchor);
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) =>
+      BoxConstraints.loose(Size(
+        constraints.maxWidth,
+        // Never taller than the room above *or* below the anchor, whichever the
+        // popup ends up using — the larger of the two is the most it can need.
+        (constraints.maxHeight - 16).clamp(80.0, double.infinity),
+      ));
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) => Offset(
+        anchor.dx.clamp(0.0, (size.width - childSize.width).clamp(0.0, 1e6)),
+        anchor.dy.clamp(0.0, (size.height - childSize.height).clamp(0.0, 1e6)),
+      );
+
+  @override
+  bool shouldRelayout(_PopupLayout old) => old.anchor != anchor;
 }
 
 class _PopupCompleter<T> {

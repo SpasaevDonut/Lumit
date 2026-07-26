@@ -65,13 +65,31 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
 
   @override
   void dispose() {
+    _boundUi?.togglePlayRequest.removeListener(_onTogglePlayRequest);
     _ticker?.dispose();
     super.dispose();
+  }
+
+  /// The shell's transport intent (the space bar). Subscribed here rather than
+  /// exposed as a callback so the key is a quiet no-op when no Viewer is
+  /// mounted.
+  LumitUiState? _boundUi;
+
+  void _onTogglePlayRequest() {
+    final ui = _boundUi;
+    final comp = ui?.selectedComp;
+    if (ui == null || comp == null) return;
+    _togglePlay(comp, ui);
   }
 
   @override
   Widget build(BuildContext context) {
     final ui = Provider.of<LumitUiState>(context);
+    if (!identical(_boundUi, ui)) {
+      _boundUi?.togglePlayRequest.removeListener(_onTogglePlayRequest);
+      _boundUi = ui;
+      ui.togglePlayRequest.addListener(_onTogglePlayRequest);
+    }
     final comp = ui.selectedComp;
     if (comp == null) {
       return const PlaceholderPanel(
@@ -82,52 +100,79 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     }
 
     final settings = comp.getSettings();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        ValueListenableBuilder<int>(
-          valueListenable: ui.playheadFrame,
-          builder: (context, frame, _) => _Toolbar(
-            zoom: _zoom,
-            channel: _channel,
-            grid: _grid,
-            playing: playing,
-            frame: frame,
-            settings: settings,
-            onZoom: (z) => setState(() {
-              _zoom = z;
-              _pan = Offset.zero;
-            }),
-            onChannel: (c) => setState(() => _channel = c),
-            onGrid: () => setState(() => _grid = !_grid),
-            onPlayPause: () => _togglePlay(comp, ui),
-            onSeek: (f) => _seek(comp, ui, f),
-          ),
-        ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final size = comp.getSize();
-              final fitted = _fittedRect(constraints, size);
-              _reportScale(ui, fitted, size);
+    final t = ThemeScope.of(context).theme;
+    final round = t.shape == ThemeShape.round;
 
-              return ValueListenableBuilder<int>(
-                valueListenable: ui.playheadFrame,
-                builder: (context, frame, _) => _Stage(
-                  comp: comp,
-                  uiState: ui,
-                  fitted: fitted,
-                  grid: _grid,
-                  channel: _channel,
-                  onPan: (delta) => setState(() => _pan += delta),
-                  onChanged: () => setState(() {}),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
+    final bar = ValueListenableBuilder<int>(
+      valueListenable: ui.playheadFrame,
+      builder: (context, frame, _) => _Toolbar(
+        zoom: _zoom,
+        channel: _channel,
+        grid: _grid,
+        playing: playing,
+        frame: frame,
+        settings: settings,
+        onZoom: (z) => setState(() {
+          _zoom = z;
+          _pan = Offset.zero;
+        }),
+        onChannel: (c) => setState(() => _channel = c),
+        onGrid: () => setState(() => _grid = !_grid),
+        onPlayPause: () => _togglePlay(comp, ui),
+        onSeek: (f) => _seek(comp, ui, f),
+        floating: round,
+      ),
     );
+
+    final stage = Expanded(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final size = comp.getSize();
+          final fitted = _fittedRect(constraints, size);
+          _reportScale(ui, fitted, size);
+
+          return ValueListenableBuilder<int>(
+            valueListenable: ui.playheadFrame,
+            builder: (context, frame, _) => _Stage(
+              comp: comp,
+              uiState: ui,
+              fitted: fitted,
+              grid: _grid,
+              channel: _channel,
+              onPan: (delta) => setState(() => _pan += delta),
+              onChanged: () => setState(() {}),
+            ),
+          );
+        },
+      ),
+    );
+
+    // The transport belongs under the picture, where a transport goes. In round
+    // mode it is a detached bar floating over the bottom of the frame — the
+    // rounded language treats it as an object sitting on the picture rather
+    // than a strip welded to the panel edge; sharp mode keeps it attached, so
+    // the two shapes read as two deliberate designs rather than one with a gap.
+    return round
+        ? Stack(
+            children: [
+              Positioned.fill(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [stage],
+                ),
+              ),
+              Positioned(
+                left: t.tokens.windowInset,
+                right: t.tokens.windowInset,
+                bottom: t.tokens.windowInset,
+                child: bar,
+              ),
+            ],
+          )
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [stage, bar],
+          );
   }
 
   /// Where the picture sits in the panel, at the current magnification.
@@ -506,8 +551,7 @@ class _SelectionOverlayState extends State<_SelectionOverlay> {
   /// way this overlay cannot represent as a single position.
   ViewerLayerMap? _mapFor(LayerReference layer, BridgeCompSize size) {
     final tf = layer.getTransform();
-    double? still(BridgeScalar s) =>
-        s is BridgeScalar_Static ? s.field0 : null;
+    double? still(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : null;
 
     final px = still(tf.positionX);
     final py = still(tf.positionY);
@@ -675,6 +719,10 @@ class _Toolbar extends StatelessWidget {
   final VoidCallback onPlayPause;
   final ValueChanged<int> onSeek;
 
+  /// Drawn as a detached bar over the picture (round mode) rather than a strip
+  /// filling the panel's width (sharp mode).
+  final bool floating;
+
   const _Toolbar({
     required this.zoom,
     required this.channel,
@@ -687,6 +735,7 @@ class _Toolbar extends StatelessWidget {
     required this.onGrid,
     required this.onPlayPause,
     required this.onSeek,
+    this.floating = false,
   });
 
   @override
@@ -694,88 +743,101 @@ class _Toolbar extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     return Container(
       height: 26,
-      color: t.surface1,
+      decoration: BoxDecoration(
+        color: t.surface1,
+        borderRadius:
+            floating ? BorderRadius.circular(t.tokens.floatRadius) : null,
+        border: floating ? Border.all(color: t.hairline) : null,
+        boxShadow: floating ? t.tokens.cardShadow : null,
+      ),
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 76,
-            child: BareDropdown<int>(
-              key: const ValueKey('viewer-zoom'),
-              value: _zoomSteps.indexOf(zoom).clamp(0, _zoomSteps.length - 1),
-              options: [for (var i = 0; i < _zoomSteps.length; i++) i],
-              label: (i) => _zoomSteps[i] == null
-                  ? 'Fit'
-                  : '${(_zoomSteps[i]! * 100).round()}%',
-              onChanged: (i) => onZoom(_zoomSteps[i]),
+      // Scrolls rather than overflowing: a Viewer docked narrow has less width
+      // than this bar wants, and an overflow stripe is not a design.
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            SizedBox(
+              width: 76,
+              child: BareDropdown<int>(
+                key: const ValueKey('viewer-zoom'),
+                value: _zoomSteps.indexOf(zoom).clamp(0, _zoomSteps.length - 1),
+                options: [for (var i = 0; i < _zoomSteps.length; i++) i],
+                label: (i) => _zoomSteps[i] == null
+                    ? 'Fit'
+                    : '${(_zoomSteps[i]! * 100).round()}%',
+                onChanged: (i) => onZoom(_zoomSteps[i]),
+              ),
             ),
-          ),
-          const SizedBox(width: 6),
-          SizedBox(
-            width: 76,
-            child: BareDropdown<ViewerChannel>(
-              key: const ValueKey('viewer-channel'),
-              value: channel,
-              options: ViewerChannel.values,
-              label: _channelLabel,
-              onChanged: onChannel,
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 76,
+              child: BareDropdown<ViewerChannel>(
+                key: const ValueKey('viewer-channel'),
+                value: channel,
+                options: ViewerChannel.values,
+                label: _channelLabel,
+                onChanged: onChannel,
+              ),
             ),
-          ),
-          const SizedBox(width: 6),
-          LumitTooltip(
-            message: 'Show the transparency grid behind the picture',
-            child: HouseButton(
-              key: const ValueKey('viewer-grid'),
+            const SizedBox(width: 6),
+            LumitTooltip(
+              message: 'Show the transparency grid behind the picture',
+              child: HouseButton(
+                key: const ValueKey('viewer-grid'),
+                small: true,
+                frameless: true,
+                onPressed: onGrid,
+                child: Text('Grid',
+                    style: t.small.copyWith(color: grid ? t.accent : null)),
+              ),
+            ),
+            // A fixed gap, not a Spacer: the bar scrolls when the panel is
+            // narrow, and a flex child cannot live inside a scroll view.
+            const SizedBox(width: 24),
+            HouseButton(
+              key: const ValueKey('viewer-home'),
               small: true,
               frameless: true,
-              onPressed: onGrid,
-              child: Text('Grid',
-                  style: t.small.copyWith(color: grid ? t.accent : null)),
+              onPressed: () => onSeek(0),
+              child: Text('|◀', style: t.small),
             ),
-          ),
-          const Spacer(),
-          HouseButton(
-            key: const ValueKey('viewer-home'),
-            small: true,
-            frameless: true,
-            onPressed: () => onSeek(0),
-            child: Text('|◀', style: t.small),
-          ),
-          HouseButton(
-            key: const ValueKey('viewer-step-back'),
-            small: true,
-            frameless: true,
-            onPressed: () => onSeek(frame - 1),
-            child: Text('◀', style: t.small),
-          ),
-          HouseButton(
-            key: const ValueKey('viewer-play'),
-            small: true,
-            onPressed: onPlayPause,
-            child: lumitIcon(playing ? LumitIcon.pause : LumitIcon.play,
-                size: 12, color: t.textPrimary),
-          ),
-          HouseButton(
-            key: const ValueKey('viewer-step-forward'),
-            small: true,
-            frameless: true,
-            onPressed: () => onSeek(frame + 1),
-            child: Text('▶', style: t.small),
-          ),
-          HouseButton(
-            key: const ValueKey('viewer-end'),
-            small: true,
-            frameless: true,
-            onPressed: () => onSeek(settings.durationFrames.toInt() - 1),
-            child: Text('▶|', style: t.small),
-          ),
-          const SizedBox(width: 8),
-          Text(
-            timecodeOf(frame, settings),
-            key: const ValueKey('viewer-timecode'),
-            style: t.mono,
-          ),
-        ],
+            HouseButton(
+              key: const ValueKey('viewer-step-back'),
+              small: true,
+              frameless: true,
+              onPressed: () => onSeek(frame - 1),
+              child: Text('◀', style: t.small),
+            ),
+            HouseButton(
+              key: const ValueKey('viewer-play'),
+              small: true,
+              onPressed: onPlayPause,
+              child: lumitIcon(playing ? LumitIcon.pause : LumitIcon.play,
+                  size: 12, color: t.textPrimary),
+            ),
+            HouseButton(
+              key: const ValueKey('viewer-step-forward'),
+              small: true,
+              frameless: true,
+              onPressed: () => onSeek(frame + 1),
+              child: Text('▶', style: t.small),
+            ),
+            HouseButton(
+              key: const ValueKey('viewer-end'),
+              small: true,
+              frameless: true,
+              onPressed: () => onSeek(settings.durationFrames.toInt() - 1),
+              child: Text('▶|', style: t.small),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              timecodeOf(frame, settings),
+              key: const ValueKey('viewer-timecode'),
+              style: t.mono,
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -225,24 +225,28 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
         height: 24,
         color: t.surface1,
         padding: const EdgeInsets.symmetric(horizontal: 6),
-        child: Row(
-          children: [
-            HouseButton(
-              key: const ValueKey('project-import'),
-              small: true,
-              frameless: true,
-              onPressed: _import,
-              child: Text('Import…', style: t.small),
-            ),
-            const SizedBox(width: 6),
-            HouseButton(
-              key: const ValueKey('project-new-comp'),
-              small: true,
-              frameless: true,
-              onPressed: _newComposition,
-              child: Text('New composition', style: t.small),
-            ),
-          ],
+        // Scrolls rather than overflowing — this panel is often docked narrow.
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              HouseButton(
+                key: const ValueKey('project-import'),
+                small: true,
+                frameless: true,
+                onPressed: _import,
+                child: Text('Import…', style: t.small),
+              ),
+              const SizedBox(width: 6),
+              HouseButton(
+                key: const ValueKey('project-new-comp'),
+                small: true,
+                frameless: true,
+                onPressed: _newComposition,
+                child: Text('New composition', style: t.small),
+              ),
+            ],
+          ),
         ),
       );
 

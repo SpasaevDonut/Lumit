@@ -267,6 +267,40 @@ void main() {
           reason: 'pausing the transport pauses the sound too');
     });
 
+    /// The shell's space bar drives the transport through LumitUiState, because
+    /// the ticker belongs to this panel's state — nothing outside can call it.
+    testWidgets('the transport request from the shell starts and stops it',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      p.uiState.requestTogglePlay();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(p.uiState.playheadFrame.value, greaterThan(0),
+          reason: 'space started playback');
+
+      p.uiState.requestTogglePlay();
+      await tester.pump();
+      final stopped = p.uiState.playheadFrame.value;
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(p.uiState.playheadFrame.value, stopped,
+          reason: 'and space stopped it');
+    });
+
+    /// A transport belongs under the picture. Asserted by position rather than
+    /// by reading the widget tree's shape, because what matters is where the
+    /// user's eye and pointer go.
+    testWidgets('the transport sits below the picture', (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      final play = tester.getCenter(find.byKey(const ValueKey('viewer-play')));
+      final stage = tester.getRect(find.byType(ViewerPanelFrb));
+      expect(play.dy, greaterThan(stage.center.dy),
+          reason: 'below the middle of the panel, not above it');
+    });
+
     testWidgets('stepping takes the sound with it', (tester) async {
       final p = withLayer();
       await mount(tester, p);

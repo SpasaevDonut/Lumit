@@ -6,6 +6,7 @@ import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:lumit_flutter/panels/panels_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
@@ -213,6 +214,26 @@ class LumitUiState extends ChangeNotifier {
   ThemeShape get shape => workspace.themeShape;
   LumitTheme get theme => workspace.theme;
 
+  /// Bumped when something outside the Viewer asks the transport to start or
+  /// stop — the space bar, or a command.
+  ///
+  /// A notifier rather than a direct call because the ticker that runs playback
+  /// belongs to the Viewer's own state: the shell should not have to reach into
+  /// a panel, and the Viewer should not have to be mounted for the key to be
+  /// harmless.
+  final ValueNotifier<int> togglePlayRequest = ValueNotifier(0);
+
+  void requestTogglePlay() => togglePlayRequest.value++;
+
+  /// Move the playhead by `delta` frames, clamped to the fronted composition.
+  void stepFrame(int delta) {
+    final comp = selectedComp;
+    if (comp == null) return;
+    final last = comp.getSettings().durationFrames.toInt() - 1;
+    playheadFrame.value =
+        (playheadFrame.value + delta).clamp(0, last < 0 ? 0 : last);
+  }
+
   /// Put the panels back where they started (Window → Reset workspace).
   void resetLayout() => workspace.resetWorkspaceLayout();
 
@@ -339,7 +360,17 @@ class LumitUiState extends ChangeNotifier {
         viewerImage.value = image;
         // Whichever path published last wins.
         viewerFrameid.value = null;
-        previous?.dispose();
+        // Disposed a frame later, not now. `RawImage` does not take ownership:
+        // the tree still holds the previous image until the rebuild this
+        // assignment schedules has been painted. Disposing it here left a
+        // `RawImage` drawing a disposed image, which throws inside paint — and
+        // once paint throws the Viewer stops updating at all. Harmless while
+        // scrubbing by hand, constant during playback, which is why playback
+        // showed one frame and then froze.
+        if (previous != null) {
+          WidgetsBinding.instance
+              .addPostFrameCallback((_) => previous.dispose());
+        }
       },
     );
   }
@@ -432,21 +463,99 @@ class _LumitAppViewState extends State<LumitAppView> {
 
     var uiState = context.watch<LumitUiState>();
 
-    return Column(
-      children: [
-        LumitMenuBarFrb(app: state),
-        Expanded(
-          child: DockWidget(
-            root: uiState.split,
-            buildPanel: (context, panel) => buildPanelBodyFrb(context, panel),
-            // Persisted, so an arrangement survives a restart.
-            onLayoutChanged: uiState.saveLayout,
-            activePanel: uiState.activePanel,
-            onPopOut: (p0) {},
-            canPopOut: (panel) => false,
-          ),
-        )
-      ],
+    // A scope, not a bare Focus: when a text field gives focus up, focus falls
+    // back to the enclosing *scope*. With a bare Focus here it fell back to
+    // nothing at all, and every shortcut stopped working after the first rename
+    // until something was clicked.
+    return FocusScope(
+      autofocus: true,
+      onKeyEvent: (node, event) => _onKey(state, uiState, event),
+      child: Column(
+        children: [
+          LumitMenuBarFrb(app: state),
+          Expanded(
+            child: DockWidget(
+              root: uiState.split,
+              buildPanel: (context, panel) => buildPanelBodyFrb(context, panel),
+              // Persisted, so an arrangement survives a restart.
+              onLayoutChanged: uiState.saveLayout,
+              activePanel: uiState.activePanel,
+              onPopOut: (p0) {},
+              canPopOut: (panel) => false,
+            ),
+          )
+        ],
+      ),
     );
+  }
+
+  /// The keyboard shortcuts, restored from the shell the port replaced.
+  ///
+  /// Only the ones whose engine calls exist on this bridge; the rest are on the
+  /// menus. A field with focus is left alone, or every letter typed into a
+  /// layer name would also be a command.
+  KeyEventResult _onKey(LumitState state, LumitUiState ui, KeyEvent event) {
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    // A field with focus keeps its keys, or typing a layer name would also run
+    // commands. The focused context's own widget is the `Focus` that
+    // `EditableText` builds, not the `EditableText` — so the check has to look
+    // up the tree, which is what the previous shell's version missed.
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return KeyEventResult.ignored;
+    }
+
+    final keyboard = HardwareKeyboard.instance;
+    final ctrl = keyboard.isControlPressed || keyboard.isMetaPressed;
+    final shift = keyboard.isShiftPressed;
+    final key = event.logicalKey;
+    final project = state.project;
+    final comp = ui.selectedComp;
+
+    var handled = true;
+    if (ctrl && shift && key == LogicalKeyboardKey.keyZ) {
+      project?.redo();
+      state.notifyDocumentChanged();
+    } else if (ctrl && key == LogicalKeyboardKey.keyZ) {
+      project?.undo();
+      state.notifyDocumentChanged();
+    } else if (key == LogicalKeyboardKey.space) {
+      ui.requestTogglePlay();
+    } else if (key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.keyJ) {
+      ui.stepFrame(-1);
+    } else if (key == LogicalKeyboardKey.arrowRight) {
+      ui.stepFrame(1);
+    } else if (key == LogicalKeyboardKey.home) {
+      ui.playheadFrame.value = 0;
+    } else if (key == LogicalKeyboardKey.end) {
+      final last = (comp?.getSettings().durationFrames.toInt() ?? 1) - 1;
+      ui.playheadFrame.value = last < 0 ? 0 : last;
+    } else if (ctrl && key == LogicalKeyboardKey.keyD) {
+      final layer = ui.selectedLayer.value;
+      if (layer == null) {
+        handled = false;
+      } else {
+        layer.duplicate();
+        state.notifyDocumentChanged();
+      }
+    } else if (key == LogicalKeyboardKey.delete ||
+        key == LogicalKeyboardKey.backspace) {
+      final layer = ui.selectedLayer.value;
+      if (layer == null) {
+        handled = false;
+      } else {
+        layer.delete();
+        ui.selectedLayer.value = null;
+        state.notifyDocumentChanged();
+      }
+    } else {
+      handled = false;
+    }
+    return handled ? KeyEventResult.handled : KeyEventResult.ignored;
   }
 }
