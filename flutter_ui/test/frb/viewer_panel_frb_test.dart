@@ -301,6 +301,83 @@ void main() {
           reason: 'below the middle of the panel, not above it');
     });
 
+    /// Moving the playhead from anywhere must repaint the Viewer. Only the
+    /// Viewer's own transport used to render, so dragging the Timeline's
+    /// playhead — or pressing an arrow key — moved the playhead and left the
+    /// picture on the old frame.
+    testWidgets('a playhead move from outside the Viewer renders',
+        (tester) async {
+      final p = withLayer();
+      final sub = p.state.onWorkerResponse.listen((_) {});
+      addTearDown(sub.cancel);
+      await mount(tester, p);
+
+      // Exactly what the Timeline ruler and the arrow keys do: set it.
+      p.uiState.playheadFrame.value = 12;
+      await tester.pump();
+
+      // The first render of a session also builds the renderer, so allow for
+      // that before asserting anything about the picture.
+      await settleFrb(
+        tester,
+        until: () => p.uiState.viewerImage.value != null,
+        minRounds: 10,
+        maxRounds: 120,
+      );
+      expect(p.uiState.viewerImage.value, isNotNull,
+          reason: 'a frame was rendered for the moved playhead');
+    });
+
+    /// One request in flight at a time. Firing one per tick queued about ten
+    /// per completed render, all but the newest thrown away — a lock, a
+    /// snapshot and a channel send each, on the UI thread, for nothing.
+    testWidgets('playback keeps one render in flight, not one per tick',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      var frames = 0;
+      final sub = p.state.onWorkerResponse.listen((_) => frames++);
+      addTearDown(sub.cancel);
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
+      // Many ticks, and so many playhead moves.
+      for (var i = 0; i < 30; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      final moved = p.uiState.playheadFrame.value;
+      expect(moved, greaterThan(0), reason: 'the playhead ran');
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 10, maxRounds: 60);
+
+      expect(frames, lessThanOrEqualTo(moved),
+          reason: 'never more renders than frames the playhead visited');
+    });
+
+    /// A still Viewer must go quiet. While the in-flight rule was being built
+    /// it re-asked for the frame it had just been given, so the engine rendered
+    /// the same picture over and over for as long as the panel was open.
+    testWidgets('a still playhead stops asking for renders', (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      var frames = 0;
+      final sub = p.state.onWorkerResponse.listen((_) => frames++);
+      addTearDown(sub.cancel);
+
+      // Let the mount render land, then count what follows it.
+      await settleFrb(tester, minRounds: 10, maxRounds: 120,
+          until: () => p.uiState.viewerImage.value != null);
+      final settled = frames;
+
+      await settleFrb(tester, minRounds: 20, maxRounds: 20);
+      expect(frames, settled,
+          reason: 'nothing moved, so nothing should have been rendered');
+    });
+
     testWidgets('stepping takes the sound with it', (tester) async {
       final p = withLayer();
       await mount(tester, p);

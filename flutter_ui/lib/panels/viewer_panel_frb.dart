@@ -65,7 +65,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
 
   @override
   void dispose() {
-    _boundUi?.togglePlayRequest.removeListener(_onTogglePlayRequest);
+    _unbind();
     _ticker?.dispose();
     super.dispose();
   }
@@ -74,6 +74,14 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
   /// exposed as a callback so the key is a quiet no-op when no Viewer is
   /// mounted.
   LumitUiState? _boundUi;
+
+  void _unbind() {
+    final ui = _boundUi;
+    if (ui == null) return;
+    ui.togglePlayRequest.removeListener(_onTogglePlayRequest);
+    ui.playheadFrame.removeListener(_onPlayheadChanged);
+    ui.frameArrived.removeListener(_onFrameArrived);
+  }
 
   void _onTogglePlayRequest() {
     final ui = _boundUi;
@@ -86,9 +94,17 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
   Widget build(BuildContext context) {
     final ui = Provider.of<LumitUiState>(context);
     if (!identical(_boundUi, ui)) {
-      _boundUi?.togglePlayRequest.removeListener(_onTogglePlayRequest);
+      _unbind();
       _boundUi = ui;
       ui.togglePlayRequest.addListener(_onTogglePlayRequest);
+      ui.playheadFrame.addListener(_onPlayheadChanged);
+      ui.frameArrived.addListener(_onFrameArrived);
+      // The frame under the playhead as it stands: without this the Viewer
+      // shows nothing at all until something moves the playhead. After the
+      // frame, so the scale this asks at is the one just measured.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onPlayheadChanged();
+      });
     }
     final comp = ui.selectedComp;
     if (comp == null) {
@@ -204,14 +220,76 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     state.reportViewerScale(fitted.width / size.width);
   }
 
+  /// The frame the engine is currently rendering for us, or null when idle.
+  ///
+  /// **One render in flight at a time.** Firing a request per tick queued about
+  /// ten of them per completed render, and the worker threw all but the newest
+  /// away — so most of that work was a lock, a document snapshot and a channel
+  /// send on the UI thread for a frame discarded on arrival. Asking again only
+  /// once the previous answer is in gets the same picture for a fraction of the
+  /// cost, and it is always the *newest* wanted frame that gets asked for, so
+  /// nothing lags behind.
+  int? _awaitingFrame;
+
+  /// The newest frame we have been asked to show, or null when the picture is
+  /// up to date. Cleared once satisfied — see [_onFrameArrived].
+  int? _wantedFrame;
+
+  void _requestRender(CompositionReference comp, LumitUiState state) {
+    _wantedFrame = state.playheadFrame.value;
+    if (_awaitingFrame != null) return;
+    _dispatchRender(comp, state);
+  }
+
+  void _dispatchRender(CompositionReference comp, LumitUiState state) {
+    final frame = _wantedFrame;
+    if (frame == null) return;
+    _awaitingFrame = frame;
+    try {
+      comp.renderFrame(frame: BigInt.from(frame), scale: state.viewerScale);
+    } catch (_) {
+      // A refused request is never answered, so holding the in-flight slot for
+      // it would wedge the Viewer for the rest of the session — every later
+      // frame would wait on a reply that is not coming.
+      _awaitingFrame = null;
+    }
+  }
+
+  /// A frame landed: ask for the next one only if the playhead has moved on.
+  ///
+  /// Clearing `_wantedFrame` once it is satisfied is what stops this looping.
+  /// Re-dispatching whenever anything was wanted meant every delivered frame
+  /// asked for itself again, and the engine rendered the same picture forever.
+  void _onFrameArrived() {
+    final delivered = _awaitingFrame;
+    _awaitingFrame = null;
+    final ui = _boundUi;
+    final comp = ui?.selectedComp;
+    if (ui == null || comp == null) return;
+
+    _wantedFrame = ui.playheadFrame.value;
+    if (_wantedFrame == delivered) {
+      _wantedFrame = null;
+      return;
+    }
+    _dispatchRender(comp, ui);
+  }
+
+  /// The playhead moved — from anywhere. The Timeline ruler, an arrow key and
+  /// the transport all just set it, and this is what turns that into a picture.
+  /// Rendering used to be the transport's own business, so dragging the
+  /// Timeline's playhead moved it and left the Viewer showing the old frame.
+  void _onPlayheadChanged() {
+    final ui = _boundUi;
+    final comp = ui?.selectedComp;
+    if (ui == null || comp == null) return;
+    _requestRender(comp, ui);
+  }
+
   void _seek(CompositionReference comp, LumitUiState state, int frame) {
     final settings = comp.getSettings();
     final last = settings.durationFrames.toInt() - 1;
     state.playheadFrame.value = frame.clamp(0, last < 0 ? 0 : last);
-    comp.renderFrame(
-      frame: BigInt.from(state.playheadFrame.value),
-      scale: state.viewerScale,
-    );
     // Take the sound with it. Seeking while playing keeps playing, which is
     // what makes scrubbing during playback usable rather than a stutter.
     final fps = settings.fpsDen == 0
@@ -267,8 +345,8 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
         return;
       }
       if (frame == state.playheadFrame.value) return;
+      // Setting it is all that is needed: the playhead listener renders.
       state.playheadFrame.value = frame;
-      comp.renderFrame(frame: BigInt.from(frame), scale: state.viewerScale);
     });
     _ticker!.start();
     setState(() {});

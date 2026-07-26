@@ -2486,6 +2486,28 @@ between frames to get away with it; playback did not, which is why pressing play
 showed one frame and then nothing. The old frame is now thrown away one frame
 later, when nothing can still be holding it.
 
+*One place decides what the picture shows.* The playhead is a number several
+things can move: the Timeline's ruler, an arrow key, the transport, playback
+itself. Rendering, though, was the transport's own private business — so dragging
+the Timeline's playhead moved the playhead and left the Viewer on the old frame,
+and the arrow keys had the same problem the moment they were added. The Viewer
+now watches the playhead and renders whenever it changes, whoever moved it. Adding
+a fourth way to move it needs no new rendering code at all.
+
+*Asking once, rather than sixty times a second.* Playback asked for a new frame
+on every tick — about sixty a second — while a frame takes far longer than that
+to render, so roughly ten requests piled up per finished frame and the worker
+threw all but the newest away. Each of those discarded requests still cost a lock,
+a copy of the document and a message across the boundary, on the very thread
+drawing the interface. The Viewer now keeps exactly one request outstanding and
+asks again only when that one is answered, for whichever frame the playhead has
+reached by then — the same pictures, a fraction of the work.
+
+There is one subtlety worth naming, because getting it wrong is silent and
+expensive: what is wanted has to be *cleared* once it arrives. An earlier version
+asked again whenever anything was wanted, which meant every delivered frame asked
+for itself, and the engine re-rendered the same picture forever at full speed.
+
 *Why the Viewer froze while the Scopes kept moving.* One background worker
 serves both: the Viewer asks it for a picture, the Scopes panel asks it for a
 trace of the same frame. When it finishes a job it takes everything that piled up

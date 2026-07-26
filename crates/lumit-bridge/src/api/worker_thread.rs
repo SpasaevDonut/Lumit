@@ -164,9 +164,12 @@ fn worker_loop(
         let (picture, scope, superseded) = drain_to_newest(request, &receiver, |r| {
             matches!(r, WorkerRequest::TraceScope(_))
         });
-        if superseded > 0 {
-            println!("Skipped {superseded} superseded render request(s)");
-        }
+        // Deliberately not logged. Superseding is the normal, healthy case —
+        // it is how a drag stays attached to the pointer — and a line per
+        // completed render is console I/O on the worker thread for something
+        // that happens sixty times a second. `cache_stats` is where to look for
+        // how the Viewer is actually doing.
+        let _ = superseded;
 
         // The picture first: it is what the user is looking at, and a trace of
         // a frame that is about to be replaced is worth less than the frame.
@@ -232,8 +235,6 @@ fn render_comp(
         let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
         document.store.snapshot()
     };
-
-    println!("Rendering frame!");
 
     publish_frame(state, req.comp.id, req.frame, req.scale, &document, stream);
     Ok(())

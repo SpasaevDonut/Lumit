@@ -225,6 +225,14 @@ class LumitUiState extends ChangeNotifier {
 
   void requestTogglePlay() => togglePlayRequest.value++;
 
+  /// Bumped each time a rendered frame reaches the Viewer, on any of the three
+  /// transports.
+  ///
+  /// The Viewer waits on this to keep exactly one render in flight: without it
+  /// there is nothing to tell Dart that a request it made has been answered,
+  /// and the only option is to fire and hope.
+  final ValueNotifier<int> frameArrived = ValueNotifier(0);
+
   /// Move the playhead by `delta` frames, clamped to the fronted composition.
   void stepFrame(int delta) {
     final comp = selectedComp;
@@ -339,6 +347,7 @@ class LumitUiState extends ChangeNotifier {
   /// changed, point the Viewer at it. Also drops any held read-back image, since
   /// the two paths are mutually exclusive.
   void _adoptTexture(int? id) {
+    frameArrived.value++;
     if (id == null) return;
     controller.frameReady();
     _disposeImage();
@@ -360,6 +369,7 @@ class LumitUiState extends ChangeNotifier {
         viewerImage.value = image;
         // Whichever path published last wins.
         viewerFrameid.value = null;
+        frameArrived.value++;
         // Disposed a frame later, not now. `RawImage` does not take ownership:
         // the tree still holds the previous image until the rebuild this
         // assignment schedules has been painted. Disposing it here left a
