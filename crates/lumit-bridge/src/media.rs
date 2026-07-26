@@ -17,7 +17,9 @@
 //! command surface stabilises) — acceptable while the first files are small and
 //! imported one at a time.
 
+#[cfg(feature = "media")]
 use std::collections::HashMap;
+#[cfg(feature = "media")]
 use uuid::Uuid;
 
 /// A footage item's probe result — the plain-data mirror of `lumit-ui`'s

@@ -86,7 +86,6 @@ mod export;
 mod framecache;
 mod media;
 mod realtime;
-#[cfg(feature = "render")]
 mod render;
 
 pub mod api;

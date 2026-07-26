@@ -33,14 +33,9 @@ pub fn boot_log() -> Vec<String> {
                 "off"
             }
         ),
-        format!(
-            "compositor: {}",
-            if cfg!(feature = "render") {
-                "linked — GPU adapter probed on first render"
-            } else {
-                "off"
-            }
-        ),
+        // Not conditional: rendering is not a feature. Said anyway, because the
+        // splash is where somebody looks when nothing is drawing.
+        "compositor: linked — GPU adapter probed on first render".to_owned(),
         format!(
             "zero-copy Viewer: {}",
             if cfg!(all(windows, feature = "shared-texture"))
@@ -194,6 +189,13 @@ impl ProjectReference {
         // The observer is attached to the old store, so the recovered document
         // is installed *through* it rather than replacing it — otherwise every
         // panel would stop hearing about changes the moment recovery ran.
+        // Re-arm the journal on the recovered document *before* installing it.
+        // The document's identity changed, so the observer's shared handle now
+        // points at the wrong file — and every edit from here is journalled
+        // against the recovered document or not at all.
+        if let Ok(mut journal) = state.journal.lock() {
+            *journal = lumit_project::JournalFile::for_document(doc.id);
+        }
         state.store.replace_document(doc);
         state.path = Some(path);
         state.media.clear();

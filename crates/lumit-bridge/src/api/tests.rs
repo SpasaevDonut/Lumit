@@ -1922,3 +1922,72 @@ fn the_export_surface_refuses_calmly_and_never_panics() {
     export_cancel();
     std::fs::remove_file(&target).ok();
 }
+
+// --- Journalling ----------------------------------------------------------
+
+/// Every commit is written to the crash journal as it happens. Without this the
+/// autosave and the recovery dialogue have nothing to recover *from* — the
+/// journal is the only record of work done since the last save.
+#[test]
+fn every_commit_is_journalled_and_a_save_clears_it() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+
+    let journal = {
+        let state = project.state().expect("state");
+        let state = state.read().expect("read");
+        let handle = state.journal.lock().expect("journal");
+        handle.clone()
+    };
+    let Some(journal) = journal else {
+        // No home for a journal on this platform; nothing to assert.
+        return;
+    };
+    journal.clear().ok();
+
+    project.new_composition("Scene".into()).expect("an edit");
+    project.new_composition("Titles".into()).expect("another");
+
+    let ops = journal.read().expect("journal read");
+    assert!(
+        ops.len() >= 2,
+        "each commit appended: {} ops for two edits",
+        ops.len()
+    );
+
+    // Saving makes the journal redundant — a later recovery must not replay
+    // edits the saved file already contains.
+    let dir = std::env::temp_dir().join("lumit-journal-save");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("scene.lum");
+    project
+        .save(target.to_string_lossy().into_owned())
+        .expect("saved");
+    assert!(
+        journal.read().expect("journal read").is_empty(),
+        "the journal is cleared by a save"
+    );
+
+    // …and an edit after the save is not journalled against the stale handle:
+    // the project disarmed it, so recovery from here is the saved file itself.
+    project.new_composition("After".into()).expect("an edit");
+    assert!(journal.read().expect("journal read").is_empty());
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// The observer runs inside `commit`, while the caller still holds the
+/// project's write lock. Journalling from there must not reach back through the
+/// registry — that would take the same lock and deadlock on the first edit.
+/// This test would hang rather than fail if that regressed.
+#[test]
+fn journalling_does_not_deadlock_against_the_commit_lock() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    // Every one of these commits through a write guard, with the observer
+    // firing inside it.
+    for i in 0..8 {
+        project
+            .new_composition(format!("Comp {i}"))
+            .expect("committed without deadlocking");
+    }
+    assert!(!project.get_items().expect("roots").is_empty());
+}

@@ -10,7 +10,8 @@ use crate::api::{
     BridgeError,
 };
 
-#[cfg(feature = "media")]
+// Not feature-gated: `thumbnail` is declared whatever the build, so its return
+// type has to exist whatever the build.
 use crate::api::state::BridgeRenderedFrame;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -172,6 +173,16 @@ impl FootageReference {
     /// The pixels are small enough that frb's per-byte `Vec<u8>` encoding does not
     /// matter here: at the panel's 56 px longer edge this is a few kilobytes, not
     /// the megabytes a Viewer frame carries.
+    ///
+    /// Declared whatever the features are, so the generated Dart is one shape:
+    /// a build with no decoder answers `None` rather than the method being
+    /// absent and the Dart side failing to compile against it.
+    #[cfg(not(feature = "media"))]
+    pub fn thumbnail(&self, max_edge: u32) -> Result<Option<BridgeRenderedFrame>, BridgeError> {
+        let _ = max_edge;
+        Ok(None)
+    }
+
     #[cfg(feature = "media")]
     pub fn thumbnail(&self, max_edge: u32) -> Result<Option<BridgeRenderedFrame>, BridgeError> {
         let proj = self.project()?;
@@ -212,14 +223,20 @@ impl FootageReference {
             lumit_core::model::ProjectItem::Footage(footage_item) => {
                 // An unresolvable path is missing media, same as one that
                 // resolves but no longer decodes.
-                let Some(path) = Self::resolve_path(&proj, footage_item) else {
+                let Some(_path) = Self::resolve_path(&proj, footage_item) else {
                     return Ok(LumitMediaStatus::Missing);
                 };
 
-                let probe = lumit_media::probe::probe(&path);
+                // The file is there; whether it *decodes* takes a prober. A
+                // build without one answers that it resolved, because reporting
+                // "missing" for a file plainly on disk would send the user to
+                // relink something that is not lost.
+                #[cfg(not(feature = "media"))]
+                let probe: Result<(), ()> = Ok(());
+                #[cfg(feature = "media")]
+                let probe = lumit_media::probe::probe(&_path);
 
                 match probe {
-                    // not sure where this info comes from
                     Ok(_) => Ok(LumitMediaStatus::Ready),
                     Err(_) => Ok(LumitMediaStatus::Missing),
                 }

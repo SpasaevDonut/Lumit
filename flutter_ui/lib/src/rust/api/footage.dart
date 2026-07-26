@@ -38,21 +38,6 @@ class FootageReference {
   void relink({required String path}) => BridgeLib.instance.api
       .crateApiFootageFootageReferenceRelink(that: this, path: path);
 
-  /// A small decoded picture of this footage's first frame, for the Project
-  /// panel row. `None` when the file cannot be resolved or decoded — a missing
-  /// or unsupported item shows its type glyph instead.
-  ///
-  /// Deliberately **not** `#[frb(sync)]`: a cold video decode is FFmpeg work
-  /// measured in tens of milliseconds, so it must not run on Dart's UI isolate.
-  /// frb puts an async call on its own worker pool and Dart simply awaits it —
-  /// which is the whole of what v0 needed a hand-rolled isolate, a wire
-  /// protocol, a `TransferableTypedData` hand-off and a generation map to
-  /// achieve. Memoised per (item, size) in the project's media cache, so a
-  /// rebuild costs nothing.
-  ///
-  /// The pixels are small enough that frb's per-byte `Vec<u8>` encoding does not
-  /// matter here: at the panel's 56 px longer edge this is a few kilobytes, not
-  /// the megabytes a Viewer frame carries.
   Future<BridgeRenderedFrame?> thumbnail({required int maxEdge}) => BridgeLib
       .instance.api
       .crateApiFootageFootageReferenceThumbnail(that: this, maxEdge: maxEdge);

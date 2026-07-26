@@ -92,14 +92,19 @@ explains the two rules above: it is exactly what they exist to avoid.
 These are the contract. Three of them survived the change of transport unchanged
 (K-179); the fourth did not, and the difference matters.
 
-1. **No panic crosses the boundary.** A panic must become an ordinary error
-    reply, never an unwind into Dart
-    ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)). Every function on the
-    `api` surface returns `Result<_, BridgeError>` and every error is a calm
-    sentence fit for the status line. **This rule is currently enforced by
-    convention and a CI grep, not by the code**: the generated glue has no
-    `catch_unwind`, where the hand-written surface wrapped every body in one.
-    Recorded as an outstanding gap in [TODO.md](TODO.md).
+1. **No panic crosses the boundary.** A panic must never unwind into Dart —
+    unwinding across languages is undefined behaviour
+    ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)). The generated handler
+    enforces this: every call, sync and async, runs inside `catch_unwind`, and a
+    second one wraps that in case the first's own error path panics. Nothing in
+    `api/**` needs to repeat it.
+
+    What a panic *becomes* is the part to know. It reaches Dart as a **thrown
+    exception**, not as a value — where a well-behaved error is a
+    `Result<_, BridgeError>` and arrives as an ordinary return. So every function
+    on the surface returns a `Result` with a calm sentence fit for the status
+    line, and a throw means a bug rather than a refusal. The
+    `no-panics-in-frb-api` CI grep exists to keep it that way.
 
 2. **Memory ownership is the generator's.** flutter_rust_bridge marshals every
     value; nothing is hand-freed on either side, and the raw-pointer discipline

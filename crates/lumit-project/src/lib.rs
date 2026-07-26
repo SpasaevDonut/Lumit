@@ -609,6 +609,11 @@ pub fn collect_for_sharing(
 }
 
 /// Append-only op log between saves; truncated on successful save.
+///
+/// `Clone` because the bridge shares one handle between the change observer and
+/// the state that arms it: it is a path, not an open file, so a copy addresses
+/// the same journal rather than competing for a descriptor.
+#[derive(Clone)]
 pub struct JournalFile {
     path: PathBuf,
 }

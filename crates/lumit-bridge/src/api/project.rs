@@ -258,8 +258,14 @@ impl ProjectReference {
         let doc = lumit_project::rebase_for_save(&state.store.snapshot(), dir);
         lumit_project::save(&doc, &target).map_err(|_| BridgeError::WriteFailed)?;
 
-        if let Some(journal) = &state.journal {
-            let _ = journal.clear();
+        // The journal covers work *between* saves, so once the document is on
+        // disk it is redundant — and keeping it would mean a later recovery
+        // replaying edits the saved file already contains.
+        if let Ok(mut journal) = state.journal.lock() {
+            if let Some(file) = journal.as_ref() {
+                let _ = file.clear();
+            }
+            *journal = None;
         }
         let written = target.to_string_lossy().into_owned();
         state.path = Some(target);

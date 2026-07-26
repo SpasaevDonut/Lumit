@@ -17,7 +17,7 @@ import 'project_item.dart';
 import 'solid.dart';
 part 'state.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `handle_change_callback`, `op_scope`
+// These functions are ignored because they are not marked as `pub`: `handle_change_callback`, `journal_for`, `op_scope`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<LumitBridgeState>>

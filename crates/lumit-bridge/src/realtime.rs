@@ -55,7 +55,6 @@ pub(crate) fn tier_scale(tier: u32) -> f32 {
 /// is ignored, so it cannot mislead the model. Returns the tier in force after
 /// the report (unchanged on an ignored cost). Called only from the render path
 /// (the `render` feature); the tier read-back ops compile in every build.
-#[cfg_attr(not(feature = "render"), allow(dead_code))]
 pub(crate) fn observe(cost_secs: f64, fps: f64, scale: f32) -> u32 {
     with_controller(|c| {
         let expected = tier_scale(c.tier());

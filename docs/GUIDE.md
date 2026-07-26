@@ -2463,6 +2463,25 @@ a whole value instead of a granular op. It was deleted once every panel had
 moved across, in one sweep, so the two never had to be kept in step with each
 other.
 
+**The safety net, and why every edit costs a disk write.** Two things stand
+between a session ending badly and losing work, and they are not the same thing.
+An **autosave** is a whole copy of the project written beside it on a timer —
+open one and you get everything up to that copy, and nothing after it. The
+**journal** is the list of edits themselves, appended one line at a time as you
+make them; replayed onto the last saved file it gets you back to the moment
+things stopped.
+
+The journal is why an ordinary edit waits for the disk. That is a real cost
+(measured at about 2.3 ms), and it is exactly why dragging a value does *not*
+commit on every tick — a hundred ticks a second would be a hundred disk waits
+for something the user thinks of as one adjustment. Dragging shows you a picture
+without recording anything, and records once when you let go.
+
+One detail worth knowing because it looks odd from the outside: saving *deletes*
+the journal. That is deliberate. The journal only ever describes work done since
+the last save, so once the file on disk contains that work, replaying it again
+would add it twice.
+
 **Staging versus committing, and why dragging used to lag.** This one is worth
 understanding, because it explains a whole class of sluggishness.
 

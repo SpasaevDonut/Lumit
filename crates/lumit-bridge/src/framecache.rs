@@ -57,7 +57,6 @@
 // compositor linked), so the get/put machinery is inert — only the empty-map
 // budget/clear/stats controls run. Say so rather than gating each item, so the
 // FFI controls stay callable in every build.
-#![cfg_attr(not(feature = "render"), allow(dead_code))]
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -213,7 +212,6 @@ fn with_cache<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
 /// the pixels are identical. `render` is called at most once per genuine miss,
 /// so a re-scrubbed frame never re-renders (proven by the module tests' render
 /// counter).
-#[cfg(feature = "render")]
 pub(crate) fn get_or_render(
     key: FrameKey,
     render: impl FnOnce() -> Option<(u32, u32, Vec<u8>)>,

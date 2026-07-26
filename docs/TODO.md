@@ -80,23 +80,19 @@ sequence clips.
     keep up (K-171).
 
     *Still outstanding on the frb path:*
-    - **No `catch_unwind`.** Every v0 export wrapped its body so a panic became
-        an error reply rather than unwinding across the FFI boundary. The frb
-        surface has no equivalent; the `no-panics-in-frb-api` CI grep is
-        prevention, not containment.
+    - **A panic throws rather than reporting.** Containment is *not* missing —
+        this list previously said it was, wrongly. flutter_rust_bridge's handler
+        wraps every call in `catch_unwind` (twice, deliberately: see
+        `handler/implementation/handler.rs`), so a panic cannot unwind across the
+        boundary. But it surfaces as a thrown Dart exception, where the old
+        transport turned it into an ordinary `ok:false` reply the interface
+        showed calmly. So the remaining work is Dart-side: no call site should
+        treat a throw as impossible. The `no-panics-in-frb-api` grep stays, as
+        prevention — a panic is still a bug.
     - **clippy is blind to the frb surface.** `#[frb(...)]` is a proc-macro
         attribute and clippy's restriction lints skip macro-expanded code, so
         `unwrap_used`/`panic`/`todo` do not fire on any annotated function.
         Covered by that same grep; the real fix is to stop needing it.
-    - **Nothing writes the crash journal.** `LumitBridgeState.journal` is always
-        `None`, so `restore_journal` replays whatever is there and nothing puts
-        anything there. The autosave and the recovery dialogue are in; this is
-        the leg that makes them worth having.
-    - **`--no-default-features` does not build.** The frb worker needs a
-        renderer, and the API surface is deliberately identical whatever the
-        features are (so the generated Dart is one shape everywhere). Either the
-        crate should require `render` in Cargo.toml, or the worker should be
-        gated and the API keep answering; not yet decided.
     - **The `PROJECTS`/`STREAMS` global pair** are two `LazyLock<RwLock<BTreeMap>>`
         registries kept apart only by a comment about lock ordering, and
         `ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out.

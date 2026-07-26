@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
-    sync::{mpsc::Sender, Arc, LazyLock, RwLock},
+    sync::{mpsc::Sender, Arc, LazyLock, Mutex, RwLock},
 };
 
 use flutter_rust_bridge::frb;
@@ -22,8 +22,27 @@ pub struct LumitBridgeState {
     pub store: DocumentStore,
     pub path: Option<PathBuf>,
     pub(crate) media: MediaCache,
-    pub journal: Option<JournalFile>,
+    /// Where committed ops are journalled for crash recovery.
+    ///
+    /// Shared with the change observer rather than owned outright, and that is
+    /// not a style choice: the observer fires from inside `commit`, while the
+    /// caller still holds this project's write lock. An observer that reached
+    /// back through `PROJECTS` for the journal would take that same lock and
+    /// deadlock on the first edit. Sharing an `Arc` means it needs no lookup —
+    /// and a `Mutex` rather than a bare handle so recovery can re-arm it when
+    /// the document changes identity.
+    pub journal: SharedJournal,
     pub sender: Option<Sender<WorkerRequest>>,
+}
+
+/// The journal handle the observer writes through. `None` before one is armed,
+/// or after a save has made it redundant.
+pub type SharedJournal = Arc<Mutex<Option<JournalFile>>>;
+
+/// Arm a journal for `document`, if this platform gives us somewhere to put one.
+#[frb(ignore)]
+pub(crate) fn journal_for(document: &Document) -> SharedJournal {
+    Arc::new(Mutex::new(JournalFile::for_document(document.id)))
 }
 
 #[frb(non_opaque)]
@@ -197,11 +216,13 @@ impl LumitBridgeState {
 
         let mut p = PROJECTS.write().map_err(|_| BridgeError::WriteFailed)?;
 
+        let document = Document::new();
+        let journal = journal_for(&document);
         let mut state = LumitBridgeState {
-            store: DocumentStore::new(Document::new()),
+            store: DocumentStore::new(document),
             path: None,
             media: MediaCache::default(),
-            journal: None,
+            journal: Arc::clone(&journal),
             sender: None,
         };
 
@@ -210,9 +231,9 @@ impl LumitBridgeState {
             s.insert(id, Arc::new(stream));
         }
 
-        state
-            .store
-            .set_callback(Arc::new(move |c| Self::handle_change_callback(c, id)));
+        state.store.set_callback(Arc::new(move |c| {
+            Self::handle_change_callback(c, id, &journal)
+        }));
 
         p.insert(id, Arc::new(RwLock::new(state)));
 
@@ -232,7 +253,23 @@ impl LumitBridgeState {
     /// there is no caller to hand an error to. It therefore cannot fail: the
     /// scope comes from matching the `Op` enum, so a new variant is a compile
     /// error here rather than a silently unscoped change at runtime.
-    fn handle_change_callback(document_change: DocumentChange, project_id: Uuid) {
+    fn handle_change_callback(
+        document_change: DocumentChange,
+        project_id: Uuid,
+        journal: &SharedJournal,
+    ) {
+        // Journal first, then tell the interface. A crash between the two loses
+        // the redraw, which the next one fixes; a crash the other way round
+        // loses the edit, which nothing does.
+        if let Ok(journal) = journal.lock() {
+            if let Some(journal) = journal.as_ref() {
+                // A journal that cannot be written is not worth taking the
+                // editor down for — the work is still in the document, and the
+                // next save writes it properly.
+                let _ = journal.append(&document_change.op);
+            }
+        }
+
         let (comp, layer, items) = op_scope(&document_change.op);
 
         let change = ScopedChange {
@@ -276,16 +313,17 @@ impl LumitBridgeState {
         let project_dir = path.parent().unwrap_or_else(|| Path::new(""));
         let (_relinked, _missing) = lumit_project::resolve_all_media(&mut doc, project_dir, &[]);
 
+        let journal = journal_for(&doc);
         let mut state = LumitBridgeState {
             store: DocumentStore::new(doc),
             path: Some(path),
             media: MediaCache::default(),
-            journal: None,
+            journal: Arc::clone(&journal),
             sender: None,
         };
-        state
-            .store
-            .set_callback(Arc::new(move |c| Self::handle_change_callback(c, id)));
+        state.store.set_callback(Arc::new(move |c| {
+            Self::handle_change_callback(c, id, &journal)
+        }));
 
         if let Some(stream) = on_change_stream {
             let mut s = STREAMS.write().map_err(|_| BridgeError::WriteFailed)?;

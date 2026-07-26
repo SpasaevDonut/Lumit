@@ -26,8 +26,6 @@
 //! Without the `render` feature this module is absent and
 //! [`crate::ffi::lumit_bridge_render_comp_frame`] always returns null.
 
-#![cfg(feature = "render")]
-
 use std::sync::{Mutex, OnceLock};
 use uuid::Uuid;
 

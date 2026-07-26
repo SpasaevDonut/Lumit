@@ -33,7 +33,6 @@
 // export driver under the `render` feature. Without it — and outside the test
 // build — they are dead, so silence the warning there rather than gate the code
 // (the tests must run in every feature configuration).
-#![cfg_attr(all(not(feature = "render"), not(test)), allow(dead_code))]
 
 use crate::err_json;
 use serde_json::{json, Value};
@@ -335,45 +334,22 @@ pub(crate) fn start_export_with_document(
     spec_json: &str,
     out_path: &str,
 ) -> String {
-    #[cfg(feature = "render")]
-    {
-        driving::start_with_document(doc, comp, spec_json, out_path)
-    }
-    #[cfg(not(feature = "render"))]
-    {
-        let _ = (doc, comp, spec_json, out_path);
-        err_json("export: this build has no exporter (the render feature is off)")
-    }
+    driving::start_with_document(doc, comp, spec_json, out_path)
 }
 
 /// Poll the running export, draining the exporter's event channel. Reply:
 /// `{"ok":true,"state":"idle|running|done|failed","frame":…,"total":…,
 /// "encoder":…,"path"/"error":…}`. `idle` when nothing has run since start-up.
 pub(crate) fn export_poll() -> String {
-    #[cfg(feature = "render")]
-    {
-        driving::poll()
-    }
-    #[cfg(not(feature = "render"))]
-    {
-        json!({ "ok": true, "state": "idle" }).to_string()
-    }
+    driving::poll()
 }
 
 /// Ask the running export to cancel (no-op when none is running). The export
 /// stops at the next frame and poll then reports `failed` with "cancelled".
 pub(crate) fn export_cancel() -> String {
-    #[cfg(feature = "render")]
-    {
-        driving::cancel()
-    }
-    #[cfg(not(feature = "render"))]
-    {
-        json!({ "ok": true }).to_string()
-    }
+    driving::cancel()
 }
 
-#[cfg(feature = "render")]
 mod driving {
     use super::{err_json, parse_inputs, resolve_spec, ResolvedSpec};
     use lumit_render::export::{ExportEvent, ExportHandle, ExportSpec};
@@ -417,6 +393,15 @@ mod driving {
 
     /// Convert the resolved spec into the exporter's `ExportSpec` (codec name →
     /// the real `VideoCodec`; an unknown name is a calm error).
+    /// Without a media build there is no encoder to name, so an export cannot
+    /// be specified at all — a calm error rather than a spec pointing at
+    /// nothing.
+    #[cfg(not(feature = "media"))]
+    fn to_export_spec(_r: &ResolvedSpec) -> Result<ExportSpec, String> {
+        Err("export: this build has no encoder (the media feature is off)".to_owned())
+    }
+
+    #[cfg(feature = "media")]
     fn to_export_spec(r: &ResolvedSpec) -> Result<ExportSpec, String> {
         use lumit_media::encode::VideoCodec;
         let codec = match r.codec.as_str() {
