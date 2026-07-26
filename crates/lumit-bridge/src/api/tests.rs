@@ -10,7 +10,8 @@
 
 use crate::api::{
     composition::CompositionReference, folder::FolderReference, footage::FootageReference,
-    project::ProjectReference, project_item::ItemReference, state::LumitBridgeState, BridgeError,
+    footage::LumitMediaStatus, project::ProjectReference, project_item::ItemReference,
+    state::LumitBridgeState, BridgeError,
 };
 use lumit_core::model::{Folder, FootageItem, MediaRef, ProjectItem};
 use lumit_core::Op;
@@ -96,11 +97,14 @@ fn project_with_folder() -> (
 fn a_folder_reports_only_its_own_children() {
     let (project, folder, filed, _loose) = project_with_folder();
 
+    // Roots only: the folder and the unfiled item. The filed footage is reached
+    // through the folder, never listed again at the top level — drawing it at both
+    // levels was the bug this asserts against.
     let roots = project.get_items().expect("roots");
-    assert_eq!(
-        roots.len(),
-        3,
-        "all three are root entries in the item list"
+    assert_eq!(roots.len(), 2, "the folder and the unfiled item");
+    assert!(
+        !roots.iter().any(|r| r.equals(&filed)),
+        "a filed item must not also appear at the root"
     );
 
     let ItemReference::Folder(folder_ref) = &folder else {
@@ -129,7 +133,11 @@ fn delete_removes_the_item_and_a_second_delete_is_a_calm_error() {
     let (project, _folder, _filed, loose) = project_with_folder();
 
     loose.delete().expect("deleted");
-    assert_eq!(project.get_items().expect("roots").len(), 2);
+    assert_eq!(
+        project.get_items().expect("roots").len(),
+        1,
+        "just the folder is left at the root"
+    );
 
     // The reference now outlives its item: an error, never a panic.
     assert!(matches!(loose.delete(), Err(BridgeError::InvalidItem)));
@@ -252,4 +260,65 @@ fn add_comp(project: &ProjectReference, name: &str) -> CompositionReference {
         .expect("comp added");
 
     CompositionReference::new(project.id, comp_id)
+}
+
+/// `get_status` must report a file that is not there as missing — the Project
+/// panel's badge depends on it.
+#[test]
+fn a_footage_item_pointing_at_nothing_reports_missing() {
+    let project = LumitBridgeState::new_project(None).expect("project");
+    let footage = project
+        .import_footage("C:/nowhere/definitely-not-here.mp4".into())
+        .expect("imported");
+
+    let status = footage.get_status().expect("status");
+    assert!(matches!(status, LumitMediaStatus::Missing));
+}
+
+/// Relink takes a write lock after having taken a read lock earlier in the same
+/// call. If those ever overlap, this deadlocks rather than fails — so the test
+/// existing at all is the guard.
+#[test]
+fn relink_does_not_deadlock_against_its_own_read() {
+    let project = LumitBridgeState::new_project(None).expect("project");
+    let footage = project
+        .import_footage("C:/nowhere/gone.mp4".into())
+        .expect("imported");
+
+    let target = std::env::temp_dir().join("lumit-relink-deadlock-probe.mp4");
+    std::fs::write(&target, b"stub").expect("temp file");
+
+    footage
+        .relink(target.to_string_lossy().into_owned())
+        .expect("relinked");
+
+    std::fs::remove_file(&target).ok();
+}
+
+/// Importing then reading back is the panel's whole read path, and `new_composition`
+/// must file its comp so the tree has something to nest.
+#[test]
+fn import_and_new_composition_land_in_the_item_tree() {
+    let project = LumitBridgeState::new_project(None).expect("project");
+    project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    let comp = project.new_composition("Scene".into()).expect("comp");
+
+    let roots = project.get_items().expect("roots");
+    // The footage and the Compositions folder. The comp is inside the folder, so
+    // it is NOT a root — drawing it at both levels was the bug this asserts against.
+    assert_eq!(roots.len(), 2);
+
+    let folder = roots
+        .iter()
+        .find_map(|i| match i {
+            ItemReference::Folder(f) => Some(f),
+            _ => None,
+        })
+        .expect("the Compositions auto-folder was created");
+    let children = folder.get_children().expect("children");
+    assert_eq!(children.len(), 1, "the comp is filed into it");
+    assert_eq!(children[0].name().expect("name"), "Scene");
+    assert_eq!(comp.get_size().expect("size").width, 1920);
 }

@@ -60,9 +60,15 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
   @override
   void initState() {
     super.initState();
-    // Every committed edit reaches us here, whoever made it — this panel, the
-    // menu bar, an undo. That is the point of the scoped-change stream: no panel
-    // has to be told about an edit it did not make, and none has to poll.
+    // Edits made ELSEWHERE reach us here — the menu bar, an undo, another panel.
+    // That is the point of the scoped-change stream: no panel has to be told
+    // about an edit it did not make, and none has to poll.
+    //
+    // This panel's own edits do *not* wait for the round trip; each calls
+    // `_documentChanged` directly. Waiting would put a Rust→Dart hop between a
+    // click and the row updating, for information this panel already had — and it
+    // would make the panel untestable without real async, since a fake-async test
+    // never delivers an FFI stream event.
     final state = Provider.of<LumitState>(context, listen: false);
     _changes = state.onChange.listen((_) => _documentChanged());
   }
@@ -136,6 +142,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
           onStartRename: () => setState(() => _renamingId = id),
           onEndRename: () => setState(() => _renamingId = null),
           onFindMissing: () => setState(() => _missingOnly = true),
+          onLocalEdit: _documentChanged,
           relinkPicker: widget.relinkPicker,
         ));
       }
@@ -276,6 +283,10 @@ class _ProjectRowFrb extends StatefulWidget {
   final VoidCallback onStartRename;
   final VoidCallback onEndRename;
   final VoidCallback onFindMissing;
+
+  /// Called after an edit this row made, so the panel re-reads at once rather
+  /// than waiting for the engine's change stream to come back around.
+  final VoidCallback onLocalEdit;
   final Future<String?> Function()? relinkPicker;
 
   const _ProjectRowFrb({
@@ -290,6 +301,7 @@ class _ProjectRowFrb extends StatefulWidget {
     required this.onStartRename,
     required this.onEndRename,
     required this.onFindMissing,
+    required this.onLocalEdit,
     this.relinkPicker,
   });
 
@@ -333,6 +345,7 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
     final text = _rename?.text.trim() ?? '';
     if (text.isNotEmpty && text != _name()) {
       item.rename(name: text);
+      widget.onLocalEdit();
     }
     _rename?.dispose();
     _rename = null;
@@ -366,6 +379,7 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
     final comp = uiState.selectedComp;
     if (comp == null) return;
     comp.addFootageLayer(footage: footage);
+    widget.onLocalEdit();
   }
 
   Future<void> _doRelink(FootageReference footage) async {
@@ -375,6 +389,7 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
         : await pickFootage().then((paths) => paths.isEmpty ? null : paths.first);
     if (path == null) return;
     footage.relink(path: path);
+    widget.onLocalEdit();
   }
 
   @override
@@ -395,6 +410,7 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
             missing: widget.missing,
             position: d.globalPosition,
             onFindMissing: widget.onFindMissing,
+            onLocalEdit: widget.onLocalEdit,
             onRelink: item is ItemReference_Footage
                 ? () => _doRelink((item as ItemReference_Footage).field0)
                 : null,
@@ -647,6 +663,7 @@ Future<void> showProjectMenuFrb({
   required bool missing,
   required Offset position,
   required VoidCallback onFindMissing,
+  required VoidCallback onLocalEdit,
   Future<void> Function()? onRelink,
 }) async {
   final isFootage = item is ItemReference_Footage;
@@ -691,8 +708,10 @@ Future<void> showProjectMenuFrb({
       onFindMissing();
     case _ProjectMenuAction.moveToRoot:
       item.moveToRoot();
+      onLocalEdit();
     case _ProjectMenuAction.delete:
       // No confirmation: it is one undo step, matching egui.
       item.delete();
+      onLocalEdit();
   }
 }

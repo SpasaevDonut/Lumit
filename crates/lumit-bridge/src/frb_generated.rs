@@ -42,7 +42,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -750950702;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 2097275107;
 
 // Section: executor
 
@@ -1047,6 +1047,70 @@ fn wire__crate__api__project__project_reference_get_items_impl(
         },
     )
 }
+fn wire__crate__api__project__project_reference_import_footage_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "project_reference_import_footage",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <crate::api::project::ProjectReference>::sse_decode(&mut deserializer);
+            let api_path = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok =
+                    crate::api::project::ProjectReference::import_footage(&api_that, api_path)?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
+fn wire__crate__api__project__project_reference_new_composition_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "project_reference_new_composition",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <crate::api::project::ProjectReference>::sse_decode(&mut deserializer);
+            let api_name = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok =
+                    crate::api::project::ProjectReference::new_composition(&api_that, api_name)?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__project__project_reference_redo_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -1834,13 +1898,23 @@ fn pde_ffi_dispatcher_sync_impl(
         28 => {
             wire__crate__api__project__project_reference_get_items_impl(ptr, rust_vec_len, data_len)
         }
-        29 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
-        30 => wire__crate__api__project__project_reference_start_worker_impl(
+        29 => wire__crate__api__project__project_reference_import_footage_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        31 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__project__project_reference_new_composition_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        31 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
+        32 => wire__crate__api__project__project_reference_start_worker_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        33 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }

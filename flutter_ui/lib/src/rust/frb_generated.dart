@@ -80,7 +80,7 @@ class BridgeLib
   String get codegenVersion => '2.12.0';
 
   @override
-  int get rustContentHash => -750950702;
+  int get rustContentHash => 2097275107;
 
   static const kDefaultExternalLibraryLoaderConfig =
       ExternalLibraryLoaderConfig(
@@ -179,6 +179,12 @@ abstract class BridgeLibApi extends BaseApi {
 
   List<ItemReference> crateApiProjectProjectReferenceGetItems(
       {required ProjectReference that});
+
+  FootageReference crateApiProjectProjectReferenceImportFootage(
+      {required ProjectReference that, required String path});
+
+  CompositionReference crateApiProjectProjectReferenceNewComposition(
+      {required ProjectReference that, required String name});
 
   void crateApiProjectProjectReferenceRedo({required ProjectReference that});
 
@@ -993,12 +999,66 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       );
 
   @override
+  FootageReference crateApiProjectProjectReferenceImportFootage(
+      {required ProjectReference that, required String path}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_project_reference(that, serializer);
+        sse_encode_String(path, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_footage_reference,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta: kCrateApiProjectProjectReferenceImportFootageConstMeta,
+      argValues: [that, path],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiProjectProjectReferenceImportFootageConstMeta =>
+      const TaskConstMeta(
+        debugName: "project_reference_import_footage",
+        argNames: ["that", "path"],
+      );
+
+  @override
+  CompositionReference crateApiProjectProjectReferenceNewComposition(
+      {required ProjectReference that, required String name}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_project_reference(that, serializer);
+        sse_encode_String(name, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_composition_reference,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta: kCrateApiProjectProjectReferenceNewCompositionConstMeta,
+      argValues: [that, name],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta get kCrateApiProjectProjectReferenceNewCompositionConstMeta =>
+      const TaskConstMeta(
+        debugName: "project_reference_new_composition",
+        argNames: ["that", "name"],
+      );
+
+  @override
   void crateApiProjectProjectReferenceRedo({required ProjectReference that}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_project_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 29)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1026,7 +1086,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_project_reference(that, serializer);
         sse_encode_StreamSink_worker_response_Sse(onReponse, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 30)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 32)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,
@@ -1051,7 +1111,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_project_reference(that, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 31)!;
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_unit,

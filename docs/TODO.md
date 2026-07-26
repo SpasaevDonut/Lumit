@@ -136,29 +136,54 @@ sequence clips.
             `effectivePreviewScale` also folds in measured render cost via
             `realtime::observe`. So a comp too heavy to render at panel size does
             not yet degrade — it just renders slowly.
-    2. **Project panel** — `save_project`, `import_footage`, `new_composition`,
-        `delete_item`, `rename_item`, `move_to_root`, `relink`, `thumbnail`,
-        plus children/parent on `ItemReference` for the folder tree. Note
-        `FootageReference::get_status` probes synchronously on every build, so the
-        off-thread probing item under "Threading / platform" lands with this.
-    3. **Effect controls** — `BridgeEffectInstance` is the furthest along and the
+    2. **Project panel — ported.** `project_panel_frb.dart` on the frb API, with
+        10 of its 12 tests passing against the *real* engine (see
+        `test/frb/frb_test_support.dart` for why these are integration tests: the
+        generated types are concrete, so there is nothing to fake, and adding a
+        Dart interface purely to allow faking would reintroduce the mirror-class
+        indirection the migration deletes). Outstanding:
+        - **Two skipped widget tests.** `FootageReference.getStatus` is an async
+            frb call, and async frb calls do not resolve inside the fake-async zone
+            `testWidgets` runs in, even under `runAsync` — verified working in a
+            plain `test()`. So the missing-media badge and the relink round trip
+            have no widget coverage; the behaviour itself is covered on the Rust
+            side. Needs either the right pump shape or a synchronous status read.
+        - **Missing status is cached in the panel**, because `getStatus` probes the
+            file so cannot be called from a build, and the missing-only filter needs
+            every status at once. v0 got status free from the snapshot because the
+            engine probed and cached. The proper fix is the off-thread probing item
+            under "Threading / platform".
+        - **Composition settings is absent from the context menu**: its dialog takes
+            an `AppStateStub`. Port it with the Timeline; the menu bar still reaches
+            the same dialog, so the capability is not lost.
+        - Then delete the v0 parts exclusive to it: `rename_item`, `delete_item`,
+            `move_to_root`, `relink`, `thumbnail`, the v0 `ProjectPanel` and its
+            three test files. `import_footage`/`new_composition`/`save_project` are
+            shared with the menu bar and stay.
+
+    3. **Menu bar and shell** — the next panel. `save_project` and the recovery,
+        autosave and export entries; `import_footage` and `new_composition` already
+        exist on `ProjectReference` (they had to, for the Project panel to have
+        anything to show). `showCompositionSettingsDialog` needs an frb form, which
+        also restores the Project panel's context-menu entry.
+    4. **Effect controls** — `BridgeEffectInstance` is the furthest along and the
         most provisional: `get_value`/`set_value` speak only static `f64`, so
         seven of the eight `EffectValue` kinds and every keyframed value are
         unreachable (they answer `None`). Replace the pair with a sum type
         mirroring `EffectValue`, then add `add_effect`, `remove_effect`,
         `reorder_effect`, `set_effect_enabled`, `list_effects` and the presets.
-    4. **Transform rows** — `set_transform`, and `preview_transform` /
+    5. **Transform rows** — `set_transform`, and `preview_transform` /
         `cancel_transform_preview` for the drag path.
-    5. **Timeline** — the largest surface: layer lifecycle (add solid/text/camera/
+    6. **Timeline** — the largest surface: layer lifecycle (add solid/text/camera/
         adjustment/sequence/footage, delete, duplicate, reorder), the switch and
         column ops (`set_layer_switch`, `set_blend_mode`, `set_matte`,
         `set_parent`, `set_motion_blur`, `list_blend_modes`), spans
         (`edit_layer_span`, `drag_boundary`, `trim_to_source_end`,
         `convert_to_sequenced`), the razor, markers, work area, comp settings.
-    6. **Keyframes and the graph editor** — the property ops plus their
+    7. **Keyframes and the graph editor** — the property ops plus their
         effect-param twins. Add the single `set_animation` op noted below rather
         than porting the granular pair.
-    7. **Retime, audio, export, then the performance/infra readouts**
+    8. **Retime, audio, export, then the performance/infra readouts**
         (`cache_stats`, `playback_tier`, `boot_log`, recovery).
 
     *cargokit is only wired up for two platforms.* The merge adapted

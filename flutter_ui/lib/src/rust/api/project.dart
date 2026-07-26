@@ -29,6 +29,27 @@ class ProjectReference {
         that: this,
       );
 
+  /// Record `path` as a footage item, as one undo step.
+  ///
+  /// Importing only *records* the file — it does not decode it or read its size.
+  /// Footage has no auto-folder (only solids and comps do), so the item lands at
+  /// the panel root, matching the egui frontend exactly.
+  ///
+  /// The bare file name becomes the relative path; saving rebases it against the
+  /// project folder (K-173).
+  FootageReference importFootage({required String path}) =>
+      BridgeLib.instance.api
+          .crateApiProjectProjectReferenceImportFootage(that: this, path: path);
+
+  /// Add a composition, filed into the Compositions auto-folder, as one undo
+  /// step. A blank name gets the next "Comp N".
+  ///
+  /// The folder is tracked by id, not by name, so renaming or nesting it keeps
+  /// it the Compositions folder — the same habit the egui frontend has.
+  CompositionReference newComposition({required String name}) => BridgeLib
+      .instance.api
+      .crateApiProjectProjectReferenceNewComposition(that: this, name: name);
+
   void redo() => BridgeLib.instance.api.crateApiProjectProjectReferenceRedo(
         that: this,
       );
