@@ -359,6 +359,68 @@ void main() {
       expect(fake.ops, contains('fxscalar:c1/l0/e1/radius=9.0'));
     });
 
+    /// The gate for the effect-param drag preview (ABI 12), at the place the
+    /// regression actually lived: the panel's wiring.
+    ///
+    /// The engine-side gate (`preview_effect_param_never_touches_undo_or_journal`)
+    /// proves the *engine* stages when asked. It cannot prove the panel asks —
+    /// and the panel not asking was the whole bug: `_EffectParamRow` passed only
+    /// `onChanged`, so `DragValueField`'s `(onChangeLive ?? onChanged)` fallback
+    /// made every tick a real commit. Deleting the three drag arguments must fail
+    /// HERE; without this test it failed nowhere.
+    testWidgets('dragging a scalar param previews per tick and commits once on '
+        'release, never per tick', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 700));
+      final fake = _PreviewCapableBridge();
+      final app = AppStateStub(bridge: fake)..selectLayer('l0');
+      await tester.pumpWidget(_host(EffectControlsPanel(app: app)));
+      await tester.pump();
+
+      final field = find.byKey(const ValueKey('fxparam-e1-radius'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      // The first move only resolves the gesture arena; ticks follow.
+      await tester.pump();
+      for (var i = 0; i < 4; i++) {
+        await gesture.moveBy(const Offset(30, 0));
+        await tester.pump();
+      }
+
+      expect(fake.previews, isNotEmpty,
+          reason: 'each drag tick must stage a preview');
+      expect(fake.ops.where((o) => o.startsWith('fxscalar:')), isEmpty,
+          reason: 'no drag tick may commit — that was the 2.5ms/tick fsync');
+
+      await gesture.up();
+      await tester.pump();
+
+      expect(fake.ops.where((o) => o.startsWith('fxscalar:')), hasLength(1),
+          reason: 'exactly one commit, on release, so one undo step per drag');
+    });
+
+    testWidgets('an older library without the preview symbol keeps committing '
+        'per tick rather than losing the drag entirely', (tester) async {
+      await tester.binding.setSurfaceSize(const Size(420, 700));
+      // supportsPreviewEffectParam false => the row falls back to onChanged.
+      final fake = _PreviewCapableBridge()..fxPreviewSupported = false;
+      final app = AppStateStub(bridge: fake)..selectLayer('l0');
+      await tester.pumpWidget(_host(EffectControlsPanel(app: app)));
+      await tester.pump();
+
+      final field = find.byKey(const ValueKey('fxparam-e1-radius'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await gesture.up();
+      await tester.pump();
+
+      expect(fake.previews, isEmpty, reason: 'the capability is off');
+      expect(fake.ops.where((o) => o.startsWith('fxscalar:')), isNotEmpty,
+          reason: 'the drag still edits, just the slow way');
+    });
+
     testWidgets('the enable checkbox and remove button call their ops',
         (tester) async {
       await tester.binding.setSurfaceSize(const Size(420, 700));
@@ -444,4 +506,42 @@ void main() {
       expect(find.textContaining('Select a layer'), findsOneWidget);
     });
   });
+}
+
+/// [_FakeBridge] plus the drag-preview capability (ABI 11/12), so a widget test
+/// can drive the fast path the real library offers. Kept separate from
+/// [_FakeBridge] so every other test in this file keeps exercising the
+/// no-capability fallback.
+class _PreviewCapableBridge extends _FakeBridge
+    implements PreviewTransformBridge {
+  final List<String> previews = [];
+
+  /// Flipped false to stand in for an ABI-11 library: the transform symbols are
+  /// present, the effect-parameter one is not.
+  bool fxPreviewSupported = true;
+
+  @override
+  bool get supportsPreviewTransform => true;
+
+  @override
+  bool get supportsPreviewEffectParam => fxPreviewSupported;
+
+  @override
+  BridgeReply previewEffectParam(String compId, String layerId, String effectId,
+      String paramName, double value) {
+    previews.add('$compId/$layerId/$effectId/$paramName=$value');
+    return const BridgeReply.ok(null);
+  }
+
+  @override
+  BridgeReply previewTransform(
+          String compId, String layerId, String property, double value) =>
+      const BridgeReply.ok(null);
+
+  @override
+  void cancelTransformPreview() {}
+
+  @override
+  DecodedFrame? renderPreviewFrame(String compId, int frame, double scale) =>
+      null;
 }

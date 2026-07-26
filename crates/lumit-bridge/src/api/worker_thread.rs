@@ -168,9 +168,13 @@ fn render_comp(
 /// Render a frame under effect values the user is still dragging.
 ///
 /// The effect stack is patched on a *clone* of the snapshot, so a drag never
-/// touches the document — no commit, no undo entry, no journal write. This is
-/// the effect-parameter counterpart of the existing `preview_transform` path
-/// (docs/TODO.md, "Effect-param drag preview").
+/// touches the document — no commit, no undo entry, no journal write.
+///
+/// Note this is a *different* idiom from the v0 bridge's `preview_effect_param`
+/// (ABI 12), which keeps a persistent overlay in `Bridge::preview` and replays
+/// `Op::SetLayerEffects` over it. Here the whole effect list rides along with the
+/// render request instead. Worth converging on one of the two when this path is
+/// finished.
 fn render_comp_with_preview(
     req: RenderCompRequestWithPreview,
     state: &mut WorkerState,

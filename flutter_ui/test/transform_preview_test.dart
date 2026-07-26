@@ -475,9 +475,12 @@ void main() {
       expect(app.effectParamValueFor('fx0', 'radius', 1.0), 9.0,
           reason: 'the field must track the drag, not the frozen snapshot');
 
+      // The `committed` argument here must DIFFER from the staged 9.0, or the
+      // assertion passes whether or not commitEffectParam cleared the entry.
       app.commitEffectParam('c1', 'l0', 'fx0', 'radius', 9.0);
-      expect(app.effectParamValueFor('fx0', 'radius', 9.0), 9.0,
-          reason: 'after release the snapshot read-back takes over again');
+      expect(app.effectParamValueFor('fx0', 'radius', 3.0), 3.0,
+          reason: 'after release the staged value is gone and the snapshot '
+              'read-back takes over again');
     });
 
     test('cancelling drops the staged value and tells the engine', () {

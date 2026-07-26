@@ -858,6 +858,15 @@ pub(crate) fn with_effects(
     ctx: &str,
     f: impl FnOnce(&mut Vec<EffectInstance>) -> Result<(), String>,
 ) -> String {
+    // Any attempt to edit an effect list ends whatever drag was being previewed,
+    // whether or not it succeeds. `commit` clears the overlay on the success
+    // path, but the four early returns below bypass it — so a mouse-up whose
+    // commit failed (the effect or parameter vanished mid-gesture) used to leave
+    // a live overlay, and the next transform drag on the same layer would render
+    // every preview frame with that stale effect value laid over it, then snap
+    // back on release. Clearing here keeps the "at most one live drag, discarded
+    // by any real edit" invariant that `DragPreview` documents.
+    bridge.preview = None;
     let (comp, layer) = match parse_comp_layer(comp_id, layer_id) {
         Ok(pair) => pair,
         Err(e) => return err_json(format!("{ctx}: {e}")),

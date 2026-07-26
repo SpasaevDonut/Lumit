@@ -925,7 +925,10 @@ class AppStateStub extends ChangeNotifier {
   void previewEffectParam(String compId, String layerId, String effectId,
       String paramName, double value) {
     final b = bridge;
-    if (b is! PreviewTransformBridge) return;
+    // The capability, not just the type: against a real ABI-11 library the type
+    // matches but the symbol is absent, so the engine would reject the call while
+    // Dart happily staged a value the document never receives.
+    if (b is! PreviewTransformBridge || !supportsPreviewEffectParam) return;
     _effectParamPreviews['$effectId/$paramName'] = value;
     (b as PreviewTransformBridge)
         .previewEffectParam(compId, layerId, effectId, paramName, value);
@@ -937,10 +940,8 @@ class AppStateStub extends ChangeNotifier {
   /// exactly as before. The engine drops its overlay on any real commit, so
   /// there is nothing to clear engine-side.
   void commitEffectParam(String compId, String layerId, String effectId,
-      String paramName, double value) {
-    _effectParamPreviews.remove('$effectId/$paramName');
-    setEffectParamScalar(compId, layerId, effectId, paramName, value);
-  }
+          String paramName, double value) =>
+      setEffectParamScalar(compId, layerId, effectId, paramName, value);
 
   /// Cancel an effect-parameter drag without committing (Escape / gesture
   /// cancel): drop the staged value so the field falls back to the untouched
@@ -1089,6 +1090,9 @@ class AppStateStub extends ChangeNotifier {
       _bridgeOp((b) => b.setEffectEnabled(compId, layerId, effectId, enabled));
 
   /// Set a scalar (Float) effect parameter to a static [value].
+  /// Commits the value for real. Any staged drag value for this parameter is
+  /// discarded by [_adoptSnapshot] when the reply lands — one rule, in one
+  /// place, covering the drag-release path and the type-a-number path alike.
   void setEffectParamScalar(String compId, String layerId, String effectId,
           String paramName, double value) =>
       _bridgeOp((b) =>
@@ -2341,6 +2345,12 @@ class AppStateStub extends ChangeNotifier {
     snapshot = snap;
     canUndo = snap.canUndo;
     canRedo = snap.canRedo;
+    // Adopting a snapshot is exactly when the engine drops its own drag overlay
+    // (every `commit` clears it, as do undo, redo and a project swap), so the
+    // Dart-side staged values must go at the same moment. A preview never adopts
+    // a snapshot, so this cannot fire mid-drag — and it means no exit path from a
+    // drag can leave an entry behind to mask the document with a stale number.
+    _effectParamPreviews.clear();
     // A document edit invalidates the engine's rendered frames (and any
     // thumbnails a relink changed), so the cache bar's warm set resets and the
     // thumbnail epoch advances.

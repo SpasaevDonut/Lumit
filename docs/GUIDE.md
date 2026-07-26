@@ -2449,8 +2449,11 @@ the undo history, nor the disk. The Viewer renders the document *with that value
 laid over the top* — and because the value does not change which frames of video
 have to be decoded, it re-composites from pictures the renderer is already holding
 rather than decoding anything again. When the mouse is released, the ordinary
-commit runs exactly once, so the whole drag is a single undo step. Escape instead
-discards the staged value and the picture snaps back.
+commit runs exactly once, so the whole drag is a single undo step. A drag that is
+abandoned rather than released — the gesture cancelled, or the pointer released
+without ever having moved far enough to change the value — discards the staged
+value instead, and the picture returns to where it was. (Cancelling with the
+Escape key is *not* wired up; the value fields have no key handling yet.)
 
 The tell that this has broken, if it ever does: dragging feels heavy and Undo has
 to be pressed many times to get back past one adjustment. Both symptoms have the
@@ -3153,10 +3156,12 @@ real, permanent edit happen — the same single undo-worthy edit dragging
 always should have been, exactly once, right at the end. Letting go of a
 linked Scale pair still commits both axes as two edits, undoing back one axis
 at a time, precisely as before this fix — only the felt smoothness of the
-drag changed, not what Undo does afterwards. Pressing Escape (or any other
-way a drag gets cancelled without a release) throws the live note away with
-nothing committed at all, so the picture and the number both snap back to
-wherever they were before you started dragging.
+drag changed, not what Undo does afterwards. A drag that is cancelled rather
+than released — the gesture interrupted, or the pointer let go without the
+value ever having moved — throws the live note away with nothing committed at
+all, so the picture and the number both snap back to wherever they were before
+you started dragging. (Cancelling with the Escape key is not wired up: the
+value fields have no key handling yet. This paragraph used to claim otherwise.)
 
 An older engine library that predates this simply does not offer the live
 note, and the interface notices and quietly falls back to the old,

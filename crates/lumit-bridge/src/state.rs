@@ -1267,14 +1267,21 @@ mod tests {
         (b, comp, layer, effect_id, param)
     }
 
-    /// The whole point of the feature, and the gate that was missing when this
-    /// regressed: a drag tick must not commit. Fails without
-    /// `preview_effect_param` — the effect rows had no live path, so every tick
-    /// ran `set_effect_param_scalar`, taking an undo entry and a synchronous
-    /// journal `fsync` (2.5 ms measured) per mouse-move event, against budget B1
-    /// (docs/13 §2, ≤ 8 ms per interaction frame).
+    /// A drag tick must not commit: no undo entry, and the committed document
+    /// untouched.
+    ///
+    /// It asserts on `journal_ops`, which is the **undo stack**, not the on-disk
+    /// crash journal. That the `fsync` is gone follows from there being no commit
+    /// at all — only `commit` calls `journal_append` — but this test does not
+    /// observe the disk, so the name says undo rather than implying more.
+    ///
+    /// This gate covers the engine. The panel wiring that actually regressed is
+    /// gated separately, by
+    /// `dragging a scalar param previews per tick and commits once on release`
+    /// in flutter_ui/test/f4_effects_test.dart — the engine was never the part
+    /// that was wrong.
     #[test]
-    fn preview_effect_param_never_touches_undo_or_journal() {
+    fn preview_effect_param_never_commits_or_touches_undo() {
         let (mut b, comp, layer, effect_id, param) = comp_with_scalar_effect();
         let before = b.store.journal_ops().len();
 
@@ -1411,6 +1418,42 @@ mod tests {
         assert!(b.preview.is_none());
         assert_eq!(b.store.journal_ops().len(), before);
         assert_eq!(*snapshot_with_preview(&b), *b.store.snapshot());
+    }
+
+    /// A *failed* effect edit must also end the drag. `commit` clears the overlay
+    /// on success, but `with_effects` has four early error returns that never
+    /// reach it — so a mouse-up whose commit failed (effect or parameter gone
+    /// mid-gesture) left the overlay live, and a later transform drag on the same
+    /// layer would render with that stale effect value laid over it. Fails if the
+    /// clear at the top of `with_effects` is removed.
+    #[test]
+    fn a_failed_effect_edit_still_ends_the_drag() {
+        let (mut b, comp, layer, _effect_id, param) = comp_with_scalar_effect();
+        preview_effect_param(
+            &mut b,
+            &comp.to_string(),
+            &layer.to_string(),
+            &Uuid::now_v7().to_string(), // an effect that does not exist
+            param,
+            4.0,
+        );
+        assert!(b.preview.is_some(), "the tick staged an overlay");
+
+        // Mouse-up: a commit that cannot succeed, because the effect id is unknown.
+        let reply = parse(&crate::edits::set_effect_param_scalar(
+            &mut b,
+            &comp.to_string(),
+            &layer.to_string(),
+            &Uuid::now_v7().to_string(),
+            param,
+            4.0,
+        ));
+        assert_eq!(reply["ok"], json!(false), "the commit failed, as set up");
+        assert!(
+            b.preview.is_none(),
+            "a failed edit must still discard the overlay, or it leaks into the \
+             next drag"
+        );
     }
 
     /// A commit ends the drag: one undo step, and the overlay is gone. This is
