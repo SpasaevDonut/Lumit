@@ -33,7 +33,16 @@ use uuid::Uuid;
 /// A transform anchored on the content's own centre and placed at the comp
 /// centre — `lumit-ui`'s `centred_transform`, the seeding every add-layer path
 /// uses so a fresh layer appears centred and pivots about its middle (K-150).
-fn centred_transform(nat_w: f64, nat_h: f64, comp_w: u32, comp_h: u32) -> TransformGroup {
+///
+/// Shared with the frb API rather than copied: a second set of layer-seeding
+/// defaults would drift, and a footage layer added through the new bridge would
+/// then land in a different place from one added through the old.
+pub(crate) fn centred_transform(
+    nat_w: f64,
+    nat_h: f64,
+    comp_w: u32,
+    comp_h: u32,
+) -> TransformGroup {
     use lumit_core::anim::Property;
     TransformGroup {
         anchor_x: Property::fixed(nat_w * 0.5),
@@ -47,7 +56,14 @@ fn centred_transform(nat_w: f64, nat_h: f64, comp_w: u32, comp_h: u32) -> Transf
 /// A layer with the house defaults every add path shares, given the parts that
 /// differ (name, kind, span end, transform). The span starts at comp 0 and the
 /// switches are the model defaults — exactly as the egui add-layer paths build.
-fn base_layer(name: String, kind: LayerKind, out: Rational, transform: TransformGroup) -> Layer {
+///
+/// Shared with the frb API for the same reason as [`centred_transform`].
+pub(crate) fn base_layer(
+    name: String,
+    kind: LayerKind,
+    out: Rational,
+    transform: TransformGroup,
+) -> Layer {
     Layer {
         id: Uuid::now_v7(),
         name,

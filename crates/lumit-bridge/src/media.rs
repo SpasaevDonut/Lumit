@@ -202,14 +202,34 @@ pub(crate) fn thumbnail(
     max_edge: u32,
 ) -> Option<(u32, u32, Vec<u8>)> {
     let id = Uuid::parse_str(item_id).ok()?;
+    let path = crate::state::footage_path(bridge, item_id)?;
+    thumbnail_from_path(&mut bridge.media, id, max_edge, &path)
+}
+
+/// Decode a thumbnail for `id` from `path`, memoised in `cache`.
+///
+/// The bridge-agnostic core: it takes the cache and the resolved path rather than
+/// a whole bridge, so the v0 wrapper above and the frb `FootageReference` both
+/// drive the same decode, the same box filter and the same cache. Shared rather
+/// than copied because a second implementation would quietly produce differently
+/// scaled thumbnails for the same request.
+///
+/// `max_edge` is clamped to 1..=4096: a request for a zero-pixel or absurd
+/// thumbnail is a caller bug, not something to allocate for.
+#[cfg(feature = "media")]
+pub(crate) fn thumbnail_from_path(
+    cache: &mut MediaCache,
+    id: Uuid,
+    max_edge: u32,
+    path: &std::path::Path,
+) -> Option<(u32, u32, Vec<u8>)> {
     let max_edge = max_edge.clamp(1, 4096);
-    if let Some(hit) = bridge.media.thumb_get(id, max_edge) {
+    if let Some(hit) = cache.thumb_get(id, max_edge) {
         return Some(hit);
     }
-    let path = crate::state::footage_path(bridge, item_id)?;
-    let frame = decode_frame(&path, 0)?;
+    let frame = decode_frame(path, 0)?;
     let (w, h, rgba) = downscale_to_max_edge(frame.width, frame.height, &frame.rgba, max_edge);
-    bridge.media.thumb_put(id, max_edge, w, h, rgba.clone());
+    cache.thumb_put(id, max_edge, w, h, rgba.clone());
     Some((w, h, rgba))
 }
 

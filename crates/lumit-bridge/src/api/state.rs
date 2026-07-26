@@ -23,7 +23,7 @@ use crate::{
 pub struct LumitBridgeState {
     pub store: DocumentStore,
     pub path: Option<PathBuf>,
-    media: MediaCache,
+    pub(crate) media: MediaCache,
     pub journal: Option<JournalFile>,
     pub sender: Option<Sender<WorkerRequest>>,
 }

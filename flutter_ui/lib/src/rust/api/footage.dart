@@ -7,8 +7,9 @@ import '../api.dart';
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
+import 'state.dart';
 
-// These functions are ignored because they are not marked as `pub`: `footage_path`, `project`
+// These functions are ignored because they are not marked as `pub`: `project`, `resolve_path`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `eq`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
@@ -36,6 +37,25 @@ class FootageReference {
   /// picked one, so a healthy item is never repointed.
   void relink({required String path}) => BridgeLib.instance.api
       .crateApiFootageFootageReferenceRelink(that: this, path: path);
+
+  /// A small decoded picture of this footage's first frame, for the Project
+  /// panel row. `None` when the file cannot be resolved or decoded — a missing
+  /// or unsupported item shows its type glyph instead.
+  ///
+  /// Deliberately **not** `#[frb(sync)]`: a cold video decode is FFmpeg work
+  /// measured in tens of milliseconds, so it must not run on Dart's UI isolate.
+  /// frb puts an async call on its own worker pool and Dart simply awaits it —
+  /// which is the whole of what v0 needed a hand-rolled isolate, a wire
+  /// protocol, a `TransferableTypedData` hand-off and a generation map to
+  /// achieve. Memoised per (item, size) in the project's media cache, so a
+  /// rebuild costs nothing.
+  ///
+  /// The pixels are small enough that frb's per-byte `Vec<u8>` encoding does not
+  /// matter here: at the panel's 56 px longer edge this is a few kilobytes, not
+  /// the megabytes a Viewer frame carries.
+  Future<BridgeRenderedFrame?> thumbnail({required int maxEdge}) => BridgeLib
+      .instance.api
+      .crateApiFootageFootageReferenceThumbnail(that: this, maxEdge: maxEdge);
 
   @override
   int get hashCode => internalproject.hashCode ^ internalid.hashCode;

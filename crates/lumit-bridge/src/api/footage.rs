@@ -10,6 +10,9 @@ use crate::api::{
     BridgeError,
 };
 
+#[cfg(feature = "media")]
+use crate::api::state::BridgeRenderedFrame;
+
 #[derive(Debug, PartialEq, Eq)]
 #[frb]
 pub struct FootageReference {
@@ -57,7 +60,7 @@ impl FootageReference {
     /// (so there is no directory to resolve against), or one that no longer
     /// exists on disk. The caller reports that as missing media, which is what
     /// it is; it is not an error worth surfacing separately.
-    fn footage_path(p: &LumitBridgeState, f: &FootageItem) -> Option<PathBuf> {
+    pub(crate) fn resolve_path(p: &LumitBridgeState, f: &FootageItem) -> Option<PathBuf> {
         if f.media.absolute_path.is_empty() {
             let path = p.path.clone()?;
             let path = path.parent()?;
@@ -109,7 +112,7 @@ impl FootageReference {
                 } else {
                     // Only sweep items that are actually broken, and only to a
                     // file that really exists beside the picked one.
-                    if Self::footage_path(&p, other).is_some_and(|p| p.is_file()) {
+                    if Self::resolve_path(&p, other).is_some_and(|p| p.is_file()) {
                         continue;
                     }
                     let Some(folder) = &folder else { continue };
@@ -154,6 +157,50 @@ impl FootageReference {
         Ok(())
     }
 
+    /// A small decoded picture of this footage's first frame, for the Project
+    /// panel row. `None` when the file cannot be resolved or decoded — a missing
+    /// or unsupported item shows its type glyph instead.
+    ///
+    /// Deliberately **not** `#[frb(sync)]`: a cold video decode is FFmpeg work
+    /// measured in tens of milliseconds, so it must not run on Dart's UI isolate.
+    /// frb puts an async call on its own worker pool and Dart simply awaits it —
+    /// which is the whole of what v0 needed a hand-rolled isolate, a wire
+    /// protocol, a `TransferableTypedData` hand-off and a generation map to
+    /// achieve. Memoised per (item, size) in the project's media cache, so a
+    /// rebuild costs nothing.
+    ///
+    /// The pixels are small enough that frb's per-byte `Vec<u8>` encoding does not
+    /// matter here: at the panel's 56 px longer edge this is a few kilobytes, not
+    /// the megabytes a Viewer frame carries.
+    #[cfg(feature = "media")]
+    pub fn thumbnail(&self, max_edge: u32) -> Result<Option<BridgeRenderedFrame>, BridgeError> {
+        let proj = self.project()?;
+        let mut proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+
+        let Some(path) = ({
+            let snapshot = proj.store.snapshot();
+            match snapshot.item(self.id) {
+                Some(lumit_core::model::ProjectItem::Footage(footage)) => {
+                    Self::resolve_path(&proj, footage)
+                }
+                _ => None,
+            }
+        }) else {
+            return Ok(None);
+        };
+
+        let id = self.id;
+        Ok(
+            crate::media::thumbnail_from_path(&mut proj.media, id, max_edge, &path).map(
+                |(width, height, rgba)| BridgeRenderedFrame {
+                    width,
+                    height,
+                    rgba,
+                },
+            ),
+        )
+    }
+
     pub fn get_status(&self) -> Result<LumitMediaStatus, BridgeError> {
         let proj = self.project()?;
         let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
@@ -165,7 +212,7 @@ impl FootageReference {
             lumit_core::model::ProjectItem::Footage(footage_item) => {
                 // An unresolvable path is missing media, same as one that
                 // resolves but no longer decodes.
-                let Some(path) = Self::footage_path(&proj, footage_item) else {
+                let Some(path) = Self::resolve_path(&proj, footage_item) else {
                     return Ok(LumitMediaStatus::Missing);
                 };
 

@@ -6,11 +6,12 @@
 import '../api.dart';
 import '../frb_generated.dart';
 import 'effect.dart';
+import 'footage.dart';
 import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `composition`, `dispatch`, `project`
+// These functions are ignored because they are not marked as `pub`: `composition`, `dispatch`, `footage_span_and_size`, `project`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
@@ -44,6 +45,23 @@ class CompositionReference {
     required this.internalproject,
     required this.internalid,
   });
+
+  /// Place `footage` into this composition as a new top layer.
+  ///
+  /// The layer's span is the media's own duration in comp frames, and its
+  /// transform is anchored on the media's own centre at the comp centre (K-150),
+  /// so a placed clip appears centred and pivots about its middle. Both fall
+  /// back to the comp's duration and size when the media cannot be probed —
+  /// a missing file still places, so the user can relink it rather than being
+  /// unable to add it at all.
+  ///
+  /// The duration comes from the container's real `duration_seconds`, not from
+  /// a frame count: audio-only media has no video frame count or rate, and
+  /// reconstructing seconds from those silently clamped such a clip to one frame.
+  void addFootageLayer({required FootageReference footage}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddFootageLayer(
+              that: this, footage: footage);
 
   List<LayerReference> getLayers() =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetLayers(

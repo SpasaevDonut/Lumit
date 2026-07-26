@@ -9,8 +9,8 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 
 use crate::api::{
-    folder::FolderReference, footage::FootageReference, project::ProjectReference,
-    project_item::ItemReference, state::LumitBridgeState, BridgeError,
+    composition::CompositionReference, folder::FolderReference, footage::FootageReference,
+    project::ProjectReference, project_item::ItemReference, state::LumitBridgeState, BridgeError,
 };
 use lumit_core::model::{Folder, FootageItem, MediaRef, ProjectItem};
 use lumit_core::Op;
@@ -159,4 +159,97 @@ fn move_to_root_unfiles_the_item_and_is_a_no_op_when_already_there() {
     // Already at the root: accepted and does nothing, rather than erroring.
     loose.move_to_root().expect("no-op");
     filed.move_to_root().expect("no-op the second time too");
+}
+
+/// Relinking points the item at the picked file and, crucially, is refused when
+/// there is nothing to point at — a silent success would leave the user thinking
+/// a broken item had been fixed.
+#[test]
+fn relink_refuses_a_blank_or_useless_path() {
+    let (_project, _folder, filed, _loose) = project_with_folder();
+    let ItemReference::Footage(footage) = &filed else {
+        panic!("the fixture built footage");
+    };
+
+    assert!(matches!(
+        footage.relink(String::new()),
+        Err(BridgeError::MediaPathUnresolved)
+    ));
+
+    // A path that does not exist: the target itself is still repointed (the user
+    // asked for it explicitly), so this succeeds and the document records it.
+    let picked = std::env::temp_dir().join("lumit-relink-target.mp4");
+    std::fs::write(&picked, b"not really a video").expect("temp file");
+    footage
+        .relink(picked.to_string_lossy().into_owned())
+        .expect("the explicit target is always repointed");
+    std::fs::remove_file(&picked).ok();
+}
+
+/// A placed clip must land in the composition; the span/size fallbacks are what
+/// let a *missing* file still place, so the user can relink rather than being
+/// unable to add it at all.
+#[test]
+fn footage_places_into_a_composition_even_when_the_media_is_missing() {
+    let (project, _folder, filed, _loose) = project_with_folder();
+    let ItemReference::Footage(footage) = &filed else {
+        panic!("the fixture built footage");
+    };
+
+    let comp = add_comp(&project, "Scene");
+    assert!(comp.get_layers().expect("layers").is_empty());
+
+    // The fixture's media has an empty absolute path and an unsaved project, so
+    // it cannot resolve — the comp's own duration and size are used.
+    comp.add_footage_layer(footage).expect("placed");
+
+    let layers = comp.get_layers().expect("layers");
+    assert_eq!(layers.len(), 1);
+    assert_eq!(layers[0].get_name().expect("name"), "filed.mp4");
+}
+
+/// `get_size` is what the Viewer divides its panel box by to work out a render
+/// scale, so it has to report the comp's own dimensions rather than anything else.
+#[test]
+fn a_composition_reports_its_own_size() {
+    let (project, ..) = project_with_folder();
+    let comp = add_comp(&project, "Scene");
+
+    let size = comp.get_size().expect("size");
+    assert_eq!((size.width, size.height), (1920, 1080));
+}
+
+/// Add a composition straight through the store, since the frb API has no
+/// add-composition op yet (that arrives with the Timeline port).
+fn add_comp(project: &ProjectReference, name: &str) -> CompositionReference {
+    use lumit_core::model::LinearColour;
+    use lumit_core::time::{Duration, FrameRate, Rational};
+
+    let comp = lumit_core::model::Composition {
+        id: Uuid::now_v7(),
+        name: name.into(),
+        width: 1920,
+        height: 1080,
+        frame_rate: FrameRate::new(30, 1).expect("30 fps"),
+        duration: Duration(Rational::new(10, 1).expect("10 s")),
+        background: LinearColour([0.0, 0.0, 0.0, 0.0]),
+        work_area: None,
+        layers: Vec::new(),
+        markers: Vec::new(),
+        motion_blur: Default::default(),
+        extra: serde_json::Map::new(),
+    };
+    let comp_id = comp.id;
+
+    let state = project.state().expect("state");
+    let state = state.write().expect("write");
+    state
+        .store
+        .commit(Op::AddItem {
+            index: 0,
+            item: Box::new(ProjectItem::Composition(comp)),
+        })
+        .expect("comp added");
+
+    CompositionReference::new(project.id, comp_id)
 }

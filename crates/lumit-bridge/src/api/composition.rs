@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::api::{
     effect::BridgeEffectInstance,
+    footage::FootageReference,
     layer::LayerReference,
     state::{LumitBridgeState, PROJECTS},
     worker_thread::{
@@ -81,6 +82,99 @@ impl CompositionReference {
             // A CompositionReference pointing at a non-composition item means the
             // id was reused or the reference outlived its item.
             _ => Err(BridgeError::InvalidComp),
+        }
+    }
+
+    /// Place `footage` into this composition as a new top layer.
+    ///
+    /// The layer's span is the media's own duration in comp frames, and its
+    /// transform is anchored on the media's own centre at the comp centre (K-150),
+    /// so a placed clip appears centred and pivots about its middle. Both fall
+    /// back to the comp's duration and size when the media cannot be probed —
+    /// a missing file still places, so the user can relink it rather than being
+    /// unable to add it at all.
+    ///
+    /// The duration comes from the container's real `duration_seconds`, not from
+    /// a frame count: audio-only media has no video frame count or rate, and
+    /// reconstructing seconds from those silently clamped such a clip to one frame.
+    #[frb(sync)]
+    pub fn add_footage_layer(&self, footage: &FootageReference) -> Result<(), BridgeError> {
+        let proj = self.project()?;
+        let comp = self.composition()?;
+
+        let layer = {
+            let p = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+            let doc = p.store.snapshot();
+
+            let item = footage.id();
+            let Some(lumit_core::model::ProjectItem::Footage(f)) = doc.item(item) else {
+                return Err(BridgeError::InvalidItem);
+            };
+
+            let (out, nat_w, nat_h) = Self::footage_span_and_size(&p, f, &comp);
+
+            crate::edits::base_layer(
+                f.name.clone(),
+                lumit_core::model::LayerKind::Footage { item, retime: None },
+                out,
+                crate::edits::centred_transform(nat_w, nat_h, comp.width, comp.height),
+            )
+        };
+
+        let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+        proj.store
+            .commit(lumit_core::Op::AddLayer {
+                comp: self.id,
+                index: 0,
+                layer: Box::new(layer),
+            })
+            .map_err(BridgeError::OpError)?;
+        Ok(())
+    }
+
+    /// The span end and natural pixel size a placed clip should take: the media's
+    /// own when it probes, the comp's when it does not.
+    #[frb(ignore)]
+    fn footage_span_and_size(
+        state: &LumitBridgeState,
+        footage: &lumit_core::model::FootageItem,
+        comp: &lumit_core::model::Composition,
+    ) -> (lumit_core::time::Rational, f64, f64) {
+        let fallback = (
+            comp.duration.0,
+            f64::from(comp.width),
+            f64::from(comp.height),
+        );
+
+        #[cfg(feature = "media")]
+        {
+            let Some(path) = FootageReference::resolve_path(state, footage) else {
+                return fallback;
+            };
+            let Ok(info) = lumit_media::probe::probe(&path) else {
+                return fallback;
+            };
+            let frames = (info.duration_seconds * comp.frame_rate.fps()).round() as i64;
+            let out = comp
+                .frame_rate
+                .time_of_frame(frames.max(1))
+                .map(|t| t.0)
+                .unwrap_or(comp.duration.0);
+            // Audio-only media has no video stream at all, so it takes the comp's
+            // size — there is no natural size to anchor on.
+            let (nat_w, nat_h) = match info.video {
+                Some(v) if v.width > 0 && v.height > 0 => (f64::from(v.width), f64::from(v.height)),
+                _ => (f64::from(comp.width), f64::from(comp.height)),
+            };
+            (out, nat_w, nat_h)
+        }
+
+        // Without the media feature nothing probes, so a placed clip spans the
+        // whole comp at comp size.
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = (state, footage);
+            fallback
         }
     }
 

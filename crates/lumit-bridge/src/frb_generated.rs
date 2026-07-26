@@ -42,7 +42,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 1006839457;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -750950702;
 
 // Section: executor
 
@@ -433,6 +433,42 @@ fn wire__crate__api__state__LumitBridgeState_open_project_impl(
         },
     )
 }
+fn wire__crate__api__composition__composition_reference_add_footage_layer_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "composition_reference_add_footage_layer",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that =
+                <crate::api::composition::CompositionReference>::sse_decode(&mut deserializer);
+            let api_footage =
+                <crate::api::footage::FootageReference>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok = crate::api::composition::CompositionReference::add_footage_layer(
+                    &api_that,
+                    &api_footage,
+                )?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__composition__composition_reference_get_layers_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -664,6 +700,41 @@ fn wire__crate__api__footage__footage_reference_relink_impl(
                 let output_ok = crate::api::footage::FootageReference::relink(&api_that, api_path)?;
                 Ok(output_ok)
             })())
+        },
+    )
+}
+fn wire__crate__api__footage__footage_reference_thumbnail_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "footage_reference_thumbnail",
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that = <crate::api::footage::FootageReference>::sse_decode(&mut deserializer);
+            let api_max_edge = <u32>::sse_decode(&mut deserializer);
+            deserializer.end();
+            move |context| {
+                transform_result_sse::<_, BridgeError>((move || {
+                    let output_ok =
+                        crate::api::footage::FootageReference::thumbnail(&api_that, api_max_edge)?;
+                    Ok(output_ok)
+                })())
+            }
         },
     )
 }
@@ -1479,6 +1550,19 @@ impl SseDecode
     }
 }
 
+impl SseDecode for Option<crate::api::state::BridgeRenderedFrame> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        if (<bool>::sse_decode(deserializer)) {
+            return Some(<crate::api::state::BridgeRenderedFrame>::sse_decode(
+                deserializer,
+            ));
+        } else {
+            return None;
+        }
+    }
+}
+
 impl SseDecode for Option<f64> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -1639,7 +1723,13 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        15 => wire__crate__api__footage__footage_reference_get_status_impl(
+        16 => wire__crate__api__footage__footage_reference_get_status_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        18 => wire__crate__api__footage__footage_reference_thumbnail_impl(
             port,
             ptr,
             rust_vec_len,
@@ -1689,63 +1779,68 @@ fn pde_ffi_dispatcher_sync_impl(
         9 => {
             wire__crate__api__state__LumitBridgeState_open_project_impl(ptr, rust_vec_len, data_len)
         }
-        10 => wire__crate__api__composition__composition_reference_get_layers_impl(
+        10 => wire__crate__api__composition__composition_reference_add_footage_layer_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        11 => wire__crate__api__composition__composition_reference_get_size_impl(
+        11 => wire__crate__api__composition__composition_reference_get_layers_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        12 => wire__crate__api__composition__composition_reference_render_frame_impl(
+        12 => wire__crate__api__composition__composition_reference_get_size_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        13 => wire__crate__api__composition__composition_reference_render_frame_with_preview_impl(
+        13 => wire__crate__api__composition__composition_reference_render_frame_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        14 => wire__crate__api__folder__folder_reference_get_children_impl(
+        14 => wire__crate__api__composition__composition_reference_render_frame_with_preview_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        16 => wire__crate__api__footage__footage_reference_relink_impl(ptr, rust_vec_len, data_len),
-        17 => {
+        15 => wire__crate__api__folder__folder_reference_get_children_impl(
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
+        17 => wire__crate__api__footage__footage_reference_relink_impl(ptr, rust_vec_len, data_len),
+        19 => {
             wire__crate__api__project_item__item_reference_delete_impl(ptr, rust_vec_len, data_len)
         }
-        18 => {
+        20 => {
             wire__crate__api__project_item__item_reference_equals_impl(ptr, rust_vec_len, data_len)
         }
-        19 => wire__crate__api__project_item__item_reference_move_to_root_impl(
+        21 => wire__crate__api__project_item__item_reference_move_to_root_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        20 => wire__crate__api__project_item__item_reference_name_impl(ptr, rust_vec_len, data_len),
-        21 => {
+        22 => wire__crate__api__project_item__item_reference_name_impl(ptr, rust_vec_len, data_len),
+        23 => {
             wire__crate__api__project_item__item_reference_rename_impl(ptr, rust_vec_len, data_len)
         }
-        22 => wire__crate__api__layer__layer_reference_equals_impl(ptr, rust_vec_len, data_len),
-        23 => {
+        24 => wire__crate__api__layer__layer_reference_equals_impl(ptr, rust_vec_len, data_len),
+        25 => {
             wire__crate__api__layer__layer_reference_get_effects_impl(ptr, rust_vec_len, data_len)
         }
-        24 => wire__crate__api__layer__layer_reference_get_name_impl(ptr, rust_vec_len, data_len),
-        25 => wire__crate__api__layer__layer_reference_rename_impl(ptr, rust_vec_len, data_len),
-        26 => {
+        26 => wire__crate__api__layer__layer_reference_get_name_impl(ptr, rust_vec_len, data_len),
+        27 => wire__crate__api__layer__layer_reference_rename_impl(ptr, rust_vec_len, data_len),
+        28 => {
             wire__crate__api__project__project_reference_get_items_impl(ptr, rust_vec_len, data_len)
         }
-        27 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
-        28 => wire__crate__api__project__project_reference_start_worker_impl(
+        29 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
+        30 => wire__crate__api__project__project_reference_start_worker_impl(
             ptr,
             rust_vec_len,
             data_len,
         ),
-        29 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
+        31 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
         _ => unreachable!(),
     }
 }
@@ -2458,6 +2553,16 @@ impl SseEncode
                 crate::api::state::ScopedChange,
                 flutter_rust_bridge::for_generated::SseCodec,
             >>::sse_encode(value, serializer);
+        }
+    }
+}
+
+impl SseEncode for Option<crate::api::state::BridgeRenderedFrame> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <bool>::sse_encode(self.is_some(), serializer);
+        if let Some(value) = self {
+            <crate::api::state::BridgeRenderedFrame>::sse_encode(value, serializer);
         }
     }
 }
