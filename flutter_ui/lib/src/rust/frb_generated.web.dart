@@ -7,6 +7,7 @@
 // ignore_for_file: argument_type_not_assignable
 
 import 'api.dart';
+import 'api/assets.dart';
 import 'api/cache.dart';
 import 'api/composition.dart';
 import 'api/effect.dart';
@@ -164,7 +165,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dco_decode_box_autoadd_bridge_shared_frame_info_linux(dynamic raw);
 
   @protected
+  BridgeSolidDef dco_decode_box_autoadd_bridge_solid_def(dynamic raw);
+
+  @protected
   BridgeSpan dco_decode_box_autoadd_bridge_span(dynamic raw);
+
+  @protected
+  BridgeTextDocument dco_decode_box_autoadd_bridge_text_document(dynamic raw);
 
   @protected
   BridgeTransform dco_decode_box_autoadd_bridge_transform(dynamic raw);
@@ -208,6 +215,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeColour dco_decode_bridge_colour(dynamic raw);
+
+  @protected
+  BridgeColourRgba dco_decode_bridge_colour_rgba(dynamic raw);
 
   @protected
   BridgeCompSettings dco_decode_bridge_comp_settings(dynamic raw);
@@ -292,7 +302,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeSideInterp dco_decode_bridge_side_interp(dynamic raw);
 
   @protected
+  BridgeSolidDef dco_decode_bridge_solid_def(dynamic raw);
+
+  @protected
   BridgeSpan dco_decode_bridge_span(dynamic raw);
+
+  @protected
+  BridgeTextDocument dco_decode_bridge_text_document(dynamic raw);
 
   @protected
   BridgeTransform dco_decode_bridge_transform(dynamic raw);
@@ -392,7 +408,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dynamic raw);
 
   @protected
+  BridgeScalar? dco_decode_opt_box_autoadd_bridge_scalar(dynamic raw);
+
+  @protected
   BridgeSpan? dco_decode_opt_box_autoadd_bridge_span(dynamic raw);
+
+  @protected
+  BridgeTextDocument? dco_decode_opt_box_autoadd_bridge_text_document(
+      dynamic raw);
 
   @protected
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
@@ -559,7 +582,15 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           SseDeserializer deserializer);
 
   @protected
+  BridgeSolidDef sse_decode_box_autoadd_bridge_solid_def(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeSpan sse_decode_box_autoadd_bridge_span(SseDeserializer deserializer);
+
+  @protected
+  BridgeTextDocument sse_decode_box_autoadd_bridge_text_document(
+      SseDeserializer deserializer);
 
   @protected
   BridgeTransform sse_decode_box_autoadd_bridge_transform(
@@ -610,6 +641,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeColour sse_decode_bridge_colour(SseDeserializer deserializer);
+
+  @protected
+  BridgeColourRgba sse_decode_bridge_colour_rgba(SseDeserializer deserializer);
 
   @protected
   BridgeCompSettings sse_decode_bridge_comp_settings(
@@ -703,7 +737,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeSideInterp sse_decode_bridge_side_interp(SseDeserializer deserializer);
 
   @protected
+  BridgeSolidDef sse_decode_bridge_solid_def(SseDeserializer deserializer);
+
+  @protected
   BridgeSpan sse_decode_bridge_span(SseDeserializer deserializer);
+
+  @protected
+  BridgeTextDocument sse_decode_bridge_text_document(
+      SseDeserializer deserializer);
 
   @protected
   BridgeTransform sse_decode_bridge_transform(SseDeserializer deserializer);
@@ -814,7 +855,15 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeScalar? sse_decode_opt_box_autoadd_bridge_scalar(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeSpan? sse_decode_opt_box_autoadd_bridge_span(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeTextDocument? sse_decode_opt_box_autoadd_bridge_text_document(
       SseDeserializer deserializer);
 
   @protected
@@ -987,8 +1036,16 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeSharedFrameInfoLinux self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_solid_def(
+      BridgeSolidDef self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_span(
       BridgeSpan self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_text_document(
+      BridgeTextDocument self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bridge_transform(
@@ -1042,6 +1099,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_bridge_colour(BridgeColour self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_colour_rgba(
+      BridgeColourRgba self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_comp_settings(
@@ -1147,7 +1208,15 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeSideInterp self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_solid_def(
+      BridgeSolidDef self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_span(BridgeSpan self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_text_document(
+      BridgeTextDocument self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_transform(
@@ -1267,8 +1336,16 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeRenderedFrame? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_bridge_scalar(
+      BridgeScalar? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_bridge_span(
       BridgeSpan? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_bridge_text_document(
+      BridgeTextDocument? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);

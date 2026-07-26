@@ -3,10 +3,13 @@
 
 // ignore_for_file: invalid_use_of_internal_member, unused_import, unnecessary_import
 
+import '../api.dart';
 import '../frb_generated.dart';
+import 'assets.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
+// These functions are ignored because they are not marked as `pub`: `commit`, `definition`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `eq`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
@@ -18,6 +21,19 @@ class SolidReference {
     required this.internalproject,
     required this.internalid,
   });
+
+  /// This solid asset's definition.
+  BridgeSolidDef getDefinition() =>
+      BridgeLib.instance.api.crateApiSolidSolidReferenceGetDefinition(
+        that: this,
+      );
+
+  /// Edit the solid. **Every layer using it changes**, because a solid is an
+  /// asset in the Project panel rather than a per-layer setting — which is
+  /// what makes "recolour every background at once" one edit.
+  void setDefinition({required BridgeSolidDef definition}) =>
+      BridgeLib.instance.api.crateApiSolidSolidReferenceSetDefinition(
+          that: this, definition: definition);
 
   @override
   int get hashCode => internalproject.hashCode ^ internalid.hashCode;

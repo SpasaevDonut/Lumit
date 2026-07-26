@@ -291,7 +291,7 @@ impl LayerReference {
     }
 
     #[frb(ignore)]
-    fn item(&self) -> Result<Layer, BridgeError> {
+    pub(crate) fn item(&self) -> Result<Layer, BridgeError> {
         self.composition()?
             .layers
             .into_iter()
@@ -809,7 +809,7 @@ impl LayerReference {
 
     /// Commit `op` against this layer's project.
     #[frb(ignore)]
-    fn commit(&self, op: lumit_core::Op) -> Result<(), BridgeError> {
+    pub(crate) fn commit(&self, op: lumit_core::Op) -> Result<(), BridgeError> {
         let proj = self.project()?;
         let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
         proj.store.commit(op).map_err(BridgeError::OpError)?;

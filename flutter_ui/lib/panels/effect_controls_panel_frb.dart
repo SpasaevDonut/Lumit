@@ -37,6 +37,7 @@ import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 import 'keyframe_controls_frb.dart';
 import 'placeholder.dart';
+import 'source_rows_frb.dart';
 
 /// How wide a value cell is, so the rows line up down the panel.
 const double _cellWidth = 78;
@@ -125,6 +126,13 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
           child: ListView(
             padding: const EdgeInsets.symmetric(vertical: 4),
             children: [
+              // What the layer is made of comes before where it sits: a text
+              // layer's words are the first thing you want when you select one.
+              SourceRowsFrb(
+                key: ValueKey<String>('src-card-${layer.internallayerId}'),
+                layer: layer,
+                onChanged: () => setState(() {}),
+              ),
               _TransformCard(
                 key: ValueKey<String>('tf-card-${layer.internallayerId}'),
                 layer: layer,

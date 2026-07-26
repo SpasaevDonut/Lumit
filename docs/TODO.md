@@ -128,9 +128,8 @@ sequence clips.
     `add_mask_geometry`); Retime (enabled/speed/reverse/interpolation,
     `segment_to_rate`, `set_segment_preset`) and the two clip commands beside it
     (`drag_boundary`, `trim_to_source_end`); audio (prepare/play/pause/seek/stop/
-    clock, `detect_beats`, `clear_beat_markers`); assets (`set_solid`,
-    `set_text_content`, `set_camera_zoom`); the preset *listing*; and
-    `decode_frame`, the single-layer decode behind the Viewer's fallback.
+    clock, `detect_beats`, `clear_beat_markers`); the preset *listing*; and `decode_frame`, the
+    single-layer decode behind the Viewer's fallback.
 
 - **Panel work left.** The graph editor's speed and time lenses and draggable
     bezier handles; the Viewer's scale and rotate gizmo handles, motion paths,

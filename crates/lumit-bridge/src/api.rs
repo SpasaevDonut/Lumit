@@ -2,6 +2,7 @@ use std::{error::Error, fmt};
 
 use lumit_core::OpError;
 
+pub mod assets;
 pub mod cache;
 pub mod composition;
 pub mod effect;
@@ -63,6 +64,10 @@ pub enum BridgeError {
     /// The export could not start — already running, no GPU, or a spec the
     /// encoder will not take. Carries the engine's own words.
     ExportFailed(String),
+    /// The edit named a text layer and the layer is not one.
+    NotText,
+    /// The edit named a camera layer and the layer is not one.
+    NotCamera,
     /// The razor was pointed at a layer that is not a Sequence layer.
     NotSequence,
     /// Only a Footage layer converts to a Sequence layer.
@@ -117,6 +122,8 @@ impl fmt::Display for BridgeError {
             }
             BridgeError::InvalidPreset => write!(f, "That is not a valid effect preset"),
             BridgeError::ExportFailed(why) => write!(f, "{why}"),
+            BridgeError::NotText => write!(f, "That is not a text layer"),
+            BridgeError::NotCamera => write!(f, "That is not a camera layer"),
             BridgeError::NotSequence => write!(f, "That is not a sequence layer"),
             BridgeError::NotFootage => {
                 write!(f, "Only footage layers convert to sequenced")

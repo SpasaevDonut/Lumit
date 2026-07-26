@@ -2022,3 +2022,160 @@ fn concurrent_project_creation_and_editing_does_not_deadlock() {
         thread.join().expect("no thread panicked or hung");
     }
 }
+
+// --- Assets: what a layer is made of --------------------------------------
+
+/// A text layer's words are editable and round-trip exactly. Before this the
+/// frontend could add a Text layer and never change what it said.
+#[test]
+fn a_text_layer_round_trips_its_document() {
+    use crate::api::assets::{BridgeColourRgba, BridgeTextDocument};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let text = comp.add_text_layer().expect("a text layer");
+
+    let before = text.get_text().expect("text").expect("it is text");
+    assert_eq!(before.text, "Text", "the starter document");
+
+    text.set_text(BridgeTextDocument {
+        text: "Hello".into(),
+        size: 48.0,
+        fill: BridgeColourRgba {
+            r: 1.0,
+            g: 0.5,
+            b: 0.0,
+            a: 1.0,
+        },
+    })
+    .expect("set");
+
+    let after = text.get_text().expect("text").expect("still text");
+    assert_eq!(after.text, "Hello");
+    assert_eq!(after.size, 48.0);
+    assert!((after.fill.g - 0.5).abs() < 1e-6);
+
+    project.undo().expect("undone");
+    assert_eq!(
+        text.get_text().expect("text").expect("text").text,
+        "Text",
+        "one undo step for the whole document"
+    );
+
+    // A layer that is not text answers None rather than erroring — the panel
+    // asks every selected layer what it is.
+    assert!(layer.get_text().expect("text").is_none());
+    assert!(matches!(
+        layer.set_text(BridgeTextDocument {
+            text: "no".into(),
+            size: 1.0,
+            fill: BridgeColourRgba {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0
+            },
+        }),
+        Err(BridgeError::NotText)
+    ));
+}
+
+/// A camera's zoom is animatable, so it takes a whole scalar like every other
+/// curve-capable value.
+#[test]
+fn a_camera_zoom_reads_and_writes_as_a_scalar() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let camera = comp.add_camera_layer().expect("a camera");
+
+    let zoom = camera
+        .get_camera_zoom()
+        .expect("zoom")
+        .expect("it is a camera");
+    assert!(
+        matches!(zoom, BridgeScalar::Static(v) if v > 0.0),
+        "the AE 50 mm default"
+    );
+
+    camera
+        .set_camera_zoom(BridgeScalar::Static(1200.0))
+        .expect("set");
+    assert_eq!(
+        camera.get_camera_zoom().expect("zoom").expect("camera"),
+        BridgeScalar::Static(1200.0)
+    );
+
+    assert!(layer.get_camera_zoom().expect("zoom").is_none());
+    assert!(matches!(
+        layer.set_camera_zoom(BridgeScalar::Static(1.0)),
+        Err(BridgeError::NotCamera)
+    ));
+}
+
+/// Editing a solid changes the **asset**, so every layer drawing it changes at
+/// once. That is the point of solids being assets, and the thing a test should
+/// pin down before somebody "fixes" it into a per-layer setting.
+#[test]
+fn editing_a_solid_changes_every_layer_that_uses_it() {
+    use crate::api::assets::{BridgeColourRgba, BridgeSolidDef};
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    comp.add_solid_layer().expect("a solid layer");
+
+    // The solid asset it made, found in the project tree.
+    let solid = project
+        .get_items()
+        .expect("roots")
+        .into_iter()
+        .find_map(|item| match item {
+            ItemReference::Solid(solid) => Some(solid),
+            ItemReference::Folder(folder) => folder.get_children().ok().and_then(|kids| {
+                kids.into_iter().find_map(|k| match k {
+                    ItemReference::Solid(solid) => Some(solid),
+                    _ => None,
+                })
+            }),
+            _ => None,
+        })
+        .expect("the solid asset was filed");
+
+    let before = solid.get_definition().expect("definition");
+    assert!(before.name.starts_with("White solid"));
+    assert!((before.colour.r - 1.0).abs() < 1e-6, "white");
+
+    solid
+        .set_definition(BridgeSolidDef {
+            name: "Backdrop".into(),
+            colour: BridgeColourRgba {
+                r: 0.0,
+                g: 0.2,
+                b: 0.4,
+                a: 1.0,
+            },
+            width: 0,
+            height: 0,
+        })
+        .expect("set");
+
+    let after = solid.get_definition().expect("definition");
+    assert_eq!(after.name, "Backdrop");
+    assert!((after.colour.b - 0.4).abs() < 1e-6);
+    assert_eq!(
+        (after.width, after.height),
+        (1, 1),
+        "a zero-area solid is floored rather than committed as nothing"
+    );
+
+    // A blank name is refused, so an asset row cannot lose its label.
+    assert!(matches!(
+        solid.set_definition(BridgeSolidDef {
+            name: "  ".into(),
+            colour: after.colour,
+            width: 100,
+            height: 100,
+        }),
+        Err(BridgeError::EmptyName)
+    ));
+    assert_eq!(solid.get_definition().expect("definition").name, "Backdrop");
+}

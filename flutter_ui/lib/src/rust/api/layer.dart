@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'assets.dart';
 import 'composition.dart';
 import 'effect.dart';
 import 'folder.dart';
@@ -359,6 +360,13 @@ class LayerReference {
         that: this,
       );
 
+  /// A camera layer's zoom — focal distance in comp pixels, the After Effects
+  /// model where the z=0 plane maps 1:1. `None` on any other kind.
+  BridgeScalar? getCameraZoom() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetCameraZoom(
+        that: this,
+      );
+
   /// The clips on this Sequence layer, in the order it holds them.
   ///
   /// An empty list on a layer that is not a Sequence, rather than an error:
@@ -422,6 +430,12 @@ class LayerReference {
   /// All eight switches at once.
   BridgeLayerSwitches getSwitches() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetSwitches(
+        that: this,
+      );
+
+  /// This layer's text document, or `None` when it is not a text layer.
+  BridgeTextDocument? getText() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetText(
         that: this,
       );
 
@@ -492,6 +506,11 @@ class LayerReference {
   void setBlend({required int index}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetBlend(that: this, index: index);
 
+  /// Set a camera's zoom. Animatable, so it takes a whole `BridgeScalar` like
+  /// every other curve-capable value.
+  void setCameraZoom({required BridgeScalar zoom}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetCameraZoom(that: this, zoom: zoom);
+
   /// Enable or bypass `effect`. A bypassed effect renders as identity and is
   /// not animatable (docs/08 §1.5 — the effect's own Mix parameter is the
   /// animatable dial).
@@ -548,6 +567,14 @@ class LayerReference {
   void setSwitch({required BridgeLayerSwitch switch_, required bool on_}) =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceSetSwitch(
           that: this, switch_: switch_, on_: on_);
+
+  /// Replace a text layer's document — one op, exactly invertible.
+  ///
+  /// The whole document rather than a field at a time, for the same reason
+  /// every other edit here takes a whole value: retyping a word and changing
+  /// its size is one action to the user and should be one undo step.
+  void setText({required BridgeTextDocument document}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetText(that: this, document: document);
 
   /// Replace one transform property's whole animation, as one
   /// [`lumit_core::Op::SetTransformProperty`].
