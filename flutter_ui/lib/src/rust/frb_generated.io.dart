@@ -148,6 +148,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dco_decode_box_autoadd_bridge_shared_frame_info_linux(dynamic raw);
 
   @protected
+  BridgeTransform dco_decode_box_autoadd_bridge_transform(dynamic raw);
+
+  @protected
   CompositionReference dco_decode_box_autoadd_composition_reference(
       dynamic raw);
 
@@ -226,6 +229,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeSideInterp dco_decode_bridge_side_interp(dynamic raw);
+
+  @protected
+  BridgeTransform dco_decode_bridge_transform(dynamic raw);
+
+  @protected
+  BridgeTransformProp dco_decode_bridge_transform_prop(dynamic raw);
 
   @protected
   CompositionReference dco_decode_composition_reference(dynamic raw);
@@ -453,6 +462,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           SseDeserializer deserializer);
 
   @protected
+  BridgeTransform sse_decode_box_autoadd_bridge_transform(
+      SseDeserializer deserializer);
+
+  @protected
   CompositionReference sse_decode_box_autoadd_composition_reference(
       SseDeserializer deserializer);
 
@@ -541,6 +554,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeSideInterp sse_decode_bridge_side_interp(SseDeserializer deserializer);
+
+  @protected
+  BridgeTransform sse_decode_bridge_transform(SseDeserializer deserializer);
+
+  @protected
+  BridgeTransformProp sse_decode_bridge_transform_prop(
+      SseDeserializer deserializer);
 
   @protected
   CompositionReference sse_decode_composition_reference(
@@ -778,6 +798,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeSharedFrameInfoLinux self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_transform(
+      BridgeTransform self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_composition_reference(
       CompositionReference self, SseSerializer serializer);
 
@@ -875,6 +899,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_side_interp(
       BridgeSideInterp self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_transform(
+      BridgeTransform self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_transform_prop(
+      BridgeTransformProp self, SseSerializer serializer);
 
   @protected
   void sse_encode_composition_reference(

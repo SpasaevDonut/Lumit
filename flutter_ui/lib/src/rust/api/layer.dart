@@ -9,9 +9,101 @@ import 'effect.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `composition`, `item`, `project`, `with_effects`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `fmt`
+// These functions are ignored because they are not marked as `pub`: `composition`, `core`, `item`, `project`, `read`, `with_effects`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
+
+/// A layer's whole transform, one scalar per property.
+///
+/// Read as a group rather than a property at a time because the panel draws them
+/// as a group and a drag on one axis previews the others unchanged — eleven
+/// round trips per frame to rebuild what one call already has would be the
+/// snapshot habit creeping back in. Writing is per-property (see
+/// [`LayerReference::set_transform`]), which is what keeps each edit exactly
+/// invertible.
+class BridgeTransform {
+  final BridgeScalar anchorX;
+  final BridgeScalar anchorY;
+  final BridgeScalar positionX;
+  final BridgeScalar positionY;
+
+  /// The 2.5D depth (K-023). Present on every layer; only meaningful, and only
+  /// drawn, when the layer's 3D switch is on.
+  final BridgeScalar positionZ;
+
+  /// Percent, 100 = natural size.
+  final BridgeScalar scaleX;
+  final BridgeScalar scaleY;
+
+  /// Degrees, about z — the 2D rotation.
+  final BridgeScalar rotation;
+  final BridgeScalar rotationX;
+  final BridgeScalar rotationY;
+
+  /// Percent, 0..100.
+  final BridgeScalar opacity;
+
+  const BridgeTransform({
+    required this.anchorX,
+    required this.anchorY,
+    required this.positionX,
+    required this.positionY,
+    required this.positionZ,
+    required this.scaleX,
+    required this.scaleY,
+    required this.rotation,
+    required this.rotationX,
+    required this.rotationY,
+    required this.opacity,
+  });
+
+  @override
+  int get hashCode =>
+      anchorX.hashCode ^
+      anchorY.hashCode ^
+      positionX.hashCode ^
+      positionY.hashCode ^
+      positionZ.hashCode ^
+      scaleX.hashCode ^
+      scaleY.hashCode ^
+      rotation.hashCode ^
+      rotationX.hashCode ^
+      rotationY.hashCode ^
+      opacity.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeTransform &&
+          runtimeType == other.runtimeType &&
+          anchorX == other.anchorX &&
+          anchorY == other.anchorY &&
+          positionX == other.positionX &&
+          positionY == other.positionY &&
+          positionZ == other.positionZ &&
+          scaleX == other.scaleX &&
+          scaleY == other.scaleY &&
+          rotation == other.rotation &&
+          rotationX == other.rotationX &&
+          rotationY == other.rotationY &&
+          opacity == other.opacity;
+}
+
+/// Which transform property an edit names ([`lumit_core::model::TransformProp`]).
+enum BridgeTransformProp {
+  anchorX,
+  anchorY,
+  positionX,
+  positionY,
+  positionZ,
+  scaleX,
+  scaleY,
+  rotation,
+  rotationX,
+  rotationY,
+  opacity,
+  ;
+}
 
 class LayerReference {
   final UuidValue internalprojectId;
@@ -42,6 +134,23 @@ class LayerReference {
       );
 
   String getName() => BridgeLib.instance.api.crateApiLayerLayerReferenceGetName(
+        that: this,
+      );
+
+  /// This layer's whole transform.
+  BridgeTransform getTransform() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetTransform(
+        that: this,
+      );
+
+  /// Whether this layer positions in z and honours the active camera (K-023).
+  ///
+  /// Read-only for now: the switch's *toggle* is a Timeline op that has not
+  /// been ported. The Effect controls panel needs the reader regardless, to
+  /// decide whether to draw the z and x/y-rotation rows at all — a 2D layer
+  /// showing 3D controls that do nothing is worse than not showing them. A
+  /// camera is 3D by construction whatever its switch says.
+  bool isThreeD() => BridgeLib.instance.api.crateApiLayerLayerReferenceIsThreeD(
         that: this,
       );
 
@@ -89,6 +198,18 @@ class LayerReference {
   void setEffects({required List<BridgeEffectInstance> effects}) =>
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceSetEffects(that: this, effects: effects);
+
+  /// Replace one transform property's whole animation, as one
+  /// [`lumit_core::Op::SetTransformProperty`].
+  ///
+  /// One property per op, not the whole group: the op is exactly invertible
+  /// that way, so a nudged Position is one undo step that puts back precisely
+  /// what was there — where committing all eleven would make undo restore ten
+  /// properties nobody touched.
+  void setTransform(
+          {required BridgeTransformProp prop, required BridgeScalar value}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetTransform(
+          that: this, prop: prop, value: value);
 
   @override
   int get hashCode =>

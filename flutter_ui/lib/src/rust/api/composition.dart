@@ -154,6 +154,22 @@ class CompositionReference {
               layer: layer,
               effects: effects);
 
+  /// Ask for `frame` with `layer`'s transform replaced by `transform` — the
+  /// same live-drag path as [`Self::render_frame_with_preview`], for the
+  /// Transform rows. Never touches the document.
+  void renderFrameWithTransformPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required BridgeTransform transform}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithTransformPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              transform: transform);
+
   /// Apply the Composition settings dialog, as one undo step.
   ///
   /// Dimensions are clamped to 16..=16384 and the duration to at least one frame,

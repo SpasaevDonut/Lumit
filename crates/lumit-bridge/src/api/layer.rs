@@ -6,10 +6,116 @@ use lumit_core::model::{EffectInstance, Layer};
 use uuid::Uuid;
 
 use crate::api::{
-    effect::BridgeEffectInstance,
+    effect::{BridgeEffectInstance, BridgeScalar},
     state::{LumitBridgeState, PROJECTS},
     BridgeError,
 };
+
+/// A layer's whole transform, one scalar per property.
+///
+/// Read as a group rather than a property at a time because the panel draws them
+/// as a group and a drag on one axis previews the others unchanged — eleven
+/// round trips per frame to rebuild what one call already has would be the
+/// snapshot habit creeping back in. Writing is per-property (see
+/// [`LayerReference::set_transform`]), which is what keeps each edit exactly
+/// invertible.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeTransform {
+    pub anchor_x: BridgeScalar,
+    pub anchor_y: BridgeScalar,
+    pub position_x: BridgeScalar,
+    pub position_y: BridgeScalar,
+    /// The 2.5D depth (K-023). Present on every layer; only meaningful, and only
+    /// drawn, when the layer's 3D switch is on.
+    pub position_z: BridgeScalar,
+    /// Percent, 100 = natural size.
+    pub scale_x: BridgeScalar,
+    pub scale_y: BridgeScalar,
+    /// Degrees, about z — the 2D rotation.
+    pub rotation: BridgeScalar,
+    pub rotation_x: BridgeScalar,
+    pub rotation_y: BridgeScalar,
+    /// Percent, 0..100.
+    pub opacity: BridgeScalar,
+}
+
+/// Which transform property an edit names ([`lumit_core::model::TransformProp`]).
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeTransformProp {
+    AnchorX,
+    AnchorY,
+    PositionX,
+    PositionY,
+    PositionZ,
+    ScaleX,
+    ScaleY,
+    Rotation,
+    RotationX,
+    RotationY,
+    Opacity,
+}
+
+impl BridgeTransformProp {
+    #[frb(ignore)]
+    pub(crate) fn core(self) -> lumit_core::model::TransformProp {
+        use lumit_core::model::TransformProp as P;
+        match self {
+            BridgeTransformProp::AnchorX => P::AnchorX,
+            BridgeTransformProp::AnchorY => P::AnchorY,
+            BridgeTransformProp::PositionX => P::PositionX,
+            BridgeTransformProp::PositionY => P::PositionY,
+            BridgeTransformProp::PositionZ => P::PositionZ,
+            BridgeTransformProp::ScaleX => P::ScaleX,
+            BridgeTransformProp::ScaleY => P::ScaleY,
+            BridgeTransformProp::Rotation => P::Rotation,
+            BridgeTransformProp::RotationX => P::RotationX,
+            BridgeTransformProp::RotationY => P::RotationY,
+            BridgeTransformProp::Opacity => P::Opacity,
+        }
+    }
+}
+
+impl BridgeTransform {
+    #[frb(ignore)]
+    pub(crate) fn read(group: &lumit_core::model::TransformGroup) -> BridgeTransform {
+        BridgeTransform {
+            anchor_x: BridgeScalar::read(&group.anchor_x),
+            anchor_y: BridgeScalar::read(&group.anchor_y),
+            position_x: BridgeScalar::read(&group.position_x),
+            position_y: BridgeScalar::read(&group.position_y),
+            position_z: BridgeScalar::read(&group.position_z),
+            scale_x: BridgeScalar::read(&group.scale_x),
+            scale_y: BridgeScalar::read(&group.scale_y),
+            rotation: BridgeScalar::read(&group.rotation),
+            rotation_x: BridgeScalar::read(&group.rotation_x),
+            rotation_y: BridgeScalar::read(&group.rotation_y),
+            opacity: BridgeScalar::read(&group.opacity),
+        }
+    }
+
+    /// Write this whole group onto `target`, for the drag preview — which needs
+    /// a document to render, not an op to commit.
+    #[frb(ignore)]
+    pub(crate) fn write(
+        &self,
+        target: &mut lumit_core::model::TransformGroup,
+    ) -> Result<(), BridgeError> {
+        target.anchor_x.animation = self.anchor_x.animation()?;
+        target.anchor_y.animation = self.anchor_y.animation()?;
+        target.position_x.animation = self.position_x.animation()?;
+        target.position_y.animation = self.position_y.animation()?;
+        target.position_z.animation = self.position_z.animation()?;
+        target.scale_x.animation = self.scale_x.animation()?;
+        target.scale_y.animation = self.scale_y.animation()?;
+        target.rotation.animation = self.rotation.animation()?;
+        target.rotation_x.animation = self.rotation_x.animation()?;
+        target.rotation_y.animation = self.rotation_y.animation()?;
+        target.opacity.animation = self.opacity.animation()?;
+        Ok(())
+    }
+}
 
 #[derive(Debug)]
 #[frb]
@@ -112,6 +218,57 @@ impl LayerReference {
             })
             .map_err(BridgeError::OpError)?;
 
+        Ok(())
+    }
+
+    /// Whether this layer positions in z and honours the active camera (K-023).
+    ///
+    /// Read-only for now: the switch's *toggle* is a Timeline op that has not
+    /// been ported. The Effect controls panel needs the reader regardless, to
+    /// decide whether to draw the z and x/y-rotation rows at all — a 2D layer
+    /// showing 3D controls that do nothing is worse than not showing them. A
+    /// camera is 3D by construction whatever its switch says.
+    #[frb(sync)]
+    pub fn is_three_d(&self) -> Result<bool, BridgeError> {
+        let layer = self.item()?;
+        Ok(layer.switches.three_d
+            || matches!(layer.kind, lumit_core::model::LayerKind::Camera { .. }))
+    }
+
+    /// This layer's whole transform.
+    #[frb(sync)]
+    pub fn get_transform(&self) -> Result<BridgeTransform, BridgeError> {
+        Ok(BridgeTransform::read(&self.item()?.transform))
+    }
+
+    /// Replace one transform property's whole animation, as one
+    /// [`lumit_core::Op::SetTransformProperty`].
+    ///
+    /// One property per op, not the whole group: the op is exactly invertible
+    /// that way, so a nudged Position is one undo step that puts back precisely
+    /// what was there — where committing all eleven would make undo restore ten
+    /// properties nobody touched.
+    #[frb(sync)]
+    pub fn set_transform(
+        &self,
+        prop: BridgeTransformProp,
+        value: BridgeScalar,
+    ) -> Result<(), BridgeError> {
+        let animation = value.animation()?;
+        // Confirm the layer is there before committing, so a stale reference is
+        // a calm error rather than a failed op.
+        self.item()?;
+
+        let proj = self.project()?;
+        let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+        proj.store
+            .commit(lumit_core::Op::SetTransformProperty {
+                comp: self.comp_id,
+                layer: self.layer_id,
+                prop: prop.core(),
+                animation,
+            })
+            .map_err(BridgeError::OpError)?;
         Ok(())
     }
 

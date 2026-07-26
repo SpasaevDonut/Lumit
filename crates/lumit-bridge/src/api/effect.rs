@@ -307,7 +307,7 @@ pub enum BridgeScalar {
 
 impl BridgeScalar {
     #[frb(ignore)]
-    fn read(property: &Property) -> BridgeScalar {
+    pub(crate) fn read(property: &Property) -> BridgeScalar {
         match &property.animation {
             Animation::Static(value) => BridgeScalar::Static(*value),
             // A keyframed property with no keys is not a curve anything can
@@ -331,7 +331,7 @@ impl BridgeScalar {
     /// validate every channel *before* writing any of them, or a bad third
     /// channel would leave the parameter half-updated.
     #[frb(ignore)]
-    fn animation(&self) -> Result<Animation, BridgeError> {
+    pub(crate) fn animation(&self) -> Result<Animation, BridgeError> {
         match self {
             BridgeScalar::Static(value) => Ok(Animation::Static(*value)),
             BridgeScalar::Keyframed(keys) => {

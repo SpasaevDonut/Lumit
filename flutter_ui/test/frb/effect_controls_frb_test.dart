@@ -14,7 +14,6 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
-import 'package:lumit_flutter/widgets/controls.dart';
 
 import 'frb_test_support.dart';
 
@@ -94,8 +93,10 @@ void main() {
       p.layer.addEffect(name: 'blur');
       await mount(tester, p);
 
-      final field = find.byType(DragValueField).first;
-      await tester.tap(field);
+      // By key, not `.first`: the Transform card is drawn above the stack, so
+      // the first DragValueField on screen is an anchor-point cell.
+      final id = p.layer.getEffects().single.id();
+      await tester.tap(find.byKey(ValueKey<String>('fx-float-$id-radius')));
       await tester.pump();
       await tester.enterText(find.byType(EditableText).first, '12.5');
       await tester.testTextInput.receiveAction(TextInputAction.done);
@@ -163,6 +164,45 @@ void main() {
 
       expect(p.layer.getEffects().map((e) => e.name()).toList(), order,
           reason: 'a disabled arrow does nothing rather than wrapping around');
+    });
+
+    testWidgets('the Transform rows draw every property and commit one at a time',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      expect(find.text('Transform'), findsOneWidget);
+      for (final row in ['Anchor point', 'Position', 'Scale', 'Rotation',
+          'Opacity']) {
+        expect(find.text(row), findsOneWidget, reason: row);
+      }
+
+      final before = p.layer.getTransform();
+      await tester.tap(find.byKey(const ValueKey('tf-opacity')));
+      await tester.pump();
+      await tester.enterText(find.byType(EditableText).first, '40');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+
+      final after = p.layer.getTransform();
+      expect((after.opacity as BridgeScalar_Static).field0, 40);
+      expect(after.positionX, before.positionX,
+          reason: 'one property per op — nothing else moved');
+    });
+
+    /// A 2D layer showing 3D controls that cannot do anything is worse than not
+    /// showing them, so the z and x/y-rotation rows are gated on the switch.
+    testWidgets('the 3D rows appear only on a 3D layer', (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      expect(p.layer.isThreeD(), isFalse);
+      expect(find.text('Rotation x'), findsNothing);
+      expect(find.text('Rotation y'), findsNothing);
+      // Position draws two cells, not three, when the layer is flat.
+      expect(find.byKey(const ValueKey('tf-positionZ')), findsNothing);
+      expect(find.byKey(const ValueKey('tf-positionX')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tf-positionY')), findsOneWidget);
     });
 
     /// The one thing a panel that cannot yet edit curves must not do: flatten

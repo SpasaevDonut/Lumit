@@ -59,13 +59,19 @@ pub struct RenderCompRequest {
     pub scale: f32,
 }
 
+/// A render of one frame with part of `layer` substituted — the live-drag path.
+///
+/// Both overrides are optional and independent, so the one request shape serves
+/// an effect drag and a transform drag rather than each growing its own worker
+/// message. `None` means "leave that part of the layer as the document has it".
 #[frb(ignore)]
 pub struct RenderCompRequestWithPreview {
     pub comp: CompositionReference,
     pub frame: u64,
     pub scale: f32,
     pub layer: LayerReference,
-    pub effects: Vec<EffectInstance>,
+    pub effects: Option<Vec<EffectInstance>>,
+    pub transform: Option<crate::api::layer::BridgeTransform>,
 }
 
 #[frb(ignore)]
@@ -201,9 +207,12 @@ fn render_comp_with_preview(
         .position(|i| i.id == req.layer.layer_id)
         .ok_or(BridgeError::InvalidLayer)?;
 
-    comp.layers[index].effects = req.effects;
-
-    println!("Rendering frame with modified effects!");
+    if let Some(effects) = req.effects {
+        comp.layers[index].effects = effects;
+    }
+    if let Some(transform) = &req.transform {
+        transform.write(&mut comp.layers[index].transform)?;
+    }
 
     publish_frame(state, req.comp.id, req.frame, req.scale, &document, stream);
     Ok(())

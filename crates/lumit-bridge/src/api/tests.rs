@@ -1103,3 +1103,87 @@ fn every_builtin_lists_its_parameters() {
         assert_eq!(params.len(), declared, "{} lost a parameter", info.name);
     }
 }
+
+// --- Transform ------------------------------------------------------------
+
+/// Reading the group and writing one property back leaves the document
+/// unchanged: the same round-trip rule the effect values follow, and what makes
+/// "read, change one field, write" safe for the panel's controls.
+#[test]
+fn a_transform_round_trips_through_the_bridge() {
+    use crate::api::layer::BridgeTransformProp;
+
+    let (_project, layer) = project_with_layer();
+    let before = layer.get_transform().expect("transform");
+
+    layer
+        .set_transform(BridgeTransformProp::PositionX, before.position_x.clone())
+        .expect("written");
+
+    assert_eq!(
+        layer.get_transform().expect("transform").position_x,
+        before.position_x,
+        "writing back what was read changes nothing"
+    );
+}
+
+/// One property per op, so undo restores exactly what was nudged and nothing
+/// else. Committing the whole group would make one undo step put back ten
+/// properties the user never touched.
+#[test]
+fn setting_one_property_leaves_the_others_alone_and_undoes_alone() {
+    use crate::api::effect::BridgeScalar;
+    use crate::api::layer::{BridgeTransform, BridgeTransformProp};
+
+    let (project, layer) = project_with_layer();
+    let before = layer.get_transform().expect("transform");
+
+    layer
+        .set_transform(BridgeTransformProp::Opacity, BridgeScalar::Static(42.0))
+        .expect("written");
+
+    let after = layer.get_transform().expect("transform");
+    assert_eq!(after.opacity, BridgeScalar::Static(42.0));
+    assert_eq!(after.position_x, before.position_x, "position untouched");
+    assert_eq!(after.scale_x, before.scale_x, "scale untouched");
+
+    project.undo().expect("undone");
+    assert_eq!(
+        layer.get_transform().expect("transform").opacity,
+        before.opacity,
+        "one op, one undo step"
+    );
+
+    // The preview writer takes the whole group, which is the drag path's shape.
+    let mut group = lumit_core::model::TransformGroup::default();
+    BridgeTransform {
+        opacity: BridgeScalar::Static(7.0),
+        ..after
+    }
+    .write(&mut group)
+    .expect("preview write");
+    assert_eq!(
+        group.opacity.animation,
+        lumit_core::anim::Animation::Static(7.0)
+    );
+}
+
+/// A reference that outlives its layer is a calm error, never a panic — the
+/// same contract every other reference method keeps.
+#[test]
+fn a_transform_edit_on_a_dead_layer_is_a_calm_error() {
+    use crate::api::effect::BridgeScalar;
+    use crate::api::layer::BridgeTransformProp;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let stale = LayerReference::new(project.id, Uuid::now_v7(), Uuid::now_v7());
+
+    assert!(matches!(
+        stale.get_transform(),
+        Err(BridgeError::InvalidItem) | Err(BridgeError::InvalidLayer)
+    ));
+    assert!(matches!(
+        stale.set_transform(BridgeTransformProp::Opacity, BridgeScalar::Static(1.0)),
+        Err(BridgeError::InvalidItem) | Err(BridgeError::InvalidLayer)
+    ));
+}

@@ -312,7 +312,29 @@ impl CompositionReference {
             frame,
             scale,
             layer,
-            effects: effects.iter().map(|i| i.get_effects()).collect(),
+            effects: Some(effects.iter().map(|i| i.get_effects()).collect()),
+            transform: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s transform replaced by `transform` — the
+    /// same live-drag path as [`Self::render_frame_with_preview`], for the
+    /// Transform rows. Never touches the document.
+    #[frb(sync)]
+    pub fn render_frame_with_transform_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        transform: crate::api::layer::BridgeTransform,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: Some(transform),
         }))
     }
 }

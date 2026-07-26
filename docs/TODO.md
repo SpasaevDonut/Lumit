@@ -126,8 +126,8 @@ sequence clips.
 
     *What must exist before v0 can be deleted.* Grow the API until a panel's needs
     are covered, port that panel, migrate its tests; the Dart suite for that panel
-    is the gate. **Immediate next: `set_transform` and the Transform rows, then
-    the keyframe ops.** The full ledger:
+    is the gate. **Immediate next: the keyframe ops, and the graph editor they
+    unblock.** The full ledger:
 
     **1. The seven docked panels.**
     - **Project** — **done**: ported, 15 tests against the real engine, and the
@@ -145,15 +145,16 @@ sequence clips.
         columns, spans, razor, markers, work area, cache bar, comp tabs, lane
         host/scale/selection, graph editor and its four lens files, keyframe
         clipboard and interp menus.
-    - **Effect controls** — **partial**: the effect stack is done
-        (`effect_controls_panel_frb.dart`, 6 tests) — add/remove/reorder/bypass
-        and a row per declared parameter in every kind the schema declares, with
-        the live-drag path committing once on release. Still missing, both
-        blocked on ops the API does not have: the **Transform rows**
-        (`set_transform`) and the **stopwatch + keyframe navigator** (the
-        keyframe pair). An animated parameter is deliberately shown as
-        "animated" with no editor until those land — `set_value` takes a whole
-        animation, so a static write over a curve would delete every key on it.
+    - **Effect controls** — **partial**: the effect stack and the Transform rows
+        are done (`effect_controls_panel_frb.dart`, 8 tests) —
+        add/remove/reorder/bypass, a row per declared parameter in every kind the
+        schema declares, and anchor/position/scale/rotation/opacity with the 3D
+        rows gated on the layer's switch. Both drag paths preview without
+        committing and commit once on release. Still missing: the **stopwatch +
+        keyframe navigator**, blocked on the keyframe ops. An animated property
+        or parameter is deliberately shown as "animated" with no editor until
+        those land — `set_value` and `set_transform` take a whole animation, so
+        a static write over a curve would delete every key on it.
     - **Effects & presets** — **not started**, a `PlaceholderPanel`. Needs
         `list_effects` wiring (the API exists), drag-to-apply, `.lumfx` save/load.
     - **Scopes** — **not started**, a `PlaceholderPanel`. Waiting on `render_scope`
@@ -189,8 +190,6 @@ sequence clips.
     - **Layer properties** — switches, blend mode, matte, parent, motion blur,
         spans, `drag_boundary`, `trim_to_source_end`, `convert_to_sequenced`, the
         razor, markers, work area, `list_blend_modes`.
-    - **Transform** — `set_transform`, plus `preview_transform` /
-        `cancel_transform_preview` for the drag path.
     - **Masks** — `add_mask`, `add_mask_geometry`.
     - **Retime** — all of it: enabled/speed/reverse/interpolation,
         `segment_to_rate`, `set_segment_preset`.
@@ -279,8 +278,16 @@ sequence clips.
         path is now proven by a real panel: it holds its own stack copy, renders
         it through `render_frame_with_preview` while the pointer is down, and
         commits once on release, so nothing engine-side has to stage.
-        Outstanding: the effect-param keyframe ops, the `.lumfx` presets, and the
-        Transform rows.
+        Outstanding: the effect-param keyframe ops and the `.lumfx` presets.
+
+    5. **Transform** — `get_transform` / `set_transform` on `LayerReference`, one
+        `SetTransformProperty` op per property so each nudge is exactly one undo
+        step. The drag preview reuses the effect path rather than growing its own
+        worker message: `RenderCompRequestWithPreview` now carries an optional
+        effects list *and* an optional transform, so v0's separate
+        `preview_transform`/`cancel_transform_preview` pair has no frb
+        counterpart and needs none. `is_three_d` came with it — a reader only;
+        the switch's toggle is still a Timeline op.
 
     Everything after that is grouped by subsystem under **3** above rather than
     ordered here, because the dependencies are between *ops* and *panels* rather
