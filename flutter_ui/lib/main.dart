@@ -21,6 +21,7 @@ import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:provider/provider.dart';
 
 import 'bridge/bridge.dart';
+import 'popout/popout_main.dart';
 import 'shell/shell.dart';
 import 'state/workspace.dart';
 import 'widgets/ui_scale.dart';
@@ -45,18 +46,34 @@ class CustomHandler extends BaseHandler {
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
-  // A popped-out panel runs through this same entrypoint in its own engine
-  // (multi-window, same process). If this engine is a popout, it takes over
-  // here; otherwise — the main window, or any build without the multi-window
-  // plugin — this is a swallowed no-op and the normal shell boots below.
+
+  // Two shells live here while the bridge is migrated (docs/TODO.md, "Bridge").
+  //
+  // The default is the flutter_rust_bridge shell — the direction of travel, but
+  // still a small test harness: a handful of panels, and no Viewer at all off
+  // Linux until the Windows render path is wired.
+  //
+  // `--v0-shell` boots the full frontend instead: every panel, on the v0 JSON
+  // bridge, which is still compiled into the same `lumit_bridge` library. It is
+  // the parity reference to judge the frb shell against, and the only way to see
+  // the whole interface on Windows today. Remove this switch once the frb shell
+  // has overtaken it.
+  if (args.contains('--v0-shell')) {
+    // A popped-out panel runs through this same entrypoint in its own engine
+    // (multi-window, same process). If this engine is a popout, it takes over
+    // here; otherwise — the main window, or any build without the multi-window
+    // plugin — this is a swallowed no-op and the normal shell boots below.
+    if (await maybeRunPopout(args)) return;
+    final workspace = Workspace()..load();
+    // Try the engine bridge; a null result keeps the F0 placeholder behaviour
+    // (the app and every test must work without the library present).
+    final bridge = LumitBridge.tryLoad();
+    runApp(LumitApp(workspace: workspace, bridge: bridge));
+    return;
+  }
 
   await BridgeLib.init(handler: CustomHandler());
 
-  // if (await maybeRunPopout(args)) return;
-  // final workspace = Workspace()..load();
-  // // Try the engine bridge; a null result keeps the F0 placeholder behaviour
-  // // (the app and every test must work without the library present).
-  // final bridge = LumitBridge.tryLoad();
   var state = LumitState();
   var ui = LumitUiState(state);
   runApp(LumitAppNew(state, ui));
@@ -66,6 +83,10 @@ class LumitState extends ChangeNotifier {
   ProjectReference? project;
 
   StreamSubscription? currentDocumentStream;
+
+  /// The render worker's reply stream. Cancelled when another project is
+  /// adopted, so a stale worker cannot feed frames to the new project's Viewer.
+  StreamSubscription? workerStream;
 
   final StreamController<ScopedChange> _onChange = StreamController.broadcast();
 
@@ -77,25 +98,47 @@ class LumitState extends ChangeNotifier {
   Stream<WorkerResponse> get onWorkerResponse => _onWorkerResponse.stream;
 
   void newProject() {
-    final sink = RustStreamSink<ScopedChange>();
-    project = LumitBridgeState.newProject(onChangeStream: sink);
-
-    project?.startWorker();
-
-    currentDocumentStream?.cancel();
-    currentDocumentStream = sink.stream.listen(handleChange);
-
-    notifyListeners();
+    _adopt(LumitBridgeState.newProject(onChangeStream: _changeSink()));
   }
 
   void openProject(String path) {
-    final sink = RustStreamSink<ScopedChange>();
-    project = LumitBridgeState.openProject(path: path, onChangeStream: sink);
-    final messages = project?.startWorker();
-    messages!.listen((msg) => _onWorkerResponse.add(msg));
+    // Null means the file would not open; the previous project stays loaded
+    // rather than the app being left with none.
+    final opened =
+        LumitBridgeState.openProject(path: path, onChangeStream: _changeSink());
+    if (opened == null) {
+      debugPrint('Could not open $path');
+      return;
+    }
+    _adopt(opened);
+  }
 
-    currentDocumentStream?.cancel();
-    currentDocumentStream = sink.stream.listen(handleChange);
+  /// The sink Rust pushes scoped document changes down. Held for the call so
+  /// [_adopt] can attach to the same one.
+  RustStreamSink<ScopedChange>? _pendingSink;
+
+  RustStreamSink<ScopedChange> _changeSink() =>
+      _pendingSink = RustStreamSink<ScopedChange>();
+
+  /// Take over a freshly created or opened project: start its render worker and
+  /// subscribe to both of its streams.
+  ///
+  /// Both subscriptions matter and `newProject` used to make neither properly —
+  /// it started the worker but dropped the returned stream, so no rendered frame
+  /// ever reached the Viewer for a new project.
+  void _adopt(ProjectReference opened) {
+    project = opened;
+
+    workerStream?.cancel();
+    workerStream =
+        opened.startWorker().listen((msg) => _onWorkerResponse.add(msg));
+
+    final sink = _pendingSink;
+    if (sink != null) {
+      currentDocumentStream?.cancel();
+      currentDocumentStream = sink.stream.listen(handleChange);
+      _pendingSink = null;
+    }
 
     notifyListeners();
   }

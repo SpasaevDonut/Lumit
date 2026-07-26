@@ -51,6 +51,13 @@ android {
 
 apply from: "../cargokit/gradle/plugin.gradle"
 cargokit {
-    manifestDir = "../../rust"
-    libname = "rust_lib_lumit_flutter"
+    // Relative to this file. The frb template's `../../rust` assumes the crate
+    // sits in a `rust/` folder beside `rust_builder/`; ours is a workspace member
+    // at `crates/lumit-bridge`, and `libname` must match the cdylib the crate
+    // actually produces (see rust_builder/windows/CMakeLists.txt for the same
+    // correction, and its note on why the Windows path differs). Untested —
+    // Android is not a target yet (docs/16-ROADMAP.md), but leaving a value that
+    // is known to be wrong is worse than fixing it blind.
+    manifestDir = "../../../crates/lumit-bridge"
+    libname = "lumit_bridge"
 }

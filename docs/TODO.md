@@ -125,6 +125,21 @@ sequence clips.
     7. **Retime, audio, export, then the performance/infra readouts**
         (`cache_stats`, `playback_tier`, `boot_log`, recovery).
 
+    *cargokit is only wired up for two platforms.* The merge adapted
+    `rust_builder/linux/CMakeLists.txt` and left every other platform on the frb
+    template's values — crate path `rust/`, library `rust_lib_lumit_flutter` —
+    so the Windows build failed outright and would not have bundled the `.dll`
+    even if it had linked. Windows is fixed and verified; Android and the
+    macOS/iOS podspecs are corrected by inspection but **untested** (no target
+    yet, K-033). Two things still open there:
+    - The podspecs are named `rust_lib_lumit_flutter.podspec` with a matching
+      `s.name`, while the plugin's pubspec name is `lumit_bridge`. Check what
+      Flutter's CocoaPods resolution actually requires before renaming.
+    - **cargokit has no hook for cargo features**, so a Linux developer cannot
+      ask `flutter run` for `--features shared-texture-linux` and the zero-copy
+      Viewer silently is not in the build. Needs a `cargokit_options.yaml` (or an
+      env var read in the CMake) carrying per-platform features.
+
     *Infrastructure the frb path is missing and v0 had.* Each is a correctness
     gap, not a nicety:
     - **No `catch_unwind`.** Every v0 export wrapped its body so a panic became an
