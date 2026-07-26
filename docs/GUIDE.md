@@ -2427,6 +2427,36 @@ deliberately tiny. The full panels beside them — `project_panel.dart`,
 bridge v0; each moves across once the new bridge covers what it needs.
 `docs/TODO.md` holds the running order.
 
+**Staging versus committing, and why dragging used to lag.** This one is worth
+understanding, because it explains a whole class of sluggishness.
+
+Every ordinary edit is a **commit**: the engine copies the document, applies the
+change, files the old version so Undo can get back to it, appends a line to the
+crash journal **and waits for the disk to confirm it**, then serialises the entire
+document to text and hands it to the interface, which reads all of it back. That
+is the right amount of ceremony for "the user changed something" — it is what makes
+Undo and crash recovery trustworthy.
+
+It is entirely the wrong amount of ceremony for one tick of a mouse drag. Dragging
+a value produces something like a hundred ticks a second, and the disk wait alone
+was measured at 2.3 ms — so a second of dragging spent roughly a quarter of a
+second just waiting for the disk, and left a hundred separate entries in the undo
+history for what the user thinks of as one adjustment.
+
+So a drag **stages** instead. `preview_transform` and `preview_effect_param` put
+the provisional value in memory beside the document, touching neither the document,
+the undo history, nor the disk. The Viewer renders the document *with that value
+laid over the top* — and because the value does not change which frames of video
+have to be decoded, it re-composites from pictures the renderer is already holding
+rather than decoding anything again. When the mouse is released, the ordinary
+commit runs exactly once, so the whole drag is a single undo step. Escape instead
+discards the staged value and the picture snaps back.
+
+The tell that this has broken, if it ever does: dragging feels heavy and Undo has
+to be pressed many times to get back past one adjustment. Both symptoms have the
+same cause — something on the drag path is committing when it should be staging.
+That is now a test rather than a hope (`preview_effect_param_never_touches_undo_or_journal`).
+
 *One caution worth knowing.* The Rust functions in the frb layer are marked with
 a small annotation (`#[frb(...)]`) that tells the generator to include them. An
 unfortunate side effect is that the automatic checker which normally forbids

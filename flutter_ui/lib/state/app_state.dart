@@ -412,20 +412,33 @@ class AppStateStub extends ChangeNotifier {
   double? transformEditAt(String layerId, String property) =>
       transformEdits['$layerId/$property'];
 
-  /// Bumped on every accepted transform-preview tick (a drag update, or a
-  /// cancel-revert). Mirrors [playheadFrame]: a plain ValueNotifier a narrow
-  /// set of widgets listen to directly (the dragged field's own cell,
-  /// PreviewSource), so a fast drag never rebuilds the whole app, never bumps
-  /// [documentEpoch], and never touches the frame cache. Named "revision" (not
-  /// "nonce" — a nonce is a one-time unpredictable token; this is a plain
-  /// monotonic counter, same family as [documentEpoch]/[cacheBarRevision]).
-  final ValueNotifier<int> transformPreviewRevision = ValueNotifier<int>(0);
+  /// Bumped on every accepted drag-preview tick — transform or effect parameter,
+  /// a drag update or a cancel-revert. Mirrors [playheadFrame]: a plain
+  /// ValueNotifier a narrow set of widgets listen to directly (the dragged
+  /// field's own cell, PreviewSource), so a fast drag never rebuilds the whole
+  /// app, never bumps [documentEpoch], and never touches the frame cache. Named
+  /// "revision" (not "nonce" — a nonce is a one-time unpredictable token; this
+  /// is a plain monotonic counter, same family as
+  /// [documentEpoch]/[cacheBarRevision]).
+  final ValueNotifier<int> previewRevision = ValueNotifier<int>(0);
 
   /// `"$layerId/$property"` keys with a live, uncommitted preview staged this
   /// drag. [transformValueFor] prefers [transformEdits] over the (frozen)
   /// snapshot read-back for exactly these keys, so the field's displayed
   /// number does not appear to freeze mid-drag. Cleared on commit or cancel.
   final Set<String> _activePreviewKeys = {};
+
+  /// Scalar effect-parameter values staged by a live drag, keyed
+  /// `"$effectId/$paramName"` (an effect id is document-unique, so the layer is
+  /// not needed). The effect sibling of [transformEdits] + [_activePreviewKeys]
+  /// rolled into one map: unlike transforms there is no session-edit history to
+  /// keep, because snapshot v3 reads effect parameter values back — the map only
+  /// needs to cover the drag itself.
+  ///
+  /// Necessary because a preview deliberately never bumps [documentEpoch], so
+  /// the snapshot stays frozen at the pre-drag value for the whole drag; without
+  /// this the number in the field would sit still while the picture moved.
+  final Map<String, double> _effectParamPreviews = {};
 
   /// Whether the loaded bridge offers the transform-preview fast path (ABI
   /// 11). False for an older `.dll`, in which case [previewTransform]/
@@ -851,7 +864,7 @@ class AppStateStub extends ChangeNotifier {
   /// Stage an in-memory preview of one transform property WITHOUT committing —
   /// no undo entry, no journal write, no snapshot round-trip, no
   /// [documentEpoch] bump. Updates the session-edit map so the field's number
-  /// tracks the live value, then bumps [transformPreviewRevision] so
+  /// tracks the live value, then bumps [previewRevision] so
   /// [PreviewSource] re-renders just the current frame. A no-op when the
   /// loaded bridge lacks the capability — the caller should be gating its
   /// drag wiring on [supportsPreviewTransform] and falling back to
@@ -863,7 +876,7 @@ class AppStateStub extends ChangeNotifier {
     _activePreviewKeys.add('$layerId/$property');
     transformEdits['$layerId/$property'] = value;
     (b as PreviewTransformBridge).previewTransform(compId, layerId, property, value);
-    transformPreviewRevision.value++;
+    previewRevision.value++;
   }
 
   /// End a drag: commit [value] as ONE real op — identical to a non-drag
@@ -887,8 +900,68 @@ class AppStateStub extends ChangeNotifier {
     if (b is PreviewTransformBridge) {
       (b as PreviewTransformBridge).cancelTransformPreview();
     }
-    transformPreviewRevision.value++;
+    previewRevision.value++;
   }
+
+  /// Whether the loaded bridge offers the effect-parameter preview fast path
+  /// (ABI 12). Separate from [supportsPreviewTransform] because an ABI-11
+  /// library has one and not the other, and the effect rows alone should fall
+  /// back in that case.
+  bool get supportsPreviewEffectParam {
+    final b = bridge;
+    return b is PreviewTransformBridge &&
+        (b as PreviewTransformBridge).supportsPreviewEffectParam;
+  }
+
+  /// Stage an in-memory preview of one scalar effect parameter WITHOUT
+  /// committing — no undo entry, no journal write (so no `fsync`), no snapshot
+  /// round-trip, no [documentEpoch] bump. Bumps [previewRevision] so the dragged
+  /// field and [PreviewSource] re-render just the current frame.
+  ///
+  /// The effect sibling of [previewTransform]. Before it existed, every tick of
+  /// an effect-value drag ran the full [setEffectParamScalar] commit: 2.5 ms of
+  /// engine work per mouse-move event, 91% of it a synchronous journal `fsync`,
+  /// against budget B1's 8 ms interaction frame (docs/13 §2).
+  void previewEffectParam(String compId, String layerId, String effectId,
+      String paramName, double value) {
+    final b = bridge;
+    if (b is! PreviewTransformBridge) return;
+    _effectParamPreviews['$effectId/$paramName'] = value;
+    (b as PreviewTransformBridge)
+        .previewEffectParam(compId, layerId, effectId, paramName, value);
+    previewRevision.value++;
+  }
+
+  /// End an effect-parameter drag: commit [value] as ONE real op, identical to a
+  /// non-drag [setEffectParamScalar] call, so undo/redo and autosave behave
+  /// exactly as before. The engine drops its overlay on any real commit, so
+  /// there is nothing to clear engine-side.
+  void commitEffectParam(String compId, String layerId, String effectId,
+      String paramName, double value) {
+    _effectParamPreviews.remove('$effectId/$paramName');
+    setEffectParamScalar(compId, layerId, effectId, paramName, value);
+  }
+
+  /// Cancel an effect-parameter drag without committing (Escape / gesture
+  /// cancel): drop the staged value so the field falls back to the untouched
+  /// snapshot read-back, and tell the engine to drop its overlay.
+  void cancelEffectParamPreview(String effectId, String paramName) {
+    _effectParamPreviews.remove('$effectId/$paramName');
+    final b = bridge;
+    if (b is PreviewTransformBridge) {
+      (b as PreviewTransformBridge).cancelTransformPreview();
+    }
+    previewRevision.value++;
+  }
+
+  /// The value to show for a scalar effect parameter: the live dragged value
+  /// while one is staged, else [committed] as read back from the snapshot.
+  ///
+  /// The snapshot is frozen for the duration of a drag (a preview never bumps
+  /// the epoch), so without the override the number would appear stuck.
+  double effectParamValueFor(
+          String effectId, String paramName, double committed) =>
+      _effectParamPreviews['$effectId/$paramName'] ?? committed;
 
   /// Drop a user marker on the composition timeline at [frame].
   void addMarker(String compId, int frame) {
@@ -2467,7 +2540,7 @@ class AppStateStub extends ChangeNotifier {
     _previewSource?.dispose();
     playheadFrame.dispose();
     cacheBarRevision.dispose();
-    transformPreviewRevision.dispose();
+    previewRevision.dispose();
     super.dispose();
   }
 }

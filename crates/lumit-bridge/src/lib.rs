@@ -168,7 +168,17 @@ use serde_json::json;
 /// flag. Purely additive — an older Dart client that never calls the new
 /// symbols behaves exactly as before — but the ABI rises so a client that
 /// needs the fast path can insist on it.
-pub(crate) const ABI_VERSION: u32 = 11;
+/// v12 (this build) extends that fast path to effect parameters, which v11 left
+/// out: `preview_effect_param` stages a scalar effect value the same way
+/// `preview_transform` stages a transform one, so a drag renders without
+/// committing. The effect rows had no live path at all before, so every tick ran
+/// the full `set_effect_param_scalar` commit — document clone, undo entry,
+/// synchronous journal `fsync`, whole-document JSON serialise — measured at
+/// 2.5 ms per tick with 91% of it the `fsync`, against budget B1's 8 ms
+/// interaction frame (docs/13 §2), and leaving hundreds of undo steps per drag.
+/// `cancel_transform_preview` already covers both kinds (there is only ever one
+/// live drag), so no new cancel symbol. Purely additive.
+pub(crate) const ABI_VERSION: u32 = 12;
 
 /// `{"ok":false,"error":"…"}`. serde escapes any control character, so the
 /// resulting string never carries an interior NUL and always makes a `CString`.

@@ -711,11 +711,11 @@ class _TransformRowState extends State<_TransformRow> {
       }
       cells.add(SizedBox(
         width: _cellWidth,
-        // A live drag bumps transformPreviewRevision, not the big app
+        // A live drag bumps previewRevision, not the big app
         // notifier (the perf pass) — this field alone rebuilds per tick, the
         // same scoping the playhead notifier gets above.
         child: ValueListenableBuilder<int>(
-          valueListenable: _app.transformPreviewRevision,
+          valueListenable: _app.previewRevision,
           builder: (context, _, child) => DragValueField(
             key: ValueKey<String>('axis-${a.prop}'),
             value: _valueOf(a),
@@ -1210,17 +1210,39 @@ class _EffectParamRow extends StatelessWidget {
         final max = range?.max ?? 1000000;
         final span = (range?.sliderMax ?? max) - (range?.sliderMin ?? min);
         final speed = range == null || span <= 0 ? 0.5 : (span / 200).abs();
+        final live = app.supportsPreviewEffectParam;
         return SizedBox(
           width: _cellWidth,
-          child: DragValueField(
-            key: ValueKey<String>('fxparam-${effect.id}-${param.name}'),
-            value: v,
-            min: min,
-            max: max,
-            speed: speed <= 0 ? 0.5 : speed,
-            decimals: 2,
-            onChanged: (nv) => app.setEffectParamScalar(
-                compId, layer.id, effect.id, param.name, nv.toDouble()),
+          // A live drag bumps previewRevision, not the big app notifier, so this
+          // cell alone rebuilds per tick — the same scoping the transform rows
+          // get.
+          child: ValueListenableBuilder<int>(
+            valueListenable: app.previewRevision,
+            builder: (context, _, child) => DragValueField(
+              key: ValueKey<String>('fxparam-${effect.id}-${param.name}'),
+              value: app.effectParamValueFor(effect.id, param.name, v),
+              min: min,
+              max: max,
+              speed: speed <= 0 ? 0.5 : speed,
+              decimals: 2,
+              onChanged: (nv) => app.setEffectParamScalar(
+                  compId, layer.id, effect.id, param.name, nv.toDouble()),
+              // The live-preview fast path (ABI 12). Without it every drag tick
+              // was a real commit — undo entry, journal fsync, whole-document
+              // JSON round trip — which is what made dragging an effect value
+              // lag. Falls back to plain onChanged on an older library.
+              onChangeLive: live
+                  ? (nv) => app.previewEffectParam(
+                      compId, layer.id, effect.id, param.name, nv.toDouble())
+                  : null,
+              onChangeEnd: live
+                  ? (nv) => app.commitEffectParam(
+                      compId, layer.id, effect.id, param.name, nv.toDouble())
+                  : null,
+              onDragCancel: live
+                  ? () => app.cancelEffectParamPreview(effect.id, param.name)
+                  : null,
+            ),
           ),
         );
       case 'colour':

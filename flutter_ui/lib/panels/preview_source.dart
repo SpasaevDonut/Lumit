@@ -199,7 +199,7 @@ class PreviewSource extends ChangeNotifier {
     _lastEpoch = app.documentEpoch;
     app.addListener(_onAppChanged);
     app.playheadFrame.addListener(_onAppChanged);
-    app.transformPreviewRevision.addListener(_onPreviewTick);
+    app.previewRevision.addListener(_onPreviewTick);
     // Let Settings → Clear cache empty this decoded-frame LRU too (the engine
     // cache and this Dart tier are two halves of the same thing, K-176).
     app.previewCacheClearer = clearDecodedCache;
@@ -625,7 +625,7 @@ class PreviewSource extends ChangeNotifier {
     }
   }
 
-  /// Fired on every [AppStateStub.transformPreviewRevision] tick (a drag
+  /// Fired on every [AppStateStub.previewRevision] tick (a drag
   /// update, or a cancel-revert): render just the current frame under the
   /// engine's staged transform preview and show it — WITHOUT clearing or
   /// growing [_cache] (see [_showPreviewFrame]) and WITHOUT touching
@@ -815,7 +815,7 @@ class PreviewSource extends ChangeNotifier {
     _disposed = true;
     app.removeListener(_onAppChanged);
     app.playheadFrame.removeListener(_onAppChanged);
-    app.transformPreviewRevision.removeListener(_onPreviewTick);
+    app.previewRevision.removeListener(_onPreviewTick);
     if (identical(app.previewCacheClearer, clearDecodedCache)) {
       app.previewCacheClearer = null;
     }

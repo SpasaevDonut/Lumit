@@ -197,7 +197,7 @@ fn render_comp_with_preview(
 /// Only the Linux DMA-BUF path is wired through this worker so far (K-177) —
 /// the zero-copy Viewer the Flutter shell currently draws. The Windows
 /// shared-texture path (`HeadlessRenderer::render_to_shared`) and the portable
-/// CPU read-back path (`render_rgba`) still have to be brought across from the
+/// CPU read-back path (`render_preview`) still have to be brought across from the
 /// old bridge, so on those builds there is nothing to publish yet. That is why
 /// this is split by `cfg` rather than calling the DMA-BUF entry point directly:
 /// `render_to_shared_dmabuf` only exists on Linux with `shared-texture-linux`,

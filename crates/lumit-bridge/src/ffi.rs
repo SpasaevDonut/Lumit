@@ -250,8 +250,46 @@ pub unsafe extern "C" fn lumit_bridge_preview_transform(
     guard(move || with_bridge(|b| state::preview_transform(b, &comp, &layer, &property, value)))
 }
 
-/// Drop the active transform preview without committing (Escape / drag-cancel).
+/// Stage a scalar effect-parameter value for the frame being dragged, without
+/// committing it (ABI 12) — the effect-parameter sibling of
+/// [`lumit_bridge_preview_transform`], and the same drag protocol: this per tick,
+/// [`lumit_bridge_render_comp_frame_preview`] to render under it, and
+/// [`lumit_bridge_set_effect_param_scalar`] once on release to commit.
+///
+/// Without it every drag tick was a real commit, including a synchronous journal
+/// `fsync` — 2.5 ms per tick measured, against budget B1's 8 ms interaction frame.
+///
+/// # Safety
+/// The four string pointers must each be null or a valid NUL-terminated UTF-8
+/// C string alive for the call.
+#[no_mangle]
+pub unsafe extern "C" fn lumit_bridge_preview_effect_param(
+    comp_id: *const c_char,
+    layer_id: *const c_char,
+    effect_id: *const c_char,
+    param_name: *const c_char,
+    value: f64,
+) -> *mut c_char {
+    let (Some(comp), Some(layer), Some(effect), Some(param)) = (
+        c_str_to_string(comp_id),
+        c_str_to_string(layer_id),
+        c_str_to_string(effect_id),
+        c_str_to_string(param_name),
+    ) else {
+        return to_c_string(err_json(
+            "preview effect param: an argument was null or not valid UTF-8",
+        ));
+    };
+    guard(move || {
+        with_bridge(|b| state::preview_effect_param(b, &comp, &layer, &effect, &param, value))
+    })
+}
+
+/// Drop the active drag preview without committing (Escape / drag-cancel).
 /// The next render falls back to the untouched, pre-drag document.
+///
+/// Covers both preview kinds — transform and effect parameter — because there is
+/// only ever one live drag. The name is kept for ABI compatibility.
 #[no_mangle]
 pub extern "C" fn lumit_bridge_cancel_transform_preview() -> *mut c_char {
     guard(move || with_bridge(state::cancel_transform_preview))
@@ -2925,7 +2963,7 @@ mod tests {
         assert!(!ptr.is_null());
         let copied = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_owned();
         assert_eq!(parse(&copied)["ok"], json!(true));
-        assert_eq!(parse(&copied)["abi"], json!(11));
+        assert_eq!(parse(&copied)["abi"], json!(12));
         unsafe { lumit_bridge_free_string(ptr) };
 
         let snap_ptr = lumit_bridge_snapshot();

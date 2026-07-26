@@ -56,18 +56,28 @@ pub(crate) struct Bridge {
     /// `Document` — export takes its own fresh `with_bridge(|b| b.store.snapshot())`
     /// and never sees this, so a preview can never leak into an exported file
     /// (docs/14 §3: "preview resolution affects preview only").
-    pub preview: Option<TransformPreview>,
+    pub preview: Option<DragPreview>,
 }
 
-/// One in-flight, uncommitted transform preview: which comp/layer it targets,
-/// and the property→value edits staged this drag. A `Vec` (not two named
-/// fields) covers the linked-Scale-axes case (2 entries) and any future
-/// multi-property preview without a shape change.
+/// One in-flight, uncommitted drag preview: which comp/layer it targets, and the
+/// values staged this drag. A `Vec` (not named fields) covers the
+/// linked-Scale-axes case (2 entries) and any future multi-property preview
+/// without a shape change.
+///
+/// Transform properties and effect parameters are staged separately because they
+/// commit through different ops — `SetTransformProperty` and `SetLayerEffects` —
+/// and the preview applies the very same ops, so a previewed frame and the frame
+/// after release are identical by construction. One drag only ever touches one
+/// kind, but holding both in one struct keeps "there is at most one live drag"
+/// true, which is what lets [`commit`] discard it with a single assignment.
 #[derive(Clone)]
-pub(crate) struct TransformPreview {
+pub(crate) struct DragPreview {
     pub comp: Uuid,
     pub layer: Uuid,
     pub edits: Vec<(TransformProp, Animation)>,
+    /// `(effect id, parameter id, value)` staged this drag. Scalar only, matching
+    /// `set_effect_param_scalar` — the other parameter kinds are not dragged.
+    pub effect_edits: Vec<(Uuid, String, f64)>,
 }
 
 impl Bridge {
@@ -543,10 +553,67 @@ pub(crate) fn preview_transform(
             }
         }
         _ => {
-            bridge.preview = Some(TransformPreview {
+            bridge.preview = Some(DragPreview {
                 comp,
                 layer,
                 edits: vec![(prop, animation)],
+                effect_edits: Vec::new(),
+            });
+        }
+    }
+    crate::ok_json()
+}
+
+/// Stage a scalar effect-parameter value for the frame being dragged, without
+/// committing it — the effect-parameter sibling of [`preview_transform`], and the
+/// reason dragging an effect value is no longer a per-tick commit.
+///
+/// Before this existed the effect-parameter rows had no live path at all, so
+/// every tick of a drag ran `set_effect_param_scalar` for real: a document clone,
+/// an undo entry, a **synchronous `fsync` of the crash journal** and a
+/// whole-document JSON serialise, once per mouse-move event. Measured at 2.5 ms
+/// per tick on an empty document, 91% of it the `fsync` — which breaks budget B1
+/// (docs/13 §2: ≤ 8 ms UI frame during any interaction) and left a drag with
+/// hundreds of undo steps.
+///
+/// Accumulation matches [`preview_transform`]: a call for the same
+/// (comp, layer, effect, parameter) already staged updates that entry, a
+/// different parameter on the same layer adds one, and a different (comp, layer)
+/// replaces the overlay because a new drag has started. Returns the tiny
+/// stateless `{"ok":true}` ack — not a snapshot.
+pub(crate) fn preview_effect_param(
+    bridge: &mut Bridge,
+    comp_id: &str,
+    layer_id: &str,
+    effect_id: &str,
+    param_name: &str,
+    value: f64,
+) -> String {
+    let (comp, layer) = match parse_comp_layer(comp_id, layer_id) {
+        Ok(pair) => pair,
+        Err(e) => return err_json(format!("preview effect param: {e}")),
+    };
+    let Ok(effect) = Uuid::parse_str(effect_id) else {
+        return err_json("preview effect param: effect id is not a valid UUID");
+    };
+    match &mut bridge.preview {
+        Some(p) if p.comp == comp && p.layer == layer => {
+            if let Some(slot) = p
+                .effect_edits
+                .iter_mut()
+                .find(|(e, param, _)| *e == effect && param == param_name)
+            {
+                slot.2 = value;
+            } else {
+                p.effect_edits.push((effect, param_name.to_owned(), value));
+            }
+        }
+        _ => {
+            bridge.preview = Some(DragPreview {
+                comp,
+                layer,
+                edits: Vec::new(),
+                effect_edits: vec![(effect, param_name.to_owned(), value)],
             });
         }
     }
@@ -556,6 +623,9 @@ pub(crate) fn preview_transform(
 /// Drop the active preview without committing (Escape / drag-cancel). The
 /// next render call falls back to the untouched, pre-drag document. Returns
 /// the tiny stateless ack.
+///
+/// One function for both preview kinds: there is only ever one live drag, so
+/// cancelling means discarding the whole overlay either way.
 pub(crate) fn cancel_transform_preview(bridge: &mut Bridge) -> String {
     bridge.preview = None;
     crate::ok_json()
@@ -592,7 +662,63 @@ pub(crate) fn snapshot_with_preview(bridge: &Bridge) -> Arc<Document> {
             },
         );
     }
+    apply_effect_preview(&mut doc, preview);
     Arc::new(doc)
+}
+
+/// Apply the drag's staged effect-parameter values to `doc`, in place.
+///
+/// Goes through `Op::SetLayerEffects` — the very op `set_effect_param_scalar`
+/// commits — so a previewed frame and the frame after drag-release are identical
+/// by construction rather than by two implementations agreeing. Parameters are
+/// addressed by id (effect UUID + parameter id), matching the setter, and
+/// resolved against the live document each time: an effect reordered mid-drag
+/// still lands on the right parameter, where an index would silently hit the
+/// wrong one.
+///
+/// Anything that no longer resolves — the comp, layer, effect or parameter gone,
+/// or a parameter that is not a scalar — is skipped. A drag is transient and
+/// unimportant; it must never be able to fail a render.
+#[cfg(feature = "render")]
+fn apply_effect_preview(doc: &mut Document, preview: &DragPreview) {
+    if preview.effect_edits.is_empty() {
+        return;
+    }
+    let Some(comp) = doc.comp(preview.comp) else {
+        return;
+    };
+    let Some(layer) = comp.layers.iter().find(|l| l.id == preview.layer) else {
+        return;
+    };
+
+    let mut effects = layer.effects.clone();
+    let mut touched = false;
+    for (effect_id, param_name, value) in &preview.effect_edits {
+        let Some(inst) = effects.iter_mut().find(|e| e.id == *effect_id) else {
+            continue;
+        };
+        let Some(param) = inst.params.iter_mut().find(|p| p.id == *param_name) else {
+            continue;
+        };
+        // Fully qualified rather than imported: this function is behind the
+        // `render` feature, and an import would be unused without it.
+        if let lumit_core::model::EffectValue::Float(p) = &mut param.value {
+            *p = lumit_core::anim::Property::fixed(*value);
+            touched = true;
+        }
+    }
+    if !touched {
+        return;
+    }
+
+    let _ = lumit_core::ops::apply(
+        doc,
+        &Op::SetLayerEffects {
+            comp: preview.comp,
+            layer: preview.layer,
+            effects,
+        },
+    );
 }
 
 /// Drop a plain user marker on the composition timeline at `frame`. Committed as
@@ -799,7 +925,9 @@ mod tests {
         let v = parse(&version());
         assert_eq!(v["ok"], json!(true));
         assert_eq!(v["abi"], json!(crate::ABI_VERSION));
-        assert_eq!(v["abi"], json!(11));
+        // Pinned deliberately: bumping the constant must be a conscious act, so
+        // this line changes in the same commit that adds the new surface.
+        assert_eq!(v["abi"], json!(12));
     }
 
     #[test]
@@ -1111,6 +1239,208 @@ mod tests {
         );
         let preview = b.preview.as_ref().expect("a preview is staged");
         assert_eq!(preview.edits.len(), 2);
+    }
+
+    /// A layer carrying one builtin effect with a scalar parameter, plus that
+    /// effect's id and the parameter's id — the fixture the effect-param preview
+    /// tests need.
+    fn comp_with_scalar_effect() -> (Bridge, Uuid, Uuid, String, &'static str) {
+        let (mut b, comp, layer) = comp_with_layer();
+        let (name, param) = lumit_core::fx::BUILTINS
+            .iter()
+            .find_map(|s| {
+                s.params.iter().find_map(|p| match p.kind {
+                    lumit_core::fx::ParamKind::Float { .. } => Some((s.match_name, p.id)),
+                    _ => None,
+                })
+            })
+            .expect("a builtin has a scalar param");
+        crate::edits::add_effect(&mut b, &comp.to_string(), &layer.to_string(), name);
+        let effect_id = b
+            .store
+            .snapshot()
+            .comp(comp)
+            .and_then(|c| c.layers.iter().find(|l| l.id == layer))
+            .and_then(|l| l.effects.first())
+            .map(|e| e.id.to_string())
+            .expect("the effect was added");
+        (b, comp, layer, effect_id, param)
+    }
+
+    /// The whole point of the feature, and the gate that was missing when this
+    /// regressed: a drag tick must not commit. Fails without
+    /// `preview_effect_param` — the effect rows had no live path, so every tick
+    /// ran `set_effect_param_scalar`, taking an undo entry and a synchronous
+    /// journal `fsync` (2.5 ms measured) per mouse-move event, against budget B1
+    /// (docs/13 §2, ≤ 8 ms per interaction frame).
+    #[test]
+    fn preview_effect_param_never_touches_undo_or_journal() {
+        let (mut b, comp, layer, effect_id, param) = comp_with_scalar_effect();
+        let before = b.store.journal_ops().len();
+
+        for v in [1.0, 2.0, 3.0, 4.0, 5.0] {
+            let reply = parse(&preview_effect_param(
+                &mut b,
+                &comp.to_string(),
+                &layer.to_string(),
+                &effect_id,
+                param,
+                v,
+            ));
+            assert_eq!(reply, json!({ "ok": true }));
+        }
+
+        // Five ticks, zero commits — no journal append, so no fsync either.
+        assert_eq!(b.store.journal_ops().len(), before);
+        // And the real document still holds the pre-drag value.
+        let doc = b.store.snapshot();
+        let params = &doc
+            .comp(comp)
+            .unwrap()
+            .layers
+            .iter()
+            .find(|l| l.id == layer)
+            .unwrap()
+            .effects[0]
+            .params;
+        let staged = params.iter().find(|p| p.id == param).unwrap();
+        assert!(
+            !matches!(
+                &staged.value,
+                lumit_core::model::EffectValue::Float(p) if p.value_at(0.0) == 5.0
+            ),
+            "the dragged value must not have reached the committed document"
+        );
+    }
+
+    /// The previewed frame and the frame after drag-release must be the same
+    /// document, because both go through `Op::SetLayerEffects`. If they diverged,
+    /// the picture would jump on mouse-up.
+    #[cfg(feature = "render")]
+    #[test]
+    fn effect_param_preview_matches_a_real_commit() {
+        let (mut b, comp, layer, effect_id, param) = comp_with_scalar_effect();
+        preview_effect_param(
+            &mut b,
+            &comp.to_string(),
+            &layer.to_string(),
+            &effect_id,
+            param,
+            12.5,
+        );
+        let previewed = snapshot_with_preview(&b);
+
+        crate::edits::set_effect_param_scalar(
+            &mut b,
+            &comp.to_string(),
+            &layer.to_string(),
+            &effect_id,
+            param,
+            12.5,
+        );
+        let committed = b.store.snapshot();
+
+        assert_eq!(*previewed, *committed);
+    }
+
+    /// Ticks accumulate in place rather than piling up, and a preview is visible
+    /// to the render path while staying invisible to the store.
+    #[cfg(feature = "render")]
+    #[test]
+    fn repeated_effect_param_ticks_replace_rather_than_accumulate() {
+        let (mut b, comp, layer, effect_id, param) = comp_with_scalar_effect();
+        for v in [1.0, 2.0, 3.0] {
+            preview_effect_param(
+                &mut b,
+                &comp.to_string(),
+                &layer.to_string(),
+                &effect_id,
+                param,
+                v,
+            );
+        }
+        let preview = b.preview.as_ref().expect("a preview is staged");
+        assert_eq!(
+            preview.effect_edits.len(),
+            1,
+            "one entry, latest value wins"
+        );
+
+        // The render path sees the last tick's value.
+        let doc = snapshot_with_preview(&b);
+        let value = doc
+            .comp(comp)
+            .unwrap()
+            .layers
+            .iter()
+            .find(|l| l.id == layer)
+            .unwrap()
+            .effects[0]
+            .params
+            .iter()
+            .find(|p| p.id == param)
+            .map(|p| match &p.value {
+                lumit_core::model::EffectValue::Float(prop) => prop.value_at(0.0),
+                _ => f64::NAN,
+            })
+            .unwrap();
+        assert_eq!(value, 3.0);
+    }
+
+    /// Cancelling drops the effect overlay too — one cancel covers both preview
+    /// kinds, because there is only ever one live drag.
+    #[cfg(feature = "render")]
+    #[test]
+    fn cancelling_drops_an_effect_param_preview() {
+        let (mut b, comp, layer, effect_id, param) = comp_with_scalar_effect();
+        // The fixture itself commits (comp, footage, layer, effect), so the
+        // baseline is whatever it left, not zero.
+        let before = b.store.journal_ops().len();
+        preview_effect_param(
+            &mut b,
+            &comp.to_string(),
+            &layer.to_string(),
+            &effect_id,
+            param,
+            9.0,
+        );
+        assert!(b.preview.is_some());
+
+        cancel_transform_preview(&mut b);
+
+        assert!(b.preview.is_none());
+        assert_eq!(b.store.journal_ops().len(), before);
+        assert_eq!(*snapshot_with_preview(&b), *b.store.snapshot());
+    }
+
+    /// A commit ends the drag: one undo step, and the overlay is gone. This is
+    /// the mouse-up path, and it is what keeps a whole drag to a single entry in
+    /// the undo history rather than one per mouse-move event.
+    #[test]
+    fn commit_after_an_effect_param_drag_is_one_undo_step() {
+        let (mut b, comp, layer, effect_id, param) = comp_with_scalar_effect();
+        let before = b.store.journal_ops().len();
+        for v in [1.0, 2.0, 3.0] {
+            preview_effect_param(
+                &mut b,
+                &comp.to_string(),
+                &layer.to_string(),
+                &effect_id,
+                param,
+                v,
+            );
+        }
+        crate::edits::set_effect_param_scalar(
+            &mut b,
+            &comp.to_string(),
+            &layer.to_string(),
+            &effect_id,
+            param,
+            3.0,
+        );
+
+        assert_eq!(b.store.journal_ops().len(), before + 1, "one op, not three");
+        assert!(b.preview.is_none(), "the commit cleared the overlay");
     }
 
     #[test]

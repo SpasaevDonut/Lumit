@@ -119,6 +119,9 @@ ABI | Adds |
 | v0.3 | Transform read-back, identity links, effects, work area, layer lifecycle ops |
 | v0.4 | Export, keyframe interpolation, Retime read-back and ops, the last timeline columns |
 | v0.9 | Beat markers, sequence clips, overrun data, asset read-back, effect-param animation, `.lumfx` presets, mask geometry, the realtime (Auto) tier |
+| v10 | Comp audio playback (`audio_prepare`/`play`/`pause`/`seek`/`stop` + the per-tick `audio_clock`); the sound card's clock is the playback master |
+| v11 | The transform drag-preview fast path: `preview_transform` stages an in-memory-only value, `render_comp_frame_preview` renders under it (deliberately outside the frame cache), `cancel_transform_preview` discards it |
+| v12 | `preview_effect_param`, the effect-parameter sibling of v11 — the effect rows had no live path, so every drag tick was a full commit including a synchronous journal `fsync` (2.5 ms/tick measured, against budget B1's 8 ms). Cancel is shared with v11: one overlay covers whichever drag is live |
 
 
 

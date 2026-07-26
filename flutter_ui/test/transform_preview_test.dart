@@ -4,7 +4,7 @@
 // document JSON round-trip and full-cache invalidation. Three layers:
 // DragValueField's own drag-lifecycle callbacks (pure widget tests), the
 // AppStateStub preview/commit/cancel API (documentEpoch and
-// transformPreviewRevision bookkeeping), and PreviewSource's ephemeral
+// previewRevision bookkeeping), and PreviewSource's ephemeral
 // preview-render path (coalescing a flood of ticks to one render in flight).
 
 import 'dart:typed_data';
@@ -63,8 +63,13 @@ class _PreviewFake
     implements DocumentBridge, PreviewTransformBridge, CompRenderBridge {
   final List<String> previewCalls = [];
   final List<String> commitCalls = [];
+  final List<String> fxPreviewCalls = [];
+  final List<String> fxCommitCalls = [];
   bool cancelCalled = false;
   bool supportsPreview = true;
+  /// Tracked separately from [supportsPreview]: an ABI-11 library offers the
+  /// transform fast path but not the effect one.
+  bool supportsFxPreview = true;
   DecodedFrame? previewFrameResult;
 
   BridgeReply _snap() => BridgeReply.parse(_oneLayerJson);
@@ -92,6 +97,23 @@ class _PreviewFake
   @override
   void cancelTransformPreview() {
     cancelCalled = true;
+  }
+
+  @override
+  bool get supportsPreviewEffectParam => supportsFxPreview;
+
+  @override
+  BridgeReply previewEffectParam(String compId, String layerId, String effectId,
+      String paramName, double value) {
+    fxPreviewCalls.add('$compId/$layerId/$effectId/$paramName=$value');
+    return const BridgeReply.ok(null);
+  }
+
+  @override
+  BridgeReply setEffectParamScalar(String compId, String layerId,
+      String effectId, String paramName, double value) {
+    fxCommitCalls.add('$compId/$layerId/$effectId/$paramName=$value');
+    return _snap();
   }
 
   @override
@@ -328,13 +350,13 @@ void main() {
 
   group('AppStateStub transform preview', () {
     test('previewTransform stages the engine edit without a big-notify or '
-        'a documentEpoch bump, and bumps transformPreviewRevision', () {
+        'a documentEpoch bump, and bumps previewRevision', () {
       final fake = _PreviewFake();
       final app = AppStateStub(bridge: fake);
       final epochBefore = app.documentEpoch;
       var notifies = 0;
       app.addListener(() => notifies++);
-      final revBefore = app.transformPreviewRevision.value;
+      final revBefore = app.previewRevision.value;
 
       app.previewTransform('c1', 'l0', 'position_x', 42.0);
 
@@ -344,7 +366,7 @@ void main() {
           reason: 'a preview never adopts a snapshot');
       expect(notifies, 0,
           reason: 'a preview never fires the big ChangeNotifier');
-      expect(app.transformPreviewRevision.value, revBefore + 1);
+      expect(app.previewRevision.value, revBefore + 1);
     });
 
     test('commitTransform commits for real — bumps documentEpoch, fires the '
@@ -368,14 +390,14 @@ void main() {
       final app = AppStateStub(bridge: fake);
       app.previewTransform('c1', 'l0', 'position_x', 42.0);
       final epochBefore = app.documentEpoch;
-      final revBefore = app.transformPreviewRevision.value;
+      final revBefore = app.previewRevision.value;
 
       app.cancelTransformPreview('l0', 'position_x');
 
       expect(fake.cancelCalled, isTrue);
       expect(app.transformEdits.containsKey('l0/position_x'), isFalse);
       expect(app.documentEpoch, epochBefore);
-      expect(app.transformPreviewRevision.value, revBefore + 1);
+      expect(app.previewRevision.value, revBefore + 1);
     });
 
     test('supportsPreviewTransform reflects the bridge capability flag', () {
@@ -399,6 +421,95 @@ void main() {
       app.previewTransform('c1', 'l0', 'position_x', 1.0);
       expect(app.transformEdits.containsKey('l0/position_x'), isFalse);
       app.cancelTransformPreview('l0', 'position_x');
+    });
+  });
+
+  group('AppStateStub effect-parameter preview', () {
+    test('previewEffectParam stages without committing, without an epoch bump, '
+        'and bumps previewRevision', () {
+      final fake = _PreviewFake();
+      final app = AppStateStub(bridge: fake);
+      final epochBefore = app.documentEpoch;
+      final revBefore = app.previewRevision.value;
+      var notifies = 0;
+      app.addListener(() => notifies++);
+
+      app.previewEffectParam('c1', 'l0', 'fx0', 'radius', 12.5);
+
+      expect(fake.fxPreviewCalls, ['c1/l0/fx0/radius=12.5']);
+      // The commit path must not have been touched — this is the whole fix.
+      expect(fake.fxCommitCalls, isEmpty);
+      expect(app.documentEpoch, epochBefore);
+      expect(notifies, 0, reason: 'a preview never fires the big notifier');
+      expect(app.previewRevision.value, revBefore + 1);
+    });
+
+    /// The regression gate. Before the fix the effect rows had no live path, so
+    /// each tick ran the full commit — an undo entry and a synchronous journal
+    /// fsync per mouse-move event, against budget B1 (docs/13 §2).
+    test('a whole drag produces preview calls only, and exactly one commit on '
+        'release', () {
+      final fake = _PreviewFake();
+      final app = AppStateStub(bridge: fake);
+
+      for (final v in [1.0, 2.0, 3.0, 4.0, 5.0]) {
+        app.previewEffectParam('c1', 'l0', 'fx0', 'radius', v);
+      }
+      expect(fake.fxPreviewCalls, hasLength(5));
+      expect(fake.fxCommitCalls, isEmpty, reason: 'no tick may commit');
+
+      app.commitEffectParam('c1', 'l0', 'fx0', 'radius', 5.0);
+      expect(fake.fxCommitCalls, ['c1/l0/fx0/radius=5.0'],
+          reason: 'one commit for the whole drag, on release');
+    });
+
+    test('the staged value overrides the frozen snapshot read-back until the '
+        'drag ends', () {
+      final fake = _PreviewFake();
+      final app = AppStateStub(bridge: fake);
+
+      // No preview staged: the committed value shows through.
+      expect(app.effectParamValueFor('fx0', 'radius', 1.0), 1.0);
+
+      app.previewEffectParam('c1', 'l0', 'fx0', 'radius', 9.0);
+      expect(app.effectParamValueFor('fx0', 'radius', 1.0), 9.0,
+          reason: 'the field must track the drag, not the frozen snapshot');
+
+      app.commitEffectParam('c1', 'l0', 'fx0', 'radius', 9.0);
+      expect(app.effectParamValueFor('fx0', 'radius', 9.0), 9.0,
+          reason: 'after release the snapshot read-back takes over again');
+    });
+
+    test('cancelling drops the staged value and tells the engine', () {
+      final fake = _PreviewFake();
+      final app = AppStateStub(bridge: fake);
+      app.previewEffectParam('c1', 'l0', 'fx0', 'radius', 7.0);
+
+      app.cancelEffectParamPreview('fx0', 'radius');
+
+      expect(fake.cancelCalled, isTrue);
+      expect(app.effectParamValueFor('fx0', 'radius', 1.0), 1.0);
+      expect(fake.fxCommitCalls, isEmpty);
+    });
+
+    test('the effect capability is independent of the transform one, so an '
+        'ABI-11 library keeps its transform fast path', () {
+      final fake = _PreviewFake()..supportsFxPreview = false;
+      final app = AppStateStub(bridge: fake);
+
+      expect(app.supportsPreviewEffectParam, isFalse);
+      expect(app.supportsPreviewTransform, isTrue,
+          reason: 'a missing effect symbol must not disable transform preview');
+    });
+
+    test('a bridge without the capability makes the effect preview calls quiet '
+        'no-ops', () {
+      final app = AppStateStub(bridge: _PlainBridge());
+      expect(app.supportsPreviewEffectParam, isFalse);
+
+      app.previewEffectParam('c1', 'l0', 'fx0', 'radius', 1.0);
+      expect(app.effectParamValueFor('fx0', 'radius', 0.0), 0.0);
+      app.cancelEffectParamPreview('fx0', 'radius');
     });
   });
 

@@ -1836,6 +1836,23 @@ abstract class PreviewTransformBridge {
   /// Never served from or banked into the engine's rendered-frame cache, so a
   /// caller must not call this more than once per frame it actually wants.
   DecodedFrame? renderPreviewFrame(String compId, int frame, double scale);
+
+  /// True when the loaded library also exports the effect-parameter preview
+  /// symbol (ABI 12). Tracked separately from [supportsPreviewTransform]
+  /// because it arrived a version later: an ABI-11 library offers the transform
+  /// fast path but not this one, and must keep its per-tick
+  /// [DocumentBridge.setEffectParamScalar] path for effect rows only.
+  bool get supportsPreviewEffectParam;
+
+  /// Stage (or update) an in-memory preview of one scalar effect parameter —
+  /// the effect sibling of [previewTransform], with the same contract: no undo
+  /// entry, no journal write, no snapshot round-trip, and a tiny `{"ok":true}`
+  /// ack rather than a document.
+  ///
+  /// Cancelling uses [cancelTransformPreview] — the engine keeps one overlay for
+  /// whichever kind of drag is live, so there is no separate cancel.
+  BridgeReply previewEffectParam(String compId, String layerId, String effectId,
+      String paramName, double value);
 }
 
 /// The zero-copy Viewer capability (K-177), kept as its own interface for the
@@ -2237,6 +2254,14 @@ class LumitBridge
   _NoArgDart? _cancelTransformPreview;
   _RenderDart? _renderPreviewFrame;
 
+  /// The effect-parameter preview symbol (ABI 12). Bound in its OWN block, not
+  /// with the three above: it arrived a version later, so an ABI-11 library has
+  /// the transform symbols but not this one. Binding them together would make a
+  /// missing effect symbol switch the transform rows back to per-tick commits
+  /// too — a regression for a capability that library actually has. Shares the
+  /// same cancel and render calls, so this is the only extra symbol.
+  _ScalarParamDart? _previewEffectParam;
+
   /// The zero-copy shared-texture symbols (K-177). Bound defensively like
   /// [_renderCompFrame]: an older `.dll` lacks them, and both stay null then, so
   /// [supportsSharedTexture] is false and the Viewer keeps the read-back path.
@@ -2556,6 +2581,16 @@ class LumitBridge
       _previewTransform = null;
       _cancelTransformPreview = null;
       _renderPreviewFrame = null;
+    }
+    // The effect-parameter preview symbol (ABI 12) is optional on its own, so it
+    // gets its own block: an ABI-11 library has the three above but not this, and
+    // must keep the transform fast path while only the effect rows fall back.
+    try {
+      _previewEffectParam = lib.lookupFunction<_ScalarParamC, _ScalarParamDart>(
+        'lumit_bridge_preview_effect_param',
+      );
+    } catch (_) {
+      _previewEffectParam = null;
     }
     // The shared-texture symbols are likewise optional (K-177): an older library
     // omits them, so bind defensively and leave the capability off if either is
@@ -2909,6 +2944,40 @@ class LumitBridge
     } finally {
       malloc.free(c);
       malloc.free(l);
+      malloc.free(p);
+    }
+  }
+
+  @override
+  bool get supportsPreviewEffectParam =>
+      _previewEffectParam != null &&
+      _cancelTransformPreview != null &&
+      _renderPreviewFrame != null;
+
+  @override
+  BridgeReply previewEffectParam(
+    String compId,
+    String layerId,
+    String effectId,
+    String paramName,
+    double value,
+  ) {
+    final fn = _previewEffectParam;
+    if (fn == null) {
+      return const BridgeReply.err('preview effect param unsupported');
+    }
+    final c = compId.toNativeUtf8();
+    final l = layerId.toNativeUtf8();
+    final e = effectId.toNativeUtf8();
+    final p = paramName.toNativeUtf8();
+    try {
+      return BridgeReply.parse(
+        _readReply(fn(c.cast(), l.cast(), e.cast(), p.cast(), value)),
+      );
+    } finally {
+      malloc.free(c);
+      malloc.free(l);
+      malloc.free(e);
       malloc.free(p);
     }
   }

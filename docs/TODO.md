@@ -94,12 +94,20 @@ sequence clips.
         The worker only knows Linux DMA-BUF (`render_to_shared_dmabuf`), so on
         Windows — the platform docs/00 calls first — the frb Viewer renders
         nothing at all. Wire `render_to_shared` (Windows, `shared-texture`) and
-        the portable `render_rgba` read-back beside it, as `WorkerResponse`
-        variants next to `RenderedDMABuf`. Then bring across what v0 already had
-        and the worker lacks: latest-wins generations (`render_comp_frame_gen`,
-        `render_cancel_stale`, K-176 — the `TODO` in
+        a portable read-back beside it, as `WorkerResponse` variants next to
+        `RenderedDMABuf`. The read-back must use `HeadlessRenderer::render_preview`,
+        **not** `render_rgba`: `render_rgba` is the *export* path — it decodes
+        afresh at full resolution and retains nothing, whereas `render_preview`
+        decodes at the requested quality and reuses retained pixels when the
+        decode plan is unchanged, which is the whole drag fast path. v0 uses
+        `render_preview` for both the Viewer and the drag. Then bring across what
+        v0 already had and the worker lacks: latest-wins generations
+        (`render_comp_frame_gen`, `render_cancel_stale`, K-176 — the `TODO` in
         `render_frame_with_preview` names this), the rendered-frame LRU
-        (`framecache`), `Quality` other than `default()`, and `render_scope`.
+        (`framecache`), a `scale`/`Quality` other than `default()` (there is no
+        scale on the frb path at all), and `render_scope`. Also: the worker loop
+        busy-spins on `try_recv()` with an empty `process_loop`, so it burns a
+        core continuously — make it block on the channel.
     2. **Project panel** — `save_project`, `import_footage`, `new_composition`,
         `delete_item`, `rename_item`, `move_to_root`, `relink`, `thumbnail`,
         plus children/parent on `ItemReference` for the folder tree. Note
@@ -164,14 +172,6 @@ sequence clips.
     - **`DocumentStore::set_callback` takes `&mut self`**, so the observer can only
         be attached before the store is shared — workable, but it means the
         callback cannot be changed or removed for the store's lifetime.
-- **Effect-param drag preview** - `previewTransform` stages a live transform value
-    so a drag never touches the document; the effect-parameter controls have no
-    equivalent and still call `setEffectParamScalar` on every tick, so each tick is
-    a real commit (and a journal/undo entry). The pixels are already cheap after
-    K-178 - an effect value does not change the decode plan, so the drag
-    re-composites from retained pixels - but the per-tick commit remains. The
-    engine side is ready (`build::patch_layer_effect_param`); it needs a
-    `previewEffectParam` op beside `previewTransform`.
 
 **Shell and onboarding:**
 - **Workspace presets** - only the single default layout exists; the four shipped
