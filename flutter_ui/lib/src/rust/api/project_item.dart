@@ -14,7 +14,7 @@ import 'package:uuid/uuid.dart';
 import 'solid.dart';
 part 'project_item.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `item`, `project`
+// These functions are ignored because they are not marked as `pub`: `commit`, `item_id`, `item_reference`, `item`, `project_id`, `project`
 // These types are ignored because they are neither used by any `pub` functions nor (for structs and enums) marked `#[frb(unignore)]`: `LumitProjectItemInfo`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `eq`, `fmt`
 
@@ -35,10 +35,31 @@ sealed class ItemReference with _$ItemReference {
     FolderReference field0,
   ) = ItemReference_Folder;
 
+  /// Delete the item. One undo step, no confirmation — matching the egui
+  /// project menu, where Delete is undoable and therefore not worth a dialog.
+  void delete() =>
+      BridgeLib.instance.api.crateApiProjectItemItemReferenceDelete(
+        that: this,
+      );
+
   bool equals({required ItemReference item}) => BridgeLib.instance.api
       .crateApiProjectItemItemReferenceEquals(that: this, item: item);
+
+  /// Move the item back to the panel root: remove it from every folder that
+  /// lists it, as one undo step. Already at the root is a calm no-op.
+  void moveToRoot() =>
+      BridgeLib.instance.api.crateApiProjectItemItemReferenceMoveToRoot(
+        that: this,
+      );
 
   String name() => BridgeLib.instance.api.crateApiProjectItemItemReferenceName(
         that: this,
       );
+
+  /// Rename the item — the panel's in-place rename.
+  ///
+  /// A blank name is refused rather than applied, matching v0: the field keeps
+  /// the old name instead of the row losing its label.
+  void rename({required String name}) => BridgeLib.instance.api
+      .crateApiProjectItemItemReferenceRename(that: this, name: name);
 }

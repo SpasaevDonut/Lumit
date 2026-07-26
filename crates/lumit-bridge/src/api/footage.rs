@@ -68,6 +68,92 @@ impl FootageReference {
         }
     }
 
+    /// Point this footage item at `path`, and fix every *other* missing item
+    /// whose file name turns up in the same folder — one undo step for the lot.
+    ///
+    /// The sibling sweep is the behaviour that makes relinking a moved project
+    /// bearable: footage almost always moves as a folder, so relinking one clip
+    /// by hand should not mean relinking forty. A sibling is only touched when it
+    /// currently fails to resolve *and* a file of its name exists beside the
+    /// picked one, so a healthy item is never repointed.
+    #[frb(sync)]
+    pub fn relink(&self, path: String) -> Result<(), BridgeError> {
+        if path.trim().is_empty() {
+            return Err(BridgeError::MediaPathUnresolved);
+        }
+        let picked = PathBuf::from(&path);
+        let proj = self.project()?;
+
+        let ops = {
+            let p = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+            let doc = p.store.snapshot();
+
+            // Refuse early if this reference does not name footage at all.
+            match doc.item(self.id).ok_or(BridgeError::InvalidItem)? {
+                lumit_core::model::ProjectItem::Footage(_) => {}
+                _ => return Err(BridgeError::InvalidItem),
+            }
+
+            let folder = picked.parent().map(std::path::Path::to_path_buf);
+            let project_dir = p.path.as_deref().and_then(|p| p.parent());
+
+            let mut ops = Vec::new();
+            for item in &doc.items {
+                let lumit_core::model::ProjectItem::Footage(other) = item else {
+                    continue;
+                };
+                let is_target = other.id == self.id;
+
+                let candidate = if is_target {
+                    picked.clone()
+                } else {
+                    // Only sweep items that are actually broken, and only to a
+                    // file that really exists beside the picked one.
+                    if Self::footage_path(&p, other).is_some_and(|p| p.is_file()) {
+                        continue;
+                    }
+                    let Some(folder) = &folder else { continue };
+                    let name = std::path::Path::new(&other.media.relative_path)
+                        .file_name()
+                        .map(std::ffi::OsString::from)
+                        .unwrap_or_else(|| std::ffi::OsString::from(&other.name));
+                    let candidate = folder.join(name);
+                    if !candidate.is_file() {
+                        continue;
+                    }
+                    candidate
+                };
+
+                let mut media = other.media.clone();
+                media.absolute_path = candidate.to_string_lossy().into_owned();
+                if let Some(dir) = project_dir {
+                    if let Some(rel) = lumit_project::relative_between(dir, &candidate) {
+                        media.relative_path = rel;
+                    }
+                }
+                media.fingerprint = lumit_project::fingerprint_path(&candidate).ok();
+                ops.push(lumit_core::Op::SetMediaRef {
+                    id: other.id,
+                    media: Box::new(media),
+                });
+            }
+            ops
+        };
+
+        if ops.is_empty() {
+            return Err(BridgeError::MediaPathUnresolved);
+        }
+
+        let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+        let op = if ops.len() == 1 {
+            ops.into_iter().next().ok_or(BridgeError::InvalidItem)?
+        } else {
+            lumit_core::Op::Batch { ops }
+        };
+        proj.store.commit(op).map_err(BridgeError::OpError)?;
+        Ok(())
+    }
+
     pub fn get_status(&self) -> Result<LumitMediaStatus, BridgeError> {
         let proj = self.project()?;
         let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;

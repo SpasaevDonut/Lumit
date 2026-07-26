@@ -316,8 +316,12 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: |
+          # src/api/tests.rs is excluded by name: test code may legitimately
+          # `expect`, and it is not on any path Dart calls. Excluding one known
+          # file beats teaching a grep where a `#[cfg(test)]` module begins.
           hits=$(grep -rnE '\.unwrap\(\)|\.expect\(|\btodo!\(|\bunimplemented!\(|\bpanic!\(' \
-            crates/lumit-bridge/src/api crates/lumit-bridge/src/api.rs --include='*.rs' || true)
+            crates/lumit-bridge/src/api crates/lumit-bridge/src/api.rs --include='*.rs' \
+            | grep -v '^crates/lumit-bridge/src/api/tests\.rs:' || true)
           if [ -n "$hits" ]; then
             echo "Panic paths in the frb API surface, which clippy cannot see"
             echo "(docs/14-ENGINEERING-RULES.md §4). Return Result<_, BridgeError>:"

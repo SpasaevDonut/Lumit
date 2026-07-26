@@ -14,12 +14,20 @@ pub mod state;
 
 mod worker_thread;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug)]
 pub enum BridgeError {
     InvalidProject,
     InvalidComp,
     InvalidItem,
     InvalidLayer,
+    /// A media path could not be resolved, or a relink found nothing to point at.
+    MediaPathUnresolved,
+    /// A rename was given a blank name. Refused rather than applied, so a row
+    /// cannot lose its label.
+    EmptyName,
     /// No parameter of that id on the effect.
     InvalidParam,
     /// The parameter exists but is of a kind this API cannot yet express (see
@@ -41,6 +49,8 @@ impl fmt::Display for BridgeError {
             BridgeError::InvalidComp => write!(f, "Invalid Comp"),
             BridgeError::InvalidItem => write!(f, "Invalid Item"),
             BridgeError::InvalidLayer => write!(f, "Invalid Layer"),
+            BridgeError::EmptyName => write!(f, "The name cannot be empty"),
+            BridgeError::MediaPathUnresolved => write!(f, "Nothing to relink at that path"),
             BridgeError::InvalidParam => write!(f, "No such effect parameter"),
             BridgeError::UnsupportedParamKind => {
                 write!(f, "That effect parameter is not a scalar")

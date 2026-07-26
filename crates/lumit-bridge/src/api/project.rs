@@ -1,15 +1,10 @@
 use std::sync::Arc;
 
 use flutter_rust_bridge::frb;
-use lumit_core::model::ProjectItem;
 use uuid::Uuid;
 
 use crate::api::{
-    composition::CompositionReference,
-    folder::FolderReference,
-    footage::FootageReference,
-    project_item::ItemReference,
-    solid::SolidReference,
+    project_item::{item_reference, ItemReference},
     state::{WorkerResponseStream, PROJECTS},
     worker_thread, BridgeError,
 };
@@ -49,21 +44,12 @@ impl ProjectReference {
 
         let snapshot = s.store.snapshot();
 
+        // The panel's roots. Nesting is walked by `FolderReference::get_children`,
+        // so a collapsed folder costs nothing.
         Ok(snapshot
             .items
             .iter()
-            .map(|i| match i {
-                ProjectItem::Composition(_) => {
-                    ItemReference::Composition(CompositionReference::new(self.id, i.id()))
-                }
-                ProjectItem::Folder(_) => {
-                    ItemReference::Folder(FolderReference::new(self.id, i.id()))
-                }
-                ProjectItem::Solid(_) => ItemReference::Solid(SolidReference::new(self.id, i.id())),
-                ProjectItem::Footage(_) => {
-                    ItemReference::Footage(FootageReference::new(self.id, i.id()))
-                }
-            })
+            .map(|i| item_reference(self.id, i))
             .collect())
     }
 

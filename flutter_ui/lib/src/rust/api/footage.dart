@@ -26,6 +26,17 @@ class FootageReference {
         that: this,
       );
 
+  /// Point this footage item at `path`, and fix every *other* missing item
+  /// whose file name turns up in the same folder — one undo step for the lot.
+  ///
+  /// The sibling sweep is the behaviour that makes relinking a moved project
+  /// bearable: footage almost always moves as a folder, so relinking one clip
+  /// by hand should not mean relinking forty. A sibling is only touched when it
+  /// currently fails to resolve *and* a file of its name exists beside the
+  /// picked one, so a healthy item is never repointed.
+  void relink({required String path}) => BridgeLib.instance.api
+      .crateApiFootageFootageReferenceRelink(that: this, path: path);
+
   @override
   int get hashCode => internalproject.hashCode ^ internalid.hashCode;
 
