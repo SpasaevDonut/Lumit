@@ -1,5 +1,5 @@
 [package]
-name = "lumit-bridge"
+name = "lumit_bridge"
 version = "0.1.0"
 edition = "2021"
 license = "GPL-3.0-only"
@@ -7,7 +7,7 @@ license = "GPL-3.0-only"
 # A cdylib the Flutter Windows runner loads over dart:ffi, plus an rlib so the
 # in-crate tests (and any future Rust consumer) can link the same code.
 [lib]
-crate-type = ["cdylib", "rlib"]
+crate-type = ["cdylib", "staticlib"]
 
 # The `media` feature (default on) pulls lumit-media so the bridge can probe
 # footage and decode frames for the F2 CPU path. `--no-default-features` drops
@@ -23,7 +23,7 @@ crate-type = ["cdylib", "rlib"]
 # the crate still builds and tests without FFmpeg or a GPU (CI parity) — render
 # calls then return null.
 [features]
-default = ["media", "render"]
+default = ["media", "render", "shared-texture", "shared-texture-linux" ]
 media = ["dep:lumit-media"]
 # `render` also pulls lumit-audio: beat detection (docs/09 §5) mixes the comp's
 # audio through the headless input builder and runs onset/tempo analysis, so it
@@ -63,9 +63,11 @@ lumit-audio = { path = "../lumit-audio", optional = true }
 # builder and the compositor the Viewer and export both drive. An engine crate,
 # so the bridge depends on no frontend.
 lumit-render = { path = "../lumit-render", optional = true }
+lumit-ui = { path = "../lumit-ui" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v7", "serde"] }
+flutter_rust_bridge = { version = "=2.12.0", features = ["uuid"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -83,3 +85,5 @@ unimplemented = "deny"
 
 [lints.rust]
 unsafe_code = "allow"
+
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(frb_expand)'] }
