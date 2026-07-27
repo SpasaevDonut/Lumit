@@ -607,6 +607,32 @@ void main() {
       await tester.pump();
       expect(find.text('Volume'), findsOneWidget);
 
+      // The waveform lane (K-172): behind its own twirl under Audio, and its
+      // lane paints once opened.
+      expect(find.text('Waveform'), findsOneWidget);
+      expect(
+          find.byKey(
+              ValueKey<String>('tl-wave-${footageLayer.internallayerId}')),
+          findsNothing,
+          reason: 'closed until asked — a busy comp only pays for open lanes');
+      await tester.tap(find.text('Waveform'));
+      await tester.pump();
+      expect(
+          find.byKey(
+              ValueKey<String>('tl-wave-${footageLayer.internallayerId}')),
+          findsOneWidget);
+
+      // And the peaks themselves are real: the whole source, bucketed, with
+      // its true length — the data the lane maps through in/out/offset.
+      // `runAsync`, because a real decode completes on real async, which the
+      // test's fake clock would otherwise wait on for ever.
+      final peaks = await tester
+          .runAsync(() => footageLayer.audioPeaks(buckets: 64));
+      expect(peaks!.durationSeconds, greaterThan(0));
+      expect(peaks.pairs, hasLength(128), reason: 'a (min, max) per bucket');
+      expect(peaks.pairs.any((v) => v.abs() > 0.01), isTrue,
+          reason: 'a tone is not silence');
+
       await tester.tap(
           find.byKey(ValueKey<String>('tl-twirl-${silent.internallayerId}')));
       await tester.pump();
@@ -687,6 +713,14 @@ Uint8List _tinyWav() {
   u16(16); // bits per sample
   ascii('data');
   u32(dataBytes);
-  out.add(Uint8List(dataBytes));
+  // An actual tone, not silence: a ~440 Hz square wave at half amplitude, so
+  // a test asking "does the waveform carry signal" has signal to find.
+  final data = Uint8List(dataBytes);
+  for (var i = 0; i < samples; i++) {
+    final v = (i ~/ 25).isEven ? 16384 : -16384;
+    data[i * 2] = v & 0xff;
+    data[i * 2 + 1] = (v >> 8) & 0xff;
+  }
+  out.add(data);
   return out.toBytes();
 }

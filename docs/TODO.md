@@ -29,8 +29,9 @@ needs `C:/tmp/test1080p60.mp4` (ffmpeg `testsrc2`) and a Windows device, so it
 is run by hand, not in CI.
 
 **Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
-- **Timeline audio waveforms** - no waveform lane on audio/footage layers or in
-sequence clips.
+- **Sequence-clip waveforms** - the footage-layer waveform lane landed
+2026-07-28 (K-172's twirl under the Audio group, source peaks mapped through
+the live in/out/offset); Sequence layers' clips still draw none.
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):** magnification, channel view
 and the transparency grid have landed. Still missing:
@@ -102,13 +103,12 @@ and the transparency grid have landed. Still missing:
 - **Engine subsystems with no frb API yet.** Masks (`add_mask`,
     `add_mask_geometry`); the Retime **graph** — the segment
     model (`segment_to_rate`, `set_segment_preset`, `drag_boundary`) and the
-    curve view that makes ramps editable; `trim_to_source_end`; and the preset
-    *listing*.
+    curve view that makes ramps editable; and `trim_to_source_end`.
 
-- **Audio is in, with one honest limit.** Playback, the transport and beat
-    detection all work. What is *not* here: an audio waveform on the Timeline
-    (the lane the "Now" list above still asks for), and the mix is rebuilt from
-    scratch whenever the comp's audio signature changes rather than patched.
+- **Audio is in, with one honest limit.** Playback, the transport, beat
+    detection and the Timeline waveform lane all work. What is *not* here: the
+    mix is rebuilt from scratch whenever the comp's audio signature changes
+    rather than patched.
 
 - **Panel work left.** The graph editor's speed and time lenses and draggable
     bezier handles; and the Viewer's scale and rotate gizmo handles, motion

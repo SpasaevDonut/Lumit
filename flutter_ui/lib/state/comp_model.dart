@@ -37,6 +37,15 @@ class CompModel extends ChangeNotifier {
     return _model?.durationFrames.toInt() ?? 0;
   }
 
+  /// The comp's rate as a plain number — what maps seconds onto the time
+  /// axis (the waveform lane) without a bridge call per paint. 60 before any
+  /// model has loaded, so nothing divides by zero.
+  double get fps {
+    _freshen();
+    final fps = _model?.fps ?? 60.0;
+    return fps > 0 ? fps : 60.0;
+  }
+
   /// Point the model at [comp] (or null) and read it.
   void bind(CompositionReference? comp) {
     _comp = comp;

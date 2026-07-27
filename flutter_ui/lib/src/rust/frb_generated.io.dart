@@ -211,6 +211,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeAudioClock dco_decode_bridge_audio_clock(dynamic raw);
 
   @protected
+  BridgeAudioPeaks dco_decode_bridge_audio_peaks(dynamic raw);
+
+  @protected
   BridgeAutosave dco_decode_bridge_autosave(dynamic raw);
 
   @protected
@@ -441,6 +444,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<Uint8List> dco_decode_list_list_prim_u_8_strict(dynamic raw);
+
+  @protected
+  Float32List dco_decode_list_prim_f_32_strict(dynamic raw);
 
   @protected
   Float64List dco_decode_list_prim_f_64_strict(dynamic raw);
@@ -716,6 +722,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeAudioClock sse_decode_bridge_audio_clock(SseDeserializer deserializer);
 
   @protected
+  BridgeAudioPeaks sse_decode_bridge_audio_peaks(SseDeserializer deserializer);
+
+  @protected
   BridgeAutosave sse_decode_bridge_autosave(SseDeserializer deserializer);
 
   @protected
@@ -976,6 +985,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   List<Uint8List> sse_decode_list_list_prim_u_8_strict(
       SseDeserializer deserializer);
+
+  @protected
+  Float32List sse_decode_list_prim_f_32_strict(SseDeserializer deserializer);
 
   @protected
   Float64List sse_decode_list_prim_f_64_strict(SseDeserializer deserializer);
@@ -1261,6 +1273,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_audio_clock(
       BridgeAudioClock self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_audio_peaks(
+      BridgeAudioPeaks self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_autosave(
@@ -1551,6 +1567,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_list_prim_u_8_strict(
       List<Uint8List> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_prim_f_32_strict(
+      Float32List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_f_64_strict(

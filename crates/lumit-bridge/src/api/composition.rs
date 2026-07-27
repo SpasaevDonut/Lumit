@@ -66,6 +66,9 @@ pub struct BridgeLayerEntry {
 #[frb(non_opaque)]
 pub struct BridgeCompModel {
     pub duration_frames: i64,
+    /// The comp's rate as a plain number, for panels that map seconds to
+    /// pixels (the waveform lane) without a bridge call per paint.
+    pub fps: f64,
     pub layers: Vec<BridgeLayerEntry>,
 }
 
@@ -150,10 +153,10 @@ pub enum BridgePlaybackMode {
     /// rendered again.
     Adaptive,
     /// **Every frame, at the resolution asked for, however long it takes** — and
-    /// kept, so the second pass over the same stretch plays properly. Playback
-    /// runs at whatever rate the renderer manages rather than on the clock, so
-    /// the caller silences the sound: sound that cannot keep time is worse than
-    /// no sound.
+    /// kept, so the second pass over the same stretch plays properly. Sound
+    /// plays while rendering holds the comp's rate and is paused by the worker
+    /// if the picture falls genuinely behind (K-171): a paused track over a
+    /// slow-motion picture, never a drifting one.
     EveryFrame,
 }
 
@@ -254,6 +257,7 @@ impl CompositionReference {
             duration_frames: comp
                 .frame_rate
                 .frame_at(lumit_core::time::CompTime(comp.duration.0)),
+            fps: comp.frame_rate.fps(),
             layers: comp
                 .layers
                 .iter()

@@ -202,6 +202,16 @@ pub(crate) fn read_layer_info(
     }
 }
 
+/// A footage layer's waveform peaks: the whole source bucketed to a fixed
+/// count, plus its length so the lane can map comp time onto buckets.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeAudioPeaks {
+    pub duration_seconds: f64,
+    /// Interleaved `[min0, max0, min1, max1, …]`, each in −1..1.
+    pub pairs: Vec<f32>,
+}
+
 /// A layer used as another layer's matte (docs/03 §5.1).
 #[frb(non_opaque)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -971,6 +981,54 @@ impl LayerReference {
     /// Probing opens the file with FFmpeg, so this is deliberately **not**
     /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
     /// a missing file is not a reason to offer a volume control.
+    /// The layer's source audio as `buckets` (min, max) peak pairs across the
+    /// WHOLE source, interleaved `[min0, max0, min1, max1, …]` (K-172). The
+    /// peaks belong to the file, not the placement, so a trim or a drag never
+    /// invalidates them — the Timeline's waveform lane maps them through the
+    /// live in/out/offset each paint. Deliberately not `#[frb(sync)]`: it
+    /// decodes the whole track. Empty when the layer has no decodable audio.
+    // ponytail: decodes the file once per asking layer per session — no
+    // persistent peak files yet (docs/TODO), and two layers on one file
+    // decode twice. Cache per item when a real project feels it.
+    pub fn audio_peaks(&self, buckets: u32) -> Result<BridgeAudioPeaks, BridgeError> {
+        let empty = BridgeAudioPeaks {
+            duration_seconds: 0.0,
+            pairs: Vec::new(),
+        };
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Footage { item, .. } = layer.kind else {
+            return Ok(empty);
+        };
+        let proj = self.project()?;
+        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+        let snapshot = proj.store.snapshot();
+        let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(item) else {
+            return Ok(empty);
+        };
+
+        #[cfg(feature = "media")]
+        {
+            let Some(path) = crate::api::footage::FootageReference::resolve_path(&proj, footage)
+            else {
+                return Ok(empty);
+            };
+            let Ok(buffer) = lumit_media::audio::decode_all(&path, 48_000) else {
+                return Ok(empty);
+            };
+            let pairs = lumit_audio::mix::waveform_peaks(&buffer.samples, buckets as usize);
+            Ok(BridgeAudioPeaks {
+                duration_seconds: buffer.duration_seconds(),
+                pairs: pairs.into_iter().flat_map(|(lo, hi)| [lo, hi]).collect(),
+            })
+        }
+
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = buckets;
+            Ok(empty)
+        }
+    }
+
     pub fn has_audio(&self) -> Result<bool, BridgeError> {
         let layer = self.item()?;
         let lumit_core::model::LayerKind::Footage { item, .. } = layer.kind else {

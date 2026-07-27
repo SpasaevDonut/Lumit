@@ -79,6 +79,31 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// answer arrives.
   final Map<String, bool> _hasAudio = {};
 
+  /// Each layer's source waveform peaks, by id — fetched once when its
+  /// Waveform twirl first opens (decoding a whole track is not work for a
+  /// build), then good for the session: peaks belong to the file, so trims
+  /// and drags never invalidate them (K-172).
+  final Map<String, BridgeAudioPeaks> _peaks = {};
+
+  /// One lane's worth of buckets: plenty for any panel width.
+  static const int _peakBuckets = 2048;
+
+  /// Fetch peaks for any layer whose Waveform twirl is open and unanswered.
+  void _refreshPeaks(List<BridgeLayerEntry> layers) {
+    for (final entry in layers) {
+      final id = entry.layer.internallayerId.toString();
+      if (!_open.contains(waveformPath(id)) || _peaks.containsKey(id)) {
+        continue;
+      }
+      // Claim the slot first, so a rebuild mid-decode does not decode twice.
+      _peaks[id] = BridgeAudioPeaks(durationSeconds: 0, pairs: Float32List(0));
+      entry.layer.audioPeaks(buckets: _peakBuckets).then((peaks) {
+        if (!mounted) return;
+        setState(() => _peaks[id] = peaks);
+      });
+    }
+  }
+
   void _toggle(String path) => setState(() {
         if (!_open.remove(path)) _open.add(path);
       });
@@ -146,6 +171,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
               if (e.info.name.toLowerCase().contains(needle)) e,
           ];
     _refreshAudio(layers);
+    _refreshPeaks(layers);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -259,6 +285,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                 layers: layers,
                                 open: _open,
                                 hasAudio: _hasAudio,
+                                peaks: _peaks,
+                                fps: ui.model.fps,
                                 axis: axis,
                                 playhead: ui.playheadFrame,
                                 razor: _razor,
@@ -329,6 +357,7 @@ class _FoldRow extends StatelessWidget {
   Widget _control(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return switch (row) {
+      FoldWaveformRow() => const SizedBox.shrink(),
       FoldGroupRow(:final path, :final label, :final open) => GestureDetector(
           key: ValueKey<String>('tl-group-$path'),
           behavior: HitTestBehavior.opaque,
@@ -511,6 +540,69 @@ class _VolumeRowState extends State<_VolumeRow> {
 }
 
 /// Frames to pixels and back, for one panel width.
+/// The waveform lane's painter: the layer's source peaks, mapped through its
+/// live in/out/offset so dragging or trimming the bar carries the transients
+/// with it in realtime (K-172). One vertical min-max line per pixel column.
+class _WaveformPainter extends CustomPainter {
+  final BridgeAudioPeaks? peaks;
+  final BridgeLayerInfo info;
+  final _Axis axis;
+  final double fps;
+  final Color colour;
+
+  const _WaveformPainter({
+    required this.peaks,
+    required this.info,
+    required this.axis,
+    required this.fps,
+    required this.colour,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final held = peaks;
+    if (held == null || held.pairs.isEmpty || held.durationSeconds <= 0) {
+      return;
+    }
+    final buckets = held.pairs.length ~/ 2;
+    final startOffset =
+        info.span.startOffset.num / info.span.startOffset.den.toDouble();
+    final left = axis.xOf(info.inFrame.toInt()).clamp(0.0, size.width);
+    final right = axis.xOf(info.outFrame.toInt()).clamp(0.0, size.width);
+    final mid = size.height / 2;
+    // Half a pixel of breathing room top and bottom.
+    final half = mid - 1;
+    final paintLine = Paint()
+      ..color = colour
+      ..strokeWidth = 1;
+
+    for (var x = left; x < right; x += 1) {
+      // Fractional, straight off the axis mapping: frameAt rounds to whole
+      // frames, which would staircase the waveform.
+      final compSec = x / axis.width * axis.frames / fps;
+      final srcSec = compSec - startOffset;
+      if (srcSec < 0 || srcSec >= held.durationSeconds) continue;
+      final bucket =
+          (srcSec / held.durationSeconds * buckets).floor().clamp(0, buckets - 1);
+      final lo = held.pairs[bucket * 2].clamp(-1.0, 1.0);
+      final hi = held.pairs[bucket * 2 + 1].clamp(-1.0, 1.0);
+      canvas.drawLine(
+        Offset(x, mid - hi * half),
+        Offset(x, mid - lo * half),
+        paintLine,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(_WaveformPainter old) =>
+      old.peaks != peaks ||
+      old.info != info ||
+      old.fps != fps ||
+      old.axis.frames != axis.frames ||
+      old.axis.width != axis.width;
+}
+
 class _Axis implements CacheBarAxis {
   @override
   final int frames;
@@ -1150,6 +1242,12 @@ class _LayerArea extends StatelessWidget {
   /// Which layers carry sound — passed through only so the row list this side
   /// builds is identical to the outline's.
   final Map<String, bool> hasAudio;
+
+  /// Each layer's source peaks, for the waveform lanes.
+  final Map<String, BridgeAudioPeaks> peaks;
+
+  /// The comp's rate, mapping the lane's pixels onto source seconds.
+  final double fps;
   final _Axis axis;
 
   /// Listened to, not read: only the playhead line moves when it changes.
@@ -1171,6 +1269,8 @@ class _LayerArea extends StatelessWidget {
     required this.layers,
     required this.open,
     required this.hasAudio,
+    required this.peaks,
+    required this.fps,
     required this.axis,
     required this.playhead,
     required this.razor,
@@ -1207,22 +1307,42 @@ class _LayerArea extends StatelessWidget {
                 onSelect: () => onSelect(entry.layer),
                 onChanged: onChanged,
               ),
-              // One empty lane per fold-out row the outline is showing, from
-              // the same list it builds. Empty for now — the keyframes are drawn
-              // in the graph editor — but the room has to be here, or every bar
-              // below an open layer sits above its own name.
+              // One lane per fold-out row the outline is showing, from the
+              // same list it builds — mostly empty room (keyframes draw in
+              // the graph editor), but the waveform row paints the layer's
+              // source peaks through its live in/out/offset (K-172).
               if (open.contains(entry.layer.internallayerId.toString()))
-                SizedBox(
+                Column(
                   key: ValueKey<String>(
                       'tl-lanes-${entry.layer.internallayerId}'),
-                  height: _rowHeight *
-                      layerFoldRows(
-                        entry: entry,
-                        open: open,
-                        hasAudio:
-                            hasAudio[entry.layer.internallayerId.toString()] ??
-                                false,
-                      ).length,
+                  children: [
+                    for (final row in layerFoldRows(
+                      entry: entry,
+                      open: open,
+                      hasAudio: hasAudio[
+                              entry.layer.internallayerId.toString()] ??
+                          false,
+                    ))
+                      SizedBox(
+                        height: _rowHeight,
+                        child: row is FoldWaveformRow
+                            ? CustomPaint(
+                                key: ValueKey<String>(
+                                    'tl-wave-${entry.layer.internallayerId}'),
+                                size: Size(axis.width, _rowHeight),
+                                painter: _WaveformPainter(
+                                  peaks: peaks[entry
+                                      .layer.internallayerId
+                                      .toString()],
+                                  info: entry.info,
+                                  axis: axis,
+                                  fps: fps,
+                                  colour: t.accent,
+                                ),
+                              )
+                            : null,
+                      ),
+                  ],
                 ),
             ],
           ],

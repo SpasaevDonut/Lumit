@@ -17,8 +17,33 @@ import 'retime.dart';
 import 'solid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_layer_info`, `read`, `with_effects`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
+
+/// A footage layer's waveform peaks: the whole source bucketed to a fixed
+/// count, plus its length so the lane can map comp time onto buckets.
+class BridgeAudioPeaks {
+  final double durationSeconds;
+
+  /// Interleaved `[min0, max0, min1, max1, …]`, each in −1..1.
+  final Float32List pairs;
+
+  const BridgeAudioPeaks({
+    required this.durationSeconds,
+    required this.pairs,
+  });
+
+  @override
+  int get hashCode => durationSeconds.hashCode ^ pairs.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeAudioPeaks &&
+          runtimeType == other.runtimeType &&
+          durationSeconds == other.durationSeconds &&
+          pairs == other.pairs;
+}
 
 /// One clip on a Sequence layer, as the Timeline needs to draw it: where it
 /// starts on the layer's own timeline and how long it occupies there.
@@ -405,6 +430,27 @@ class LayerReference {
   void addEffect({required String name}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceAddEffect(that: this, name: name);
 
+  /// Whether this layer's source actually carries sound.
+  ///
+  /// What decides whether the Audio group appears under a layer at all
+  /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
+  /// a solid or a title it can never be heard, and a control that cannot do
+  /// anything is worse than no control. Footage is the case that matters, and
+  /// the answer is the container's own: a file with an audio stream.
+  ///
+  /// Probing opens the file with FFmpeg, so this is deliberately **not**
+  /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
+  /// a missing file is not a reason to offer a volume control.
+  /// The layer's source audio as `buckets` (min, max) peak pairs across the
+  /// WHOLE source, interleaved `[min0, max0, min1, max1, …]` (K-172). The
+  /// peaks belong to the file, not the placement, so a trim or a drag never
+  /// invalidates them — the Timeline's waveform lane maps them through the
+  /// live in/out/offset each paint. Deliberately not `#[frb(sync)]`: it
+  /// decodes the whole track. Empty when the layer has no decodable audio.
+  Future<BridgeAudioPeaks> audioPeaks({required int buckets}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceAudioPeaks(that: this, buckets: buckets);
+
   /// Turn a Footage layer into a Sequence layer holding one clip of the whole
   /// source — the way into the clip-editing surface.
   ///
@@ -562,17 +608,6 @@ class LayerReference {
         that: this,
       );
 
-  /// Whether this layer's source actually carries sound.
-  ///
-  /// What decides whether the Audio group appears under a layer at all
-  /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
-  /// a solid or a title it can never be heard, and a control that cannot do
-  /// anything is worse than no control. Footage is the case that matters, and
-  /// the answer is the container's own: a file with an audio stream.
-  ///
-  /// Probing opens the file with FFmpeg, so this is deliberately **not**
-  /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
-  /// a missing file is not a reason to offer a volume control.
   Future<bool> hasAudio() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceHasAudio(
         that: this,

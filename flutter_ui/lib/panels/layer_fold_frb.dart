@@ -73,6 +73,12 @@ final class FoldVolumeRow extends LayerFoldRow {
   const FoldVolumeRow({required int depth}) : super(depth);
 }
 
+/// The waveform lane (K-172): the outline names it, the lane side draws the
+/// layer's source peaks through its live in/out/offset.
+final class FoldWaveformRow extends LayerFoldRow {
+  const FoldWaveformRow({required int depth}) : super(depth);
+}
+
 /// The path of a layer's Transform group in the open set.
 String transformPath(String layerId) => '$layerId/transform';
 
@@ -85,6 +91,9 @@ String effectPath(String layerId, String effectId) =>
 
 /// The path of a layer's Audio group.
 String audioPath(String layerId) => '$layerId/audio';
+
+/// The path of the Waveform twirl inside the Audio group.
+String waveformPath(String layerId) => '$layerId/audio/waveform';
 
 /// The rows to draw under an open layer, in order.
 ///
@@ -151,7 +160,19 @@ List<LayerFoldRow> layerFoldRows({
       open: audioOpen,
       depth: 1,
     ));
-    if (audioOpen) rows.add(const FoldVolumeRow(depth: 2));
+    if (audioOpen) {
+      rows.add(const FoldVolumeRow(depth: 2));
+      // The waveform behind its own twirl (K-172), so a busy comp only pays
+      // for the lanes actually being looked at.
+      final waveOpen = open.contains(waveformPath(id));
+      rows.add(FoldGroupRow(
+        path: waveformPath(id),
+        label: 'Waveform',
+        open: waveOpen,
+        depth: 2,
+      ));
+      if (waveOpen) rows.add(const FoldWaveformRow(depth: 3));
+    }
   }
 
   return rows;
