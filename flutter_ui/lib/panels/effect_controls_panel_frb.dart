@@ -173,6 +173,7 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                 for (var index = 0; index < effects.length; index++)
                   _EffectCard(
                     key: ValueKey<String>('fx-card-${effects[index].id()}'),
+                    // ponytail: id() is a bridge call; the card caches its own.
                     effect: effects[index],
                     index: index,
                     count: effects.length,
@@ -316,7 +317,9 @@ class _EffectCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final params = listParameters(effect: effect.name());
+    // One bridge call for the name, schema answered from the session cache.
+    final name = effect.name();
+    final params = cachedListParameters(name);
 
     return Container(
       margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
@@ -353,15 +356,20 @@ class _EffectCard extends StatelessWidget {
     );
   }
 
-  Widget _titleRow(BuildContext context, LumitTheme t) => Padding(
+  Widget _titleRow(BuildContext context, LumitTheme t) {
+    // Read once per build: each of these is a call across the bridge, and the
+    // four buttons were each minting their own copy of the same id.
+    final id = effect.id();
+    final enabled = effect.enabled();
+    return Padding(
         padding: const EdgeInsets.fromLTRB(8, 5, 6, 5),
         child: Row(
           children: [
             LumitTooltip(
-              message: effect.enabled() ? 'Disable this effect' : 'Enable it',
+              message: enabled ? 'Disable this effect' : 'Enable it',
               child: HouseCheckbox(
-                key: ValueKey<String>('fx-enabled-${effect.id()}'),
-                value: effect.enabled(),
+                key: ValueKey<String>('fx-enabled-$id'),
+                value: enabled,
                 onChanged: (on) {
                   layer.setEffectEnabled(effect: effect, enabled: on);
                   onStackChanged();
@@ -369,13 +377,14 @@ class _EffectCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            Expanded(child: Text(_titleOf(effect), style: t.bodyPrimary)),
+            Expanded(
+                child: Text(effectLabelOf(effect.name()), style: t.bodyPrimary)),
             _markButton(
               context,
               mark: '▲',
               tip: 'Move up the stack',
               enabled: index > 0,
-              key: 'fx-up-${effect.id()}',
+              key: 'fx-up-$id',
               onPressed: () {
                 layer.reorderEffect(effect: effect, newIndex: index - 1);
                 onStackChanged();
@@ -386,7 +395,7 @@ class _EffectCard extends StatelessWidget {
               mark: '▼',
               tip: 'Move down the stack',
               enabled: index < count - 1,
-              key: 'fx-down-${effect.id()}',
+              key: 'fx-down-$id',
               onPressed: () {
                 layer.reorderEffect(effect: effect, newIndex: index + 1);
                 onStackChanged();
@@ -397,7 +406,7 @@ class _EffectCard extends StatelessWidget {
               mark: '×',
               tip: 'Remove this effect',
               enabled: true,
-              key: 'fx-remove-${effect.id()}',
+              key: 'fx-remove-$id',
               onPressed: () {
                 layer.removeEffect(effect: effect);
                 onStackChanged();
@@ -406,6 +415,7 @@ class _EffectCard extends StatelessWidget {
           ],
         ),
       );
+  }
 
   /// A small text mark rather than an icon, matching v0's × for Remove — the
   /// icon set has no caret or close glyph, and three marks do not earn three
@@ -437,16 +447,6 @@ class _EffectCard extends StatelessWidget {
   }
 }
 
-/// The card heading. The instance carries its match name, which is a snake_case
-/// key rather than something to show, so this is the label from the schema —
-/// falling back to the raw name for an effect this build does not know.
-String _titleOf(BridgeEffectInstance effect) {
-  final name = effect.name();
-  for (final info in listEffects()) {
-    if (info.name == name) return info.label;
-  }
-  return name;
-}
 
 /// The Transform card: the layer's transform rows, in the panel's card chrome.
 ///

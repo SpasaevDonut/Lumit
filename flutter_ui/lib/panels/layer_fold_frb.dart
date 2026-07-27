@@ -18,6 +18,7 @@
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
+import 'effect_param_row_frb.dart';
 import 'transform_rows_frb.dart';
 
 /// One row of a layer's fold-out.
@@ -123,7 +124,7 @@ List<LayerFoldRow> layerFoldRows({
           depth: 2,
         ));
         if (effectOpen) {
-          for (final param in listParameters(effect: effect.name())) {
+          for (final param in cachedListParameters(effect.name())) {
             rows.add(FoldEffectParamRow(effect, param, depth: 3));
           }
         }
@@ -146,11 +147,5 @@ List<LayerFoldRow> layerFoldRows({
 }
 
 /// An effect's display label, falling back to its match name for one this build
-/// does not know about.
-String effectLabel(BridgeEffectInstance effect) {
-  final name = effect.name();
-  for (final info in listEffects()) {
-    if (info.name == name) return info.label;
-  }
-  return name;
-}
+/// does not know about. The schema behind it is the session-cached copy.
+String effectLabel(BridgeEffectInstance effect) => effectLabelOf(effect.name());

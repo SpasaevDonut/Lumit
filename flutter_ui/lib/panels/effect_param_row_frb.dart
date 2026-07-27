@@ -60,7 +60,13 @@ class EffectParamRowFrb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final scalar = _animatableScalar;
+    // Each of these is a call across the bridge, so each is made once per build
+    // and handed down — `effect.id()` alone was crossing six times per row just
+    // to name widget keys, which is how one click on a layer came to cost
+    // ninety calls before anything useful happened.
+    final id = effect.id();
+    final value = _value;
+    final scalar = _animatableScalarOf(value);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
       child: Row(
@@ -74,7 +80,7 @@ class EffectParamRowFrb extends StatelessWidget {
               comp: comp,
               playheadFrame: playheadFrame,
               onSeek: onSeek,
-              rowKey: '${effect.id()}-${param.id}',
+              rowKey: '$id-${param.id}',
               onWrite: (next) => _set(BridgeEffectValue.float(next.single)),
             ),
           const SizedBox(width: 4),
@@ -83,7 +89,7 @@ class EffectParamRowFrb extends StatelessWidget {
                 style: t.body, overflow: TextOverflow.ellipsis),
           ),
           const SizedBox(width: 10),
-          _control(context, t),
+          _control(context, t, id, value),
         ],
       ),
     );
@@ -92,9 +98,9 @@ class EffectParamRowFrb extends StatelessWidget {
   /// The scalar behind this row when the kind is one that can animate, else
   /// null. Float is the only single-scalar animatable kind the schema declares;
   /// a colour animates per channel, which the swatch has no room to key.
-  BridgeScalar? get _animatableScalar {
+  BridgeScalar? _animatableScalarOf(BridgeEffectValue? value) {
     if (param.kind is! BridgeParamKind_Float) return null;
-    return switch (_value) {
+    return switch (value) {
       BridgeEffectValue_Float(:final field0) => field0,
       _ => null,
     };
@@ -124,8 +130,8 @@ class EffectParamRowFrb extends StatelessWidget {
   void _setLive(BridgeEffectValue value) =>
       onLive(effect.id(), param.id, value);
 
-  Widget _control(BuildContext context, LumitTheme t) {
-    final value = _value;
+  Widget _control(
+      BuildContext context, LumitTheme t, UuidValue id, BridgeEffectValue? value) {
     if (value == null) return Text('—', style: t.small);
 
     switch (param.kind) {
@@ -143,7 +149,7 @@ class EffectParamRowFrb extends StatelessWidget {
             sliderMax: sliderMax,
             hardMin: hardMin,
             hardMax: hardMax,
-            keyName: '${effect.id()}-${param.id}',
+            keyName: '$id-${param.id}',
             write: (s) => _set(BridgeEffectValue.float(s)),
           );
         }
@@ -151,7 +157,7 @@ class EffectParamRowFrb extends StatelessWidget {
 
       case BridgeParamKind_Colour(:final min, :final max):
         if (value case BridgeEffectValue_Colour(:final field0)) {
-          return _colourSwatch(context, field0, min, max);
+          return _colourSwatch(context, id, field0, min, max);
         }
         return Text('—', style: t.small);
 
@@ -162,7 +168,7 @@ class EffectParamRowFrb extends StatelessWidget {
             child: Align(
               alignment: Alignment.centerLeft,
               child: HouseCheckbox(
-                key: ValueKey<String>('fx-bool-${effect.id()}-${param.id}'),
+                key: ValueKey<String>('fx-bool-$id-${param.id}'),
                 value: field0,
                 onChanged: (on) => _set(BridgeEffectValue.bool(on)),
               ),
@@ -177,7 +183,7 @@ class EffectParamRowFrb extends StatelessWidget {
           return SizedBox(
             width: effectCellWidth + 40,
             child: BareDropdown<int>(
-              key: ValueKey<String>('fx-choice-${effect.id()}-${param.id}'),
+              key: ValueKey<String>('fx-choice-$id-${param.id}'),
               value: index,
               options: [for (var i = 0; i < options.length; i++) i],
               label: (i) => options[i],
@@ -192,7 +198,7 @@ class EffectParamRowFrb extends StatelessWidget {
           return SizedBox(
             width: effectCellWidth,
             child: DragValueField(
-              key: ValueKey<String>('fx-seed-${effect.id()}-${param.id}'),
+              key: ValueKey<String>('fx-seed-$id-${param.id}'),
               value: field0,
               min: 0,
               max: 0xFFFFFFFF,
@@ -206,7 +212,7 @@ class EffectParamRowFrb extends StatelessWidget {
 
       case BridgeParamKind_Layer():
         if (value case BridgeEffectValue_Layer(:final field0)) {
-          return _layerPicker(context, field0);
+          return _layerPicker(context, id, field0);
         }
         return Text('—', style: t.small);
 
@@ -287,8 +293,8 @@ class EffectParamRowFrb extends StatelessWidget {
   /// A colour swatch. The four channels animate independently in the model, so a
   /// swatch edit writes all four statics at once; an animated channel is left
   /// alone for the same reason a scalar is.
-  Widget _colourSwatch(
-      BuildContext context, BridgeColour colour, double min, double max) {
+  Widget _colourSwatch(BuildContext context, UuidValue id, BridgeColour colour,
+      double min, double max) {
     double chan(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : 0;
     final animated = colour.r is! BridgeScalar_Static ||
         colour.g is! BridgeScalar_Static ||
@@ -312,7 +318,7 @@ class EffectParamRowFrb extends StatelessWidget {
       child: Align(
         alignment: Alignment.centerLeft,
         child: GestureDetector(
-          key: ValueKey<String>('fx-colour-${effect.id()}-${param.id}'),
+          key: ValueKey<String>('fx-colour-$id-${param.id}'),
           behavior: HitTestBehavior.opaque,
           onTap: () async {
             final box = context.findRenderObject();
@@ -351,7 +357,7 @@ class EffectParamRowFrb extends StatelessWidget {
   /// A picker over the comp's own layers, with None. An unset or dangling
   /// reference is a labelled no-op engine-side, never a fault, so None is a
   /// first-class choice rather than an error state.
-  Widget _layerPicker(BuildContext context, UuidValue? current) {
+  Widget _layerPicker(BuildContext context, UuidValue id, UuidValue? current) {
     final layers = comp.getLayers();
     final names = {
       for (final l in layers) l.internallayerId.toString(): l.getName(),
@@ -364,7 +370,7 @@ class EffectParamRowFrb extends StatelessWidget {
     return SizedBox(
       width: effectCellWidth + 40,
       child: BareDropdown<String>(
-        key: ValueKey<String>('fx-layer-${effect.id()}-${param.id}'),
+        key: ValueKey<String>('fx-layer-$id-${param.id}'),
         value: names.containsKey(chosen) ? chosen! : unset,
         options: [unset, ...names.keys],
         label: (id) => id == unset ? 'None' : (names[id] ?? 'Missing layer'),
@@ -374,6 +380,28 @@ class EffectParamRowFrb extends StatelessWidget {
       ),
     );
   }
+}
+
+/// The effect schema, fetched once per session and then answered from here.
+///
+/// `listEffects` serialises every built-in's declaration and `listParameters`
+/// one effect's worth; both are static for the life of the process, yet they
+/// were being re-fetched per card per rebuild — the whole schema crossing the
+/// bridge to look up one display label. Memoised, a rebuild costs nothing here.
+List<BridgeEffectInfo>? _effectSchema;
+List<BridgeEffectInfo> cachedListEffects() => _effectSchema ??= listEffects();
+
+final Map<String, List<BridgeParamInfo>> _paramSchema = {};
+List<BridgeParamInfo> cachedListParameters(String effect) =>
+    _paramSchema[effect] ??= listParameters(effect: effect);
+
+/// An effect's display label from the schema, falling back to its match name
+/// for an effect this build does not know.
+String effectLabelOf(String name) {
+  for (final info in cachedListEffects()) {
+    if (info.name == name) return info.label;
+  }
+  return name;
 }
 
 /// The last path segment, for showing a chosen file without its whole path.

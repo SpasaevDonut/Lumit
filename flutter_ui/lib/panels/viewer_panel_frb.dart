@@ -164,6 +164,19 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
           final fitted = _fittedRect(constraints, size);
           _reportScale(ui, fitted, size);
 
+          // Which layers might be missing their file — read here, once per
+          // panel rebuild, NOT inside the playhead builder below. It used to
+          // live in the stage, which rebuilds per frame during playback, so
+          // `getLayers` plus a `getSourceItem` per layer crossed the bridge
+          // sixty times a second to re-answer a question edits change and
+          // playback never does.
+          final footage = <FootageReference>[
+            for (final layer in comp.getLayers())
+              if (layer.getSourceItem() case ItemReference_Footage(
+                  :final field0))
+                field0,
+          ];
+
           return ValueListenableBuilder<int>(
             valueListenable: ui.playheadFrame,
             builder: (context, frame, _) => _Stage(
@@ -172,6 +185,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
               fitted: fitted,
               grid: _grid,
               channel: _channel,
+              footage: footage,
               onPan: (delta) => setState(() => _pan += delta),
               onChanged: () => setState(() {}),
             ),
@@ -273,6 +287,10 @@ class _Stage extends StatelessWidget {
   final Rect fitted;
   final bool grid;
   final ViewerChannel channel;
+
+  /// The comp's footage layers' sources, read by the panel once per rebuild —
+  /// not here, where playback would re-read them per frame.
+  final List<FootageReference> footage;
   final ValueChanged<Offset> onPan;
   final VoidCallback onChanged;
 
@@ -282,6 +300,7 @@ class _Stage extends StatelessWidget {
     required this.fitted,
     required this.grid,
     required this.channel,
+    required this.footage,
     required this.onPan,
     required this.onChanged,
   });
@@ -320,23 +339,14 @@ class _Stage extends StatelessWidget {
     );
   }
 
-  /// A notice when a footage layer in this comp has lost its file.
-  ///
-  /// Read from the layers rather than from a status the panel caches: `getStatus`
-  /// probes the file, so this asks only the *kinds* question here and the probe
-  /// happens in the badge itself.
+  /// A notice when a footage layer in this comp has lost its file. The probe
+  /// itself happens in the badge; this only places it.
   Widget _missingSlate(BuildContext context, LumitTheme t) {
-    final missing = <FootageReference>[];
-    for (final layer in comp.getLayers()) {
-      final item = layer.getSourceItem();
-      if (item is ItemReference_Footage) missing.add(item.field0);
-    }
-    if (missing.isEmpty) return const SizedBox.shrink();
-
+    if (footage.isEmpty) return const SizedBox.shrink();
     return Positioned(
       left: 8,
       bottom: 8,
-      child: _MissingBadge(footage: missing),
+      child: _MissingBadge(footage: footage),
     );
   }
 }

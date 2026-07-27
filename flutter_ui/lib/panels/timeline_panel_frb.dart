@@ -40,6 +40,10 @@ import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
 import 'transform_rows_frb.dart';
 
+/// The blend-mode names, fetched once per session: the list is static for the
+/// life of the process, and every outline row was re-fetching it per rebuild.
+List<String>? _blendModes;
+
 /// The outline column's width. Wide enough for the number, four switches, a
 /// name worth reading, and the blend and parent pickers side by side — about
 /// what After Effects gives its own outline. Fixed rather than resizable for
@@ -120,10 +124,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
 
     final frames = comp.durationFrames();
     final needle = _search.trim().toLowerCase();
-    final layers = [
-      for (final l in comp.getLayers())
-        if (needle.isEmpty || l.getName().toLowerCase().contains(needle)) l,
-    ];
+    // No search means no name reads: `getName` is a bridge call per layer, and
+    // paying it per rebuild to filter against an empty string was pure chatter.
+    final layers = needle.isEmpty
+        ? comp.getLayers()
+        : [
+            for (final l in comp.getLayers())
+              if (l.getName().toLowerCase().contains(needle)) l,
+          ];
     _refreshAudio(layers);
 
     return Column(
@@ -887,7 +895,7 @@ class _OutlineRow extends StatelessWidget {
   }
 
   Widget _blendPicker(BuildContext context, LumitTheme t) {
-    final modes = listBlendModes();
+    final modes = _blendModes ??= listBlendModes();
     final current = layer.getBlend();
     // Wide enough for the longest mode name plus the caret: a dropdown that
     // overflows its cell is a layout error, not a cosmetic one.

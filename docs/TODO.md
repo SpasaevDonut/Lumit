@@ -275,6 +275,36 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
 - Retime Time-lens **vertical (source-position) boundary drag** has no bridge op
     (`SetLayerRetime`/`from_source_keyframes` unexposed).
 
+**Bridge chatter: the panels re-read the world on every rebuild.** Measured
+(test/frb/bridge_call_budget_test.dart, which now traps it): selecting a layer
+in a two-layer document costs ~75 bridge calls; a real document was traced at
+>200. The cause is architectural, not any one call site: the egui shell read
+state through in-process pointers, so "read in build" was free, and the port
+kept that idiom while making every read a serialising FFI call. Nothing holds a
+read model — every widget asks the engine again in `build()`, and any change
+rebuilds whole panels. The fixes are decisions, not patches, in rough order of
+value:
+- **A per-change read snapshot per panel** (layer name/switches/blend/parent
+    read once per `ScopedChange`, not once per widget per rebuild) — the
+    structural answer.
+- **Effect controls re-reads the entire stack once per playhead move** (its
+    rows sit under a `ValueListenableBuilder(playheadFrame)` so the keyframe
+    diamonds track the playhead) — during playback that is a full panel re-read
+    per frame, ~60/s. The diamonds should listen per row.
+- **`_TimelineParamRow` re-reads the whole effect stack per row** (each row's
+    `EffectStackEditor.stackWith` calls `getEffects` and compares `id()` per
+    instance), so one effect with N parameters costs N stack reads per rebuild.
+    Follows from frb's move-by-value handles — the same ownership problem being
+    worked on for value sync; solving it with id-addressed ops solves both.
+- **`LayerReference.equals` is a bridge call** used for selection compares;
+    `internallayerId` is already on the Dart side — compare that.
+- **The comp tabs read the whole project item tree per Timeline rebuild**
+    (`get_items` + `get_children`); the Project panel already listens to the
+    change stream — the tabs should too.
+- **`LumitAppNew` rebuilds the whole app on any `LumitUiState.notifyListeners`**
+    (a `ListenableBuilder` above everything), and un-scoped document changes do
+    the same via `LumitState` — every panel then re-reads. Scope it.
+
 **The frame cache never fills on the zero-copy path, so the cache bar is blank.**
 The shared texture keeps no bytes anywhere — that is what makes it fast — and
 `publish_read_back` was the only thing that ever filled `framecache`. Now that
