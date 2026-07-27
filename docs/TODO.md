@@ -33,9 +33,8 @@ is run by hand, not in CI.
 2026-07-28 (K-172's twirl under the Audio group, source peaks mapped through
 the live in/out/offset); Sequence layers' clips still draw none.
 
-**Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):** magnification, channel view
-and the transparency grid have landed. Still missing:
-- re-introduce zooming via scrolling (focused on mouse position)
+**Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):** magnification, channel view,
+the transparency grid and wheel zoom about the cursor have landed. Still missing:
 - wireframe/overlay menu
 - guides menu
 - region-of-interest

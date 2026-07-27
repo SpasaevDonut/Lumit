@@ -6,6 +6,7 @@
 // magnification and channel pickers, the grid, and the move gizmo, all of which
 // are the parts a user actually operates.
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
@@ -149,9 +150,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
       await settleFrb(tester,
-          minRounds: 6,
-          maxRounds: 200,
-          until: () => !p.uiState.playing.value);
+          minRounds: 6, maxRounds: 200, until: () => !p.uiState.playing.value);
 
       expect(p.uiState.playing.value, isFalse,
           reason: 'the engine said it ended; nothing in Dart worked it out');
@@ -246,8 +245,8 @@ void main() {
       await tester.pumpAndSettle();
 
       final after = p.layer.getTransform();
-      expect((after.positionX as BridgeScalar_Static).field0,
-          greaterThan(beforeX),
+      expect(
+          (after.positionX as BridgeScalar_Static).field0, greaterThan(beforeX),
           reason: 'the drag reached the document');
     });
 
@@ -308,7 +307,8 @@ void main() {
           until: () => p.uiState.playheadFrame.value > 0);
 
       expect(p.uiState.playheadFrame.value, greaterThan(0),
-          reason: 'no audio device, so the engine falls back to its wall clock');
+          reason:
+              'no audio device, so the engine falls back to its wall clock');
 
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
@@ -388,6 +388,37 @@ void main() {
     /// A still Viewer must go quiet. While the in-flight rule was being built
     /// it re-asked for the frame it had just been given, so the engine rendered
     /// the same picture over and over for as long as the panel was open.
+    /// Scroll-zoom (docs/07 §2.2): the wheel leans the picture in about the
+    /// cursor. Observable through the scale the Viewer reports to the engine —
+    /// zooming in shows more comp pixels per screen pixel, so it rises — and
+    /// through the picker showing a true percentage between its steps.
+    testWidgets('the wheel zooms the picture about the cursor', (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      final before = p.uiState.viewerScale;
+      final centre = tester.getCenter(find.byType(ViewerPanelFrb));
+      final pointer = TestPointer(1, PointerDeviceKind.mouse);
+      pointer.hover(centre);
+      // Three notches in.
+      for (var i = 0; i < 3; i++) {
+        await tester.sendEventToBinding(pointer.scroll(const Offset(0, -120)));
+        await tester.pump();
+      }
+
+      expect(p.uiState.viewerScale, greaterThan(before),
+          reason: 'zooming in raises the on-screen fraction of the comp');
+      // The picker tells the truth about a zoom between its steps.
+      expect(find.textContaining('%'), findsWidgets);
+
+      // And back out well past fit: the scale falls below where it started.
+      for (var i = 0; i < 8; i++) {
+        await tester.sendEventToBinding(pointer.scroll(const Offset(0, 120)));
+        await tester.pump();
+      }
+      expect(p.uiState.viewerScale, lessThan(before));
+    });
+
     testWidgets('a still playhead stops asking for renders', (tester) async {
       final p = withLayer();
       await mount(tester, p);
@@ -402,7 +433,9 @@ void main() {
       addTearDown(sub.cancel);
 
       // Let the mount render land, then count what follows it.
-      await settleFrb(tester, minRounds: 10, maxRounds: 120,
+      await settleFrb(tester,
+          minRounds: 10,
+          maxRounds: 120,
           until: () => p.uiState.frameArrived.value > 0);
       final settled = frames;
 
@@ -470,13 +503,13 @@ void main() {
       final button = find.byKey(const ValueKey('viewer-playback-mode'));
       expect(button, findsOneWidget, reason: 'the mode is visible, not buried');
       expect(find.textContaining('Adaptive'), findsOneWidget,
-          reason: 'adaptive is the mode that always plays, so it is the default');
+          reason:
+              'adaptive is the mode that always plays, so it is the default');
 
       await tester.tap(button);
       await tester.pump();
       expect(find.text('Every frame'), findsOneWidget);
-      expect(p.uiState.workspace.performance.playback,
-          PlaybackMode.everyFrame,
+      expect(p.uiState.workspace.performance.playback, PlaybackMode.everyFrame,
           reason: 'and the choice is remembered, not just drawn');
 
       await tester.tap(button);

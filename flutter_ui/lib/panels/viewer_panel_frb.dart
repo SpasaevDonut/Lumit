@@ -27,7 +27,9 @@
 // indicator. Recorded in docs/TODO.md — none is blocked on the engine.
 
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/audio.dart';
@@ -171,22 +173,33 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
           // playback never does.
           final footage = <FootageReference>[
             for (final layer in comp.getLayers())
-              if (layer.getSourceItem() case ItemReference_Footage(
-                  :final field0))
+              if (layer.getSourceItem()
+                  case ItemReference_Footage(:final field0))
                 field0,
           ];
 
-          return ValueListenableBuilder<int>(
-            valueListenable: ui.playheadFrame,
-            builder: (context, frame, _) => _Stage(
-              comp: comp,
-              uiState: ui,
-              fitted: fitted,
-              grid: _grid,
-              channel: _channel,
-              footage: footage,
-              onPan: (delta) => setState(() => _pan += delta),
-              onChanged: () => setState(() {}),
+          return Listener(
+            // The wheel zooms about the cursor (docs/07 §2.2): the comp point
+            // under the pointer stays under the pointer, which is what makes
+            // zooming feel like leaning in rather than teleporting.
+            onPointerSignal: (event) {
+              if (event is PointerScrollEvent) {
+                _scrollZoom(event.localPosition, event.scrollDelta.dy,
+                    constraints, size, fitted);
+              }
+            },
+            child: ValueListenableBuilder<int>(
+              valueListenable: ui.playheadFrame,
+              builder: (context, frame, _) => _Stage(
+                comp: comp,
+                uiState: ui,
+                fitted: fitted,
+                grid: _grid,
+                channel: _channel,
+                footage: footage,
+                onPan: (delta) => setState(() => _pan += delta),
+                onChanged: () => setState(() {}),
+              ),
             ),
           );
         },
@@ -243,13 +256,34 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
     return (centre + _pan) & drawn;
   }
 
+  /// One wheel notch is ~12 % in or out, smooth on a trackpad (the delta is
+  /// per-pixel there), anchored so the comp point under the cursor does not
+  /// move: solve the new pan from `cursor = topLeft' + u·s'` where `u` is the
+  /// comp point currently under the cursor.
+  void _scrollZoom(Offset cursor, double dy, BoxConstraints constraints,
+      BridgeCompSize size, Rect fitted) {
+    if (size.width == 0 || fitted.width <= 0) return;
+    final s1 = fitted.width / size.width;
+    final s2 = (s1 * math.pow(1.0012, -dy)).clamp(0.02, 32.0).toDouble();
+    if (s2 == s1) return;
+    final u = (cursor - fitted.topLeft) / s1;
+    final topLeft = cursor - u * s2;
+    final centre = Offset(
+      (constraints.maxWidth - size.width * s2) / 2,
+      (constraints.maxHeight - size.height * s2) / 2,
+    );
+    setState(() {
+      _zoom = s2;
+      _pan = topLeft - centre;
+    });
+  }
+
   /// Tell the engine what fraction of comp resolution is on screen, so the next
   /// render asks for that much and no more.
   void _reportScale(LumitUiState state, Rect fitted, BridgeCompSize size) {
     if (size.width == 0) return;
     state.reportViewerScale(fitted.width / size.width);
   }
-
 
   /// The playhead moved — from anywhere. The Timeline ruler, an arrow key and
   /// the transport all just set it, and this is what tells the engine.
@@ -759,11 +793,16 @@ class _Toolbar extends StatelessWidget {
               width: 76,
               child: BareDropdown<int>(
                 key: const ValueKey('viewer-zoom'),
-                value: _zoomSteps.indexOf(zoom).clamp(0, _zoomSteps.length - 1),
+                // -1: a wheel zoom between the listed steps; the button shows
+                // the true percentage and the menu still offers the steps.
+                value:
+                    _zoomSteps.contains(zoom) ? _zoomSteps.indexOf(zoom) : -1,
                 options: [for (var i = 0; i < _zoomSteps.length; i++) i],
-                label: (i) => _zoomSteps[i] == null
-                    ? 'Fit'
-                    : '${(_zoomSteps[i]! * 100).round()}%',
+                label: (i) => i == -1
+                    ? '${((zoom ?? 1) * 100).round()}%'
+                    : _zoomSteps[i] == null
+                        ? 'Fit'
+                        : '${(_zoomSteps[i]! * 100).round()}%',
                 onChanged: (i) => onZoom(_zoomSteps[i]),
               ),
             ),
@@ -871,7 +910,6 @@ String timecodeOf(int frame, BridgeCompSettings settings) {
   return '${two(hours)}:${two(minutes)}:${two(seconds)}:${two(frames)}';
 }
 
-
 /// Which playback behaviour is in force, and a click to change it.
 ///
 /// **Why this is on the bar rather than buried in Settings.** The two modes
@@ -893,8 +931,7 @@ class _PlaybackModeButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context);
-    final adaptive =
-        ui.workspace.performance.playback == PlaybackMode.adaptive;
+    final adaptive = ui.workspace.performance.playback == PlaybackMode.adaptive;
     final tier = comp.playbackTier();
     final label = adaptive
         ? 'Adaptive · ${_tierNames[tier.clamp(0, _tierNames.length - 1)]}'
