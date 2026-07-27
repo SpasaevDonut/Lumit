@@ -78,13 +78,15 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
 
     for (final layer in comp.getLayers()) {
       final id = layer.internallayerId.toString();
-      final kind = layer.getKind();
+      // One crossing per row (K-183) instead of a getter per field.
+      final info = layer.getInfo();
+      final kind = info.kind;
       final nested = kind == BridgeLayerKind.precomp ? _compOf(layer) : null;
       final open = _open.contains(id);
 
       rows.add(_HierarchyRow(
         key: ValueKey<String>('hierarchy-row-$id'),
-        name: layer.getName(),
+        name: info.name,
         kind: kind,
         depth: depth,
         selected: ui.selectedLayer.value?.equals(layer: layer) ?? false,

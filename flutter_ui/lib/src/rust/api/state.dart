@@ -37,24 +37,13 @@ abstract class LumitBridgeState implements RustOpaqueInterface {
           path: path, onChangeStream: onChangeStream);
 }
 
-/// A Viewer frame that came back as pixels rather than a GPU handle — the
-/// portable path, used on any build without one of the zero-copy features (the
-/// default on Windows). Dart turns `rgba` into a `ui.Image`.
-///
-/// Costly by construction: flutter_rust_bridge's SSE codec serialises a
-/// `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p frame and 37 ms
-/// at 4K — the whole of budget B1 (docs/13 §2) for the 1080p case, before any
-/// rendering. Prefer a zero-copy build where the platform allows one; see
-/// docs/TODO.md for the fix.
+/// A small still picture as plain pixels — the thumbnail payload
+/// (`FootageReference::thumbnail`). **Not a Viewer transport**: the read-back
+/// frame path was deleted in K-183, so the only pixel payloads that cross the
+/// bridge are these thumbnails and the scope traces, both small by
+/// construction.
 class BridgeRenderedFrame {
-  /// Which frame of the composition this is.
-  ///
-  /// **The frontend does not track this itself.** It used to: the Viewer held
-  /// the frame it had asked for and assumed the next arrival answered it,
-  /// which made a scheduler out of a panel and went wrong the moment anything
-  /// else published a frame. A picture that says which frame it is needs no
-  /// bookkeeping to place — the frontend paints it and moves the playhead
-  /// there.
+  /// Which frame of the source this is (0 for a thumbnail's poster frame).
   final BigInt frame;
   final int width;
   final int height;
@@ -86,8 +75,11 @@ class BridgeRenderedFrame {
 
 /// One scope trace: a fixed 256x256 RGBA picture the Scopes panel draws.
 ///
-/// Small enough that the per-byte SSE cost `BridgeRenderedFrame` warns about
-/// does not matter here — 256 KiB against a 1080p frame's 8 MiB.
+/// The one place pixels still cross the boundary, and small enough not to
+/// matter — 256 KiB against a 1080p frame's 8 MiB. Viewer frames themselves
+/// only ever cross as GPU handles (K-183): flutter_rust_bridge's SSE codec
+/// serialises a `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p
+/// frame, which is why the read-back frame transport was deleted.
 class BridgeScopeTrace {
   final Uint8List rgba;
 
@@ -115,7 +107,9 @@ class BridgeSharedFrameInfo {
   /// reaches Dart as a `BigInt`.
   final BigInt handle;
 
-  /// Which frame this is. See [`BridgeRenderedFrame::frame`].
+  /// Which frame of the composition this is. The frontend does not track this
+  /// itself: a picture that says which frame it is needs no bookkeeping to
+  /// place — the frontend paints it and moves the playhead there.
   final BigInt frame;
   final int width;
   final int height;
@@ -145,7 +139,9 @@ class BridgeSharedFrameInfo {
 class BridgeSharedFrameInfoLinux {
   final int fd;
 
-  /// Which frame this is. See [`BridgeRenderedFrame::frame`].
+  /// Which frame of the composition this is. The frontend does not track this
+  /// itself: a picture that says which frame it is needs no bookkeeping to
+  /// place — the frontend paints it and moves the playhead there.
   final BigInt frame;
   final int width;
   final int height;
@@ -241,11 +237,6 @@ sealed class WorkerResponse with _$WorkerResponse {
   const factory WorkerResponse.renderedSharedTexture(
     BridgeSharedFrameInfo field0,
   ) = WorkerResponse_RenderedSharedTexture;
-
-  /// Everything else: a CPU read-back.
-  const factory WorkerResponse.renderedPixels(
-    BridgeRenderedFrame field0,
-  ) = WorkerResponse_RenderedPixels;
 
   /// A scope trace, which rides the same stream as the frames so the panel
   /// needs no second channel.

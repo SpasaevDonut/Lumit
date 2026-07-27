@@ -212,53 +212,48 @@ class _LayerSearchFrbState extends State<LayerSearchFrb> {
       );
 }
 
-/// The sentinel a nullable dropdown option needs — see [ParentPickerFrb].
-const String _noParent = '';
-
 /// The parent picker: every *other* layer in the comp, plus None.
 ///
 /// A layer cannot parent to itself, so it is not in its own list — the engine
 /// refuses it anyway, but offering a choice that always fails is a worse way to
 /// say so than not offering it.
+///
+/// The resting button costs no bridge calls at all: the current parent's name
+/// rides in on the row's own [BridgeLayerInfo] (K-183). The other layers' names
+/// are read only when the menu opens — this used to be one name call per other
+/// layer per row per rebuild, which made the outline O(layers²).
 class ParentPickerFrb extends StatelessWidget {
   final CompositionReference comp;
   final LayerReference layer;
+  final BridgeLayerInfo info;
   final VoidCallback onChanged;
 
   const ParentPickerFrb({
     super.key,
     required this.comp,
     required this.layer,
+    required this.info,
     required this.onChanged,
   });
 
   @override
   Widget build(BuildContext context) {
-    final others = [
-      for (final l in comp.getLayers())
-        if (l.internallayerId != layer.internallayerId) l,
-    ];
-    final names = {
-      for (final l in others) l.internallayerId.toString(): l.getName(),
-    };
-    final current = layer.getParent()?.toString();
-
-    // The empty string stands for "no parent", not `null`: `showLumitPopup`
-    // completes with null when its barrier is tapped, so a nullable option is
-    // indistinguishable from dismissing the menu and can never be chosen.
     return SizedBox(
       width: 96,
-      child: BareDropdown<String>(
+      child: BareLazyDropdown(
         key: ValueKey<String>('tl-parent-${layer.internallayerId}'),
-        value: names.containsKey(current) ? current! : _noParent,
-        options: [_noParent, ...names.keys],
-        label: (id) => id == _noParent ? 'None' : (names[id] ?? 'None'),
+        label: info.parent == null ? 'None' : (info.parentName ?? 'None'),
+        options: () => [
+          (null, 'None'),
+          for (final l in comp.getLayers())
+            if (l.internallayerId != layer.internallayerId)
+              (l.internallayerId, l.getInfo().name),
+        ],
         onChanged: (id) {
           // A cycle is refused engine-side; the picker reports nothing and the
           // row keeps the parent it had.
           try {
-            layer.setParent(
-                parent: id == _noParent ? null : UuidValue.fromString(id));
+            layer.setParent(parent: id);
           } catch (_) {
             return;
           }

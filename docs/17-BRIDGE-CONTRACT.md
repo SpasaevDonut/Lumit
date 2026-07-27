@@ -175,21 +175,19 @@ A video frame is too large to marshal field by field, so frames have their own
 path, documented beside the types in
 [`api/state.rs`](../crates/lumit-bridge/src/api/state.rs).
 
-- **CPU read-back path.** The render worker publishes a `BridgeRenderedFrame` —
-    width, height and tightly packed RGBA8 — down its response stream. This is
-    the portable fallback and it is **expensive**: flutter_rust_bridge's SSE
-    codec encodes a `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p
-    frame. Prefer a zero-copy build where the platform allows one; the fix is
-    recorded in [TODO.md](TODO.md).
-- **Zero-copy shared-texture path (Windows and Linux, opt-in, K-177).** The
-    per-frame CPU round trip (render on the GPU, read pixels down, copy across,
-    upload back) is the recorded top performance cost (K-176). The shared-texture
-    path removes it: the engine renders into a shared texture and hands the
-    frontend a handle, which the runner registers as a Flutter external texture —
-    no pixels copied. Opt-in cargo features (`shared-texture`,
-    `shared-texture-linux`). All three publish variants are always *declared*, so
-    the generated Dart is one shape on every platform and the Viewer holds one
-    `switch` over the lot.
+- **Zero-copy shared textures are the ONLY frame transport (K-177, K-183).**
+    The engine renders into a shared texture and hands the frontend a handle,
+    which the runner registers as a Flutter external texture — no pixels ever
+    cross the boundary. Default-on cargo features (`shared-texture` for D3D12
+    on Windows, `shared-texture-linux` for Vulkan/DMA-BUF), each inert off its
+    platform. The CPU read-back transport that serialised every pixel (8.8 ms
+    per 1080p frame in the SSE codec alone) is deleted: a platform with no
+    zero-copy path (macOS, K-033) has no Viewer picture until it grows one.
+    Both publish variants are always *declared*, so the generated Dart is one
+    shape on every platform and the Viewer holds one `switch` over the pair.
+- **Small stills still cross as pixels**, deliberately: footage thumbnails
+    (`BridgeRenderedFrame`) and the 256×256 scope traces. Both are bounded and
+    rare, which is what makes the per-byte codec tolerable there.
 
 ## Feature gates
 

@@ -132,9 +132,11 @@ void main() {
           reason: 'the click actually changed the selection');
       // ignore: avoid_print
       print('CLICK COST ${counter.total} calls\n${counter.ranking()}');
+      // Measured at 31 after the grouped get_info reads landed (K-183);
+      // the cap stays roughly 2x measured so honest growth does not trip it.
       expect(
         counter.total,
-        lessThan(120),
+        lessThan(64),
         reason: 'one click re-read far too much across the bridge:\n'
             '${counter.ranking()}',
       );

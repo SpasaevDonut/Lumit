@@ -700,14 +700,12 @@ impl CompositionReference {
         frame: u64,
         scale: f32,
         mode: BridgePlaybackMode,
-        zero_copy: bool,
     ) -> Result<(), BridgeError> {
         self.dispatch(RenderComp(RenderCompRequest {
             comp: self.clone(),
             frame,
             scale,
             mode,
-            zero_copy,
         }))
     }
 
@@ -727,13 +725,7 @@ impl CompositionReference {
     /// `mode` comes from the frontend because it is a user *setting*, kept in the
     /// workspace file the frontend owns — stating it is not deciding anything.
     #[frb(sync)]
-    pub fn play(
-        &self,
-        from: u64,
-        scale: f32,
-        mode: BridgePlaybackMode,
-        zero_copy: bool,
-    ) -> Result<(), BridgeError> {
+    pub fn play(&self, from: u64, scale: f32, mode: BridgePlaybackMode) -> Result<(), BridgeError> {
         match mode {
             BridgePlaybackMode::EveryFrame => crate::api::audio::audio_stop(),
             BridgePlaybackMode::Adaptive => {
@@ -748,7 +740,6 @@ impl CompositionReference {
                 from,
                 mode,
                 scale,
-                zero_copy,
             },
         ))
     }

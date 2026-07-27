@@ -361,10 +361,9 @@ class CompositionReference {
   void play(
           {required BigInt from,
           required double scale,
-          required BridgePlaybackMode mode,
-          required bool zeroCopy}) =>
+          required BridgePlaybackMode mode}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferencePlay(
-          that: this, from: from, scale: scale, mode: mode, zeroCopy: zeroCopy);
+          that: this, from: from, scale: scale, mode: mode);
 
   /// The preview tier adaptive playback has settled on: 1 Full, 2 Half,
   /// 3 Third, 4 Quarter. Shown beside the mode so "why is it soft?" has an
@@ -380,14 +379,9 @@ class CompositionReference {
   void renderFrame(
           {required BigInt frame,
           required double scale,
-          required BridgePlaybackMode mode,
-          required bool zeroCopy}) =>
+          required BridgePlaybackMode mode}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
-          that: this,
-          frame: frame,
-          scale: scale,
-          mode: mode,
-          zeroCopy: zeroCopy);
+          that: this, frame: frame, scale: scale, mode: mode);
 
   /// Ask for `frame` with `layer`'s effect stack replaced by `effects` — the
   /// live drag path, which never touches the document.

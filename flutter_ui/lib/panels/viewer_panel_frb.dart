@@ -2,9 +2,9 @@
 //
 // A toolbar over the picture: magnification, channel view, the transparency
 // grid, the transport and the timecode. The picture itself is whatever the
-// render worker last published — a platform `Texture` on either zero-copy path,
-// or a decoded image on the portable read-back one — drawn at the chosen zoom
-// over a checkerboard, pannable when it is larger than the panel.
+// render worker last published — always a platform `Texture` on a zero-copy
+// path (K-183) — drawn at the chosen zoom over a checkerboard, pannable when
+// it is larger than the panel.
 //
 // **What the overlay does.** The selected layer gets a bounding box with a
 // centre handle. Dragging the handle moves the layer: the drag previews through
@@ -27,7 +27,6 @@
 // indicator. Recorded in docs/TODO.md — none is blocked on the engine.
 
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
@@ -409,7 +408,8 @@ class _MissingBadgeState extends State<_MissingBadge> {
   }
 }
 
-/// Whatever the worker last published, in the chosen channel.
+/// Whatever the worker last published, in the chosen channel — always a
+/// platform texture (K-183): frames only ever arrive as GPU handles.
 class _Picture extends StatelessWidget {
   final LumitUiState uiState;
   final ViewerChannel channel;
@@ -422,12 +422,7 @@ class _Picture extends StatelessWidget {
       builder: (context, textureId, _) {
         final picture = textureId != null
             ? Texture(textureId: textureId)
-            : ValueListenableBuilder<ui.Image?>(
-                valueListenable: uiState.viewerImage,
-                builder: (context, image, _) => image == null
-                    ? const SizedBox.expand()
-                    : RawImage(image: image, fit: BoxFit.fill),
-              );
+            : const SizedBox.expand();
         final filter = channelFilterFor(channel);
         return filter == null
             ? picture

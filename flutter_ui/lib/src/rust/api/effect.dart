@@ -11,7 +11,7 @@ import 'package:uuid/uuid.dart';
 part 'effect.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `animation`, `param`, `read`, `read`, `read`, `read`, `write`, `write`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`
 
 /// Every built-in effect, in schema order — the Add-effect menu's source of
@@ -54,6 +54,9 @@ abstract class BridgeEffectInstance implements RustOpaqueInterface {
   /// False when the effect is individually bypassed (docs/08 §1.5) — the state
   /// of the checkbox in its title bar.
   bool enabled();
+
+  /// One read for everything a card draws — see [`BridgeEffectInstanceInfo`].
+  BridgeEffectInstanceInfo getInfo();
 
   List<String> getParameters();
 
@@ -171,6 +174,39 @@ class BridgeEffectInfo {
           label == other.label &&
           category == other.category &&
           categoryLabel == other.categoryLabel;
+}
+
+/// Everything a panel draws for one effect instance, in one crossing (K-183):
+/// its id, match name, bypass state, and every parameter's current value. The
+/// instance is an opaque handle, so `id()`/`name()`/`get_value()` each cross
+/// the bridge — a card that read them one at a time cost a call per field per
+/// parameter per rebuild.
+class BridgeEffectInstanceInfo {
+  final UuidValue id;
+  final String name;
+  final bool enabled;
+  final List<BridgeParamValue> values;
+
+  const BridgeEffectInstanceInfo({
+    required this.id,
+    required this.name,
+    required this.enabled,
+    required this.values,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^ name.hashCode ^ enabled.hashCode ^ values.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeEffectInstanceInfo &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          enabled == other.enabled &&
+          values == other.values;
 }
 
 @freezed
@@ -340,6 +376,29 @@ sealed class BridgeParamKind with _$BridgeParamKind {
     required String filterName,
   }) = BridgeParamKind_File;
   const factory BridgeParamKind.layer() = BridgeParamKind_Layer;
+}
+
+/// One parameter's current value, as [`BridgeEffectInstance::get_info`]
+/// carries it.
+class BridgeParamValue {
+  final String id;
+  final BridgeEffectValue value;
+
+  const BridgeParamValue({
+    required this.id,
+    required this.value,
+  });
+
+  @override
+  int get hashCode => id.hashCode ^ value.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeParamValue &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          value == other.value;
 }
 
 /// A point parameter: two independently animatable axes.

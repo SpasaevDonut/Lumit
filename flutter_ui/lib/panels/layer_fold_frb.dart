@@ -44,17 +44,27 @@ final class FoldGroupRow extends LayerFoldRow {
   }) : super(depth);
 }
 
-/// One transform property group — Position, Scale, and so on.
+/// One transform property group — Position, Scale, and so on — with the
+/// layer's transform read once for the whole fold (K-183).
 final class FoldTransformRow extends LayerFoldRow {
   final TransformGroup group;
-  const FoldTransformRow(this.group, {required int depth}) : super(depth);
+  final BridgeTransform transform;
+  const FoldTransformRow(this.group, this.transform, {required int depth})
+      : super(depth);
 }
 
-/// One parameter of one effect.
+/// One parameter of one effect: the instance handle (for staging writes) plus
+/// everything the row draws, from the effect's one `getInfo` read (K-183).
 final class FoldEffectParamRow extends LayerFoldRow {
   final BridgeEffectInstance effect;
+  final BridgeEffectInstanceInfo info;
   final BridgeParamInfo param;
-  const FoldEffectParamRow(this.effect, this.param, {required int depth})
+
+  /// This parameter's current value, or null when the instance does not carry
+  /// it (a schema newer than the saved document).
+  final BridgeEffectValue? value;
+  const FoldEffectParamRow(this.effect, this.info, this.param, this.value,
+      {required int depth})
       : super(depth);
 }
 
@@ -97,8 +107,9 @@ List<LayerFoldRow> layerFoldRows({
     depth: 1,
   ));
   if (transformOpen) {
+    final transform = layer.getTransform();
     for (final group in transformGroups(threeD: layer.isThreeD())) {
-      rows.add(FoldTransformRow(group, depth: 2));
+      rows.add(FoldTransformRow(group, transform, depth: 2));
     }
   }
 
@@ -115,17 +126,21 @@ List<LayerFoldRow> layerFoldRows({
     ));
     if (effectsOpen) {
       for (final effect in effects) {
-        final path = effectPath(id, effect.id().toString());
+        // One crossing per effect for everything its rows draw (K-183).
+        final info = effect.getInfo();
+        final path = effectPath(id, info.id.toString());
         final effectOpen = open.contains(path);
         rows.add(FoldGroupRow(
           path: path,
-          label: effectLabel(effect),
+          label: effectLabelOf(info.name),
           open: effectOpen,
           depth: 2,
         ));
         if (effectOpen) {
-          for (final param in cachedListParameters(effect.name())) {
-            rows.add(FoldEffectParamRow(effect, param, depth: 3));
+          final values = {for (final v in info.values) v.id: v.value};
+          for (final param in cachedListParameters(info.name)) {
+            rows.add(
+                FoldEffectParamRow(effect, info, param, values[param.id], depth: 3));
           }
         }
       }
@@ -145,7 +160,3 @@ List<LayerFoldRow> layerFoldRows({
 
   return rows;
 }
-
-/// An effect's display label, falling back to its match name for one this build
-/// does not know about. The schema behind it is the session-cached copy.
-String effectLabel(BridgeEffectInstance effect) => effectLabelOf(effect.name());

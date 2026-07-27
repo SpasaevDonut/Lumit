@@ -17,7 +17,7 @@ import 'retime.dart';
 import 'solid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read`, `with_effects`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// One clip on a Sequence layer, as the Timeline needs to draw it: where it
@@ -49,6 +49,75 @@ class BridgeClip {
           id == other.id &&
           placeStart == other.placeStart &&
           placeDuration == other.placeDuration;
+}
+
+/// Everything the Timeline outline, its bars, and the Hierarchy draw for one
+/// layer, in one crossing (K-183). Read one getter at a time this cost
+/// seven-plus bridge calls per row per rebuild — each cloning the composition
+/// out of the snapshot — plus two time↔frame trips per bar.
+class BridgeLayerInfo {
+  final String name;
+  final BridgeLayerKind kind;
+  final BridgeLayerSwitches switches;
+
+  /// Blend mode as an index into `list_blend_modes`.
+  final int blend;
+  final BridgeSpan span;
+
+  /// The span at the comp's own rate, so drawing needs no time↔frame trips.
+  final PlatformInt64 inFrame;
+  final PlatformInt64 outFrame;
+
+  /// Sequence clip starts as comp frames (empty on other kinds) — what the
+  /// bar draws its split lines from.
+  final Int64List clipFrames;
+  final UuidValue? parent;
+
+  /// The parent layer's current name, so the outline's parent picker renders
+  /// with no second lookup. None when there is no parent, or it is dangling.
+  final String? parentName;
+
+  const BridgeLayerInfo({
+    required this.name,
+    required this.kind,
+    required this.switches,
+    required this.blend,
+    required this.span,
+    required this.inFrame,
+    required this.outFrame,
+    required this.clipFrames,
+    this.parent,
+    this.parentName,
+  });
+
+  @override
+  int get hashCode =>
+      name.hashCode ^
+      kind.hashCode ^
+      switches.hashCode ^
+      blend.hashCode ^
+      span.hashCode ^
+      inFrame.hashCode ^
+      outFrame.hashCode ^
+      clipFrames.hashCode ^
+      parent.hashCode ^
+      parentName.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeLayerInfo &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          kind == other.kind &&
+          switches == other.switches &&
+          blend == other.blend &&
+          span == other.span &&
+          inFrame == other.inFrame &&
+          outFrame == other.outFrame &&
+          clipFrames == other.clipFrames &&
+          parent == other.parent &&
+          parentName == other.parentName;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
@@ -380,6 +449,14 @@ class LayerReference {
 
   List<BridgeEffectInstance> getEffects() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetEffects(
+        that: this,
+      );
+
+  /// One read for everything a row draws — see [`BridgeLayerInfo`]. One
+  /// document lock and one crossing, where the per-field getters cost one of
+  /// each per field.
+  BridgeLayerInfo getInfo() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetInfo(
         that: this,
       );
 

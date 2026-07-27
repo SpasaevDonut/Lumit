@@ -44,15 +44,12 @@ void main() {
   group('Cache bar against the engine', () {
     setUpAll(initEngineForTests);
 
-    // These run against the read-back transport, which is what a plain
-    // `cargo build -p lumit_bridge` produces and what the test harness loads.
-    // The shipped Windows build adds `shared-texture`, where adaptive playback
-    // hands over a texture instead of bytes and so keeps nothing — the cache
-    // bar fills in Every frame mode there. See `publish_frame`.
+    // Viewer frames only ever cross as GPU handles now (K-183), so nothing the
+    // Viewer shows leaves bytes behind — the rendered-frame cache is filled by
+    // the scope path, which needs CPU pixels and files what it renders.
 
-    /// The whole point of the bar: a frame that has been rendered reads back as
-    /// held, and one that has not reads as nothing. Before this the bridge could
-    /// only say how many bytes were in use.
+    /// The whole point of the bar: a frame that has been rendered (here, for a
+    /// trace) reads back as held, and one that has not reads as nothing.
     testWidgets('a rendered frame shows as held, an unrendered one does not',
         (tester) async {
       final p = freshProject();
@@ -73,11 +70,19 @@ void main() {
         size: const Size(700, 500),
       ));
       await tester.pump();
+      comp.renderScope(
+        frame: BigInt.zero,
+        scale: p.uiState.viewerScale,
+        kind: 0,
+        colours: scopeColoursFor(LumitTheme.dark()),
+      );
       await settleFrb(
         tester,
         minRounds: 20,
         maxRounds: 200,
-        until: () => p.uiState.viewerImage.value != null,
+        until: () => comp
+                .cachedFrames(frames: BigInt.from(8), scale: p.uiState.viewerScale)[0] !=
+            0,
       );
 
       final tiers =
@@ -109,11 +114,19 @@ void main() {
         size: const Size(700, 500),
       ));
       await tester.pump();
+      comp.renderScope(
+        frame: BigInt.zero,
+        scale: p.uiState.viewerScale,
+        kind: 0,
+        colours: scopeColoursFor(LumitTheme.dark()),
+      );
       await settleFrb(
         tester,
         minRounds: 20,
         maxRounds: 200,
-        until: () => p.uiState.viewerImage.value != null,
+        until: () => comp
+                .cachedFrames(frames: BigInt.from(4), scale: p.uiState.viewerScale)[0] !=
+            0,
       );
       expect(
         comp.cachedFrames(frames: BigInt.from(4), scale: p.uiState.viewerScale)[0],
@@ -168,11 +181,11 @@ void main() {
           reason: '4000 frames across 1000 px must not throw in paint');
     });
 
-    /// A scope trace reads the values in a frame, and the Viewer has just
-    /// rendered that frame. It used to composite the whole composition a second
-    /// time to get it — several times a second, all through playback, doubling
-    /// the cost of every played frame whenever the Scopes panel was open.
-    testWidgets('a scope trace reuses the frame instead of rendering again',
+    /// A scope trace needs CPU pixels, and the zero-copy Viewer keeps none
+    /// (K-183) — so the first trace of a frame renders and files it, and a
+    /// second trace of the same frame is served from the cache rather than
+    /// compositing the composition again.
+    testWidgets('a second trace of the same frame is served from the cache',
         (tester) async {
       final p = freshProject();
       final comp = p.state.project!.newComposition(name: 'Scene');
@@ -186,35 +199,38 @@ void main() {
         size: const Size(700, 500),
       ));
       await tester.pump();
-      await settleFrb(
-        tester,
-        minRounds: 20,
-        maxRounds: 200,
-        until: () => p.uiState.viewerImage.value != null,
-      );
 
-      // The Viewer holds frame 0. `best_frame` reuses it without going through
-      // the cache's own lookup, deliberately, so that the hit and miss counters
-      // keep describing how well the *Viewer* is served. That is what makes the
-      // reuse observable here: a trace that fetched the frame any other way
-      // would move one of those counters, and one that composited afresh would
-      // add an entry.
-      final before = cacheStats();
       comp.renderScope(
         frame: BigInt.zero,
         scale: p.uiState.viewerScale,
         kind: 0,
         colours: scopeColoursFor(LumitTheme.dark()),
       );
+      await settleFrb(
+        tester,
+        minRounds: 15,
+        maxRounds: 200,
+        until: () => cacheStats().entries > BigInt.zero,
+      );
+
+      final before = cacheStats();
+      comp.renderScope(
+        frame: BigInt.zero,
+        scale: p.uiState.viewerScale,
+        kind: 1,
+        colours: scopeColoursFor(LumitTheme.dark()),
+      );
       await settleFrb(tester, minRounds: 15, maxRounds: 80);
 
+      // `best_frame` serves the held frame without touching the hit/miss
+      // counters (they describe cache lookups, and this is a reuse before the
+      // lookup) — so the observable is that nothing new was made: a fresh
+      // composite would have filed another entry and counted a miss.
       final after = cacheStats();
-      expect(after.hits, before.hits,
-          reason: 'the trace never went to the cache — it reused the frame in hand');
+      expect(after.entries, before.entries,
+          reason: 'the second trace did not composite the composition again');
       expect(after.misses, before.misses,
-          reason: 'and certainly did not composite the composition again');
-      expect(after.entries, before.entries);
-      expect(after.usedBytes, before.usedBytes);
+          reason: 'and never even asked the cache for a render');
     });
 
     testWidgets('the bar is drawn under the ruler', (tester) async {

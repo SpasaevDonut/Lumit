@@ -3,7 +3,6 @@
 // see docs/archive/flutter-port/ for the plan and the parity checklist.
 
 import 'dart:async';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -226,8 +225,6 @@ class LumitUiState extends ChangeNotifier {
       mode: workspace.performance.playback == PlaybackMode.adaptive
           ? BridgePlaybackMode.adaptive
           : BridgePlaybackMode.everyFrame,
-      zeroCopy:
-          workspace.performance.useSharedTexture && controller.available,
     );
     playing.value = true;
   }
@@ -255,8 +252,6 @@ class LumitUiState extends ChangeNotifier {
         mode: workspace.performance.playback == PlaybackMode.adaptive
             ? BridgePlaybackMode.adaptive
             : BridgePlaybackMode.everyFrame,
-        zeroCopy:
-            workspace.performance.useSharedTexture && controller.available,
       );
     } catch (_) {
       // No worker yet, or a composition that has gone away. The next playhead
@@ -299,16 +294,10 @@ class LumitUiState extends ChangeNotifier {
 
   ViewerTextureController controller = ViewerTextureController();
 
-  /// The platform texture the Viewer draws, on either zero-copy path. Null when
-  /// this build renders through the read-back path instead.
+  /// The platform texture the Viewer draws — the only frame transport (K-183):
+  /// every frame arrives as a GPU handle, never as pixels. Null before the
+  /// first registration.
   ValueNotifier<int?> viewerFrameid = ValueNotifier(null);
-
-  /// The decoded frame the Viewer draws on the read-back path — the portable
-  /// fallback for a build without one of the zero-copy features, which is the
-  /// default on Windows. Mutually exclusive with [viewerFrameid]: whichever the
-  /// worker last published wins, and the other is cleared, so the Viewer never
-  /// has to guess which is current.
-  ValueNotifier<ui.Image?> viewerImage = ValueNotifier(null);
 
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
 
@@ -352,8 +341,6 @@ class LumitUiState extends ChangeNotifier {
           _showDmabuf(frame.field0);
         case WorkerResponse_RenderedSharedTexture frame:
           _showSharedTexture(frame.field0);
-        case WorkerResponse_RenderedPixels frame:
-          _showPixels(frame.field0);
         // Scope traces ride the same stream; the Scopes panel subscribes to it
         // directly, so there is nothing for the Viewer to do with one.
         case WorkerResponse_Scope():
@@ -390,72 +377,17 @@ class LumitUiState extends ChangeNotifier {
   }
 
   /// A registered texture is now current: mark a frame available and, if the id
-  /// changed, point the Viewer at it. Also drops any held read-back image, since
-  /// the two paths are mutually exclusive.
+  /// changed, point the Viewer at it.
   void _adoptTexture(int? id, int frame) {
     _arrived(frame);
     if (id == null) return;
     controller.frameReady();
-    // The texture may turn out never to be drawn (see `neverDrawn`). Clearing
-    // the id then is what puts the read-back picture back on screen — leaving it
-    // set would keep the Viewer showing an empty `Texture` widget for ever, with
-    // pixels arriving that nothing displays.
-    if (controller.neverDrawn) {
-      viewerFrameid.value = null;
-      return;
-    }
-    _disposeImage();
     if (viewerFrameid.value != id) viewerFrameid.value = id;
-  }
-
-  /// The portable path: decode the pixels into a `ui.Image` for the Viewer to
-  /// draw. The previous image is disposed once the new one is in place —
-  /// a `ui.Image` holds native memory and is not collected for us.
-  void _showPixels(BridgeRenderedFrame f) {
-    if (f.width == 0 || f.height == 0) {
-      // Still an answer, even though there is nothing to draw — playback keeps
-      // moving past a frame that would not render.
-      _arrived(f.frame.toInt());
-      return;
-    }
-    ui.decodeImageFromPixels(
-      f.rgba,
-      f.width,
-      f.height,
-      ui.PixelFormat.rgba8888,
-      (image) {
-        final previous = viewerImage.value;
-        viewerImage.value = image;
-        // Whichever path published last wins.
-        viewerFrameid.value = null;
-        _arrived(f.frame.toInt());
-        // Disposed a frame later, not now. `RawImage` does not take ownership:
-        // the tree still holds the previous image until the rebuild this
-        // assignment schedules has been painted. Disposing it here left a
-        // `RawImage` drawing a disposed image, which throws inside paint — and
-        // once paint throws the Viewer stops updating at all. Harmless while
-        // scrubbing by hand, constant during playback, which is why playback
-        // showed one frame and then froze.
-        if (previous != null) {
-          WidgetsBinding.instance
-              .addPostFrameCallback((_) => previous.dispose());
-        }
-      },
-    );
-  }
-
-  void _disposeImage() {
-    final held = viewerImage.value;
-    if (held == null) return;
-    viewerImage.value = null;
-    held.dispose();
   }
 
   @override
   void dispose() {
     sub?.cancel();
-    _disposeImage();
-    viewerImage.dispose();
     viewerFrameid.dispose();
     selectedLayer.dispose();
     activePanel.dispose();

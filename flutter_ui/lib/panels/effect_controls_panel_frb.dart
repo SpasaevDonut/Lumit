@@ -172,8 +172,7 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
               else
                 for (var index = 0; index < effects.length; index++)
                   _EffectCard(
-                    key: ValueKey<String>('fx-card-${effects[index].id()}'),
-                    // ponytail: id() is a bridge call; the card caches its own.
+                    key: ValueKey<String>('fx-card-$index'),
                     effect: effects[index],
                     index: index,
                     count: effects.length,
@@ -317,9 +316,12 @@ class _EffectCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    // One bridge call for the name, schema answered from the session cache.
-    final name = effect.name();
-    final params = cachedListParameters(name);
+    // ONE bridge call for everything this card draws (K-183): id, name, bypass
+    // state and every parameter's value. The schema is answered from the
+    // session cache.
+    final info = effect.getInfo();
+    final params = cachedListParameters(info.name);
+    final values = {for (final v in info.values) v.id: v.value};
 
     return Container(
       margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
@@ -331,7 +333,7 @@ class _EffectCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _titleRow(context, t),
+          _titleRow(context, t, info),
           if (params.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
@@ -339,9 +341,10 @@ class _EffectCard extends StatelessWidget {
                 children: [
                   for (final param in params)
                     EffectParamRowFrb(
-                      key: ValueKey<String>('fx-row-${effect.id()}-${param.id}'),
-                      effect: effect,
+                      key: ValueKey<String>('fx-row-${info.id}-${param.id}'),
+                      effectId: info.id,
                       param: param,
+                      value: values[param.id],
                       comp: comp,
                       playheadFrame: playheadFrame,
                       onSeek: onSeek,
@@ -356,11 +359,10 @@ class _EffectCard extends StatelessWidget {
     );
   }
 
-  Widget _titleRow(BuildContext context, LumitTheme t) {
-    // Read once per build: each of these is a call across the bridge, and the
-    // four buttons were each minting their own copy of the same id.
-    final id = effect.id();
-    final enabled = effect.enabled();
+  Widget _titleRow(
+      BuildContext context, LumitTheme t, BridgeEffectInstanceInfo info) {
+    final id = info.id;
+    final enabled = info.enabled;
     return Padding(
         padding: const EdgeInsets.fromLTRB(8, 5, 6, 5),
         child: Row(
@@ -378,7 +380,7 @@ class _EffectCard extends StatelessWidget {
             ),
             const SizedBox(width: 8),
             Expanded(
-                child: Text(effectLabelOf(effect.name()), style: t.bodyPrimary)),
+                child: Text(effectLabelOf(info.name), style: t.bodyPrimary)),
             _markButton(
               context,
               mark: '▲',

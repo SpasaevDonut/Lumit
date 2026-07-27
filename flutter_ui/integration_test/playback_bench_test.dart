@@ -45,12 +45,12 @@ void main() {
 
     // Let the first frame land (decoder spin-up, renderer build).
     ui.playheadFrame.value = 0;
-    for (var i = 0; i < 100 && ui.viewerImage.value == null; i++) {
+    for (var i = 0; i < 100 && ui.viewerFrameid.value == null; i++) {
       await tester.pump(const Duration(milliseconds: 50));
       await tester.runAsync(
           () => Future<void>.delayed(const Duration(milliseconds: 40)));
     }
-    debugPrint('DDD warm image=${ui.viewerImage.value}');
+    debugPrint('DDD warm textureId=${ui.viewerFrameid.value}');
 
     // Play. Every-frame mode advances the playhead per delivered frame, so the
     // wall time for N frames IS the pipeline's sustained rate. The whole wait

@@ -240,6 +240,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeEffectInfo dco_decode_bridge_effect_info(dynamic raw);
 
   @protected
+  BridgeEffectInstanceInfo dco_decode_bridge_effect_instance_info(dynamic raw);
+
+  @protected
   BridgeEffectValue dco_decode_bridge_effect_value(dynamic raw);
 
   @protected
@@ -259,6 +262,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeKeyframe dco_decode_bridge_keyframe(dynamic raw);
+
+  @protected
+  BridgeLayerInfo dco_decode_bridge_layer_info(dynamic raw);
 
   @protected
   BridgeLayerKind dco_decode_bridge_layer_kind(dynamic raw);
@@ -283,6 +289,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeParamKind dco_decode_bridge_param_kind(dynamic raw);
+
+  @protected
+  BridgeParamValue dco_decode_bridge_param_value(dynamic raw);
 
   @protected
   BridgePlaybackMode dco_decode_bridge_playback_mode(dynamic raw);
@@ -396,6 +405,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<BridgeParamInfo> dco_decode_list_bridge_param_info(dynamic raw);
 
   @protected
+  List<BridgeParamValue> dco_decode_list_bridge_param_value(dynamic raw);
+
+  @protected
   List<BridgeScalar> dco_decode_list_bridge_scalar(dynamic raw);
 
   @protected
@@ -412,6 +424,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   Float64List dco_decode_list_prim_f_64_strict(dynamic raw);
+
+  @protected
+  Int64List dco_decode_list_prim_i_64_strict(dynamic raw);
 
   @protected
   Uint32List dco_decode_list_prim_u_32_strict(dynamic raw);
@@ -709,6 +724,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeEffectInfo sse_decode_bridge_effect_info(SseDeserializer deserializer);
 
   @protected
+  BridgeEffectInstanceInfo sse_decode_bridge_effect_instance_info(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeEffectValue sse_decode_bridge_effect_value(
       SseDeserializer deserializer);
 
@@ -731,6 +750,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeKeyframe sse_decode_bridge_keyframe(SseDeserializer deserializer);
+
+  @protected
+  BridgeLayerInfo sse_decode_bridge_layer_info(SseDeserializer deserializer);
 
   @protected
   BridgeLayerKind sse_decode_bridge_layer_kind(SseDeserializer deserializer);
@@ -757,6 +779,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeParamKind sse_decode_bridge_param_kind(SseDeserializer deserializer);
+
+  @protected
+  BridgeParamValue sse_decode_bridge_param_value(SseDeserializer deserializer);
 
   @protected
   BridgePlaybackMode sse_decode_bridge_playback_mode(
@@ -884,6 +909,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<BridgeParamValue> sse_decode_list_bridge_param_value(
+      SseDeserializer deserializer);
+
+  @protected
   List<BridgeScalar> sse_decode_list_bridge_scalar(
       SseDeserializer deserializer);
 
@@ -905,6 +934,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   Float64List sse_decode_list_prim_f_64_strict(SseDeserializer deserializer);
+
+  @protected
+  Int64List sse_decode_list_prim_i_64_strict(SseDeserializer deserializer);
 
   @protected
   Uint32List sse_decode_list_prim_u_32_strict(SseDeserializer deserializer);
@@ -1220,6 +1252,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeEffectInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_effect_instance_info(
+      BridgeEffectInstanceInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_effect_value(
       BridgeEffectValue self, SseSerializer serializer);
 
@@ -1245,6 +1281,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_keyframe(
       BridgeKeyframe self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_layer_info(
+      BridgeLayerInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_layer_kind(
@@ -1275,6 +1315,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_param_kind(
       BridgeParamKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_param_value(
+      BridgeParamValue self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_playback_mode(
@@ -1412,6 +1456,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       List<BridgeParamInfo> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_param_value(
+      List<BridgeParamValue> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_bridge_scalar(
       List<BridgeScalar> self, SseSerializer serializer);
 
@@ -1434,6 +1482,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_prim_f_64_strict(
       Float64List self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_prim_i_64_strict(
+      Int64List self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_prim_u_32_strict(

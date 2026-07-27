@@ -61,7 +61,9 @@ pub struct ScopedChange {
 #[frb(non_opaque)]
 pub struct BridgeSharedFrameInfoLinux {
     pub fd: i32,
-    /// Which frame this is. See [`BridgeRenderedFrame::frame`].
+    /// Which frame of the composition this is. The frontend does not track this
+    /// itself: a picture that says which frame it is needs no bookkeeping to
+    /// place — the frontend paints it and moves the playhead there.
     pub frame: u64,
     pub width: u32,
     pub height: u32,
@@ -82,31 +84,22 @@ pub struct BridgeSharedFrameInfo {
     /// The NT `HANDLE` value. `u64` because a Windows handle is 64-bit; it
     /// reaches Dart as a `BigInt`.
     pub handle: u64,
-    /// Which frame this is. See [`BridgeRenderedFrame::frame`].
+    /// Which frame of the composition this is. The frontend does not track this
+    /// itself: a picture that says which frame it is needs no bookkeeping to
+    /// place — the frontend paints it and moves the playhead there.
     pub frame: u64,
     pub width: u32,
     pub height: u32,
 }
 
-/// A Viewer frame that came back as pixels rather than a GPU handle — the
-/// portable path, used on any build without one of the zero-copy features (the
-/// default on Windows). Dart turns `rgba` into a `ui.Image`.
-///
-/// Costly by construction: flutter_rust_bridge's SSE codec serialises a
-/// `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p frame and 37 ms
-/// at 4K — the whole of budget B1 (docs/13 §2) for the 1080p case, before any
-/// rendering. Prefer a zero-copy build where the platform allows one; see
-/// docs/TODO.md for the fix.
+/// A small still picture as plain pixels — the thumbnail payload
+/// (`FootageReference::thumbnail`). **Not a Viewer transport**: the read-back
+/// frame path was deleted in K-183, so the only pixel payloads that cross the
+/// bridge are these thumbnails and the scope traces, both small by
+/// construction.
 #[frb(non_opaque)]
 pub struct BridgeRenderedFrame {
-    /// Which frame of the composition this is.
-    ///
-    /// **The frontend does not track this itself.** It used to: the Viewer held
-    /// the frame it had asked for and assumed the next arrival answered it,
-    /// which made a scheduler out of a panel and went wrong the moment anything
-    /// else published a frame. A picture that says which frame it is needs no
-    /// bookkeeping to place — the frontend paints it and moves the playhead
-    /// there.
+    /// Which frame of the source this is (0 for a thumbnail's poster frame).
     pub frame: u64,
     pub width: u32,
     pub height: u32,
@@ -116,16 +109,19 @@ pub struct BridgeRenderedFrame {
 
 /// One scope trace: a fixed 256x256 RGBA picture the Scopes panel draws.
 ///
-/// Small enough that the per-byte SSE cost `BridgeRenderedFrame` warns about
-/// does not matter here — 256 KiB against a 1080p frame's 8 MiB.
+/// The one place pixels still cross the boundary, and small enough not to
+/// matter — 256 KiB against a 1080p frame's 8 MiB. Viewer frames themselves
+/// only ever cross as GPU handles (K-183): flutter_rust_bridge's SSE codec
+/// serialises a `Vec<u8>` one byte at a time, measured at 8.8 ms for a 1080p
+/// frame, which is why the read-back frame transport was deleted.
 #[frb(non_opaque)]
 pub struct BridgeScopeTrace {
     pub rgba: Vec<u8>,
 }
 
-/// What the render worker publishes for one frame. Which variant a build can
-/// actually produce is decided at compile time by the zero-copy features — see
-/// `worker_thread::publish_frame` — but all three are always declared, so the
+/// What the render worker publishes for one frame. Which frame variant a build
+/// can actually produce is decided at compile time by the zero-copy features —
+/// see `worker_thread::publish_frame` — but both are always declared, so the
 /// generated Dart is identical on every platform and the Viewer holds one
 /// `switch` over the lot.
 #[frb(non_opaque)]
@@ -134,8 +130,6 @@ pub enum WorkerResponse {
     RenderedDMABuf(BridgeSharedFrameInfoLinux),
     /// Windows, `shared-texture`.
     RenderedSharedTexture(BridgeSharedFrameInfo),
-    /// Everything else: a CPU read-back.
-    RenderedPixels(BridgeRenderedFrame),
     /// A scope trace, which rides the same stream as the frames so the panel
     /// needs no second channel.
     Scope(BridgeScopeTrace),

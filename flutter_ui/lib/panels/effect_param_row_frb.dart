@@ -31,9 +31,19 @@ import 'keyframe_controls_frb.dart';
 const double effectCellWidth = 78;
 
 /// One parameter: its label, and the control its kind asks for.
+///
+/// Takes the effect's *id* and this parameter's *value* rather than the opaque
+/// instance handle: every read through a handle is a bridge crossing, and the
+/// owner already fetched everything in one `getInfo` (K-183).
 class EffectParamRowFrb extends StatelessWidget {
-  final BridgeEffectInstance effect;
+  final UuidValue effectId;
   final BridgeParamInfo param;
+
+  /// This parameter's current value, from the owner's one `getInfo` read —
+  /// staged value during a drag. Null when the instance does not carry the
+  /// parameter (a schema newer than the saved document); the row then draws
+  /// nothing rather than a misleading zero.
+  final BridgeEffectValue? value;
   final CompositionReference comp;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
@@ -48,8 +58,9 @@ class EffectParamRowFrb extends StatelessWidget {
 
   const EffectParamRowFrb({
     super.key,
-    required this.effect,
+    required this.effectId,
     required this.param,
+    required this.value,
     required this.comp,
     required this.playheadFrame,
     required this.onSeek,
@@ -60,12 +71,7 @@ class EffectParamRowFrb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    // Each of these is a call across the bridge, so each is made once per build
-    // and handed down — `effect.id()` alone was crossing six times per row just
-    // to name widget keys, which is how one click on a layer came to cost
-    // ninety calls before anything useful happened.
-    final id = effect.id();
-    final value = _value;
+    final id = effectId;
     final scalar = _animatableScalarOf(value);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 3),
@@ -106,29 +112,13 @@ class EffectParamRowFrb extends StatelessWidget {
     };
   }
 
-  /// The parameter's current value, or null when the instance does not carry it
-  /// (a schema newer than the saved document). A missing value draws nothing
-  /// rather than a misleading zero.
-  BridgeEffectValue? get _value {
-    try {
-      return effect.getValue(id: param.id);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Write `value` onto the staged copy and commit. Refused kinds are the
-  /// engine's business — a control can never change what a parameter *is* — so a
-  /// rejection here is a bug in this file, not something to surface.
   /// Write this parameter. The value goes up to the panel rather than being
-  /// written into `effect` here: the instance this row was built from belongs to
-  /// the widget tree, and anything passed across the boundary is consumed by it
-  /// (see `_stackWithStagedEdit`).
-  void _set(BridgeEffectValue value) => onWrite(effect.id(), param.id, value);
+  /// written into an instance here: the owner of the stack mints fresh handles
+  /// for the one call that consumes them.
+  void _set(BridgeEffectValue value) => onWrite(effectId, param.id, value);
 
   /// The same value, previewed rather than committed — one drag tick.
-  void _setLive(BridgeEffectValue value) =>
-      onLive(effect.id(), param.id, value);
+  void _setLive(BridgeEffectValue value) => onLive(effectId, param.id, value);
 
   Widget _control(
       BuildContext context, LumitTheme t, UuidValue id, BridgeEffectValue? value) {

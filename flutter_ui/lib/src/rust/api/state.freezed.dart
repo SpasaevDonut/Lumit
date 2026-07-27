@@ -53,7 +53,6 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult Function(WorkerResponse_RenderedDMABuf value)? renderedDmaBuf,
     TResult Function(WorkerResponse_RenderedSharedTexture value)?
         renderedSharedTexture,
-    TResult Function(WorkerResponse_RenderedPixels value)? renderedPixels,
     TResult Function(WorkerResponse_Scope value)? scope,
     TResult Function(WorkerResponse_PlaybackEnded value)? playbackEnded,
     required TResult orElse(),
@@ -65,8 +64,6 @@ extension WorkerResponsePatterns on WorkerResponse {
       case WorkerResponse_RenderedSharedTexture()
           when renderedSharedTexture != null:
         return renderedSharedTexture(_that);
-      case WorkerResponse_RenderedPixels() when renderedPixels != null:
-        return renderedPixels(_that);
       case WorkerResponse_Scope() when scope != null:
         return scope(_that);
       case WorkerResponse_PlaybackEnded() when playbackEnded != null:
@@ -95,8 +92,6 @@ extension WorkerResponsePatterns on WorkerResponse {
         renderedDmaBuf,
     required TResult Function(WorkerResponse_RenderedSharedTexture value)
         renderedSharedTexture,
-    required TResult Function(WorkerResponse_RenderedPixels value)
-        renderedPixels,
     required TResult Function(WorkerResponse_Scope value) scope,
     required TResult Function(WorkerResponse_PlaybackEnded value) playbackEnded,
   }) {
@@ -106,8 +101,6 @@ extension WorkerResponsePatterns on WorkerResponse {
         return renderedDmaBuf(_that);
       case WorkerResponse_RenderedSharedTexture():
         return renderedSharedTexture(_that);
-      case WorkerResponse_RenderedPixels():
-        return renderedPixels(_that);
       case WorkerResponse_Scope():
         return scope(_that);
       case WorkerResponse_PlaybackEnded():
@@ -132,7 +125,6 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult? Function(WorkerResponse_RenderedDMABuf value)? renderedDmaBuf,
     TResult? Function(WorkerResponse_RenderedSharedTexture value)?
         renderedSharedTexture,
-    TResult? Function(WorkerResponse_RenderedPixels value)? renderedPixels,
     TResult? Function(WorkerResponse_Scope value)? scope,
     TResult? Function(WorkerResponse_PlaybackEnded value)? playbackEnded,
   }) {
@@ -143,8 +135,6 @@ extension WorkerResponsePatterns on WorkerResponse {
       case WorkerResponse_RenderedSharedTexture()
           when renderedSharedTexture != null:
         return renderedSharedTexture(_that);
-      case WorkerResponse_RenderedPixels() when renderedPixels != null:
-        return renderedPixels(_that);
       case WorkerResponse_Scope() when scope != null:
         return scope(_that);
       case WorkerResponse_PlaybackEnded() when playbackEnded != null:
@@ -170,7 +160,6 @@ extension WorkerResponsePatterns on WorkerResponse {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(BridgeSharedFrameInfoLinux field0)? renderedDmaBuf,
     TResult Function(BridgeSharedFrameInfo field0)? renderedSharedTexture,
-    TResult Function(BridgeRenderedFrame field0)? renderedPixels,
     TResult Function(BridgeScopeTrace field0)? scope,
     TResult Function()? playbackEnded,
     required TResult orElse(),
@@ -182,8 +171,6 @@ extension WorkerResponsePatterns on WorkerResponse {
       case WorkerResponse_RenderedSharedTexture()
           when renderedSharedTexture != null:
         return renderedSharedTexture(_that.field0);
-      case WorkerResponse_RenderedPixels() when renderedPixels != null:
-        return renderedPixels(_that.field0);
       case WorkerResponse_Scope() when scope != null:
         return scope(_that.field0);
       case WorkerResponse_PlaybackEnded() when playbackEnded != null:
@@ -211,7 +198,6 @@ extension WorkerResponsePatterns on WorkerResponse {
     required TResult Function(BridgeSharedFrameInfoLinux field0) renderedDmaBuf,
     required TResult Function(BridgeSharedFrameInfo field0)
         renderedSharedTexture,
-    required TResult Function(BridgeRenderedFrame field0) renderedPixels,
     required TResult Function(BridgeScopeTrace field0) scope,
     required TResult Function() playbackEnded,
   }) {
@@ -221,8 +207,6 @@ extension WorkerResponsePatterns on WorkerResponse {
         return renderedDmaBuf(_that.field0);
       case WorkerResponse_RenderedSharedTexture():
         return renderedSharedTexture(_that.field0);
-      case WorkerResponse_RenderedPixels():
-        return renderedPixels(_that.field0);
       case WorkerResponse_Scope():
         return scope(_that.field0);
       case WorkerResponse_PlaybackEnded():
@@ -246,7 +230,6 @@ extension WorkerResponsePatterns on WorkerResponse {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(BridgeSharedFrameInfoLinux field0)? renderedDmaBuf,
     TResult? Function(BridgeSharedFrameInfo field0)? renderedSharedTexture,
-    TResult? Function(BridgeRenderedFrame field0)? renderedPixels,
     TResult? Function(BridgeScopeTrace field0)? scope,
     TResult? Function()? playbackEnded,
   }) {
@@ -257,8 +240,6 @@ extension WorkerResponsePatterns on WorkerResponse {
       case WorkerResponse_RenderedSharedTexture()
           when renderedSharedTexture != null:
         return renderedSharedTexture(_that.field0);
-      case WorkerResponse_RenderedPixels() when renderedPixels != null:
-        return renderedPixels(_that.field0);
       case WorkerResponse_Scope() when scope != null:
         return scope(_that.field0);
       case WorkerResponse_PlaybackEnded() when playbackEnded != null:
@@ -398,72 +379,6 @@ class _$WorkerResponse_RenderedSharedTextureCopyWithImpl<$Res>
           ? _self.field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as BridgeSharedFrameInfo,
-    ));
-  }
-}
-
-/// @nodoc
-
-class WorkerResponse_RenderedPixels extends WorkerResponse {
-  const WorkerResponse_RenderedPixels(this.field0) : super._();
-
-  final BridgeRenderedFrame field0;
-
-  /// Create a copy of WorkerResponse
-  /// with the given fields replaced by the non-null parameter values.
-  @JsonKey(includeFromJson: false, includeToJson: false)
-  @pragma('vm:prefer-inline')
-  $WorkerResponse_RenderedPixelsCopyWith<WorkerResponse_RenderedPixels>
-      get copyWith => _$WorkerResponse_RenderedPixelsCopyWithImpl<
-          WorkerResponse_RenderedPixels>(this, _$identity);
-
-  @override
-  bool operator ==(Object other) {
-    return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is WorkerResponse_RenderedPixels &&
-            (identical(other.field0, field0) || other.field0 == field0));
-  }
-
-  @override
-  int get hashCode => Object.hash(runtimeType, field0);
-
-  @override
-  String toString() {
-    return 'WorkerResponse.renderedPixels(field0: $field0)';
-  }
-}
-
-/// @nodoc
-abstract mixin class $WorkerResponse_RenderedPixelsCopyWith<$Res>
-    implements $WorkerResponseCopyWith<$Res> {
-  factory $WorkerResponse_RenderedPixelsCopyWith(
-          WorkerResponse_RenderedPixels value,
-          $Res Function(WorkerResponse_RenderedPixels) _then) =
-      _$WorkerResponse_RenderedPixelsCopyWithImpl;
-  @useResult
-  $Res call({BridgeRenderedFrame field0});
-}
-
-/// @nodoc
-class _$WorkerResponse_RenderedPixelsCopyWithImpl<$Res>
-    implements $WorkerResponse_RenderedPixelsCopyWith<$Res> {
-  _$WorkerResponse_RenderedPixelsCopyWithImpl(this._self, this._then);
-
-  final WorkerResponse_RenderedPixels _self;
-  final $Res Function(WorkerResponse_RenderedPixels) _then;
-
-  /// Create a copy of WorkerResponse
-  /// with the given fields replaced by the non-null parameter values.
-  @pragma('vm:prefer-inline')
-  $Res call({
-    Object? field0 = null,
-  }) {
-    return _then(WorkerResponse_RenderedPixels(
-      null == field0
-          ? _self.field0
-          : field0 // ignore: cast_nullable_to_non_nullable
-              as BridgeRenderedFrame,
     ));
   }
 }

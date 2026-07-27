@@ -318,9 +318,10 @@ class _FoldRow extends StatelessWidget {
             ],
           ),
         ),
-      FoldTransformRow(:final group) => TransformRowFrb(
+      FoldTransformRow(:final group, :final transform) => TransformRowFrb(
           comp: comp,
           layer: layer,
+          transform: transform,
           group: group,
           playheadFrame: playheadFrame,
           onSeek: onSeek,
@@ -328,11 +329,10 @@ class _FoldRow extends StatelessWidget {
           keyPrefix: 'tl-tf',
           rowPadding: EdgeInsets.zero,
         ),
-      FoldEffectParamRow(:final effect, :final param) => _TimelineParamRow(
+      FoldEffectParamRow() => _TimelineParamRow(
           comp: comp,
           layer: layer,
-          effect: effect,
-          param: param,
+          row: row as FoldEffectParamRow,
           playheadFrame: playheadFrame,
           onSeek: onSeek,
           onChanged: onChanged,
@@ -349,13 +349,13 @@ class _FoldRow extends StatelessWidget {
 }
 
 /// One effect parameter in the Timeline. It owns the staging for its own drag,
-/// which is all the state a single row needs — the stack it writes is read fresh
-/// each time (see [EffectStackEditor]).
+/// which is all the state a single row needs — no stack is read to *display*:
+/// the value rides in on the fold row (K-183), and a drag in flight overlays
+/// its staged value on top.
 class _TimelineParamRow extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;
-  final BridgeEffectInstance effect;
-  final BridgeParamInfo param;
+  final FoldEffectParamRow row;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
@@ -363,8 +363,7 @@ class _TimelineParamRow extends StatefulWidget {
   const _TimelineParamRow({
     required this.comp,
     required this.layer,
-    required this.effect,
-    required this.param,
+    required this.row,
     required this.playheadFrame,
     required this.onSeek,
     required this.onChanged,
@@ -379,21 +378,14 @@ class _TimelineParamRowState extends State<_TimelineParamRow> {
 
   @override
   Widget build(BuildContext context) {
-    // Read through the editor so the number under the pointer is the staged one
-    // while a drag is in flight.
-    final stack = _editor.stackWith(widget.layer);
-    final id = widget.effect.id();
-    BridgeEffectInstance? instance;
-    for (final candidate in stack) {
-      if (candidate.id() == id) instance = candidate;
-    }
-    if (instance == null) return const SizedBox.shrink();
-
+    final row = widget.row;
     final ui = Provider.of<LumitUiState>(context, listen: false);
     return EffectParamRowFrb(
-      key: ValueKey<String>('tl-fx-$id-${widget.param.id}'),
-      effect: instance,
-      param: widget.param,
+      key: ValueKey<String>('tl-fx-${row.info.id}-${row.param.id}'),
+      effectId: row.info.id,
+      param: row.param,
+      // The staged value while a drag is in flight, the document's otherwise.
+      value: _editor.stagedValue(row.info.id, row.param.id) ?? row.value,
       comp: widget.comp,
       playheadFrame: widget.playheadFrame,
       onSeek: widget.onSeek,
@@ -803,7 +795,10 @@ class _OutlineRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final switches = layer.getSwitches();
+    // ONE bridge call for everything this row draws (K-183): name, switches,
+    // blend and kind used to be a crossing each, per row, per rebuild.
+    final info = layer.getInfo();
+    final switches = info.switches;
     final id = layer.internallayerId.toString();
 
     return GestureDetector(
@@ -851,14 +846,15 @@ class _OutlineRow extends StatelessWidget {
                 BridgeLayerSwitch.locked),
             const SizedBox(width: 4),
             Expanded(
-              child: Text(layer.getName(),
+              child: Text(info.name,
                   style: t.body, overflow: TextOverflow.ellipsis),
             ),
-            _blendPicker(context, t),
+            _blendPicker(context, t, info.blend),
             const SizedBox(width: 4),
             ParentPickerFrb(
               comp: comp,
               layer: layer,
+              info: info,
               onChanged: onChanged,
             ),
           ],
@@ -894,9 +890,8 @@ class _OutlineRow extends StatelessWidget {
     );
   }
 
-  Widget _blendPicker(BuildContext context, LumitTheme t) {
+  Widget _blendPicker(BuildContext context, LumitTheme t, int current) {
     final modes = _blendModes ??= listBlendModes();
-    final current = layer.getBlend();
     // Wide enough for the longest mode name plus the caret: a dropdown that
     // overflows its cell is a layout error, not a cosmetic one.
     return SizedBox(
@@ -1159,9 +1154,12 @@ class _BarState extends State<_Bar> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final span = widget.layer.getSpan();
-    final inFrame = widget.comp.frameAtTime(time: span.inPoint);
-    final outFrame = widget.comp.frameAtTime(time: span.outPoint);
+    // ONE bridge call for everything the bar draws (K-183): the span already
+    // mapped to comp frames, the kind, and the clip split positions — this used
+    // to be a getter each plus a time→frame trip per edge and per clip.
+    final info = widget.layer.getInfo();
+    final inFrame = info.inFrame;
+    final outFrame = info.outFrame;
 
     final (drawIn, drawOut) = switch (_grab) {
       _Grab.move => (inFrame + _delta, outFrame + _delta),
@@ -1223,19 +1221,16 @@ class _BarState extends State<_Bar> {
                       }),
               child: Container(
                 decoration: BoxDecoration(
-                  color: _colourFor(widget.layer.getKind(), t),
+                  color: _colourFor(info.kind, t),
                   borderRadius: BorderRadius.circular(2),
                 ),
                 // A Sequence layer draws its clip splits, so the razor has
                 // something to aim at and a cut is visible once made.
                 child: Stack(
                   children: [
-                    for (final clip in widget.layer.getClips())
+                    for (final clipFrame in info.clipFrames)
                       Positioned(
-                        left: widget.axis.xOf(
-                              widget.comp.frameAtTime(time: clip.placeStart),
-                            ) -
-                            0.5,
+                        left: widget.axis.xOf(clipFrame.toInt()) - 0.5,
                         top: 0,
                         bottom: 0,
                         child: Container(width: 1, color: t.surface0),

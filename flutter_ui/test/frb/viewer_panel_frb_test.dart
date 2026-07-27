@@ -365,18 +365,22 @@ void main() {
       await mount(tester, p);
 
       // Exactly what the Timeline ruler and the arrow keys do: set it.
+      final before = p.uiState.frameArrived.value;
       p.uiState.playheadFrame.value = 12;
       await tester.pump();
 
       // The first render of a session also builds the renderer, so allow for
-      // that before asserting anything about the picture.
+      // that before asserting anything about the picture. Frames arrive as
+      // shared-texture handles (K-183); in a widget test the platform channel
+      // has no handler so no texture registers, but every arrival still bumps
+      // `frameArrived` — which is the fact being asserted.
       await settleFrb(
         tester,
-        until: () => p.uiState.viewerImage.value != null,
+        until: () => p.uiState.frameArrived.value > before,
         minRounds: 10,
         maxRounds: 120,
       );
-      expect(p.uiState.viewerImage.value, isNotNull,
+      expect(p.uiState.frameArrived.value, greaterThan(before),
           reason: 'a frame was rendered for the moved playhead');
     });
 
@@ -393,7 +397,7 @@ void main() {
 
       // Let the mount render land, then count what follows it.
       await settleFrb(tester, minRounds: 10, maxRounds: 120,
-          until: () => p.uiState.viewerImage.value != null);
+          until: () => p.uiState.frameArrived.value > 0);
       final settled = frames;
 
       await settleFrb(tester, minRounds: 20, maxRounds: 20);

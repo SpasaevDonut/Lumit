@@ -12,10 +12,7 @@ use crate::render::quality_for;
 use uuid::Uuid;
 
 // Each frame type is only constructed by its own platform's `publish_frame`, so
-// importing all three unconditionally would warn on two of them in every build.
-// Always needed now: the read-back path is no longer the *fallback* transport
-// but one of two, chosen per render by the playback mode.
-use crate::api::state::BridgeRenderedFrame;
+// importing both unconditionally would warn on one of them in every build.
 #[cfg(all(windows, feature = "shared-texture"))]
 use crate::api::state::BridgeSharedFrameInfo;
 #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
@@ -74,7 +71,6 @@ pub struct PlayRequest {
     pub from: u64,
     pub mode: BridgePlaybackMode,
     pub scale: f32,
-    pub zero_copy: bool,
 }
 
 /// Playback in progress: what is being played, and where it has got to.
@@ -95,7 +91,6 @@ struct Playback {
     last: u64,
     mode: BridgePlaybackMode,
     scale: f32,
-    zero_copy: bool,
     /// The composition's rate, for turning a clock reading into a frame.
     fps: f64,
     /// Where playback started, and when — the wall clock's baseline for as long
@@ -230,37 +225,11 @@ fn clock_seconds() -> Option<f64> {
     None
 }
 
-#[frb(ignore)]
-/// How one publish should behave: which playback mode it is serving, and
-/// whether its pixels may be kept.
-///
-/// A pair rather than two arguments because they travel together and are
-/// meaningless apart — and because they answer different questions, so folding
-/// them into one flag would be wrong: a drag is full resolution (not adaptive)
-/// yet must never be kept, its pixels being of values not yet committed.
-#[frb(ignore)]
-#[derive(Clone, Copy)]
-struct Publish {
-    mode: BridgePlaybackMode,
-    cache: bool,
-    /// Whether the caller can show a shared texture (see `RenderCompRequest`).
-    zero_copy: bool,
-}
-
 pub struct RenderCompRequest {
     pub comp: CompositionReference,
     pub frame: u64,
     /// Which of the two playback behaviours this render is for.
     pub mode: BridgePlaybackMode,
-    /// Whether the caller can actually *show* a shared texture.
-    ///
-    /// Asked rather than assumed, because the failure is silent and total: if
-    /// the frontend cannot register the texture it is handed, it draws nothing
-    /// at all, and the engine has no way to find that out. It happened —
-    /// switching the zero-copy path on left the Viewer showing its checkerboard
-    /// while the playhead ran and the Scopes updated, which reads as the picture
-    /// being broken rather than the transport.
-    pub zero_copy: bool,
     /// The on-screen scale of the Viewer, 1.0 meaning "shown at comp
     /// resolution". Below 1.0 the frame is being displayed smaller than the comp,
     /// so it is decoded smaller too — see [`crate::render::quality_for`].
@@ -411,7 +380,6 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         frame,
         mode: playback.mode,
         scale: playback.scale,
-        zero_copy: playback.zero_copy,
     };
     // Stamped before the render, so the period counts hand-off to hand-off
     // rather than adding the render on top of it — the pacing must not make a
@@ -480,7 +448,6 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
         last,
         mode: req.mode,
         scale: req.scale,
-        zero_copy: req.zero_copy,
         fps: if fps > 0.0 { fps } else { 60.0 },
         from,
         started: std::time::Instant::now(),
@@ -640,11 +607,7 @@ fn render_comp(
         req.scale,
         &document,
         stream,
-        Publish {
-            mode: req.mode,
-            cache: true,
-            zero_copy: req.zero_copy,
-        },
+        req.mode,
     );
     Ok(())
 }
@@ -687,10 +650,9 @@ fn render_comp_with_preview(
         transform.write(&mut comp.layers[index].transform)?;
     }
 
-    // Never cached. These pixels are of values the user has not committed, and
-    // the key names only (comp, frame, scale) — so filing them would hand the
-    // half-way state of a drag back as the document's own frame once the drag
-    // ended.
+    // A drag is not playback: full resolution (EveryFrame skips the adaptive
+    // tier), and nothing is ever kept — the zero-copy path holds no bytes, so
+    // the half-committed pixels of a drag cannot leak into any cache.
     publish_frame(
         state,
         req.comp.id,
@@ -698,12 +660,7 @@ fn render_comp_with_preview(
         req.scale,
         &document,
         stream,
-        Publish {
-            // A drag is not playback: full resolution, and never kept.
-            mode: BridgePlaybackMode::EveryFrame,
-            cache: false,
-            zero_copy: false,
-        },
+        BridgePlaybackMode::EveryFrame,
     );
     Ok(())
 }
@@ -773,41 +730,19 @@ fn trace_scope(
     Ok(())
 }
 
-/// Render one frame and publish it to Dart.
+/// Render one frame and publish it to Dart — always as a GPU handle (K-183).
 ///
-/// Three implementations, selected at compile time, because the zero-copy entry
-/// points only *exist* under their own platform and feature. The conditions are
-/// mutually exclusive and together exhaustive, so exactly one is compiled:
+/// Two implementations, selected at compile time, because the zero-copy entry
+/// points only *exist* under their own platform and feature:
 ///
 /// 1. Linux + `shared-texture-linux` → a DMA-BUF handle (K-177).
 /// 2. Windows + `shared-texture` → a shared D3D12 texture handle (K-177).
-/// 3. anything else → a CPU read-back of the pixels.
 ///
-/// The read-back is `render_preview`, deliberately **not** `render_rgba`.
-/// `render_rgba` is the export path: it decodes afresh at full resolution and
-/// retains nothing. `render_preview` decodes at the quality asked for and reuses
-/// retained pixels when the decode plan has not changed, which is what makes a
-/// drag cheap — v0 uses it for both the Viewer and drag previews.
-///
-/// A failed render drops the frame and says so; it never takes the worker down.
-/// Send one rendered frame to the Viewer, by whichever route the mode calls for.
-///
-/// **The mode picks the transport, and it has to.** The zero-copy paths hand
-/// Flutter a texture the engine drew straight into — nothing is copied, which is
-/// what makes playback feel immediate — but there are no *bytes* anywhere, so
-/// there is nothing a frame cache could hold. The read-back path copies every
-/// pixel down and is slower for it, but those bytes are exactly what the cache
-/// keeps and what the cache bar then reports.
-///
-/// So the two playback behaviours are not just two speeds, they are two routes:
-///
-/// * [`BridgePlaybackMode::Adaptive`] wants to keep time above all, so it takes
-///   the zero-copy path when the build has one and lets the tier drop.
-/// * [`BridgePlaybackMode::EveryFrame`] exists to *fill the cache*, so it takes
-///   the read-back path deliberately, slower and complete.
-///
-/// A build without a zero-copy path uses read-back for both, which is what every
-/// build did until the Flutter build was taught to pass the feature at all.
+/// The engine draws straight into a texture the runner displays and no pixels
+/// cross the boundary at all; the read-back transport that copied every pixel
+/// off the card and serialised it a byte at a time (~6 ms per 1.4 MB) is
+/// deleted. A failed render, or a platform with no zero-copy path (macOS,
+/// K-033), drops the frame and says so; it never takes the worker down.
 fn publish_frame(
     state: &mut WorkerState,
     comp: Uuid,
@@ -815,42 +750,22 @@ fn publish_frame(
     scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
-    publish: Publish,
+    mode: BridgePlaybackMode,
 ) {
-    // A build with no zero-copy path compiled in has nothing to ask: whatever
-    // the caller can show, read-back is the only route there is.
-    #[cfg(not(any(
-        all(windows, feature = "shared-texture"),
-        all(target_os = "linux", feature = "shared-texture-linux")
-    )))]
-    let _ = publish.zero_copy;
-
-    // **Zero-copy whenever this build and this machine can do it, in every
-    // mode.** The engine draws straight into a texture the runner displays and
-    // no pixels cross the boundary at all; the alternative copies every pixel
-    // off the card, serialises it a byte at a time (~6 ms per 1.4 MB, growing
-    // with the panel) and has Flutter upload it back to the card to draw —
-    // four trips for a picture that never needed to leave.
-    //
-    // This used to be gated on `Adaptive`, so every-frame mode deliberately took
-    // the slow road in order to *fill the frame cache* — the zero-copy path
-    // keeps no bytes, so there is nothing to file. That trade is off: the fast
-    // path is the one to be on, and with sequential decode restored (see
-    // `VideoDecoder::frame_rgba`) re-rendering a frame is cheap enough that
-    // holding its pixels no longer earns the round trip it costs to get them.
-    //
-    // Read-back remains the fallback and is still reached two ways: a machine or
-    // build that cannot register a shared texture (`publish.zero_copy` false),
-    // and a shared-texture render that fails, which falls through below.
     #[cfg(any(
         all(windows, feature = "shared-texture"),
         all(target_os = "linux", feature = "shared-texture-linux")
     ))]
-    if publish.zero_copy {
-        publish_zero_copy(state, comp, frame, scale, document, stream, publish);
-        return;
+    publish_zero_copy(state, comp, frame, scale, document, stream, mode);
+
+    #[cfg(not(any(
+        all(windows, feature = "shared-texture"),
+        all(target_os = "linux", feature = "shared-texture-linux")
+    )))]
+    {
+        let _ = (state, comp, frame, scale, document, stream, mode);
+        eprintln!("No zero-copy transport in this build; dropping the frame");
     }
-    publish_read_back(state, comp, frame, scale, document, stream, publish);
 }
 
 #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
@@ -861,12 +776,12 @@ fn publish_zero_copy(
     scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
-    publish: Publish,
+    mode: BridgePlaybackMode,
 ) {
     // The adaptive tier applies here exactly as on the Windows sibling: without
     // it a coarser tier makes the picture no cheaper, so the controller's
     // decision has no effect and playback drops frames instead of softening.
-    let effective = if matches!(publish.mode, BridgePlaybackMode::Adaptive) {
+    let effective = if matches!(mode, BridgePlaybackMode::Adaptive) {
         scale * crate::realtime::tier_scale(crate::realtime::tier())
     } else {
         scale
@@ -878,9 +793,8 @@ fn publish_zero_copy(
         {
             Ok(shared) => shared,
             Err(err) => {
-                // Fall back rather than drop — see the Windows sibling.
-                eprintln!("Shared DMA-BUF render failed, falling back to read-back: {err}");
-                publish_read_back(state, comp, frame, scale, document, stream, publish);
+                // Dropped, not fatal: the next request renders afresh.
+                eprintln!("Shared DMA-BUF render failed, dropping frame: {err}");
                 return;
             }
         };
@@ -905,15 +819,14 @@ fn publish_zero_copy(
     scale: f32,
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
-    publish: Publish,
+    mode: BridgePlaybackMode,
 ) {
-    // The adaptive tier has to be applied *here* too, not only on the read-back
-    // path. This asked for `scale` flat, so the controller could drop to Quarter
-    // and the picture would not get any cheaper — which on a build where this is
-    // the only display path means the tier does nothing at all, and playback
-    // keeps time by dropping frames for ever. What it costs is reported by
-    // `play_one_frame`, which times the render whichever route it took.
-    let effective = if matches!(publish.mode, BridgePlaybackMode::Adaptive) {
+    // The adaptive tier is applied here, the only display path: without it the
+    // controller could drop to Quarter and the picture would not get any
+    // cheaper, so the tier would do nothing at all and playback would keep time
+    // by dropping frames for ever. What a frame costs is reported by
+    // `play_one_frame`, which times the render.
+    let effective = if matches!(mode, BridgePlaybackMode::Adaptive) {
         scale * crate::realtime::tier_scale(crate::realtime::tier())
     } else {
         scale
@@ -925,13 +838,8 @@ fn publish_zero_copy(
         {
             Ok(shared) => shared,
             Err(err) => {
-                // Fall back rather than drop. A dropped frame here is not a slower
-                // Viewer, it is an *empty* one: nothing else publishes a picture, so
-                // the panel stays on its checkerboard for the whole session while
-                // everything else — the playhead, the Scopes — carries on as though
-                // playback were fine. A frame by the slow road beats no frame.
-                eprintln!("Shared-texture render failed, falling back to read-back: {err}");
-                publish_read_back(state, comp, frame, scale, document, stream, publish);
+                // Dropped, not fatal: the next request renders afresh.
+                eprintln!("Shared-texture render failed, dropping frame: {err}");
                 return;
             }
         };
@@ -944,94 +852,6 @@ fn publish_zero_copy(
             height: shared.height,
         },
     ));
-}
-
-fn publish_read_back(
-    state: &mut WorkerState,
-    comp: Uuid,
-    frame: u64,
-    scale: f32,
-    document: &lumit_core::Document,
-    stream: &mut WorkerResponseStream,
-    publish: Publish,
-) {
-    // `scale` twice over, and they mean different things: `quality_for` turns it
-    // into a *decode* size (don't decode 4K footage to fill a 500 px panel), and
-    // the trailing argument resizes the finished buffer. Both matter — the first
-    // is where the time goes, the second is how many bytes then cross to Dart,
-    // which on this path is the expensive part (see `BridgeRenderedFrame`).
-    //
-    // Served through the rendered-frame cache, so scrubbing back to a frame
-    // already made does not render it again. The key names the *content*: comp,
-    // frame, and the scale it was made at — two requests that agree on all three
-    // produce identical pixels, and one that does not must not be served the
-    // other's.
-    // Adaptive playback renders at the realtime controller's current tier, which
-    // is the whole mechanism: the controller lowers the tier while frames cost
-    // more than the frame rate allows, and raises it again when they do not.
-    //
-    // It had never done anything, for two reasons that had to be fixed together.
-    // The tier was never *applied* — every render went out at the panel-fit
-    // scale — and `observe` only records a cost when the render was issued at
-    // exactly the tier's own scale, so every measurement was discarded and the
-    // tier never moved off Full. Reporting `tier_scale(tier)` here is what closes
-    // that loop.
-    let tier = crate::realtime::tier();
-    let Publish { mode, cache, .. } = publish;
-    let adaptive = matches!(mode, BridgePlaybackMode::Adaptive);
-    let effective = if adaptive {
-        scale * crate::realtime::tier_scale(tier)
-    } else {
-        scale
-    };
-
-    let mut render = || {
-        state
-            .renderer
-            .render_preview(
-                document,
-                comp,
-                frame,
-                quality_for(effective),
-                effective,
-                None,
-            )
-            .ok()
-            .map(|(rgba, width, height)| (width, height, rgba))
-    };
-    // Adaptive frames ARE kept, filed under the tier they were actually made at.
-    // That is what lets the cache bar show them dimmed — "held, but coarser than
-    // you are watching" — which is the state docs/06 §5.6 asks for, and it means
-    // a second pass over a stretch you have already played is served rather than
-    // re-rendered. The budget's own eviction handles the tiers you stop asking
-    // for; there is no need to refuse to keep them.
-    let rendered = if !cache {
-        render()
-    } else {
-        crate::framecache::get_or_render(
-            crate::framecache::frame_key(comp, frame, effective),
-            render,
-        )
-    };
-
-    let Some((width, height, rgba)) = rendered else {
-        eprintln!("Read-back render failed, dropping frame");
-        return;
-    };
-
-    _ = stream.add(WorkerResponse::RenderedPixels(BridgeRenderedFrame {
-        frame,
-        width,
-        height,
-        rgba,
-    }));
-
-    // What this cost is reported by the playback loop (`play_one_frame`), which
-    // is the only place that knows whether the clock ran away from us as well as
-    // what the worker itself spent. A still frame — a scrub, an edit redraw, or
-    // the session's first render, which pays for renderer warm-up — is never
-    // measured at all: the tier answers "can this machine hold the composition's
-    // rate", and a still frame cannot help answer it.
 }
 
 #[cfg(test)]
@@ -1049,7 +869,6 @@ mod tests {
             last,
             mode,
             scale: 1.0,
-            zero_copy: false,
             fps: 60.0,
             from: 0,
             started: std::time::Instant::now(),

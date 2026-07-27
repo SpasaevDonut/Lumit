@@ -147,25 +147,17 @@ and the transparency grid have landed. Still missing:
     a time like any other `Vec<u8>`, and is decoded into an image Dart-side. Small
     next to a full frame, but it is on the same per-frame path and could take the
     shared-texture route the Viewer now takes.
-- **Adaptive playback keeps no frames on the zero-copy path**, because there are
-    no bytes to keep — so the Scopes still composite their own frame there, and
-    the cache bar stays empty until you switch to Every frame. Both would be
-    solved by the engine keeping a small read-back copy a few times a second (as
-    the egui shell did) rather than per frame.
+- **Playback keeps no frames on the zero-copy transport** (the only one,
+    K-183), because there are no bytes to keep — so the Scopes composite their
+    own frame (cached, so a re-trace is free) and the cache bar shows traced
+    frames only. Both would be solved by the engine keeping a small read-back
+    copy a few times a second (as the egui shell did) rather than per frame.
 - **Playback is driven from Dart**: the audio clock is read over the bridge each
     tick, the playhead moved, and a render asked for back across the boundary.
     With one render in flight that is one round trip per displayed frame rather
     than per tick, so the overhead is small — but the loop would be tighter
     entirely engine-side, which is worth revisiting if the frame budget gets
     tight (docs/13 §B1).
-- **The Dart suite only ever exercises the read-back transport.** The harness
-    loads `target/debug/lumit_bridge.dll`, which a plain `cargo build` produces
-    without `shared-texture` — while the *shipped* Windows build now has it
-    (`crates/lumit-bridge/cargokit.yaml`). So the zero-copy path, and the
-    mode-picks-the-transport routing in `publish_frame`, are compiled by CI but
-    not behaviourally covered. A texture cannot be registered in a widget test at
-    all (no platform channel), so covering it needs an integration test on a real
-    window.
 - **The Viewer composites at full comp resolution whatever the preview scale —
     the dominant playback cost.** `preview_display_texture` always renders the
     comp at `(comp.width, comp.height)`; `Quality::divisor` only shrinks the
@@ -179,25 +171,13 @@ and the transparency grid have landed. Still missing:
     while Dart sends the panel-fit scale, so the tier never moves. Both need
     fixing together; this is an `06-RENDER-PIPELINE` change (every layer
     transform is in comp pixels), not a patch.
-- **The Viewer's zero-copy path was never actually in a shipped build until
-    2026-07-26.** `shared-texture` is off by default and was meant to be switched
-    on for the built application, but nothing switched it on: `flutter build
-    windows` drives cargo through cargokit rather than a command line. The claim
-    recorded here that "cargokit has no hook for cargo features" was **wrong** —
-    `extra_flags` is exactly that hook (`options.dart`,
-    `CargoBuildOptions.parse`), and `cargokit.yaml` now uses it. Linux still has
-    no equivalent switched on, deliberately: that path has never run on a Linux
-    machine (K-033).
-- **The read-back Viewer path costs 8.8 ms per 1080p frame in serialisation
-    alone** (37 ms at 4K), because flutter_rust_bridge's SSE codec encodes a
-    `Vec<u8>` *one byte at a time* — the generated Rust `SseEncode for Vec<u8>`
-    is a per-byte loop, while the Dart side already decodes in bulk. Measured;
-    that is the whole of budget B1 for 1080p before any rendering happens. A
-    Windows build should prefer `--features shared-texture` (zero-copy, no pixels
-    cross at all). Fix properly by getting frb to emit the bulk codec on the Rust
-    side too — worth checking whether a bare `Vec<u8>` return rather than a
-    struct field is what triggers it — or by moving that call to the DCO codec,
-    whose `IntoDart` for `Vec<u8>` is already zero-copy.
+- **Both zero-copy features are default-on since K-183** (`cargokit.yaml`
+    deleted with them). The Linux DMA-BUF path is compiled and default but has
+    never run on a Linux machine (K-033) — first Linux run verifies it.
+- **frb's SSE codec encodes `Vec<u8>` one byte at a time** (measured 8.8 ms per
+    1080p payload). Frames no longer cross as bytes, so this now only taxes the
+    thumbnails and the 256×256 scope traces — small, but the per-byte loop is
+    still worth replacing with the bulk codec if traces ever feel late.
 
 - **Engine subsystems with no frb API yet.** Masks (`add_mask`,
     `add_mask_geometry`); the Retime **graph** — the segment
@@ -272,27 +252,18 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
 - Retime Time-lens **vertical (source-position) boundary drag** has no bridge op
     (`SetLayerRetime`/`from_source_keyframes` unexposed).
 
-**Bridge chatter: the panels re-read the world on every rebuild.** Measured
-(test/frb/bridge_call_budget_test.dart, which now traps it): selecting a layer
-in a two-layer document costs ~75 bridge calls; a real document was traced at
->200. The cause is architectural, not any one call site: the egui shell read
-state through in-process pointers, so "read in build" was free, and the port
-kept that idiom while making every read a serialising FFI call. Nothing holds a
-read model — every widget asks the engine again in `build()`, and any change
-rebuilds whole panels. The fixes are decisions, not patches, in rough order of
-value:
-- **A per-change read snapshot per panel** (layer name/switches/blend/parent
-    read once per `ScopedChange`, not once per widget per rebuild) — the
-    structural answer.
-- **Effect controls re-reads the entire stack once per playhead move** (its
-    rows sit under a `ValueListenableBuilder(playheadFrame)` so the keyframe
-    diamonds track the playhead) — during playback that is a full panel re-read
-    per frame, ~60/s. The diamonds should listen per row.
-- **`_TimelineParamRow` re-reads the whole effect stack per row** (each row's
-    `EffectStackEditor.stackWith` calls `getEffects` and compares `id()` per
-    instance), so one effect with N parameters costs N stack reads per rebuild.
-    Follows from frb's move-by-value handles — the same ownership problem being
-    worked on for value sync; solving it with id-addressed ops solves both.
+**Bridge chatter: mostly grouped away (K-183), remainder listed.** The grouped
+reads landed: `LayerReference::get_info` (name, kind, switches, blend, span as
+frames, clip frames, parent + its name in ONE crossing) and
+`BridgeEffectInstance::get_info` (id, name, enabled, every parameter value),
+with panels reading them once per widget rebuild, the parent picker building
+its menu lazily on click, and the transform rows sharing one `get_transform`.
+Selecting a layer in the two-layer budget document dropped ~75 → 31 calls
+(test/frb/bridge_call_budget_test.dart caps it at 64). Still open:
+- **Effect controls re-reads the stack once per playhead move** (its rows sit
+    under a `ValueListenableBuilder(playheadFrame)` so the keyframe diamonds
+    track the playhead) — during playback that is a per-frame re-read, ~60/s.
+    The diamonds should listen per row.
 - **`LayerReference.equals` is a bridge call** used for selection compares;
     `internallayerId` is already on the Dart side — compare that.
 - **The comp tabs read the whole project item tree per Timeline rebuild**
@@ -302,31 +273,18 @@ value:
     (a `ListenableBuilder` above everything), and un-scoped document changes do
     the same via `LumitState` — every panel then re-reads. Scope it.
 
-**The frame cache never fills on the zero-copy path, so the cache bar is blank.**
-The shared texture keeps no bytes anywhere — that is what makes it fast — and
-`publish_read_back` was the only thing that ever filled `framecache`. Now that
-zero-copy is taken in both playback modes, the cache holds nothing in a shipped
-build and the cache bar has nothing to draw. Decide which: teach the bar to say
-"not held on this transport" rather than showing empty (honest, small), retire
-the bar and the frame cache on zero-copy builds (less code, loses the scrub-back
-win), or cache on the card so coverage means something again (most work, keeps
-docs/06 §5.6's promise). Until then the bar reads as "nothing cached", which is
-true but looks like a fault.
+**The frame cache is now the scope path's cache (K-183).** The shared texture
+keeps no bytes anywhere — that is what makes it fast — so with the read-back
+transport deleted, `framecache` is filled only by scope traces (which need CPU
+pixels and file what they render). The cache bar therefore shows traced frames
+only. The real fix remains docs/06 §5.6's: cache on the card, so coverage means
+something on the zero-copy transport.
 
-**The shipped build is the one configuration nothing tests.** `flutter test`
-loads `cargo build -p lumit_bridge` — default features, so always read-back —
-while the app builds with `--features shared-texture` (`cargokit.yaml`). Every
-zero-copy line is therefore untested, which is exactly how `publish_zero_copy`
-came to ignore the preview tier and report no cost for as long as it did: no
-test could have noticed. A second CI leg with the feature on would have caught
-it the day it landed.
-
-**Read-back's remaining cost, for whenever it is the fallback in use.** Measured:
-a 1.44 MB frame (800x450) costs ~3 ms to render and **~6 ms to hand to Dart** —
-`stream.add`'s SSE encode, linear in bytes, so a full 1080p frame is ~35 ms
-against a 16.7 ms budget at 60 fps. A machine that cannot register a shared
-texture still pays this; replacing the per-byte codec for this one payload is
-the fix if that ever matters.
+**Zero-copy is now the tested default** (`shared-texture` and
+`shared-texture-linux` are default features since K-183; `cargokit.yaml` is
+gone). The widget suite exercises the publish path; actually *registering* the
+texture still needs a real window (integration_test/shared_texture_test.dart,
+run by hand).
 
 **Playback scheduler — the rest of it.** Playback now runs in the render worker
 rather than in Flutter (K-181), which was the boundary fix. What it is not yet is

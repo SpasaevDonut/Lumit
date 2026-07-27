@@ -26,7 +26,6 @@ void main() {
     await BridgeLib.init();
     final state = LumitState()..newProject();
     final ui = LumitUiState(state, workspace: Workspace());
-    ui.workspace.performance.useSharedTexture = true;
 
     final comp = state.project!.newComposition(name: 'Scene');
     comp.addSolidLayer();
@@ -78,7 +77,7 @@ void main() {
         'neverDrawn=${ui.controller.neverDrawn} '
         'announced=${ui.controller.debugAnnounced} '
         'drawn=${ui.controller.debugDrawn} '
-        'image=${ui.viewerImage.value}');
+        'textureId2=${ui.viewerFrameid.value}');
 
     expect(ui.controller.available, isTrue,
         reason: 'the texture path must not have latched itself off');

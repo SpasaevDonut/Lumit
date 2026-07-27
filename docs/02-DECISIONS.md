@@ -2419,3 +2419,24 @@ and the in-tree copy cost every CI run, every workspace build, and a standing in
 pop-out is), it is *removed* and rebuilt from history when wanted — half-shipped code that
 ships its dependencies but not its entry point is the worst of both. K-174's decision itself
 is unchanged; this only deletes the superseded implementation.
+
+**K-183 · DECIDED · Frames cross the bridge as GPU handles only, and reads cross grouped.**
+Reported by the owner's collaborator: the Viewer should lose the ability to send pixel data
+back to Flutter entirely ("forced to use shared texture everywhere"), and the panels should
+stop paying a bridge call per field ("we don't have calls to things like .name() .id(),
+grouping things into .get_info() that can be called once per widget rebuild"). **Transport:**
+the CPU read-back frame path is deleted — `WorkerResponse::RenderedPixels`, the `zero_copy`
+opt-out flag, the Dart `viewerImage` fallback machinery and the `useSharedTexture` setting are
+gone, and `shared-texture` + `shared-texture-linux` are default cargo features (each inert off
+its platform), so every build and every test exercises the shipped path. A failed zero-copy
+render drops the frame rather than falling back; a platform with neither path (macOS, K-033)
+has no Viewer picture until it grows its own. Thumbnails and the 256×256 scope traces still
+cross as pixels, deliberately — bounded and rare. The rendered-frame cache is now filled only
+by the scope path. **Grouped reads:** `LayerReference::get_info` returns name, kind, switches,
+blend, the span already mapped to comp frames, clip split frames, and the parent id *and
+name* in one crossing; `BridgeEffectInstance::get_info` returns id, name, enabled and every
+parameter value. Panels read one info per widget rebuild, the parent picker builds its menu
+lazily on click (it was O(layers) calls per row, O(layers²) per outline), and the transform
+rows share one `get_transform`. Selecting a layer measured ~75 → 31 calls; the budget test
+caps it at 64. The per-field getters remain for one-shot call sites — grouping is for what
+rebuilds, not a ban.

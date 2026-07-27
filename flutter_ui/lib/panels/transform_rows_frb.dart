@@ -138,29 +138,39 @@ class TransformRowsFrb extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final group in transformGroups(threeD: layer.isThreeD()))
-            TransformRowFrb(
-              comp: comp,
-              layer: layer,
-              group: group,
-              playheadFrame: playheadFrame,
-              onSeek: onSeek,
-              onChanged: onChanged,
-              keyPrefix: keyPrefix,
-              rowHeight: rowHeight,
-              rowPadding: rowPadding,
-            ),
-        ],
-      );
+  Widget build(BuildContext context) {
+    // One read shared by every row (K-183): each row reading its own copy of
+    // the same eleven-scalar struct was ten crossings per rebuild.
+    final transform = layer.getTransform();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final group in transformGroups(threeD: layer.isThreeD()))
+          TransformRowFrb(
+            comp: comp,
+            layer: layer,
+            transform: transform,
+            group: group,
+            playheadFrame: playheadFrame,
+            onSeek: onSeek,
+            onChanged: onChanged,
+            keyPrefix: keyPrefix,
+            rowHeight: rowHeight,
+            rowPadding: rowPadding,
+          ),
+      ],
+    );
+  }
 }
 
 /// One transform property group as a row.
 class TransformRowFrb extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;
+
+  /// The layer's transform as the owner last read it — one read shared by all
+  /// the rows, rather than one crossing per row (K-183).
+  final BridgeTransform transform;
   final TransformGroup group;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
@@ -173,6 +183,7 @@ class TransformRowFrb extends StatefulWidget {
     super.key,
     required this.comp,
     required this.layer,
+    required this.transform,
     required this.group,
     required this.playheadFrame,
     required this.onSeek,
@@ -196,7 +207,7 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
 
   @override
   Widget build(BuildContext context) =>
-      _row(_staged ?? widget.layer.getTransform(), widget.group);
+      _row(_staged ?? widget.transform, widget.group);
 
   Widget _row(BridgeTransform transform, TransformGroup group) {
     final t = ThemeScope.of(context).theme;
@@ -276,7 +287,7 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
 
   /// A drag tick: hold the new value locally and render it, without committing.
   void _live(BridgeTransformProp prop, double value) {
-    final staged = write(_staged ?? widget.layer.getTransform(), prop, value);
+    final staged = write(_staged ?? widget.transform, prop, value);
     setState(() => _staged = staged);
 
     if (_since.elapsed - _lastPreview < _previewInterval) return;

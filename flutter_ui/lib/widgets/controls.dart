@@ -259,6 +259,73 @@ class BareDropdown<T> extends StatelessWidget {
   }
 }
 
+/// A [BareDropdown] whose option list is built only when the menu opens.
+///
+/// For pickers whose options are bridge reads (the Timeline's parent picker):
+/// the resting button then costs nothing per rebuild, and the reads happen
+/// once per click instead of once per rebuild.
+class BareLazyDropdown<T> extends StatelessWidget {
+  /// What the closed button shows.
+  final String label;
+
+  /// The options, as (value, label) pairs — called when the menu opens.
+  final List<(T, String)> Function() options;
+  final ValueChanged<T> onChanged;
+
+  const BareLazyDropdown({
+    super.key,
+    required this.label,
+    required this.options,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return HouseButton(
+      onPressed: () async {
+        final box = context.findRenderObject()! as RenderBox;
+        final origin = box.localToGlobal(Offset.zero);
+        final built = options();
+        final picked = await showLumitPopup<(T,)>(
+          context: context,
+          position: origin + Offset(0, box.size.height + 2),
+          builder: (close) => FloatSurface(
+            child: IntrinsicWidth(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final (value, optionLabel) in built)
+                    MenuRow(
+                      selected: optionLabel == label,
+                      // Wrapped in a record so a null value survives the
+                      // popup's null-means-dismissed contract.
+                      onPressed: () => close((value,)),
+                      child: Text(optionLabel),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+        if (picked != null) onChanged(picked.$1);
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 4),
+          CustomPaint(
+            size: const Size(9, 9),
+            painter: _CaretPainter(t.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _CaretPainter extends CustomPainter {
   final Color color;
   const _CaretPainter(this.color);

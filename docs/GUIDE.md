@@ -2906,11 +2906,12 @@ hardened-runtime process cannot `dlopen` an unsigned, locally-built dylib from
 an arbitrary Cargo target path, which is exactly what the bridge loader does
 (matching the unsigned, unsandboxed posture Windows and Linux dev builds
 already have; a signed macOS release is a later decision). Two things are
-deliberately out of scope for this pass, both degrading cleanly: the Viewer's
+deliberately out of scope for this pass: the Viewer's
 zero-copy shared-texture path is Windows/Linux only (`shared-texture` /
-`shared-texture-linux`) — macOS always uses the portable CPU frame path, so the
-picture still draws, just via the read-back route every platform can fall back
-to; and the native macOS menu bar (`native_menu.rs`, muda) stays deferred with
+`shared-texture-linux`) — and since K-183 deleted the CPU read-back transport,
+macOS has **no Viewer picture at all** until a Metal/IOSurface path of its own
+exists (the editor otherwise works);
+and the native macOS menu bar (muda) stays deferred with
 the rest of the "macOS pass" named in `docs/archive/flutter-port/01-STRATEGY.md` — the
 in-window menu bar renders instead, same as it does today.
 
@@ -3666,3 +3667,29 @@ them. The same rule is now written down beside the code that has to follow it.
 literally the same widgets the Effect controls panel shows, moved into their
 own files so both use them. Writing a second set would have been quicker today
 and wrong by next month, when a fix to one quietly failed to reach the other.
+
+**One texture, never pixels (K-183).** There used to be two ways a finished
+frame could reach the window: the fast way (the engine draws into a piece of
+graphics-card memory that Flutter shows directly — a "shared texture", nothing
+copied) and a slow fallback (copy every pixel off the card, hand them across
+one byte at a time, and have Flutter upload the same pixels straight back to
+the card — four trips for a picture that never needed to leave). The fallback
+is now deleted. Every frame arrives as a handle to graphics memory, on every
+build, and the one toggle that could turn it off is gone with it. What still
+crosses as actual pixels is only the small stuff: the little footage
+thumbnails in the Project panel and the 256×256 scope pictures — both tiny,
+neither per-frame. One honest consequence: a platform with no shared-texture
+code of its own (macOS today) shows no Viewer picture at all until it grows
+one, rather than quietly taking a slow road.
+
+**Ask once per redraw, not once per fact (K-183).** Every question the
+interface asks the engine — "what is this layer called?", "which switches are
+on?" — crosses the Rust/Flutter boundary, and each crossing costs a little.
+The panels used to ask one question per fact: a single timeline row asked
+seven times, and its parent dropdown asked once per *other* layer, every time
+anything redrew. Now the engine answers everything a row needs in one go —
+`get_info` returns the name, the kind, the switches, the blend mode, where the
+bar sits (already in frames), the clip cuts and the parent, in a single
+crossing — and the same for an effect (its id, name, on/off state and every
+parameter value at once). Clicking a layer used to cost about 75 crossings;
+it now costs 31, and a test fails the build if it creeps past 64.

@@ -92,6 +92,31 @@ pub struct BridgeClip {
     pub place_duration: BridgeRational,
 }
 
+/// Everything the Timeline outline, its bars, and the Hierarchy draw for one
+/// layer, in one crossing (K-183). Read one getter at a time this cost
+/// seven-plus bridge calls per row per rebuild — each cloning the composition
+/// out of the snapshot — plus two time↔frame trips per bar.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeLayerInfo {
+    pub name: String,
+    pub kind: BridgeLayerKind,
+    pub switches: BridgeLayerSwitches,
+    /// Blend mode as an index into `list_blend_modes`.
+    pub blend: u32,
+    pub span: BridgeSpan,
+    /// The span at the comp's own rate, so drawing needs no time↔frame trips.
+    pub in_frame: i64,
+    pub out_frame: i64,
+    /// Sequence clip starts as comp frames (empty on other kinds) — what the
+    /// bar draws its split lines from.
+    pub clip_frames: Vec<i64>,
+    pub parent: Option<Uuid>,
+    /// The parent layer's current name, so the outline's parent picker renders
+    /// with no second lookup. None when there is no parent, or it is dangling.
+    pub parent_name: Option<String>,
+}
+
 /// A layer used as another layer's matte (docs/03 §5.1).
 #[frb(non_opaque)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,6 +336,73 @@ impl LayerReference {
         let item = self.item()?;
 
         Ok(item.name)
+    }
+
+    /// One read for everything a row draws — see [`BridgeLayerInfo`]. One
+    /// document lock and one crossing, where the per-field getters cost one of
+    /// each per field.
+    #[frb(sync)]
+    pub fn get_info(&self) -> Result<BridgeLayerInfo, BridgeError> {
+        use lumit_core::model::LayerKind as K;
+        let comp = self.composition()?;
+        let layer = comp
+            .layers
+            .iter()
+            .find(|l| l.id == self.layer_id)
+            .ok_or(BridgeError::InvalidLayer)?;
+
+        let clip_frames = match &layer.kind {
+            K::Sequence { clips } => clips
+                .iter()
+                .map(|c| {
+                    comp.frame_rate
+                        .frame_at(lumit_core::time::CompTime(c.place_start))
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let s = layer.switches;
+        Ok(BridgeLayerInfo {
+            name: layer.name.clone(),
+            kind: match &layer.kind {
+                K::Footage { .. } => BridgeLayerKind::Footage,
+                K::Solid { .. } => BridgeLayerKind::Solid,
+                K::Precomp { .. } => BridgeLayerKind::Precomp,
+                K::Text { .. } => BridgeLayerKind::Text,
+                K::Camera { .. } => BridgeLayerKind::Camera,
+                K::Sequence { .. } => BridgeLayerKind::Sequence,
+                K::Adjustment => BridgeLayerKind::Adjustment,
+            },
+            switches: BridgeLayerSwitches {
+                visible: s.visible,
+                audible: s.audible,
+                locked: s.locked,
+                solo: s.solo,
+                three_d: s.three_d,
+                fx: s.fx,
+                motion_blur: s.motion_blur,
+                collapse: s.collapse,
+            },
+            blend: lumit_core::model::BlendMode::ALL
+                .iter()
+                .position(|b| *b == layer.blend)
+                .unwrap_or(0) as u32,
+            span: BridgeSpan {
+                in_point: rational_of(layer.in_point.0),
+                out_point: rational_of(layer.out_point.0),
+                start_offset: rational_of(layer.start_offset.0),
+            },
+            in_frame: comp.frame_rate.frame_at(layer.in_point),
+            out_frame: comp.frame_rate.frame_at(layer.out_point),
+            clip_frames,
+            parent: layer.parent,
+            parent_name: layer.parent.and_then(|p| {
+                comp.layers
+                    .iter()
+                    .find(|l| l.id == p)
+                    .map(|l| l.name.clone())
+            }),
+        })
     }
 
     #[frb(sync)]

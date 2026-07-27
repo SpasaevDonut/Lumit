@@ -550,9 +550,51 @@ pub struct BridgeEffectInstance {
     effect: EffectInstance,
 }
 
+/// One parameter's current value, as [`BridgeEffectInstance::get_info`]
+/// carries it.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeParamValue {
+    pub id: String,
+    pub value: BridgeEffectValue,
+}
+
+/// Everything a panel draws for one effect instance, in one crossing (K-183):
+/// its id, match name, bypass state, and every parameter's current value. The
+/// instance is an opaque handle, so `id()`/`name()`/`get_value()` each cross
+/// the bridge — a card that read them one at a time cost a call per field per
+/// parameter per rebuild.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeEffectInstanceInfo {
+    pub id: Uuid,
+    pub name: String,
+    pub enabled: bool,
+    pub values: Vec<BridgeParamValue>,
+}
+
 impl BridgeEffectInstance {
     pub fn new(effect: EffectInstance) -> BridgeEffectInstance {
         BridgeEffectInstance { effect }
+    }
+
+    /// One read for everything a card draws — see [`BridgeEffectInstanceInfo`].
+    #[frb(sync)]
+    pub fn get_info(&self) -> BridgeEffectInstanceInfo {
+        BridgeEffectInstanceInfo {
+            id: self.effect.id,
+            name: self.effect.effect.match_name.clone(),
+            enabled: self.effect.enabled,
+            values: self
+                .effect
+                .params
+                .iter()
+                .map(|p| BridgeParamValue {
+                    id: p.id.to_string(),
+                    value: BridgeEffectValue::read(&p.value),
+                })
+                .collect(),
+        }
     }
 
     /// This instance's own id — what the stack ops on

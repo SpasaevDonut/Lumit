@@ -11,7 +11,6 @@ import 'package:lumit_flutter/theme/theme.dart';
 void main() {
   test('performance defaults are the shipped ones', () {
     final p = PerformanceSettings();
-    expect(p.useSharedTexture, isTrue);
     expect(p.playback, PlaybackMode.adaptive);
   });
 
