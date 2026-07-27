@@ -90,18 +90,26 @@ and the transparency grid have landed. Still missing:
     next to a full frame, but it is on the same per-frame path and could take the
     shared-texture route the Viewer now takes.
 - **The Viewer composites at full comp resolution whatever the preview scale —
-    the dominant playback cost.** `preview_display_texture` always renders the
-    comp at `(comp.width, comp.height)`; `Quality::divisor` only shrinks the
-    *decode* width (`plan.rs:77`), and the preview `scale` only sizes the output.
-    So a Viewer showing a 1080p comp at a third still composites 1920x1080 every
-    frame. Measured 59.7 ms/frame for a one-solid 1080p comp shown at 0.42
-    (was 74.5 ms before the read-back was reduced on the GPU). Until the comp can
-    be composited at reduced size, the realtime controller has nothing to
-    usefully lower — and note `realtime::observe` is inert for a second reason:
-    it only records a cost when the render was issued at exactly `tier_scale`,
-    while Dart sends the panel-fit scale, so the tier never moves. Both need
-    fixing together; this is an `06-RENDER-PIPELINE` change (every layer
-    transform is in comp pixels), not a patch.
+    the dominant playback cost.** Measured 59.7 ms/frame for a one-solid 1080p
+    comp shown at 0.42; until the composite itself shrinks, the realtime tier
+    has nothing to usefully lower (and check `realtime::observe`'s
+    issued-at-tier-scale filter while there — it may still discard every
+    measurement). **The design is mapped (2026-07-27), one walk to change
+    (K-185):** the compositor's vertex path (`CompositeLayer::matrix`,
+    `camera_matrix`) must keep the LOGICAL comp dims — geometry is in comp
+    pixels — while the render-target allocation and the fragment-side
+    `target_size` uniform (which normalises `in.pos` to comp UV for matte
+    sampling) take the ACTUAL scaled dims; NDC does the rest. Give `Realiser`
+    a `render_scale` field so the nested/below/adjustment recursions inherit
+    it with no signature ripple; `composite_seeded` and `motion_blur_average`
+    grow the logical/target split (full-frame identity passes stay logical —
+    a full-NDC quad covers any target); matte render-alone (`fxops.rs`) can
+    stay full-res first (sampled normalised, correctness-safe) and shrink
+    later. `preview_display_texture` must then return the texture's ACTUAL
+    dims (the shared-texture registration sizes off them), `scaled_size` is
+    the one rounding both the target and the final blit use, and export keeps
+    scale 1.0 so the K-031 matrix pins it unchanged. Prove the win on the
+    real-window playback bench.
 - **The Linux DMA-BUF path has never run on a Linux machine** (K-033) — it is
     compiled and default-on, so the first Linux run verifies it.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** (measured 8.8 ms per
