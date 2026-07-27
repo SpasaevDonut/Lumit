@@ -124,6 +124,38 @@ pub(crate) fn cached_tiers(comp: uuid::Uuid, frames: u64, scale: f32) -> Vec<u8>
     out
 }
 
+/// The finest held picture of `comp` at `frame`, whatever scale it was made at,
+/// stamped most-recently-used.
+///
+/// For the Scopes, which need the *numbers* in a frame rather than a frame at
+/// any particular size. They were compositing the whole composition again to get
+/// them — a second full render of the frame the Viewer had just rendered, several
+/// times a second, all through playback. Any resolution answers the question a
+/// waveform or a vectorscope asks, so the one already in hand will do.
+///
+/// Does not count as a hit or a miss: those numbers describe how well the Viewer
+/// is being served, and mixing a second consumer into them would make the meter
+/// mean nothing.
+pub(crate) fn best_frame(comp: uuid::Uuid, frame: u64) -> Option<(u32, u32, Vec<u8>)> {
+    let comp_low = comp.as_u128() as u64;
+    with_cache(|c| {
+        let key = c
+            .map
+            .keys()
+            .filter(|k| {
+                (*k >> 64) as u64 == comp_low && ((*k >> 16) & 0xFFFF_FFFF_FFFF) as u64 == frame
+            })
+            // The finest one held: the scale lives in the low 16 bits, so the
+            // largest key among these is the largest scale.
+            .max()
+            .copied()?;
+        let entry = c.map.get_mut(&key)?;
+        c.clock += 1;
+        entry.last_used = c.clock;
+        Some((entry.width, entry.height, entry.rgba.clone()))
+    })
+}
+
 /// Drop every held frame, because the document changed.
 ///
 /// **Why all of them, and not just the composition that was edited.** Deciding
@@ -552,6 +584,41 @@ mod tests {
             "a precomp or a shared solid could have reached it"
         );
         with_cache(|c| assert_eq!(c.used, 0));
+        clear();
+    }
+
+    /// The Scopes read the values in a frame, so any resolution answers their
+    /// question — and the frame the Viewer just rendered is right there. They
+    /// were compositing the whole composition a second time to get it, several
+    /// times a second, for as long as playback ran with the panel open.
+    #[test]
+    fn the_finest_held_picture_of_a_frame_is_reusable() {
+        let comp = uuid::Uuid::now_v7();
+        let other = uuid::Uuid::now_v7();
+        clear();
+        with_cache(|c| {
+            c.put(frame_key(comp, 5, 0.25), 4, 4, vec![1; 64]);
+            c.put(frame_key(comp, 5, 0.5), 8, 8, vec![2; 256]);
+            c.put(frame_key(comp, 6, 1.0), 16, 16, vec![3; 1024]);
+            c.put(frame_key(other, 5, 1.0), 32, 32, vec![4; 4096]);
+        });
+
+        let (w, h, rgba) = best_frame(comp, 5).expect("frame 5 is held");
+        assert_eq!((w, h), (8, 8), "the finest one held, not just any");
+        assert_eq!(rgba[0], 2);
+
+        assert!(best_frame(comp, 7).is_none(), "nothing held for frame 7");
+
+        // Another composition's frame of the same number must never be handed
+        // over — the scope would be reading a different picture entirely.
+        let (w, _, _) = best_frame(other, 5).expect("the other comp has its own");
+        assert_eq!(w, 32);
+
+        // `best_frame` deliberately does not touch the hit and miss counters —
+        // they describe how well the *Viewer* is served, and folding a second
+        // consumer into them would make the meter meaningless. Not asserted
+        // here: those counters are global and these tests share them, so the
+        // check would depend on what else happened to be running.
         clear();
     }
 

@@ -9,8 +9,11 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
+import 'package:lumit_flutter/panels/scopes_panel_frb.dart';
+import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 
 import 'frb_test_support.dart';
@@ -161,6 +164,55 @@ void main() {
 
       expect(tester.takeException(), isNull,
           reason: '4000 frames across 1000 px must not throw in paint');
+    });
+
+    /// A scope trace reads the values in a frame, and the Viewer has just
+    /// rendered that frame. It used to composite the whole composition a second
+    /// time to get it — several times a second, all through playback, doubling
+    /// the cost of every played frame whenever the Scopes panel was open.
+    testWidgets('a scope trace reuses the frame instead of rendering again',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      p.uiState.setSelectedComp(comp);
+
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+      await settleFrb(
+        tester,
+        minRounds: 20,
+        maxRounds: 200,
+        until: () => p.uiState.viewerImage.value != null,
+      );
+
+      // The Viewer holds frame 0. `best_frame` reuses it without going through
+      // the cache's own lookup, deliberately, so that the hit and miss counters
+      // keep describing how well the *Viewer* is served. That is what makes the
+      // reuse observable here: a trace that fetched the frame any other way
+      // would move one of those counters, and one that composited afresh would
+      // add an entry.
+      final before = cacheStats();
+      comp.renderScope(
+        frame: BigInt.zero,
+        scale: p.uiState.viewerScale,
+        kind: 0,
+        colours: scopeColoursFor(LumitTheme.dark()),
+      );
+      await settleFrb(tester, minRounds: 15, maxRounds: 80);
+
+      final after = cacheStats();
+      expect(after.hits, before.hits,
+          reason: 'the trace never went to the cache — it reused the frame in hand');
+      expect(after.misses, before.misses,
+          reason: 'and certainly did not composite the composition again');
+      expect(after.entries, before.entries);
+      expect(after.usedBytes, before.usedBytes);
     });
 
     testWidgets('the bar is drawn under the ruler', (tester) async {

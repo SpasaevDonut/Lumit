@@ -2542,6 +2542,14 @@ expensive: what is wanted has to be *cleared* once it arrives. An earlier versio
 asked again whenever anything was wanted, which meant every delivered frame asked
 for itself, and the engine re-rendered the same picture forever at full speed.
 
+*The Scopes were secretly doubling the cost of playback.* The waveform and
+vectorscope displays read the numbers in a frame — how bright it is, what colours
+are in it. To get those numbers they were building the whole composition a second
+time, from scratch, for a frame the Viewer had just finished building. Several
+times a second, for as long as playback ran, whenever that panel was open. They
+now reuse the picture already in hand, at whatever resolution it happens to be:
+any size answers the question a waveform asks.
+
 *Why the Viewer froze while the Scopes kept moving.* One background worker
 serves both: the Viewer asks it for a picture, the Scopes panel asks it for a
 trace of the same frame. When it finishes a job it takes everything that piled up

@@ -342,17 +342,37 @@ fn trace_scope(
         document.store.snapshot()
     };
 
-    let rendered = state.renderer.render_preview(
-        &document,
-        req.comp.id,
-        req.frame,
-        quality_for(req.scale),
-        req.scale,
-        None,
-    );
-    let Ok((rgba, width, height)) = rendered else {
-        eprintln!("Scope render failed, dropping the trace");
-        return Ok(());
+    // Reuse the picture the Viewer already has, at whatever resolution it was
+    // made at. Scopes read the *values* in a frame, so any size answers the
+    // question — and compositing the composition a second time to ask it was
+    // doubling the cost of every played frame with the panel open.
+    let (width, height, rgba) = match crate::framecache::best_frame(req.comp.id, req.frame) {
+        Some(held) => held,
+        None => {
+            // Nothing held for this frame — the zero-copy Viewer keeps no bytes,
+            // so on that path the trace still has to make its own. Cached, so a
+            // second trace of the same frame is free.
+            let key = crate::framecache::frame_key(req.comp.id, req.frame, req.scale);
+            let mut render = || {
+                state
+                    .renderer
+                    .render_preview(
+                        &document,
+                        req.comp.id,
+                        req.frame,
+                        quality_for(req.scale),
+                        req.scale,
+                        None,
+                    )
+                    .ok()
+                    .map(|(rgba, width, height)| (width, height, rgba))
+            };
+            let Some(made) = crate::framecache::get_or_render(key, &mut render) else {
+                eprintln!("Scope render failed, dropping the trace");
+                return Ok(());
+            };
+            made
+        }
     };
 
     match state

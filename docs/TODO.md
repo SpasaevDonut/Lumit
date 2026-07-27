@@ -126,6 +126,21 @@ and the transparency grid have landed. Still missing:
 - **No disk or VRAM frame cache**, so the cache bar can only ever show the RAM
     tier. The design language's steel blue for "on disk only" and the future VRAM
     tier have nothing behind them yet ([15-DESIGN.md](15-DESIGN.md) §6.3).
+- **The Scopes' trace still crosses the bridge as pixels**, serialised a byte at
+    a time like any other `Vec<u8>`, and is decoded into an image Dart-side. Small
+    next to a full frame, but it is on the same per-frame path and could take the
+    shared-texture route the Viewer now takes.
+- **Adaptive playback keeps no frames on the zero-copy path**, because there are
+    no bytes to keep — so the Scopes still composite their own frame there, and
+    the cache bar stays empty until you switch to Every frame. Both would be
+    solved by the engine keeping a small read-back copy a few times a second (as
+    the egui shell did) rather than per frame.
+- **Playback is driven from Dart**: the audio clock is read over the bridge each
+    tick, the playhead moved, and a render asked for back across the boundary.
+    With one render in flight that is one round trip per displayed frame rather
+    than per tick, so the overhead is small — but the loop would be tighter
+    entirely engine-side, which is worth revisiting if the frame budget gets
+    tight (docs/13 §B1).
 - **The Dart suite only ever exercises the read-back transport.** The harness
     loads `target/debug/lumit_bridge.dll`, which a plain `cargo build` produces
     without `shared-texture` — while the *shipped* Windows build now has it
