@@ -182,8 +182,7 @@ pub fn parent_world_placement(
 /// Each sample's comp time is `t_comp + offset · dt` (dt = one frame in comp
 /// seconds; offsets from [`MotionBlur::sample_offsets`], centred on the frame),
 /// and its layer time subtracts the layer's `start_offset`. Shared by the
-/// preview (build_comp_draws) and the export path (render_comp_linear) so the
-/// two smear identically (K-031). Parent motion within the shutter is a
+/// every caller of the one comp walk (K-031) so all paths smear identically. Parent motion within the shutter is a
 /// follow-up: only the layer's OWN transform is sampled here — a parented
 /// layer keeps its frame-time parent placement (`pre`) for every sub-copy.
 pub fn motion_blur_samples(
@@ -946,9 +945,7 @@ pub fn below_draws_at(
 /// the layer's document index, so the below-set is `comp.layers[idx + 1..]`
 /// (everything lower in the stack). The *this layer's effects* scope is not an
 /// adjustment re-render (it substitutes time into the layer's own stack, a
-/// later step), so it returns None here. Shared by the preview
-/// (`build_comp_draws`) and export, which detects the same effect in
-/// `render_comp_linear` and calls [`render_below_at`] directly.
+/// later step), so it returns None here.
 #[allow(clippy::too_many_arguments)]
 pub fn posterize_below(
     doc: &lumit_core::model::Document,

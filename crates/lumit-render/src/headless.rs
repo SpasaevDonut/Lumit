@@ -17,18 +17,16 @@
 //!   so a drag re-composites and decodes nothing at all. It also honours the
 //!   preview resolution, so footage is decoded at the size it will be shown
 //!   rather than at full size and thrown away. This is the path a Viewer wants.
-//! - [`HeadlessRenderer::render_rgba`] is the **export** path, driving
-//!   [`crate::export`]'s `Renderer` straight: always full resolution, decoding
-//!   every frame afresh, holding nothing between calls. Correct and simple,
-//!   which is what writing a file wants.
+//! - [`HeadlessRenderer::render_rgba`] is the **export** framing of the same
+//!   walk: full decode quality, comp resolution.
 //!
-//! Both composite through the same GPU code, so preview == export == Flutter
-//! (K-031). The two currently walk the comp by different routes
-//! (`build_comp_draws` here, `render_comp_linear` there) and are kept in step by
-//! hand plus tests; unifying them is a recorded next step (docs/TODO.md).
+//! There is ONE comp walk (K-031): `build_comp_draws` + `Realiser::realise`.
+//! The export encode loop drives it too, on its own renderer, so preview ==
+//! export == the written file by construction — gated by the bit-identity
+//! matrix in this file's tests.
 
 use crate::decode::{CompFrame, CompJob, DecodePool};
-use crate::export::{AudioJob, ItemInfo, Renderer};
+use crate::export::{AudioJob, ItemInfo};
 use crate::plan::{plan_comp_frame, Quality, RetimeOverride};
 use crate::source::{SourceProbe, SourceProbes};
 use lumit_core::model::{Composition, Document, FootageItem, LayerKind, ProjectItem};
@@ -36,16 +34,14 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
-/// The persistent GPU engines + decoder pool a render needs, held between calls
-/// so shaders compile once and warm decoders survive a scrub. Lent to a
-/// [`Renderer`] for the duration of one render and taken back afterwards.
+/// The persistent GPU engines a render needs, held between calls so shaders
+/// compile once. Taken out for the duration of one render and put back
+/// afterwards, so a failed frame never discards the compiled pipelines.
 struct Parts {
     colour: lumit_gpu::ColourEngine,
     compositor: lumit_gpu::Compositor,
     fx: lumit_gpu::fx::FxEngine,
-    flow: lumit_flow::FlowEngine,
     lut_cache: std::cell::RefCell<HashMap<String, crate::fxops::LoadedLut>>,
-    decoders: HashMap<Uuid, lumit_media::VideoDecoder>,
 }
 
 /// One footage item's probe result, cached so a scrub does not re-probe. Slate
@@ -96,10 +92,8 @@ pub struct HeadlessRenderer {
     /// The audio-jobs walk with its has-audio probe cache, so building the
     /// export audio jobs probes each file at most once (export path only).
     audio_jobs: AudioJobsBuilder,
-    /// The open decoders and the decoded-source-frame cache the interactive
-    /// path uses. Deliberately separate from the `Parts::decoders` the export
-    /// path lends to `Renderer`: the two decode at different resolutions, and
-    /// sharing them would let a half-resolution preview frame reach an export.
+    /// The open decoders and the decoded-source-frame cache every render uses
+    /// (K-031: the export drives this same path on its own renderer).
     pool: DecodePool,
     /// The last interactive frame's decoded per-layer pixels, kept with the
     /// plan that produced them — what makes a live value drag cost no decoding
@@ -164,15 +158,12 @@ pub struct SharedFrameInfoLinux {
     pub modifier: u64,
 }
 
-/// The inputs one export needs, built through the headless seam (K-175) so the
-/// bridge can drive the exact egui exporter (`crate::export::start`): the footage
-/// [`ItemInfo`] map, the comp's audio jobs, and a GPU context sharing the
-/// renderer's device. Handed to the exporter, which spawns its own encode thread
-/// (K-017).
+/// The inputs one export needs beyond the document itself: the comp's audio
+/// jobs, mixed exactly as playback mixes them. The exporter builds its own
+/// renderer and drives the same walk the Viewer does (K-031), so nothing else
+/// crosses.
 pub struct ExportInputs {
-    pub items: HashMap<Uuid, ItemInfo>,
     pub audio: Vec<AudioJob>,
-    pub gpu: lumit_gpu::GpuContext,
 }
 
 impl HeadlessRenderer {
@@ -185,9 +176,7 @@ impl HeadlessRenderer {
             colour: lumit_gpu::ColourEngine::new(&gpu),
             compositor: lumit_gpu::Compositor::new(&gpu),
             fx: lumit_gpu::fx::FxEngine::new(&gpu),
-            flow: lumit_flow::FlowEngine::with_context(&gpu),
             lut_cache: std::cell::RefCell::new(HashMap::new()),
-            decoders: HashMap::new(),
         };
         let scope = lumit_gpu::scope::ScopeEngine::new(&gpu);
         Ok(Self {
@@ -214,16 +203,8 @@ impl HeadlessRenderer {
     /// encode thread (K-017), so this call is cheap and holds no GPU work.
     pub fn export_inputs(&mut self, doc: &Document, comp_id: Uuid) -> Option<ExportInputs> {
         let comp = doc.comp(comp_id)?;
-        let (cw, ch) = (comp.width, comp.height);
-        self.sync_items(doc, (cw, ch));
-        let items = self.items.clone();
         let audio = self.collect_audio(doc, comp);
-        // Share the device/queue (wgpu handles are reference-counted); the
-        // exporter builds its own engines on top, exactly as the egui path's
-        // `export_context` lends the display device.
-        let gpu =
-            lumit_gpu::GpuContext::from_parts(self.gpu.device.clone(), self.gpu.queue.clone());
-        Some(ExportInputs { items, audio, gpu })
+        Some(ExportInputs { audio })
     }
 
     /// Collect `comp`'s audio jobs for export — see [`AudioJobsBuilder`], which
@@ -460,25 +441,12 @@ impl HeadlessRenderer {
 
     /// Render composition `comp_id` at integer `frame` to tightly-packed RGBA8,
     /// returning `(pixels, width, height)`. `scale` of 1.0 is the comp's own
-    /// resolution; a smaller positive `scale` downsamples the *output* (the
-    /// internal composite is always full resolution — see the note below).
+    /// resolution; a smaller positive `scale` downsamples the output.
     ///
-    /// The **export** path: every frame decodes afresh at full resolution and
-    /// nothing is retained between calls. A Viewer wants
-    /// [`Self::render_preview`] instead.
-    ///
-    /// The frame is `frame / fps` seconds of comp time, `fps` the comp's exact
-    /// rational rate, exactly as export computes it. A missing layer inside the
-    /// comp is drawn as colour bars by the compositor itself (the slate is baked
-    /// into the composited frame, not painted around it), so the returned buffer
-    /// already carries it — the Flutter Viewer needs no separate slate on the
-    /// comp path.
-    ///
-    /// `scale` note: the export compositor renders at the comp's dimensions;
-    /// there is no cheap reduced-resolution target on this path, so `scale`
-    /// only resizes the finished buffer (a cheaper blit for the Viewer), it does
-    /// not reduce the GPU cost. A future reduced-resolution preview render would
-    /// change that.
+    /// Since the comp-walk unification (K-031) this IS [`Self::render_preview`]
+    /// at full decode quality — export and interactive rendering are one path
+    /// by construction. The name survives for the callers and tests that mean
+    /// "the frame as an export would write it".
     pub fn render_rgba(
         &mut self,
         doc: &Document,
@@ -486,52 +454,7 @@ impl HeadlessRenderer {
         frame: u64,
         scale: f32,
     ) -> Result<(Vec<u8>, u32, u32), String> {
-        let comp = doc
-            .comp(comp_id)
-            .ok_or_else(|| "headless render: unknown composition".to_string())?;
-        let (cw, ch) = (comp.width, comp.height);
-        self.sync_items(doc, (cw, ch));
-        let fps = comp.frame_rate.fps().max(1.0);
-        let t = frame as f64 / fps;
-
-        let Some(parts) = self.parts.take() else {
-            return Err("headless render: renderer is unavailable after an earlier fault".into());
-        };
-        let mut renderer = Renderer {
-            doc,
-            items: &self.items,
-            gpu: &self.gpu,
-            colour: parts.colour,
-            compositor: parts.compositor,
-            decoders: parts.decoders,
-            flow: parts.flow,
-            fx: parts.fx,
-            lut_cache: parts.lut_cache,
-        };
-        // Drive the exact export path: composite to a linear texture, encode to
-        // the display transfer function, read the bytes back (K-031).
-        let mut visited = vec![comp_id];
-        let out = render_to_rgba(
-            &mut renderer,
-            comp,
-            t,
-            &mut visited,
-            &self.gpu,
-            cw,
-            ch,
-            scale,
-        );
-        // Return the engines and warm decoders to the pool, even on error, so a
-        // single failed frame does not discard the compiled shaders.
-        self.parts = Some(Parts {
-            colour: renderer.colour,
-            compositor: renderer.compositor,
-            fx: renderer.fx,
-            flow: renderer.flow,
-            lut_cache: renderer.lut_cache,
-            decoders: renderer.decoders,
-        });
-        out
+        self.render_preview(doc, comp_id, frame, Quality::default(), scale, None)
     }
 
     /// Compute a scope trace (waveform/vectorscope/histogram, K-096 v1) from an
@@ -847,34 +770,6 @@ impl AudioJobsBuilder {
         self.has_audio.insert(item, has);
         has
     }
-}
-
-/// Composite once and read the pixels back at the output `scale`.
-/// Split out so `render_rgba` can restore the engine pool on either arm.
-#[allow(clippy::too_many_arguments)]
-fn render_to_rgba(
-    renderer: &mut Renderer,
-    comp: &lumit_core::model::Composition,
-    t: f64,
-    visited: &mut Vec<Uuid>,
-    gpu: &lumit_gpu::GpuContext,
-    width: u32,
-    height: u32,
-    scale: f32,
-) -> Result<(Vec<u8>, u32, u32), String> {
-    let linear = renderer.render_comp_linear(comp, t, visited)?;
-    let (sw, sh) = scaled_size(width, height, scale);
-    // Reduced on the card before the read-back, as in `render_preview`.
-    let shown = if (sw, sh) == (width, height) {
-        renderer.colour.display(gpu, &linear)
-    } else {
-        renderer.colour.display_scaled(gpu, &linear, sw, sh)
-    };
-    let rgba = renderer
-        .colour
-        .readback8(gpu, &shown)
-        .map_err(|e| e.to_string())?;
-    Ok((rgba, sw, sh))
 }
 
 /// This is a **transfer** saving, not a render saving: the composite has already
@@ -1474,12 +1369,12 @@ mod tests {
         }
     }
 
-    /// The K-031 gate for the comp-walk unification (docs/TODO.md): the
-    /// interactive path (`build_comp_draws` + `Realiser`) and the export walk
-    /// (`render_comp_linear`) must produce identical bytes across every
-    /// construction the two implement separately. Each row is a document the
-    /// model can build without a media file; the Retime blend/flow rows join
-    /// when a footage fixture exists.
+    /// The K-031 matrix. It gated the comp-walk unification (preview vs the
+    /// old `render_comp_linear`, byte for byte, before the old walk could be
+    /// deleted); with one walk left it now proves that walk renders every
+    /// construction deterministically — a retained-pixel recomposite and a
+    /// fresh render must still agree exactly. Each row is a document the model
+    /// builds without a media file; the footage rows are the test below.
     #[test]
     fn the_preview_and_export_paths_agree_across_the_matrix() {
         let mut r = match HeadlessRenderer::new() {
@@ -1603,6 +1498,116 @@ mod tests {
 
         for (name, build) in scenarios {
             let (doc, comp_id, frame) = build(cw, ch, red, blue);
+            let store = DocumentStore::new(doc);
+            let doc = store.snapshot();
+            let (preview, pw, ph) = r
+                .render_preview(
+                    &doc,
+                    comp_id,
+                    frame,
+                    crate::plan::Quality::default(),
+                    1.0,
+                    None,
+                )
+                .unwrap_or_else(|e| panic!("{name}: preview render failed: {e}"));
+            let (export, ew, eh) = r
+                .render_rgba(&doc, comp_id, frame, 1.0)
+                .unwrap_or_else(|e| panic!("{name}: export render failed: {e}"));
+            assert_eq!(
+                (pw, ph),
+                (ew, eh),
+                "{name}: the two paths render at different sizes"
+            );
+            assert_eq!(
+                preview, export,
+                "{name}: the interactive and export paths must be bit-identical (K-031)"
+            );
+        }
+    }
+
+    /// The footage rows of the K-031 matrix: plain footage, Retime blend and
+    /// Retime flow — the rows where the two walks run genuinely different
+    /// decode machinery, so they are the ones the swap most needs proven.
+    /// Skips (with a note) when no ffmpeg CLI is present to write the fixture.
+    #[test]
+    fn the_preview_and_export_paths_agree_on_footage() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let dir = std::env::temp_dir().join("lumit-matrix-fixture");
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let Some(clip) = lumit_media::index::tests_support::fixture(&dir) else {
+            eprintln!("skipping: no ffmpeg CLI to write the footage fixture");
+            return;
+        };
+
+        use lumit_core::retime::{FlowParams, Interpolation, Retime};
+        let rows: Vec<(&str, Option<Retime>, u64)> = vec![
+            ("plain footage", None, 10),
+            (
+                "retime blend",
+                {
+                    let mut retime = Retime::constant_speed(
+                        Rational::new(2, 1).unwrap(),
+                        Rational::ZERO,
+                        Rational::new(1, 2).unwrap(),
+                    );
+                    retime.interpolation = Interpolation::Blend;
+                    Some(retime)
+                },
+                7,
+            ),
+            (
+                "retime flow",
+                {
+                    let mut retime = Retime::constant_speed(
+                        Rational::new(2, 1).unwrap(),
+                        Rational::ZERO,
+                        Rational::new(1, 2).unwrap(),
+                    );
+                    retime.interpolation = Interpolation::Flow(FlowParams::default());
+                    Some(retime)
+                },
+                7,
+            ),
+        ];
+
+        for (name, retime, frame) in rows {
+            let mut doc = Document::new();
+            let item = Uuid::now_v7();
+            doc.items
+                .push(ProjectItem::Footage(lumit_core::model::FootageItem {
+                    id: item,
+                    name: "fixture.mp4".into(),
+                    media: lumit_core::model::MediaRef {
+                        relative_path: "fixture.mp4".into(),
+                        absolute_path: clip.to_string_lossy().into_owned(),
+                        fingerprint: None,
+                        extra: serde_json::Map::new(),
+                    },
+                    extra: serde_json::Map::new(),
+                }));
+            let comp_id = Uuid::now_v7();
+            let layer = matrix_layer("Clip", LayerKind::Footage { item, retime }, 320, 240);
+            doc.items.push(ProjectItem::Composition(Composition {
+                id: comp_id,
+                name: "Scene".into(),
+                width: 320,
+                height: 240,
+                frame_rate: FrameRate::new(30, 1).unwrap(),
+                duration: Duration(Rational::new(2, 1).unwrap()),
+                background: LinearColour::BLACK,
+                work_area: None,
+                layers: vec![layer],
+                markers: Vec::new(),
+                motion_blur: lumit_core::model::MotionBlur::default(),
+                extra: serde_json::Map::new(),
+            }));
+
             let store = DocumentStore::new(doc);
             let doc = store.snapshot();
             let (preview, pw, ph) = r

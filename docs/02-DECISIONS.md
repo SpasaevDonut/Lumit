@@ -2462,3 +2462,16 @@ ops fetch a fresh instance handle at click time (frb consumes handles passed by 
 `LayerBuilder` is deleted — per-row change scoping existed because rebuilds were expensive,
 and rebuilds that cost one revision check need no scoping. Measured: selecting a layer is
 now 11 calls (was ~75 pre-K-183, 31 after it); the budget test caps it at 24.
+
+**K-185 · DECIDED · There is one comp walk; export drives the preview path.**
+K-031 ("preview == export") was held together by hand: `build_comp_draws` + `Realiser` drew the
+Viewer while `render_comp_linear` — a parallel ~1,400-line implementation of the same rules —
+drew the file, kept identical by discipline and comments. The TODO's gate ran first: a
+bit-identity matrix (blends/opacity, nested and collapsed precomps, all three matte source
+modes, adjustment stacks, per-layer motion blur, posterize time, camera over 3D, plain footage,
+Retime blend and Retime flow) proved the two walks byte-identical on every row **before**
+anything moved. Then the export encode loop and `render_rgba` switched onto the preview path —
+`HeadlessRenderer::render_preview` at full decode quality, the exporter on its own renderer and
+device so it never contends with the Viewer — and `render_comp_linear`, its `Renderer` and every
+private helper were deleted (export.rs: 2131 → 683 lines). K-031 is now true by construction:
+there is no second walk to disagree. The matrix stays as the determinism gate for the one walk.

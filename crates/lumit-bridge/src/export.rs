@@ -455,17 +455,16 @@ mod driving {
             Err(e) => return err_json(e),
         };
 
-        // Build the footage/audio inputs and a GPU context through the headless
-        // seam (K-175), then hand off to the exact egui exporter (K-017, K-031).
+        // Build the audio inputs through the headless seam (K-175), then hand
+        // off to the exporter, which drives the same render walk the Viewer
+        // uses on its own thread and device (K-017, K-031).
         let Some(inputs) = crate::render::with_export_inputs(&doc, comp) else {
             return err_json("export: the GPU pipeline is unavailable");
         };
         let handle = lumit_render::export::start(
             doc.clone(),
             comp,
-            inputs.items,
             inputs.audio,
-            inputs.gpu,
             std::path::PathBuf::from(out_path),
             spec,
         );
