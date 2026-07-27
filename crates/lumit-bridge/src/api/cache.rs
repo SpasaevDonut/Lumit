@@ -62,31 +62,16 @@ pub fn cache_stats() -> BridgeCacheStats {
 /// the number on screen changes.
 #[frb(sync)]
 pub fn set_cache_budget(bytes: u64) -> BridgeCacheStats {
-    let (used, budget, entries, hits, misses) =
-        crate::framecache::set_budget(usize::try_from(bytes).unwrap_or(usize::MAX));
-    BridgeCacheStats {
-        used_bytes: used as u64,
-        budget_bytes: budget as u64,
-        entries: entries as u64,
-        hits,
-        misses,
-        comp_decodes: crate::framecache::comp_decodes(),
-    }
+    crate::framecache::set_budget(usize::try_from(bytes).unwrap_or(usize::MAX));
+    read()
 }
 
 /// Empty the cache. Every frame is re-rendered from here on, so this is a
 /// deliberate act rather than something to do on a timer.
 #[frb(sync)]
 pub fn clear_cache() -> BridgeCacheStats {
-    let (used, budget, entries, hits, misses) = crate::framecache::clear();
-    BridgeCacheStats {
-        used_bytes: used as u64,
-        budget_bytes: budget as u64,
-        entries: entries as u64,
-        hits,
-        misses,
-        comp_decodes: crate::framecache::comp_decodes(),
-    }
+    crate::framecache::clear();
+    read()
 }
 
 impl crate::api::composition::CompositionReference {
@@ -127,7 +112,7 @@ pub struct BridgeVramCacheStats {
 /// budget is the asked-for value, applied on the worker's next turn.
 #[frb(sync)]
 pub fn vram_cache_stats() -> BridgeVramCacheStats {
-    let (used, _, entries) = crate::framecache::vram::stats();
+    let (used, entries) = crate::framecache::vram::stats();
     BridgeVramCacheStats {
         used_bytes: used,
         budget_bytes: crate::framecache::vram::budget() as u64,

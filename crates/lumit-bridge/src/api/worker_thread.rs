@@ -95,7 +95,7 @@ fn sync_caches(state: &mut WorkerState) {
         state.fill_exhausted = false;
     }
     crate::framecache::publish_comp_decodes(state.renderer.decoded_frames());
-    let (used, budget_now, entries) = state.renderer.frame_texture_stats();
+    let (used, _, entries) = state.renderer.frame_texture_stats();
     if (used as u64, entries as u64) != state.published_vram {
         state.published_vram = (used as u64, entries as u64);
         let keys = state
@@ -106,13 +106,7 @@ fn sync_caches(state: &mut WorkerState) {
                 crate::framecache::frame_key_quantised(comp, frame, scale_q)
             })
             .collect();
-        crate::framecache::vram::publish(
-            state.seen_generation,
-            used as u64,
-            budget_now as u64,
-            entries as u64,
-            keys,
-        );
+        crate::framecache::vram::publish(state.seen_generation, used as u64, entries as u64, keys);
     }
 }
 
@@ -840,8 +834,6 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
     // machine can actually hold, rather than inheriting the last run's verdict
     // on a comp that may since have got lighter.
     crate::realtime::reset();
-    // Decodes queued for the previous run's frames are no longer wanted.
-    state.prefetcher.invalidate();
     Ok(())
 }
 
@@ -894,7 +886,6 @@ fn handle_requests(
                 WorkerRequest::Play(req) => start_playback(req, state),
                 WorkerRequest::StopPlayback => {
                     state.playback = None;
-                    state.prefetcher.invalidate();
                     Ok(())
                 }
             };

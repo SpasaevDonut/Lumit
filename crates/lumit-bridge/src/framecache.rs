@@ -370,13 +370,14 @@ pub(crate) mod vram {
     /// Bumped by Clear cache; the worker clears when it sees it move.
     static CLEARS: AtomicU64 = AtomicU64::new(0);
     /// What the worker last reported holding: the invalidation generation it
-    /// held them under, (used, budget, entries), and the held keys
+    /// held them under, (used, entries), and the held keys
     /// `(comp low 64 bits ‖ frame ‖ scale)` packed exactly like
     /// [`super::frame_key`], so the bar merge is integer comparisons. The
     /// generation is what keeps the bar honest across an edit: the worker's
     /// clear-and-republish is a loop turn away, and until it lands these keys
-    /// describe frames that no longer exist.
-    static MIRROR: Mutex<(u64, u64, u64, u64, Vec<u128>)> = Mutex::new((0, 0, 0, 0, Vec::new()));
+    /// describe frames that no longer exist. (The budget is deliberately not
+    /// mirrored — the atomic above is the one authority on it.)
+    static MIRROR: Mutex<(u64, u64, u64, Vec<u128>)> = Mutex::new((0, 0, 0, Vec::new()));
 
     pub(crate) fn set_budget(bytes: usize) {
         BUDGET.store(bytes, Ordering::Relaxed);
@@ -396,15 +397,15 @@ pub(crate) mod vram {
 
     /// The worker's report of what it holds, stamped with the invalidation
     /// generation it holds them under.
-    pub(crate) fn publish(generation: u64, used: u64, budget: u64, entries: u64, keys: Vec<u128>) {
+    pub(crate) fn publish(generation: u64, used: u64, entries: u64, keys: Vec<u128>) {
         let mut guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = (generation, used, budget, entries, keys);
+        *guard = (generation, used, entries, keys);
     }
 
-    /// `(used, budget, entries)` as last published.
-    pub(crate) fn stats() -> (u64, u64, u64) {
+    /// `(used, entries)` as last published.
+    pub(crate) fn stats() -> (u64, u64) {
         let guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
-        (guard.1, guard.2, guard.3)
+        (guard.1, guard.2)
     }
 
     /// The held keys as last published — empty when an edit has moved the
@@ -415,7 +416,7 @@ pub(crate) mod vram {
         if guard.0 != super::generation() {
             return Vec::new();
         }
-        guard.4.clone()
+        guard.3.clone()
     }
 }
 
@@ -454,20 +455,14 @@ pub(crate) fn get_or_render(
     Some((w, h, rgba))
 }
 
-/// Resize the RAM budget (Settings → Performance). Returns the fresh stats.
-pub(crate) fn set_budget(bytes: usize) -> (usize, usize, usize, u64, u64) {
-    with_cache(|c| {
-        c.set_budget(bytes);
-        c.stats()
-    })
+/// Resize the RAM budget (Settings → Performance).
+pub(crate) fn set_budget(bytes: usize) {
+    with_cache(|c| c.set_budget(bytes));
 }
 
-/// Empty the cache now (Settings → Clear cache). Returns the fresh stats.
-pub(crate) fn clear() -> (usize, usize, usize, u64, u64) {
-    with_cache(|c| {
-        c.clear();
-        c.stats()
-    })
+/// Empty the cache now (Settings → Clear cache).
+pub(crate) fn clear() {
+    with_cache(|c| c.clear());
 }
 
 /// `(used_bytes, budget_bytes, entries, hits, misses)`.
@@ -586,11 +581,10 @@ mod tests {
     /// The global FFI-facing controls round-trip: clear, set budget, stats.
     #[test]
     fn global_controls_round_trip() {
-        let (_, _, _, _, _) = clear();
-        let (_, budget, _, _, _) = set_budget(123 * 1024 * 1024);
+        clear();
+        set_budget(123 * 1024 * 1024);
+        let (used, budget, _entries, _hits, _misses) = stats();
         assert_eq!(budget, 123 * 1024 * 1024);
-        let (used, budget2, _entries, _hits, _misses) = stats();
-        assert_eq!(budget2, 123 * 1024 * 1024);
         assert_eq!(used, 0);
         // Restore the default so other tests see a sane budget.
         set_budget(DEFAULT_BUDGET_BYTES);
@@ -645,7 +639,6 @@ mod tests {
         vram::publish(
             generation(),
             1,
-            2,
             1,
             vec![
                 frame_key_quantised(comp, 3, 500),
@@ -670,7 +663,7 @@ mod tests {
         );
 
         // Leave the shared mirror empty for the other tests.
-        vram::publish(generation(), 0, 0, 0, Vec::new());
+        vram::publish(generation(), 0, 0, Vec::new());
         clear();
     }
 

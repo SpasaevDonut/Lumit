@@ -14,21 +14,16 @@
 //! Correctness is carried by the cache key, not by trust: a result is filed
 //! under (item, source frame, decode width) — the same key the render's own
 //! decode would use — so the worst a late or wasted prefetch can do is warm
-//! the cache with pixels nobody asks for. An `epoch` guards even that: bump
-//! it on stop or seek and in-flight results are dropped on arrival.
+//! the cache with pixels nobody asks for. That is also why a stop or seek
+//! needs no cancellation here: a result that arrives late is still correct,
+//! and filing it is a favour to the next visit, never a hazard.
 
 use lumit_render::PrefetchWant;
 use std::collections::HashMap;
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, Sender};
 use uuid::Uuid;
 
-pub(crate) struct Job {
-    pub epoch: u64,
-    pub want: PrefetchWant,
-}
-
 pub(crate) struct Done {
-    pub epoch: u64,
     pub item: Uuid,
     pub frame: usize,
     pub target_width: Option<u32>,
@@ -40,45 +35,31 @@ pub(crate) struct Done {
 /// The worker's handle: send wants, drain finished decodes. Dropping it ends
 /// the thread (its receiver disconnects).
 pub(crate) struct Prefetcher {
-    tx: Sender<Job>,
+    tx: Sender<PrefetchWant>,
     rx: Receiver<Done>,
-    epoch: u64,
 }
 
 impl Default for Prefetcher {
     fn default() -> Self {
-        let (tx, jobs) = channel::<Job>();
+        let (tx, jobs) = channel::<PrefetchWant>();
         let (done_tx, rx) = channel::<Done>();
         std::thread::spawn(move || run(jobs, done_tx));
-        Self { tx, rx, epoch: 0 }
+        Self { tx, rx }
     }
 }
 
 impl Prefetcher {
-    /// Invalidate everything queued or in flight (stop, seek, a new play).
-    /// Results already decoded still arrive but are dropped by epoch.
-    pub(crate) fn invalidate(&mut self) {
-        self.epoch += 1;
-    }
-
     /// Queue one decode-ahead. Never blocks; a dead thread makes this a no-op
     /// (playback then simply decodes inline, exactly as before prefetch).
     pub(crate) fn request(&self, want: PrefetchWant) {
-        let _ = self.tx.send(Job {
-            epoch: self.epoch,
-            want,
-        });
+        let _ = self.tx.send(want);
     }
 
-    /// Everything decoded since the last drain, current-epoch only.
+    /// Everything decoded since the last drain.
     pub(crate) fn drain(&self) -> Vec<Done> {
         let mut out = Vec::new();
-        loop {
-            match self.rx.try_recv() {
-                Ok(done) if done.epoch == self.epoch => out.push(done),
-                Ok(_) => {}
-                Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
-            }
+        while let Ok(done) = self.rx.try_recv() {
+            out.push(done);
         }
         out
     }
@@ -89,10 +70,9 @@ impl Prefetcher {
 /// for frames in playing order, so the decoders run sequentially — the cheap
 /// direction. A job that fails to decode is skipped: the render will try it
 /// inline and surface the error through the path that already knows how.
-fn run(jobs: Receiver<Job>, done: Sender<Done>) {
+fn run(jobs: Receiver<PrefetchWant>, done: Sender<Done>) {
     let mut decoders: HashMap<Uuid, lumit_media::VideoDecoder> = HashMap::new();
-    while let Ok(job) = jobs.recv() {
-        let want = job.want;
+    while let Ok(want) = jobs.recv() {
         let dec = match decoders.entry(want.item) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => {
@@ -111,7 +91,6 @@ fn run(jobs: Receiver<Job>, done: Sender<Done>) {
         };
         if done
             .send(Done {
-                epoch: job.epoch,
                 item: want.item,
                 frame: want.frame,
                 target_width: want.target_width,
