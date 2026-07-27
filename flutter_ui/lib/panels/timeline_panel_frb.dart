@@ -27,6 +27,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
+import '../builder/layer_builder.dart';
 import '../icons/icons.dart';
 import '../state/drag_payloads.dart';
 import '../theme/theme.dart';
@@ -271,11 +272,27 @@ class _FoldRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
     // 20 for the layer number, then one step per level, so a parameter sits
     // under its effect and an effect under Effects.
     final indent = 20.0 + row.depth * 14.0;
-    final child = switch (row) {
+
+    return SizedBox(
+      height: _rowHeight,
+      child: Padding(
+        padding: EdgeInsets.only(left: indent, right: 4),
+        // Any op on this layer redraws the row, so the number shown is the
+        // document's: an undo, a redo, or the same property dragged in Effect
+        // controls. Without it a row only ever changed when *it* wrote — undo
+        // moved the picture and left the numbers behind, and the two panels
+        // showing the same property disagreed until one of them was rebuilt.
+        child: LayerBuilder(layer: layer, builder: _control),
+      ),
+    );
+  }
+
+  Widget _control(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return switch (row) {
       FoldGroupRow(:final path, :final label, :final open) => GestureDetector(
           key: ValueKey<String>('tl-group-$path'),
           behavior: HitTestBehavior.opaque,
@@ -320,14 +337,6 @@ class _FoldRow extends StatelessWidget {
           onChanged: onChanged,
         ),
     };
-
-    return SizedBox(
-      height: _rowHeight,
-      child: Padding(
-        padding: EdgeInsets.only(left: indent, right: 4),
-        child: child,
-      ),
-    );
   }
 }
 

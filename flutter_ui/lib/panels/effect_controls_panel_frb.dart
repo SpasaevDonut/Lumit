@@ -31,6 +31,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../builder/layer_builder.dart';
 import '../icons/icons.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -90,7 +91,16 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
       ValueListenableBuilder<int>(
         valueListenable:
             Provider.of<LumitUiState>(context, listen: false).playheadFrame,
-        builder: (context, playhead, _) => _rows(context, comp, layer, playhead),
+        // Wrapped so any op on this layer re-reads it — an undo or redo, or the
+        // same property dragged in the Timeline's fold-out. The effect stack in
+        // particular has to be read *again*, not just redrawn: the instances the
+        // rows hold are a staged copy taken when the panel last built, so
+        // without this an undone value stayed on screen until something else
+        // rebuilt the panel.
+        builder: (context, playhead, _) => LayerBuilder(
+          layer: layer,
+          builder: (context) => _rows(context, comp, layer, playhead),
+        ),
       );
 
   Widget _rows(

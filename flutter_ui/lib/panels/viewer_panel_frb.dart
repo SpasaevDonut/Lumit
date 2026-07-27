@@ -339,6 +339,16 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       return;
     }
 
+    // A frame nobody here asked for: a live drag's preview, which the Effect
+    // controls and Timeline rows publish through `renderFrameWithPreview`.
+    // Answering one by dispatching a plain render is what made a drag flicker —
+    // every preview tick was immediately overpainted by the *unedited* document
+    // at the same frame, so the picture alternated between the dragged value and
+    // the value before the drag until the pointer was released. The preview owns
+    // the picture for as long as it keeps publishing; the commit that ends the
+    // drag comes back through [_onDocumentChanged].
+    if (delivered == null) return;
+
     _wantedFrame = ui.playheadFrame.value;
     // `_stale` is why this is not just a frame-number comparison: an edit that
     // landed while this frame was rendering makes the delivered picture the

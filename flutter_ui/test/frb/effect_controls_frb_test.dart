@@ -221,6 +221,32 @@ void main() {
           reason: 'one property per op — nothing else moved');
     });
 
+    /// **The stale-value regression.** A row only ever changed when it wrote
+    /// the value itself. So an undo moved the picture and left the number
+    /// behind, and the same property edited in the Timeline's fold-out never
+    /// reached this panel — one miss, two symptoms: nothing here listened to the
+    /// engine's change stream. Fails without the `LayerBuilder` around the rows.
+    testWidgets('an edit made elsewhere, and an undo, both reach the rows',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+      expect(find.text('100%'), findsOneWidget, reason: 'opacity as it starts');
+
+      // What the Timeline's fold-out does when the same row is dragged there.
+      p.layer.setTransform(
+          prop: BridgeTransformProp.opacity, value: BridgeScalar.static_(40));
+      await settleFrb(tester,
+          until: () => find.text('40%').evaluate().isNotEmpty);
+      expect(find.text('40%'), findsOneWidget,
+          reason: 'an edit made in the other panel shows here');
+
+      p.state.project!.undo();
+      await settleFrb(tester,
+          until: () => find.text('100%').evaluate().isNotEmpty);
+      expect(find.text('100%'), findsOneWidget,
+          reason: 'undo puts the number back, not only the picture');
+    });
+
     /// A 2D layer showing 3D controls that cannot do anything is worse than not
     /// showing them, so the z and x/y-rotation rows are gated on the switch.
     testWidgets('the 3D rows appear only on a 3D layer', (tester) async {
