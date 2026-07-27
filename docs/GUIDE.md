@@ -3751,3 +3751,32 @@ order at the comp's own rate (a full ring is not a licence to rush), and
 adaptive still keeps to the clock, now by showing the newest queued frame the
 clock has reached. Pressing stop, or seeking, simply throws the ring away —
 frames rendered ahead for a future that was cancelled are dropped unshown.
+
+**The graphics card decodes the video too.** Modern graphics cards carry a
+dedicated video unit — separate silicon whose only job is undoing H.264/HEVC
+compression — and on Windows Lumit now hands the compressed stream straight to
+it (the D3D11VA interface). The decoded picture is brought back to ordinary
+memory and joins the pipeline exactly where a software-decoded frame would, so
+nothing downstream can tell the difference. That indifference is enforced, not
+assumed: video decoding is defined so precisely that hardware and software must
+produce identical pixels, and a test decodes the same frames both ways and
+compares every byte. (Finding that test's tolerance needed one real fix: the
+converter library treats the hardware's pixel layout slightly differently at
+sharp colour edges, so the hardware frame is first repacked into the software
+layout — pure shuffling, no values change — and then converted identically.)
+Anything about the hardware path failing — an unsupported codec, no video
+unit, a driver quirk — quietly falls back to software decoding, which now also
+uses every processor core rather than the single core the library defaults to.
+
+**Decoding runs ahead on its own thread.** Even with the ring, one worker used
+to do everything for a frame in sequence: decode the source video, then
+composite it, then move to the next frame. But playback always knows which
+frames come next, so a separate decode thread now works on the NEXT few
+frames' source video while the worker composites the current one. Finished
+pixels are filed into the decoded-frame cache under exactly the name the
+worker's own decode would look up, so when the worker gets there the expensive
+half of its job is already done — a frame then costs whichever is larger of
+decode and composite, not the two added together. There is no shared state to
+fight over: the decode thread has its own decoders, and the hand-off is a
+one-way delivery of finished pixels. A stop or seek marks everything in flight
+as unwanted, and late deliveries are dropped on arrival.

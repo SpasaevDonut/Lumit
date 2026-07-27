@@ -40,6 +40,11 @@ pub struct WorkerState {
     /// Playback, when it is running. `None` means the worker is idle and blocks
     /// waiting for something to do.
     playback: Option<Playback>,
+    /// The decode-ahead thread (docs/impl/playback-scheduler.md §5): playback
+    /// posts the source decodes coming frames will need, and files the results
+    /// into the renderer's cache, so decode runs alongside compositing rather
+    /// than before it.
+    prefetcher: crate::prefetch::Prefetcher,
 }
 
 #[frb(ignore)]
@@ -109,6 +114,11 @@ struct Playback {
     ring: std::collections::VecDeque<(u64, lumit_render::PreparedFrame)>,
     /// Recent render costs, sizing the ring (`capacity()`).
     costs: crate::playback::CostWindow,
+    /// The highest frame whose source decodes have been posted to the
+    /// decode-ahead thread this run. A watermark, not a set: playback frames
+    /// only move forward, so "post everything from here to there once" is the
+    /// whole bookkeeping.
+    prefetched_to: Option<u64>,
     /// How many frames the last [`Self::advance`] had to jump over to catch the
     /// clock. Zero while playback is keeping up.
     ///
@@ -358,6 +368,7 @@ fn worker_loop(
         renderer,
         preview_engine: PreviewEngine::default(),
         playback: None,
+        prefetcher: crate::prefetch::Prefetcher::default(),
     };
 
     loop {
@@ -405,6 +416,19 @@ fn worker_loop(
 /// expensive frame spend what the cheap frames before it banked.
 #[frb(ignore)]
 fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
+    // File whatever the decode-ahead thread has finished into the renderer's
+    // cache, so the renders below find their source pixels already decoded.
+    for done in state.prefetcher.drain() {
+        state.renderer.preload_decoded(
+            done.item,
+            done.frame,
+            done.target_width,
+            done.width,
+            done.height,
+            done.rgba,
+        );
+    }
+
     // Present first: at a frame boundary the due picture goes out BEFORE the
     // next render is started, so an expensive render never delays a present
     // that was already payable.
@@ -450,6 +474,32 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             } else {
                 playback.scale
             };
+            // Post the COMING frames' source decodes to the decode-ahead
+            // thread before this frame's render occupies the loop, so those
+            // decodes and this composite run at the same time. The watermark
+            // posts each frame once per run; an adaptive skip jumps it
+            // forward with the playhead.
+            let ahead_to = frame
+                .saturating_add(crate::playback::PREFETCH_AHEAD)
+                .min(playback.last);
+            let from = playback
+                .prefetched_to
+                .map_or(frame + 1, |posted| posted + 1)
+                .max(frame + 1);
+            for future in from..=ahead_to {
+                let wants = state.renderer.prefetch_wants(
+                    &document,
+                    playback.comp.id,
+                    future,
+                    quality_for(effective),
+                );
+                for want in wants {
+                    state.prefetcher.request(want);
+                }
+            }
+            if ahead_to >= from {
+                playback.prefetched_to = Some(ahead_to);
+            }
             // BGRA on the Windows shared-texture path (ANGLE only opens BGRA
             // surfaces); RGBA everywhere else.
             let bgra = cfg!(all(windows, feature = "shared-texture"));
@@ -595,12 +645,15 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
         last_presented: None,
         ring: std::collections::VecDeque::new(),
         costs: crate::playback::CostWindow::default(),
+        prefetched_to: None,
         skipped: 0,
     });
     // A fresh run starts optimistic at Full and walks down to whatever this
     // machine can actually hold, rather than inheriting the last run's verdict
     // on a comp that may since have got lighter.
     crate::realtime::reset();
+    // Decodes queued for the previous run's frames are no longer wanted.
+    state.prefetcher.invalidate();
     Ok(())
 }
 
@@ -668,6 +721,7 @@ fn handle_requests(
                 WorkerRequest::Play(req) => start_playback(req, state),
                 WorkerRequest::StopPlayback => {
                     state.playback = None;
+                    state.prefetcher.invalidate();
                     Ok(())
                 }
             };
@@ -1018,6 +1072,7 @@ mod tests {
             last_presented: None,
             ring: std::collections::VecDeque::new(),
             costs: crate::playback::CostWindow::default(),
+            prefetched_to: None,
             skipped: 0,
         }
     }

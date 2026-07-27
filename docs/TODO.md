@@ -197,14 +197,18 @@ real window) is the coverage.
 **Playback scheduler — what remains.** The ring landed (2026-07-27): renders run
 ahead of the clock into a bounded ring sized by measured p95 cost
 ([impl/playback-scheduler.md](impl/playback-scheduler.md) §5), presents pace
-against the clock, and a stop/seek drops the ring wholesale. Still not built
-from the note: the worker pool and in-render epoch tokens (renders are serial on
-the one worker thread, so cancellation latency is one frame's render, not §1's
+against the clock, and a stop/seek drops the ring wholesale. The decode-ahead
+thread landed the same day (`lumit-bridge/src/prefetch.rs`): playback posts the
+coming frames' source decodes to a thread with its own decoders, results file
+into the renderer's decoded-frame cache under the decode's own key, so decode
+runs alongside compositing (§5's decode ∥ evaluate). Still not built from the
+note: the worker pool and in-render epoch tokens (composites are serial on the
+one worker thread, so cancellation latency is one frame's render, not §1's
 15 ms — the tokens only mean something once renders leave that thread); pre-roll
 before the audio stream starts (§5); and §6's real-window benches (A/V drift
 over 10 minutes, the underrun ladder). Re-run
-`integration_test/playback_bench_test.dart` to price the ring: the serial loop
-measured 58.7 fps on 1080p60 footage just before it landed.
+`integration_test/playback_bench_test.dart` to price the stack: the serial loop
+measured 58.7 fps on 1080p60 footage just before the ring landed.
 
 **Viewer / comp rendering (gated on the F2 comp-render path):**
 - Transform gizmo and motion paths ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3-§2.4);
@@ -250,11 +254,14 @@ Grouped by the phase they belong to in [16-ROADMAP.md](16-ROADMAP.md). Pointer
 list, not a re-statement of the roadmap.
 
 - **Media engine ([05-ARCHITECTURE.md](05-ARCHITECTURE.md) §6, [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md)).**
-    Hardware decode (D3D11VA/D3D12VA/VideoToolbox); persistent decoder pool
-    (v1 is one-shot CPU decode); proxy generation; image-sequence footage; the VRAM
-    cache tier + resource governor; ProRes/DNxHR intermediate export (v1 is
-    H.264/HEVC only); the 8-/32-bpc working-depth switch (v1 is fp16 only); OCI0 v2
-    colour management and the colour-management UI.
+    Hardware decode: the D3D11VA baseline landed 2026-07-27 (decode on the video
+    unit, transfer to system memory, sw fallback —
+    [impl/media-io.md](impl/media-io.md) §4); still to come are the one-copy
+    D3D11→DX12 interop and VideoToolbox (K-033). Also: proxy generation;
+    image-sequence footage; the VRAM cache tier + resource governor;
+    ProRes/DNxHR intermediate export (v1 is H.264/HEVC only); the 8-/32-bpc
+    working-depth switch (v1 is fp16 only); OCI0 v2 colour management and the
+    colour-management UI.
 
 - **Audio (the largest gap - [07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
     - **Audio panel** - the whole panel is missing in Flutter. The engine (playback,

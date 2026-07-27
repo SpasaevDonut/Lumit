@@ -283,6 +283,28 @@ impl DecodePool {
         decode(&mut self.decoders, &mut self.frame_cache, req)
     }
 
+    /// File a frame decoded elsewhere (the decode-ahead thread) into the
+    /// decoded-frame cache, under the same key a decode here would use — the
+    /// hand-off that makes a prefetched render decode nothing.
+    pub fn preload(
+        &mut self,
+        item: Uuid,
+        frame: usize,
+        target_width: Option<u32>,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) {
+        self.frame_cache.insert(
+            (item, frame, target_width),
+            CachedFrame {
+                width,
+                height,
+                rgba,
+            },
+        );
+    }
+
     /// Decode every layer of one comp frame from its plan — the pixels
     /// [`crate::build`] then turns into a draw list.
     pub fn decode_comp(
@@ -543,4 +565,45 @@ fn decode_comp(
         layers,
         render_cost: decode_started.elapsed(),
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+
+    /// **The decode-ahead hand-off.** A frame filed by [`DecodePool::preload`]
+    /// must be served by the render's own decode as a cache hit — proven by
+    /// requesting it against a path that does not exist, which would error if
+    /// anything tried to open a decoder. And the key is the whole contract:
+    /// a different decode width is a genuine miss, never a wrong-sized hit.
+    #[test]
+    fn a_preloaded_frame_is_served_without_touching_the_file() {
+        let mut pool = DecodePool::new();
+        let item = Uuid::now_v7();
+        pool.preload(item, 3, Some(64), 2, 2, vec![200u8; 16]);
+
+        let hit = pool.decode_footage(&Request {
+            generation: 0,
+            item,
+            path: PathBuf::from("Z:/definitely/not/here/gone.mp4"),
+            frame: 3,
+            target_width: Some(64),
+            slate: None,
+        });
+        let px = hit.expect("preloaded pixels are a cache hit; the file does not exist");
+        assert_eq!((px.width, px.height, px.rgba[0]), (2, 2, 200));
+
+        // Same frame, different decode width: not this entry.
+        assert!(pool
+            .decode_footage(&Request {
+                generation: 0,
+                item,
+                path: PathBuf::from("Z:/definitely/not/here/gone.mp4"),
+                frame: 3,
+                target_width: None,
+                slate: None,
+            })
+            .is_err());
+    }
 }

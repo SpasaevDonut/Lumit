@@ -171,6 +171,16 @@ pub struct ExportInputs {
     pub audio: Vec<AudioJob>,
 }
 
+/// One source decode a prefetcher should perform ahead of the playhead:
+/// exactly what the render's own decode would ask for, so filing the result
+/// under [`HeadlessRenderer::preload_decoded`] makes that render a cache hit.
+pub struct PrefetchWant {
+    pub item: Uuid,
+    pub path: PathBuf,
+    pub frame: usize,
+    pub target_width: Option<u32>,
+}
+
 /// A frame composited and display-encoded but not yet shown, still on the
 /// graphics card — the payload of the playback scheduler's ring buffer
 /// (docs/impl/playback-scheduler.md §5). Rendering and presenting used to be
@@ -439,6 +449,67 @@ impl HeadlessRenderer {
     #[must_use]
     pub fn decoded_frames(&self) -> u64 {
         self.pool.comp_decodes()
+    }
+
+    /// The source decodes rendering `comp_id` at `frame` will perform — what a
+    /// decode-ahead thread does early so the render itself is a cache hit
+    /// (docs/impl/playback-scheduler.md §5, decode ∥ evaluate). Runs the same
+    /// plan the render will run, so the two cannot want different frames.
+    /// Slated (missing) media wants nothing — there is nothing to decode.
+    pub fn prefetch_wants(
+        &mut self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+    ) -> Vec<PrefetchWant> {
+        let Some(comp) = doc.comp(comp_id) else {
+            return Vec::new();
+        };
+        let (cw, ch) = (comp.width, comp.height);
+        self.sync_items(doc, (cw, ch));
+        let fps = comp.frame_rate.fps().max(1.0);
+        let t = frame as f64 / fps;
+        let jobs = plan_comp_frame(doc, comp, t, quality, &ProbeView(&self.probe_cache), None);
+        let mut wants = Vec::new();
+        for job in &jobs {
+            if job.slate {
+                continue;
+            }
+            let mut want = |frame: usize| {
+                wants.push(PrefetchWant {
+                    item: job.item,
+                    path: job.path.clone(),
+                    frame,
+                    target_width: job.target_width,
+                });
+            };
+            want(job.source_frame);
+            if let Some((ceil, _)) = job.blend {
+                want(ceil);
+            }
+            for &(_, neighbour) in &job.temporal {
+                want(neighbour);
+            }
+        }
+        wants
+    }
+
+    /// File one prefetched decode into the decoded-source cache, under exactly
+    /// the key the render's own decode would use — so the render finds it and
+    /// decodes nothing. Wrong or stale pixels cannot be filed under a live
+    /// key: the key IS (item, source frame, decode width).
+    pub fn preload_decoded(
+        &mut self,
+        item: Uuid,
+        frame: usize,
+        target_width: Option<u32>,
+        width: u32,
+        height: u32,
+        rgba: Vec<u8>,
+    ) {
+        self.pool
+            .preload(item, frame, target_width, width, height, rgba);
     }
 
     /// Forget the retained per-layer pixels. The next [`Self::render_preview`]

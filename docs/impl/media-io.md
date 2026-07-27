@@ -62,6 +62,16 @@ GpuFrame }` with the CPU path as the always-working fallback:
   hwaccel with `av_hwframe_transfer_data` → CPU NV12 → `Queue::write_texture` upload.
   Two copies, but simple, correct everywhere, and fast enough for 1080p60 editing. Measure
   before despising it.
+  - **Determinism trap (measured, 2026-07-27)**: swscale's `nv12→rgba` and `yuv420p→rgba`
+    paths interpolate chroma DIFFERENTLY (≈9 % of bytes off, up to 161/255, on test-pattern
+    edges), so a hardware-decoded frame converted straight from NV12 disagrees with the
+    software decoder's pixels — breaking preview == export across machines (K-031). The fix
+    shipped with the baseline: repack the transferred NV12 as planar `yuv420p` (a lossless
+    layout change, `SWS_POINT` same-size) and run the identical conversion. Guarded by the
+    `hardware_and_software_decode_agree_on_the_pixels` regression test.
+  - Also shipped with it: `thread_count = 0` on every codec context — library-default libav
+    is single-threaded (unlike the ffmpeg CLI), so the software fallback was grinding one
+    core.
 - **v1 target (the "one copy")**, Windows: create the decoder with a D3D11 hw device ctx;
   frames arrive as `AV_PIX_FMT_D3D11` (ID3D11Texture2D array slices). Copy the slice into
   a **shared** `ID3D11Texture2D` (created with `D3D11_RESOURCE_MISC_SHARED_NTHANDLE |
