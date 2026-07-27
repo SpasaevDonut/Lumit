@@ -135,7 +135,6 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
     - Re-introduce ability to drag start/end of layer to adjust/crop length
     - All Retime specific's are to be implemented later, currently it should behave and have exact parity
         as all other properties in graph view, same value/speed graph etc. Nothing extra
-    - Currently marquee/selection box for dragging doesn't happen in flutter ui, needs adding
     - **Effect-param interpolation menu** on the fx keyframe lane.
 
 ## Next - engine/bridge follow-ups

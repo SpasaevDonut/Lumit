@@ -79,14 +79,51 @@ void main() {
       animateOpacity(p.comp, p.layer, frames: [0, 40, 90]);
       await mountGraph(tester, p);
 
-      expect(find.byKey(const ValueKey('graph-lane-tf-opacity')), findsOneWidget);
+      expect(
+          find.byKey(const ValueKey('graph-lane-tf-opacity')), findsOneWidget);
       expect(find.text('Opacity'), findsOneWidget);
       for (var i = 0; i < 3; i++) {
         expect(find.byKey(ValueKey<String>('graph-key-tf-opacity#$i')),
             findsOneWidget);
       }
       // Only animated channels get a lane; Position is still static.
-      expect(find.byKey(const ValueKey('graph-lane-tf-positionX')), findsNothing);
+      expect(
+          find.byKey(const ValueKey('graph-lane-tf-positionX')), findsNothing);
+    });
+
+    /// The marquee (docs/TODO Timeline): a drag on the lane's background
+    /// selects the keys inside the box, replacing the lane's old selection;
+    /// a plain background click clears it.
+    testWidgets('a marquee drag selects the keys it encloses', (tester) async {
+      final p = withLayer();
+      // Spread across the comp, so the keys sit far apart on the lane and a
+      // box can honestly take some and not others.
+      animateOpacity(p.comp, p.layer, frames: [0, 600, 1500]);
+      await mountGraph(tester, p);
+
+      // Drag from an empty band (clear of the frame-0 key's handle at the
+      // left edge) to past the right edge: the box takes the later two keys
+      // and leaves the first outside.
+      final lane = find.byKey(const ValueKey('graph-marquee-tf-opacity'));
+      final box = tester.getRect(lane);
+      final start = Offset(box.left + box.width * 0.15, box.top + 2);
+      final gesture = await tester.startGesture(start);
+      // In steps, as a real pointer moves — a single jump can resolve the
+      // gesture arena differently than a drag ever would.
+      final end = box.bottomRight - const Offset(1, 1);
+      for (var i = 1; i <= 8; i++) {
+        await gesture.moveTo(start + (end - start) * (i / 8));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pump();
+      expect(find.text('2 selected'), findsOneWidget,
+          reason: 'the box swallowed the keys inside it, and only those');
+
+      // A click on empty background clears the lane's selection.
+      await tester.tapAt(start);
+      await tester.pump();
+      expect(find.text('0 selected'), findsOneWidget);
     });
 
     /// The whole reason the API takes a whole animation: one gesture, one op.
@@ -104,7 +141,8 @@ void main() {
       // first key, which the collision guard refuses — a different behaviour,
       // tested below.
       await _dragKey(
-          tester, find.byKey(const ValueKey('graph-key-tf-opacity#1')),
+          tester,
+          find.byKey(const ValueKey('graph-key-tf-opacity#1')),
           const Offset(120, -20));
 
       final after =
@@ -133,7 +171,8 @@ void main() {
 
       // Far enough left that the second key would clamp onto the first.
       await _dragKey(
-          tester, find.byKey(const ValueKey('graph-key-tf-opacity#1')),
+          tester,
+          find.byKey(const ValueKey('graph-key-tf-opacity#1')),
           const Offset(-900, 0));
 
       final keys =
@@ -211,11 +250,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('graph-paste')));
       await tester.pumpAndSettle();
 
-      final frames =
-          (p.layer.getTransform().opacity as BridgeScalar_Keyframed)
-              .field0
-              .map((k) => p.comp.frameAtTime(time: k.time))
-              .toList();
+      final frames = (p.layer.getTransform().opacity as BridgeScalar_Keyframed)
+          .field0
+          .map((k) => p.comp.frameAtTime(time: k.time))
+          .toList();
       expect(frames, contains(75),
           reason: 'the earliest pasted key lands on the playhead');
       expect(frames, hasLength(3));

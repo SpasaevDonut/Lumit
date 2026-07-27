@@ -313,6 +313,32 @@ class _LaneState extends State<_Lane> {
   int? _dragging;
   Offset _delta = Offset.zero;
 
+  /// The marquee, while one is being dragged on the lane's background: where
+  /// it started and where the pointer is now.
+  Offset? _marqueeFrom;
+  Offset? _marqueeTo;
+
+  /// Select exactly the keys the marquee encloses — replacing this lane's
+  /// previous selection, so a marquee around nothing also clears it, which is
+  /// what a selection box means everywhere.
+  void _applyMarquee(_View view, List<BridgeKeyframe> keys) {
+    final from = _marqueeFrom;
+    final to = _marqueeTo;
+    setState(() {
+      _marqueeFrom = null;
+      _marqueeTo = null;
+    });
+    if (from == null || to == null) return;
+    final rect = Rect.fromPoints(from, to);
+    widget.selected.removeWhere((id) => id.startsWith('${widget.channel.id}#'));
+    for (var i = 0; i < keys.length; i++) {
+      if (rect.contains(view.pointOf(keys[i]))) {
+        widget.selected.add('${widget.channel.id}#$i');
+      }
+    }
+    widget.onSelectionChanged();
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
@@ -352,6 +378,48 @@ class _LaneState extends State<_Lane> {
                         ),
                       ),
                     ),
+                    // The marquee: dragging on the lane's background draws a
+                    // box and selects the keys inside it (the key handles sit
+                    // above, so grabbing a key still moves it). A plain click
+                    // on the background clears this lane's selection.
+                    Positioned.fill(
+                      child: GestureDetector(
+                        key: ValueKey<String>(
+                            'graph-marquee-${widget.channel.id}'),
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          widget.selected.removeWhere(
+                              (id) => id.startsWith('${widget.channel.id}#'));
+                          widget.onSelectionChanged();
+                        },
+                        // Down, not start: a pan's start position is where
+                        // the slop was exceeded, which would eat the box's
+                        // first corner and the keys nearest it.
+                        onPanDown: (d) => _marqueeFrom = d.localPosition,
+                        onPanStart: (d) => setState(() {
+                          _marqueeTo = d.localPosition;
+                        }),
+                        onPanUpdate: (d) =>
+                            setState(() => _marqueeTo = d.localPosition),
+                        onPanEnd: (_) => _applyMarquee(view, keys),
+                        onPanCancel: () => setState(() {
+                          _marqueeFrom = null;
+                          _marqueeTo = null;
+                        }),
+                      ),
+                    ),
+                    if (_marqueeFrom != null && _marqueeTo != null)
+                      Positioned.fromRect(
+                        rect: Rect.fromPoints(_marqueeFrom!, _marqueeTo!),
+                        child: IgnorePointer(
+                          child: Container(
+                            decoration: BoxDecoration(
+                              color: t.accent.withValues(alpha: 0.12),
+                              border: Border.all(color: t.accent, width: 1),
+                            ),
+                          ),
+                        ),
+                      ),
                     for (var i = 0; i < keys.length; i++)
                       _keyHandle(t, view, keys, i),
                   ],
