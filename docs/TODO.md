@@ -50,11 +50,15 @@ and the transparency grid have landed. Still missing:
     exactly this for the temporal re-render, in `collect_below_pixels` — then have
     it call `build_comp_draws` + `Realiser::realise` like everything else. Deletes
     ~500 duplicated lines and makes preview == export true by construction.
-    **Gate:** a bit-identity test matrix (plain footage, nested and collapsed
-    precomps, mattes of each source mode, adjustment layers, per-layer and
-    accumulation motion blur, Retime blend/flow) must pass *before* the old walk
-    is deleted. `the_preview_and_export_paths_agree_on_a_solid_comp` is the first
-    row of that matrix.
+    **Gate:** a bit-identity test matrix must pass *before* the old walk is
+    deleted. `the_preview_and_export_paths_agree_across_the_matrix` now proves
+    ten rows (blends/opacity, nested + collapsed precomps, all three matte
+    source modes, adjustment stacks, per-layer motion blur, posterize time,
+    camera over 3D) — the two walks already agree on all of them. Remaining
+    before the swap: the footage rows (plain footage, Retime blend/flow),
+    which need a media fixture; then switch `render_rgba` and the export
+    `run()` loop onto the preview path and delete `render_comp_linear` and
+    its private helpers.
 - Surface `DecodePool::comp_decodes` in the bridge's cache stats, so a decode that
     should not have happened is visible rather than merely slow.
 
