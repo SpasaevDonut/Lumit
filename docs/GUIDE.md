@@ -3731,3 +3731,23 @@ everywhere, so no two parts of the pipeline can disagree about the size by a
 pixel. Export never uses a scale (it always renders full size), and the
 one-walk matrix above pins that path unchanged — which is exactly why shrinking
 the preview cannot quietly shrink your exported file.
+
+**Playback renders ahead and presents on time.** For a while playback was a
+strict lockstep: render a frame, show it, wait for the next one to be due,
+render again. That made every frame's deadline personal — one expensive frame
+(a heavy effect, an unlucky decode) blew its own budget and the picture
+stuttered, even if the thirty frames around it were cheap. Now the worker keeps
+a small queue — the ring — of frames it has already rendered but not yet shown.
+Rendering runs as far ahead as the ring allows; *showing* a frame (a single
+cheap GPU copy) happens only when that frame's moment arrives. The gain is
+slack: a stretch of cheap or cached frames fills the ring, and an expensive
+frame can then take several frames' worth of time without anyone noticing,
+because the ring keeps presenting on schedule while it works. How far ahead to
+render is not a guess — the worker measures what frames have recently cost and
+sizes the ring from the slow end of those measurements, so a struggling comp
+gets more slack and a cheap one is not hoarding graphics memory. The two
+playback modes keep their promises: every-frame still shows every frame in
+order at the comp's own rate (a full ring is not a licence to rush), and
+adaptive still keeps to the clock, now by showing the newest queued frame the
+clock has reached. Pressing stop, or seeking, simply throws the ring away —
+frames rendered ahead for a future that was cancelled are dropped unshown.

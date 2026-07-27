@@ -22,9 +22,11 @@ the parity reference. These are v1-scope surfaces the Flutter frontend does not
 yet match, from the 2026-07-24 doc/code parity pass.
 
 **Playback measurements (2026-07-27, real window, `integration_test/playback_bench_test.dart`):**
-every-frame mode with one 1080p60 H.264 layer sustains ~64 fps (was ~56 before
-the two-in-flight pipeline). The bench needs `C:/tmp/test1080p60.mp4` (ffmpeg
-`testsrc2`) and a Windows device, so it is run by hand, not in CI.
+every-frame mode with one 1080p60 H.264 layer measured 58.7 fps on the serial
+loop just before the ring scheduler landed (earlier the same day: ~64 with the
+Dart two-in-flight pipeline, ~56 before it). Re-run to price the ring. The bench
+needs `C:/tmp/test1080p60.mp4` (ffmpeg `testsrc2`) and a Windows device, so it
+is run by hand, not in CI.
 
 **Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
 - **Timeline audio waveforms** - no waveform lane on audio/footage layers or in
@@ -192,16 +194,17 @@ something on the zero-copy transport. Registering a texture still cannot happen
 in a widget test; `integration_test/shared_texture_test.dart` (run by hand on a
 real window) is the coverage.
 
-**Playback scheduler — the rest of it.** Playback now runs in the render worker
-rather than in Flutter (K-181), which was the boundary fix. What it is not yet is
-the scheduler [impl/playback-scheduler.md](impl/playback-scheduler.md) §5
-specifies: it renders one frame at a time, strictly serial, with no ring buffer,
-no lookahead adapted from measured p95 cost, and no epoch tokens — cancellation
-is still the coarse newest-wins drain. The serial hand-off costs roughly what the
-Dart-side two-deep pipeline used to hide (~4 fps on 1080p60 footage), so that is
-the number the ring has to beat. Its test plan (§6: cancellation latency,
-snapshot isolation, A/V drift, the underrun ladder, the realtime controller)
-lands with it.
+**Playback scheduler — what remains.** The ring landed (2026-07-27): renders run
+ahead of the clock into a bounded ring sized by measured p95 cost
+([impl/playback-scheduler.md](impl/playback-scheduler.md) §5), presents pace
+against the clock, and a stop/seek drops the ring wholesale. Still not built
+from the note: the worker pool and in-render epoch tokens (renders are serial on
+the one worker thread, so cancellation latency is one frame's render, not §1's
+15 ms — the tokens only mean something once renders leave that thread); pre-roll
+before the audio stream starts (§5); and §6's real-window benches (A/V drift
+over 10 minutes, the underrun ladder). Re-run
+`integration_test/playback_bench_test.dart` to price the ring: the serial loop
+measured 58.7 fps on 1080p60 footage just before it landed.
 
 **Viewer / comp rendering (gated on the F2 comp-render path):**
 - Transform gizmo and motion paths ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3-§2.4);

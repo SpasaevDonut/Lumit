@@ -171,6 +171,18 @@ pub struct ExportInputs {
     pub audio: Vec<AudioJob>,
 }
 
+/// A frame composited and display-encoded but not yet shown, still on the
+/// graphics card — the payload of the playback scheduler's ring buffer
+/// (docs/impl/playback-scheduler.md §5). Rendering and presenting used to be
+/// one call (`render_to_shared`); splitting them is what lets the worker
+/// render frames AHEAD of the clock and present each one only when it is due,
+/// so one slow frame spends the slack the cheap frames before it banked.
+/// Holding one costs its texture's VRAM and nothing else; dropping it frees
+/// that. It is only valid on the renderer that made it.
+pub struct PreparedFrame {
+    texture: wgpu::Texture,
+}
+
 impl HeadlessRenderer {
     /// Build a headless renderer, acquiring a GPU adapter and compiling the
     /// shader engines. `Err` when no adapter exists (the bridge turns this into
@@ -507,6 +519,26 @@ impl HeadlessRenderer {
             .map_err(|e| e.to_string())
     }
 
+    /// Composite and display-encode one frame WITHOUT showing it — the render
+    /// half of [`Self::render_to_shared`], split out so the playback scheduler
+    /// can render ahead of the clock into its ring and present each frame only
+    /// when it is due (docs/impl/playback-scheduler.md §5). `bgra` chooses the
+    /// channel order the eventual present needs (true on the Windows
+    /// shared-texture path — ANGLE only opens BGRA surfaces). Shares the
+    /// interactive path, so it shares the drag fast path too.
+    pub fn render_prepared(
+        &mut self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+        bgra: bool,
+    ) -> Result<PreparedFrame, String> {
+        let (texture, _, _) =
+            self.preview_display_texture_fmt(doc, comp_id, frame, quality, None, bgra)?;
+        Ok(PreparedFrame { texture })
+    }
+
     /// Render composition `comp_id` at integer `frame` into the Windows shared
     /// GPU texture, returning its NT handle and dimensions ([`SharedFrameInfo`],
     /// K-177) — the zero-copy sibling of [`Self::render_preview`]. The frame
@@ -533,8 +565,20 @@ impl HeadlessRenderer {
     ) -> Result<SharedFrameInfo, String> {
         // BGRA, not the RGBA every other path uses: the shared texture's
         // consumer is ANGLE, which only opens BGRA share-handle surfaces.
-        let (shown, _, _) =
-            self.preview_display_texture_fmt(doc, comp_id, frame, quality, None, true)?;
+        let prepared = self.render_prepared(doc, comp_id, frame, quality, true)?;
+        self.present_prepared(&prepared)
+    }
+
+    /// Show an already-rendered frame: copy it into the Windows shared texture
+    /// and report the handle — the present half of [`Self::render_to_shared`].
+    /// Cheap next to a render (one GPU-to-GPU copy), which is what lets the
+    /// scheduler pace presents against the clock while renders run ahead.
+    #[cfg(all(windows, feature = "shared-texture"))]
+    pub fn present_prepared(
+        &mut self,
+        prepared: &PreparedFrame,
+    ) -> Result<SharedFrameInfo, String> {
+        let shown = &prepared.texture;
         // The texture's ACTUAL dims — the comp size times the preview scale the
         // composite ran at. The registration sizes off them, so a coarser tier
         // shares a genuinely smaller texture; Dart stretches it into the same
@@ -554,7 +598,7 @@ impl HeadlessRenderer {
             .shared
             .as_ref()
             .ok_or_else(|| "headless render: shared texture missing after create".to_string())?;
-        target.present(&self.gpu, &shown);
+        target.present(&self.gpu, shown);
         Ok(SharedFrameInfo {
             handle: target.handle(),
             width: aw,
@@ -583,7 +627,19 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
     ) -> Result<SharedFrameInfoLinux, String> {
-        let (shown, _, _) = self.preview_display_texture(doc, comp_id, frame, quality, None)?;
+        let prepared = self.render_prepared(doc, comp_id, frame, quality, false)?;
+        self.present_prepared_dmabuf(&prepared)
+    }
+
+    /// Show an already-rendered frame via the DMA-BUF texture — the Linux
+    /// sibling of [`Self::present_prepared`], for the scheduler's paced
+    /// presents.
+    #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+    pub fn present_prepared_dmabuf(
+        &mut self,
+        prepared: &PreparedFrame,
+    ) -> Result<SharedFrameInfoLinux, String> {
+        let shown = &prepared.texture;
         // The texture's ACTUAL dims (comp size × preview scale) — see the
         // Windows sibling above.
         let (aw, ah) = (shown.width(), shown.height());
@@ -603,7 +659,7 @@ impl HeadlessRenderer {
             .shared_dmabuf
             .as_ref()
             .ok_or_else(|| "headless render: dmabuf texture missing after create".to_string())?;
-        target.present(&self.gpu, &shown);
+        target.present(&self.gpu, shown);
         let info = target.info();
         Ok(SharedFrameInfoLinux {
             fd: info.fd,

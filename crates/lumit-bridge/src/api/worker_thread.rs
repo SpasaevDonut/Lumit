@@ -75,13 +75,18 @@ pub struct PlayRequest {
 
 /// Playback in progress: what is being played, and where it has got to.
 ///
-// ponytail: renders one frame at a time, strictly serial. docs/impl/playback-
-// scheduler.md §5 specifies a bounded ring with lookahead adapted from measured
-// p95 render cost, and epoch tokens for cancellation, so a frame can be
-// rendering while the previous one is still being shown. Upgrade when the
-// serial hand-off is measurably the limit — the pipelining the every-frame path
-// used to do in Dart bought ~4 fps on 1080p60 footage, which is the number to
-// beat.
+/// The scheduler shape (docs/impl/playback-scheduler.md §5): renders run AHEAD
+/// of the clock into `ring`, a bounded queue of finished frames still on the
+/// graphics card, and each is PRESENTED — one cheap GPU copy — only when it is
+/// due. The slack is the point: a span of cheap or cached frames fills the
+/// ring, and an expensive frame then spends the banked time instead of
+/// stalling the picture. How far ahead is `capacity()`, adapted from the
+/// measured p95 render cost. Dropping this struct (stop, seek, a new play)
+/// drops the ring and every in-flight frame with it — the cancellation edge.
+// ponytail: renders are still serial on this one worker thread, so cancellation
+// latency is bounded by one frame's render, not the impl note's 15 ms. Epoch
+// tokens inside the render walk (and the worker pool they exist for) are the
+// upgrade, docs/impl/playback-scheduler.md §1-2.
 #[frb(ignore)]
 struct Playback {
     comp: CompositionReference,
@@ -97,9 +102,13 @@ struct Playback {
     /// as no mix is loaded to be master instead.
     from: u64,
     started: std::time::Instant,
-    /// When the last frame was handed over, for every-frame's pacing. `None`
-    /// before the first frame of a run.
-    last_published: Option<std::time::Instant>,
+    /// When the last frame was shown, for every-frame's pacing. `None`
+    /// before the first present of a run.
+    last_presented: Option<std::time::Instant>,
+    /// Frames rendered ahead of the clock, oldest first, waiting to be shown.
+    ring: std::collections::VecDeque<(u64, lumit_render::PreparedFrame)>,
+    /// Recent render costs, sizing the ring (`capacity()`).
+    costs: crate::playback::CostWindow,
     /// How many frames the last [`Self::advance`] had to jump over to catch the
     /// clock. Zero while playback is keeping up.
     ///
@@ -126,35 +135,71 @@ impl Playback {
         }
     }
 
-    /// How long until the next frame is *due*, or `None` when it is due now.
+    /// How many frames ahead of the clock to render — the ring's capacity,
+    /// adapted from the measured p95 render cost (the impl note's pinned
+    /// formula, [`crate::playback::lookahead_frames`]).
+    fn capacity(&self) -> usize {
+        crate::playback::lookahead_frames(self.costs.p95(), self.fps)
+    }
+
+    /// Which queued frame to present now — an index into `queued` (the ring's
+    /// frame numbers, oldest first) — or `None` while nothing is due yet.
     ///
-    /// **This is what keeps adaptive playback at the composition's rate.** A
-    /// comp that renders faster than realtime would otherwise play as fast as
-    /// the renderer managed — the frontend's `Ticker` used to supply this pacing
-    /// by only asking once per vsync, and moving playback without moving the
-    /// pacing with it made a 60 fps comp play at several hundred.
+    /// **This is what keeps playback at the composition's rate.** Renders are
+    /// free to run ahead into the ring; the PRESENT is what the user sees, so
+    /// the present is what paces. Without this gate a comp cheaper than
+    /// realtime would play as fast as the renderer managed — the frontend's
+    /// `Ticker` used to supply the pacing for free by only asking once per
+    /// vsync, and losing it made a 60 fps comp play at several hundred.
     ///
-    /// Every-frame paces differently, and against a different baseline: it is
-    /// allowed to fall behind (that is the mode — it never skips, so a comp too
-    /// heavy to render in realtime simply plays slow), but it is *not* allowed
-    /// to run ahead. Once a span is cached, frames cost almost nothing to
-    /// produce and the mode would replay it many times faster than realtime,
-    /// which is what "it zooms through the cached parts" was. K-171's "replays
-    /// it at full speed from cache" means the composition's own rate, not
-    /// whatever rate the cache can be read at.
-    ///
-    /// So the baseline is the *previous frame*, not the start of playback: keep
-    /// at least one frame period between hand-offs, and never try to make up
-    /// time that has already been lost.
-    fn wait_before_next(&self) -> Option<std::time::Duration> {
-        let period = std::time::Duration::from_secs_f64(1.0 / self.fps);
-        if matches!(self.mode, BridgePlaybackMode::EveryFrame) {
-            let since = self.last_published?.elapsed();
-            return period.checked_sub(since).filter(|d| !d.is_zero());
+    /// * **Every-frame** shows every frame in order (the mode's promise), so it
+    ///   is always the front — but no sooner than one comp period since the
+    ///   last present. It may fall behind (a heavy comp plays slow); it is
+    ///   never allowed to run ahead, however full the cache fills the ring
+    ///   (K-171: "replays at full speed" means the comp's own rate).
+    /// * **Adaptive** keeps time: the NEWEST queued frame the clock has
+    ///   reached (docs/impl/playback-scheduler.md §4). The caller drops the
+    ///   older entries — the clock has passed them, and showing them would
+    ///   mean playing late pictures instead of the current one.
+    fn present_choice(&self, queued: &[u64]) -> Option<usize> {
+        if queued.is_empty() {
+            return None;
         }
-        let due = self.next as f64 / self.fps;
-        let elapsed = self.elapsed_seconds();
-        (due > elapsed).then(|| std::time::Duration::from_secs_f64(due - elapsed))
+        match self.mode {
+            BridgePlaybackMode::EveryFrame => {
+                let period = std::time::Duration::from_secs_f64(1.0 / self.fps);
+                match &self.last_presented {
+                    Some(at) if at.elapsed() < period => None,
+                    _ => Some(0),
+                }
+            }
+            BridgePlaybackMode::Adaptive => {
+                let clock = self.elapsed_seconds();
+                queued
+                    .iter()
+                    .rposition(|&frame| frame as f64 / self.fps <= clock)
+            }
+        }
+    }
+
+    /// How long until the ring's front is due to present, or `None` when it is
+    /// due now (or nothing is queued). The worker sleeps this out — in short
+    /// slices, so a stop arriving mid-wait is still acted on promptly — when
+    /// the ring is full and there is nothing else to do.
+    fn wait_until_present(&self, queued: &[u64]) -> Option<std::time::Duration> {
+        let &front = queued.first()?;
+        match self.mode {
+            BridgePlaybackMode::EveryFrame => {
+                let period = std::time::Duration::from_secs_f64(1.0 / self.fps);
+                let since = self.last_presented?.elapsed();
+                period.checked_sub(since).filter(|d| !d.is_zero())
+            }
+            BridgePlaybackMode::Adaptive => {
+                let due = front as f64 / self.fps;
+                let clock = self.elapsed_seconds();
+                (due > clock).then(|| std::time::Duration::from_secs_f64(due - clock))
+            }
+        }
     }
 
     /// The next frame to render, or `None` when playback has run off the end.
@@ -164,10 +209,10 @@ impl Playback {
     /// * **Every-frame** never skips — that is the mode's entire promise, since
     ///   the point of it is to render and cache every frame at full quality
     ///   however long that takes (K-171). It simply counts.
-    /// * **Adaptive** keeps time, so it asks the clock where playback actually
-    ///   is and renders *that* frame, letting frames the clock has already
-    ///   passed go by. Being *ahead* of the clock is [`Self::wait_before_next`]'s
-    ///   business, not this one's.
+    /// * **Adaptive** keeps time, so it never schedules a frame the clock has
+    ///   already passed — it jumps to where playback actually is. Running
+    ///   *ahead* of the clock is fine now (that is what the ring is for);
+    ///   how far ahead is [`Self::capacity`]'s business, not this one's.
     fn advance(&mut self) -> Option<u64> {
         if self.next > self.last {
             return None;
@@ -348,74 +393,170 @@ fn worker_loop(
     }
 }
 
-/// Render the next frame of playback, if playback is running.
+/// One turn of the playback scheduler, if playback is running
+/// (docs/impl/playback-scheduler.md §5).
 ///
-/// One frame per turn of the loop, so a stop or a seek that arrives mid-playback
-/// is seen between frames rather than after the whole run. Rendering is
-/// synchronous here on purpose: the next frame's choice depends on how long this
-/// one took, which is exactly the coupling that could not exist while the
-/// frontend was choosing.
+/// Each turn does at most one piece of work — present a due frame, or render
+/// one frame ahead into the ring, or sleep a short bounded slice — so a stop
+/// or a seek arriving mid-playback is seen between pieces rather than after
+/// the whole run. Renders and presents are decoupled: renders fill the ring as
+/// fast as the machine allows (up to `capacity()` frames ahead), presents pace
+/// against the clock, and the ring between them is the slack that lets one
+/// expensive frame spend what the cheap frames before it banked.
 #[frb(ignore)]
 fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
+    // Present first: at a frame boundary the due picture goes out BEFORE the
+    // next render is started, so an expensive render never delays a present
+    // that was already payable.
+    if let Some(playback) = &mut state.playback {
+        let queued: Vec<u64> = playback.ring.iter().map(|(frame, _)| *frame).collect();
+        if let Some(chosen) = playback.present_choice(&queued) {
+            // Everything before the chosen entry arrived too late — adaptive's
+            // clock has passed it (every-frame always chooses the front, so
+            // this drops nothing there). Rendered but never shown; the frame
+            // cache keeps the work.
+            let Some((frame, prepared)) = playback.ring.drain(..=chosen).last() else {
+                return;
+            };
+            playback.last_presented = Some(std::time::Instant::now());
+            present_ring_frame(&mut state.renderer, frame, &prepared, stream);
+            return;
+        }
+    }
+
     let Some(playback) = &mut state.playback else {
         return;
     };
 
-    // Ahead of the clock: wait for this frame to be due rather than racing on.
-    // Capped well below a frame so a stop or a seek arriving mid-wait is still
-    // acted on promptly — the loop simply comes back round and waits again.
-    if let Some(wait) = playback.wait_before_next() {
-        std::thread::sleep(wait.min(std::time::Duration::from_millis(4)));
-        return;
-    }
-
-    let Some(frame) = playback.advance() else {
-        state.playback = None;
-        _ = stream.add(WorkerResponse::PlaybackEnded);
-        return;
-    };
-
-    let request = RenderCompRequest {
-        comp: playback.comp.clone(),
-        frame,
-        mode: playback.mode,
-        scale: playback.scale,
-    };
-    // Stamped before the render, so the period counts hand-off to hand-off
-    // rather than adding the render on top of it — the pacing must not make a
-    // slow comp slower still.
-    if let Some(playback) = &mut state.playback {
-        playback.last_published = Some(std::time::Instant::now());
-    }
-
-    // The tier this frame is about to be rendered at, read before the render so
-    // the cost can be attributed to it afterwards.
-    let tier = crate::realtime::tier();
-    let started = std::time::Instant::now();
-    let outcome = render_comp(request, state, stream);
-
-    // Tell the realtime controller what that frame cost, so playback can drop to
-    // a coarser preview when this machine cannot hold the composition's rate
-    // (K-171). Here rather than in the render path because this is the only
-    // place that knows *both* halves of the answer: what the worker measured,
-    // and whether the clock has run away from it regardless.
-    if let Some(playback) = &state.playback {
-        if matches!(playback.mode, BridgePlaybackMode::Adaptive) {
-            crate::realtime::observe(
-                playback.observed_cost(started.elapsed().as_secs_f64()),
-                playback.fps,
-                crate::realtime::tier_scale(tier),
+    // Render ahead while the ring has room and frames remain.
+    if playback.ring.len() < playback.capacity() {
+        if let Some(frame) = playback.advance() {
+            let document = {
+                let Ok(document) = state.project.state() else {
+                    return;
+                };
+                let Ok(document) = document.read() else {
+                    return;
+                };
+                document.store.snapshot()
+            };
+            // The adaptive tier applies at RENDER time — the whole point of a
+            // coarser tier is a cheaper composite (K-186), so it must be in
+            // force while the frame is made, not when it is shown. Read before
+            // the render so the cost can be attributed to it afterwards.
+            let tier = crate::realtime::tier();
+            let effective = if matches!(playback.mode, BridgePlaybackMode::Adaptive) {
+                playback.scale * crate::realtime::tier_scale(tier)
+            } else {
+                playback.scale
+            };
+            // BGRA on the Windows shared-texture path (ANGLE only opens BGRA
+            // surfaces); RGBA everywhere else.
+            let bgra = cfg!(all(windows, feature = "shared-texture"));
+            let started = std::time::Instant::now();
+            let rendered = state.renderer.render_prepared(
+                &document,
+                playback.comp.id,
+                frame,
+                quality_for(effective),
+                bgra,
             );
+            let cost = started.elapsed().as_secs_f64();
+            match rendered {
+                Ok(prepared) => {
+                    playback.ring.push_back((frame, prepared));
+                    playback.costs.push(cost);
+                    // Tell the realtime controller what that frame cost, so
+                    // playback can drop to a coarser preview when this machine
+                    // cannot hold the composition's rate (K-171). Here because
+                    // this is the only place that knows both halves: what the
+                    // worker measured, and whether the clock has run away from
+                    // it regardless (`observed_cost`).
+                    if matches!(playback.mode, BridgePlaybackMode::Adaptive) {
+                        crate::realtime::observe(
+                            playback.observed_cost(cost),
+                            playback.fps,
+                            crate::realtime::tier_scale(tier),
+                        );
+                    }
+                }
+                Err(err) => {
+                    // A frame that will not render stops playback rather than
+                    // spinning on it — the alternative is a silent loop burning
+                    // a core on a comp that cannot be drawn.
+                    eprintln!("Playback stopped: {err}");
+                    state.playback = None;
+                    _ = stream.add(WorkerResponse::PlaybackEnded);
+                }
+            }
+            return;
+        }
+        // Nothing left to schedule: playback ends once the ring has drained.
+        if playback.ring.is_empty() {
+            state.playback = None;
+            _ = stream.add(WorkerResponse::PlaybackEnded);
+            return;
         }
     }
 
-    if let Err(err) = outcome {
-        // A frame that will not render stops playback rather than spinning on it
-        // — the alternative is a silent loop burning a core on a comp that
-        // cannot be drawn.
-        eprintln!("Playback stopped: {err}");
-        state.playback = None;
-        _ = stream.add(WorkerResponse::PlaybackEnded);
+    // Ring full (or everything is rendered) and nothing due: wait, in slices
+    // capped well below a frame so a stop or a seek arriving mid-wait is still
+    // acted on promptly — the loop simply comes back round.
+    let queued: Vec<u64> = playback.ring.iter().map(|(frame, _)| *frame).collect();
+    if let Some(wait) = playback.wait_until_present(&queued) {
+        std::thread::sleep(wait.min(std::time::Duration::from_millis(4)));
+    }
+}
+
+/// Show one already-rendered ring frame — the present half of the pipeline,
+/// one GPU copy plus the handle relay to Dart. A failed present drops the
+/// frame and says so; it never takes playback down.
+#[frb(ignore)]
+fn present_ring_frame(
+    renderer: &mut HeadlessRenderer,
+    frame: u64,
+    prepared: &lumit_render::PreparedFrame,
+    stream: &mut WorkerResponseStream,
+) {
+    #[cfg(all(windows, feature = "shared-texture"))]
+    match renderer.present_prepared(prepared) {
+        Ok(shared) => {
+            _ = stream.add(WorkerResponse::RenderedSharedTexture(
+                BridgeSharedFrameInfo {
+                    handle: shared.handle,
+                    frame,
+                    width: shared.width,
+                    height: shared.height,
+                },
+            ));
+        }
+        Err(err) => eprintln!("Shared-texture present failed, dropping frame: {err}"),
+    }
+
+    #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+    match renderer.present_prepared_dmabuf(prepared) {
+        Ok(shared) => {
+            _ = stream.add(WorkerResponse::RenderedDMABuf(BridgeSharedFrameInfoLinux {
+                fd: shared.fd,
+                frame,
+                width: shared.width,
+                height: shared.height,
+                stride: shared.stride,
+                offset: shared.offset,
+                drm_fourcc: shared.drm_fourcc,
+                modifier: shared.modifier,
+            }));
+        }
+        Err(err) => eprintln!("Shared DMA-BUF present failed, dropping frame: {err}"),
+    }
+
+    #[cfg(not(any(
+        all(windows, feature = "shared-texture"),
+        all(target_os = "linux", feature = "shared-texture-linux")
+    )))]
+    {
+        let _ = (renderer, frame, prepared, stream);
+        eprintln!("No zero-copy transport in this build; dropping the frame");
     }
 }
 
@@ -451,7 +592,9 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
         fps: if fps > 0.0 { fps } else { 60.0 },
         from,
         started: std::time::Instant::now(),
-        last_published: None,
+        last_presented: None,
+        ring: std::collections::VecDeque::new(),
+        costs: crate::playback::CostWindow::default(),
         skipped: 0,
     });
     // A fresh run starts optimistic at Full and walks down to whatever this
@@ -872,33 +1015,47 @@ mod tests {
             fps: 60.0,
             from: 0,
             started: std::time::Instant::now(),
-            last_published: None,
+            last_presented: None,
+            ring: std::collections::VecDeque::new(),
+            costs: crate::playback::CostWindow::default(),
             skipped: 0,
         }
     }
 
-    /// **The pacing regression.** Playback moved from a Flutter `Ticker` to the
-    /// worker, and the Ticker had been supplying the pacing for free by only
-    /// asking once per vsync. Without [`Playback::wait_before_next`] the loop
-    /// renders as fast as the renderer manages, so a comp cheaper than realtime
-    /// plays at several times its own rate. Fails without the wait.
+    /// **The pacing regression, on the present side.** Renders are free to run
+    /// ahead into the ring — that is the scheduler's point — so the PRESENT is
+    /// what paces playback now. Without [`Playback::present_choice`]'s clock
+    /// gate a comp cheaper than realtime would play as fast as the renderer
+    /// manages, which is the "plays at several hundred fps" bug the old
+    /// per-render wait existed for. Fails without the gate.
     #[test]
-    fn adaptive_playback_waits_for_each_frame_to_be_due() {
+    fn adaptive_playback_presents_frames_only_when_the_clock_reaches_them() {
         let mut p = playback(BridgePlaybackMode::Adaptive, 100);
+        let queued = [0u64, 1, 2, 3];
 
-        // Frame 0 is due the instant playback starts.
-        assert!(p.wait_before_next().is_none(), "the first frame is due now");
-        assert_eq!(p.advance(), Some(0));
-
-        // Frame 1 is not: at 60 fps it is due a sixtieth of a second in, and
-        // essentially none of that has passed.
-        let wait = p
-            .wait_before_next()
-            .expect("frame 1 is not due yet, so playback must wait for it");
-        assert!(
-            wait.as_secs_f64() > 0.010 && wait.as_secs_f64() <= 1.0 / 60.0,
-            "waits out most of a frame, not more than one: {wait:?}"
+        // Frame 0 is due the instant playback starts; nothing beyond it is.
+        assert_eq!(
+            p.present_choice(&queued),
+            Some(0),
+            "frame 0 is due at the very start, and only frame 0"
         );
+
+        // Half a second in, the clock has reached frame 30: the ring's newest
+        // due entry is presented and everything older is dropped with it —
+        // showing frame 1 half a second late is worse than not showing it.
+        p.started = std::time::Instant::now() - std::time::Duration::from_millis(500);
+        let queued = [28u64, 29, 30, 40];
+        let chosen = p.present_choice(&queued).expect("plenty is due by now");
+        assert!(
+            (1..=2).contains(&chosen),
+            "the newest frame the clock has reached, not the oldest queued: {chosen}"
+        );
+
+        // And a ring full of the future presents nothing at all.
+        assert_eq!(p.present_choice(&[500, 501]), None, "the future can wait");
+        // The wait until it is due is bounded by when frame 500 falls due.
+        let wait = p.wait_until_present(&[500, 501]).expect("not due yet");
+        assert!(wait.as_secs_f64() <= 500.0 / 60.0);
     }
 
     /// Every-frame never skips, whatever it costs — that is the mode's whole
@@ -912,25 +1069,34 @@ mod tests {
         assert_eq!(p.advance(), None, "past the last frame, playback is over");
     }
 
-    /// **The cached-playback regression.** Every-frame is allowed to fall behind
-    /// — a comp too heavy to render in realtime plays slow rather than dropping
-    /// frames — but it must never run *ahead*. Once a span is cached, frames
-    /// cost almost nothing and it replayed them many times faster than realtime:
-    /// "it zooms through those parts". Fails without the per-frame pacing.
+    /// **The cached-playback regression, on the present side.** Every-frame is
+    /// allowed to fall behind — a comp too heavy to render in realtime plays
+    /// slow rather than dropping frames — but it must never run *ahead*. Once a
+    /// span is cached, renders cost almost nothing and the RING fills instantly;
+    /// without the present gate the mode replayed cached spans many times
+    /// faster than realtime: "it zooms through those parts". Fails without the
+    /// per-present pacing.
     #[test]
-    fn every_frame_playback_never_runs_faster_than_realtime() {
+    fn every_frame_playback_never_presents_faster_than_realtime() {
         let mut p = playback(BridgePlaybackMode::EveryFrame, 100);
+        let queued = [0u64, 1, 2];
 
         // The first frame of a run is due immediately — nothing has been shown
-        // yet, so there is nothing to be early against.
-        assert!(p.wait_before_next().is_none());
+        // yet, so there is nothing to be early against. And it is the FRONT:
+        // every-frame shows every frame, in order, never the newest.
+        assert_eq!(p.present_choice(&queued), Some(0));
 
-        // A frame that has just been handed over: the next one is a sixtieth of
-        // a second away, and a cache hit must not be allowed to jump the queue.
-        p.last_published = Some(std::time::Instant::now());
+        // A frame shown just now: the next present is a sixtieth of a second
+        // away, however full of cached frames the ring already is.
+        p.last_presented = Some(std::time::Instant::now());
+        assert_eq!(
+            p.present_choice(&queued),
+            None,
+            "a full ring is not a licence to run ahead of the comp's rate"
+        );
         let wait = p
-            .wait_before_next()
-            .expect("a frame delivered just now means the next one is not due");
+            .wait_until_present(&queued)
+            .expect("a frame shown just now means the next one is not due");
         // The upper bound carries a nanosecond of slack: `Duration` rounds
         // 1/60 s up at nanosecond precision, so an exact `<=` fails on the
         // untouched period.
@@ -939,14 +1105,33 @@ mod tests {
             "waits out the rest of the frame period, no more: {wait:?}"
         );
 
-        // A frame that took longer than its period to produce is already late.
-        // Late is allowed; making it later is not.
-        p.last_published = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
-        assert!(
-            p.wait_before_next().is_none(),
-            "already behind, so no further wait — it never tries to catch up \
-             and never adds to the delay"
+        // A present that is already overdue happens now. Late is allowed;
+        // making it later is not.
+        p.last_presented = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
+        assert_eq!(
+            p.present_choice(&queued),
+            Some(0),
+            "already behind, so the front goes out immediately — it never \
+             tries to catch up and never adds to the delay"
         );
+    }
+
+    /// The scheduler's slack, end to end at the decision level: cheap frames
+    /// keep the ring's capacity at the impl note's floor of 8, a run of
+    /// expensive ones raises it, and the raise ages out with the costs that
+    /// caused it — the lookahead follows the comp the playhead is in now.
+    #[test]
+    fn the_ring_capacity_adapts_to_measured_render_cost() {
+        let mut p = playback(BridgePlaybackMode::Adaptive, 1000);
+        assert_eq!(p.capacity(), 8, "a fresh run starts at the floor");
+        for _ in 0..32 {
+            p.costs.push(0.1); // 6 budgets at 60 fps: a struggling comp.
+        }
+        assert_eq!(p.capacity(), 12, "2 × 0.1 s × 60 fps");
+        for _ in 0..32 {
+            p.costs.push(0.004); // The playhead moved somewhere cheap.
+        }
+        assert_eq!(p.capacity(), 8, "the expensive stretch ages out");
     }
 
     /// Adaptive skips frames the clock has already gone past, rather than
@@ -957,7 +1142,6 @@ mod tests {
         let mut p = playback(BridgePlaybackMode::Adaptive, 100);
         p.started = std::time::Instant::now() - std::time::Duration::from_millis(500);
 
-        assert!(p.wait_before_next().is_none(), "half a second overdue");
         let frame = p.advance().expect("still inside the composition");
         assert!(
             frame >= 29,
