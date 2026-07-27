@@ -825,11 +825,28 @@ fn publish_frame(
     )))]
     let _ = publish.zero_copy;
 
+    // **Zero-copy whenever this build and this machine can do it, in every
+    // mode.** The engine draws straight into a texture the runner displays and
+    // no pixels cross the boundary at all; the alternative copies every pixel
+    // off the card, serialises it a byte at a time (~6 ms per 1.4 MB, growing
+    // with the panel) and has Flutter upload it back to the card to draw —
+    // four trips for a picture that never needed to leave.
+    //
+    // This used to be gated on `Adaptive`, so every-frame mode deliberately took
+    // the slow road in order to *fill the frame cache* — the zero-copy path
+    // keeps no bytes, so there is nothing to file. That trade is off: the fast
+    // path is the one to be on, and with sequential decode restored (see
+    // `VideoDecoder::frame_rgba`) re-rendering a frame is cheap enough that
+    // holding its pixels no longer earns the round trip it costs to get them.
+    //
+    // Read-back remains the fallback and is still reached two ways: a machine or
+    // build that cannot register a shared texture (`publish.zero_copy` false),
+    // and a shared-texture render that fails, which falls through below.
     #[cfg(any(
         all(windows, feature = "shared-texture"),
         all(target_os = "linux", feature = "shared-texture-linux")
     ))]
-    if publish.zero_copy && matches!(publish.mode, BridgePlaybackMode::Adaptive) {
+    if publish.zero_copy {
         publish_zero_copy(state, comp, frame, scale, document, stream, publish);
         return;
     }
@@ -846,10 +863,18 @@ fn publish_zero_copy(
     stream: &mut WorkerResponseStream,
     publish: Publish,
 ) {
+    // The adaptive tier applies here exactly as on the Windows sibling: without
+    // it a coarser tier makes the picture no cheaper, so the controller's
+    // decision has no effect and playback drops frames instead of softening.
+    let effective = if matches!(publish.mode, BridgePlaybackMode::Adaptive) {
+        scale * crate::realtime::tier_scale(crate::realtime::tier())
+    } else {
+        scale
+    };
     let shared =
         match state
             .renderer
-            .render_to_shared_dmabuf(document, comp, frame, quality_for(scale))
+            .render_to_shared_dmabuf(document, comp, frame, quality_for(effective))
         {
             Ok(shared) => shared,
             Err(err) => {
@@ -882,22 +907,34 @@ fn publish_zero_copy(
     stream: &mut WorkerResponseStream,
     publish: Publish,
 ) {
-    let shared = match state
-        .renderer
-        .render_to_shared(document, comp, frame, quality_for(scale))
-    {
-        Ok(shared) => shared,
-        Err(err) => {
-            // Fall back rather than drop. A dropped frame here is not a slower
-            // Viewer, it is an *empty* one: nothing else publishes a picture, so
-            // the panel stays on its checkerboard for the whole session while
-            // everything else — the playhead, the Scopes — carries on as though
-            // playback were fine. A frame by the slow road beats no frame.
-            eprintln!("Shared-texture render failed, falling back to read-back: {err}");
-            publish_read_back(state, comp, frame, scale, document, stream, publish);
-            return;
-        }
+    // The adaptive tier has to be applied *here* too, not only on the read-back
+    // path. This asked for `scale` flat, so the controller could drop to Quarter
+    // and the picture would not get any cheaper — which on a build where this is
+    // the only display path means the tier does nothing at all, and playback
+    // keeps time by dropping frames for ever. What it costs is reported by
+    // `play_one_frame`, which times the render whichever route it took.
+    let effective = if matches!(publish.mode, BridgePlaybackMode::Adaptive) {
+        scale * crate::realtime::tier_scale(crate::realtime::tier())
+    } else {
+        scale
     };
+    let shared =
+        match state
+            .renderer
+            .render_to_shared(document, comp, frame, quality_for(effective))
+        {
+            Ok(shared) => shared,
+            Err(err) => {
+                // Fall back rather than drop. A dropped frame here is not a slower
+                // Viewer, it is an *empty* one: nothing else publishes a picture, so
+                // the panel stays on its checkerboard for the whole session while
+                // everything else — the playhead, the Scopes — carries on as though
+                // playback were fine. A frame by the slow road beats no frame.
+                eprintln!("Shared-texture render failed, falling back to read-back: {err}");
+                publish_read_back(state, comp, frame, scale, document, stream, publish);
+                return;
+            }
+        };
 
     _ = stream.add(WorkerResponse::RenderedSharedTexture(
         BridgeSharedFrameInfo {
