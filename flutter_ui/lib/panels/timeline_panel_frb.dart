@@ -47,7 +47,7 @@ List<String>? _blendModes;
 /// name worth reading, and the blend and parent pickers side by side — about
 /// what After Effects gives its own outline. Fixed rather than resizable for
 /// now: a splitter is its own slice of work and nothing depends on it yet.
-const double _outlineWidth = 400;
+const double _outlineWidth = 560;
 
 /// One layer row's height, and the ruler's.
 const double _rowHeight = 22;
@@ -98,6 +98,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   }
 
   String _search = '';
+
+  /// The layer whose fold-out was last touched — drawn a shade dimmer than
+  /// the selected layer, so "which layer do these rows belong to" has an
+  /// answer at a glance without stealing the selection.
+  String? _highlighted;
 
   /// The graph editor replaces the layer area rather than sitting beside it:
   /// the two want the same width, and a curve squeezed into half a panel is not
@@ -184,11 +189,17 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                     ),
               child: LayoutBuilder(
                 builder: (context, constraints) {
+                  // A panel narrower than the outline's columns shows a
+                  // horizontally-scrolling slice of them rather than the
+                  // overflow stripe — the same answer the Timeline toolbar
+                  // gives — keeping the lanes at least a working sliver.
+                  final outlineViewport =
+                      (constraints.maxWidth - 120).clamp(120.0, _outlineWidth);
                   // The axis is the panel's own width minus the outline, so a
                   // narrower panel shows the same span more tightly rather than
                   // scrolling — matching the Viewer's fit-to-panel behaviour.
                   final layerAreaWidth =
-                      (constraints.maxWidth - _outlineWidth).clamp(1.0, 1e6);
+                      (constraints.maxWidth - outlineViewport).clamp(1.0, 1e6);
                   final axis = _Axis(frames: frames, width: layerAreaWidth);
 
                   // **Not** wrapped in a playhead listener. Every layer row and
@@ -202,20 +213,29 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       SizedBox(
-                        width: _outlineWidth,
-                        child: _Outline(
-                          comp: comp,
-                          layers: layers,
-                          selected: ui.selectedLayer.value,
-                          open: _open,
-                          hasAudio: _hasAudio,
-                          onToggle: _toggle,
-                          playheadFrame: ui.playheadFrame.value,
-                          onSeek: (f) => ui.playheadFrame.value = f,
-                          onSelect: (l) => setState(() {
-                            ui.selectedLayer.value = l;
-                          }),
-                          onChanged: ui.model.refresh,
+                        width: outlineViewport,
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: SizedBox(
+                            width: _outlineWidth,
+                            child: _Outline(
+                              comp: comp,
+                              layers: layers,
+                              selected: ui.selectedLayer.value,
+                              highlighted: _highlighted,
+                              open: _open,
+                              hasAudio: _hasAudio,
+                              onToggle: _toggle,
+                              playheadFrame: ui.playheadFrame.value,
+                              onSeek: (f) => ui.playheadFrame.value = f,
+                              onSelect: (l) => setState(() {
+                                ui.selectedLayer.value = l;
+                              }),
+                              onHighlight: (id) =>
+                                  setState(() => _highlighted = id),
+                              onChanged: ui.model.refresh,
+                            ),
+                          ),
                         ),
                       ),
                       Expanded(
@@ -244,9 +264,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                 razor: _razor,
                                 onSeek: (f) => ui.playheadFrame.value =
                                     f.clamp(0, frames == 0 ? 0 : frames - 1),
+                                onSelect: (l) => setState(() {
+                                  ui.selectedLayer.value = l;
+                                }),
                                 onChanged: ui.model.refresh,
-                                cacheRevision:
-                                    Listenable.merge([ui.frameArrived, ui.cacheChanged]),
+                                cacheRevision: Listenable.merge(
+                                    [ui.frameArrived, ui.cacheChanged]),
                               ),
                       ),
                     ],
@@ -261,7 +284,6 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     );
   }
 }
-
 
 /// One row of a layer's fold-out, in the outline.
 ///
@@ -703,24 +725,28 @@ class _Outline extends StatelessWidget {
   final CompositionReference comp;
   final List<BridgeLayerEntry> layers;
   final LayerReference? selected;
+  final String? highlighted;
   final Set<String> open;
   final Map<String, bool> hasAudio;
   final ValueChanged<String> onToggle;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
   final ValueChanged<LayerReference> onSelect;
+  final ValueChanged<String> onHighlight;
   final VoidCallback onChanged;
 
   const _Outline({
     required this.comp,
     required this.layers,
     required this.selected,
+    required this.highlighted,
     required this.open,
     required this.hasAudio,
     required this.onToggle,
     required this.playheadFrame,
     required this.onSeek,
     required this.onSelect,
+    required this.onHighlight,
     required this.onChanged,
   });
 
@@ -739,16 +765,17 @@ class _Outline extends StatelessWidget {
         ),
         for (var i = 0; i < layers.length; i++) ...[
           _OutlineRow(
-            key: ValueKey<String>(
-                'tl-row-${layers[i].layer.internallayerId}'),
+            key: ValueKey<String>('tl-row-${layers[i].layer.internallayerId}'),
             comp: comp,
             entry: layers[i],
             layers: layers,
             index: i,
             count: layers.length,
             // A local compare, not a bridge call: both ids already sit here.
-            selected: selected?.internallayerId ==
-                layers[i].layer.internallayerId,
+            selected:
+                selected?.internallayerId == layers[i].layer.internallayerId,
+            highlighted:
+                highlighted == layers[i].layer.internallayerId.toString(),
             open: open.contains(layers[i].layer.internallayerId.toString()),
             onToggleOpen: () =>
                 onToggle(layers[i].layer.internallayerId.toString()),
@@ -761,17 +788,23 @@ class _Outline extends StatelessWidget {
               entry: layers[i],
               open: open,
               hasAudio:
-                  hasAudio[layers[i].layer.internallayerId.toString()] ??
-                      false,
+                  hasAudio[layers[i].layer.internallayerId.toString()] ?? false,
             ))
-              _FoldRow(
-                comp: comp,
-                layer: layers[i].layer,
-                row: row,
-                playheadFrame: playheadFrame,
-                onSeek: onSeek,
-                onToggle: onToggle,
-                onChanged: onChanged,
+              // A raw pointer listener, not a gesture: touching a sub-item
+              // highlights its layer, and it must never fight the row's own
+              // taps and drags for the gesture arena.
+              Listener(
+                onPointerDown: (_) =>
+                    onHighlight(layers[i].layer.internallayerId.toString()),
+                child: _FoldRow(
+                  comp: comp,
+                  layer: layers[i].layer,
+                  row: row,
+                  playheadFrame: playheadFrame,
+                  onSeek: onSeek,
+                  onToggle: onToggle,
+                  onChanged: onChanged,
+                ),
               ),
         ],
       ],
@@ -779,7 +812,7 @@ class _Outline extends StatelessWidget {
   }
 }
 
-class _OutlineRow extends StatelessWidget {
+class _OutlineRow extends StatefulWidget {
   final CompositionReference comp;
   final BridgeLayerEntry entry;
 
@@ -789,6 +822,10 @@ class _OutlineRow extends StatelessWidget {
   final int index;
   final int count;
   final bool selected;
+
+  /// A sub-item of this layer was last touched — drawn a shade dimmer than
+  /// selection, so the two states read apart at a glance.
+  final bool highlighted;
   final bool open;
   final VoidCallback onToggleOpen;
   final VoidCallback onSelect;
@@ -802,80 +839,211 @@ class _OutlineRow extends StatelessWidget {
     required this.index,
     required this.count,
     required this.selected,
+    required this.highlighted,
     required this.open,
     required this.onToggleOpen,
     required this.onSelect,
     required this.onChanged,
   });
 
-  LayerReference get layer => entry.layer;
+  @override
+  State<_OutlineRow> createState() => _OutlineRowState();
+}
+
+class _OutlineRowState extends State<_OutlineRow> {
+  /// The inline rename, entered by double-clicking the name.
+  TextEditingController? _rename;
+
+  LayerReference get layer => widget.entry.layer;
+  int get index => widget.index;
+  int get count => widget.count;
+
+  @override
+  void dispose() {
+    _rename?.dispose();
+    super.dispose();
+  }
+
+  void _commitRename() {
+    final text = _rename?.text.trim() ?? '';
+    setState(() {
+      _rename?.dispose();
+      _rename = null;
+    });
+    if (text.isEmpty || text == widget.entry.info.name) return;
+    layer.rename(name: text);
+    widget.onChanged();
+  }
 
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     // ZERO bridge calls: everything this row draws is in the read model
     // (K-184).
-    final info = entry.info;
+    final info = widget.entry.info;
     final switches = info.switches;
     final id = layer.internallayerId.toString();
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: onSelect,
+      onTap: widget.onSelect,
       onSecondaryTapDown: (d) => _showRowMenu(context, d.globalPosition),
       child: Container(
         height: _rowHeight,
-        color: selected ? t.surface2 : null,
+        // Selected is the brighter of the two states; a highlight (this
+        // layer's fold-out was last touched) is the same surface at half
+        // strength, so they read apart at a glance.
+        color: widget.selected
+            ? t.surface2
+            : widget.highlighted
+                ? t.surface2.withValues(alpha: 0.45)
+                : null,
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(
           children: [
-            SizedBox(
-              width: 20,
-              child: Text('${index + 1}',
-                  style: t.small.copyWith(color: t.textMuted)),
-            ),
+            // The owner's column groupings (docs/TODO): visibility and sound
+            // first, then twirl + label colour + name, then the rest of the
+            // switches, with matte and blend closing the row.
+            _switch(context, id, 'visible', LumitIcon.eye, switches.visible,
+                BridgeLayerSwitch.visible),
+            _switch(context, id, 'audible', LumitIcon.audio, switches.audible,
+                BridgeLayerSwitch.audible),
+            const SizedBox(width: 4),
             // The twirl: the layer's properties, where AE puts them. Its own
             // gesture, so opening a layer does not also select it — you often
             // want to look at one layer's values while another is selected.
             GestureDetector(
               key: ValueKey<String>('tl-twirl-$id'),
               behavior: HitTestBehavior.opaque,
-              onTap: onToggleOpen,
+              onTap: widget.onToggleOpen,
               child: SizedBox(
                 width: 16,
                 height: _rowHeight,
                 child: Center(
                   child: lumitIcon(
-                    open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                    widget.open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
                     size: 11,
-                    color: open ? t.textPrimary : t.textMuted,
+                    color: widget.open ? t.textPrimary : t.textMuted,
                   ),
                 ),
               ),
             ),
-            _switch(context, id, 'visible', LumitIcon.eye, switches.visible,
-                BridgeLayerSwitch.visible),
-            _switch(context, id, 'audible', LumitIcon.audio, switches.audible,
-                BridgeLayerSwitch.audible),
+            _labelSwatch(context, t, id, info.label),
+            const SizedBox(width: 4),
+            Expanded(child: _name(t, id, info)),
+            const SizedBox(width: 4),
+            SizedBox(
+              width: 20,
+              child: Text('${index + 1}',
+                  style: t.small.copyWith(color: t.textMuted)),
+            ),
             // No solo glyph in the icon set; the star reads as isolate.
             _switch(context, id, 'solo', LumitIcon.star, switches.solo,
                 BridgeLayerSwitch.solo),
             _switch(context, id, 'locked', LumitIcon.lock, switches.locked,
                 BridgeLayerSwitch.locked),
-            const SizedBox(width: 4),
-            Expanded(
-              child: Text(info.name,
-                  style: t.body, overflow: TextOverflow.ellipsis),
-            ),
-            _blendPicker(context, t, info.blend),
-            const SizedBox(width: 4),
             ParentPickerFrb(
               layer: layer,
               info: info,
-              all: layers,
-              onChanged: onChanged,
+              all: widget.layers,
+              onChanged: widget.onChanged,
             ),
+            const SizedBox(width: 4),
+            MattePickerFrb(
+              layer: layer,
+              info: info,
+              all: widget.layers,
+              onChanged: widget.onChanged,
+            ),
+            _blendPicker(context, t, info.blend),
           ],
+        ),
+      ),
+    );
+  }
+
+  /// The name, or the rename editor a double-click turns it into. Submitting
+  /// commits; clicking anywhere else commits too (the field loses the row).
+  Widget _name(LumitTheme t, String id, BridgeLayerInfo info) {
+    final editor = _rename;
+    if (editor != null) {
+      return HouseTextField(
+        key: ValueKey<String>('tl-rename-$id'),
+        controller: editor,
+        autofocus: true,
+        onSubmitted: (_) => _commitRename(),
+      );
+    }
+    return GestureDetector(
+      key: ValueKey<String>('tl-name-$id'),
+      behavior: HitTestBehavior.opaque,
+      onDoubleTap: () => setState(() {
+        _rename = TextEditingController(text: info.name);
+      }),
+      child: SizedBox(
+        height: _rowHeight,
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child:
+              Text(info.name, style: t.body, overflow: TextOverflow.ellipsis),
+        ),
+      ),
+    );
+  }
+
+  /// The layer's label colour (TL2): a chip that opens the eight-colour
+  /// picker. The palette is the theme's own, so no colour literal lives here.
+  Widget _labelSwatch(
+      BuildContext context, LumitTheme t, String id, int label) {
+    return GestureDetector(
+      key: ValueKey<String>('tl-label-$id'),
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (d) async {
+        final picked = await showLumitPopup<int>(
+          context: context,
+          position: d.globalPosition,
+          builder: (close) => FloatSurface(
+            child: Padding(
+              padding: const EdgeInsets.all(6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (var i = 0; i < 8; i++)
+                    GestureDetector(
+                      key: ValueKey<String>('tl-label-chip-$i'),
+                      onTap: () => close(i),
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        margin: const EdgeInsets.all(2),
+                        decoration: BoxDecoration(
+                          color: t.labelColour(i),
+                          borderRadius:
+                              BorderRadius.circular(t.tokens.controlRadius),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+        if (picked == null) return;
+        layer.setLabel(label: picked);
+        widget.onChanged();
+      },
+      child: SizedBox(
+        width: 16,
+        height: _rowHeight,
+        child: Center(
+          child: Container(
+            width: 10,
+            height: 10,
+            decoration: BoxDecoration(
+              color: t.labelColour(label),
+              borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+            ),
+          ),
         ),
       ),
     );
@@ -895,7 +1063,7 @@ class _OutlineRow extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: () {
         layer.setSwitch(switch_: which, on_: !on);
-        onChanged();
+        widget.onChanged();
       },
       child: SizedBox(
         width: 18,
@@ -921,7 +1089,7 @@ class _OutlineRow extends StatelessWidget {
         label: (i) => modes[i],
         onChanged: (i) {
           layer.setBlend(index: i);
-          onChanged();
+          widget.onChanged();
         },
       ),
     );
@@ -966,7 +1134,7 @@ class _OutlineRow extends StatelessWidget {
       case _:
         return;
     }
-    onChanged();
+    widget.onChanged();
   }
 }
 
@@ -988,6 +1156,9 @@ class _LayerArea extends StatelessWidget {
   final ValueListenable<int> playhead;
   final bool razor;
   final ValueChanged<int> onSeek;
+
+  /// Clicking a bar is clicking the layer: the lane side selects too.
+  final ValueChanged<LayerReference> onSelect;
   final VoidCallback onChanged;
 
   /// Fires when something may have changed which frames are held — a frame
@@ -1004,6 +1175,7 @@ class _LayerArea extends StatelessWidget {
     required this.playhead,
     required this.razor,
     required this.onSeek,
+    required this.onSelect,
     required this.onChanged,
     required this.cacheRevision,
   });
@@ -1026,13 +1198,13 @@ class _LayerArea extends StatelessWidget {
             TimelineCacheBar(comp: comp, axis: axis, revision: cacheRevision),
             for (final entry in layers) ...[
               _Bar(
-                key: ValueKey<String>(
-                    'tl-bar-${entry.layer.internallayerId}'),
+                key: ValueKey<String>('tl-bar-${entry.layer.internallayerId}'),
                 comp: comp,
                 entry: entry,
                 axis: axis,
                 razor: razor,
                 playheadFrame: () => playhead.value,
+                onSelect: () => onSelect(entry.layer),
                 onChanged: onChanged,
               ),
               // One empty lane per fold-out row the outline is showing, from
@@ -1047,9 +1219,9 @@ class _LayerArea extends StatelessWidget {
                       layerFoldRows(
                         entry: entry,
                         open: open,
-                        hasAudio: hasAudio[
-                                entry.layer.internallayerId.toString()] ??
-                            false,
+                        hasAudio:
+                            hasAudio[entry.layer.internallayerId.toString()] ??
+                                false,
                       ).length,
                 ),
             ],
@@ -1146,8 +1318,12 @@ class _Bar extends StatefulWidget {
   final BridgeLayerEntry entry;
   final _Axis axis;
   final bool razor;
+
   /// Read when the razor is clicked, not captured when the bar is built.
   final int Function() playheadFrame;
+
+  /// Clicking (or grabbing) the bar selects its layer.
+  final VoidCallback onSelect;
   final VoidCallback onChanged;
 
   const _Bar({
@@ -1157,6 +1333,7 @@ class _Bar extends StatefulWidget {
     required this.axis,
     required this.razor,
     required this.playheadFrame,
+    required this.onSelect,
     required this.onChanged,
   });
 
@@ -1217,10 +1394,15 @@ class _BarState extends State<_Bar> {
                       }
                       widget.onChanged();
                     }
-                  : null,
+                  // Clicking anywhere on a layer selects it (docs/TODO) —
+                  // the bar is most of what "the layer" is on screen.
+                  : widget.onSelect,
               onHorizontalDragStart: widget.razor
                   ? null
                   : (d) => setState(() {
+                        // Grabbing a bar selects its layer too: a drag is a
+                        // click that kept going.
+                        widget.onSelect();
                         _delta = 0;
                         _grab = d.localPosition.dx < _trimGrab
                             ? _Grab.trimIn

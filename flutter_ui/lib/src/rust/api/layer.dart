@@ -84,6 +84,13 @@ class BridgeLayerInfo {
   /// data for *drawing*; an edit reads fresh instance handles at commit time.
   final List<BridgeEffectInstanceInfo> effects;
 
+  /// The label colour index (0-7), drawn as the outline's swatch.
+  final int label;
+
+  /// The layer's matte, for the outline's matte cell (K-184: the row draws
+  /// with no bridge calls). Writes still go through `set_matte`.
+  final BridgeMatte? matte;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -97,6 +104,8 @@ class BridgeLayerInfo {
     this.parentName,
     required this.transform,
     required this.effects,
+    required this.label,
+    this.matte,
   });
 
   @override
@@ -112,7 +121,9 @@ class BridgeLayerInfo {
       parent.hashCode ^
       parentName.hashCode ^
       transform.hashCode ^
-      effects.hashCode;
+      effects.hashCode ^
+      label.hashCode ^
+      matte.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -130,7 +141,9 @@ class BridgeLayerInfo {
           parent == other.parent &&
           parentName == other.parentName &&
           transform == other.transform &&
-          effects == other.effects;
+          effects == other.effects &&
+          label == other.label &&
+          matte == other.matte;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its

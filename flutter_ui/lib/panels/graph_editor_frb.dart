@@ -204,41 +204,48 @@ class _GraphEditorFrbState extends State<GraphEditorFrb> {
       height: 22,
       color: t.surface1,
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Row(
-        children: [
-          HouseButton(
-            key: const ValueKey('graph-copy'),
-            small: true,
-            frameless: true,
-            onPressed: source == null
-                ? null
-                : () {
-                    _clipboard = [
-                      for (var i = 0; i < source.keys.length; i++)
-                        if (_selected.contains('${source.id}#$i'))
-                          source.keys[i],
-                    ];
-                    setState(() {});
-                  },
-            child: Text('Copy keys', style: t.small),
-          ),
-          const SizedBox(width: 6),
-          HouseButton(
-            key: const ValueKey('graph-paste'),
-            small: true,
-            frameless: true,
-            onPressed: _clipboard.isEmpty || source == null
-                ? null
-                : () {
-                    _pasteInto(source);
-                    widget.onChanged();
-                  },
-            child: Text('Paste keys', style: t.small),
-          ),
-          const Spacer(),
-          Text('${_selected.length} selected',
-              style: t.small.copyWith(color: t.textMuted)),
-        ],
+      // Scrolls sideways when the panel is narrow, the same answer the
+      // Timeline toolbar gives — an overflow stripe is a layout fault.
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            HouseButton(
+              key: const ValueKey('graph-copy'),
+              small: true,
+              frameless: true,
+              onPressed: source == null
+                  ? null
+                  : () {
+                      _clipboard = [
+                        for (var i = 0; i < source.keys.length; i++)
+                          if (_selected.contains('${source.id}#$i'))
+                            source.keys[i],
+                      ];
+                      setState(() {});
+                    },
+              child: Text('Copy keys', style: t.small),
+            ),
+            const SizedBox(width: 6),
+            HouseButton(
+              key: const ValueKey('graph-paste'),
+              small: true,
+              frameless: true,
+              onPressed: _clipboard.isEmpty || source == null
+                  ? null
+                  : () {
+                      _pasteInto(source);
+                      widget.onChanged();
+                    },
+              child: Text('Paste keys', style: t.small),
+            ),
+            // A gap, not a Spacer: inside a horizontal scroller there is no
+            // finite width for a Spacer to fill.
+            const SizedBox(width: 16),
+            Text('${_selected.length} selected',
+                style: t.small.copyWith(color: t.textMuted)),
+          ],
+        ),
       ),
     );
   }
@@ -269,8 +276,7 @@ class _GraphEditorFrbState extends State<GraphEditorFrb> {
       );
     }
     final frames = merged.keys.toList()..sort();
-    channel.write(
-        BridgeScalar.keyframed([for (final f in frames) merged[f]!]));
+    channel.write(BridgeScalar.keyframed([for (final f in frames) merged[f]!]));
   }
 }
 
@@ -462,13 +468,10 @@ class _LaneState extends State<_Lane> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             MenuRow(
-                onPressed: () => close('linear'),
-                child: const Text('Linear')),
+                onPressed: () => close('linear'), child: const Text('Linear')),
             MenuRow(
-                onPressed: () => close('ease'),
-                child: const Text('Easy ease')),
-            MenuRow(
-                onPressed: () => close('hold'), child: const Text('Hold')),
+                onPressed: () => close('ease'), child: const Text('Easy ease')),
+            MenuRow(onPressed: () => close('hold'), child: const Text('Hold')),
             MenuRow(
                 onPressed: () => close('delete'),
                 child: const Text('Delete key')),
@@ -556,8 +559,7 @@ class _View {
 
   double yOf(double value) =>
       height - ((value - _low) / (_high - _low)) * height;
-  double valueAt(double y) =>
-      _low + ((height - y) / height) * (_high - _low);
+  double valueAt(double y) => _low + ((height - y) / height) * (_high - _low);
 
   Offset pointOf(BridgeKeyframe key) =>
       Offset(xOf(comp.frameAtTime(time: key.time)), yOf(key.value));

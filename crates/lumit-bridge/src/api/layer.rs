@@ -120,6 +120,11 @@ pub struct BridgeLayerInfo {
     /// Every effect on the layer, with every parameter's value (K-184). Plain
     /// data for *drawing*; an edit reads fresh instance handles at commit time.
     pub effects: Vec<crate::api::effect::BridgeEffectInstanceInfo>,
+    /// The label colour index (0-7), drawn as the outline's swatch.
+    pub label: u8,
+    /// The layer's matte, for the outline's matte cell (K-184: the row draws
+    /// with no bridge calls). Writes still go through `set_matte`.
+    pub matte: Option<BridgeMatte>,
 }
 
 /// Build one layer's [`BridgeLayerInfo`] from an already-fetched composition —
@@ -188,6 +193,12 @@ pub(crate) fn read_layer_info(
             .iter()
             .map(crate::api::effect::read_instance_info)
             .collect(),
+        label: layer.label,
+        matte: layer.matte.as_ref().map(|m| BridgeMatte {
+            layer: m.layer,
+            luma: matches!(m.channel, lumit_core::model::MatteChannel::Luma),
+            inverted: m.inverted,
+        }),
     }
 }
 

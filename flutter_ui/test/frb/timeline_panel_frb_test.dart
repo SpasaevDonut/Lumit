@@ -12,6 +12,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/theme/theme.dart';
+import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -271,6 +273,7 @@ void main() {
           reason: 'the drop reached the document');
       expect(p.comp.getLayers().single.getName(), contains('shot'));
     });
+
     /// The layer rows deliberately do *not* rebuild when the playhead moves —
     /// they used to, sixty times a second during playback, re-asking the engine
     /// for every layer's name and span each time, and the cost grew with the
@@ -294,8 +297,8 @@ void main() {
       p.uiState.playheadFrame.value = 30;
       await tester.pump();
 
-      final bar = find.byKey(
-          ValueKey<String>('tl-bar-${layer.internallayerId}'));
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
       expect(bar, findsOneWidget);
       await tester.tap(bar, warnIfMissed: false);
       await tester.pump();
@@ -334,8 +337,13 @@ void main() {
 
       await tester.tap(find.text('Transform'));
       await tester.pump();
-      for (final row in ['Anchor point', 'Position', 'Scale', 'Rotation',
-        'Opacity']) {
+      for (final row in [
+        'Anchor point',
+        'Position',
+        'Scale',
+        'Rotation',
+        'Opacity'
+      ]) {
         expect(find.text(row), findsOneWidget);
       }
 
@@ -344,7 +352,168 @@ void main() {
       expect(find.text('Transform'), findsNothing);
     });
 
-    testWidgets('dragging a transform value in the Timeline reaches the document',
+    /// The owner's column groupings (docs/TODO): visibility and sound first,
+    /// then twirl + label colour + name, then the remaining switches, with
+    /// matte and blend closing the row.
+    testWidgets('the outline columns sit in their groups', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      double dx(String key) =>
+          tester.getTopLeft(find.byKey(ValueKey<String>(key))).dx;
+      final order = [
+        'tl-visible-$id',
+        'tl-audible-$id',
+        'tl-twirl-$id',
+        'tl-label-$id',
+        'tl-name-$id',
+        'tl-solo-$id',
+        'tl-locked-$id',
+        'tl-parent-$id',
+        'tl-matte-$id',
+        'tl-blend-$id',
+      ];
+      for (var i = 1; i < order.length; i++) {
+        expect(dx(order[i]), greaterThan(dx(order[i - 1])),
+            reason: '${order[i]} sits right of ${order[i - 1]}');
+      }
+    });
+
+    /// Double-clicking the name turns it into an editor; submitting renames
+    /// the layer through the document (one op, undoable like any other).
+    testWidgets('double-clicking the name renames the layer', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      final name = find.byKey(ValueKey<String>('tl-name-$id'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pump();
+
+      final editor = find.byKey(ValueKey<String>('tl-rename-$id'));
+      expect(editor, findsOneWidget, reason: 'the name became a field');
+
+      await tester.enterText(editor, 'Hero solid');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+
+      expect(layer.getInfo().name, 'Hero solid');
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'submitting leaves the editor');
+    });
+
+    /// Clicking anywhere on a layer selects it — including its bar in the
+    /// lane area, which is most of what "the layer" is on screen.
+    testWidgets('clicking a bar selects its layer', (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      final top = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      expect(p.uiState.selectedLayer.value, isNull);
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-bar-${top.internallayerId}')));
+      await tester.pump();
+      expect(
+          p.uiState.selectedLayer.value?.internallayerId, top.internallayerId);
+    });
+
+    /// Touching a layer's fold-out highlights the layer a shade DIMMER than
+    /// selection — "whose rows are these" answered at a glance, without the
+    /// touch stealing the selection.
+    testWidgets(
+        'touching a fold row highlights its layer, dimmer than '
+        'selection', (tester) async {
+      final p = withComp();
+      final below = p.comp.addSolidLayer();
+      final top = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      // Select the top layer (a single click on the name selects once the
+      // double-tap window has passed — the same click-and-a-beat AE has),
+      // twirl open the one below and touch its fold.
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-name-${top.internallayerId}')));
+      await tester.pump(kDoubleTapTimeout * 2);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${below.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      Color? rowColour(UuidValue id) {
+        final row = find.descendant(
+          of: find.byKey(ValueKey<String>('tl-row-$id')),
+          matching: find.byType(Container),
+        );
+        return tester.widget<Container>(row.first).color;
+      }
+
+      final t = LumitTheme.dark();
+      expect(rowColour(top.internallayerId), t.surface2,
+          reason: 'the selected layer keeps the full surface');
+      expect(
+          rowColour(below.internallayerId), t.surface2.withValues(alpha: 0.45),
+          reason: 'the touched fold marks its layer at half strength');
+      expect(
+          p.uiState.selectedLayer.value?.internallayerId, top.internallayerId,
+          reason: 'the highlight never steals the selection');
+    });
+
+    /// The matte cell: pick a source layer and the mode toggles appear; the
+    /// choice reaches the document, luma and invert flip on their toggles.
+    testWidgets('the matte cell sets, retargets and flips the matte',
+        (tester) async {
+      final p = withComp();
+      final source = p.comp.addSolidLayer();
+      source.rename(name: 'Matte source');
+      final consumer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = consumer.internallayerId;
+
+      expect(consumer.getMatte(), isNull);
+      await tester.tap(find.byKey(ValueKey<String>('tl-matte-$id')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Matte source').last);
+      await tester.pumpAndSettle();
+
+      var matte = consumer.getMatte();
+      expect(matte?.layer, source.internallayerId);
+      expect(matte?.luma, isFalse, reason: 'alpha until asked otherwise');
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-matte-luma-$id')));
+      await tester.pumpAndSettle();
+      matte = consumer.getMatte();
+      expect(matte?.luma, isTrue);
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-matte-invert-$id')));
+      await tester.pumpAndSettle();
+      expect(consumer.getMatte()?.inverted, isTrue);
+    });
+
+    /// The label swatch opens the eight-chip picker and the choice lands on
+    /// the layer.
+    testWidgets('the label swatch recolours the layer', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      expect(layer.getInfo().label, 0);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-label-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('tl-label-chip-3')));
+      await tester.pumpAndSettle();
+      expect(layer.getInfo().label, 3);
+    });
+
+    testWidgets(
+        'dragging a transform value in the Timeline reaches the document',
         (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
@@ -395,8 +564,8 @@ void main() {
 
       final id = layer.getEffects().single.id();
       double radius() => ((layer.getEffects().single.getValue(id: 'radius')
-              as BridgeEffectValue_Float)
-          .field0 as BridgeScalar_Static)
+                  as BridgeEffectValue_Float)
+              .field0 as BridgeScalar_Static)
           .field0;
       final before = radius();
 
@@ -418,7 +587,8 @@ void main() {
         (tester) async {
       final p = withComp();
       final silent = p.comp.addSolidLayer();
-      final audible = p.state.project!.importFootage(path: _wavFile('tone.wav'));
+      final audible =
+          p.state.project!.importFootage(path: _wavFile('tone.wav'));
       p.comp.addFootageLayer(footage: audible);
       await mount(tester, p);
 
@@ -427,8 +597,8 @@ void main() {
       // frame or two rather than during the first build.
       await settleFrb(tester, minRounds: 8);
 
-      await tester.tap(find.byKey(
-          ValueKey<String>('tl-twirl-${footageLayer.internallayerId}')));
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-twirl-${footageLayer.internallayerId}')));
       await tester.pump();
       expect(find.text('Audio'), findsOneWidget,
           reason: 'the file carries an audio stream');
@@ -478,7 +648,6 @@ void main() {
         );
       }
     });
-
   }, skip: !engineAvailable);
 }
 

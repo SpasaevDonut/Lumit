@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
 /// The open compositions, as tabs. Clicking one fronts it.
@@ -246,6 +247,126 @@ class ParentPickerFrb extends StatelessWidget {
   }
 }
 
+/// The layer's matte cell (docs/06 §1.6): which layer gates this one, drawn
+/// straight from the row's info (K-184). The dropdown picks the source; with
+/// one set, the two small toggles choose luma-over-alpha and invert.
+class MattePickerFrb extends StatelessWidget {
+  final LayerReference layer;
+  final BridgeLayerInfo info;
+
+  /// Every layer in the comp, from the read model.
+  final List<BridgeLayerEntry> all;
+  final VoidCallback onChanged;
+
+  const MattePickerFrb({
+    super.key,
+    required this.layer,
+    required this.info,
+    required this.all,
+    required this.onChanged,
+  });
+
+  void _set(BridgeMatte? matte) {
+    try {
+      layer.setMatte(matte: matte);
+    } catch (_) {
+      return;
+    }
+    onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final matte = info.matte;
+    final sourceName = matte == null
+        ? 'No matte'
+        : all
+                .where((e) => e.layer.internallayerId == matte.layer)
+                .map((e) => e.info.name)
+                .firstOrNull ??
+            'Matte';
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox(
+          width: 88,
+          child: BareLazyDropdown<UuidValue?>(
+            key: ValueKey<String>('tl-matte-${layer.internallayerId}'),
+            label: sourceName,
+            options: () => [
+              (null, 'No matte'),
+              for (final e in all)
+                if (e.layer.internallayerId != layer.internallayerId)
+                  (e.layer.internallayerId, e.info.name),
+            ],
+            onChanged: (id) => _set(id == null
+                ? null
+                : BridgeMatte(
+                    layer: id,
+                    luma: matte?.luma ?? false,
+                    inverted: matte?.inverted ?? false,
+                  )),
+          ),
+        ),
+        // The mode toggles only mean something once a source is set.
+        if (matte != null) ...[
+          _toggle(
+            t,
+            key: 'tl-matte-luma-${layer.internallayerId}',
+            glyph: matte.luma ? 'L' : 'α',
+            on: true,
+            tip: matte.luma ? 'Luma matte' : 'Alpha matte',
+            onTap: () => _set(BridgeMatte(
+                layer: matte.layer,
+                luma: !matte.luma,
+                inverted: matte.inverted)),
+          ),
+          _toggle(
+            t,
+            key: 'tl-matte-invert-${layer.internallayerId}',
+            glyph: '−',
+            on: matte.inverted,
+            tip: matte.inverted ? 'Inverted' : 'Not inverted',
+            onTap: () => _set(BridgeMatte(
+                layer: matte.layer,
+                luma: matte.luma,
+                inverted: !matte.inverted)),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _toggle(
+    LumitTheme t, {
+    required String key,
+    required String glyph,
+    required bool on,
+    required String tip,
+    required VoidCallback onTap,
+  }) {
+    return LumitTooltip(
+      message: tip,
+      child: GestureDetector(
+        key: ValueKey<String>(key),
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox(
+          width: 14,
+          height: 22,
+          child: Center(
+            child: Text(glyph,
+                style: t.small
+                    .copyWith(color: on ? t.textPrimary : t.textDisabled)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// Add, rename and remove markers, and set the work area, from one dialogue.
 ///
 /// A dialogue rather than direct manipulation on the ruler: dragging markers is
@@ -336,8 +457,8 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                       );
                       setState(() {});
                     },
-                    child: Text('×',
-                        style: t.small.copyWith(color: t.textMuted)),
+                    child:
+                        Text('×', style: t.small.copyWith(color: t.textMuted)),
                   ),
                 ],
               ),

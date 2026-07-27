@@ -394,11 +394,17 @@ class HouseTextField extends StatefulWidget {
   final double width;
   final ValueChanged<String>? onSubmitted;
 
+  /// Grab focus on first build — for fields that appear in response to a
+  /// gesture (an inline rename), where a second click to focus would be
+  /// asking the user to say it twice.
+  final bool autofocus;
+
   const HouseTextField({
     super.key,
     required this.controller,
     this.width = 200,
     this.onSubmitted,
+    this.autofocus = false,
   });
 
   @override
@@ -428,6 +434,7 @@ class _HouseTextFieldState extends State<HouseTextField> {
       child: EditableText(
         controller: widget.controller,
         focusNode: _focus,
+        autofocus: widget.autofocus,
         style: t.bodyPrimary,
         cursorColor: t.accent,
         backgroundCursorColor: t.surface2,

@@ -5052,8 +5052,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeLayerInfo dco_decode_bridge_layer_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 12)
-      throw Exception('unexpected arr length: expect 12 but see ${arr.length}');
+    if (arr.length != 14)
+      throw Exception('unexpected arr length: expect 14 but see ${arr.length}');
     return BridgeLayerInfo(
       name: dco_decode_String(arr[0]),
       kind: dco_decode_bridge_layer_kind(arr[1]),
@@ -5067,6 +5067,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       parentName: dco_decode_opt_String(arr[9]),
       transform: dco_decode_bridge_transform(arr[10]),
       effects: dco_decode_list_bridge_effect_instance_info(arr[11]),
+      label: dco_decode_u_8(arr[12]),
+      matte: dco_decode_opt_box_autoadd_bridge_matte(arr[13]),
     );
   }
 
@@ -6520,6 +6522,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_parentName = sse_decode_opt_String(deserializer);
     var var_transform = sse_decode_bridge_transform(deserializer);
     var var_effects = sse_decode_list_bridge_effect_instance_info(deserializer);
+    var var_label = sse_decode_u_8(deserializer);
+    var var_matte = sse_decode_opt_box_autoadd_bridge_matte(deserializer);
     return BridgeLayerInfo(
         name: var_name,
         kind: var_kind,
@@ -6532,7 +6536,9 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         parent: var_parent,
         parentName: var_parentName,
         transform: var_transform,
-        effects: var_effects);
+        effects: var_effects,
+        label: var_label,
+        matte: var_matte);
   }
 
   @protected
@@ -8125,6 +8131,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_opt_String(self.parentName, serializer);
     sse_encode_bridge_transform(self.transform, serializer);
     sse_encode_list_bridge_effect_instance_info(self.effects, serializer);
+    sse_encode_u_8(self.label, serializer);
+    sse_encode_opt_box_autoadd_bridge_matte(self.matte, serializer);
   }
 
   @protected

@@ -136,16 +136,6 @@ presets (Edit/Effects/Colour/Audio) are not built ([07-UI-SPEC.md](07-UI-SPEC.md
 categories, recent-first ranking, and taught-shortcut hints are not built (§12).
 
 **Timeline Panel**
-- **Layer area**
-    - Fix ordering of subcolumns, and groupings, e.g. left most should be Visiblity o Volume
-        then twirl/layer color and layer name, then the rest of the options, and the final
-        group is the matte o blend boxes.
-    - Effects and Audio sub-menus don't appear on layers
-    - Double clicking layer name allows user to edit it
-    - Clicking anywhere on a layer (once) Selects the layer
-    - Clicking a layer's sub-items/properties, i.e. transform, effects,
-        audio also Highlights the layer. Please bear in mind there should be a slight difference
-        in color between the Highlight and Selected color (Selected is brighter)
 - **Graph editor / Lane Editor / keyframes ([04-RETIMING.md](04-RETIMING.md), archive/flutter-port/06 §C):**
     - Re-introduce ability to move layer before comp start
     - Re-introduce ability to drag start/end of layer to adjust/crop length

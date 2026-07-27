@@ -5349,6 +5349,8 @@ impl SseDecode for crate::api::layer::BridgeLayerInfo {
         let mut var_transform = <crate::api::layer::BridgeTransform>::sse_decode(deserializer);
         let mut var_effects =
             <Vec<crate::api::effect::BridgeEffectInstanceInfo>>::sse_decode(deserializer);
+        let mut var_label = <u8>::sse_decode(deserializer);
+        let mut var_matte = <Option<crate::api::layer::BridgeMatte>>::sse_decode(deserializer);
         return crate::api::layer::BridgeLayerInfo {
             name: var_name,
             kind: var_kind,
@@ -5362,6 +5364,8 @@ impl SseDecode for crate::api::layer::BridgeLayerInfo {
             parent_name: var_parentName,
             transform: var_transform,
             effects: var_effects,
+            label: var_label,
+            matte: var_matte,
         };
     }
 }
@@ -7345,6 +7349,8 @@ impl flutter_rust_bridge::IntoDart for crate::api::layer::BridgeLayerInfo {
             self.parent_name.into_into_dart().into_dart(),
             self.transform.into_into_dart().into_dart(),
             self.effects.into_into_dart().into_dart(),
+            self.label.into_into_dart().into_dart(),
+            self.matte.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -8719,6 +8725,8 @@ impl SseEncode for crate::api::layer::BridgeLayerInfo {
         <Option<String>>::sse_encode(self.parent_name, serializer);
         <crate::api::layer::BridgeTransform>::sse_encode(self.transform, serializer);
         <Vec<crate::api::effect::BridgeEffectInstanceInfo>>::sse_encode(self.effects, serializer);
+        <u8>::sse_encode(self.label, serializer);
+        <Option<crate::api::layer::BridgeMatte>>::sse_encode(self.matte, serializer);
     }
 }
 
