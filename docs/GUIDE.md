@@ -3713,3 +3713,21 @@ the graphics card — and the copy was deleted. "What you preview is what you
 export" is no longer a promise anyone keeps; it is true because there is
 nothing else the export could draw with. The matrix test stays behind as the
 tripwire.
+
+**The preview scale is real (K-186).** When playback falls behind, Lumit drops
+the preview to Half or Quarter resolution so it can keep the beat. For a while
+that was half a lie: the footage was *decoded* smaller, but the compositing —
+stacking the layers, running the effects — still happened on a full-size
+canvas, which was the dominant cost of every played frame. The fix rests on a
+neat property of how graphics cards draw. Layer positions are described in
+composition pixels ("this layer sits at x = 800"), but before anything is
+drawn, those numbers are converted into a card-native coordinate system that
+always runs from −1 to +1 across the target, whatever size the target is. So
+the engine keeps all the geometry maths in full-size comp pixels — nothing
+about the layout changes — and simply allocates a smaller canvas for the
+result; the −1..+1 step lands the same picture on the smaller canvas
+automatically. One rounding function decides what "half of 1920×1080" means
+everywhere, so no two parts of the pipeline can disagree about the size by a
+pixel. Export never uses a scale (it always renders full size), and the
+one-walk matrix above pins that path unchanged — which is exactly why shrinking
+the preview cannot quietly shrink your exported file.

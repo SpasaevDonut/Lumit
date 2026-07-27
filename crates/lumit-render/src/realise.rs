@@ -33,6 +33,13 @@ pub struct Realiser<'a> {
     pub compositor: &'a lumit_gpu::Compositor,
     pub fx: &'a lumit_gpu::fx::FxEngine,
     pub lut_cache: &'a std::cell::RefCell<std::collections::HashMap<String, LoadedLut>>,
+    /// The preview render scale (the K-185 follow-up): every composite this
+    /// walk performs allocates its target at [`lumit_gpu::scaled_size`] of the
+    /// comp dims while all geometry stays in logical comp pixels. A field
+    /// rather than a parameter so the nested/below/adjustment recursions
+    /// inherit it with no signature ripple. Export always builds with 1.0, so
+    /// the K-031 preview == export identity is untouched at full scale.
+    pub render_scale: f32,
 }
 
 impl Realiser<'_> {
@@ -143,6 +150,9 @@ impl Realiser<'_> {
         background: [f64; 4],
         layers: &[CompLayerDraw],
     ) -> wgpu::Texture {
+        // The actual raster this comp's composites land on; all geometry
+        // below stays in the logical `width`×`height` comp pixels.
+        let (tw, th) = lumit_gpu::scaled_size(width, height, self.render_scale);
         let mut acc: Option<wgpu::Texture> = None;
         let mut start = 0usize;
         for (i, l) in layers.iter().enumerate() {
@@ -159,7 +169,7 @@ impl Realiser<'_> {
             // identical to export (K-031). The adjustment stack runs on the
             // comp-sized composite, so its depth inputs resample to comp size.
             let luts = self.load_luts(&l.lut_files);
-            let layer_inputs = self.render_dof_inputs(&l.dof_inputs, width, height);
+            let layer_inputs = self.render_dof_inputs(&l.dof_inputs, tw, th);
             // Posterize Time everything-below (docs/08 §3.25): the input this
             // adjustment's own effects run on is the below-stack held at the
             // posterised time, not the plain below-composite. The held draws and
@@ -177,12 +187,15 @@ impl Realiser<'_> {
             } else {
                 below.clone()
             };
+            // The adjustment's own stack, coverage and blend all run on the
+            // ACTUAL raster: `adjust_blend` reads its three inputs texel by
+            // texel, so they must agree on their size.
             let processed = crate::fxops::run_ops(
                 self.fx,
                 &self.ctx,
                 fx_input,
-                width,
-                height,
+                tw,
+                th,
                 &l.fx,
                 &[],
                 None,
@@ -195,8 +208,8 @@ impl Realiser<'_> {
                 &below,
                 &processed,
                 &coverage,
-                width,
-                height,
+                tw,
+                th,
                 (l.opacity / 100.0).clamp(0.0, 1.0),
             ));
             start = i + 1;
@@ -230,20 +243,21 @@ impl Realiser<'_> {
             // No samples (N < 2) degrades to the plain below — never a panic.
             return below.clone();
         }
+        // The sub-frames and `below` are all at the ACTUAL raster size; the
+        // combine is a full-frame identity pass, so it runs at that size too.
+        let (tw, th) = lumit_gpu::scaled_size(width, height, self.render_scale);
         // Equal weights 1/N sum to 1: the premultiplied arithmetic mean.
         let weight = 1.0 / frames.len() as f32;
         let avg_layers: Vec<(&wgpu::Texture, f32)> = frames.iter().map(|f| (f, weight)).collect();
-        let average = self
-            .compositor
-            .accumulate(&self.ctx, width, height, &avg_layers);
+        let average = self.compositor.accumulate(&self.ctx, tw, th, &avg_layers);
         if ab.mix >= 1.0 {
             average
         } else {
             // Mix blends the blurred average against the live below-composite.
             self.compositor.accumulate(
                 &self.ctx,
-                width,
-                height,
+                tw,
+                th,
                 &[(below, 1.0 - ab.mix), (&average, ab.mix)],
             )
         }
@@ -268,7 +282,9 @@ impl Realiser<'_> {
         let src = self.engine.upload_srgb8(&self.ctx, rgba, w, h);
         let linear = self.engine.linearise(&self.ctx, &src);
         let cam_mat = camera.map(|pose| crate::export::camera_mat(width, height, pose));
-        self.compositor.composite_with_camera(
+        // Rendered at the render scale: `adjust_blend` reads coverage texel by
+        // texel against the below/processed rasters, so they must match.
+        self.compositor.composite_seeded(
             &self.ctx,
             width,
             height,
@@ -292,6 +308,8 @@ impl Realiser<'_> {
                 pre: None,
             }],
             cam_mat,
+            None,
+            self.render_scale,
         )
     }
 
@@ -394,6 +412,7 @@ impl Realiser<'_> {
                         l.three_d,
                         l.pre,
                         cam_mat,
+                        self.render_scale,
                     )
                 })
             })
@@ -409,6 +428,9 @@ impl Realiser<'_> {
             .collect();
         // Matte layers render alone into comp space (one texture per consumer;
         // the shared-matte cache optimisation arrives with the evaluator).
+        // Deliberately at FULL comp resolution whatever the render scale: the
+        // fragment samples the matte by normalised comp UV, so any size is
+        // correct — shrink it later if it ever shows in a profile.
         let matte_textures: Vec<Option<wgpu::Texture>> = layers
             .iter()
             .map(|l| {
@@ -527,6 +549,7 @@ impl Realiser<'_> {
             &comp_layers,
             cam_mat,
             seed.as_ref(),
+            self.render_scale,
         )
     }
 }

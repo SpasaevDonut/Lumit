@@ -190,6 +190,21 @@ pub fn concat_place(outer: [[f32; 4]; 4], inner: [[f32; 4]; 4]) -> [[f32; 4]; 4]
     (Mat4::from_cols_array_2d(&outer) * Mat4::from_cols_array_2d(&inner)).to_cols_array_2d()
 }
 
+/// The pixel size a `width`×`height` frame takes at a render `scale` — the ONE
+/// rounding used both for the compositor's scaled render target and for the
+/// preview's final blit, so the two can never disagree about what "half size"
+/// is. Nonsense scales (zero, negative, non-finite) and anything within a hair
+/// of 1.0 answer the full size, so full scale takes a bit-identical path.
+pub fn scaled_size(width: u32, height: u32, scale: f32) -> (u32, u32) {
+    if !scale.is_finite() || scale <= 0.0 || (scale - 1.0).abs() < 1e-4 {
+        return (width, height);
+    }
+    (
+        ((width as f32 * scale).round() as u32).max(1),
+        ((height as f32 * scale).round() as u32).max(1),
+    )
+}
+
 impl CompositeLayer<'_> {
     /// comp pixel space → NDC, with the layer transform applied.
     /// Full 4×4 (K-023). Order: quad(0..1) → layer px → −anchor → scale →
@@ -678,7 +693,7 @@ impl Compositor {
         layers: &[CompositeLayer<'_>],
         camera: Option<Mat4>,
     ) -> wgpu::Texture {
-        self.composite_seeded(ctx, width, height, background, layers, camera, None)
+        self.composite_seeded(ctx, width, height, background, layers, camera, None, 1.0)
     }
 
     /// As [`Self::composite_with_camera`], but when `seed` is given the
@@ -686,8 +701,17 @@ impl Compositor {
     /// the continuation half of adjustment-layer staging (docs/06 §1.5):
     /// the layers above an adjustment composite onto the blended
     /// intermediate exactly as they would have onto the live accumulation,
-    /// with no intervening resample. `seed` must be a comp-sized working
+    /// with no intervening resample. `seed` must be a target-sized working
     /// texture (the previous stage's output).
+    ///
+    /// `render_scale` splits logical from actual (the preview-scale design):
+    /// `width`/`height` stay the LOGICAL comp dims — layer geometry, the
+    /// camera and every placement matrix are in comp pixels — while the
+    /// render target, the dst snapshot and the fragment's `target_size`
+    /// uniform (which normalises the frag position to comp UV for matte and
+    /// snapshot sampling) take the ACTUAL [`scaled_size`] dims. NDC does the
+    /// rest: the same full-frame geometry lands on a smaller raster. 1.0 is
+    /// the bit-identical full-size path export always takes (K-031).
     #[allow(clippy::too_many_arguments)]
     pub fn composite_seeded(
         &self,
@@ -698,12 +722,14 @@ impl Compositor {
         layers: &[CompositeLayer<'_>],
         camera: Option<Mat4>,
         seed: Option<&wgpu::Texture>,
+        render_scale: f32,
     ) -> wgpu::Texture {
+        let (tw, th) = scaled_size(width, height, render_scale);
         let target = ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("comp-frame"),
             size: wgpu::Extent3d {
-                width,
-                height,
+                width: tw,
+                height: th,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -724,8 +750,8 @@ impl Compositor {
             ctx.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("comp-dst-snapshot"),
                 size: wgpu::Extent3d {
-                    width,
-                    height,
+                    width: tw,
+                    height: th,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -751,12 +777,7 @@ impl Compositor {
                         f32::from(layer.matte.as_ref().is_some_and(|m| m.luma)),
                         f32::from(layer.matte.as_ref().is_some_and(|m| m.inverted)),
                     ],
-                    target: [
-                        width as f32,
-                        height as f32,
-                        layer.blend.snapshot_mode(),
-                        0.0,
-                    ],
+                    target: [tw as f32, th as f32, layer.blend.snapshot_mode(), 0.0],
                 };
                 let buffer = wgpu::util::DeviceExt::create_buffer_init(
                     &ctx.device,
@@ -841,8 +862,8 @@ impl Compositor {
                 s.as_image_copy(),
                 target.as_image_copy(),
                 wgpu::Extent3d {
-                    width,
-                    height,
+                    width: tw,
+                    height: th,
                     depth_or_array_layers: 1,
                 },
             );
@@ -872,8 +893,8 @@ impl Compositor {
                         target.as_image_copy(),
                         snap.as_image_copy(),
                         wgpu::Extent3d {
-                            width,
-                            height,
+                            width: tw,
+                            height: th,
                             depth_or_array_layers: 1,
                         },
                     );
@@ -957,6 +978,11 @@ impl Compositor {
     /// per-layer motion blur is identical between them (K-031). An empty
     /// `samples` returns a transparent frame (the caller only invokes this with
     /// a non-empty set, so that is a defensive no-op, never a panic).
+    ///
+    /// `render_scale` splits logical from actual exactly as
+    /// [`Self::composite_seeded`] does: placements stay in LOGICAL comp
+    /// pixels, the smear target and fp32 accumulators take the ACTUAL
+    /// [`scaled_size`] dims. Export passes 1.0.
     #[allow(clippy::too_many_arguments)]
     pub fn motion_blur_average(
         &self,
@@ -969,12 +995,14 @@ impl Compositor {
         three_d: bool,
         pre: Option<[[f32; 4]; 4]>,
         camera: Option<Mat4>,
+        render_scale: f32,
     ) -> wgpu::Texture {
+        let (tw, th) = scaled_size(width, height, render_scale);
         let target = ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("mb-average"),
             size: wgpu::Extent3d {
-                width,
-                height,
+                width: tw,
+                height: th,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -1027,7 +1055,7 @@ impl Compositor {
                     // averaged result at the caller's 1:1 composite. Full alpha —
                     // the 1/N weight is applied later, in f32, by the add pass.
                     params: [1.0, 0.0, 0.0, 0.0],
-                    target: [width as f32, height as f32, -1.0, 0.0],
+                    target: [tw as f32, th as f32, -1.0, 0.0],
                 };
                 let buffer = wgpu::util::DeviceExt::create_buffer_init(
                     &ctx.device,
@@ -1080,8 +1108,8 @@ impl Compositor {
             ctx.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(label),
                 size: wgpu::Extent3d {
-                    width,
-                    height,
+                    width: tw,
+                    height: th,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
@@ -1096,8 +1124,8 @@ impl Compositor {
         let temp = ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("mb-temp"),
             size: wgpu::Extent3d {
-                width,
-                height,
+                width: tw,
+                height: th,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -1139,7 +1167,7 @@ impl Compositor {
             let u = LayerUniform {
                 matrix: ident_matrix,
                 params: [px, 0.0, 0.0, 0.0],
-                target: [width as f32, height as f32, -1.0, 0.0],
+                target: [tw as f32, th as f32, -1.0, 0.0],
             };
             wgpu::util::DeviceExt::create_buffer_init(
                 &ctx.device,
@@ -2456,10 +2484,67 @@ mod tests {
             &[layer(&grey, 6.0, Blend::Screen)],
             None,
             Some(&first),
+            1.0,
         );
         let a = crate::fx::readback_linear_f32(&ctx, &both, 16, 16).unwrap();
         let b = crate::fx::readback_linear_f32(&ctx, &seeded, 16, 16).unwrap();
         assert_eq!(a, b, "seeded continuation must be bit-identical");
+    }
+
+    /// The preview-scale split: `render_scale` shrinks the ALLOCATION while
+    /// the GEOMETRY stays in logical comp pixels. An opaque quad placed over
+    /// the right half of a 16×16 comp, composited at 0.5, must come back as an
+    /// 8×8 target whose right half is the quad and whose left half is still
+    /// the background — proving the placement matrix was not fed the scaled
+    /// dims (which would shrink the picture into a corner instead).
+    #[test]
+    fn a_render_scale_shrinks_the_target_but_not_the_geometry() {
+        let Ok(ctx) = GpuContext::headless() else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let colour = ColourEngine::new(&ctx);
+        let compositor = Compositor::new(&ctx);
+        let red = solid_linear(&ctx, &colour, [255, 0, 0, 255], 8, 8);
+        let out = compositor.composite_seeded(
+            &ctx,
+            16,
+            16,
+            [0.0, 0.0, 0.0, 1.0],
+            &[CompositeLayer {
+                texture: &red,
+                size: (8.0, 8.0),
+                // Comp pixels: the quad covers x 8..16 × y 8..16, the comp's
+                // bottom-right quarter.
+                position: (8.0, 8.0),
+                anchor: (0.0, 0.0),
+                scale: (100.0, 100.0),
+                rotation_deg: 0.0,
+                opacity: 100.0,
+                matte: None,
+                blend: Blend::Normal,
+                z: 0.0,
+                rotation_x_deg: 0.0,
+                rotation_y_deg: 0.0,
+                three_d: false,
+                layer_mask: None,
+                pre: None,
+            }],
+            None,
+            None,
+            0.5,
+        );
+        assert_eq!((out.width(), out.height()), (8, 8), "target is scaled");
+        let px = crate::fx::readback_linear_f32(&ctx, &out, 8, 8).unwrap();
+        let red_at = |x: usize, y: usize| px[(y * 8 + x) * 4];
+        assert!(
+            red_at(6, 6) > 0.9,
+            "the bottom-right quarter carries the quad"
+        );
+        assert!(
+            red_at(1, 1) < 0.1,
+            "the top-left quarter is still background"
+        );
     }
 
     /// Per-layer motion blur (docs/06 §4, K-120): averaging a moving layer's
@@ -2499,6 +2584,7 @@ mod tests {
                 false,
                 None,
                 None,
+                1.0,
             );
             crate::fx::readback_linear_f32(&ctx, &tex, w, h).unwrap()
         };

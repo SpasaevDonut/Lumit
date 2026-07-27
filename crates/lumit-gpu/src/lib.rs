@@ -544,7 +544,7 @@ pub mod shared;
 #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
 pub mod shared_linux;
 pub use composite::{
-    camera_matrix, concat_place, place_matrix, Blend, CompositeLayer, Compositor, MatteInput,
-    MbSample,
+    camera_matrix, concat_place, place_matrix, scaled_size, Blend, CompositeLayer, Compositor,
+    MatteInput, MbSample,
 };
 pub use glam::Mat4;

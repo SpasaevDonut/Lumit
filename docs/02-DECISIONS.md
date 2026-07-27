@@ -2475,3 +2475,23 @@ anything moved. Then the export encode loop and `render_rgba` switched onto the 
 device so it never contends with the Viewer — and `render_comp_linear`, its `Renderer` and every
 private helper were deleted (export.rs: 2131 → 683 lines). K-031 is now true by construction:
 there is no second walk to disagree. The matrix stays as the determinism gate for the one walk.
+
+**K-186 · DECIDED · The composite runs at the preview scale; geometry stays logical.**
+The realtime tier and Auto resolution used to shrink only the decode: the composite itself
+always ran on a full comp-sized target (measured 59.7 ms/frame for a one-solid 1080p comp
+shown at 0.42), so a coarser tier barely made frames cheaper. **Binding now:** the one walk
+carries a render scale (`Realiser::render_scale`, a field so the nested/below/adjustment
+recursions inherit it with no signature ripple). The split is logical-steers,
+target-allocates: every placement matrix and the camera keep the LOGICAL comp dims —
+geometry is in comp pixels — while `composite_seeded` / `motion_blur_average` allocate their
+targets, dst snapshots and fp32 accumulators at the ACTUAL `lumit_gpu::scaled_size` dims and
+feed those to the fragment's `target_size` uniform (which normalises the frag position to
+comp UV for matte and snapshot sampling); NDC lands the same geometry on the smaller raster.
+`scaled_size` is the ONE rounding both the target and the preview's final blit use. The
+matte render-alone pass deliberately stays full-res (sampled by normalised comp UV, so any
+size is correct); the adjustment stack, coverage and `adjust_blend` run at the actual raster
+(texel-matched reads). The shared-texture registration sizes off the texture's actual dims,
+so a tier change re-registers a genuinely smaller texture. Export builds the walk with scale
+1.0 always, and the K-031 matrix pins that path bit-unchanged — the preview scale can never
+leak into the file. Regression tests: `a_render_scale_shrinks_the_target_but_not_the_geometry`
+(lumit-gpu) and `auto_resolution_composites_at_the_scaled_size` (lumit-render).

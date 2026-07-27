@@ -1208,6 +1208,7 @@ mod render_below_at_tests {
             compositor: &compositor,
             fx: &fx,
             lut_cache: &lut_cache,
+            render_scale: 1.0,
         };
         let comp = Composition {
             id: Uuid::now_v7(),
@@ -1527,6 +1528,7 @@ mod render_below_at_tests {
             compositor: &compositor,
             fx: &fx,
             lut_cache: &lut_cache,
+            render_scale: 1.0,
         };
         let comp = posterize_comp();
         let doc = Document::new();
@@ -1667,6 +1669,7 @@ mod render_below_at_tests {
             compositor: &compositor,
             fx: &fx,
             lut_cache: &lut_cache,
+            render_scale: 1.0,
         };
         let doc = Document::new();
         let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();

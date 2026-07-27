@@ -30,6 +30,11 @@ use crate::export::{AudioJob, ItemInfo};
 use crate::plan::{plan_comp_frame, Quality, RetimeOverride};
 use crate::source::{SourceProbe, SourceProbes};
 use lumit_core::model::{Composition, Document, FootageItem, LayerKind, ProjectItem};
+// The one preview-size rounding, shared with the compositor's scaled render
+// target so the composite and the final blit can never disagree about what
+// "half size" is (it moved into lumit-gpu when the composite itself started
+// running at the preview scale; the rounding is unchanged).
+use lumit_gpu::scaled_size;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -241,12 +246,16 @@ impl HeadlessRenderer {
     }
 
     /// Composite one interactive frame and return the display-encoded GPU
-    /// texture with the comp's dimensions — the shared body of both interactive
-    /// entry points.
+    /// texture — the shared body of both interactive entry points. The texture
+    /// is at the comp's dimensions times the preview scale (`quality`'s
+    /// display scale under auto resolution — see [`composite_scale`]): the
+    /// composite itself runs on the smaller raster, which is where a coarser
+    /// preview actually gets cheaper. The returned pair is the LOGICAL comp
+    /// dims; the texture's own `width()`/`height()` are the actual ones.
     ///
     /// Its callers differ only in what they do with the texture: read it back to
     /// bytes ([`Self::render_preview`]) or copy it into a texture the frontend
-    /// samples directly ([`Self::render_preview_to_shared`]). So both show the
+    /// samples directly ([`Self::render_to_shared`]). So both show the
     /// same pixels, and both get the drag fast path.
     fn preview_display_texture(
         &mut self,
@@ -323,6 +332,7 @@ impl HeadlessRenderer {
                 compositor: &parts.compositor,
                 fx: &parts.fx,
                 lut_cache: &parts.lut_cache,
+                render_scale: composite_scale(quality),
             };
             let pixels_by_layer: HashMap<Uuid, &crate::decode::CompLayerPixels> = retained
                 .pixels
@@ -387,20 +397,20 @@ impl HeadlessRenderer {
             return Err("headless preview: renderer is unavailable after an earlier fault".into());
         };
 
-        // Reduce on the graphics card, before the read-back, not after it.
-        //
-        // This used to composite full size, copy the whole thing down into
-        // ordinary memory — 8 MB per frame for a 1080p comp — and only then
-        // resize on the processor. Both of those costs scaled with the *comp*,
-        // not with what was actually being shown, so a Viewer at a third of comp
-        // resolution paid full price for every frame. Now the read-back is
-        // already the size the Viewer asked for.
+        // The interactive path now composites at the preview scale (the
+        // Realiser's `render_scale`), so on the Viewer path `shown` already IS
+        // the size the frontend asked for and no second pass runs at all. The
+        // resize below survives for the caller that composites full-size but
+        // wants a smaller buffer back (export's letterbox path, `render_rgba`
+        // with a scale) — reduced on the graphics card, before the read-back,
+        // using the same `scaled_size` rounding the composite target used, so
+        // the two can never disagree.
         let (sw, sh) = scaled_size(cw, ch, scale);
-        if (sw, sh) == (cw, ch) {
+        if (sw, sh) == (shown.width(), shown.height()) {
             return parts
                 .colour
                 .readback8(&self.gpu, &shown)
-                .map(|rgba| (rgba, cw, ch))
+                .map(|rgba| (rgba, sw, sh))
                 .map_err(|e| format!("headless preview: {e}"));
         }
         let reduced = parts.colour.display_scaled(&self.gpu, &shown, sw, sh);
@@ -523,17 +533,22 @@ impl HeadlessRenderer {
     ) -> Result<SharedFrameInfo, String> {
         // BGRA, not the RGBA every other path uses: the shared texture's
         // consumer is ANGLE, which only opens BGRA share-handle surfaces.
-        let (shown, cw, ch) =
+        let (shown, _, _) =
             self.preview_display_texture_fmt(doc, comp_id, frame, quality, None, true)?;
-        // Re-create the shared texture when it is missing or the comp changed
-        // size — a new handle is reported then, which the bridge relays so Dart
-        // re-registers.
+        // The texture's ACTUAL dims — the comp size times the preview scale the
+        // composite ran at. The registration sizes off them, so a coarser tier
+        // shares a genuinely smaller texture; Dart stretches it into the same
+        // Viewer rect, which is what makes the tier cheaper at all.
+        let (aw, ah) = (shown.width(), shown.height());
+        // Re-create the shared texture when it is missing or the size changed
+        // (a comp resize or a tier change) — a new handle is reported then,
+        // which the bridge relays so Dart re-registers.
         let needs_new = match self.shared.as_ref() {
-            Some(sh) => sh.width != cw || sh.height != ch,
+            Some(sh) => sh.width != aw || sh.height != ah,
             None => true,
         };
         if needs_new {
-            self.shared = Some(lumit_gpu::shared::SharedTexture::new(&self.gpu, cw, ch)?);
+            self.shared = Some(lumit_gpu::shared::SharedTexture::new(&self.gpu, aw, ah)?);
         }
         let target = self
             .shared
@@ -542,8 +557,8 @@ impl HeadlessRenderer {
         target.present(&self.gpu, &shown);
         Ok(SharedFrameInfo {
             handle: target.handle(),
-            width: cw,
-            height: ch,
+            width: aw,
+            height: ah,
             format: "rgba8888",
         })
     }
@@ -568,17 +583,20 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
     ) -> Result<SharedFrameInfoLinux, String> {
-        let (shown, cw, ch) = self.preview_display_texture(doc, comp_id, frame, quality, None)?;
-        // Re-create the DMA-BUF texture when it is missing or the comp changed
-        // size — a new fd is reported then, which the bridge relays so Dart
-        // re-registers.
+        let (shown, _, _) = self.preview_display_texture(doc, comp_id, frame, quality, None)?;
+        // The texture's ACTUAL dims (comp size × preview scale) — see the
+        // Windows sibling above.
+        let (aw, ah) = (shown.width(), shown.height());
+        // Re-create the DMA-BUF texture when it is missing or the size changed
+        // (a comp resize or a tier change) — a new fd is reported then, which
+        // the bridge relays so Dart re-registers.
         let needs_new = match self.shared_dmabuf.as_ref() {
-            Some(sh) => sh.width != cw || sh.height != ch,
+            Some(sh) => sh.width != aw || sh.height != ah,
             None => true,
         };
         if needs_new {
             self.shared_dmabuf = Some(lumit_gpu::shared_linux::SharedDmabuf::new(
-                &self.gpu, cw, ch,
+                &self.gpu, aw, ah,
             )?);
         }
         let target = self
@@ -772,24 +790,16 @@ impl AudioJobsBuilder {
     }
 }
 
-/// This is a **transfer** saving, not a render saving: the composite has already
-/// happened at the comp's own size. The saving that reduces real work is the
-/// decode width, which [`crate::plan::Quality`] controls. The resize preserves
-/// aspect (a same-aspect target, so no letterbox bars appear) and reuses the
-/// export path's bilinear resampler, so both render paths downsample alike.
-/// The size a preview at `scale` should come back at, and so the size it is
-/// reduced to on the graphics card before the read-back.
-///
-/// The rounding is the same the processor-side resize used before this moved to
-/// the card, so nothing downstream sees a different answer than it used to.
-fn scaled_size(width: u32, height: u32, scale: f32) -> (u32, u32) {
-    if !scale.is_finite() || scale <= 0.0 || (scale - 1.0).abs() < 1e-4 {
-        return (width, height);
+/// The scale the compositor should composite at for `quality`: the Viewer's
+/// display scale when auto resolution asks for less than full, else 1.0.
+/// Export always renders with the default quality, so it composites at 1.0
+/// and the K-031 preview == export identity is untouched.
+fn composite_scale(quality: Quality) -> f32 {
+    if quality.auto_res {
+        quality.display_scale.min(1.0)
+    } else {
+        1.0
     }
-    (
-        ((width as f32 * scale).round() as u32).max(1),
-        ((height as f32 * scale).round() as u32).max(1),
-    )
 }
 
 /// The on-disk path a footage item points at (absolute when known, else the
@@ -1030,6 +1040,47 @@ mod tests {
         assert_eq!(rgba.len(), (w * h * 4) as usize);
         let idx = (((h / 2) * w + w / 2) * 4) as usize;
         assert!(rgba[idx + 1] > 200, "green solid stays green after resize");
+    }
+
+    /// **The preview scale is real.** Under auto resolution the COMPOSITE
+    /// itself runs on the scaled raster — the display texture comes back at
+    /// comp × scale, not comp size shrunk afterwards. This is what makes a
+    /// coarser realtime tier actually cheaper; before the fix this texture was
+    /// always full comp size whatever the preview scale, so this test fails
+    /// without it. The read-back still carries the right picture at the right
+    /// size, with no second resize pass to disagree with.
+    #[test]
+    fn auto_resolution_composites_at_the_scaled_size() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.0, 0.0, 1.0]), 16, 16);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality {
+            auto_res: true,
+            display_scale: 0.5,
+            ..Default::default()
+        };
+        let (shown, cw, ch) = r
+            .preview_display_texture(&doc, comp_id, 0, q, None)
+            .expect("preview texture");
+        assert_eq!((cw, ch), (16, 16), "the reported dims stay logical");
+        assert_eq!(
+            (shown.width(), shown.height()),
+            (8, 8),
+            "the composite ran at the preview scale, not at comp size"
+        );
+        // And the read-back entry point agrees end to end: right size, still red.
+        let (rgba, w, h) = r
+            .render_preview(&doc, comp_id, 0, q, 0.5, None)
+            .expect("preview");
+        assert_eq!((w, h), (8, 8));
+        let idx = (((h / 2) * w + w / 2) * 4) as usize;
+        assert!(rgba[idx] > 200, "red solid stays red at the scaled size");
     }
 
     /// Audio-only media (a readable file with no video stream) must not draw
