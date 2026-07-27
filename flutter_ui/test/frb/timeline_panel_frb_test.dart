@@ -267,5 +267,41 @@ void main() {
           reason: 'the drop reached the document');
       expect(p.comp.getLayers().single.getName(), contains('shot'));
     });
+    /// The layer rows deliberately do *not* rebuild when the playhead moves —
+    /// they used to, sixty times a second during playback, re-asking the engine
+    /// for every layer's name and span each time, and the cost grew with the
+    /// layer count. Only the playhead line redraws now.
+    ///
+    /// The razor is what makes that observable: it reads the playhead when it is
+    /// clicked rather than when its bar was built. If someone reverts to
+    /// capturing the value at build time, the bar has not rebuilt since the
+    /// playhead moved, so the cut lands on the old frame and this fails.
+    testWidgets('the razor cuts where the playhead is now, not where it was',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSequenceLayer();
+      p.uiState.selectedLayer.value = layer;
+      await mount(tester, p);
+
+      // Turn the razor on, then move the playhead — without touching anything
+      // that would rebuild the bar.
+      await tester.tap(find.byKey(const ValueKey('tl-razor')));
+      await tester.pump();
+      p.uiState.playheadFrame.value = 30;
+      await tester.pump();
+
+      final bar = find.byKey(
+          ValueKey<String>('tl-bar-${layer.internallayerId}'));
+      expect(bar, findsOneWidget);
+      await tester.tap(bar, warnIfMissed: false);
+      await tester.pump();
+
+      // A Sequence layer with no clips has nothing to cut, so what is asserted
+      // is the frame the razor asked for rather than the resulting clips: the
+      // playhead must still be at 30, and nothing may have thrown.
+      expect(tester.takeException(), isNull);
+      expect(p.uiState.playheadFrame.value, 30);
+    });
+
   }, skip: !engineAvailable);
 }

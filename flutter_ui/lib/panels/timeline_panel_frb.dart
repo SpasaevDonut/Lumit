@@ -133,47 +133,57 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                       (constraints.maxWidth - _outlineWidth).clamp(1.0, 1e6);
                   final axis = _Axis(frames: frames, width: layerAreaWidth);
 
-                  return ValueListenableBuilder<int>(
-                    valueListenable: ui.playheadFrame,
-                    builder: (context, playhead, _) => Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: _outlineWidth,
-                          child: _Outline(
-                            comp: comp,
-                            layers: layers,
-                            selected: ui.selectedLayer.value,
-                            onSelect: (l) => setState(() {
-                              ui.selectedLayer.value = l;
-                            }),
-                            onChanged: () => setState(() {}),
-                          ),
+                  // **Not** wrapped in a playhead listener. Every layer row and
+                  // every bar used to rebuild each time the playhead moved —
+                  // sixty times a second during playback, growing with the layer
+                  // count, and asking the engine for each layer's name and span
+                  // again every time. Only two things actually care where the
+                  // playhead is: the line itself, and the razor (which reads it
+                  // when clicked). Both listen for themselves now.
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: _outlineWidth,
+                        child: _Outline(
+                          comp: comp,
+                          layers: layers,
+                          selected: ui.selectedLayer.value,
+                          onSelect: (l) => setState(() {
+                            ui.selectedLayer.value = l;
+                          }),
+                          onChanged: () => setState(() {}),
                         ),
-                        Expanded(
-                          child: _graph
-                              ? GraphEditorFrb(
+                      ),
+                      Expanded(
+                        child: _graph
+                            // The graph draws the playhead through its own
+                            // curves, so it does still redraw on every move.
+                            ? ValueListenableBuilder<int>(
+                                valueListenable: ui.playheadFrame,
+                                builder: (context, playhead, _) =>
+                                    GraphEditorFrb(
                                   comp: comp,
                                   layer: ui.selectedLayer.value,
                                   frames: frames,
                                   playheadFrame: playhead,
                                   onSeek: (f) => ui.playheadFrame.value = f,
                                   onChanged: () => setState(() {}),
-                                )
-                              : _LayerArea(
-                                  comp: comp,
-                                  layers: layers,
-                                  axis: axis,
-                                  playhead: playhead,
-                                  razor: _razor,
-                                  onSeek: (f) => ui.playheadFrame.value =
-                                      f.clamp(0, frames == 0 ? 0 : frames - 1),
-                                  onChanged: () => setState(() {}),
-                                  cacheRevision: ui.frameArrived,
                                 ),
-                        ),
-                      ],
-                    ),
+                              )
+                            : _LayerArea(
+                                comp: comp,
+                                layers: layers,
+                                axis: axis,
+                                playhead: ui.playheadFrame,
+                                razor: _razor,
+                                onSeek: (f) => ui.playheadFrame.value =
+                                    f.clamp(0, frames == 0 ? 0 : frames - 1),
+                                onChanged: () => setState(() {}),
+                                cacheRevision: ui.frameArrived,
+                              ),
+                      ),
+                    ],
                   );
                 },
               ),
@@ -599,7 +609,9 @@ class _LayerArea extends StatelessWidget {
   final CompositionReference comp;
   final List<LayerReference> layers;
   final _Axis axis;
-  final int playhead;
+
+  /// Listened to, not read: only the playhead line moves when it changes.
+  final ValueListenable<int> playhead;
   final bool razor;
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
@@ -642,16 +654,21 @@ class _LayerArea extends StatelessWidget {
                 layer: layer,
                 axis: axis,
                 razor: razor,
-                playhead: playhead,
+                playheadFrame: () => playhead.value,
                 onChanged: onChanged,
               ),
           ],
         ),
-        // The playhead rides above every bar so it is never hidden behind one.
-        Positioned(
-          left: axis.xOf(playhead),
-          top: 0,
-          bottom: 0,
+        // The playhead rides above every bar so it is never hidden behind one,
+        // and it is the only thing here that redraws when it moves.
+        ValueListenableBuilder<int>(
+          valueListenable: playhead,
+          builder: (context, frame, child) => Positioned(
+            left: axis.xOf(frame),
+            top: 0,
+            bottom: 0,
+            child: child!,
+          ),
           child: IgnorePointer(
             child: Container(width: 1, color: t.accent),
           ),
@@ -733,7 +750,8 @@ class _Bar extends StatefulWidget {
   final LayerReference layer;
   final _Axis axis;
   final bool razor;
-  final int playhead;
+  /// Read when the razor is clicked, not captured when the bar is built.
+  final int Function() playheadFrame;
   final VoidCallback onChanged;
 
   const _Bar({
@@ -742,7 +760,7 @@ class _Bar extends StatefulWidget {
     required this.layer,
     required this.axis,
     required this.razor,
-    required this.playhead,
+    required this.playheadFrame,
     required this.onChanged,
   });
 
@@ -794,7 +812,7 @@ class _BarState extends State<_Bar> {
               onTap: widget.razor
                   ? () {
                       try {
-                        widget.layer.cutClipAt(frame: widget.playhead);
+                        widget.layer.cutClipAt(frame: widget.playheadFrame());
                       } catch (_) {
                         return;
                       }

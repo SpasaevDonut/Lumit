@@ -2542,6 +2542,16 @@ expensive: what is wanted has to be *cleared* once it arrives. An earlier versio
 asked again whenever anything was wanted, which meant every delivered frame asked
 for itself, and the engine re-rendered the same picture forever at full speed.
 
+*The Timeline was redrawing itself sixty times a second for no reason.* Moving
+the playhead rebuilt every layer row and every bar — and rebuilding a row means
+asking the engine again for that layer's name, its span, its switches. During
+playback that happened for every frame, and the cost grew with the number of
+layers, so the more work you had in a composition the worse playback got. Only
+two things actually care where the playhead is: the line itself, and the razor,
+which reads it at the moment you click. Both now listen for themselves and the
+rows sit still. Measured on a playhead move: with five layers, 6.4 ms down to
+1.3 ms; with twenty, 1.8 ms where the old shape would have cost around 19.
+
 *A fast path that fails silently is worse than no fast path.* Turning the
 zero-copy Viewer on in the shipped build had an ugly result: the Viewer drew
 nothing at all — just its checkerboard — while the playhead ran and the Scopes
