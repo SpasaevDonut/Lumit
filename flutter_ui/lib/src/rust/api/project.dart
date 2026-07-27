@@ -6,6 +6,7 @@
 import '../api.dart';
 import '../frb_generated.dart';
 import 'composition.dart';
+import 'effect.dart';
 import 'folder.dart';
 import 'footage.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
@@ -15,6 +16,7 @@ import 'shell.dart';
 import 'solid.dart';
 import 'state.dart';
 
+// These functions are ignored because they are not marked as `pub`: `next_comp_name_in`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `new`, `state`
 
@@ -84,11 +86,31 @@ class ProjectReference {
   /// Add a composition, filed into the Compositions auto-folder, as one undo
   /// step. A blank name gets the next "Comp N".
   ///
+  /// `settings` is what the New composition dialog collected — size, rate and
+  /// duration. `None` takes the defaults ([`BridgeCompSettings::defaults`]), which
+  /// is what every caller that does not ask the user does. `settings.name` is
+  /// ignored: the name comes from `name`, so there is one answer to "what is this
+  /// comp called" rather than two that can disagree.
+  ///
+  /// It is one call rather than "create, then apply settings" because that would
+  /// be two undo steps for one click, and undoing once would leave a comp behind
+  /// at the wrong size.
+  ///
   /// The folder is tracked by id, not by name, so renaming or nesting it keeps
   /// it the Compositions folder — the same habit the egui frontend has.
-  CompositionReference newComposition({required String name}) => BridgeLib
-      .instance.api
-      .crateApiProjectProjectReferenceNewComposition(that: this, name: name);
+  CompositionReference newComposition(
+          {required String name, BridgeCompSettings? settings}) =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceNewComposition(
+          that: this, name: name, settings: settings);
+
+  /// The name a comp made right now would get, if nobody typed one — "Comp 3"
+  /// when the project holds two. What the New composition dialog puts in its
+  /// Name field before the user touches it, so the field shows the same name
+  /// the engine would have chosen rather than a guess made in Dart.
+  String nextCompName() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceNextCompName(
+        that: this,
+      );
 
   /// Where this project was last saved, or null when it never has been. The
   /// menu bar needs it to decide between Save and Save as.

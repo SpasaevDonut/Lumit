@@ -68,8 +68,7 @@ void main() {
 
     testWidgets('Home and End go to the ends of the comp', (tester) async {
       final p = await mount(tester);
-      final last =
-          p.uiState.selectedComp!.getSettings().durationFrames.toInt() - 1;
+      final last = p.uiState.selectedComp!.durationFrames() - 1;
 
       await tester.sendKeyEvent(LogicalKeyboardKey.end);
       await tester.pump();
@@ -146,6 +145,43 @@ void main() {
       await tester.sendKeyEvent(LogicalKeyboardKey.space);
       await tester.pump();
       expect(asked, 1);
+    });
+
+    /// **The dialogue-kills-the-keyboard regression.** A modal is an *overlay*
+    /// entry, so it sits outside the shell's `FocusScope` rather than inside it.
+    /// A text field in one therefore takes focus out of the shell's subtree
+    /// altogether, and when the entry is removed the focus it held dies with it
+    /// — leaving the primary focus somewhere that is not under the shell, so the
+    /// shell's key handler was never called again and *every* shortcut was dead
+    /// until something inside the shell was clicked.
+    ///
+    /// It only became reachable when New composition grew a dialogue (K-180):
+    /// make a comp, press space, nothing plays.
+    testWidgets('the keyboard still works after a dialogue has been used',
+        (tester) async {
+      final p = await mount(tester);
+      var asked = 0;
+      p.uiState.togglePlayRequest.addListener(() => asked++);
+
+      await tester.tap(find.byKey(const ValueKey<String>('menu-Composition')));
+      await tester.pump();
+      await tester.tap(find.text('Composition settings…'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('comp-name')), findsOneWidget);
+
+      // Type into it, which is what moves focus into the overlay.
+      await tester.tap(find.byKey(const ValueKey('comp-name')));
+      await tester.pump();
+      await tester.enterText(find.byKey(const ValueKey('comp-name')), 'Scene');
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('comp-apply')));
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(asked, 1,
+          reason: 'the shell has the keyboard back once the dialogue is gone');
     });
   }, skip: !engineAvailable);
 }

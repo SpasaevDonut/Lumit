@@ -234,6 +234,14 @@ The library of assets: footage items, audio items, comps, folders.
   MUST NOT trigger full decodes. Double-click opens the item in a Viewer (footage mode).
 - Drag an item into a comp's Timeline or Viewer to create a layer; drag onto the
   **New comp** button to create a comp matching the footage (dimensions, fps, duration).
+  **Shipped:** rows multi-select — `Ctrl`/`Cmd`-click adds or removes one, `Shift`-click takes
+  the run between the last click and this one, a plain click goes back to one — and a drag from
+  any selected row carries the whole selection, so several clips reach the Timeline, or the
+  **New composition** button, in one gesture. A drop on that button opens the composition
+  settings dialogue (§13.3) prefilled from the media: the size and rate of the first item that
+  has a picture, and the length of the longest, because a comp shorter than what was dropped
+  into it would clip the very thing that was asked for. Pressing Create makes the comp and
+  places every dropped item in it as a layer.
 
 ### 3.2 Interpretation dialogue
 
@@ -691,6 +699,28 @@ no-wizard rule below.
   A single setting disables all tooltips.
 - No multi-step onboarding wizard or forced tour. The single first-run screen (§13.1),
   empty states, tooltips, and command palette are the entire onboarding surface.
+
+### 13.3 The composition settings dialogue (K-180)
+
+One window serves both **New composition** (Create) and **Composition settings** (Save); they
+ask the same four questions and differ only in what the button does. It is reached from the
+Composition menu, the Project panel's footer button, a right-click on a comp row, and a drop of
+footage on that button (§3.1).
+
+- **Name.**
+- **Size**: width × height, with an aspect-ratio lock (on by default — editing one side carries
+  the other) and the shape shown beside it in its smallest whole numbers (`40 : 17`).
+- **Frame rate**: **one number**, in fps. `600` and `23.976` are both typed as they read; a
+  **Presets** list offers the common rates including the NTSC family. The denominator is never
+  shown. It still crosses the bridge as the exact `num`/`den` pair — 23.976 reaches the engine
+  as 24000/1001 — but that pair is derived from what was typed (docs/14 §2 is unchanged).
+- **Duration**: `HH:MM:SS.mmm`, a length of time. Never a frame count: a count means nothing
+  without the rate it was counted at, and writing one back at a *changed* rate is what used to
+  make the comp longer or shorter under layers that had not moved (K-180).
+
+**Changing the frame rate MUST change only the frame rate.** The comp keeps its length, every
+layer keeps its timing, and nothing plays faster or slower — the comp is simply shown at more
+(or fewer) frames per second. This has a regression test on both sides of the bridge.
 
 ---
 

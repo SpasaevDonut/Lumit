@@ -167,7 +167,7 @@ void main() {
       await tester.tapAt(Offset(box.left + box.width * 0.5, box.center.dy));
       await tester.pump();
 
-      final frames = p.comp.getSettings().durationFrames.toInt();
+      final frames = p.comp.durationFrames();
       expect(p.uiState.playheadFrame.value, closeTo(frames * 0.5, 2),
           reason: 'the tap landed halfway along the comp');
       expect(p.uiState.playheadFrame.value, lessThan(frames),

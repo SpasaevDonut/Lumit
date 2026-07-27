@@ -20,6 +20,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
@@ -37,6 +38,35 @@ import '../widgets/controls.dart';
 /// The longer edge a row thumbnail is decoded at: ~28 logical px at 2× for
 /// crispness on a high-DPI display.
 const int _thumbMaxEdge = 56;
+
+/// What a click on a row does to the selection.
+enum SelectMode {
+  /// Plain click: this row, and only this row.
+  replace,
+
+  /// `Ctrl` (or `Cmd`): add this row, or drop it if it was already in.
+  toggle,
+
+  /// `Shift`: every row between the anchor and this one.
+  range,
+}
+
+/// The modifier held right now, as a selection rule. Read from the keyboard
+/// rather than carried on the tap because `GestureDetector.onTap` does not
+/// report modifiers.
+SelectMode _selectModeFromKeyboard() {
+  final keys = HardwareKeyboard.instance.logicalKeysPressed;
+  bool down(LogicalKeyboardKey a, LogicalKeyboardKey b) =>
+      keys.contains(a) || keys.contains(b);
+  if (down(LogicalKeyboardKey.shiftLeft, LogicalKeyboardKey.shiftRight)) {
+    return SelectMode.range;
+  }
+  if (down(LogicalKeyboardKey.controlLeft, LogicalKeyboardKey.controlRight) ||
+      down(LogicalKeyboardKey.metaLeft, LogicalKeyboardKey.metaRight)) {
+    return SelectMode.toggle;
+  }
+  return SelectMode.replace;
+}
 
 /// How far each nesting level indents a row.
 const double _indentPerDepth = 14;
@@ -90,9 +120,67 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     super.dispose();
   }
 
-  /// The item currently selected, by id. Held here rather than in `LumitUiState`
-  /// because nothing outside this panel reads it yet.
-  String? _selectedId;
+  /// The items currently selected, by id, in the order the panel lists them.
+  /// Held here rather than in `LumitUiState` because nothing outside this panel
+  /// reads it yet.
+  ///
+  /// A set rather than one id because more than one row can be picked:
+  /// `Ctrl`-click adds or removes one, `Shift`-click takes the run between the
+  /// last click and this one, and a plain click goes back to just that row — the
+  /// selection rules every file list has. Multi-selection is what lets several
+  /// clips be dropped on the Timeline, or on New composition, in one gesture.
+  final Set<String> _selectedIds = {};
+
+  /// The row a `Shift`-click measures its run from — the last one clicked
+  /// without `Shift`.
+  String? _anchorId;
+
+  /// Every row id currently drawn, top to bottom, so a `Shift`-click knows what
+  /// "between these two" means. Rebuilt with the rows.
+  final List<String> _visibleIds = [];
+
+  /// The footage handle behind each row, so a drag can carry the whole selection
+  /// without walking the tree again. Rebuilt with the rows.
+  final Map<String, FootageReference> _footageById = {};
+
+  /// The selected footage, in the order the panel lists it. Anything selected
+  /// that is not footage — a folder, a comp — is simply not part of a drag.
+  List<FootageReference> get _selectedFootage => [
+        for (final id in _visibleIds)
+          if (_selectedIds.contains(id) && _footageById[id] != null)
+            _footageById[id]!,
+      ];
+
+  /// Apply a click to the selection.
+  void _select(String id, SelectMode mode) {
+    setState(() {
+      switch (mode) {
+        case SelectMode.replace:
+          _selectedIds
+            ..clear()
+            ..add(id);
+          _anchorId = id;
+        case SelectMode.toggle:
+          if (!_selectedIds.remove(id)) _selectedIds.add(id);
+          _anchorId = id;
+        case SelectMode.range:
+          final from = _visibleIds.indexOf(_anchorId ?? id);
+          final to = _visibleIds.indexOf(id);
+          if (from < 0 || to < 0) {
+            _selectedIds.add(id);
+            return;
+          }
+          // The anchor stays put, so widening and narrowing the run with
+          // repeated Shift-clicks both work.
+          _selectedIds
+            ..clear()
+            ..addAll(_visibleIds.sublist(
+              from < to ? from : to,
+              (from < to ? to : from) + 1,
+            ));
+      }
+    });
+  }
 
   /// The row being renamed in place, by id.
   String? _renamingId;
@@ -148,27 +236,34 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     final missingOnly = _missingOnly && anyMissing;
 
     final rows = <Widget>[];
+    _visibleIds.clear();
     void walk(ItemReference item, int depth) {
       final id = _idOf(item);
       final isMissingFootage =
           item is ItemReference_Footage && (_missing[id] ?? false);
       // In missing-only mode every visible row is something to fix (docs/07 §3.3).
       if (!missingOnly || isMissingFootage) {
+        _visibleIds.add(id);
         rows.add(_ProjectRowFrb(
           key: ValueKey<String>('project-row-$id'),
           item: item,
           depth: depth,
           missing: isMissingFootage,
           epoch: _epoch,
-          selected: _selectedId == id,
+          selected: _selectedIds.contains(id),
           renaming: _renamingId == id,
-          onSelect: () => setState(() => _selectedId = id),
+          selectionCount: _selectedIds.length,
+          selectedFootage: () => _selectedFootage,
+          onSelect: (modifier) => _select(id, modifier),
           onStartRename: () => setState(() => _renamingId = id),
           onEndRename: () => setState(() => _renamingId = null),
           onFindMissing: () => setState(() => _missingOnly = true),
           onLocalEdit: _documentChanged,
           relinkPicker: widget.relinkPicker,
         ));
+      }
+      if (item case ItemReference_Footage(:final field0)) {
+        _footageById[id] = field0;
       }
       if (item is ItemReference_Folder) {
         for (final child in item.field0.getChildren()) {
@@ -177,6 +272,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
       }
     }
 
+    _footageById.clear();
     for (final item in roots) {
       walk(item, 0);
     }
@@ -238,12 +334,24 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                 child: Text('Import…', style: t.small),
               ),
               const SizedBox(width: 6),
-              HouseButton(
-                key: const ValueKey('project-new-comp'),
-                small: true,
-                frameless: true,
-                onPressed: _newComposition,
-                child: Text('New composition', style: t.small),
+              // Footage dropped here makes a comp that matches it (docs/07 §3.1)
+              // — the same dialog the button opens, with the media's own size,
+              // rate and length already filled in, and every dropped item landing
+              // in the finished comp as a layer.
+              DragTarget<FootageDragData>(
+                onAcceptWithDetails: (d) => _newComposition(d.data.footage),
+                builder: (context, candidate, _) => Container(
+                  foregroundDecoration: candidate.isEmpty
+                      ? null
+                      : BoxDecoration(border: Border.all(color: t.accent)),
+                  child: HouseButton(
+                    key: const ValueKey('project-new-comp'),
+                    small: true,
+                    frameless: true,
+                    onPressed: _newComposition,
+                    child: Text('New composition', style: t.small),
+                  ),
+                ),
               ),
             ],
           ),
@@ -258,11 +366,15 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     }
   }
 
-  void _newComposition() {
+  /// Ask for the new comp's settings, then make it. `footage` is whatever was
+  /// dropped on the button; empty for a plain click.
+  Future<void> _newComposition([
+    List<FootageReference> footage = const [],
+  ]) async {
+    final state = Provider.of<LumitState>(context, listen: false);
+    final comp = await state.newComposition(context, footage: footage);
+    if (comp == null || !mounted) return;
     // Fronted because a comp you just made is the one you want to work on.
-    final comp =
-        Provider.of<LumitState>(context, listen: false).newComposition();
-    if (comp == null) return;
     Provider.of<LumitUiState>(context, listen: false).setSelectedComp(comp);
     _documentChanged();
   }
@@ -370,7 +482,15 @@ class _ProjectRowFrb extends StatefulWidget {
   final int epoch;
   final bool selected;
   final bool renaming;
-  final VoidCallback onSelect;
+
+  /// How many rows are selected in all — a second click renames only when this
+  /// row is the whole selection.
+  final int selectionCount;
+  final ValueChanged<SelectMode> onSelect;
+
+  /// The panel's whole footage selection, read when a drag starts so dragging
+  /// any selected row brings the rest with it.
+  final List<FootageReference> Function() selectedFootage;
   final VoidCallback onStartRename;
   final VoidCallback onEndRename;
   final VoidCallback onFindMissing;
@@ -388,7 +508,9 @@ class _ProjectRowFrb extends StatefulWidget {
     required this.epoch,
     required this.selected,
     required this.renaming,
+    required this.selectionCount,
     required this.onSelect,
+    required this.selectedFootage,
     required this.onStartRename,
     required this.onEndRename,
     required this.onFindMissing,
@@ -444,13 +566,20 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
   }
 
   /// A second click on the already-selected row starts an in-place rename — the
-  /// AE click-to-rename-when-selected gesture.
+  /// AE click-to-rename-when-selected gesture. Held modifiers mean the click is
+  /// about the *selection*, so they never start a rename, and neither does a
+  /// click on a row that is one of several selected: renaming one row of four is
+  /// not what that click asked for.
   void _handleTap() {
-    if (widget.selected && !widget.renaming) {
+    final mode = _selectModeFromKeyboard();
+    if (mode == SelectMode.replace &&
+        widget.selected &&
+        widget.selectionCount <= 1 &&
+        !widget.renaming) {
       widget.onStartRename();
-    } else {
-      widget.onSelect();
+      return;
     }
+    widget.onSelect(mode);
   }
 
   void _handleDoubleTap() {
@@ -495,7 +624,10 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
         onTap: _handleTap,
         onDoubleTap: _handleDoubleTap,
         onSecondaryTapDown: (d) {
-          widget.onSelect();
+          // A right-click on a row already in the selection keeps it: the menu
+          // is about what is picked, and collapsing four rows to one because the
+          // menu was opened would throw the selection away.
+          if (!widget.selected) widget.onSelect(SelectMode.replace);
           showProjectMenuFrb(
             context: context,
             item: item,
@@ -545,15 +677,27 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
       ),
     );
 
-    // Only footage drags onto the Timeline, and the payload must stay
-    // `FootageDragData` — the Timeline's drop target consumes exactly that, and
-    // nothing else produces it.
+    // Only footage drags onto the Timeline (or onto New composition), and the
+    // payload must stay `FootageDragData` — those drop targets consume exactly
+    // that, and nothing else produces it.
     if (item case ItemReference_Footage(:final field0)) {
       final name = _name();
+      // Dragging a row that is part of the selection brings the whole selection;
+      // dragging an unselected row is about that row alone, which is what every
+      // file list does and what stops a stale selection following the pointer.
+      final selection = widget.selected ? widget.selectedFootage() : const [];
+      final dragged = selection.length > 1
+          ? List<FootageReference>.from(selection)
+          : <FootageReference>[field0];
       return Draggable<FootageDragData>(
-        data: FootageDragData(field0, name),
+        data: FootageDragData(
+          dragged,
+          dragged.length > 1 ? '${dragged.length} items' : name,
+        ),
         dragAnchorStrategy: pointerDragAnchorStrategy,
-        feedback: _DragFeedbackFrb(name: name),
+        feedback: _DragFeedbackFrb(
+          name: dragged.length > 1 ? '${dragged.length} items' : name,
+        ),
         child: row,
       );
     }

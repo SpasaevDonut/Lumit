@@ -12,10 +12,12 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
-import 'package:lumit_flutter/src/rust/api/footage.dart' show LumitMediaStatus;
+import 'package:lumit_flutter/src/rust/api/footage.dart'
+    show FootageReference, LumitMediaStatus;
 import 'package:lumit_flutter/src/rust/api/project_item.dart'
     show ItemReference_Footage;
 import 'package:lumit_flutter/src/rust/api/state.dart' show ScopedChange;
@@ -210,6 +212,95 @@ void main() {
       // The Timeline's drop target consumes exactly this type and nothing else
       // produces it, so the payload type is load-bearing.
       expect(find.byType(Draggable<FootageDragData>), findsOneWidget);
+    });
+
+    /// Selecting several rows is what makes "drop four clips on the Timeline",
+    /// or on New composition, a single gesture. Ctrl adds one at a time, Shift
+    /// takes the run between, and a plain click goes back to just one.
+    testWidgets('Ctrl and Shift select more than one row', (tester) async {
+      final p = freshProject();
+      for (final name in ['a.mov', 'b.mov', 'c.mov']) {
+        p.state.project!.importFootage(path: 'C:/clips/$name');
+      }
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      List<FootageReference> dragged() => tester
+          .widget<Draggable<FootageDragData>>(
+            find.ancestor(
+              of: find.text('a.mov'),
+              matching: find.byType(Draggable<FootageDragData>),
+            ),
+          )
+          .data!
+          .footage;
+
+      await _clickRow(tester, 'a.mov');
+      expect(dragged(), hasLength(1), reason: 'one click, one row');
+
+      await _clickRow(tester, 'c.mov', held: LogicalKeyboardKey.controlLeft);
+      expect(dragged(), hasLength(2),
+          reason: 'Ctrl adds a row without dropping the first');
+
+      await _clickRow(tester, 'a.mov');
+      await _clickRow(tester, 'c.mov', held: LogicalKeyboardKey.shiftLeft);
+      expect(dragged(), hasLength(3),
+          reason: 'Shift takes the whole run between the two clicks');
+
+      await _clickRow(tester, 'b.mov');
+      expect(dragged(), hasLength(1),
+          reason: 'a plain click goes back to just that row');
+    });
+
+    /// Dropping footage on New composition opens the same dialogue the button
+    /// opens, and every dropped item lands in the finished comp as a layer
+    /// (docs/07 §3.1).
+    testWidgets('footage dropped on New composition makes a comp of it',
+        (tester) async {
+      final p = freshProject();
+      final a = p.state.project!.importFootage(path: 'C:/clips/a.mov');
+      final b = p.state.project!.importFootage(path: 'C:/clips/b.mov');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      // The drop is delivered straight to the target's callback rather than
+      // simulated with a pointer: the Draggable and the target live in the same
+      // panel, and a real drag would need the row and the footer on screen at
+      // once at a size these tests do not fix.
+      final target = find.byType(DragTarget<FootageDragData>);
+      tester
+          .widget<DragTarget<FootageDragData>>(target)
+          .onAcceptWithDetails!(DragTargetDetails<FootageDragData>(
+            data: FootageDragData([a, b], '2 items'),
+            offset: tester.getCenter(target),
+          ));
+      // The dialogue opens only after every dropped item has been probed, which
+      // is a real trip into FFmpeg — `settleFrb` waits on the engine rather than
+      // on a frame count.
+      await settleFrb(
+        tester,
+        until: () =>
+            find.byKey(const ValueKey('comp-apply')).evaluate().isNotEmpty,
+      );
+
+      expect(find.text('New composition'), findsWidgets,
+          reason: 'a drop asks for the settings, exactly as the click does');
+      await tester.tap(find.byKey(const ValueKey('comp-apply')));
+      await tester.pumpAndSettle();
+
+      final comp = p.uiState.selectedComp;
+      expect(comp, isNotNull);
+      expect(comp!.getLayers(), hasLength(2),
+          reason: 'both dropped clips are in the comp');
     });
 
     testWidgets('the context menu deletes an item', (tester) async {
@@ -492,7 +583,8 @@ void main() {
           reason: 'and the panel is showing it');
     });
 
-    testWidgets('the footer makes a composition and fronts it', (tester) async {
+    testWidgets('the footer asks for settings, then makes a composition',
+        (tester) async {
       final p = freshProject();
       await tester.pumpWidget(hostPanel(
         child: const ProjectPanelFrb(),
@@ -503,10 +595,36 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('project-new-comp')));
       await tester.pump();
+      // The button asks before it commits (K-180): nothing exists until Create.
+      expect(find.text('New composition'), findsWidgets);
+      expect(p.state.project!.getItems(), isEmpty);
+
+      await tester.tap(find.byKey(const ValueKey('comp-apply')));
+      await tester.pumpAndSettle();
 
       expect(p.state.project!.getItems(), hasLength(1));
       expect(p.uiState.selectedComp, isNotNull,
           reason: 'a comp you just made is the one you want to work on');
+    });
+
+    /// Cancelling has to leave the project exactly as it was — a dialogue that
+    /// commits on the way out is worse than no dialogue.
+    testWidgets('cancelling New composition makes nothing', (tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('project-new-comp')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('comp-cancel')));
+      await tester.pumpAndSettle();
+
+      expect(p.state.project!.getItems(), isEmpty);
+      expect(p.uiState.selectedComp, isNull);
     });
 
     /// Double-clicking empty space is the gesture people reach for before they
@@ -546,6 +664,25 @@ void main() {
           reason: 'the blank space below the rows takes the gesture too');
     });
   }, skip: !engineAvailable);
+}
+
+/// Click a row, optionally with a modifier held.
+///
+/// Two things this has to get right. The modifier is *held on the keyboard*
+/// rather than carried on the tap, because `GestureDetector.onTap` does not
+/// report one. And the pump is a full double-tap timeout: the rows also handle
+/// double-taps, so a single tap is not delivered until the recogniser gives up
+/// waiting for a second one — pumping a single frame leaves the click pending
+/// and the test asserting against a selection that has not happened yet.
+Future<void> _clickRow(
+  WidgetTester tester,
+  String name, {
+  LogicalKeyboardKey? held,
+}) async {
+  if (held != null) await tester.sendKeyDownEvent(held);
+  await tester.tap(find.text(name));
+  await tester.pump(kDoubleTapTimeout);
+  if (held != null) await tester.sendKeyUpEvent(held);
 }
 
 Future<void> _doubleTap(WidgetTester tester, Finder target) async {

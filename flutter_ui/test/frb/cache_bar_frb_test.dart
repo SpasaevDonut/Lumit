@@ -15,6 +15,7 @@ import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 
 import 'frb_test_support.dart';
 
@@ -147,7 +148,8 @@ void main() {
           height: settings.height,
           fpsNum: settings.fpsNum,
           fpsDen: settings.fpsDen,
-          durationFrames: 4000,
+          // 4000 frames at the comp's 60 fps.
+          duration: const BridgeRational(num: 200, den: 3),
         ),
       );
       comp.addSolidLayer();

@@ -54,9 +54,17 @@ pub struct BridgeCompSize {
 
 /// Everything the Composition settings dialog reads and writes.
 ///
-/// The frame rate is the exact `num`/`den` pair and the duration is a frame count,
-/// never floating-point seconds (docs/14 §2). A dialog that round-tripped 29.97
-/// through a double would not hand it back as 30000/1001.
+/// The frame rate is the exact `num`/`den` pair and the duration is exact
+/// rational **seconds**, never floating point (docs/14 §2). A dialog that
+/// round-tripped 29.97 through a double would not hand it back as 30000/1001.
+///
+/// The duration is seconds rather than a frame count because the frame rate is
+/// editable in the same dialog, and a frame count means nothing without knowing
+/// which rate it was counted at: applying "1800 frames" after changing 60 fps to
+/// 30 halved the comp's real length while every layer kept its own seconds, which
+/// is what made the layers look retimed (K-180). Seconds are what the document
+/// stores, so the rate can change without the comp getting longer or shorter.
+/// Callers wanting the count ask [`CompositionReference::duration_frames`].
 #[frb(non_opaque)]
 pub struct BridgeCompSettings {
     pub name: String,
@@ -64,7 +72,41 @@ pub struct BridgeCompSettings {
     pub height: u32,
     pub fps_num: u32,
     pub fps_den: u32,
-    pub duration_frames: i64,
+    pub duration: BridgeRational,
+}
+
+impl BridgeCompSettings {
+    /// What a comp gets when nobody chose: 1920×1080, 60 fps, 30 seconds.
+    ///
+    /// Here rather than in the frontend so the New composition dialog and a
+    /// `new_composition` with no settings cannot drift into different ideas of
+    /// what a default comp is.
+    #[frb(sync)]
+    pub fn defaults() -> BridgeCompSettings {
+        BridgeCompSettings {
+            name: String::new(),
+            width: 1920,
+            height: 1080,
+            fps_num: 60,
+            fps_den: 1,
+            duration: BridgeRational { num: 30, den: 1 },
+        }
+    }
+
+    /// The engine types this settings block names, or `None` when the rate or
+    /// duration is not a time at all.
+    #[frb(ignore)]
+    pub(crate) fn to_engine(
+        &self,
+    ) -> Option<(lumit_core::time::FrameRate, lumit_core::time::Duration)> {
+        use lumit_core::time::{Duration, FrameRate, Rational};
+        let rate = FrameRate::new(self.fps_num, self.fps_den).ok()?;
+        let duration = Rational::new(self.duration.num, self.duration.den).ok()?;
+        // A comp shorter than one frame has nothing to show, so the floor is one
+        // frame at the rate being applied.
+        let floor = rate.frame_duration().ok()?;
+        Some((rate, Duration(duration.max(floor.0))))
+    }
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -138,24 +180,37 @@ impl CompositionReference {
 
     /// Everything the Composition settings dialog shows.
     ///
-    /// The frame rate crosses as an exact `{num, den}` pair and the duration as a
-    /// frame count, never as floating-point seconds — docs/14 §2's rational-time
-    /// rule. 29.97 fps is 30000/1001, and a dialog that round-tripped it through a
-    /// double would not give it back.
+    /// The frame rate crosses as an exact `{num, den}` pair and the duration as
+    /// exact rational seconds, never as a float — docs/14 §2's rational-time rule.
+    /// 29.97 fps is 30000/1001, and a dialog that round-tripped it through a double
+    /// would not give it back.
     #[frb(sync)]
     pub fn get_settings(&self) -> Result<BridgeCompSettings, BridgeError> {
         let comp = self.composition()?;
-        let frames = comp
-            .frame_rate
-            .frame_at(lumit_core::time::CompTime(comp.duration.0));
         Ok(BridgeCompSettings {
             name: comp.name.clone(),
             width: comp.width,
             height: comp.height,
             fps_num: comp.frame_rate.num(),
             fps_den: comp.frame_rate.den(),
-            duration_frames: frames,
+            duration: BridgeRational {
+                num: comp.duration.0.num(),
+                den: comp.duration.0.den(),
+            },
         })
+    }
+
+    /// How many frames the comp is long at its own rate — the Timeline's axis,
+    /// and one past the last frame the transport can reach.
+    ///
+    /// Derived rather than stored: the document holds a length in seconds, and
+    /// the count is that length read at whatever rate the comp currently has.
+    #[frb(sync)]
+    pub fn duration_frames(&self) -> Result<i64, BridgeError> {
+        let comp = self.composition()?;
+        Ok(comp
+            .frame_rate
+            .frame_at(lumit_core::time::CompTime(comp.duration.0)))
     }
 
     /// Apply the Composition settings dialog, as one undo step.
@@ -164,17 +219,15 @@ impl CompositionReference {
     /// so a dialog cannot commit a comp that is zero pixels wide or zero frames
     /// long. The background colour is preserved: it is not part of this dialog, and
     /// `SetCompSettings` carries the whole settings block.
+    ///
+    /// Changing only the frame rate changes only the frame rate: the duration
+    /// crosses as seconds, so the comp keeps its real length and every layer keeps
+    /// its own timing — the comp shows more (or fewer) frames per second and
+    /// nothing plays faster (K-180).
     #[frb(sync)]
     pub fn set_settings(&self, settings: BridgeCompSettings) -> Result<(), BridgeError> {
-        use lumit_core::time::{Duration, FrameRate};
-
         let comp = self.composition()?;
-        let frame_rate = FrameRate::new(settings.fps_num, settings.fps_den)
-            .map_err(|_| BridgeError::InvalidFrameRate)?;
-        let duration = frame_rate
-            .time_of_frame(settings.duration_frames.max(1))
-            .map(|t| Duration(t.0))
-            .map_err(|_| BridgeError::InvalidFrameRate)?;
+        let (frame_rate, duration) = settings.to_engine().ok_or(BridgeError::InvalidFrameRate)?;
 
         let proj = self.project()?;
         let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;

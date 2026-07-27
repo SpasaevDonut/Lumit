@@ -3136,10 +3136,10 @@ until the engine gains a way to set them); a companion **Effects & presets**
 panel lets you search the built-in effects and apply one to the selected layer.
 Finally, the **Composition settings** and **New composition** windows
 are real dialogues now — name, size, frame rate and duration — opened from the
-Composition menu; creating a comp sends its name through the real engine call,
-while the size/rate/duration and the "edit an existing comp's settings" button
-are honestly marked as not-yet-wired, waiting on a bridge call that does not
-exist yet. Saving effect presets to a `.lumfx` file, and masks, are later waves.
+Composition menu; every field reaches the engine, and the two windows have since
+become one piece of code with two buttons (see "the composition settings window"
+at the end of this section for what each field means and the frame-rate bug that
+reshaped two of them). Saving effect presets to a `.lumfx` file, and masks, are later waves.
 
 **The Timeline coming to life (F3).** The Timeline panel — the strip along the
 bottom that shows time running left-to-right and the stack of layers — is now
@@ -3531,3 +3531,73 @@ value fields have no key handling yet. This paragraph used to claim otherwise.)
 An older engine library that predates this simply does not offer the live
 note, and the interface notices and quietly falls back to the old,
 tick-by-tick full-edit behaviour — slower, but correct, and nothing breaks.
+
+**The composition settings window, and why changing the frame rate used to
+speed everything up.** This is one window doing two jobs: pressed from the
+Project panel's *New composition* button (or the Composition menu) it says
+"New composition" and its button reads *Create*; opened by right-clicking a
+composition it says "Composition settings" and reads *Save*. They ask the same
+four questions, so there is one piece of code and one appearance rather than
+two that drift apart.
+
+Two of those questions changed shape, and the second one was a real bug the
+owner reported.
+
+*The frame rate is now one number.* It used to be shown as two — a top and a
+bottom, 24000 over 1001 — because some broadcast rates genuinely are fractions
+(what everyone calls "23.976 fps" is exactly 24000/1001, and a number written
+out as 23.976 is a rounding that can never be turned back into the exact one).
+That is true, and the engine still stores and receives the exact pair; but it
+is *our* problem, not yours. So the field takes the number you would say out
+loud — `60`, `600`, `23.976` — and works the fraction out behind the window,
+with a **Presets** list beside it holding the awkward rates so nobody has to
+remember that 1001 exists.
+
+*The duration is now a length of time, not a count of frames — and that is the
+fix.* Think about what a comp actually is. Underneath, the project stores "this
+composition is thirty seconds long" and "this layer runs from second two to
+second twelve" — real time, the kind a clock measures. The frame rate is only
+how finely that time gets chopped up for display: at 30 fps thirty seconds is
+900 slices, at 60 fps it is 1800 slices of the same thirty seconds. Nothing
+about the *content* changes when you change it, any more than a film gets
+shorter when you count it in half-frames.
+
+The old window asked for the duration as a slice count. So it would open on a
+thirty-second comp at 60 fps, show you "1800", and if you changed the rate to
+30 and pressed Save, it dutifully wrote back "1800 frames" — which at 30 fps
+means **sixty seconds**. The comp quietly doubled in length while every layer
+inside it stayed exactly where it was, occupying the seconds it always had.
+On screen that reads as everything suddenly running at half speed, which is
+precisely what was reported. Changing the rate the other way looked like a
+speed-up for the same reason.
+
+Now the field reads `00:00:30.000` — hours, minutes, seconds, thousandths —
+which is the thing the project actually stores, so it passes through a rate
+change untouched. Change 60 to 30 and the comp is still thirty seconds long,
+every layer is still where you left it, and the only difference is that the
+timeline counts 900 frames instead of 1800. That promise has a test on each
+side of the boundary, so it cannot quietly come undone: one in Rust that
+checks the comp and its layers after a rate change, and one in Flutter that
+drives the real window and presses Save.
+
+The size row gained a padlock, on by default, that keeps the shape when you
+change one side, with the ratio spelled out beside it (`40 : 17`).
+
+**Picking more than one thing in the Project panel.** The panel used to allow
+exactly one selected row. It now behaves like every file list: plain click
+picks one, `Ctrl`-click adds or removes one, `Shift`-click takes the whole run
+between your last click and this one. Dragging any row that is part of a
+selection brings the whole selection with it — dragging an unselected row is
+about that row alone — so four clips can be dropped onto the Timeline in one
+go and each becomes a layer.
+
+The useful destination for that gesture is the **New composition** button
+itself, which now accepts drops. Dropping footage on it opens the settings
+window already filled in from the media: the size and rate of the first item
+that has a picture in it, and the length of the longest one (a comp shorter
+than what you dropped into it would cut off the very thing you asked for).
+Press Create and you get the comp *and* every dropped clip in it as a layer.
+Reading those numbers off a file means opening it with FFmpeg, which is slow
+enough that it must not happen on the interface's own thread, so it happens
+before the window appears rather than making the window rearrange itself a
+moment after you see it.

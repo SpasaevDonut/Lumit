@@ -288,7 +288,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     // keeping time.
     if (playing &&
         ui.workspace.performance.playback == PlaybackMode.everyFrame) {
-      final last = comp.getSettings().durationFrames.toInt() - 1;
+      final last = comp.durationFrames() - 1;
       _efInFlight = (_efInFlight - 1).clamp(0, 8);
       _efPump(comp, ui, last);
       final next = ui.playheadFrame.value + 1;
@@ -353,7 +353,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
 
   void _seek(CompositionReference comp, LumitUiState state, int frame) {
     final settings = comp.getSettings();
-    final last = settings.durationFrames.toInt() - 1;
+    final last = comp.durationFrames() - 1;
     state.playheadFrame.value = frame.clamp(0, last < 0 ? 0 : last);
     // Take the sound with it. Seeking while playing keeps playing, which is
     // what makes scrubbing during playback usable rather than a stutter.
@@ -387,7 +387,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     final fps = settings.fpsDen == 0
         ? 60.0
         : settings.fpsNum.toDouble() / settings.fpsDen.toDouble();
-    final last = settings.durationFrames.toInt() - 1;
+    final last = comp.durationFrames() - 1;
 
     // Every-frame playback cannot keep time by definition, so it plays silent.
     // Sound that drifts against the picture is worse than no sound, and worse
@@ -992,7 +992,7 @@ class _Toolbar extends StatelessWidget {
               key: const ValueKey('viewer-end'),
               small: true,
               frameless: true,
-              onPressed: () => onSeek(settings.durationFrames.toInt() - 1),
+              onPressed: () => onSeek(comp.durationFrames() - 1),
               child: Text('▶|', style: t.small),
             ),
             const SizedBox(width: 8),

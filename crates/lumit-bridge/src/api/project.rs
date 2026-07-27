@@ -5,7 +5,7 @@ use lumit_core::Op;
 use uuid::Uuid;
 
 use crate::api::{
-    composition::CompositionReference,
+    composition::{BridgeCompSettings, CompositionReference},
     footage::FootageReference,
     project_item::{item_reference, ItemReference},
     state::{WorkerResponseStream, PROJECTS},
@@ -78,36 +78,63 @@ impl ProjectReference {
             .collect())
     }
 
+    /// The name a comp made right now would get, if nobody typed one — "Comp 3"
+    /// when the project holds two. What the New composition dialog puts in its
+    /// Name field before the user touches it, so the field shows the same name
+    /// the engine would have chosen rather than a guess made in Dart.
+    #[frb(sync)]
+    pub fn next_comp_name(&self) -> Result<String, BridgeError> {
+        let state = self.state()?;
+        let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(Self::next_comp_name_in(&state.store.snapshot()))
+    }
+
+    #[frb(ignore)]
+    fn next_comp_name_in(doc: &lumit_core::Document) -> String {
+        let existing = doc
+            .items
+            .iter()
+            .filter(|i| matches!(i, lumit_core::model::ProjectItem::Composition(_)))
+            .count();
+        format!("Comp {}", existing + 1)
+    }
+
     /// Add a composition, filed into the Compositions auto-folder, as one undo
     /// step. A blank name gets the next "Comp N".
+    ///
+    /// `settings` is what the New composition dialog collected — size, rate and
+    /// duration. `None` takes the defaults ([`BridgeCompSettings::defaults`]), which
+    /// is what every caller that does not ask the user does. `settings.name` is
+    /// ignored: the name comes from `name`, so there is one answer to "what is this
+    /// comp called" rather than two that can disagree.
+    ///
+    /// It is one call rather than "create, then apply settings" because that would
+    /// be two undo steps for one click, and undoing once would leave a comp behind
+    /// at the wrong size.
     ///
     /// The folder is tracked by id, not by name, so renaming or nesting it keeps
     /// it the Compositions folder — the same habit the egui frontend has.
     #[frb(sync)]
-    pub fn new_composition(&self, name: String) -> Result<CompositionReference, BridgeError> {
+    pub fn new_composition(
+        &self,
+        name: String,
+        settings: Option<BridgeCompSettings>,
+    ) -> Result<CompositionReference, BridgeError> {
         use lumit_core::model::{Composition, Folder, LinearColour, MotionBlur, ProjectItem};
         use lumit_core::ops::AutoFolderKind;
-        use lumit_core::time::{Duration, FrameRate, Rational};
 
         let state = self.state()?;
         let state = state.write().map_err(|_| BridgeError::WriteFailed)?;
         let doc = state.store.snapshot();
 
         let name = if name.trim().is_empty() {
-            let existing = doc
-                .items
-                .iter()
-                .filter(|i| matches!(i, ProjectItem::Composition(_)))
-                .count();
-            format!("Comp {}", existing + 1)
+            Self::next_comp_name_in(&doc)
         } else {
             name
         };
 
-        let (frame_rate, duration) = match (FrameRate::new(60, 1), Rational::new(30, 1)) {
-            (Ok(fr), Ok(dur)) => (fr, Duration(dur)),
-            _ => return Err(BridgeError::InvalidComp),
-        };
+        let settings = settings.unwrap_or_else(BridgeCompSettings::defaults);
+        let (frame_rate, duration) = settings.to_engine().ok_or(BridgeError::InvalidFrameRate)?;
 
         let mut ops: Vec<Op> = Vec::new();
         let folder_id = match doc
@@ -138,8 +165,8 @@ impl ProjectReference {
         let comp = Composition {
             id: Uuid::now_v7(),
             name,
-            width: 1920,
-            height: 1080,
+            width: settings.width.clamp(16, 16384),
+            height: settings.height.clamp(16, 16384),
             frame_rate,
             duration,
             background: LinearColour::BLACK,

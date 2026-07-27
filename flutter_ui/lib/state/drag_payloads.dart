@@ -9,15 +9,24 @@
 
 import 'package:lumit_flutter/src/rust/api/footage.dart';
 
-/// A footage item dragged from the Project panel onto the Timeline.
+/// Footage dragged from the Project panel onto the Timeline, or onto the New
+/// composition button.
 ///
-/// It carries the handle itself, not an id to look the handle back up by: on
-/// frb the reference *is* the identity, so the drop calls `addFootageLayer`
-/// with what it was given and never has to search the project for it.
+/// It carries the handles themselves, not ids to look them back up by: on frb the
+/// reference *is* the identity, so the drop calls `addFootageLayer` with what it
+/// was given and never has to search the project for it.
+///
+/// A *list*, because the Project panel selects more than one row: dragging any
+/// row of a multi-selection brings the whole selection, which is what makes
+/// "drop four clips on New composition" a single gesture. A single-item drag is
+/// the same payload with one entry, so the drop targets have one path.
 class FootageDragData {
-  final FootageReference footage;
-  final String name;
-  const FootageDragData(this.footage, this.name);
+  final List<FootageReference> footage;
+
+  /// What the floating label under the pointer reads: the item's name for one,
+  /// a count for several.
+  final String label;
+  const FootageDragData(this.footage, this.label);
 }
 
 /// An effect dragged from the Effects & presets panel onto a layer.

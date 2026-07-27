@@ -435,7 +435,7 @@ BridgeSpan workAreaWith({
   required int frame,
   required bool isStart,
 }) {
-  final duration = comp.getSettings().durationFrames.toInt();
+  final duration = comp.durationFrames();
   final zero = comp.timeOfFrame(frame: 0);
   final existingIn =
       current == null ? 0 : comp.frameAtTime(time: current.inPoint);

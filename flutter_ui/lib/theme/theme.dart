@@ -564,6 +564,10 @@ class LumitTheme {
       color: textMuted,
       decoration: TextDecoration.none,
       fontWeight: FontWeight.w500);
+  /// The note under a field explaining its format — smaller than a label so it
+  /// reads as an aside rather than as another thing to fill in
+  /// (docs/15-DESIGN.md §7.1).
+  TextStyle get caption => small.copyWith(fontSize: 10);
   TextStyle get mono => TextStyle(
       fontFamily: 'monospace',
       fontSize: 12,

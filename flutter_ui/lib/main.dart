@@ -10,9 +10,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:lumit_flutter/panels/panels_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
+import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
@@ -170,11 +172,27 @@ class LumitState extends ChangeNotifier {
     return true;
   }
 
-  /// Make a composition. A blank name lets the engine pick the next "Comp N".
-  CompositionReference? newComposition() {
+  /// Make a composition, asking for its settings first.
+  ///
+  /// Every route to a new comp — the menu bar, the command palette, the Project
+  /// panel's button, and footage dropped on that button — comes through here, so
+  /// there is one answer to what "New composition" does. `footage` is what was
+  /// dropped: the dialog opens on the media's own size, rate and length, and each
+  /// item lands in the finished comp as a layer.
+  ///
+  /// Null when the project is closed or the dialog was cancelled.
+  Future<CompositionReference?> newComposition(
+    BuildContext context, {
+    List<FootageReference> footage = const [],
+  }) async {
     final project = this.project;
     if (project == null) return null;
-    final comp = project.newComposition(name: '');
+    final comp = await showNewCompositionFrb(
+      context: context,
+      project: project,
+      footage: footage,
+    );
+    if (comp == null) return null;
     notifyDocumentChanged();
     return comp;
   }
@@ -237,7 +255,7 @@ class LumitUiState extends ChangeNotifier {
   void stepFrame(int delta) {
     final comp = selectedComp;
     if (comp == null) return;
-    final last = comp.getSettings().durationFrames.toInt() - 1;
+    final last = comp.durationFrames() - 1;
     playheadFrame.value =
         (playheadFrame.value + delta).clamp(0, last < 0 ? 0 : last);
   }
@@ -551,7 +569,7 @@ class _LumitAppViewState extends State<LumitAppView> {
     } else if (key == LogicalKeyboardKey.home) {
       ui.playheadFrame.value = 0;
     } else if (key == LogicalKeyboardKey.end) {
-      final last = (comp?.getSettings().durationFrames.toInt() ?? 1) - 1;
+      final last = (comp?.durationFrames() ?? 1) - 1;
       ui.playheadFrame.value = last < 0 ? 0 : last;
     } else if (ctrl && key == LogicalKeyboardKey.keyD) {
       final layer = ui.selectedLayer.value;

@@ -12,7 +12,7 @@ import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_at_top`, `commit`, `composition`, `dispatch`, `document`, `footage_span_and_size`, `project`
+// These functions are ignored because they are not marked as `pub`: `add_at_top`, `commit`, `composition`, `dispatch`, `document`, `footage_span_and_size`, `project`, `to_engine`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
@@ -27,16 +27,24 @@ List<String> listBlendModes() =>
 
 /// Everything the Composition settings dialog reads and writes.
 ///
-/// The frame rate is the exact `num`/`den` pair and the duration is a frame count,
-/// never floating-point seconds (docs/14 §2). A dialog that round-tripped 29.97
-/// through a double would not hand it back as 30000/1001.
+/// The frame rate is the exact `num`/`den` pair and the duration is exact
+/// rational **seconds**, never floating point (docs/14 §2). A dialog that
+/// round-tripped 29.97 through a double would not hand it back as 30000/1001.
+///
+/// The duration is seconds rather than a frame count because the frame rate is
+/// editable in the same dialog, and a frame count means nothing without knowing
+/// which rate it was counted at: applying "1800 frames" after changing 60 fps to
+/// 30 halved the comp's real length while every layer kept its own seconds, which
+/// is what made the layers look retimed (K-180). Seconds are what the document
+/// stores, so the rate can change without the comp getting longer or shorter.
+/// Callers wanting the count ask [`CompositionReference::duration_frames`].
 class BridgeCompSettings {
   final String name;
   final int width;
   final int height;
   final int fpsNum;
   final int fpsDen;
-  final PlatformInt64 durationFrames;
+  final BridgeRational duration;
 
   const BridgeCompSettings({
     required this.name,
@@ -44,8 +52,16 @@ class BridgeCompSettings {
     required this.height,
     required this.fpsNum,
     required this.fpsDen,
-    required this.durationFrames,
+    required this.duration,
   });
+
+  /// What a comp gets when nobody chose: 1920×1080, 60 fps, 30 seconds.
+  ///
+  /// Here rather than in the frontend so the New composition dialog and a
+  /// `new_composition` with no settings cannot drift into different ideas of
+  /// what a default comp is.
+  static BridgeCompSettings defaults() =>
+      BridgeLib.instance.api.crateApiCompositionBridgeCompSettingsDefaults();
 
   @override
   int get hashCode =>
@@ -54,7 +70,7 @@ class BridgeCompSettings {
       height.hashCode ^
       fpsNum.hashCode ^
       fpsDen.hashCode ^
-      durationFrames.hashCode;
+      duration.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -66,7 +82,7 @@ class BridgeCompSettings {
           height == other.height &&
           fpsNum == other.fpsNum &&
           fpsDen == other.fpsDen &&
-          durationFrames == other.durationFrames;
+          duration == other.duration;
 }
 
 /// A composition's pixel dimensions.
@@ -265,6 +281,16 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceDetectBeats(
           that: this, sensitivityPercent: sensitivityPercent);
 
+  /// How many frames the comp is long at its own rate — the Timeline's axis,
+  /// and one past the last frame the transport can reach.
+  ///
+  /// Derived rather than stored: the document holds a length in seconds, and
+  /// the count is that length read at whatever rate the comp currently has.
+  PlatformInt64 durationFrames() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceDurationFrames(
+        that: this,
+      );
+
   /// The frame containing `time` (floored) — the inverse of
   /// [`Self::time_of_frame`], for drawing a key at a frame position.
   PlatformInt64 frameAtTime({required BridgeRational time}) =>
@@ -284,10 +310,10 @@ class CompositionReference {
 
   /// Everything the Composition settings dialog shows.
   ///
-  /// The frame rate crosses as an exact `{num, den}` pair and the duration as a
-  /// frame count, never as floating-point seconds — docs/14 §2's rational-time
-  /// rule. 29.97 fps is 30000/1001, and a dialog that round-tripped it through a
-  /// double would not give it back.
+  /// The frame rate crosses as an exact `{num, den}` pair and the duration as
+  /// exact rational seconds, never as a float — docs/14 §2's rational-time rule.
+  /// 29.97 fps is 30000/1001, and a dialog that round-tripped it through a double
+  /// would not give it back.
   BridgeCompSettings getSettings() =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetSettings(
         that: this,
@@ -389,6 +415,11 @@ class CompositionReference {
   /// so a dialog cannot commit a comp that is zero pixels wide or zero frames
   /// long. The background colour is preserved: it is not part of this dialog, and
   /// `SetCompSettings` carries the whole settings block.
+  ///
+  /// Changing only the frame rate changes only the frame rate: the duration
+  /// crosses as seconds, so the comp keeps its real length and every layer keeps
+  /// its own timing — the comp shows more (or fewer) frames per second and
+  /// nothing plays faster (K-180).
   void setSettings({required BridgeCompSettings settings}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceSetSettings(
           that: this, settings: settings);

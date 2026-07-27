@@ -2352,3 +2352,29 @@ exporter serve both frontends. This supersedes 17-BRIDGE-CONTRACT.md's "JSON ove
 transport section; the four binding rules in it (no panic crosses the boundary, no lock held
 across the boundary, rational time crosses as integers, the engine never depends on the
 frontend) are unchanged and still bind.
+
+**K-180 · DECIDED · A composition's duration is a length of time, and the frame rate is only a
+frame rate.** The Composition settings dialogue used to edit the duration as a *frame count* and
+the rate as a visible numerator over a denominator, and `BridgeCompSettings` carried the count
+across the bridge. That was a bug, not a presentation choice: a frame count means nothing
+without the rate it was counted at, so pressing Save after changing 60 fps to 30 wrote
+yesterday's 1800 frames back at the new rate and *doubled* the comp's real length, while every
+layer kept the seconds it already occupied. On screen that looked exactly like the layers
+speeding up or slowing down — reported by the owner, and the reason for this entry. **Binding
+now:** the duration crosses the bridge as exact rational **seconds** (`BridgeCompSettings
+.duration`), which is what the document has always stored, so changing the rate changes only how
+finely the comp is counted — never how long it is, never where a layer sits, never how fast
+anything plays. Frame counts are derived on demand from `CompositionReference::duration_frames`.
+**The dialogue's shape follows from that:** the rate is one number in one field (`600`,
+`23.976`) with the awkward rates on a Presets list, and the duration is `HH:MM:SS.mmm`. The
+exact `num`/`den` pair still crosses the boundary — docs/14 §2's rational-time rule is
+untouched, and 23.976 still reaches the engine as 24000/1001 — but the pair is worked out from
+what was typed rather than typed by hand, because a denominator is an implementation detail of
+NTSC and not a question to ask someone making a comp. **One dialogue, three doors:** the same
+window is New composition (with a Create button) and Composition settings (with Save), reached
+from the menu bar, the Project panel's footer button, and a right-click on a comp; creating is
+one call and therefore one undo step, never "create then apply". **Footage dropped on the New
+composition button** opens it prefilled from the media's own size, rate and length, and every
+dropped item lands in the finished comp as a layer, which is what docs/07 §3.1 has always asked
+for; that is also why the Project panel now multi-selects (`Ctrl` adds, `Shift` takes the run)
+and why a drag carries the whole selection.

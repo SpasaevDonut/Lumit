@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'effect.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 import 'state.dart';
@@ -12,6 +13,51 @@ import 'state.dart';
 // These functions are ignored because they are not marked as `pub`: `project`, `resolve_path`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `eq`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
+
+/// A footage file's own vital statistics, as the container declares them.
+///
+/// What "a comp matching the footage" means when a clip is dragged onto the New
+/// composition button (docs/07 §3.1): the size, the rate and the length come from
+/// here. The rate is the exact pair the container carries and the duration is
+/// rational seconds — both because a rate that went through a float would not come
+/// back as 30000/1001 (docs/14 §2).
+///
+/// Audio-only media has no picture, so `width`/`height` are zero and the rate is
+/// 0/1; the caller keeps its own size rather than making a comp no pixels wide.
+class BridgeMediaInfo {
+  final int width;
+  final int height;
+  final int fpsNum;
+  final int fpsDen;
+  final BridgeRational duration;
+
+  const BridgeMediaInfo({
+    required this.width,
+    required this.height,
+    required this.fpsNum,
+    required this.fpsDen,
+    required this.duration,
+  });
+
+  @override
+  int get hashCode =>
+      width.hashCode ^
+      height.hashCode ^
+      fpsNum.hashCode ^
+      fpsDen.hashCode ^
+      duration.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeMediaInfo &&
+          runtimeType == other.runtimeType &&
+          width == other.width &&
+          height == other.height &&
+          fpsNum == other.fpsNum &&
+          fpsDen == other.fpsDen &&
+          duration == other.duration;
+}
 
 class FootageReference {
   final UuidValue internalproject;
@@ -24,6 +70,11 @@ class FootageReference {
 
   Future<LumitMediaStatus> getStatus() =>
       BridgeLib.instance.api.crateApiFootageFootageReferenceGetStatus(
+        that: this,
+      );
+
+  Future<BridgeMediaInfo?> mediaInfo() =>
+      BridgeLib.instance.api.crateApiFootageFootageReferenceMediaInfo(
         that: this,
       );
 

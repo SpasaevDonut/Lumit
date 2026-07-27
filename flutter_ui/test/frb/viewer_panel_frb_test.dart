@@ -62,7 +62,7 @@ void main() {
         (tester) async {
       final p = withLayer();
       await mount(tester, p);
-      final last = p.comp.getSettings().durationFrames.toInt() - 1;
+      final last = p.comp.durationFrames() - 1;
 
       await tester.tap(find.byKey(const ValueKey('viewer-step-forward')));
       await tester.pump();
@@ -138,7 +138,7 @@ void main() {
           height: settings.height,
           fpsNum: 30000,
           fpsDen: 1001,
-          durationFrames: settings.durationFrames,
+          duration: settings.duration,
         ),
       );
       await mount(tester, p);

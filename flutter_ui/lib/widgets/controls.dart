@@ -518,6 +518,12 @@ class DragValueField extends StatefulWidget {
   final int decimals;
   final String? suffix;
   final num? resetTo;
+
+  /// The resting background. Defaults to `surface3`, which reads as a field on
+  /// a panel — but a dialogue's own surface *is* surface3, so a field there has
+  /// to be darker to look like something you can type into. Only the resting
+  /// colour: hover stays the standard lift, so the affordance is unchanged.
+  final Color? fill;
   final ValueChanged<num> onChanged;
 
   /// Fired once when a drag begins. Optional — a caller with nothing to do at
@@ -550,6 +556,7 @@ class DragValueField extends StatefulWidget {
     this.decimals = 0,
     this.suffix,
     this.resetTo,
+    this.fill,
     this.onChangeStart,
     this.onChangeLive,
     this.onChangeEnd,
@@ -734,7 +741,7 @@ class _DragValueFieldState extends State<DragValueField> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(
-            color: _hover ? t.surface4 : t.surface3,
+            color: _hover ? t.surface4 : (widget.fill ?? t.surface3),
             borderRadius: BorderRadius.circular(t.tokens.controlRadius),
             // Reserved even when not hovered — see HouseButton above.
             border: Border.all(

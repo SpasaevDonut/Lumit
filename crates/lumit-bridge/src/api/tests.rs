@@ -313,7 +313,7 @@ fn import_and_new_composition_land_in_the_item_tree() {
     project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    let comp = project.new_composition("Scene".into()).expect("comp");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
 
     let roots = project.get_items().expect("roots");
     // The footage and the Compositions folder. The comp is inside the folder, so
@@ -351,7 +351,7 @@ fn composition_settings_round_trip_including_a_drop_frame_rate() {
         height: 720,
         fps_num: 30000,
         fps_den: 1001,
-        duration_frames: 240,
+        duration: BridgeRational { num: 8, den: 1 },
     })
     .expect("applied");
 
@@ -363,7 +363,51 @@ fn composition_settings_round_trip_including_a_drop_frame_rate() {
         (30000, 1001),
         "the exact rate survives — no float round trip"
     );
-    assert_eq!(after.duration_frames, 240);
+    assert_eq!(
+        (after.duration.num, after.duration.den),
+        (8, 1),
+        "the length is the exact seconds it was given"
+    );
+    assert_eq!(comp.duration_frames().expect("frames"), 239, "8 s at 29.97");
+}
+
+/// **The frame-rate regression (K-180).** Changing only the rate must change only
+/// the rate: the comp keeps its real length, and a layer keeps the seconds it
+/// occupies, so nothing plays faster or slower. Before this, the dialog read the
+/// duration as a frame count and wrote the same count back at the new rate, which
+/// silently halved or doubled the comp against layers that had not moved.
+#[test]
+fn changing_only_the_frame_rate_leaves_the_comp_and_its_layers_where_they_were() {
+    let (project, ..) = project_with_folder();
+    let comp = add_comp(&project, "Scene");
+    let layer = comp.add_solid_layer().expect("layer");
+    let span_before = layer.get_span().expect("span");
+
+    let before = comp.get_settings().expect("settings");
+    assert_eq!(comp.duration_frames().expect("frames"), 300, "10 s at 30");
+
+    comp.set_settings(BridgeCompSettings {
+        fps_num: 60,
+        ..before
+    })
+    .expect("applied");
+
+    let after = comp.get_settings().expect("settings");
+    assert_eq!(
+        (after.duration.num, after.duration.den),
+        (10, 1),
+        "still ten seconds long"
+    );
+    assert_eq!(
+        comp.duration_frames().expect("frames"),
+        600,
+        "the same ten seconds, counted twice as finely"
+    );
+    assert_eq!(
+        layer.get_span().expect("span"),
+        span_before,
+        "the layer occupies the same time — the rate is not a speed control"
+    );
 }
 
 /// A dialog must not be able to commit a comp that is zero pixels wide or zero
@@ -380,13 +424,13 @@ fn composition_settings_clamp_the_absurd_and_refuse_a_zero_rate() {
         height: 0,
         fps_num: 30,
         fps_den: 1,
-        duration_frames: 0,
+        duration: BridgeRational { num: 0, den: 1 },
     })
     .expect("applied");
 
     let after = comp.get_settings().expect("settings");
     assert_eq!((after.width, after.height), (16, 16), "clamped, not zero");
-    assert_eq!(after.duration_frames, 1, "at least one frame");
+    assert_eq!(comp.duration_frames().expect("frames"), 1, "one frame");
 
     assert!(matches!(
         comp.set_settings(BridgeCompSettings {
@@ -395,7 +439,7 @@ fn composition_settings_clamp_the_absurd_and_refuse_a_zero_rate() {
             height: 1080,
             fps_num: 0,
             fps_den: 1,
-            duration_frames: 10,
+            duration: BridgeRational { num: 10, den: 1 },
         }),
         Err(BridgeError::InvalidFrameRate)
     ));
@@ -444,7 +488,7 @@ fn history_reports_what_undo_and_redo_can_do() {
         "a fresh project has none"
     );
 
-    project.new_composition("Scene".into()).expect("comp");
+    project.new_composition("Scene".into(), None).expect("comp");
     let after_edit = project.history().expect("history");
     assert!(after_edit.can_undo && !after_edit.can_redo);
 
@@ -1513,7 +1557,7 @@ fn a_footage_layer_converts_to_a_sequence_layer_in_one_step() {
     use crate::api::layer::BridgeLayerKind;
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Scene".into()).expect("comp");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
@@ -1581,7 +1625,7 @@ fn the_sequence_ops_refuse_the_wrong_kind_of_layer() {
 #[test]
 fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Scene".into()).expect("comp");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
@@ -1739,8 +1783,8 @@ fn a_composition_nests_into_another_but_not_into_itself() {
     use crate::api::layer::BridgeLayerKind;
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    let inner = project.new_composition("Inner".into()).expect("comp");
-    let outer = project.new_composition("Outer".into()).expect("comp");
+    let inner = project.new_composition("Inner".into(), None).expect("comp");
+    let outer = project.new_composition("Outer".into(), None).expect("comp");
 
     let placed = outer.add_precomp_layer(&inner).expect("nested");
     assert_eq!(placed.get_kind().expect("kind"), BridgeLayerKind::Precomp);
@@ -1815,7 +1859,7 @@ fn listing_autosaves_of_a_project_with_none_is_empty() {
 fn an_autosave_writes_a_slot_without_moving_the_project() {
     let project = LumitBridgeState::new_project(None).expect("a new project");
     project
-        .new_composition("Scene".into())
+        .new_composition("Scene".into(), None)
         .expect("something to save");
 
     let dir = std::env::temp_dir().join("lumit-autosave-writes");
@@ -1846,13 +1890,15 @@ fn restoring_replaces_the_document_and_keeps_the_change_observer() {
     let target = dir.join("scene.lum");
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    project.new_composition("Saved".into()).expect("comp");
+    project.new_composition("Saved".into(), None).expect("comp");
     project
         .save(target.to_string_lossy().into_owned())
         .expect("saved");
 
     // Drift away from what is on disk, then restore.
-    project.new_composition("Unsaved".into()).expect("comp");
+    project
+        .new_composition("Unsaved".into(), None)
+        .expect("comp");
     let recovered = project
         .restore_journal(target.to_string_lossy().into_owned())
         .expect("restored");
@@ -1861,7 +1907,7 @@ fn restoring_replaces_the_document_and_keeps_the_change_observer() {
     // The document really was replaced, and the store still takes edits — which
     // is what proves the observer was not thrown away with it.
     project
-        .new_composition("After".into())
+        .new_composition("After".into(), None)
         .expect("still editable");
     assert!(
         !project.get_items().expect("roots").is_empty(),
@@ -1944,8 +1990,12 @@ fn every_commit_is_journalled_and_a_save_clears_it() {
     };
     journal.clear().ok();
 
-    project.new_composition("Scene".into()).expect("an edit");
-    project.new_composition("Titles".into()).expect("another");
+    project
+        .new_composition("Scene".into(), None)
+        .expect("an edit");
+    project
+        .new_composition("Titles".into(), None)
+        .expect("another");
 
     let ops = journal.read().expect("journal read");
     assert!(
@@ -1969,7 +2019,9 @@ fn every_commit_is_journalled_and_a_save_clears_it() {
 
     // …and an edit after the save is not journalled against the stale handle:
     // the project disarmed it, so recovery from here is the saved file itself.
-    project.new_composition("After".into()).expect("an edit");
+    project
+        .new_composition("After".into(), None)
+        .expect("an edit");
     assert!(journal.read().expect("journal read").is_empty());
 
     std::fs::remove_dir_all(&dir).ok();
@@ -1986,7 +2038,7 @@ fn journalling_does_not_deadlock_against_the_commit_lock() {
     // firing inside it.
     for i in 0..8 {
         project
-            .new_composition(format!("Comp {i}"))
+            .new_composition(format!("Comp {i}"), None)
             .expect("committed without deadlocking");
     }
     assert!(!project.get_items().expect("roots").is_empty());
@@ -2008,7 +2060,7 @@ fn concurrent_project_creation_and_editing_does_not_deadlock() {
                 let project = LumitBridgeState::new_project(None).expect("a new project");
                 for i in 0..6 {
                     project
-                        .new_composition(format!("T{t} comp {i}"))
+                        .new_composition(format!("T{t} comp {i}"), None)
                         .expect("committed");
                 }
                 // Reading through a reference takes the registry and then the
@@ -2188,7 +2240,7 @@ fn editing_a_solid_changes_every_layer_that_uses_it() {
 #[test]
 fn retiming_is_absent_until_it_is_switched_on() {
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Scene".into()).expect("comp");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
@@ -2219,7 +2271,7 @@ fn speed_reverse_and_interpolation_do_not_disturb_each_other() {
     use crate::api::retime::BridgeRetimeInterp;
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Scene".into()).expect("comp");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
@@ -2263,7 +2315,7 @@ fn a_varying_curve_refuses_a_single_speed() {
     use lumit_core::time::Rational;
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Scene".into()).expect("comp");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");

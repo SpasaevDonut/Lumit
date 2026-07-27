@@ -80,8 +80,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       );
     }
 
-    final settings = comp.getSettings();
-    final frames = settings.durationFrames.toInt();
+    final frames = comp.durationFrames();
     final needle = _search.trim().toLowerCase();
     final layers = [
       for (final l in comp.getLayers())
@@ -112,7 +111,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           // hit one half of it would be a rule with no reason behind it.
           child: DragTarget<FootageDragData>(
             onAcceptWithDetails: (details) {
-              comp.addFootageLayer(footage: details.data.footage);
+              // Bottom-up, so a multi-item drop stacks in the order the panel
+              // listed them: each lands at the top of the stack.
+              for (final f in details.data.footage.reversed) {
+                comp.addFootageLayer(footage: f);
+              }
               setState(() {});
             },
             builder: (context, candidate, _) => Container(

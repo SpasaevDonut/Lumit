@@ -208,11 +208,13 @@ class LumitMenuBarFrb extends StatelessWidget {
     await app.importFootagePaths(await (footagePicker ?? pickFootage)());
   }
 
-  void _newComposition(BuildContext context) {
-    final comp = app.newComposition();
+  Future<void> _newComposition(BuildContext context) async {
+    final comp = await app.newComposition(context);
     // Front it, which is what the egui menu does — a comp you just made is the
     // one you want to work on.
-    if (comp != null) context.read<LumitUiState>().setSelectedComp(comp);
+    if (comp != null && context.mounted) {
+      context.read<LumitUiState>().setSelectedComp(comp);
+    }
   }
 
   Future<void> _compSettings(BuildContext context) async {

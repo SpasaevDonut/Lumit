@@ -144,6 +144,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMatte dco_decode_box_autoadd_bridge_matte(dynamic raw);
 
   @protected
+  BridgeMediaInfo dco_decode_box_autoadd_bridge_media_info(dynamic raw);
+
+  @protected
   BridgePoint dco_decode_box_autoadd_bridge_point(dynamic raw);
 
   @protected
@@ -271,6 +274,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeMatte dco_decode_bridge_matte(dynamic raw);
+
+  @protected
+  BridgeMediaInfo dco_decode_bridge_media_info(dynamic raw);
 
   @protected
   BridgeParamInfo dco_decode_bridge_param_info(dynamic raw);
@@ -427,7 +433,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   UuidValue? dco_decode_opt_Uuid(dynamic raw);
 
   @protected
+  BridgeCompSettings? dco_decode_opt_box_autoadd_bridge_comp_settings(
+      dynamic raw);
+
+  @protected
   BridgeMatte? dco_decode_opt_box_autoadd_bridge_matte(dynamic raw);
+
+  @protected
+  BridgeMediaInfo? dco_decode_opt_box_autoadd_bridge_media_info(dynamic raw);
 
   @protected
   BridgeRenderedFrame? dco_decode_opt_box_autoadd_bridge_rendered_frame(
@@ -583,6 +596,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMatte sse_decode_box_autoadd_bridge_matte(SseDeserializer deserializer);
 
   @protected
+  BridgeMediaInfo sse_decode_box_autoadd_bridge_media_info(
+      SseDeserializer deserializer);
+
+  @protected
   BridgePoint sse_decode_box_autoadd_bridge_point(SseDeserializer deserializer);
 
   @protected
@@ -731,6 +748,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeMatte sse_decode_bridge_matte(SseDeserializer deserializer);
+
+  @protected
+  BridgeMediaInfo sse_decode_bridge_media_info(SseDeserializer deserializer);
 
   @protected
   BridgeParamInfo sse_decode_bridge_param_info(SseDeserializer deserializer);
@@ -906,7 +926,15 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   UuidValue? sse_decode_opt_Uuid(SseDeserializer deserializer);
 
   @protected
+  BridgeCompSettings? sse_decode_opt_box_autoadd_bridge_comp_settings(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeMatte? sse_decode_opt_box_autoadd_bridge_matte(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeMediaInfo? sse_decode_opt_box_autoadd_bridge_media_info(
       SseDeserializer deserializer);
 
   @protected
@@ -1071,6 +1099,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeMatte self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_media_info(
+      BridgeMediaInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_point(
       BridgePoint self, SseSerializer serializer);
 
@@ -1231,6 +1263,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_bridge_matte(BridgeMatte self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_media_info(
+      BridgeMediaInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_param_info(
@@ -1422,8 +1458,16 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_opt_Uuid(UuidValue? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_bridge_comp_settings(
+      BridgeCompSettings? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_bridge_matte(
       BridgeMatte? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_bridge_media_info(
+      BridgeMediaInfo? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_bridge_rendered_frame(

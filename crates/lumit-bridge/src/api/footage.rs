@@ -28,6 +28,25 @@ pub enum LumitMediaStatus {
     Ready,
 }
 
+/// A footage file's own vital statistics, as the container declares them.
+///
+/// What "a comp matching the footage" means when a clip is dragged onto the New
+/// composition button (docs/07 §3.1): the size, the rate and the length come from
+/// here. The rate is the exact pair the container carries and the duration is
+/// rational seconds — both because a rate that went through a float would not come
+/// back as 30000/1001 (docs/14 §2).
+///
+/// Audio-only media has no picture, so `width`/`height` are zero and the rate is
+/// 0/1; the caller keeps its own size rather than making a comp no pixels wide.
+#[frb(non_opaque)]
+pub struct BridgeMediaInfo {
+    pub width: u32,
+    pub height: u32,
+    pub fps_num: u32,
+    pub fps_den: u32,
+    pub duration: crate::api::effect::BridgeRational,
+}
+
 impl FootageReference {
     #[frb(ignore)]
     pub fn new(project: Uuid, id: Uuid) -> FootageReference {
@@ -210,6 +229,56 @@ impl FootageReference {
                 },
             ),
         )
+    }
+
+    /// This footage's declared size, rate and length, or `None` when the file
+    /// cannot be resolved or does not probe.
+    ///
+    /// Async for the same reason `thumbnail` is: probing opens the container with
+    /// FFmpeg, which is not work for Dart's UI isolate. Declared whatever the
+    /// features are, so a build with no decoder answers `None` rather than the
+    /// method being absent and the Dart side failing to compile against it.
+    #[cfg(not(feature = "media"))]
+    pub fn media_info(&self) -> Result<Option<BridgeMediaInfo>, BridgeError> {
+        Ok(None)
+    }
+
+    #[cfg(feature = "media")]
+    pub fn media_info(&self) -> Result<Option<BridgeMediaInfo>, BridgeError> {
+        let proj = self.project()?;
+        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+
+        let snapshot = proj.store.snapshot();
+        let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(self.id) else {
+            return Err(BridgeError::InvalidItem);
+        };
+        let Some(path) = Self::resolve_path(&proj, footage) else {
+            return Ok(None);
+        };
+        let Ok(info) = lumit_media::probe::probe(&path) else {
+            return Ok(None);
+        };
+
+        // The only sanctioned route back from the container's floating-point
+        // duration is an explicit grid (docs/impl/rational-time.md §4); the
+        // millisecond grid is the resolution the Duration field edits in anyway.
+        let duration = lumit_core::time::Rational::from_f64_on_grid(info.duration_seconds, 1000)
+            .unwrap_or(lumit_core::time::Rational::ZERO);
+        let video = info.video.as_ref();
+        Ok(Some(BridgeMediaInfo {
+            width: video.map_or(0, |v| v.width),
+            height: video.map_or(0, |v| v.height),
+            fps_num: video
+                .and_then(|v| u32::try_from(v.fps_num).ok())
+                .unwrap_or(0),
+            fps_den: video
+                .and_then(|v| u32::try_from(v.fps_den).ok())
+                .unwrap_or(1),
+            duration: crate::api::effect::BridgeRational {
+                num: duration.num(),
+                den: duration.den(),
+            },
+        }))
     }
 
     pub fn get_status(&self) -> Result<LumitMediaStatus, BridgeError> {

@@ -84,6 +84,15 @@ void main() {
       await tester.pump();
     }
 
+    /// New composition asks for its settings first (K-180), so every route to a
+    /// comp goes through the dialogue: choose the command, then press Create.
+    Future<void> makeComp(WidgetTester tester) async {
+      await choose(tester, 'Composition', 'New composition');
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('comp-apply')));
+      await tester.pumpAndSettle();
+    }
+
     /// Dismiss an open menu through its full-screen barrier, without choosing
     /// anything.
     /// Well below the menus, and inside the 800x600 test surface — a tap outside
@@ -144,7 +153,7 @@ void main() {
       final p = await mount(tester);
       expect(p.uiState.selectedComp, isNull);
 
-      await choose(tester, 'Composition', 'New composition');
+      await makeComp(tester);
 
       final comps = allItems(p.state).whereType<ItemReference_Composition>();
       expect(comps.length, 1, reason: 'the menu committed one composition');
@@ -166,7 +175,7 @@ void main() {
           reason: 'no comp is fronted, so the row does nothing when pressed');
 
       // Front one, and the same row now opens the dialogue.
-      await choose(tester, 'Composition', 'New composition');
+      await makeComp(tester);
       expect(p.uiState.selectedComp, isNotNull);
       await choose(tester, 'Composition', 'Composition settings…');
       await tester.pump();
@@ -224,7 +233,7 @@ void main() {
       await dismiss(tester);
 
       // One edit, and Undo lights up.
-      await choose(tester, 'Composition', 'New composition');
+      await makeComp(tester);
       expect(p.state.project!.history().canUndo, isTrue);
 
       await tester.tap(find.byKey(const ValueKey<String>('menu-Edit')));
@@ -267,7 +276,7 @@ void main() {
           return picks.removeAt(0);
         },
       );
-      await choose(tester, 'Composition', 'New composition');
+      await makeComp(tester);
 
       // Never saved: Save has to ask where.
       await choose(tester, 'File', 'Save');
@@ -303,7 +312,7 @@ void main() {
         openPicker: () async => path,
         footagePicker: () async => ['C:/clips/hero.mov'],
       );
-      await choose(tester, 'Composition', 'New composition');
+      await makeComp(tester);
       await choose(tester, 'File', 'Import footage…');
       await tester.pump();
       await choose(tester, 'File', 'Save');
@@ -331,7 +340,7 @@ void main() {
     /// and a Window menu. Each of these reaches the document.
     testWidgets('Composition creates every kind of layer', (tester) async {
       final p = await mount(tester);
-      await choose(tester, 'Composition', 'New composition');
+      await makeComp(tester);
       final comp = p.uiState.selectedComp!;
 
       for (final item in [
@@ -364,7 +373,7 @@ void main() {
     testWidgets('Add marker at playhead marks the fronted comp',
         (tester) async {
       final p = await mount(tester);
-      await choose(tester, 'Composition', 'New composition');
+      await makeComp(tester);
       final comp = p.uiState.selectedComp!;
       p.uiState.playheadFrame.value = 30;
 
@@ -379,7 +388,7 @@ void main() {
     testWidgets('Clear beat markers is calm on a comp with none',
         (tester) async {
       final p = await mount(tester);
-      await choose(tester, 'Composition', 'New composition');
+      await makeComp(tester);
       await choose(tester, 'Composition', 'Clear beat markers');
       await tester.pump();
       expect(p.uiState.selectedComp!.getMarkers(), isEmpty);

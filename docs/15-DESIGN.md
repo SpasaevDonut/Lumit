@@ -410,6 +410,7 @@ Lumit is a pro tool; the household 16px body default gives way to an 11–13px U
 
 | Size | Face | Use |
 |---|---|---|
+| 10px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
 | 11px | JetBrains Mono, +0.08em, caps | Kickers, layer bar labels, axis numbers, attribution |
 | 12px | Inter | Panel body copy, property names, menus, buttons |
 | 13px | JetBrains Mono | Property values, timecode fields, frame numbers, speed percentages |
