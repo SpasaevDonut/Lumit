@@ -282,20 +282,22 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     final comp = ui?.selectedComp;
     if (ui == null || comp == null) return;
 
-    // Every-frame playback is driven by delivery, not by a clock: the next
-    // frame is asked for when the last one arrives, so nothing is ever skipped
-    // however long each takes. That is the whole point of the mode — you are
-    // watching every frame and filling the cache, not keeping time.
+    // Every-frame playback is driven by delivery, not by a clock: nothing is
+    // ever skipped however long each frame takes. That is the whole point of
+    // the mode — you are watching every frame and filling the cache, not
+    // keeping time.
     if (playing &&
         ui.workspace.performance.playback == PlaybackMode.everyFrame) {
       final last = comp.getSettings().durationFrames.toInt() - 1;
+      _efInFlight = (_efInFlight - 1).clamp(0, 8);
+      _efPump(comp, ui, last);
       final next = ui.playheadFrame.value + 1;
-      if (next > last) {
+      if (next > last && _efInFlight == 0) {
         _ticker?.stop();
         setState(() {});
         return;
       }
-      ui.playheadFrame.value = next;
+      if (next <= last) ui.playheadFrame.value = next;
       return;
     }
 
@@ -307,6 +309,31 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     _dispatchRender(comp, ui);
   }
 
+  /// How many every-frame renders are outstanding, and the next frame to ask
+  /// for. Two are kept in flight so the worker renders frame N+1 while this
+  /// side is still decoding and displaying frame N — the pipeline was strictly
+  /// serial before, and the hand-off latency alone held 60 fps footage to ~56.
+  /// Safe only because the worker never supersedes an every-frame request.
+  int _efInFlight = 0;
+  int _efNext = 0;
+
+  void _efPump(CompositionReference comp, LumitUiState state, int last) {
+    while (_efInFlight < 2 && _efNext <= last) {
+      try {
+        comp.renderFrame(
+          frame: BigInt.from(_efNext),
+          scale: state.viewerScale,
+          mode: BridgePlaybackMode.everyFrame,
+          zeroCopy: false,
+        );
+      } catch (_) {
+        return;
+      }
+      _efNext++;
+      _efInFlight++;
+    }
+  }
+
   /// The playhead moved — from anywhere. The Timeline ruler, an arrow key and
   /// the transport all just set it, and this is what turns that into a picture.
   /// Rendering used to be the transport's own business, so dragging the
@@ -315,6 +342,12 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     final ui = _boundUi;
     final comp = ui?.selectedComp;
     if (ui == null || comp == null) return;
+    // During every-frame playback the pump owns the request stream; the
+    // playhead moving here is the *result* of a delivery, not a seek.
+    if (playing &&
+        ui.workspace.performance.playback == PlaybackMode.everyFrame) {
+      return;
+    }
     _requestRender(comp, ui);
   }
 
@@ -367,7 +400,9 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       _ticker?.dispose();
       _ticker = createTicker((_) {});
       _ticker!.start();
-      _requestRender(comp, state);
+      _efNext = state.playheadFrame.value;
+      _efInFlight = 0;
+      _efPump(comp, state, last);
       setState(() {});
       return;
     }

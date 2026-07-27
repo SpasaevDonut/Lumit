@@ -20,6 +20,11 @@ The frontend moved from egui to Flutter (K-174). Flutter is now the frontend; th
 egui code remains only as the parity reference. These are v1-scope surfaces the
 Flutter frontend does not yet match, from the 2026-07-24 doc/code parity pass.
 
+**Playback measurements (2026-07-27, real window, `integration_test/playback_bench_test.dart`):**
+every-frame mode with one 1080p60 H.264 layer sustains ~64 fps (was ~56 before
+the two-in-flight pipeline). The bench needs `C:/tmp/test1080p60.mp4` (ffmpeg
+`testsrc2`) and a Windows device, so it is run by hand, not in CI.
+
 **Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
 - **Timeline audio waveforms** - no waveform lane on audio/footage layers or in
 sequence clips.

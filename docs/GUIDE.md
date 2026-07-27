@@ -2552,6 +2552,34 @@ which reads it at the moment you click. Both now listen for themselves and the
 rows sit still. Measured on a playhead move: with five layers, 6.4 ms down to
 1.3 ms; with twenty, 1.8 ms where the old shape would have cost around 19.
 
+*Why the zero-copy Viewer showed nothing, and how it was found.* The fault could
+not be seen from inside the program: the engine made its texture, Flutter
+accepted it and asked for it every frame, and the panel stayed empty. It was
+found by driving the real application window from a test and photographing it —
+the first run showed the checkerboard, the last shows the rendered picture
+arriving through the shared texture.
+
+The cause was two mismatches with the component inside Flutter that opens the
+texture (ANGLE). First, the *kind of handle*: Windows has two ways of naming a
+shared texture — an older "share handle" and a newer "NT handle" — and ANGLE
+only accepts the older kind, while the engine was exporting the newer, because
+Direct3D 12 can only make the newer. The engine now crosses that gap itself: the
+picture is copied, still on the graphics card, into a texture made the older way
+by the older API, and that texture's handle is what Flutter gets. Second, the
+*channel order*: ANGLE only opens blue-green-red-alpha surfaces, and the engine
+shared red-green-blue-alpha. The proving colour in the test is orange on
+purpose — with the channels swapped it would show blue, where the earlier
+magenta (whose red and blue are equal) would have hidden the mistake.
+
+*Every-frame playback now keeps two frames in motion.* One frame used to be
+requested, rendered, delivered, shown — and only then the next requested, so the
+renderer sat idle while the interface caught up, and the interface sat idle
+while the renderer worked. In every-frame mode the Viewer now asks for the next
+frame while the current one is still crossing, which is safe there because that
+mode's requests are never discarded. Measured on the real window with 1080p60
+footage: 56 frames a second serial, 64 pipelined — which is what makes a 60 fps
+composition play in real time in the mode that renders and keeps every frame.
+
 *Catching a failure that reports nothing.* The zero-copy Viewer's failure had no
 symptom you could act on: the engine made its texture, Flutter accepted it
 without complaint, and then simply never drew it — an empty panel for the whole

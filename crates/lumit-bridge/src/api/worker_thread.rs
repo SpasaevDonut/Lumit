@@ -187,8 +187,17 @@ fn worker_loop(
         // asks every 120 ms while the Viewer asks every tick, so the picture
         // froze on its first frame while the scopes kept updating. A trace and
         // a frame are different jobs; neither is the other's replacement.
-        let (picture, scope, superseded) = drain_to_newest(request, &receiver, |r| {
-            matches!(r, WorkerRequest::TraceScope(_))
+        let (pictures, scope, superseded) = drain_to_newest(request, &receiver, |r| match r {
+            WorkerRequest::TraceScope(_) => DrainClass::Scope,
+            // Every-frame requests are the mode's whole promise: each one is
+            // rendered and cached, so none may be superseded — and it is what
+            // lets the caller keep two in flight to hide its own latency.
+            WorkerRequest::RenderComp(req)
+                if matches!(req.mode, BridgePlaybackMode::EveryFrame) =>
+            {
+                DrainClass::PictureKeepAll
+            }
+            _ => DrainClass::PictureNewestWins,
         });
         // Deliberately not logged. Superseding is the normal, healthy case —
         // it is how a drag stays attached to the pointer — and a line per
@@ -197,12 +206,12 @@ fn worker_loop(
         // how the Viewer is actually doing.
         let _ = superseded;
 
-        // The picture first: it is what the user is looking at, and a trace of
+        // Pictures first: they are what the user is looking at, and a trace of
         // a frame that is about to be replaced is worth less than the frame.
         //
         // A frame that cannot be rendered is dropped, not fatal: the worker has
         // to survive to serve the next request.
-        for request in picture.into_iter().chain(scope) {
+        for request in pictures.into_iter().chain(scope) {
             let outcome = match request {
                 WorkerRequest::RenderComp(req) => render_comp(req, &mut state, &mut stream),
                 // Named for what it does rather than "render", so the three
@@ -219,36 +228,58 @@ fn worker_loop(
     }
 }
 
-/// Take everything queued and keep only the newest of each kind: the newest
-/// picture, and the newest scope trace.
+/// How the drain treats one queued request.
+#[frb(ignore)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DrainClass {
+    /// A stale one is worthless: only the newest survives (a scrub, adaptive
+    /// playback — the frame behind the newest will never be looked at).
+    PictureNewestWins,
+    /// Every one is served, in order (every-frame playback: each frame is
+    /// rendered and cached, and the caller may pipeline several).
+    PictureKeepAll,
+    /// A trace; the newest survives, served after the pictures.
+    Scope,
+}
+
+/// Take everything queued and keep what its class says to keep.
 ///
 /// Generic over the classifier so the policy can be tested on its own — a
 /// `WorkerRequest` needs a live project behind it, and the rule being tested has
 /// nothing to do with rendering.
 ///
-/// Returns `(picture, scope, superseded_count)`.
+/// Returns `(pictures_in_order, scope, superseded_count)`.
 #[frb(ignore)]
 fn drain_to_newest<T>(
     first: T,
     receiver: &Receiver<T>,
-    is_scope: impl Fn(&T) -> bool,
-) -> (Option<T>, Option<T>, usize) {
-    let mut picture = None;
+    classify: impl Fn(&T) -> DrainClass,
+) -> (Vec<T>, Option<T>, usize) {
+    let mut kept: Vec<T> = Vec::new();
+    let mut newest_wins: Option<T> = None;
     let mut scope = None;
     let mut superseded = 0usize;
     let mut newest = Some(first);
     while let Some(item) = newest.take() {
-        let slot = if is_scope(&item) {
-            &mut scope
-        } else {
-            &mut picture
-        };
-        if slot.replace(item).is_some() {
-            superseded += 1;
+        match classify(&item) {
+            DrainClass::Scope => {
+                if scope.replace(item).is_some() {
+                    superseded += 1;
+                }
+            }
+            DrainClass::PictureKeepAll => kept.push(item),
+            DrainClass::PictureNewestWins => {
+                if newest_wins.replace(item).is_some() {
+                    superseded += 1;
+                }
+            }
         }
         newest = receiver.try_recv().ok();
     }
-    (picture, scope, superseded)
+    // A surviving newest-wins picture runs after the kept ones: the kept ones
+    // were asked for earlier, and order is part of every-frame's contract.
+    kept.extend(newest_wins);
+    (kept, scope, superseded)
 }
 
 fn render_comp(
@@ -635,19 +666,25 @@ fn publish_read_back(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
-    use super::drain_to_newest;
+    use super::{drain_to_newest, DrainClass};
     use std::sync::mpsc::channel;
 
-    /// The requests these tests queue: a picture carrying a frame number, and a
-    /// scope trace. Standing in for `WorkerRequest`, which needs a live project.
+    /// The requests these tests queue: an adaptive picture (newest wins), an
+    /// every-frame picture (all kept, in order), and a scope trace. Standing in
+    /// for `WorkerRequest`, which needs a live project.
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     enum Req {
-        Picture(u32),
+        Adaptive(u32),
+        EveryFrame(u32),
         Scope(u32),
     }
 
-    fn is_scope(r: &Req) -> bool {
-        matches!(r, Req::Scope(_))
+    fn classify(r: &Req) -> DrainClass {
+        match r {
+            Req::Adaptive(_) => DrainClass::PictureNewestWins,
+            Req::EveryFrame(_) => DrainClass::PictureKeepAll,
+            Req::Scope(_) => DrainClass::Scope,
+        }
     }
 
     /// The bug this policy exists to fix: during playback the Viewer asks for a
@@ -659,34 +696,35 @@ mod tests {
     fn a_scope_trace_does_not_supersede_a_frame() {
         let (tx, rx) = channel();
         for frame in 1..=3 {
-            tx.send(Req::Picture(frame)).unwrap();
+            tx.send(Req::Adaptive(frame)).unwrap();
         }
         // The trace arrives last, which is what used to win outright.
         tx.send(Req::Scope(9)).unwrap();
         drop(tx);
 
-        let (picture, scope, superseded) = drain_to_newest(Req::Picture(0), &rx, is_scope);
+        let (pictures, scope, superseded) = drain_to_newest(Req::Adaptive(0), &rx, classify);
         assert_eq!(
-            picture,
-            Some(Req::Picture(3)),
+            pictures,
+            vec![Req::Adaptive(3)],
             "the newest frame survives a trace queued behind it"
         );
         assert_eq!(scope, Some(Req::Scope(9)), "and the trace is served too");
         assert_eq!(superseded, 3, "the three older frames were dropped");
     }
 
-    /// The behaviour the policy is *for*: a backlog of pictures collapses to the
-    /// newest, because the ones behind it are frames nobody will ever see.
+    /// The behaviour the policy is *for*: a backlog of adaptive pictures
+    /// collapses to the newest, because the ones behind it are frames nobody
+    /// will ever see.
     #[test]
     fn pictures_still_collapse_to_the_newest() {
         let (tx, rx) = channel();
         for frame in 1..=5 {
-            tx.send(Req::Picture(frame)).unwrap();
+            tx.send(Req::Adaptive(frame)).unwrap();
         }
         drop(tx);
 
-        let (picture, scope, superseded) = drain_to_newest(Req::Picture(0), &rx, is_scope);
-        assert_eq!(picture, Some(Req::Picture(5)));
+        let (pictures, scope, superseded) = drain_to_newest(Req::Adaptive(0), &rx, classify);
+        assert_eq!(pictures, vec![Req::Adaptive(5)]);
         assert_eq!(scope, None, "nothing asked for a trace");
         assert_eq!(superseded, 5);
     }
@@ -699,8 +737,8 @@ mod tests {
         tx.send(Req::Scope(3)).unwrap();
         drop(tx);
 
-        let (picture, scope, superseded) = drain_to_newest(Req::Scope(1), &rx, is_scope);
-        assert_eq!(picture, None);
+        let (pictures, scope, superseded) = drain_to_newest(Req::Scope(1), &rx, classify);
+        assert!(pictures.is_empty());
         assert_eq!(scope, Some(Req::Scope(3)));
         assert_eq!(superseded, 2);
     }
@@ -711,9 +749,39 @@ mod tests {
         let (tx, rx) = channel::<Req>();
         drop(tx);
 
-        let (picture, scope, superseded) = drain_to_newest(Req::Picture(7), &rx, is_scope);
-        assert_eq!(picture, Some(Req::Picture(7)));
+        let (pictures, scope, superseded) = drain_to_newest(Req::Adaptive(7), &rx, classify);
+        assert_eq!(pictures, vec![Req::Adaptive(7)]);
         assert_eq!(scope, None);
         assert_eq!(superseded, 0);
+    }
+
+    /// Every-frame's contract: nothing dropped, order preserved — it is what
+    /// makes keeping two requests in flight safe, and what makes the mode's
+    /// "every frame rendered and cached" true under a backlog.
+    #[test]
+    fn every_frame_requests_all_survive_in_order() {
+        let (tx, rx) = channel();
+        for frame in 2..=4 {
+            tx.send(Req::EveryFrame(frame)).unwrap();
+        }
+        // An adaptive scrub and a trace land in the middle of the backlog.
+        tx.send(Req::Adaptive(9)).unwrap();
+        tx.send(Req::Scope(1)).unwrap();
+        drop(tx);
+
+        let (pictures, scope, superseded) = drain_to_newest(Req::EveryFrame(1), &rx, classify);
+        assert_eq!(
+            pictures,
+            vec![
+                Req::EveryFrame(1),
+                Req::EveryFrame(2),
+                Req::EveryFrame(3),
+                Req::EveryFrame(4),
+                Req::Adaptive(9),
+            ],
+            "every-frame requests all survive, in order, before the adaptive one"
+        );
+        assert_eq!(scope, Some(Req::Scope(1)));
+        assert_eq!(superseded, 0, "nothing every-frame was thrown away");
     }
 }
