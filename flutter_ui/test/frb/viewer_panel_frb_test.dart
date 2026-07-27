@@ -114,6 +114,17 @@ void main() {
           until: () => p.uiState.playheadFrame.value > 0);
       expect(p.uiState.playheadFrame.value, greaterThan(0),
           reason: 'the engine chose frames and the playhead followed them');
+      // The degradation badge mirrors the tier exactly: shown when adaptive
+      // playback has walked below Full (which this transportless test build
+      // does, since nothing can present), absent at Full. Asserting the
+      // correspondence rather than a fixed state keeps the test honest on
+      // any machine.
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('viewer-tier-badge')),
+        p.comp.playbackTier() > 1 ? findsOneWidget : findsNothing,
+        reason: 'the badge says exactly what the controller decided',
+      );
 
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();

@@ -39,7 +39,6 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 - guides menu
 - region-of-interest
 - colour-management indicator
-- degradation indicator badge
 - background-colour swatch.
 - **Click-to-edit timecode** (currently read-only), may want to remove from this bar and
     only keep the one on timeline and add the functionality there.

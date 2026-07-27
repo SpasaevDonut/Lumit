@@ -875,6 +875,29 @@ class _Toolbar extends StatelessWidget {
               key: const ValueKey('viewer-timecode'),
               style: t.mono,
             ),
+            // The degradation badge (docs/13 §B5, docs/07 §2.2): when adaptive
+            // playback has dropped below Full, say so on the bar — a softer
+            // picture must never be a mystery. Reading the tier is one atomic;
+            // this bar already rebuilds per shown frame.
+            if (playing && comp.playbackTier() > 1) ...[
+              const SizedBox(width: 8),
+              Container(
+                key: const ValueKey('viewer-tier-badge'),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: t.surface2,
+                  borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+                ),
+                child: Text(
+                  switch (comp.playbackTier()) {
+                    2 => 'Half',
+                    3 => 'Third',
+                    _ => 'Quarter',
+                  },
+                  style: t.small.copyWith(color: t.warning),
+                ),
+              ),
+            ],
           ],
         ),
       ),
