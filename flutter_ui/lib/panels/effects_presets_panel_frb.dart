@@ -256,27 +256,34 @@ class _PresetBar extends StatelessWidget {
       height: 26,
       color: t.surface1,
       padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Row(
-        children: [
-          HouseButton(
-            key: const ValueKey('preset-save'),
-            small: true,
-            frameless: true,
-            onPressed: target == null ? null : () => _save(target),
-            child: Text('Save preset…', style: t.small),
-          ),
-          const SizedBox(width: 6),
-          HouseButton(
-            key: const ValueKey('preset-load'),
-            small: true,
-            frameless: true,
-            onPressed: target == null ? null : () => _load(target),
-            child: Text('Load preset…', style: t.small),
-          ),
-          const Spacer(),
-          if (target == null)
-            Text('Select a layer', style: t.small.copyWith(color: t.textMuted)),
-        ],
+      // Scrolls sideways when docked narrow rather than striping (the
+      // Timeline toolbar's answer).
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            HouseButton(
+              key: const ValueKey('preset-save'),
+              small: true,
+              frameless: true,
+              onPressed: target == null ? null : () => _save(target),
+              child: Text('Save preset…', style: t.small),
+            ),
+            const SizedBox(width: 6),
+            HouseButton(
+              key: const ValueKey('preset-load'),
+              small: true,
+              frameless: true,
+              onPressed: target == null ? null : () => _load(target),
+              child: Text('Load preset…', style: t.small),
+            ),
+            if (target == null) ...[
+              const SizedBox(width: 16),
+              Text('Select a layer',
+                  style: t.small.copyWith(color: t.textMuted)),
+            ],
+          ],
+        ),
       ),
     );
   }

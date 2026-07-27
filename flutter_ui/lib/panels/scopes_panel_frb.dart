@@ -111,28 +111,35 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
               height: 26,
               color: t.surface1,
               padding: const EdgeInsets.symmetric(horizontal: 6),
-              child: Row(
-                children: [
-                  SizedBox(
-                    width: 110,
-                    child: BareDropdown<ScopeKind>(
-                      key: const ValueKey('scope-kind'),
-                      value: _kind,
-                      options: ScopeKind.values,
-                      label: _label,
-                      onChanged: (k) => setState(() {
-                        _kind = k;
-                        // A new trace kind is worth an immediate request rather
-                        // than waiting out the throttle on a picture the user
-                        // just asked to change.
-                        _lastFrame = -1;
-                      }),
+              // Scrolls sideways when docked narrow, the same answer the
+              // Timeline toolbar gives — an overflow stripe is a layout fault.
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 110,
+                      child: BareDropdown<ScopeKind>(
+                        key: const ValueKey('scope-kind'),
+                        value: _kind,
+                        options: ScopeKind.values,
+                        label: _label,
+                        onChanged: (k) => setState(() {
+                          _kind = k;
+                          // A new trace kind is worth an immediate request
+                          // rather than waiting out the throttle on a picture
+                          // the user just asked to change.
+                          _lastFrame = -1;
+                        }),
+                      ),
                     ),
-                  ),
-                  const Spacer(),
-                  Text('frame $frame',
-                      style: t.small.copyWith(color: t.textMuted)),
-                ],
+                    // A gap, not a Spacer: a horizontal scroller has no finite
+                    // width for a Spacer to fill.
+                    const SizedBox(width: 16),
+                    Text('frame $frame',
+                        style: t.small.copyWith(color: t.textMuted)),
+                  ],
+                ),
               ),
             ),
             Expanded(

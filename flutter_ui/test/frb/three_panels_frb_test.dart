@@ -203,6 +203,26 @@ void main() {
       expect(find.textContaining('Select a composition'), findsOneWidget);
     });
 
+    /// The narrow-dock rule (docs/TODO shell): a toolbar that does not fit
+    /// scrolls sideways instead of painting the overflow stripe — which in a
+    /// test surfaces as a thrown RenderFlex exception, so none is the pass.
+    testWidgets('a narrow dock scrolls the toolbar instead of striping',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addAdjustmentLayer();
+      p.uiState.setSelectedComp(comp);
+      await tester.pumpWidget(hostPanel(
+        child: const ScopesPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(140, 300),
+      ));
+      await tester.pump();
+      expect(tester.takeException(), isNull,
+          reason: 'no overflow at 140 px wide');
+    });
+
     testWidgets('it offers the four traces and waits for one', (tester) async {
       final p = freshProject();
       final comp = p.state.project!.newComposition(name: 'Scene');
