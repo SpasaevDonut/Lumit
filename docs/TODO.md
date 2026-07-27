@@ -275,18 +275,31 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
 - Retime Time-lens **vertical (source-position) boundary drag** has no bridge op
     (`SetLayerRetime`/`from_source_keyframes` unexposed).
 
-**The read-back transport is the playback bottleneck, not the renderer.** Measured
-on the frb read-back path: a 1.44 MB frame (800x450) costs ~3 ms to render and
-**~6 ms to hand to Dart** — `stream.add`'s SSE encode, which is linear in bytes,
-so a full 1080p frame is ~35 ms against a 16.7 ms budget at 60 fps. That is why a
-single-layer comp with no effects cannot preview at 60 fps: the pixels, not the
-compositing. The realtime tier now measures the whole cost and drops resolution
-in response (which cuts bytes quadratically, so it does help), but that is
-mitigation. The fix is to stop copying: build with `--features shared-texture`
-on Windows (K-177 zero-copy is written and unused by default), or replace the
-per-byte SSE codec for this one payload. Note `publish_zero_copy` currently
-ignores the tier and never reports a cost — wire both when that path goes on, or
-adaptive playback will regress to always-Full there.
+**The frame cache never fills on the zero-copy path, so the cache bar is blank.**
+The shared texture keeps no bytes anywhere — that is what makes it fast — and
+`publish_read_back` was the only thing that ever filled `framecache`. Now that
+zero-copy is taken in both playback modes, the cache holds nothing in a shipped
+build and the cache bar has nothing to draw. Decide which: teach the bar to say
+"not held on this transport" rather than showing empty (honest, small), retire
+the bar and the frame cache on zero-copy builds (less code, loses the scrub-back
+win), or cache on the card so coverage means something again (most work, keeps
+docs/06 §5.6's promise). Until then the bar reads as "nothing cached", which is
+true but looks like a fault.
+
+**The shipped build is the one configuration nothing tests.** `flutter test`
+loads `cargo build -p lumit_bridge` — default features, so always read-back —
+while the app builds with `--features shared-texture` (`cargokit.yaml`). Every
+zero-copy line is therefore untested, which is exactly how `publish_zero_copy`
+came to ignore the preview tier and report no cost for as long as it did: no
+test could have noticed. A second CI leg with the feature on would have caught
+it the day it landed.
+
+**Read-back's remaining cost, for whenever it is the fallback in use.** Measured:
+a 1.44 MB frame (800x450) costs ~3 ms to render and **~6 ms to hand to Dart** —
+`stream.add`'s SSE encode, linear in bytes, so a full 1080p frame is ~35 ms
+against a 16.7 ms budget at 60 fps. A machine that cannot register a shared
+texture still pays this; replacing the per-byte codec for this one payload is
+the fix if that ever matters.
 
 **Playback scheduler — the rest of it.** Playback now runs in the render worker
 rather than in Flutter (K-181), which was the boundary fix. What it is not yet is
