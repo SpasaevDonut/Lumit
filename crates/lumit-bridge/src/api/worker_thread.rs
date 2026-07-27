@@ -102,6 +102,9 @@ struct Playback {
     /// as no mix is loaded to be master instead.
     from: u64,
     started: std::time::Instant,
+    /// When the last frame was handed over, for every-frame's pacing. `None`
+    /// before the first frame of a run.
+    last_published: Option<std::time::Instant>,
 }
 
 impl Playback {
@@ -125,11 +128,23 @@ impl Playback {
     /// by only asking once per vsync, and moving playback without moving the
     /// pacing with it made a 60 fps comp play at several hundred.
     ///
-    /// Every-frame never waits: running at whatever rate the renderer manages is
-    /// the mode's whole definition (K-171).
+    /// Every-frame paces differently, and against a different baseline: it is
+    /// allowed to fall behind (that is the mode — it never skips, so a comp too
+    /// heavy to render in realtime simply plays slow), but it is *not* allowed
+    /// to run ahead. Once a span is cached, frames cost almost nothing to
+    /// produce and the mode would replay it many times faster than realtime,
+    /// which is what "it zooms through the cached parts" was. K-171's "replays
+    /// it at full speed from cache" means the composition's own rate, not
+    /// whatever rate the cache can be read at.
+    ///
+    /// So the baseline is the *previous frame*, not the start of playback: keep
+    /// at least one frame period between hand-offs, and never try to make up
+    /// time that has already been lost.
     fn wait_before_next(&self) -> Option<std::time::Duration> {
+        let period = std::time::Duration::from_secs_f64(1.0 / self.fps);
         if matches!(self.mode, BridgePlaybackMode::EveryFrame) {
-            return None;
+            let since = self.last_published?.elapsed();
+            return period.checked_sub(since).filter(|d| !d.is_zero());
         }
         let due = self.next as f64 / self.fps;
         let elapsed = self.elapsed_seconds();
@@ -367,6 +382,12 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         scale: playback.scale,
         zero_copy: playback.zero_copy,
     };
+    // Stamped before the render, so the period counts hand-off to hand-off
+    // rather than adding the render on top of it — the pacing must not make a
+    // slow comp slower still.
+    if let Some(playback) = &mut state.playback {
+        playback.last_published = Some(std::time::Instant::now());
+    }
     if let Err(err) = render_comp(request, state, stream) {
         // A frame that will not render stops playback rather than spinning on it
         // — the alternative is a silent loop burning a core on a comp that
@@ -410,7 +431,12 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
         fps: if fps > 0.0 { fps } else { 60.0 },
         from,
         started: std::time::Instant::now(),
+        last_published: None,
     });
+    // A fresh run starts optimistic at Full and walks down to whatever this
+    // machine can actually hold, rather than inheriting the last run's verdict
+    // on a comp that may since have got lighter.
+    crate::realtime::reset();
     Ok(())
 }
 
@@ -903,10 +929,36 @@ fn publish_read_back(
         return;
     };
 
-    // Tell the realtime controller what that cost, so playback can drop to a
-    // coarser tier when the comp is too heavy to keep up (K-171). Only a genuine
-    // render counts: a cache hit measures the cache, not the comp.
-    if adaptive && started.elapsed().as_secs_f64() > 0.001 {
+    _ = stream.add(WorkerResponse::RenderedPixels(BridgeRenderedFrame {
+        frame,
+        width,
+        height,
+        rgba,
+    }));
+
+    // Tell the realtime controller what that frame cost, so playback can drop to
+    // a coarser tier when the machine cannot keep up (K-171).
+    //
+    // **Measured after the hand-off, and that is the whole point.** This used to
+    // stop the clock before `stream.add` and report the render alone, which on
+    // this transport is the smaller half of the bill: encoding the pixels for
+    // Dart costs about 6 ms per 1.4 MB — twice the render — and grows with the
+    // panel, so a full-size 1080p Viewer spends over 30 ms handing the frame
+    // over. The controller therefore saw 3 ms against a 15 ms threshold,
+    // concluded it had headroom, and sat at Full for ever while playback missed
+    // its budget and skipped frames instead of getting softer. A tier it cannot
+    // see the cost of is a tier it can never choose.
+    //
+    // A cache hit is measured too, for the same reason: the pixels still have to
+    // cross, and that crossing is what is actually slow.
+    //
+    // Only while *playing*, though. The tier answers "can this machine hold the
+    // composition's rate", which is a question a still frame cannot help with: a
+    // scrub, an edit redraw, or the first render of a session — which pays for
+    // renderer warm-up — would drag the tier down over a cost nothing was
+    // keeping time against, and the next playback would start soft for no
+    // reason.
+    if adaptive && state.playback.is_some() {
         let fps = document
             .comp(comp)
             .map(|c| c.frame_rate.fps())
@@ -917,13 +969,6 @@ fn publish_read_back(
             crate::realtime::tier_scale(tier),
         );
     }
-
-    _ = stream.add(WorkerResponse::RenderedPixels(BridgeRenderedFrame {
-        frame,
-        width,
-        height,
-        rgba,
-    }));
 }
 
 #[cfg(test)]
@@ -945,6 +990,7 @@ mod tests {
             fps: 60.0,
             from: 0,
             started: std::time::Instant::now(),
+            last_published: None,
         }
     }
 
@@ -972,16 +1018,52 @@ mod tests {
         );
     }
 
-    /// Every-frame renders each frame as fast as it can and never waits — that
-    /// is the mode's whole definition (K-171), and it is why it plays silent.
+    /// Every-frame never skips, whatever it costs — that is the mode's whole
+    /// definition (K-171), and it is why it plays silent.
     #[test]
-    fn every_frame_playback_never_waits_and_never_skips() {
+    fn every_frame_playback_never_skips() {
         let mut p = playback(BridgePlaybackMode::EveryFrame, 3);
         for expected in 0..=3 {
-            assert!(p.wait_before_next().is_none(), "every-frame never waits");
-            assert_eq!(p.advance(), Some(expected), "and never skips one");
+            assert_eq!(p.advance(), Some(expected), "never skips one");
         }
         assert_eq!(p.advance(), None, "past the last frame, playback is over");
+    }
+
+    /// **The cached-playback regression.** Every-frame is allowed to fall behind
+    /// — a comp too heavy to render in realtime plays slow rather than dropping
+    /// frames — but it must never run *ahead*. Once a span is cached, frames
+    /// cost almost nothing and it replayed them many times faster than realtime:
+    /// "it zooms through those parts". Fails without the per-frame pacing.
+    #[test]
+    fn every_frame_playback_never_runs_faster_than_realtime() {
+        let mut p = playback(BridgePlaybackMode::EveryFrame, 100);
+
+        // The first frame of a run is due immediately — nothing has been shown
+        // yet, so there is nothing to be early against.
+        assert!(p.wait_before_next().is_none());
+
+        // A frame that has just been handed over: the next one is a sixtieth of
+        // a second away, and a cache hit must not be allowed to jump the queue.
+        p.last_published = Some(std::time::Instant::now());
+        let wait = p
+            .wait_before_next()
+            .expect("a frame delivered just now means the next one is not due");
+        // The upper bound carries a nanosecond of slack: `Duration` rounds
+        // 1/60 s up at nanosecond precision, so an exact `<=` fails on the
+        // untouched period.
+        assert!(
+            wait.as_secs_f64() > 0.010 && wait.as_secs_f64() <= 1.0 / 60.0 + 1e-6,
+            "waits out the rest of the frame period, no more: {wait:?}"
+        );
+
+        // A frame that took longer than its period to produce is already late.
+        // Late is allowed; making it later is not.
+        p.last_published = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
+        assert!(
+            p.wait_before_next().is_none(),
+            "already behind, so no further wait — it never tries to catch up \
+             and never adds to the delay"
+        );
     }
 
     /// Adaptive skips frames the clock has already gone past, rather than

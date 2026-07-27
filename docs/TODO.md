@@ -275,6 +275,19 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
 - Retime Time-lens **vertical (source-position) boundary drag** has no bridge op
     (`SetLayerRetime`/`from_source_keyframes` unexposed).
 
+**The read-back transport is the playback bottleneck, not the renderer.** Measured
+on the frb read-back path: a 1.44 MB frame (800x450) costs ~3 ms to render and
+**~6 ms to hand to Dart** — `stream.add`'s SSE encode, which is linear in bytes,
+so a full 1080p frame is ~35 ms against a 16.7 ms budget at 60 fps. That is why a
+single-layer comp with no effects cannot preview at 60 fps: the pixels, not the
+compositing. The realtime tier now measures the whole cost and drops resolution
+in response (which cuts bytes quadratically, so it does help), but that is
+mitigation. The fix is to stop copying: build with `--features shared-texture`
+on Windows (K-177 zero-copy is written and unused by default), or replace the
+per-byte SSE codec for this one payload. Note `publish_zero_copy` currently
+ignores the tier and never reports a cost — wire both when that path goes on, or
+adaptive playback will regress to always-Full there.
+
 **Playback scheduler — the rest of it.** Playback now runs in the render worker
 rather than in Flutter (K-181), which was the boundary fix. What it is not yet is
 the scheduler [impl/playback-scheduler.md](impl/playback-scheduler.md) §5

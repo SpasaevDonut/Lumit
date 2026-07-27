@@ -80,3 +80,50 @@ pub(crate) fn tier() -> u32 {
 pub(crate) fn reset() {
     with_controller(|c| *c = RealtimeController::new());
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use lumit_eval::schedule::RealtimeController;
+
+    /// **The costs this controller is fed, written down.**
+    ///
+    /// Its own controller rather than the process-global one: the tier is shared
+    /// session state and other tests reset it, so asserting exact tiers against
+    /// the global would race. What is pinned here is that the numbers actually
+    /// measured on the read-back transport reach a verdict, which is the thing
+    /// that silently was not true.
+    ///
+    /// The render path used to stop its clock *before* handing the pixels to
+    /// Dart, so it reported the render alone. Measured on this transport, a
+    /// 1.44 MB frame (800x450) costs about 3 ms to render and about 6 ms to hand
+    /// over — the hand-off is the larger half and is linear in bytes, so a full
+    /// 1080p frame is around 35 ms against a 16.7 ms budget at 60 fps. Reporting
+    /// 3 ms of that left the controller believing it had headroom, so it never
+    /// left Full and playback skipped frames instead of getting softer.
+    #[test]
+    fn the_measured_read_back_costs_reach_the_right_verdicts() {
+        // A full-size 1080p frame on this transport: hopeless at 60 fps.
+        let mut over = RealtimeController::new();
+        assert_eq!(over.tier(), 1, "a fresh controller is optimistic");
+        assert!(
+            over.record(0.035, 60.0) > 1,
+            "35 ms a frame against a 16.7 ms budget must coarsen the preview, \
+             not sit at Full while playback skips frames around it"
+        );
+
+        // The render cost alone, which is what used to be reported. It has to
+        // read as comfortable — that is precisely why the old measurement never
+        // moved anything, and why the fix is where the clock stops, not here.
+        let mut render_only = RealtimeController::new();
+        for _ in 0..20 {
+            render_only.record(0.003, 60.0);
+        }
+        assert_eq!(
+            render_only.tier(),
+            1,
+            "3 ms of a 16.7 ms budget is not a reason to soften — so a \
+             controller fed only the render can never do its job"
+        );
+    }
+}
