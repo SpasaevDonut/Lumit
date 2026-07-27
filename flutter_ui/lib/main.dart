@@ -350,6 +350,14 @@ class LumitUiState extends ChangeNotifier {
     frameArrived.value++;
     if (id == null) return;
     controller.frameReady();
+    // The texture may turn out never to be drawn (see `neverDrawn`). Clearing
+    // the id then is what puts the read-back picture back on screen — leaving it
+    // set would keep the Viewer showing an empty `Texture` widget for ever, with
+    // pixels arriving that nothing displays.
+    if (controller.neverDrawn) {
+      viewerFrameid.value = null;
+      return;
+    }
     _disposeImage();
     if (viewerFrameid.value != id) viewerFrameid.value = id;
   }

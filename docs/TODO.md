@@ -126,13 +126,31 @@ and the transparency grid have landed. Still missing:
 - **No disk or VRAM frame cache**, so the cache bar can only ever show the RAM
     tier. The design language's steel blue for "on disk only" and the future VRAM
     tier have nothing behind them yet ([15-DESIGN.md](15-DESIGN.md) §6.3).
-- **The zero-copy Viewer draws nothing on a real window** and is off by default
-    because of it (Settings → Playback → Frame transport turns it on). The engine
-    makes the shared texture and Dart registers it without error, but the
-    `Texture` widget shows an empty panel. Needs debugging against a real window,
-    which no widget test can do. Everything around it is now defensive: the
-    engine falls back to read-back when it cannot make the texture, and Dart only
-    asks for one while its controller reports itself available.
+- **The zero-copy Viewer draws nothing on a real window.** Off by default;
+    Settings → Playback → Frame transport turns it on, and now *reports* the
+    failure rather than showing an empty panel: the runner counts how many times
+    Flutter asks for the texture's descriptor, and if it stays at zero after a
+    dozen announced frames the Viewer goes back to read-back on its own and
+    Settings reads "the shared texture was never drawn".
+
+    What has been ruled out by reading the code against the 3.44 headers: the
+    descriptor shape and `struct_size`; the surface type; the D3D12 resource
+    flags (`ALLOW_SIMULTANEOUS_ACCESS` + `HEAP_FLAG_SHARED`, committed, COMMON
+    state, `CreateSharedHandle`); handle lifetime (the texture is created once
+    and reused, and the handle outlives every frame); and `MarkTextureFrameAvailable`
+    being called per frame from the platform thread. The engine reports success,
+    so it is the embedder that is not compositing it.
+
+    Two hypotheses, untested because they need a real window:
+    1. **Impeller.** Flutter 3.44 defaults to it on Windows, while
+       `kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle` is the older ANGLE path.
+       Test by launching the built `.exe` with the engine switch Flutter's own
+       tooling uses (`desktop_device.dart`):
+       `FLUTTER_ENGINE_SWITCHES=1 FLUTTER_ENGINE_SWITCH_1=enable-impeller=false`
+       then turning the transport on and reading what Settings says.
+    2. **Adapter mismatch.** wgpu picks the D3D12 adapter and the embedder picks
+       its own; on a machine with two GPUs a handle shared from one cannot be
+       opened on the other, and it fails exactly this silently.
 - **The Scopes' trace still crosses the bridge as pixels**, serialised a byte at
     a time like any other `Vec<u8>`, and is decoded into an image Dart-side. Small
     next to a full frame, but it is on the same per-frame path and could take the

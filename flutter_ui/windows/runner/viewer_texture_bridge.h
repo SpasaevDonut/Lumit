@@ -32,6 +32,7 @@
 #include <flutter/texture_registrar.h>
 #include <flutter_windows.h>
 
+#include <atomic>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -56,6 +57,19 @@ class ViewerTextureBridge {
   struct Entry {
     FlutterDesktopGpuSurfaceDescriptor descriptor;
     std::unique_ptr<flutter::TextureVariant> texture;
+    // How many times Flutter has actually asked for this descriptor — that is,
+    // how many times it has composited the texture.
+    //
+    // It exists because the failure mode here is silent and total: if the
+    // embedder cannot open or draw the shared handle, it simply draws nothing,
+    // reports no error, and the Viewer shows an empty panel for the rest of the
+    // session while everything else carries on. A count of zero after several
+    // frames have been announced is the only evidence available, so Dart asks
+    // for it and falls back to copying pixels when it stays at zero.
+    //
+    // Atomic: the callback runs on the raster thread, the read on the platform
+    // thread.
+    std::atomic<uint64_t> presented{0};
   };
 
   void HandleMethodCall(
@@ -66,6 +80,8 @@ class ViewerTextureBridge {
   // given size, returning its Flutter texture id (0 on failure).
   int64_t Register(uint64_t handle, uint32_t width, uint32_t height);
   bool MarkFrameAvailable(int64_t texture_id);
+  // How many times Flutter has composited |texture_id| (see Entry::presented).
+  uint64_t Presented(int64_t texture_id) const;
   void Unregister(int64_t texture_id);
 
   std::unique_ptr<flutter::PluginRegistrarWindows> registrar_;

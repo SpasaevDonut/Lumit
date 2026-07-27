@@ -160,9 +160,11 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               Text(
                 switch (viewerTransport()) {
                   BridgeViewerTransport.sharedTexture =>
-                    ui.workspace.performance.useSharedTexture
-                        ? 'Shared texture (no copy)'
-                        : 'Read-back (shared texture available)',
+                    !ui.workspace.performance.useSharedTexture
+                        ? 'Read-back (shared texture available)'
+                        : ui.controller.neverDrawn
+                            ? 'Read-back — the shared texture was never drawn'
+                            : 'Shared texture (no copy)',
                   BridgeViewerTransport.dmaBuf =>
                     ui.workspace.performance.useSharedTexture
                         ? 'DMA-BUF (no copy)'

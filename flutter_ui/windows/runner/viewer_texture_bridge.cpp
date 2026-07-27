@@ -79,7 +79,11 @@ void ViewerTextureBridge::HandleMethodCall(
   if (call.method_name() == "frameReady") {
     const int64_t id = static_cast<int64_t>(GetU64(args, "textureId"));
     MarkFrameAvailable(id);
-    result->Success();
+    // Answer with how many times Flutter has actually drawn this texture, so
+    // the caller can tell "registered and working" from "registered and
+    // silently never drawn" — the two look identical otherwise.
+    result->Success(
+        flutter::EncodableValue(static_cast<int64_t>(Presented(id))));
     return;
   }
 
@@ -117,14 +121,16 @@ int64_t ViewerTextureBridge::Register(uint64_t handle, uint32_t width,
 
   // The callback returns a stable pointer to the descriptor held inside the
   // heap-allocated Entry; moving the unique_ptr into the map does not move the
-  // Entry itself, so the pointer stays valid for the texture's lifetime.
-  FlutterDesktopGpuSurfaceDescriptor* descriptor_ptr = &entry->descriptor;
+  // Entry itself, so the pointer stays valid for the texture's lifetime. The
+  // same reasoning lets it count its own invocations.
+  Entry* entry_ptr = entry.get();
   entry->texture = std::make_unique<flutter::TextureVariant>(
       flutter::GpuSurfaceTexture(
           kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle,
-          [descriptor_ptr](size_t /*width*/, size_t /*height*/)
+          [entry_ptr](size_t /*width*/, size_t /*height*/)
               -> const FlutterDesktopGpuSurfaceDescriptor* {
-            return descriptor_ptr;
+            entry_ptr->presented.fetch_add(1, std::memory_order_relaxed);
+            return &entry_ptr->descriptor;
           }));
 
   const int64_t id = textures_->RegisterTexture(entry->texture.get());
@@ -137,6 +143,14 @@ bool ViewerTextureBridge::MarkFrameAvailable(int64_t texture_id) {
     return false;
   }
   return textures_->MarkTextureFrameAvailable(texture_id);
+}
+
+uint64_t ViewerTextureBridge::Presented(int64_t texture_id) const {
+  auto it = entries_.find(texture_id);
+  if (it == entries_.end()) {
+    return 0;
+  }
+  return it->second->presented.load(std::memory_order_relaxed);
 }
 
 void ViewerTextureBridge::Unregister(int64_t texture_id) {

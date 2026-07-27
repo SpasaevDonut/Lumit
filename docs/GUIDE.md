@@ -2552,6 +2552,19 @@ which reads it at the moment you click. Both now listen for themselves and the
 rows sit still. Measured on a playhead move: with five layers, 6.4 ms down to
 1.3 ms; with twenty, 1.8 ms where the old shape would have cost around 19.
 
+*Catching a failure that reports nothing.* The zero-copy Viewer's failure had no
+symptom you could act on: the engine made its texture, Flutter accepted it
+without complaint, and then simply never drew it — an empty panel for the whole
+session while the playhead ran and every other panel updated. Nothing in that
+chain says "this is not working".
+
+So the runner now counts something it can only know by being asked: how many
+times Flutter has actually come back for the texture in order to draw it. A dozen
+frames announced and none drawn is proof the picture is not reaching the screen,
+whatever the reason, and the Viewer quietly goes back to copying pixels — with
+Settings saying why, rather than leaving you to guess whether it is the picture
+or the plumbing that is broken.
+
 *A fast path that fails silently is worse than no fast path.* Turning the
 zero-copy Viewer on in the shipped build had an ugly result: the Viewer drew
 nothing at all — just its checkerboard — while the playhead ran and the Scopes

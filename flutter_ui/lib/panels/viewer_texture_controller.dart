@@ -102,6 +102,8 @@ class ViewerTextureController {
             };
       final id = await _channel.invokeMethod<int>('register', args);
       _textureId = id;
+      _announced = 0;
+      _drawn = 0;
       _handle = handle;
       _fd = fd;
       _width = width;
@@ -121,11 +123,43 @@ class ViewerTextureController {
   /// so Flutter re-samples it. A no-op when nothing is registered. A transient
   /// failure is swallowed (one skipped frame), but a missing handler latches
   /// [available] off.
+  /// How many frames we have announced since registering, and how many times
+  /// Flutter has actually drawn the texture in reply.
+  ///
+  /// **The failure this exists to catch.** If the embedder cannot open or
+  /// composite the shared handle it does not fail — it draws nothing, says
+  /// nothing, and the Viewer shows an empty panel for the whole session while
+  /// the playhead runs and every other panel updates. Registration succeeding
+  /// tells you nothing, because that is exactly what it does when it is about to
+  /// silently ignore the texture.
+  ///
+  /// So: announce a few frames, then check whether any of them were drawn. If
+  /// none were, this path does not work on this machine or this Flutter
+  /// renderer, and the Viewer goes back to copying pixels — which is slower, but
+  /// is a picture.
+  int _announced = 0;
+  int _drawn = 0;
+
+  /// Frames to allow before deciding. Enough that a slow first composite or a
+  /// window that has not been painted yet is not mistaken for a broken path.
+  static const int _graceFrames = 12;
+
+  /// True once the texture path has been seen to fail this way.
+  bool get neverDrawn => _announced >= _graceFrames && _drawn == 0;
+
   Future<void> frameReady() async {
     final id = _textureId;
     if (!_available || id == null) return;
     try {
-      await _channel.invokeMethod<void>('frameReady', {'textureId': id});
+      final drawn =
+          await _channel.invokeMethod<int>('frameReady', {'textureId': id});
+      _announced++;
+      _drawn = drawn ?? _drawn;
+      if (neverDrawn) {
+        // Registered, announced, never drawn: the texture is not reaching the
+        // screen. Give up on it rather than showing nothing indefinitely.
+        _available = false;
+      }
     } on MissingPluginException {
       _available = false;
     } catch (_) {
