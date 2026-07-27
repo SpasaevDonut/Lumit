@@ -10,8 +10,8 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 import 'package:uuid/uuid.dart';
 part 'effect.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `animation`, `param`, `read_instance_info`, `read`, `read`, `read`, `read`, `write`, `write`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `animation`, `param`, `presets_in`, `read_instance_info`, `read`, `read`, `read`, `read`, `write`, `write`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`
 
 /// Every built-in effect, in schema order — the Add-effect menu's source of
@@ -21,6 +21,19 @@ part 'effect.freezed.dart';
 /// available before any project is open.
 List<BridgeEffectInfo> listEffects() =>
     BridgeLib.instance.api.crateApiEffectListEffects();
+
+/// Every `.lumfx` in the preset library folder, sorted by name — what the
+/// Effects & presets browser lists. A file that is not a preset (unreadable,
+/// or not preset JSON) is simply not listed; the folder is the user's to put
+/// things in, and a stray file there is not a fault.
+List<BridgePresetInfo> listPresets() =>
+    BridgeLib.instance.api.crateApiEffectListPresets();
+
+/// Where the preset library lives, created on first ask — the save dialogue's
+/// default folder, so a saved preset appears in the listing without the user
+/// navigating anywhere. `None` only when the platform has no home directory.
+String? presetsDirPath() =>
+    BridgeLib.instance.api.crateApiEffectPresetsDirPath();
 
 /// What `scalar` reads as at `time` — the value the picture is actually showing.
 ///
@@ -421,6 +434,29 @@ class BridgePoint {
           runtimeType == other.runtimeType &&
           x == other.x &&
           y == other.y;
+}
+
+/// One saved `.lumfx` preset in the user's library: the display name it was
+/// saved under and the file to read when applying it.
+class BridgePresetInfo {
+  final String name;
+  final String path;
+
+  const BridgePresetInfo({
+    required this.name,
+    required this.path,
+  });
+
+  @override
+  int get hashCode => name.hashCode ^ path.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgePresetInfo &&
+          runtimeType == other.runtimeType &&
+          name == other.name &&
+          path == other.path;
 }
 
 /// An exact rational time in seconds, as `num / den`.

@@ -94,6 +94,7 @@ fn sync_caches(state: &mut WorkerState) {
         state.renderer.clear_frame_textures();
         state.fill_exhausted = false;
     }
+    crate::framecache::publish_comp_decodes(state.renderer.decoded_frames());
     let (used, budget_now, entries) = state.renderer.frame_texture_stats();
     if (used as u64, entries as u64) != state.published_vram {
         state.published_vram = (used as u64, entries as u64);

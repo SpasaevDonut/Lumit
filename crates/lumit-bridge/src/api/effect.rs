@@ -62,6 +62,80 @@ pub fn list_effects() -> Vec<BridgeEffectInfo> {
         .collect()
 }
 
+/// One saved `.lumfx` preset in the user's library: the display name it was
+/// saved under and the file to read when applying it.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgePresetInfo {
+    pub name: String,
+    pub path: String,
+}
+
+/// Every `.lumfx` in the preset library folder, sorted by name — what the
+/// Effects & presets browser lists. A file that is not a preset (unreadable,
+/// or not preset JSON) is simply not listed; the folder is the user's to put
+/// things in, and a stray file there is not a fault.
+#[frb(sync)]
+pub fn list_presets() -> Vec<BridgePresetInfo> {
+    lumit_project::presets_dir()
+        .map(|dir| presets_in(&dir))
+        .unwrap_or_default()
+}
+
+/// Where the preset library lives, created on first ask — the save dialogue's
+/// default folder, so a saved preset appears in the listing without the user
+/// navigating anywhere. `None` only when the platform has no home directory.
+#[frb(sync)]
+pub fn presets_dir_path() -> Option<String> {
+    let dir = lumit_project::presets_dir()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.to_string_lossy().into_owned())
+}
+
+/// The listing itself, on any folder — split from [`list_presets`] so the scan
+/// is testable without touching the user's real library.
+#[frb(ignore)]
+pub(crate) fn presets_in(dir: &std::path::Path) -> Vec<BridgePresetInfo> {
+    #[derive(serde::Deserialize)]
+    struct Named {
+        name: Option<String>,
+        // Presence is the "is this actually a preset" check; the effects
+        // themselves are parsed properly at load time.
+        effects: serde_json::Value,
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<BridgePresetInfo> = entries
+        .filter_map(|entry| {
+            let path = entry.ok()?.path();
+            if !path
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("lumfx"))
+            {
+                return None;
+            }
+            let text = std::fs::read_to_string(&path).ok()?;
+            // It must at least be preset JSON with an effects list; the saved
+            // display name wins, the file's stem stands in without one.
+            let named: Named = serde_json::from_str(&text).ok()?;
+            if !named.effects.is_array() {
+                return None;
+            }
+            let name = named
+                .name
+                .filter(|n| !n.trim().is_empty())
+                .or_else(|| Some(path.file_stem()?.to_string_lossy().into_owned()))?;
+            Some(BridgePresetInfo {
+                name,
+                path: path.to_string_lossy().into_owned(),
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    out
+}
+
 /// What `scalar` reads as at `time` — the value the picture is actually showing.
 ///
 /// The panel needs this at exactly two moments, and both would be wrong done in

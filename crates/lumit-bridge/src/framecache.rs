@@ -332,6 +332,20 @@ impl Cache {
 /// controls. One Flutter window, one cache.
 static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
 
+/// The worker renderer's comp-decode counter, mirrored each loop turn so
+/// `cache_stats` can report it — a decode that should not have happened (a
+/// drag that re-decoded, a cache that missed) is then visible in Settings
+/// rather than merely slow (docs/TODO.md, Render pipeline).
+static COMP_DECODES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn publish_comp_decodes(count: u64) {
+    COMP_DECODES.store(count, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn comp_decodes() -> u64 {
+    COMP_DECODES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The invalidation generation, for consumers on other threads: the worker
 /// compares it each loop turn and drops its VRAM final-frame cache when it
 /// moved, since those textures are keyed by position exactly as this cache's

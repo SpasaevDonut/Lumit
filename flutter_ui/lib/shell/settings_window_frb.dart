@@ -119,6 +119,12 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               Text('${stats.hits} of ${stats.hits + stats.misses}',
                   style: t.small),
             ),
+            _row(
+              t,
+              'Frames decoded',
+              Text('${stats.compDecodes}',
+                  key: const ValueKey('settings-decodes'), style: t.small),
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
               child: Align(

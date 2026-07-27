@@ -44,10 +44,6 @@ and the transparency grid have landed. Still missing:
 - **Click-to-edit timecode** (currently read-only), may want to remove from this bar and
     only keep the one on timeline and add the functionality there.
 
-**Render pipeline ([05-ARCHITECTURE.md](05-ARCHITECTURE.md), K-178):**
-- Surface `DecodePool::comp_decodes` in the bridge's cache stats, so a decode that
-    should not have happened is visible rather than merely slow.
-
 **Bridge ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)):**
 
 - **A panic throws rather than reporting.** frb's handler contains every panic
@@ -157,10 +153,6 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
         as all other properties in graph view, same value/speed graph etc. Nothing extra
     - Currently marquee/selection box for dragging doesn't happen in flutter ui, needs adding
     - **Effect-param interpolation menu** on the fx keyframe lane.
-
-**Effects & presets:**
-- **Preset browser listing** - save/load a `.lumfx` works, but saved presets are
-    not listed; needs a 'list_presets / presets_dir bridge op.
 
 ## Next - engine/bridge follow-ups
 

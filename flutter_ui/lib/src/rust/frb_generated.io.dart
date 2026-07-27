@@ -307,6 +307,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgePoint dco_decode_bridge_point(dynamic raw);
 
   @protected
+  BridgePresetInfo dco_decode_bridge_preset_info(dynamic raw);
+
+  @protected
   BridgeRational dco_decode_bridge_rational(dynamic raw);
 
   @protected
@@ -420,6 +423,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeParamValue> dco_decode_list_bridge_param_value(dynamic raw);
+
+  @protected
+  List<BridgePresetInfo> dco_decode_list_bridge_preset_info(dynamic raw);
 
   @protected
   List<BridgeScalar> dco_decode_list_bridge_scalar(dynamic raw);
@@ -815,6 +821,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgePoint sse_decode_bridge_point(SseDeserializer deserializer);
 
   @protected
+  BridgePresetInfo sse_decode_bridge_preset_info(SseDeserializer deserializer);
+
+  @protected
   BridgeRational sse_decode_bridge_rational(SseDeserializer deserializer);
 
   @protected
@@ -942,6 +951,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeParamValue> sse_decode_list_bridge_param_value(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgePresetInfo> sse_decode_list_bridge_preset_info(
       SseDeserializer deserializer);
 
   @protected
@@ -1372,6 +1385,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_bridge_point(BridgePoint self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_preset_info(
+      BridgePresetInfo self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_rational(
       BridgeRational self, SseSerializer serializer);
 
@@ -1510,6 +1527,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_bridge_param_value(
       List<BridgeParamValue> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_preset_info(
+      List<BridgePresetInfo> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_scalar(

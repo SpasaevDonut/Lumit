@@ -2551,3 +2551,41 @@ fn setting_several_transform_properties_is_one_undo_step() {
     ));
     layer.set_transforms(vec![], vec![]).expect("no-op");
 }
+
+/// The preset library listing: real presets appear under their saved name (or
+/// their file's stem when saved without one), sorted case-insensitively, and
+/// strays — non-JSON, JSON that is not a preset, other extensions — are simply
+/// not listed. The folder is the user's; a stray file there is not a fault.
+#[test]
+fn the_preset_library_lists_presets_and_skips_strays() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let write = |file: &str, text: &str| {
+        std::fs::write(dir.path().join(file), text).expect("write");
+    };
+    write(
+        "zeta.lumfx",
+        r#"{"format":1,"name":"Zeta look","effects":[]}"#,
+    );
+    write("anon.lumfx", r#"{"format":1,"effects":[]}"#);
+    write(
+        "Bright.LUMFX",
+        r#"{"format":1,"name":"bright","effects":[]}"#,
+    );
+    write("notes.txt", "not a preset");
+    write("broken.lumfx", "{ this is not json");
+    write("shaped.lumfx", r#"{"name":"no effects list here"}"#);
+
+    let listed = crate::api::effect::presets_in(dir.path());
+    let names: Vec<&str> = listed.iter().map(|p| p.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["anon", "bright", "Zeta look"],
+        "named presets by name, nameless by stem, sorted, strays skipped"
+    );
+    assert!(
+        listed
+            .iter()
+            .all(|p| p.path.ends_with("lumfx") || p.path.ends_with("LUMFX")),
+        "each entry points at its file"
+    );
+}

@@ -64,12 +64,19 @@ class BridgeCacheStats {
   /// Frames that had to be rendered.
   final BigInt misses;
 
+  /// Comp frames the worker's renderer has genuinely DECODED this session,
+  /// as last mirrored. The drag fast path's meter: a value drag must not
+  /// move it, so a decode that should not have happened is visible here
+  /// rather than merely slow.
+  final BigInt compDecodes;
+
   const BridgeCacheStats({
     required this.usedBytes,
     required this.budgetBytes,
     required this.entries,
     required this.hits,
     required this.misses,
+    required this.compDecodes,
   });
 
   @override
@@ -78,7 +85,8 @@ class BridgeCacheStats {
       budgetBytes.hashCode ^
       entries.hashCode ^
       hits.hashCode ^
-      misses.hashCode;
+      misses.hashCode ^
+      compDecodes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -89,7 +97,8 @@ class BridgeCacheStats {
           budgetBytes == other.budgetBytes &&
           entries == other.entries &&
           hits == other.hits &&
-          misses == other.misses;
+          misses == other.misses &&
+          compDecodes == other.compDecodes;
 }
 
 /// Which route a rendered frame takes from the engine to the Viewer.

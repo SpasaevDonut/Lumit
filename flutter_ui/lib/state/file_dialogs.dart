@@ -80,11 +80,14 @@ Future<String?> pickPresetToOpen() async {
 }
 
 /// Choose where to save a `.lumfx` preset, defaulting the name to
-/// [suggestedName], or null when cancelled.
-Future<String?> pickPresetSaveLocation(String suggestedName) async {
+/// [suggestedName] and the folder to [initialDirectory] (the preset library,
+/// so a plain save lands where the browser lists), or null when cancelled.
+Future<String?> pickPresetSaveLocation(String suggestedName,
+    {String? initialDirectory}) async {
   final location = await getSaveLocation(
     acceptedTypeGroups: [_presetGroup()],
     suggestedName: suggestedName,
+    initialDirectory: initialDirectory,
   );
   return location?.path;
 }

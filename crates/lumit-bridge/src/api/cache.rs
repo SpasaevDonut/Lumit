@@ -25,6 +25,11 @@ pub struct BridgeCacheStats {
     pub hits: u64,
     /// Frames that had to be rendered.
     pub misses: u64,
+    /// Comp frames the worker's renderer has genuinely DECODED this session,
+    /// as last mirrored. The drag fast path's meter: a value drag must not
+    /// move it, so a decode that should not have happened is visible here
+    /// rather than merely slow.
+    pub comp_decodes: u64,
 }
 
 #[frb(ignore)]
@@ -36,6 +41,7 @@ fn read() -> BridgeCacheStats {
         entries: entries as u64,
         hits,
         misses,
+        comp_decodes: crate::framecache::comp_decodes(),
     }
 }
 
@@ -64,6 +70,7 @@ pub fn set_cache_budget(bytes: u64) -> BridgeCacheStats {
         entries: entries as u64,
         hits,
         misses,
+        comp_decodes: crate::framecache::comp_decodes(),
     }
 }
 
@@ -78,6 +85,7 @@ pub fn clear_cache() -> BridgeCacheStats {
         entries: entries as u64,
         hits,
         misses,
+        comp_decodes: crate::framecache::comp_decodes(),
     }
 }
 

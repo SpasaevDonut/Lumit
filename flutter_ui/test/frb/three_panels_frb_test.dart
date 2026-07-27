@@ -11,6 +11,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effects_presets_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/state/drag_payloads.dart';
 import 'package:lumit_flutter/panels/hierarchy_panel_frb.dart';
 import 'package:lumit_flutter/panels/scopes_panel_frb.dart';
@@ -39,11 +40,14 @@ void main() {
       dynamic p, {
       Future<String?> Function()? savePicker,
       Future<String?> Function()? loadPicker,
+      List<BridgePresetInfo> Function()? presetsLister,
     }) async {
       await tester.pumpWidget(hostPanel(
         child: EffectsPresetsPanelFrb(
           savePicker: savePicker,
           loadPicker: loadPicker,
+          // Tests never read the user's real library unless they say so.
+          presetsLister: presetsLister ?? () => const [],
         ),
         state: p.state as LumitState,
         uiState: p.uiState as LumitUiState,
@@ -119,6 +123,40 @@ void main() {
       expect(after, hasLength(2));
       expect(after[1].id(), isNot(before),
           reason: 'a loaded preset is a fresh instance, never a shared id');
+    });
+
+    /// The library listing (docs/TODO: saved presets were not listed at all):
+    /// a preset in the library appears under its saved name, the search field
+    /// filters it, and a double-click applies its whole stack to the layer.
+    testWidgets('a library preset is listed and applies on double-click',
+        (tester) async {
+      final p = withLayer();
+      final dir = Directory.systemTemp.createTempSync('lumit-preset-lib');
+      final path = '${dir.path}/glow.lumfx';
+      final donor = withLayer();
+      donor.layer.addEffect(name: 'blur');
+      File(path).writeAsStringSync(donor.layer.savePreset(name: 'Soft glow'));
+
+      await mount(tester, p,
+          presetsLister: () => [BridgePresetInfo(name: 'Soft glow', path: path)]);
+
+      expect(find.text('Saved presets'), findsOneWidget);
+      final row = find.byKey(const ValueKey('preset-item-Soft glow'));
+      expect(row, findsOneWidget);
+
+      await tester.tap(row);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(row);
+      await tester.pumpAndSettle();
+
+      expect(p.layer.getEffects(), hasLength(1));
+      expect(p.layer.getEffects().single.name(), 'blur');
+
+      // The search field filters the library too.
+      await tester.enterText(
+          find.byKey(const ValueKey('fx-search')), 'zzz-nothing');
+      await tester.pump();
+      expect(find.byKey(const ValueKey('preset-item-Soft glow')), findsNothing);
     });
 
     testWidgets('a file that is not a preset changes nothing', (tester) async {
