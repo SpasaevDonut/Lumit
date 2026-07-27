@@ -2589,3 +2589,45 @@ fn the_preset_library_lists_presets_and_skips_strays() {
         "each entry points at its file"
     );
 }
+
+/// "Any op, anywhere, is undoable" — the owner's standing rule, checked on the
+/// layer row's newest controls: rename, label colour and matte each commit
+/// exactly ONE undo step, and undoing each finds the state before it.
+#[test]
+fn rename_label_and_matte_each_undo_in_one_step() {
+    use crate::api::layer::BridgeMatte;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = add_comp(&project, "Scene");
+    let source = comp.add_solid_layer().expect("matte source");
+    let layer = comp.add_solid_layer().expect("layer");
+    let before = layer.get_info().expect("info").name;
+
+    layer.rename("Hero".into()).expect("renamed");
+    assert_eq!(layer.get_info().expect("info").name, "Hero");
+    project.undo().expect("undo rename");
+    assert_eq!(
+        layer.get_info().expect("info").name,
+        before,
+        "one undo step returns the old name"
+    );
+
+    layer.set_label(5).expect("labelled");
+    assert_eq!(layer.get_info().expect("info").label, 5);
+    project.undo().expect("undo label");
+    assert_eq!(layer.get_info().expect("info").label, 0);
+
+    layer
+        .set_matte(Some(BridgeMatte {
+            layer: source.layer_id,
+            luma: true,
+            inverted: false,
+        }))
+        .expect("matte set");
+    assert!(layer.get_matte().expect("matte").is_some());
+    project.undo().expect("undo matte");
+    assert!(
+        layer.get_matte().expect("matte").is_none(),
+        "one undo step removes the matte"
+    );
+}
