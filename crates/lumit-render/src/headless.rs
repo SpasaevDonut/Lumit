@@ -104,6 +104,16 @@ pub struct HeadlessRenderer {
     /// plan that produced them — what makes a live value drag cost no decoding
     /// at all. Replaced whenever a render genuinely needs different pixels.
     retained: Option<Retained>,
+    /// The VRAM final-frame cache (docs/06 §5.1's top tier, "cache on the
+    /// card"): finished display textures keyed by (comp, frame, preview
+    /// scale in thousandths, channel order). This is what makes a revisited
+    /// frame free on the zero-copy Viewer, which keeps no CPU bytes to cache
+    /// (K-183). Keyed by position, like the bridge's RAM cache, so the owner
+    /// must drop it on a committed edit ([`Self::clear_frame_textures`]) and
+    /// a provisional drag render must pass `cacheable: false`.
+    frame_textures: lumit_cache::ByteLru<(Uuid, u64, u16, bool), FrameTexture>,
+    /// How many `render_prepared` calls were served from [`Self::frame_textures`].
+    frame_texture_hits: u64,
     /// The Windows zero-copy Viewer target (K-177), held for the session and
     /// re-created only when the comp's dimensions change. `None` until the first
     /// `render_to_shared` call. Present only in the opt-in shared-texture build.
@@ -171,6 +181,32 @@ pub struct ExportInputs {
     pub audio: Vec<AudioJob>,
 }
 
+/// The VRAM cache's default byte budget: 512 MiB (~60 full-res 1080p display
+/// textures, proportionally more at any preview scale). Settings →
+/// Performance overrides it through the bridge.
+pub const DEFAULT_VRAM_CACHE_BYTES: usize = 512 * 1024 * 1024;
+
+/// One cached display texture. Costed by its pixel footprint — display
+/// textures are 4 bytes per pixel in either channel order.
+struct FrameTexture {
+    texture: wgpu::Texture,
+}
+
+impl lumit_cache::ByteSized for FrameTexture {
+    fn byte_size(&self) -> usize {
+        (self.texture.width() as usize) * (self.texture.height() as usize) * 4 + 64
+    }
+}
+
+/// The preview scale as it appears in a VRAM cache key: thousandths of the
+/// scale the composite actually ran at, mirroring the bridge cache's
+/// quantisation so the Timeline's cache bar can compare the two directly.
+fn scale_key(quality: Quality) -> u16 {
+    (composite_scale(quality) * 1000.0)
+        .round()
+        .clamp(0.0, 65535.0) as u16
+}
+
 /// One source decode a prefetcher should perform ahead of the playhead:
 /// exactly what the render's own decode would ask for, so filing the result
 /// under [`HeadlessRenderer::preload_decoded`] makes that render a cache hit.
@@ -215,6 +251,8 @@ impl HeadlessRenderer {
             audio_jobs: AudioJobsBuilder::new(),
             pool: DecodePool::new(),
             retained: None,
+            frame_textures: lumit_cache::ByteLru::new(DEFAULT_VRAM_CACHE_BYTES),
+            frame_texture_hits: 0,
             #[cfg(all(windows, feature = "shared-texture"))]
             shared: None,
             #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
@@ -597,6 +635,12 @@ impl HeadlessRenderer {
     /// channel order the eventual present needs (true on the Windows
     /// shared-texture path — ANGLE only opens BGRA surfaces). Shares the
     /// interactive path, so it shares the drag fast path too.
+    ///
+    /// `cacheable` opts the frame into the VRAM final-frame cache: a held
+    /// frame is served without compositing anything, and a rendered one is
+    /// kept for next time. Pass false for any render of a document the store
+    /// has not committed (a live drag's provisional values) — those pixels
+    /// must neither be served stale nor poison the cache.
     pub fn render_prepared(
         &mut self,
         doc: &Document,
@@ -604,10 +648,75 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
         bgra: bool,
+        cacheable: bool,
     ) -> Result<PreparedFrame, String> {
+        let key = (comp_id, frame, scale_key(quality), bgra);
+        if cacheable {
+            if let Some(held) = self.frame_textures.get(&key) {
+                self.frame_texture_hits += 1;
+                return Ok(PreparedFrame {
+                    texture: held.texture.clone(),
+                });
+            }
+        }
         let (texture, _, _) =
             self.preview_display_texture_fmt(doc, comp_id, frame, quality, None, bgra)?;
+        if cacheable {
+            self.frame_textures.insert(
+                key,
+                FrameTexture {
+                    texture: texture.clone(),
+                },
+            );
+        }
         Ok(PreparedFrame { texture })
+    }
+
+    /// Resize the VRAM final-frame cache (Settings → Performance), evicting
+    /// down to the new budget immediately.
+    pub fn set_frame_texture_budget(&mut self, bytes: usize) {
+        self.frame_textures.set_budget(bytes);
+    }
+
+    /// Drop every cached frame texture — a committed edit changed the document
+    /// and these are keyed by position, or the user asked (Clear cache).
+    pub fn clear_frame_textures(&mut self) {
+        self.frame_textures.clear();
+    }
+
+    /// `(used_bytes, budget_bytes, entries)` of the VRAM final-frame cache.
+    #[must_use]
+    pub fn frame_texture_stats(&self) -> (usize, usize, usize) {
+        (
+            self.frame_textures.used_bytes(),
+            self.frame_textures.budget_bytes(),
+            self.frame_textures.len(),
+        )
+    }
+
+    /// Every held frame as `(comp, frame, scale in thousandths)` — the
+    /// snapshot the Timeline's cache bar merges. Channel order is dropped:
+    /// one platform only ever uses one.
+    #[must_use]
+    pub fn frame_texture_keys(&self) -> Vec<(Uuid, u64, u16)> {
+        self.frame_textures
+            .keys()
+            .map(|&(comp, frame, scale, _)| (comp, frame, scale))
+            .collect()
+    }
+
+    /// Whether a frame is already held at this quality, without touching its
+    /// eviction recency — what the idle fill asks before rendering.
+    #[must_use]
+    pub fn has_frame_texture(&self, comp: Uuid, frame: u64, quality: Quality, bgra: bool) -> bool {
+        self.frame_textures
+            .contains_key(&(comp, frame, scale_key(quality), bgra))
+    }
+
+    /// How many renders the VRAM cache has answered. Test observability.
+    #[must_use]
+    pub fn frame_texture_hits(&self) -> u64 {
+        self.frame_texture_hits
     }
 
     /// Render composition `comp_id` at integer `frame` into the Windows shared
@@ -633,10 +742,11 @@ impl HeadlessRenderer {
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
+        cacheable: bool,
     ) -> Result<SharedFrameInfo, String> {
         // BGRA, not the RGBA every other path uses: the shared texture's
         // consumer is ANGLE, which only opens BGRA share-handle surfaces.
-        let prepared = self.render_prepared(doc, comp_id, frame, quality, true)?;
+        let prepared = self.render_prepared(doc, comp_id, frame, quality, true, cacheable)?;
         self.present_prepared(&prepared)
     }
 
@@ -697,8 +807,9 @@ impl HeadlessRenderer {
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
+        cacheable: bool,
     ) -> Result<SharedFrameInfoLinux, String> {
-        let prepared = self.render_prepared(doc, comp_id, frame, quality, false)?;
+        let prepared = self.render_prepared(doc, comp_id, frame, quality, false, cacheable)?;
         self.present_prepared_dmabuf(&prepared)
     }
 
@@ -1292,21 +1403,22 @@ mod tests {
         };
         let (store, comp_id) = doc_with_solid(LinearColour([0.0, 0.0, 1.0, 1.0]), 32, 16);
         let doc = store.snapshot();
-        let first = match r.render_to_shared(&doc, comp_id, 0, crate::plan::Quality::default()) {
-            Ok(info) => info,
-            Err(e) => {
-                // e.g. wgpu chose Vulkan over D3D12, or no shared-heap support.
-                eprintln!("skipping: shared texture unavailable here: {e}");
-                return;
-            }
-        };
+        let first =
+            match r.render_to_shared(&doc, comp_id, 0, crate::plan::Quality::default(), true) {
+                Ok(info) => info,
+                Err(e) => {
+                    // e.g. wgpu chose Vulkan over D3D12, or no shared-heap support.
+                    eprintln!("skipping: shared texture unavailable here: {e}");
+                    return;
+                }
+            };
         assert_ne!(first.handle, 0, "a shared render yields a non-zero handle");
         assert_eq!((first.width, first.height), (32, 16));
         assert_eq!(first.format, "rgba8888");
 
         // A second frame re-uses the same texture: same dimensions, same handle.
         let second = r
-            .render_to_shared(&doc, comp_id, 1, crate::plan::Quality::default())
+            .render_to_shared(&doc, comp_id, 1, crate::plan::Quality::default(), true)
             .expect("second shared render");
         assert_eq!((second.width, second.height), (32, 16));
         assert_eq!(
@@ -1329,7 +1441,13 @@ mod tests {
         let (store, _comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 4, 4);
         let doc = store.snapshot();
         assert!(r
-            .render_to_shared(&doc, Uuid::now_v7(), 0, crate::plan::Quality::default())
+            .render_to_shared(
+                &doc,
+                Uuid::now_v7(),
+                0,
+                crate::plan::Quality::default(),
+                true
+            )
             .is_err());
     }
 
@@ -1471,6 +1589,52 @@ mod tests {
             after_first + 1,
             "moving the playhead must decode"
         );
+    }
+
+    /// **The VRAM final-frame cache.** A committed frame rendered twice is
+    /// composited once — the second `render_prepared` is served from the card
+    /// (the hit counter proves it). A drag's provisional render must neither
+    /// read the cache (it would show the pre-drag picture) nor store into it
+    /// (it would poison later reads), and an owner-driven clear empties it —
+    /// the hook a committed edit pulls, since the keys are positional.
+    #[test]
+    fn a_cacheable_frame_is_served_from_vram_and_a_drag_never_is() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.5, 0.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality::default();
+
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("first render");
+        assert_eq!(r.frame_texture_hits(), 0, "a cold frame renders");
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("second render");
+        assert_eq!(r.frame_texture_hits(), 1, "the revisit is served from VRAM");
+
+        // A drag render of another frame: not banked, and a repeat of it does
+        // not read the cache either.
+        r.render_prepared(&doc, comp_id, 1, q, false, false)
+            .expect("drag render");
+        assert!(
+            !r.has_frame_texture(comp_id, 1, q, false),
+            "provisional pixels are never banked"
+        );
+        r.render_prepared(&doc, comp_id, 1, q, false, false)
+            .expect("drag render again");
+        assert_eq!(
+            r.frame_texture_hits(),
+            1,
+            "a drag render never reads the cache"
+        );
+
+        r.clear_frame_textures();
+        assert_eq!(r.frame_texture_stats().2, 0, "a committed edit drops all");
     }
 
     /// The interactive path renders the same picture the export path does — the

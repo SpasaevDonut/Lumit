@@ -2495,3 +2495,25 @@ so a tier change re-registers a genuinely smaller texture. Export builds the wal
 1.0 always, and the K-031 matrix pins that path bit-unchanged — the preview scale can never
 leak into the file. Regression tests: `a_render_scale_shrinks_the_target_but_not_the_geometry`
 (lumit-gpu) and `auto_resolution_composites_at_the_scaled_size` (lumit-render).
+
+**K-187 · DECIDED · The VRAM final-frame cache and the idle fill: revisited frames are free.**
+Docs/06 §5's top tier, built for the zero-copy transport that made the RAM frame cache
+irrelevant to the Viewer (K-183): the renderer keeps finished display textures on the card,
+keyed `(comp, frame, preview scale in thousandths, channel order)` under a byte-budgeted LRU
+(default 512 MiB, Settings → Performance sets it). Playback, scrubbing and the ring all pass
+through it — a warm span composites nothing. **Position keys carry two duties:** every
+committed edit drops the whole tier (the same generation signal that drops the RAM bytes,
+watched by the worker each loop turn), and a live drag's provisional renders pass
+`cacheable: false` — they must neither be served stale nor bank half-committed pixels.
+**Idle fill (§5.5, forward-biased):** after a 200 ms request lull the worker renders
+uncached frames outward from the last-shown frame — two ahead for every one behind, bounded
+by the work area and by the budget (it stops before the LRU would churn) — one frame per
+wake so any request pre-empts it within one render. **The cache bar merges the tier**: the
+worker publishes its holdings (packed exactly like `framecache`'s keys) and `cached_frames`
+reports card-held frames as green — the bar means something on the zero-copy transport
+again. The textures never leave the worker's thread; settings speak to it through three
+atomics and a published mirror, so no lock ever spans GPU work. The disk tier (§5.4) and
+content keying (K-178) remain open. Regression tests:
+`a_cacheable_frame_is_served_from_vram_and_a_drag_never_is` (lumit-render),
+`the_fill_order_is_forward_biased_and_complete` and `cached_tiers_merges_the_vram_mirror`
+(lumit-bridge).

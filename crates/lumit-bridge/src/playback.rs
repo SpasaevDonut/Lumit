@@ -79,6 +79,38 @@ pub(crate) fn lookahead_frames(p95_cost: Option<f64>, fps: f64) -> usize {
     frames.clamp(8, 16)
 }
 
+/// The order idle cache-fill visits frames around the playhead (docs/06 §5.5,
+/// with the forward bias the owner asked for): two frames ahead for every one
+/// behind — you are about to watch forward, but a small rewind should be warm
+/// too. Yields every frame in `[first, last]` except the anchor itself,
+/// nearest first per direction; when one direction runs out the other simply
+/// continues.
+pub(crate) fn fill_order(anchor: u64, first: u64, last: u64) -> impl Iterator<Item = u64> {
+    let anchor = anchor.clamp(first, last);
+    let mut ahead = anchor;
+    let mut behind = anchor;
+    let mut step = 0u64;
+    std::iter::from_fn(move || loop {
+        let ahead_left = ahead < last;
+        let behind_left = behind > first;
+        if !ahead_left && !behind_left {
+            return None;
+        }
+        // The pattern: positions 0 and 1 of every three go forward, 2 back.
+        let forward = step % 3 != 2;
+        step += 1;
+        if forward && ahead_left {
+            ahead += 1;
+            return Some(ahead);
+        }
+        if !forward && behind_left {
+            behind -= 1;
+            return Some(behind);
+        }
+        // The wanted direction is exhausted; the loop tries the other.
+    })
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -118,6 +150,25 @@ mod tests {
             w.p95().unwrap() < 0.005,
             "a cost older than the window must not size the ring for ever"
         );
+    }
+
+    /// The fill order walks outward from the playhead, two ahead for every
+    /// one behind, covers every frame exactly once, and keeps going in the
+    /// remaining direction when one side runs out.
+    #[test]
+    fn the_fill_order_is_forward_biased_and_complete() {
+        let order: Vec<u64> = fill_order(10, 0, 20).collect();
+        assert_eq!(&order[..6], &[11, 12, 9, 13, 14, 8], "two ahead, one back");
+        let mut all = order.clone();
+        all.sort_unstable();
+        let expected: Vec<u64> = (0..=20).filter(|&f| f != 10).collect();
+        assert_eq!(all, expected, "every frame once, never the anchor");
+
+        // Anchor at the end: everything comes from behind.
+        let backwards: Vec<u64> = fill_order(5, 0, 5).collect();
+        assert_eq!(backwards, vec![4, 3, 2, 1, 0]);
+        // Anchor clamped into range, single-frame comp yields nothing.
+        assert_eq!(fill_order(99, 0, 0).count(), 0);
     }
 
     /// The impl note's clamp, pinned: never fewer than 8 frames of lookahead

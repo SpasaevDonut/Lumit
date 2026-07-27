@@ -301,9 +301,11 @@ class CompositionReference {
   /// docs/06-RENDER-PIPELINE.md §5.6). It is a snapshot, not a subscription:
   /// the caller redraws when it has reason to, rather than the cache pushing.
   ///
-  /// Only the RAM tier exists in this engine — there is no disk or VRAM frame
-  /// cache yet — so the "on disk only" state the design language reserves blue
-  /// for cannot occur, and is not reported.
+  /// The answer merges the RAM tier and the VRAM tier (the worker's
+  /// final-frame textures, as last published) — a frame on the card plays
+  /// without rendering, so it is as green as one in RAM. There is no disk
+  /// tier yet, so the "on disk only" state the design language reserves
+  /// blue for cannot occur, and is not reported.
   Uint8List cachedFrames({required BigInt frames, required double scale}) =>
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceCachedFrames(

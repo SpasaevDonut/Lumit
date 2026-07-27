@@ -86,10 +86,14 @@ pub(crate) fn scale_quantised(scale: f32) -> u16 {
 /// preposterous frame number cannot run up into the comp's half and name a
 /// different composition's picture.
 pub(crate) fn frame_key(comp: uuid::Uuid, frame: u64, scale: f32) -> FrameKey {
+    frame_key_quantised(comp, frame, scale_quantised(scale))
+}
+
+/// [`frame_key`] with the scale already in thousandths — the form the VRAM
+/// mirror publishes, since the renderer keys its textures the same way.
+pub(crate) fn frame_key_quantised(comp: uuid::Uuid, frame: u64, scale_q: u16) -> FrameKey {
     let low = comp.as_u128() as u64;
-    (u128::from(low) << 64)
-        | (u128::from(frame & 0xFFFF_FFFF_FFFF) << 16)
-        | u128::from(scale_quantised(scale))
+    (u128::from(low) << 64) | (u128::from(frame & 0xFFFF_FFFF_FFFF) << 16) | u128::from(scale_q)
 }
 
 /// Which of `frames` frames of `comp` are held, and at what resolution relative
@@ -105,22 +109,31 @@ pub(crate) fn cached_tiers(comp: uuid::Uuid, frames: u64, scale: f32) -> Vec<u8>
     let wanted = scale_quantised(scale);
     let comp_low = comp.as_u128() as u64;
     let mut out = vec![0u8; frames as usize];
+    let mut mark = |key: &FrameKey| {
+        if (key >> 64) as u64 != comp_low {
+            return;
+        }
+        let frame = ((key >> 16) & 0xFFFF_FFFF_FFFF) as u64;
+        if frame >= frames {
+            return;
+        }
+        // A coarser render is a smaller number; equal or finer will serve.
+        let held = (key & 0xFFFF) as u16;
+        let tier = if held >= wanted { 2u8 } else { 1u8 };
+        let slot = &mut out[frame as usize];
+        *slot = (*slot).max(tier);
+    };
     with_cache(|c| {
         for key in c.map.keys() {
-            if (key >> 64) as u64 != comp_low {
-                continue;
-            }
-            let frame = ((key >> 16) & 0xFFFF_FFFF_FFFF) as u64;
-            if frame >= frames {
-                continue;
-            }
-            // A coarser render is a smaller number; equal or finer will serve.
-            let held = (key & 0xFFFF) as u16;
-            let tier = if held >= wanted { 2u8 } else { 1u8 };
-            let slot = &mut out[frame as usize];
-            *slot = (*slot).max(tier);
+            mark(key);
         }
     });
+    // The VRAM tier's holdings, as the worker last published them — same key
+    // packing, so the same comparison. A frame held on the card is as green
+    // as one held in RAM: playback serves it without rendering.
+    for key in vram::keys() {
+        mark(&key);
+    }
     out
 }
 
@@ -318,6 +331,69 @@ impl Cache {
 /// The process-wide cache instance, shared by the render path and the FFI
 /// controls. One Flutter window, one cache.
 static CACHE: OnceLock<Mutex<Cache>> = OnceLock::new();
+
+/// The invalidation generation, for consumers on other threads: the worker
+/// compares it each loop turn and drops its VRAM final-frame cache when it
+/// moved, since those textures are keyed by position exactly as this cache's
+/// bytes are.
+pub(crate) fn generation() -> u64 {
+    with_cache(|c| c.generation)
+}
+
+/// The VRAM final-frame cache's controls and mirror. The textures themselves
+/// live inside the worker's renderer (they are GPU objects only that thread
+/// touches); what crosses threads is three atomics the settings ops write and
+/// the worker applies, plus a snapshot of what is held that the worker
+/// publishes and the cache bar reads — the §5.6 "lock-free bitmap" idea at
+/// its plainest.
+pub(crate) mod vram {
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use std::sync::Mutex;
+
+    /// The budget the settings asked for; the worker applies it on its next
+    /// turn.
+    static BUDGET: AtomicUsize = AtomicUsize::new(lumit_render::DEFAULT_VRAM_CACHE_BYTES);
+    /// Bumped by Clear cache; the worker clears when it sees it move.
+    static CLEARS: AtomicU64 = AtomicU64::new(0);
+    /// What the worker last reported holding: (used, budget, entries) and the
+    /// held keys `(comp low 64 bits ‖ frame ‖ scale)` packed exactly like
+    /// [`super::frame_key`], so the bar merge is integer comparisons.
+    static MIRROR: Mutex<(u64, u64, u64, Vec<u128>)> = Mutex::new((0, 0, 0, Vec::new()));
+
+    pub(crate) fn set_budget(bytes: usize) {
+        BUDGET.store(bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn budget() -> usize {
+        BUDGET.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn request_clear() {
+        CLEARS.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn clears() -> u64 {
+        CLEARS.load(Ordering::Relaxed)
+    }
+
+    /// The worker's report of what it holds.
+    pub(crate) fn publish(used: u64, budget: u64, entries: u64, keys: Vec<u128>) {
+        let mut guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
+        *guard = (used, budget, entries, keys);
+    }
+
+    /// `(used, budget, entries)` as last published.
+    pub(crate) fn stats() -> (u64, u64, u64) {
+        let guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
+        (guard.0, guard.1, guard.2)
+    }
+
+    /// The held keys as last published.
+    pub(crate) fn keys() -> Vec<u128> {
+        let guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
+        guard.3.clone()
+    }
+}
 
 fn with_cache<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
     let mutex = CACHE.get_or_init(|| Mutex::new(Cache::new(DEFAULT_BUDGET_BYTES)));
@@ -534,6 +610,34 @@ mod tests {
         assert_eq!(scale_quantised(0.500_01), scale_quantised(0.499_99));
         // Nonsense cannot wrap into a plausible scale.
         assert_eq!(scale_quantised(-1.0), 0);
+    }
+
+    /// The bar merges the VRAM tier: a frame the worker published as held on
+    /// the card is as green as one held in RAM, at the same scale comparison.
+    #[test]
+    fn cached_tiers_merges_the_vram_mirror() {
+        let comp = uuid::Uuid::now_v7();
+        clear();
+        vram::publish(
+            1,
+            2,
+            1,
+            vec![
+                frame_key_quantised(comp, 3, 500),
+                frame_key_quantised(comp, 4, 250),
+            ],
+        );
+
+        let tiers = cached_tiers(comp, 6, 0.5);
+        assert_eq!(
+            tiers,
+            vec![0, 0, 0, 2, 1, 0],
+            "frame 3 ready at this scale, frame 4 held only coarser"
+        );
+
+        // Leave the shared mirror empty for the other tests.
+        vram::publish(0, 0, 0, Vec::new());
+        clear();
     }
 
     /// The cache bar's answer: nothing, coarser than asked for, or ready.

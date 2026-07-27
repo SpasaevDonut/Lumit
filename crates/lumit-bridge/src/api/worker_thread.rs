@@ -45,6 +45,138 @@ pub struct WorkerState {
     /// into the renderer's cache, so decode runs alongside compositing rather
     /// than before it.
     prefetcher: crate::prefetch::Prefetcher,
+    /// Where the user is looking — the comp, frame and scale last shown — the
+    /// idle cache-fill's anchor (docs/06 §5.5).
+    last_shown: Option<(CompositionReference, u64, f32)>,
+    /// The framecache invalidation generation last seen. When it moves an edit
+    /// committed, and the position-keyed VRAM frame cache must drop with the
+    /// RAM one.
+    seen_generation: u64,
+    /// The VRAM budget last applied and the clear-request count last honoured
+    /// (both arrive as atomics from the settings ops — see
+    /// [`crate::framecache::vram`]).
+    applied_vram_budget: usize,
+    seen_vram_clears: u64,
+    /// `(used, entries)` last published to the cache-bar mirror, so an
+    /// unchanged cache publishes nothing.
+    published_vram: (u64, u64),
+    /// True when the idle fill has nothing left to do (everything near the
+    /// playhead is held, or the budget is full). Cleared whenever the anchor,
+    /// the document or the budget moves.
+    fill_exhausted: bool,
+    /// When the last request arrived — the fill waits out a ~200 ms lull
+    /// after it (docs/06 §5.5), so a scrub in progress is never contended.
+    last_request: std::time::Instant,
+}
+
+/// Apply cross-thread cache controls and keep the cache-bar mirror fresh —
+/// run once per worker loop turn, cheap when nothing changed (three atomic
+/// loads and one mutex'd read of five counters).
+#[frb(ignore)]
+fn sync_caches(state: &mut WorkerState) {
+    // A committed edit drops the VRAM frames exactly as it drops the RAM
+    // bytes: both are keyed by position, so neither name changed.
+    let generation = crate::framecache::generation();
+    if generation != state.seen_generation {
+        state.seen_generation = generation;
+        state.renderer.clear_frame_textures();
+        state.fill_exhausted = false;
+    }
+    let budget = crate::framecache::vram::budget();
+    if budget != state.applied_vram_budget {
+        state.applied_vram_budget = budget;
+        state.renderer.set_frame_texture_budget(budget);
+        state.fill_exhausted = false;
+    }
+    let clears = crate::framecache::vram::clears();
+    if clears != state.seen_vram_clears {
+        state.seen_vram_clears = clears;
+        state.renderer.clear_frame_textures();
+        state.fill_exhausted = false;
+    }
+    let (used, budget_now, entries) = state.renderer.frame_texture_stats();
+    if (used as u64, entries as u64) != state.published_vram {
+        state.published_vram = (used as u64, entries as u64);
+        let keys = state
+            .renderer
+            .frame_texture_keys()
+            .into_iter()
+            .map(|(comp, frame, scale_q)| {
+                crate::framecache::frame_key_quantised(comp, frame, scale_q)
+            })
+            .collect();
+        crate::framecache::vram::publish(used as u64, budget_now as u64, entries as u64, keys);
+    }
+}
+
+/// Render ONE uncached frame near the playhead into the VRAM frame cache —
+/// the idle-time background fill (docs/06 §5.5, forward-biased per
+/// [`crate::playback::fill_order`]). One frame per call so a request arriving
+/// mid-fill waits at most one render; sets `fill_exhausted` when there is
+/// nothing (or no room) left, so an idle editor stops spending the GPU.
+#[frb(ignore)]
+fn idle_fill(state: &mut WorkerState) {
+    let Some((comp_ref, anchor, scale)) = state.last_shown.clone() else {
+        state.fill_exhausted = true;
+        return;
+    };
+    let document = {
+        let Ok(document) = state.project.state() else {
+            state.fill_exhausted = true;
+            return;
+        };
+        let Ok(document) = document.read() else {
+            state.fill_exhausted = true;
+            return;
+        };
+        document.store.snapshot()
+    };
+    let Some(comp) = document.comp(comp_ref.id) else {
+        state.fill_exhausted = true;
+        return;
+    };
+    let frames = comp
+        .frame_rate
+        .frame_at(lumit_core::time::CompTime(comp.duration.0))
+        .max(1) as u64;
+    // The work area bounds the fill when one is set (§5.5); else the comp.
+    let (first, last) = match comp.work_area {
+        Some((a, b)) => (
+            comp.frame_rate.frame_at(a) as u64,
+            (comp.frame_rate.frame_at(b) as u64).min(frames - 1),
+        ),
+        None => (0, frames - 1),
+    };
+    let quality = quality_for(scale);
+    let bgra = cfg!(all(windows, feature = "shared-texture"));
+    // Stop before the LRU starts churning: filling past the budget would
+    // evict the frames just made to admit the next ones, for ever.
+    let (used, budget, _) = state.renderer.frame_texture_stats();
+    let (cw, ch) = (comp.width, comp.height);
+    let s = scale.clamp(0.05, 1.0);
+    let frame_bytes = ((cw as f32 * s) as usize).max(1) * ((ch as f32 * s) as usize).max(1) * 4;
+    if used + frame_bytes > budget {
+        state.fill_exhausted = true;
+        return;
+    }
+    for frame in crate::playback::fill_order(anchor, first, last) {
+        if state
+            .renderer
+            .has_frame_texture(comp_ref.id, frame, quality, bgra)
+        {
+            continue;
+        }
+        if state
+            .renderer
+            .render_prepared(&document, comp_ref.id, frame, quality, bgra, true)
+            .is_err()
+        {
+            // A comp that will not render must not be retried in a loop.
+            state.fill_exhausted = true;
+        }
+        return;
+    }
+    state.fill_exhausted = true;
 }
 
 #[frb(ignore)]
@@ -369,14 +501,26 @@ fn worker_loop(
         preview_engine: PreviewEngine::default(),
         playback: None,
         prefetcher: crate::prefetch::Prefetcher::default(),
+        last_shown: None,
+        seen_generation: crate::framecache::generation(),
+        applied_vram_budget: crate::framecache::vram::budget(),
+        seen_vram_clears: crate::framecache::vram::clears(),
+        published_vram: (0, 0),
+        fill_exhausted: true,
+        last_request: std::time::Instant::now(),
     };
 
     loop {
+        sync_caches(&mut state);
+
         // While playing the worker has work of its own, so it must not block on
         // the channel — it takes whatever has arrived and gets on with the next
-        // frame. Idle, it blocks, because an editor sitting still should spin no
-        // core at all. (This used to be `try_recv` in a bare loop, which spun one
-        // continuously whether or not anything was rendering.)
+        // frame. Idle, it waits — indefinitely in spirit, but waking after a
+        // 200 ms lull to fill the cache around the playhead (docs/06 §5.5),
+        // then on a short leash while that filling is productive so it
+        // proceeds briskly yet yields to any request within one frame's
+        // render. With nothing left to fill the wake does no work at all, so
+        // an editor sitting still spins no core worth speaking of.
         let request = if state.playback.is_some() {
             match receiver.try_recv() {
                 Ok(request) => Some(request),
@@ -387,9 +531,22 @@ fn worker_loop(
                 }
             }
         } else {
-            match receiver.recv() {
+            let wait = if state.fill_exhausted {
+                std::time::Duration::from_millis(200)
+            } else {
+                std::time::Duration::from_millis(2)
+            };
+            match receiver.recv_timeout(wait) {
                 Ok(request) => Some(request),
-                Err(_) => {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    let lull =
+                        state.last_request.elapsed() >= std::time::Duration::from_millis(200);
+                    if !state.fill_exhausted && lull {
+                        idle_fill(&mut state);
+                    }
+                    None
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                     eprintln!("Receiver disconnected, stopping the worker");
                     return;
                 }
@@ -397,6 +554,7 @@ fn worker_loop(
         };
 
         if let Some(request) = request {
+            state.last_request = std::time::Instant::now();
             handle_requests(request, &receiver, &mut state, &mut stream);
         }
 
@@ -443,6 +601,10 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                 return;
             };
             playback.last_presented = Some(std::time::Instant::now());
+            // Playback moves the playhead: keep the idle fill's anchor with
+            // it, so a stop resumes filling from where the user actually is.
+            state.last_shown = Some((playback.comp.clone(), frame, playback.scale));
+            state.fill_exhausted = false;
             present_ring_frame(&mut state.renderer, frame, &prepared, stream);
             return;
         }
@@ -510,6 +672,9 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                 frame,
                 quality_for(effective),
                 bgra,
+                // Committed document: a warm span plays from the VRAM cache
+                // and every rendered frame warms it for the next pass.
+                true,
             );
             let cost = started.elapsed().as_secs_f64();
             match rendered {
@@ -797,6 +962,9 @@ fn render_comp(
         document.store.snapshot()
     };
 
+    // The user is looking here now: anchor the idle fill on it, and wake it.
+    state.last_shown = Some((req.comp.clone(), req.frame, req.scale));
+    state.fill_exhausted = false;
     publish_frame(
         state,
         req.comp.id,
@@ -805,6 +973,8 @@ fn render_comp(
         &document,
         stream,
         req.mode,
+        // A committed document: cacheable, and a held frame serves the scrub.
+        true,
     );
     Ok(())
 }
@@ -848,8 +1018,9 @@ fn render_comp_with_preview(
     }
 
     // A drag is not playback: full resolution (EveryFrame skips the adaptive
-    // tier), and nothing is ever kept — the zero-copy path holds no bytes, so
-    // the half-committed pixels of a drag cannot leak into any cache.
+    // tier), and NOT cacheable — these pixels are of provisional values the
+    // document never committed, so they must neither be served back later nor
+    // displace honest frames.
     publish_frame(
         state,
         req.comp.id,
@@ -858,6 +1029,7 @@ fn render_comp_with_preview(
         &document,
         stream,
         BridgePlaybackMode::EveryFrame,
+        false,
     );
     Ok(())
 }
@@ -940,6 +1112,7 @@ fn trace_scope(
 /// off the card and serialised it a byte at a time (~6 ms per 1.4 MB) is
 /// deleted. A failed render, or a platform with no zero-copy path (macOS,
 /// K-033), drops the frame and says so; it never takes the worker down.
+#[allow(clippy::too_many_arguments)]
 fn publish_frame(
     state: &mut WorkerState,
     comp: Uuid,
@@ -948,24 +1121,26 @@ fn publish_frame(
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
+    cacheable: bool,
 ) {
     #[cfg(any(
         all(windows, feature = "shared-texture"),
         all(target_os = "linux", feature = "shared-texture-linux")
     ))]
-    publish_zero_copy(state, comp, frame, scale, document, stream, mode);
+    publish_zero_copy(state, comp, frame, scale, document, stream, mode, cacheable);
 
     #[cfg(not(any(
         all(windows, feature = "shared-texture"),
         all(target_os = "linux", feature = "shared-texture-linux")
     )))]
     {
-        let _ = (state, comp, frame, scale, document, stream, mode);
+        let _ = (state, comp, frame, scale, document, stream, mode, cacheable);
         eprintln!("No zero-copy transport in this build; dropping the frame");
     }
 }
 
 #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+#[allow(clippy::too_many_arguments)]
 fn publish_zero_copy(
     state: &mut WorkerState,
     comp: Uuid,
@@ -974,6 +1149,7 @@ fn publish_zero_copy(
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
+    cacheable: bool,
 ) {
     // The adaptive tier applies here exactly as on the Windows sibling: without
     // it a coarser tier makes the picture no cheaper, so the controller's
@@ -983,18 +1159,20 @@ fn publish_zero_copy(
     } else {
         scale
     };
-    let shared =
-        match state
-            .renderer
-            .render_to_shared_dmabuf(document, comp, frame, quality_for(effective))
-        {
-            Ok(shared) => shared,
-            Err(err) => {
-                // Dropped, not fatal: the next request renders afresh.
-                eprintln!("Shared DMA-BUF render failed, dropping frame: {err}");
-                return;
-            }
-        };
+    let shared = match state.renderer.render_to_shared_dmabuf(
+        document,
+        comp,
+        frame,
+        quality_for(effective),
+        cacheable,
+    ) {
+        Ok(shared) => shared,
+        Err(err) => {
+            // Dropped, not fatal: the next request renders afresh.
+            eprintln!("Shared DMA-BUF render failed, dropping frame: {err}");
+            return;
+        }
+    };
 
     _ = stream.add(WorkerResponse::RenderedDMABuf(BridgeSharedFrameInfoLinux {
         fd: shared.fd,
@@ -1009,6 +1187,7 @@ fn publish_zero_copy(
 }
 
 #[cfg(all(windows, feature = "shared-texture"))]
+#[allow(clippy::too_many_arguments)]
 fn publish_zero_copy(
     state: &mut WorkerState,
     comp: Uuid,
@@ -1017,6 +1196,7 @@ fn publish_zero_copy(
     document: &lumit_core::Document,
     stream: &mut WorkerResponseStream,
     mode: BridgePlaybackMode,
+    cacheable: bool,
 ) {
     // The adaptive tier is applied here, the only display path: without it the
     // controller could drop to Quarter and the picture would not get any
@@ -1028,18 +1208,20 @@ fn publish_zero_copy(
     } else {
         scale
     };
-    let shared =
-        match state
-            .renderer
-            .render_to_shared(document, comp, frame, quality_for(effective))
-        {
-            Ok(shared) => shared,
-            Err(err) => {
-                // Dropped, not fatal: the next request renders afresh.
-                eprintln!("Shared-texture render failed, dropping frame: {err}");
-                return;
-            }
-        };
+    let shared = match state.renderer.render_to_shared(
+        document,
+        comp,
+        frame,
+        quality_for(effective),
+        cacheable,
+    ) {
+        Ok(shared) => shared,
+        Err(err) => {
+            // Dropped, not fatal: the next request renders afresh.
+            eprintln!("Shared-texture render failed, dropping frame: {err}");
+            return;
+        }
+    };
 
     _ = stream.add(WorkerResponse::RenderedSharedTexture(
         BridgeSharedFrameInfo {

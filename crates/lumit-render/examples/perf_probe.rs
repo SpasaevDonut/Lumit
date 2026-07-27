@@ -81,7 +81,7 @@ fn quality(scale: f32) -> Quality {
 fn run(label: &str, r: &mut HeadlessRenderer, doc: &Document, comp: Uuid, scale: f32) {
     let start = Instant::now();
     for f in 0..N {
-        r.render_prepared(doc, comp, f, quality(scale), true)
+        r.render_prepared(doc, comp, f, quality(scale), true, false)
             .expect("render");
     }
     let ms = start.elapsed().as_secs_f64() * 1000.0 / N as f64;
@@ -93,7 +93,7 @@ fn run_present(label: &str, r: &mut HeadlessRenderer, doc: &Document, comp: Uuid
     let start = Instant::now();
     for f in 0..N {
         let p = r
-            .render_prepared(doc, comp, f, quality(scale), true)
+            .render_prepared(doc, comp, f, quality(scale), true, false)
             .expect("render");
         r.present_prepared(&p).expect("present");
     }

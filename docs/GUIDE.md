@@ -3768,6 +3768,33 @@ Anything about the hardware path failing — an unsupported codec, no video
 unit, a driver quirk — quietly falls back to software decoding, which now also
 uses every processor core rather than the single core the library defaults to.
 
+**Finished frames stay on the graphics card (K-187).** Once a frame has been
+fully composited and colour-managed, throwing it away and redoing all that
+work the next time the playhead lands there is pure waste — so the renderer
+now keeps finished frames in the graphics card's own memory, up to a budget
+you set in Settings (default 512 MB). Revisit a frame — scrub back over it,
+replay a span — and it is shown without compositing anything at all. Two
+rules keep this honest. First, these frames are filed by *where* they are
+(composition, frame number, preview size), not by what is in them, so the
+moment you commit any edit the whole store is dropped — a stale picture is
+never worth a saved render. Second, the frames you see while *dragging* a
+value are provisional — the document hasn't committed them — so drag renders
+deliberately never read from or write into the store. The Timeline's cache
+bar now includes these card-held frames in its green, which is what makes the
+bar meaningful again on the zero-copy Viewer.
+
+**The editor fills the cache while you think.** When you stop interacting for
+a fifth of a second, the worker starts quietly rendering the frames around
+the playhead into that on-card store — two frames ahead for every one behind,
+because you are more likely to press play than to rewind, staying inside the
+work area when one is set. It renders exactly one frame per wake, so the
+instant you scrub, drag or press play, your request pre-empts the filling
+within a single render. It also knows when to stop: when everything nearby is
+held, or when the budget is full, it goes back to sleep entirely rather than
+burning the GPU on frames it would immediately have to evict. The effect is
+simple to feel: pause anywhere, wait a moment, and the stretch of timeline in
+front of you plays back instantly.
+
 **Decoding runs ahead on its own thread.** Even with the ring, one worker used
 to do everything for a frame in sequence: decode the source video, then
 composite it, then move to the next frame. But playback always knows which

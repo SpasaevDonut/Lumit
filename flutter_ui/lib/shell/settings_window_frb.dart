@@ -42,6 +42,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context);
     final stats = cacheStats();
+    final vram = vramCacheStats();
     final tier = playbackTier();
 
     return FloatSurface(
@@ -126,6 +127,45 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                   key: const ValueKey('settings-cache-clear'),
                   small: true,
                   onPressed: () => setState(clearCache),
+                  child: Text('Clear cache', style: t.small),
+                ),
+              ),
+            ),
+          ]),
+          _group(t, 'Preview cache on the graphics card', [
+            _row(
+              t,
+              'Budget',
+              SizedBox(
+                width: 110,
+                child: BareDropdown<int>(
+                  key: const ValueKey('settings-vram-budget'),
+                  value: _nearestBudget(vram.budgetBytes.toInt()),
+                  options: _budgets,
+                  label: (mib) => '$mib MB',
+                  onChanged: (mib) => setState(
+                      () => setVramCacheBudget(bytes: BigInt.from(mib) << 20)),
+                ),
+              ),
+            ),
+            _row(
+              t,
+              'In use',
+              Text(
+                '${_mib(vram.usedBytes.toInt())} MB in '
+                '${vram.entries} frame${vram.entries == BigInt.one ? '' : 's'}',
+                key: const ValueKey('settings-vram-used'),
+                style: t.small,
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: HouseButton(
+                  key: const ValueKey('settings-vram-clear'),
+                  small: true,
+                  onPressed: () => setState(clearVramCache),
                   child: Text('Clear cache', style: t.small),
                 ),
               ),

@@ -66,7 +66,7 @@ pub use decode::{CompFrame, CompJob, CompLayerPixels, PreviewEngine, PreviewResu
 pub use draw::{
     AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
 };
-pub use headless::{HeadlessRenderer, PrefetchWant, PreparedFrame};
+pub use headless::{HeadlessRenderer, PrefetchWant, PreparedFrame, DEFAULT_VRAM_CACHE_BYTES};
 pub use plan::{plan_comp_frame, Quality, RetimeOverride};
 pub use realise::Realiser;
 pub use source::{SourceProbe, SourceProbes};

@@ -80,9 +80,10 @@ and the transparency grid have landed. Still missing:
     here. Note the cache bar's per-frame query (`cached_frames`) depends on being
     able to name a frame from its position — under content keying it would
     compute the same hash per frame instead, which works but needs the probes too.
-- **No disk or VRAM frame cache**, so the cache bar can only ever show the RAM
-    tier. The design language's steel blue for "on disk only" and the future VRAM
-    tier have nothing behind them yet ([15-DESIGN.md](15-DESIGN.md) §6.3).
+- **No disk frame cache** (docs/06 §5.4): the VRAM tier landed 2026-07-27
+    (K-187) and the RAM tier exists, but nothing persists across sessions and
+    the design language's steel blue for "on disk only" still has nothing
+    behind it ([15-DESIGN.md](15-DESIGN.md) §6.3).
 - **The shared-texture chain has no keyed mutex** (a torn frame is possible in
     principle — see the fence entry under Threading), and the D3D12 → D3D11
     legacy-handle hop the Windows path rides is knowledge docs/06 does not yet
@@ -185,14 +186,14 @@ the budget ranking (`bridge_call_budget_test.dart` prints it).
     the same via `LumitState`. Reads are nearly free now (K-184), but the
     widget-tree rebuild itself is not. Scope it.
 
-**The frame cache is now the scope path's cache (K-183).** The shared texture
-keeps no bytes anywhere — that is what makes it fast — so with the read-back
-transport deleted, `framecache` is filled only by scope traces (which need CPU
-pixels and file what they render). The cache bar therefore shows traced frames
-only. The real fix remains docs/06 §5.6's: cache on the card, so coverage means
-something on the zero-copy transport. Registering a texture still cannot happen
-in a widget test; `integration_test/shared_texture_test.dart` (run by hand on a
-real window) is the coverage.
+**The RAM frame cache is now only the scope path's cache (K-183, narrowed by
+K-187).** The zero-copy transport keeps no CPU bytes, so `framecache` is filled
+only by scope traces; what serves the Viewer is the VRAM final-frame cache
+(K-187, "cache on the card"), which the cache bar merges into its answer.
+`framecache`'s content-keying upgrade (K-178's design, needs the probe view)
+remains worthwhile but is now much lower stakes. Registering a texture still
+cannot happen in a widget test; `integration_test/shared_texture_test.dart`
+(run by hand on a real window) is the coverage.
 
 **Playback scheduler — what remains.** The ring landed (2026-07-27): renders run
 ahead of the clock into a bounded ring sized by measured p95 cost
@@ -220,10 +221,13 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
     settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
     plugins/decoder page.
 - The egui shell's fuller Performance/General/Export pages are not rebuilt in
-    Flutter yet: disk and VRAM cache budgets, background fill, the cache root
-    folder, autosave interval/keep, and the export defaults (preset + filename
-    template). Each lands wired to the engine through the bridge, not as a
-    Dart-side setting nothing reads (K-181/K-182).
+    Flutter yet: the disk cache budget and root folder (the tier itself is
+    unbuilt), autosave interval/keep, and the export defaults (preset +
+    filename template). The RAM and VRAM cache budgets landed in the Settings
+    window (K-187); idle background fill landed with no setting (it costs
+    nothing the user would trade). Each remaining page lands wired to the
+    engine through the bridge, not as a Dart-side setting nothing reads
+    (K-181/K-182).
 
 **Threading / platform:**
 - **Move footage probing off-thread** - synchronous today; needs a probe worker

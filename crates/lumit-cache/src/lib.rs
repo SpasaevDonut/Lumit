@@ -207,6 +207,17 @@ impl<K: Eq + Hash + Clone, V: ByteSized> ByteLru<K, V> {
         self.used
     }
 
+    pub fn budget_bytes(&self) -> usize {
+        self.budget
+    }
+
+    /// Every held key, in no particular order — for mirrors of the cache's
+    /// contents (the Timeline's cache bar) that must never hold this cache's
+    /// owner across a paint.
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.map.keys()
+    }
+
     pub fn len(&self) -> usize {
         self.map.len()
     }

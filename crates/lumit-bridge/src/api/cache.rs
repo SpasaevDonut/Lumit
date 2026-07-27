@@ -90,9 +90,11 @@ impl crate::api::composition::CompositionReference {
     /// docs/06-RENDER-PIPELINE.md §5.6). It is a snapshot, not a subscription:
     /// the caller redraws when it has reason to, rather than the cache pushing.
     ///
-    /// Only the RAM tier exists in this engine — there is no disk or VRAM frame
-    /// cache yet — so the "on disk only" state the design language reserves blue
-    /// for cannot occur, and is not reported.
+    /// The answer merges the RAM tier and the VRAM tier (the worker's
+    /// final-frame textures, as last published) — a frame on the card plays
+    /// without rendering, so it is as green as one in RAM. There is no disk
+    /// tier yet, so the "on disk only" state the design language reserves
+    /// blue for cannot occur, and is not reported.
     #[frb(sync)]
     pub fn cached_frames(&self, frames: u64, scale: f32) -> Vec<u8> {
         // A composition long enough to make this walk expensive is not a
@@ -100,6 +102,45 @@ impl crate::api::composition::CompositionReference {
         // few pixels per frame at most.
         crate::framecache::cached_tiers(self.id, frames, scale)
     }
+}
+
+/// What the VRAM final-frame cache holds — the tier that makes a revisited
+/// frame free on the zero-copy Viewer ("cache on the card", docs/06 §5.1).
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BridgeVramCacheStats {
+    pub used_bytes: u64,
+    pub budget_bytes: u64,
+    pub entries: u64,
+}
+
+/// The VRAM cache's live numbers. `used`/`entries` are as the worker last
+/// published (it holds the textures; nothing here touches the GPU); the
+/// budget is the asked-for value, applied on the worker's next turn.
+#[frb(sync)]
+pub fn vram_cache_stats() -> BridgeVramCacheStats {
+    let (used, _, entries) = crate::framecache::vram::stats();
+    BridgeVramCacheStats {
+        used_bytes: used,
+        budget_bytes: crate::framecache::vram::budget() as u64,
+        entries,
+    }
+}
+
+/// Resize the VRAM cache. The worker applies it on its next turn, evicting
+/// down immediately then; the returned stats show the new budget with the
+/// holdings as last published.
+#[frb(sync)]
+pub fn set_vram_cache_budget(bytes: u64) -> BridgeVramCacheStats {
+    crate::framecache::vram::set_budget(usize::try_from(bytes).unwrap_or(usize::MAX));
+    vram_cache_stats()
+}
+
+/// Empty the VRAM cache on the worker's next turn.
+#[frb(sync)]
+pub fn clear_vram_cache() -> BridgeVramCacheStats {
+    crate::framecache::vram::request_clear();
+    vram_cache_stats()
 }
 
 /// Which route a rendered frame takes from the engine to the Viewer.

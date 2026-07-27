@@ -358,6 +358,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeViewerTransport dco_decode_bridge_viewer_transport(dynamic raw);
 
   @protected
+  BridgeVramCacheStats dco_decode_bridge_vram_cache_stats(dynamic raw);
+
+  @protected
   CompositionReference dco_decode_composition_reference(dynamic raw);
 
   @protected
@@ -866,6 +869,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeViewerTransport sse_decode_bridge_viewer_transport(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeVramCacheStats sse_decode_bridge_vram_cache_stats(
       SseDeserializer deserializer);
 
   @protected
@@ -1426,6 +1433,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_viewer_transport(
       BridgeViewerTransport self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_vram_cache_stats(
+      BridgeVramCacheStats self, SseSerializer serializer);
 
   @protected
   void sse_encode_composition_reference(

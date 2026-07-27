@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `read`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 
 /// The cache's live numbers.
 ///
@@ -29,6 +29,22 @@ BridgeCacheStats setCacheBudget({required BigInt bytes}) =>
 /// deliberate act rather than something to do on a timer.
 BridgeCacheStats clearCache() =>
     BridgeLib.instance.api.crateApiCacheClearCache();
+
+/// The VRAM cache's live numbers. `used`/`entries` are as the worker last
+/// published (it holds the textures; nothing here touches the GPU); the
+/// budget is the asked-for value, applied on the worker's next turn.
+BridgeVramCacheStats vramCacheStats() =>
+    BridgeLib.instance.api.crateApiCacheVramCacheStats();
+
+/// Resize the VRAM cache. The worker applies it on its next turn, evicting
+/// down immediately then; the returned stats show the new budget with the
+/// holdings as last published.
+BridgeVramCacheStats setVramCacheBudget({required BigInt bytes}) =>
+    BridgeLib.instance.api.crateApiCacheSetVramCacheBudget(bytes: bytes);
+
+/// Empty the VRAM cache on the worker's next turn.
+BridgeVramCacheStats clearVramCache() =>
+    BridgeLib.instance.api.crateApiCacheClearVramCache();
 
 /// What this build compiles to. It reports the *build*, not the run — a machine
 /// that cannot provide a shared texture still falls back at runtime.
@@ -94,4 +110,31 @@ enum BridgeViewerTransport {
   /// Every pixel copied down, serialised, and uploaded again.
   readBack,
   ;
+}
+
+/// What the VRAM final-frame cache holds — the tier that makes a revisited
+/// frame free on the zero-copy Viewer ("cache on the card", docs/06 §5.1).
+class BridgeVramCacheStats {
+  final BigInt usedBytes;
+  final BigInt budgetBytes;
+  final BigInt entries;
+
+  const BridgeVramCacheStats({
+    required this.usedBytes,
+    required this.budgetBytes,
+    required this.entries,
+  });
+
+  @override
+  int get hashCode =>
+      usedBytes.hashCode ^ budgetBytes.hashCode ^ entries.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeVramCacheStats &&
+          runtimeType == other.runtimeType &&
+          usedBytes == other.usedBytes &&
+          budgetBytes == other.budgetBytes &&
+          entries == other.entries;
 }
