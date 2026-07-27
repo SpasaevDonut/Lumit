@@ -62,7 +62,7 @@ void main() {
       expect(before, isA<BridgeScalar_Static>());
       final value = (before as BridgeScalar_Static).field0;
 
-      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-tf-opacity')));
       await tester.pump();
 
       final after = opacityOf(p.layer);
@@ -100,7 +100,7 @@ void main() {
       p.uiState.playheadFrame.value = 50;
       await mount(tester, p);
 
-      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-tf-opacity')));
       await tester.pump();
 
       final after = opacityOf(p.layer);
@@ -115,12 +115,12 @@ void main() {
       await mount(tester, p);
 
       // Animate, then move on and add a second key.
-      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-tf-opacity')));
       await tester.pump();
       p.uiState.playheadFrame.value = 60;
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('kf-toggle-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-tf-opacity')));
       await tester.pump();
       var keys = (opacityOf(p.layer) as BridgeScalar_Keyframed).field0;
       expect(keys, hasLength(2));
@@ -131,7 +131,7 @@ void main() {
       );
 
       // The same button removes the key it just added.
-      await tester.tap(find.byKey(const ValueKey('kf-toggle-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-tf-opacity')));
       await tester.pump();
       keys = (opacityOf(p.layer) as BridgeScalar_Keyframed).field0;
       expect(keys, hasLength(1));
@@ -147,11 +147,11 @@ void main() {
       p.uiState.playheadFrame.value = 12;
       await mount(tester, p);
 
-      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-tf-opacity')));
       await tester.pump();
       final keyed = (opacityOf(p.layer) as BridgeScalar_Keyframed).field0.single;
 
-      await tester.tap(find.byKey(const ValueKey('kf-toggle-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-tf-opacity')));
       await tester.pump();
 
       final after = opacityOf(p.layer);
@@ -178,20 +178,20 @@ void main() {
       p.uiState.playheadFrame.value = 40;
       await mount(tester, p);
 
-      await tester.tap(find.byKey(const ValueKey('kf-prev-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-prev-tf-opacity')));
       await tester.pump();
       expect(p.uiState.playheadFrame.value, 10);
 
-      await tester.tap(find.byKey(const ValueKey('kf-next-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-next-tf-opacity')));
       await tester.pump();
       expect(p.uiState.playheadFrame.value, 40);
 
-      await tester.tap(find.byKey(const ValueKey('kf-next-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-next-tf-opacity')));
       await tester.pump();
       expect(p.uiState.playheadFrame.value, 90);
 
       // Past the last key there is nowhere to go, and the arrow is inert.
-      await tester.tap(find.byKey(const ValueKey('kf-next-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-next-tf-opacity')));
       await tester.pump();
       expect(p.uiState.playheadFrame.value, 90,
           reason: 'a disabled arrow does nothing rather than wrapping around');
@@ -205,7 +205,7 @@ void main() {
       p.uiState.playheadFrame.value = 24;
       await mount(tester, p);
 
-      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-opacity')));
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-tf-opacity')));
       await tester.pump();
       expect(opacityOf(p.layer), isA<BridgeScalar_Keyframed>());
 
@@ -249,7 +249,7 @@ void main() {
       expect(before.positionY, isA<BridgeScalar_Static>());
 
       // Position's stopwatch — one control, two properties.
-      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-positionX')));
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-tf-positionX')));
       await tester.pump();
 
       final after = p.layer.getTransform();
@@ -277,19 +277,19 @@ void main() {
       p.uiState.playheadFrame.value = 0;
       await mount(tester, p);
 
-      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-positionX')));
+      await tester.tap(find.byKey(const ValueKey('kf-stopwatch-tf-positionX')));
       await tester.pump();
       p.uiState.playheadFrame.value = 40;
       await tester.pump();
 
-      await tester.tap(find.byKey(const ValueKey('kf-toggle-positionX')));
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-tf-positionX')));
       await tester.pump();
       var tf = p.layer.getTransform();
       expect((tf.positionX as BridgeScalar_Keyframed).field0, hasLength(2));
       expect((tf.positionY as BridgeScalar_Keyframed).field0, hasLength(2),
           reason: 'the axes keep the same key times');
 
-      await tester.tap(find.byKey(const ValueKey('kf-toggle-positionX')));
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-tf-positionX')));
       await tester.pump();
       tf = p.layer.getTransform();
       expect((tf.positionX as BridgeScalar_Keyframed).field0, hasLength(1));

@@ -384,7 +384,13 @@ class LumitUiState extends ChangeNotifier {
   /// draw. The previous image is disposed once the new one is in place —
   /// a `ui.Image` holds native memory and is not collected for us.
   void _showPixels(BridgeRenderedFrame f) {
-    if (f.width == 0 || f.height == 0) return;
+    if (f.width == 0 || f.height == 0) {
+      // Still an answer, even though there is nothing to draw. The Viewer holds
+      // one render in flight and waits for this before asking again, so a
+      // silent return here wedged it for the rest of the session.
+      frameArrived.value++;
+      return;
+    }
     ui.decodeImageFromPixels(
       f.rgba,
       f.width,

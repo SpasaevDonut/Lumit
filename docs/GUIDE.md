@@ -3162,8 +3162,9 @@ layer earlier or later (its length preserved), or grab either end to trim just
 that edge, and with the magnet on, drags snap to whole seconds and to markers.
 The zoom, magnet and graph-editor buttons live along the bottom. A second wave now
 adds the fold-out twirl on each layer (revealing its transform property rows, each
-with a stopwatch, the ◄ ◆ ► keyframe navigator and its keyframes drawn as
-shape-coded diamonds you can select and drag), the work-area band on the ruler with
+with a stopwatch, the ◄ ◆ ► keyframe navigator and a value you can drag — the
+keyframes themselves are drawn in the graph editor rather than as diamonds on the
+lane, which is still to come), the work-area band on the ruler with
 draggable edges, a right-click menu on each layer, a search box that filters the
 layers by name, and a scrollbar to slide left and right once you have zoomed in.
 The **graph editor** landed too: the bottom-bar toggle turns the lane into a curve
@@ -3601,3 +3602,60 @@ Reading those numbers off a file means opening it with FFmpeg, which is slow
 enough that it must not happen on the interface's own thread, so it happens
 before the window appears rather than making the window rearrange itself a
 moment after you see it.
+
+**Twirling a layer open in the Timeline, and why the picture now keeps up.**
+Two things landed together here, and the second one is the reason the first
+looked broken.
+
+*The fold-out.* Every layer row in the Timeline has a little arrow beside its
+number. Click it and the layer opens to show its **Transform** properties —
+anchor point, position, scale, rotation, opacity — one row each, with the
+stopwatch and the ◄ ◆ ► keyframe navigator on the left and the numbers on the
+right. The numbers are *scrub-draggable*: press on one and move sideways and
+the value follows your pointer, or click it and type. Dragging is one undoable
+change for the whole gesture, not one per pixel: while you drag, the engine
+renders a *copy* of the composition with your in-progress value patched into
+it and never touches the real document, and only letting go writes the change.
+Clicking the arrow again folds it away.
+
+These are the same rows the Effect controls panel has always shown. Rather
+than write a second set that would slowly drift out of step with the first,
+the rows moved into their own file that both panels use — the Effect controls
+panel now just draws its card around them. So a fix to how a value behaves is
+a fix in both places, which is the whole point.
+
+The lane to the right of an open property row is deliberately empty for now:
+the keyframes themselves are edited in the graph editor. What matters is that
+the Timeline *leaves room* for those rows on both sides — if the names moved
+down and the bars did not, every layer below an open one would sit beside the
+wrong name. (While making that true, a two-pixel drift between the names and
+their bars turned up and was fixed: the outline was clearing the ruler but not
+the thin cache stripe under it.)
+
+*The picture keeping up.* The Viewer used to ask for a new frame only when the
+playhead moved. Nothing else. So if you changed a value with the playhead
+sitting still — typed an opacity, added an effect, anything another panel
+committed — the picture on screen stayed as it was, showing the composition as
+it used to be, until you nudged the playhead or pressed play. Playing was the
+accident that fixed it, which is exactly how it was reported: "the Viewer does
+not update until I play."
+
+Now the Viewer also listens to the engine's stream of document changes, and
+asks for the frame again whenever one arrives. There is one subtlety worth
+knowing, because it is the kind of thing that looks fixed and is not: the
+Viewer keeps exactly one render in flight, and it used to decide whether a
+delivered frame was still wanted by comparing frame *numbers*. An edit does
+not change the number — frame 40 is still frame 40 — so an edit that landed
+while frame 40 was being rendered was "answered" by the picture already on its
+way and never asked for again. So the Viewer now also carries a flag saying
+"the document changed since I asked", and re-asks when a frame arrives under
+it.
+
+Two smaller repairs came with it. Pressing play with the playhead already
+parked on the last frame used to do nothing whatsoever — the clock said "past
+the end" on its first tick and stopped again, and in every-frame mode there
+was no frame left to ask for — so it now rewinds to the start and plays, which
+is what every other editor does. And a frame that comes back with no pixels in
+it (a render that failed) now still counts as an answer: before, it left the
+Viewer waiting for a reply that was never coming, which stopped it updating
+for the rest of the session.
