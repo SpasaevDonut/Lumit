@@ -3698,3 +3698,18 @@ every committed edit (and undo, and redo), and a rebuilding panel asks "what's
 the count?" — one cheap call — re-reading only when the number moved. So
 clicking a layer, which changes nothing in the document, went from about 75
 crossings to 11, and a test fails the build if it creeps past 24.
+
+**One walk from project to pixels (K-185).** For a long time there were two
+separate pieces of code that could turn your project into a picture: one drew
+the Viewer, and a second, fourteen-hundred-line near-copy drew the exported
+file. They were kept identical by care and comments — every new feature had
+to be built twice, and any slip meant the file you rendered could differ from
+the preview you approved. Before touching it, a test matrix rendered ten
+different kinds of composition (blends, nested comps, mattes, motion blur,
+retimes, cameras…) down both paths and compared every byte: they agreed on
+all of them. Then the export was pointed at the Viewer's own path — running
+at full quality, on its own renderer so exporting never fights the Viewer for
+the graphics card — and the copy was deleted. "What you preview is what you
+export" is no longer a promise anyone keeps; it is true because there is
+nothing else the export could draw with. The matrix test stays behind as the
+tripwire.
