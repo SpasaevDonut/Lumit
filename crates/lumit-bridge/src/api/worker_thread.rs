@@ -105,6 +105,17 @@ struct Playback {
     /// When the last frame was handed over, for every-frame's pacing. `None`
     /// before the first frame of a run.
     last_published: Option<std::time::Instant>,
+    /// How many frames the last [`Self::advance`] had to jump over to catch the
+    /// clock. Zero while playback is keeping up.
+    ///
+    /// **This is the honest measure of "we cannot keep up", and the only one
+    /// available.** The worker can time its own render and hand-off, but that is
+    /// not the whole bill: decoding the pixels into an image, painting them, and
+    /// whatever else the frontend does per frame all happen after the worker has
+    /// let go, and it can never see them. Skipping is the *symptom* of all of it
+    /// at once — if the clock has moved past a frame we have not drawn yet, the
+    /// round trip cost more than its budget, wherever the time went.
+    skipped: u64,
 }
 
 impl Playback {
@@ -176,12 +187,32 @@ impl Playback {
                 wanted.max(self.next)
             }
         };
+        self.skipped = frame.saturating_sub(self.next);
         if frame > self.last {
             self.next = frame;
             return None;
         }
         self.next = frame + 1;
         Some(frame)
+    }
+
+    /// What the last frame really cost, for the realtime controller.
+    ///
+    /// `busy` is what the worker itself measured — render plus hand-off. When
+    /// playback is keeping up that is the honest number and lets the tier climb
+    /// back. When frames are being skipped it is an *under*-estimate by
+    /// definition: the skip proves the round trip took longer than its budget,
+    /// and the part the worker cannot see is exactly the part that made it so.
+    /// One skipped frame means the last one took about two budgets, two means
+    /// about three, and so on — which is the cost to report if the tier is ever
+    /// to come down over work the worker is blind to.
+    fn observed_cost(&self, busy: f64) -> f64 {
+        let budget = 1.0 / self.fps;
+        if self.skipped == 0 {
+            busy
+        } else {
+            (self.skipped + 1) as f64 * budget
+        }
     }
 }
 
@@ -388,7 +419,29 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     if let Some(playback) = &mut state.playback {
         playback.last_published = Some(std::time::Instant::now());
     }
-    if let Err(err) = render_comp(request, state, stream) {
+
+    // The tier this frame is about to be rendered at, read before the render so
+    // the cost can be attributed to it afterwards.
+    let tier = crate::realtime::tier();
+    let started = std::time::Instant::now();
+    let outcome = render_comp(request, state, stream);
+
+    // Tell the realtime controller what that frame cost, so playback can drop to
+    // a coarser preview when this machine cannot hold the composition's rate
+    // (K-171). Here rather than in the render path because this is the only
+    // place that knows *both* halves of the answer: what the worker measured,
+    // and whether the clock has run away from it regardless.
+    if let Some(playback) = &state.playback {
+        if matches!(playback.mode, BridgePlaybackMode::Adaptive) {
+            crate::realtime::observe(
+                playback.observed_cost(started.elapsed().as_secs_f64()),
+                playback.fps,
+                crate::realtime::tier_scale(tier),
+            );
+        }
+    }
+
+    if let Err(err) = outcome {
         // A frame that will not render stops playback rather than spinning on it
         // — the alternative is a silent loop burning a core on a comp that
         // cannot be drawn.
@@ -432,6 +485,7 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
         from,
         started: std::time::Instant::now(),
         last_published: None,
+        skipped: 0,
     });
     // A fresh run starts optimistic at Full and walks down to whatever this
     // machine can actually hold, rather than inheriting the last run's verdict
@@ -894,7 +948,6 @@ fn publish_read_back(
         scale
     };
 
-    let started = std::time::Instant::now();
     let mut render = || {
         state
             .renderer
@@ -936,39 +989,12 @@ fn publish_read_back(
         rgba,
     }));
 
-    // Tell the realtime controller what that frame cost, so playback can drop to
-    // a coarser tier when the machine cannot keep up (K-171).
-    //
-    // **Measured after the hand-off, and that is the whole point.** This used to
-    // stop the clock before `stream.add` and report the render alone, which on
-    // this transport is the smaller half of the bill: encoding the pixels for
-    // Dart costs about 6 ms per 1.4 MB — twice the render — and grows with the
-    // panel, so a full-size 1080p Viewer spends over 30 ms handing the frame
-    // over. The controller therefore saw 3 ms against a 15 ms threshold,
-    // concluded it had headroom, and sat at Full for ever while playback missed
-    // its budget and skipped frames instead of getting softer. A tier it cannot
-    // see the cost of is a tier it can never choose.
-    //
-    // A cache hit is measured too, for the same reason: the pixels still have to
-    // cross, and that crossing is what is actually slow.
-    //
-    // Only while *playing*, though. The tier answers "can this machine hold the
-    // composition's rate", which is a question a still frame cannot help with: a
-    // scrub, an edit redraw, or the first render of a session — which pays for
-    // renderer warm-up — would drag the tier down over a cost nothing was
-    // keeping time against, and the next playback would start soft for no
-    // reason.
-    if adaptive && state.playback.is_some() {
-        let fps = document
-            .comp(comp)
-            .map(|c| c.frame_rate.fps())
-            .unwrap_or(0.0);
-        crate::realtime::observe(
-            started.elapsed().as_secs_f64(),
-            fps,
-            crate::realtime::tier_scale(tier),
-        );
-    }
+    // What this cost is reported by the playback loop (`play_one_frame`), which
+    // is the only place that knows whether the clock ran away from us as well as
+    // what the worker itself spent. A still frame — a scrub, an edit redraw, or
+    // the session's first render, which pays for renderer warm-up — is never
+    // measured at all: the tier answers "can this machine hold the composition's
+    // rate", and a still frame cannot help answer it.
 }
 
 #[cfg(test)]
@@ -991,6 +1017,7 @@ mod tests {
             from: 0,
             started: std::time::Instant::now(),
             last_published: None,
+            skipped: 0,
         }
     }
 
@@ -1080,6 +1107,47 @@ mod tests {
             frame >= 29,
             "half a second at 60 fps is about frame 30, not frame 0: got {frame}"
         );
+    }
+
+    /// **The always-Full regression.** The tier only ever saw what the worker
+    /// could time — its own render and hand-off — and the rest of a frame's
+    /// journey (the decode, the paint, everything the frontend does per frame)
+    /// happens after the worker has let go. So on a machine where the worker
+    /// spent 9 ms of a 16.7 ms budget the controller read "plenty of headroom"
+    /// and stayed at Full, while playback visibly skipped frames to keep time.
+    ///
+    /// A skip is the symptom of the whole round trip being too slow, whoever
+    /// spent the time, so it is what the cost is derived from. Fails without
+    /// `observed_cost` — the reported cost would be the 9 ms busy time, which
+    /// sits comfortably under the 15 ms drop threshold and moves nothing.
+    #[test]
+    fn skipped_frames_are_reported_as_over_budget_however_little_the_worker_spent() {
+        let mut p = playback(BridgePlaybackMode::Adaptive, 1000);
+        let budget = 1.0 / 60.0;
+
+        // Keeping up: the worker's own measurement stands, so a cheap frame
+        // reads cheap and the tier is free to climb back.
+        p.skipped = 0;
+        assert_eq!(p.observed_cost(0.009), 0.009);
+        assert!(
+            p.observed_cost(0.009) < 0.9 * budget,
+            "a frame that kept up must not read as over budget"
+        );
+
+        // Behind by one frame: the worker still only spent 9 ms, but the round
+        // trip demonstrably took more than its budget.
+        p.skipped = 1;
+        assert!(
+            p.observed_cost(0.009) > 0.9 * budget,
+            "one skipped frame means the last one cost about two budgets, \
+             whatever the worker's own stopwatch says"
+        );
+
+        // And the further behind it falls, the worse the reported cost, so the
+        // tier keeps coming down instead of settling one step in.
+        p.skipped = 3;
+        assert!(p.observed_cost(0.009) > p.observed_cost(0.009) / 2.0);
+        assert_eq!(p.observed_cost(0.009), 4.0 * budget);
     }
 
     /// The requests these tests queue: an adaptive picture (newest wins), an
