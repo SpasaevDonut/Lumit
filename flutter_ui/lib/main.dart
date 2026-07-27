@@ -12,6 +12,7 @@ import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
 import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
+import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -532,7 +533,10 @@ class _LumitAppViewState extends State<LumitAppView> {
               onLayoutChanged: uiState.saveLayout,
               activePanel: uiState.activePanel,
             ),
-          )
+          ),
+          // The strip under the dock (docs/07 §1): the running export's
+          // progress and Cancel, reachable without the dialogue open.
+          const StatusLineFrb(),
         ],
       ),
     );

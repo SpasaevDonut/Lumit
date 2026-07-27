@@ -119,10 +119,10 @@ and the transparency grid have landed. Still missing:
   others lay out as a plain `Row` with fixed-width controls, so a narrow dock
   shows the overflow stripe. The Timeline toolbar, the Viewer transport and the
   Project panel footer scroll horizontally instead; the rest need the same.
-- **Status line and splash are not in the frb shell.** The port's shell rebuilt
-  the menu bar and dock but not the bottom status line (notices, export progress
-  and its cancel button) or the boot splash; `boot_log` and the export poll both
-  exist on the frb API, so this is Dart-side only.
+- **The boot splash and a notices feed are not in the frb shell.** The bottom
+  status line landed 2026-07-28 (export progress and Cancel, under the dock);
+  what remains is the boot splash and a general notices channel for it to show —
+  the engine currently has no notice stream, only `boot_log`.
 - **Pop-out panel windows are removed** (K-182): the ported-but-never-wired
   subsystem (`lib/popout/`, the `desktop_multi_window` plugin, the dock's
   pop-out chrome) shipped ~500 unreachable lines. Rebuild from git history

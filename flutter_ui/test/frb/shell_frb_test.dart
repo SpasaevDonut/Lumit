@@ -12,6 +12,7 @@ import 'package:lumit_flutter/shell/command_palette_frb.dart';
 import 'package:lumit_flutter/shell/export_dialog_frb.dart';
 import 'package:lumit_flutter/shell/recovery_dialog_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
+import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/export.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
@@ -189,6 +190,44 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('recover-discard')));
       await tester.pumpAndSettle();
       expect(listAutosaves(project: path), hasLength(1));
+    });
+  }, skip: !engineAvailable);
+
+  group('Status line (frb)', () {
+    /// The strip stays empty while there is nothing to say, follows the
+    /// export through running to its outcome, and offers Cancel only while
+    /// something is actually cancellable. Driven through the injected poll,
+    /// so no engine has to run a real export.
+    testWidgets('the status line follows an export through its states',
+        (tester) async {
+      var state = const BridgeExportState.idle();
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: StatusLineFrb(poll: () => state),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.byKey(const ValueKey('status-export-progress')), findsNothing,
+          reason: 'idle says nothing');
+
+      state = BridgeExportState.running(
+          frame: BigInt.from(30), total: BigInt.from(120), encoder: 'x264');
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.textContaining('frame 30 of 120'), findsOneWidget);
+      expect(find.byKey(const ValueKey('status-export-cancel')), findsOneWidget,
+          reason: 'a running export can be cancelled from the strip');
+
+      state = const BridgeExportState.done(path: 'C:/out/final.mp4');
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.textContaining('Exported to'), findsOneWidget);
+      expect(find.byKey(const ValueKey('status-export-cancel')), findsNothing,
+          reason: 'nothing to cancel any more');
+
+      state = const BridgeExportState.failed(error: 'cancelled');
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('Export cancelled'), findsOneWidget);
     });
   }, skip: !engineAvailable);
 
