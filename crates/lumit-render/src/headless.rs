@@ -1428,6 +1428,316 @@ mod tests {
         );
     }
 
+    /// One layer for the matrix scenarios: full-frame span, centred over its
+    /// own natural size, everything else the model's defaults.
+    fn matrix_layer(name: &str, kind: LayerKind, w: u32, h: u32) -> lumit_core::model::Layer {
+        lumit_core::model::Layer {
+            id: Uuid::now_v7(),
+            name: name.into(),
+            kind,
+            in_point: CompTime(Rational::new(0, 1).unwrap()),
+            out_point: CompTime(Rational::new(5, 1).unwrap()),
+            start_offset: CompTime(Rational::new(0, 1).unwrap()),
+            transform: centred(w, h),
+            matte: None,
+            parent: None,
+            label: 0,
+            volume_db: Property::zero(),
+            blend: Default::default(),
+            masks: Vec::new(),
+            effects: Vec::new(),
+            switches: Switches::default(),
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// A two-key linear ramp, for rows that need genuine animation (motion
+    /// blur's sub-frame samples, the temporal re-render's held time).
+    fn ramp(from: f64, to: f64, over_s: i64) -> Property {
+        use lumit_core::anim::{Animation, Keyframe, SideInterp};
+        Property {
+            animation: Animation::Keyframed(vec![
+                Keyframe {
+                    time: Rational::new(0, 1).unwrap(),
+                    value: from,
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                },
+                Keyframe {
+                    time: Rational::new(over_s, 1).unwrap(),
+                    value: to,
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                },
+            ]),
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// The K-031 gate for the comp-walk unification (docs/TODO.md): the
+    /// interactive path (`build_comp_draws` + `Realiser`) and the export walk
+    /// (`render_comp_linear`) must produce identical bytes across every
+    /// construction the two implement separately. Each row is a document the
+    /// model can build without a media file; the Retime blend/flow rows join
+    /// when a footage fixture exists.
+    #[test]
+    fn the_preview_and_export_paths_agree_across_the_matrix() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+
+        let (cw, ch) = (32u32, 16u32);
+        let red = LinearColour([0.8, 0.1, 0.1, 1.0]);
+        let blue = LinearColour([0.1, 0.2, 0.9, 1.0]);
+
+        // Each scenario builds its own document from scratch, so a row can
+        // never lean on another's state.
+        type Build = fn(u32, u32, LinearColour, LinearColour) -> (Document, Uuid, u64);
+        let scenarios: Vec<(&str, Build)> = vec![
+            ("stacked blends and opacity", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                let (_, top) = matrix_top(&mut doc, comp_id, blue);
+                let comp = doc.comp_mut(comp_id).unwrap();
+                let l = comp.layers.iter_mut().find(|l| l.id == top).unwrap();
+                l.blend = lumit_core::model::BlendMode::Multiply;
+                l.transform.opacity = Property::fixed(60.0);
+                l.transform.rotation = Property::fixed(25.0);
+                (doc, comp_id, 0)
+            }),
+            ("nested precomp", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                let (child_doc, child_id, _) = matrix_base(16, 16, blue);
+                for item in child_doc.items {
+                    doc.items.push(item);
+                }
+                let layer = matrix_layer("Nested", LayerKind::Precomp { comp: child_id }, 16, 16);
+                doc.comp_mut(comp_id).unwrap().layers.insert(0, layer);
+                (doc, comp_id, 0)
+            }),
+            ("collapsed precomp", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                let (child_doc, child_id, _) = matrix_base(16, 16, blue);
+                for item in child_doc.items {
+                    doc.items.push(item);
+                }
+                let mut layer =
+                    matrix_layer("Collapsed", LayerKind::Precomp { comp: child_id }, 16, 16);
+                layer.switches.collapse = true;
+                doc.comp_mut(comp_id).unwrap().layers.insert(0, layer);
+                (doc, comp_id, 0)
+            }),
+            ("matte source none", |w, h, red, blue| {
+                matte_doc(w, h, red, blue, lumit_core::model::LayerInputSource::None)
+            }),
+            ("matte source masks", |w, h, red, blue| {
+                matte_doc(w, h, red, blue, lumit_core::model::LayerInputSource::Masks)
+            }),
+            ("matte source effects and masks", |w, h, red, blue| {
+                matte_doc(
+                    w,
+                    h,
+                    red,
+                    blue,
+                    lumit_core::model::LayerInputSource::EffectsAndMasks,
+                )
+            }),
+            ("adjustment layer with an effect", |w, h, red, _blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                let mut adj = matrix_layer("Adjust", LayerKind::Adjustment, w, h);
+                adj.effects
+                    .push(lumit_core::fx::instantiate("invert").unwrap());
+                doc.comp_mut(comp_id).unwrap().layers.insert(0, adj);
+                (doc, comp_id, 0)
+            }),
+            ("per-layer motion blur", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                let (_, top) = matrix_top(&mut doc, comp_id, blue);
+                let comp = doc.comp_mut(comp_id).unwrap();
+                comp.motion_blur = lumit_core::model::MotionBlur {
+                    enabled: true,
+                    shutter_angle: 180.0,
+                    shutter_phase: -90.0,
+                    samples: 8,
+                };
+                let l = comp.layers.iter_mut().find(|l| l.id == top).unwrap();
+                l.switches.motion_blur = true;
+                l.transform.rotation = ramp(0.0, 180.0, 1);
+                (doc, comp_id, 15)
+            }),
+            ("posterize time holds the stack below", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                let (_, top) = matrix_top(&mut doc, comp_id, blue);
+                let comp = doc.comp_mut(comp_id).unwrap();
+                let l = comp.layers.iter_mut().find(|l| l.id == top).unwrap();
+                l.transform.rotation = ramp(0.0, 180.0, 1);
+                let mut adj = matrix_layer("Hold", LayerKind::Adjustment, w, h);
+                adj.effects
+                    .push(lumit_core::fx::instantiate("posterize_time").unwrap());
+                comp.layers.insert(0, adj);
+                (doc, comp_id, 15)
+            }),
+            ("camera over a 3d layer", |w, h, red, blue| {
+                let (mut doc, comp_id, _) = matrix_base(w, h, red);
+                let (_, top) = matrix_top(&mut doc, comp_id, blue);
+                let comp = doc.comp_mut(comp_id).unwrap();
+                let l = comp.layers.iter_mut().find(|l| l.id == top).unwrap();
+                l.switches.three_d = true;
+                l.transform.rotation_y = Property::fixed(35.0);
+                l.transform.position_z = Property::fixed(40.0);
+                let camera = matrix_layer(
+                    "Camera",
+                    LayerKind::Camera {
+                        zoom: Property::fixed(f64::from(h) * 2.0),
+                    },
+                    w,
+                    h,
+                );
+                comp.layers.insert(0, camera);
+                (doc, comp_id, 0)
+            }),
+        ];
+
+        for (name, build) in scenarios {
+            let (doc, comp_id, frame) = build(cw, ch, red, blue);
+            let store = DocumentStore::new(doc);
+            let doc = store.snapshot();
+            let (preview, pw, ph) = r
+                .render_preview(
+                    &doc,
+                    comp_id,
+                    frame,
+                    crate::plan::Quality::default(),
+                    1.0,
+                    None,
+                )
+                .unwrap_or_else(|e| panic!("{name}: preview render failed: {e}"));
+            let (export, ew, eh) = r
+                .render_rgba(&doc, comp_id, frame, 1.0)
+                .unwrap_or_else(|e| panic!("{name}: export render failed: {e}"));
+            assert_eq!(
+                (pw, ph),
+                (ew, eh),
+                "{name}: the two paths render at different sizes"
+            );
+            assert_eq!(
+                preview, export,
+                "{name}: the interactive and export paths must be bit-identical (K-031)"
+            );
+        }
+    }
+
+    /// A document with one comp holding a full-frame solid of `colour`.
+    fn matrix_base(w: u32, h: u32, colour: LinearColour) -> (Document, Uuid, Uuid) {
+        let mut doc = Document::new();
+        let solid = Uuid::now_v7();
+        doc.items.push(ProjectItem::Solid(SolidDef {
+            id: solid,
+            name: "Base".into(),
+            colour,
+            width: w,
+            height: h,
+            extra: serde_json::Map::new(),
+        }));
+        let comp_id = Uuid::now_v7();
+        doc.items.push(ProjectItem::Composition(Composition {
+            id: comp_id,
+            name: "Scene".into(),
+            width: w,
+            height: h,
+            frame_rate: FrameRate::new(30, 1).unwrap(),
+            duration: Duration(Rational::new(5, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers: vec![matrix_layer("Base", LayerKind::Solid { def: solid }, w, h)],
+            markers: Vec::new(),
+            motion_blur: lumit_core::model::MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        }));
+        (doc, comp_id, solid)
+    }
+
+    /// A second, smaller solid item plus a layer of it at the top of the stack.
+    fn matrix_top(doc: &mut Document, comp_id: Uuid, colour: LinearColour) -> (Uuid, Uuid) {
+        let solid = Uuid::now_v7();
+        doc.items.push(ProjectItem::Solid(SolidDef {
+            id: solid,
+            name: "Top".into(),
+            colour,
+            width: 12,
+            height: 10,
+            extra: serde_json::Map::new(),
+        }));
+        let layer = matrix_layer("Top", LayerKind::Solid { def: solid }, 12, 10);
+        let layer_id = layer.id;
+        if let Some(comp) = doc.comp_mut(comp_id) {
+            // Index 0 = top of the stack.
+            comp.layers.insert(0, layer);
+        }
+        (solid, layer_id)
+    }
+
+    /// A consumer layer matted by a hidden source carrying a mask and an
+    /// effect, with the matte's sampling mode chosen per row (K-142).
+    fn matte_doc(
+        w: u32,
+        h: u32,
+        red: LinearColour,
+        blue: LinearColour,
+        source: lumit_core::model::LayerInputSource,
+    ) -> (Document, Uuid, u64) {
+        let mut doc = Document::new();
+        let red_solid = Uuid::now_v7();
+        let blue_solid = Uuid::now_v7();
+        for (id, name, colour, sw, sh) in [
+            (red_solid, "Red", red, w, h),
+            (blue_solid, "Blue", blue, 12u32, 12u32),
+        ] {
+            doc.items.push(ProjectItem::Solid(SolidDef {
+                id,
+                name: name.into(),
+                colour,
+                width: sw,
+                height: sh,
+                extra: serde_json::Map::new(),
+            }));
+        }
+        let mut matte_layer = matrix_layer("Matte", LayerKind::Solid { def: blue_solid }, 12, 12);
+        matte_layer.switches.visible = false;
+        matte_layer
+            .masks
+            .push(lumit_core::mask::Mask::rectangle(0.0, 0.0, 6.0, 12.0));
+        matte_layer
+            .effects
+            .push(lumit_core::fx::instantiate("invert").unwrap());
+        let mut consumer = matrix_layer("Red", LayerKind::Solid { def: red_solid }, w, h);
+        consumer.matte = Some(lumit_core::model::MatteRef {
+            layer: matte_layer.id,
+            channel: lumit_core::model::MatteChannel::Alpha,
+            inverted: false,
+            source,
+        });
+        let comp_id = Uuid::now_v7();
+        doc.items.push(ProjectItem::Composition(Composition {
+            id: comp_id,
+            name: "Scene".into(),
+            width: w,
+            height: h,
+            frame_rate: FrameRate::new(30, 1).unwrap(),
+            duration: Duration(Rational::new(5, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers: vec![consumer, matte_layer],
+            markers: Vec::new(),
+            motion_blur: lumit_core::model::MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        }));
+        (doc, comp_id, 0)
+    }
+
     /// An unknown comp id on the interactive path is a calm error, and it must
     /// not disturb the pixels retained for a comp that *does* exist.
     #[test]
