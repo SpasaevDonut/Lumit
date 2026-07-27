@@ -113,14 +113,15 @@ class LumitMenuBarFrb extends StatelessWidget {
                 _onComp(context, (c) => _markerAtPlayhead(context, c))),
             _Item.divider(),
             // Beat detection reads the whole comp's audio and can take
-            // seconds; a comp with no audio does nothing rather than alarming.
+            // seconds, so it runs off-thread; a comp with no audio does
+            // nothing rather than alarming.
             _Item(
                 'Detect beats',
-                _onComp(context, (c) {
-                  try {
-                    c.detectBeats(sensitivityPercent: 50);
-                  } catch (_) {}
-                })),
+                _onComp(
+                    context,
+                    (c) => c
+                        .detectBeats(sensitivityPercent: 50)
+                        .then((_) {}, onError: (_) {}))),
             _Item('Clear beat markers',
                 _onComp(context, (c) => c.clearBeatMarkers())),
             _Item.divider(),

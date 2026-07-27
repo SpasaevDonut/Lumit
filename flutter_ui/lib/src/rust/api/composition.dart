@@ -331,8 +331,9 @@ class CompositionReference {
   /// `sensitivity_percent` runs 0..100, where 50 is the standard setting and
   /// higher finds more. Returns how many markers were placed — zero is a
   /// legitimate answer for quiet or arrhythmic audio, and worth showing as
-  /// such rather than as a failure.
-  int detectBeats({required int sensitivityPercent}) =>
+  /// such rather than as a failure. Seconds-long on a long comp, so it is
+  /// async on purpose (docs/TODO: "move beat detection off-thread").
+  Future<int> detectBeats({required int sensitivityPercent}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceDetectBeats(
           that: this, sensitivityPercent: sensitivityPercent);
 

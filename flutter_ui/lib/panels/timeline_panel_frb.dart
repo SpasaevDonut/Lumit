@@ -721,15 +721,13 @@ class _Toolbar extends StatelessWidget {
                 small: true,
                 frameless: true,
                 onPressed: () {
-                  // Synchronous and seconds-long on a long comp; a comp with no
-                  // audio, or a machine with no pipeline, says so by doing
-                  // nothing rather than by an alarm.
-                  try {
-                    comp.detectBeats(sensitivityPercent: 50);
-                  } catch (_) {
-                    return;
-                  }
-                  onChanged();
+                  // Seconds-long on a long comp, so it runs off-thread and the
+                  // markers appear when it finishes; a comp with no audio, or
+                  // a machine with no pipeline, says so by doing nothing
+                  // rather than by an alarm.
+                  comp
+                      .detectBeats(sensitivityPercent: 50)
+                      .then((_) => onChanged(), onError: (_) {});
                 },
                 child: Text('Detect beats', style: t.small),
               ),

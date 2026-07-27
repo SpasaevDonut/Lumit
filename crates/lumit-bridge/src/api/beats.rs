@@ -13,9 +13,11 @@
 //! sensitivity is an ordinary thing to do and losing your own notes to it would
 //! not be.
 //!
-//! It is synchronous and can take a few seconds on a long comp: it mixes the
-//! audio and analyses the lot. The caller should say what it is doing rather
-//! than appear to have hung.
+//! It can take a few seconds on a long comp — it mixes the audio and analyses
+//! the lot — so detection is deliberately NOT `#[frb(sync)]`: it runs on the
+//! bridge's worker pool and the interface never waits on it. The markers land
+//! as one committed op when it finishes, and the change stream repaints the
+//! panels exactly as any other edit does.
 
 use flutter_rust_bridge::frb;
 
@@ -27,8 +29,8 @@ impl CompositionReference {
     /// `sensitivity_percent` runs 0..100, where 50 is the standard setting and
     /// higher finds more. Returns how many markers were placed — zero is a
     /// legitimate answer for quiet or arrhythmic audio, and worth showing as
-    /// such rather than as a failure.
-    #[frb(sync)]
+    /// such rather than as a failure. Seconds-long on a long comp, so it is
+    /// async on purpose (docs/TODO: "move beat detection off-thread").
     pub fn detect_beats(&self, sensitivity_percent: u32) -> Result<u32, BridgeError> {
         let composition = self.composition()?;
         let document = {

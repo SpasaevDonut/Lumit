@@ -1212,15 +1212,16 @@ fn wire__crate__api__composition__composition_reference_clear_beat_markers_impl(
     )
 }
 fn wire__crate__api__composition__composition_reference_detect_beats_impl(
+    port_: flutter_rust_bridge::for_generated::MessagePort,
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
     data_len_: i32,
-) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
-    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+) {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_normal::<flutter_rust_bridge::for_generated::SseCodec, _, _>(
         flutter_rust_bridge::for_generated::TaskInfo {
             debug_name: "composition_reference_detect_beats",
-            port: None,
-            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+            port: Some(port_),
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Normal,
         },
         move || {
             let message = unsafe {
@@ -1236,13 +1237,15 @@ fn wire__crate__api__composition__composition_reference_detect_beats_impl(
                 <crate::api::composition::CompositionReference>::sse_decode(&mut deserializer);
             let api_sensitivity_percent = <u32>::sse_decode(&mut deserializer);
             deserializer.end();
-            transform_result_sse::<_, BridgeError>((move || {
-                let output_ok = crate::api::composition::CompositionReference::detect_beats(
-                    &api_that,
-                    api_sensitivity_percent,
-                )?;
-                Ok(output_ok)
-            })())
+            move |context| {
+                transform_result_sse::<_, BridgeError>((move || {
+                    let output_ok = crate::api::composition::CompositionReference::detect_beats(
+                        &api_that,
+                        api_sensitivity_percent,
+                    )?;
+                    Ok(output_ok)
+                })())
+            }
         },
     )
 }
@@ -6658,6 +6661,12 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
+        33 => wire__crate__api__composition__composition_reference_detect_beats_impl(
+            port,
+            ptr,
+            rust_vec_len,
+            data_len,
+        ),
         60 => wire__crate__api__footage__footage_reference_get_status_impl(
             port,
             ptr,
@@ -6737,7 +6746,6 @@ fn pde_ffi_dispatcher_sync_impl(
 30 => wire__crate__api__composition__composition_reference_audio_prepare_impl(ptr, rust_vec_len, data_len),
 31 => wire__crate__api__composition__composition_reference_cached_frames_impl(ptr, rust_vec_len, data_len),
 32 => wire__crate__api__composition__composition_reference_clear_beat_markers_impl(ptr, rust_vec_len, data_len),
-33 => wire__crate__api__composition__composition_reference_detect_beats_impl(ptr, rust_vec_len, data_len),
 34 => wire__crate__api__composition__composition_reference_document_revision_impl(ptr, rust_vec_len, data_len),
 35 => wire__crate__api__composition__composition_reference_duration_frames_impl(ptr, rust_vec_len, data_len),
 36 => wire__crate__api__composition__composition_reference_fps_impl(ptr, rust_vec_len, data_len),

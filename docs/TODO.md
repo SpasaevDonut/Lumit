@@ -210,8 +210,6 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
     drained on `lumit_bridge_snapshot` plus a synchronous `ensure_probed` fallback
     for consumers that read the cache synchronously (`convert_to_sequenced`,
     `trim_to_source_end`, `add_footage_layer`, relink). (archive/flutter-port/06 §B)
-- **Move beat detection off-thread** - `detect_beats` blocks; a start/poll pair like
-    export is the fix. (archive/flutter-port/06 §A)
 **Shared-texture producer/consumer fence** - only if the owner's live run shows
     tearing; verify on the machine first. (archive/flutter-port/06 §B)
 **Linux packaging** - the flatpak shipped the egui `lumit-app` binary and was

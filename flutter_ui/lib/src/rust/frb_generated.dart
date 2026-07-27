@@ -187,7 +187,7 @@ abstract class BridgeLibApi extends BaseApi {
   void crateApiCompositionCompositionReferenceClearBeatMarkers(
       {required CompositionReference that});
 
-  int crateApiCompositionCompositionReferenceDetectBeats(
+  Future<int> crateApiCompositionCompositionReferenceDetectBeats(
       {required CompositionReference that, required int sensitivityPercent});
 
   BigInt crateApiCompositionCompositionReferenceDocumentRevision(
@@ -1418,14 +1418,15 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
           );
 
   @override
-  int crateApiCompositionCompositionReferenceDetectBeats(
+  Future<int> crateApiCompositionCompositionReferenceDetectBeats(
       {required CompositionReference that, required int sensitivityPercent}) {
-    return handler.executeSync(SyncTask(
-      callFfi: () {
+    return handler.executeNormal(NormalTask(
+      callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_composition_reference(that, serializer);
         sse_encode_u_32(sensitivityPercent, serializer);
-        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 33)!;
+        pdeCallFfi(generalizedFrbRustBinding, serializer,
+            funcId: 33, port: port_);
       },
       codec: SseCodec(
         decodeSuccessData: sse_decode_u_32,
