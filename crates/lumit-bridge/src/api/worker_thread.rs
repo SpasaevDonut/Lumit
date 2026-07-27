@@ -62,6 +62,8 @@ pub enum WorkerRequest {
 struct Publish {
     mode: BridgePlaybackMode,
     cache: bool,
+    /// Whether the caller can show a shared texture (see `RenderCompRequest`).
+    zero_copy: bool,
 }
 
 pub struct RenderCompRequest {
@@ -69,6 +71,15 @@ pub struct RenderCompRequest {
     pub frame: u64,
     /// Which of the two playback behaviours this render is for.
     pub mode: BridgePlaybackMode,
+    /// Whether the caller can actually *show* a shared texture.
+    ///
+    /// Asked rather than assumed, because the failure is silent and total: if
+    /// the frontend cannot register the texture it is handed, it draws nothing
+    /// at all, and the engine has no way to find that out. It happened —
+    /// switching the zero-copy path on left the Viewer showing its checkerboard
+    /// while the playhead ran and the Scopes updated, which reads as the picture
+    /// being broken rather than the transport.
+    pub zero_copy: bool,
     /// The on-screen scale of the Viewer, 1.0 meaning "shown at comp
     /// resolution". Below 1.0 the frame is being displayed smaller than the comp,
     /// so it is decoded smaller too — see [`crate::render::quality_for`].
@@ -261,6 +272,7 @@ fn render_comp(
         Publish {
             mode: req.mode,
             cache: true,
+            zero_copy: req.zero_copy,
         },
     );
     Ok(())
@@ -319,6 +331,7 @@ fn render_comp_with_preview(
             // A drag is not playback: full resolution, and never kept.
             mode: BridgePlaybackMode::EveryFrame,
             cache: false,
+            zero_copy: false,
         },
     );
     Ok(())
@@ -433,11 +446,19 @@ fn publish_frame(
     stream: &mut WorkerResponseStream,
     publish: Publish,
 ) {
+    // A build with no zero-copy path compiled in has nothing to ask: whatever
+    // the caller can show, read-back is the only route there is.
+    #[cfg(not(any(
+        all(windows, feature = "shared-texture"),
+        all(target_os = "linux", feature = "shared-texture-linux")
+    )))]
+    let _ = publish.zero_copy;
+
     #[cfg(any(
         all(windows, feature = "shared-texture"),
         all(target_os = "linux", feature = "shared-texture-linux")
     ))]
-    if matches!(publish.mode, BridgePlaybackMode::Adaptive) {
+    if publish.zero_copy && matches!(publish.mode, BridgePlaybackMode::Adaptive) {
         publish_zero_copy(state, comp, frame, scale, document, stream, publish);
         return;
     }
@@ -454,9 +475,6 @@ fn publish_zero_copy(
     stream: &mut WorkerResponseStream,
     publish: Publish,
 ) {
-    // The zero-copy paths hand out a texture rather than bytes, so there is
-    // nothing here for a byte cache to hold.
-    let _ = publish;
     let shared =
         match state
             .renderer
@@ -464,7 +482,9 @@ fn publish_zero_copy(
         {
             Ok(shared) => shared,
             Err(err) => {
-                eprintln!("Shared DMA-BUF render failed, dropping frame: {err}");
+                // Fall back rather than drop — see the Windows sibling.
+                eprintln!("Shared DMA-BUF render failed, falling back to read-back: {err}");
+                publish_read_back(state, comp, frame, scale, document, stream, publish);
                 return;
             }
         };
@@ -490,14 +510,19 @@ fn publish_zero_copy(
     stream: &mut WorkerResponseStream,
     publish: Publish,
 ) {
-    let _ = publish;
     let shared = match state
         .renderer
         .render_to_shared(document, comp, frame, quality_for(scale))
     {
         Ok(shared) => shared,
         Err(err) => {
-            eprintln!("Shared-texture render failed, dropping frame: {err}");
+            // Fall back rather than drop. A dropped frame here is not a slower
+            // Viewer, it is an *empty* one: nothing else publishes a picture, so
+            // the panel stays on its checkerboard for the whole session while
+            // everything else — the playhead, the Scopes — carries on as though
+            // playback were fine. A frame by the slow road beats no frame.
+            eprintln!("Shared-texture render failed, falling back to read-back: {err}");
+            publish_read_back(state, comp, frame, scale, document, stream, publish);
             return;
         }
     };
@@ -542,7 +567,7 @@ fn publish_read_back(
     // tier never moved off Full. Reporting `tier_scale(tier)` here is what closes
     // that loop.
     let tier = crate::realtime::tier();
-    let Publish { mode, cache } = publish;
+    let Publish { mode, cache, .. } = publish;
     let adaptive = matches!(mode, BridgePlaybackMode::Adaptive);
     let effective = if adaptive {
         scale * crate::realtime::tier_scale(tier)

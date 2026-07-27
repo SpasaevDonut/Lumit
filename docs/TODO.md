@@ -126,6 +126,13 @@ and the transparency grid have landed. Still missing:
 - **No disk or VRAM frame cache**, so the cache bar can only ever show the RAM
     tier. The design language's steel blue for "on disk only" and the future VRAM
     tier have nothing behind them yet ([15-DESIGN.md](15-DESIGN.md) §6.3).
+- **The zero-copy Viewer draws nothing on a real window** and is off by default
+    because of it (Settings → Playback → Frame transport turns it on). The engine
+    makes the shared texture and Dart registers it without error, but the
+    `Texture` widget shows an empty panel. Needs debugging against a real window,
+    which no widget test can do. Everything around it is now defensive: the
+    engine falls back to read-back when it cannot make the texture, and Dart only
+    asks for one while its controller reports itself available.
 - **The Scopes' trace still crosses the bridge as pixels**, serialised a byte at
     a time like any other `Vec<u8>`, and is decoded into an image Dart-side. Small
     next to a full frame, but it is on the same per-frame path and could take the

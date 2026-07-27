@@ -255,6 +255,12 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
         mode: state.workspace.performance.playback == PlaybackMode.adaptive
             ? BridgePlaybackMode.adaptive
             : BridgePlaybackMode.everyFrame,
+        // Only ask for a texture we can actually show. The controller latches
+        // itself unavailable the moment a registration fails, so a machine or a
+        // runner that cannot do this gets pixels from the next frame onwards
+        // rather than an empty Viewer for the rest of the session.
+        zeroCopy: state.workspace.performance.useSharedTexture &&
+            state.controller.available,
       );
     } catch (_) {
       // A refused request is never answered, so holding the in-flight slot for

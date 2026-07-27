@@ -647,12 +647,14 @@ impl CompositionReference {
         frame: u64,
         scale: f32,
         mode: BridgePlaybackMode,
+        zero_copy: bool,
     ) -> Result<(), BridgeError> {
         self.dispatch(RenderComp(RenderCompRequest {
             comp: self.clone(),
             frame,
             scale,
             mode,
+            zero_copy,
         }))
     }
 

@@ -2542,6 +2542,22 @@ expensive: what is wanted has to be *cleared* once it arrives. An earlier versio
 asked again whenever anything was wanted, which meant every delivered frame asked
 for itself, and the engine re-rendered the same picture forever at full speed.
 
+*A fast path that fails silently is worse than no fast path.* Turning the
+zero-copy Viewer on in the shipped build had an ugly result: the Viewer drew
+nothing at all — just its checkerboard — while the playhead ran and the Scopes
+updated, which reads as the picture being broken rather than the *transport*
+being broken. Two things had to change. The engine now falls back to copying the
+pixels when it cannot make a shared texture, instead of dropping the frame: a
+frame by the slow road beats no frame. And the frontend now says, with each
+request, whether it can actually display a texture — asked rather than assumed,
+because if it cannot, it draws nothing and the engine has no way to find out.
+
+The path is therefore off by default and opted into from Settings → Playback →
+Frame transport, until it has been seen working on a real window. It had never
+run in a shipped build before, so there was no evidence it did. Which transport
+is in use shows in Settings and in the playback-mode tooltip, so it is never a
+guess.
+
 *The Scopes were secretly doubling the cost of playback.* The waveform and
 vectorscope displays read the numbers in a frame — how bright it is, what colours
 are in it. To get those numbers they were building the whole composition a second

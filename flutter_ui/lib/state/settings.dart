@@ -30,9 +30,19 @@ class PerformanceSettings {
   bool backgroundFill;
   String? cacheRoot;
 
-  /// Whether the Viewer may use the zero-copy shared-texture path (round 3
-  /// escape hatch: a texture that registers but presents nothing leaves an
-  /// empty Viewer, so the read-back path must be reachable from Settings).
+  /// Whether the Viewer may use the zero-copy shared-texture path.
+  ///
+  /// **Off by default, deliberately.** The escape hatch this was written as
+  /// turned out to be the wrong way round: the feature was never actually
+  /// enabled in a built application until 2026-07-26, so the path had never run
+  /// outside a developer's own build — and the first time it shipped, the Viewer
+  /// drew nothing at all while the playhead ran and the Scopes updated. A
+  /// texture that registers but presents nothing fails *silently and totally*,
+  /// and nothing else publishes a picture to cover for it.
+  ///
+  /// So the working path is the default and the fast one is opted into, until it
+  /// has been seen to work on a real window. The Viewer's transport is shown in
+  /// the playback-mode tooltip, so which one is in use is never a guess.
   bool useSharedTexture;
 
   /// Which playback behaviour the Viewer uses. Kept here rather than only in
@@ -45,7 +55,7 @@ class PerformanceSettings {
     this.diskCacheMb = 50 * 1024,
     this.vramCacheMb = 512,
     this.backgroundFill = true,
-    this.useSharedTexture = true,
+    this.useSharedTexture = false,
     this.playback = PlaybackMode.adaptive,
     this.cacheRoot,
   }) : ramBudgetMb = ramBudgetMb ?? defaultRamBudgetMb();
@@ -104,7 +114,7 @@ class PerformanceSettings {
         diskCacheMb: j['disk_cache_mb'] as int? ?? 50 * 1024,
         vramCacheMb: j['vram_cache_mb'] as int? ?? 512,
         backgroundFill: j['background_fill'] as bool? ?? true,
-        useSharedTexture: j['use_shared_texture'] as bool? ?? true,
+        useSharedTexture: j['use_shared_texture'] as bool? ?? false,
         // An unknown name (an older or newer build) falls back to adaptive,
         // which is the mode that always plays.
         playback: PlaybackMode.values.firstWhere(

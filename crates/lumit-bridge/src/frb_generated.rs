@@ -1392,10 +1392,15 @@ fn wire__crate__api__composition__composition_reference_render_frame_impl(
             let api_scale = <f32>::sse_decode(&mut deserializer);
             let api_mode =
                 <crate::api::composition::BridgePlaybackMode>::sse_decode(&mut deserializer);
+            let api_zero_copy = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
                 let output_ok = crate::api::composition::CompositionReference::render_frame(
-                    &api_that, api_frame, api_scale, api_mode,
+                    &api_that,
+                    api_frame,
+                    api_scale,
+                    api_mode,
+                    api_zero_copy,
                 )?;
                 Ok(output_ok)
             })())

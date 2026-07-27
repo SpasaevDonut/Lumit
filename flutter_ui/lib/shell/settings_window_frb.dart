@@ -154,6 +154,59 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                 ),
               ),
             ),
+            _row(
+              t,
+              'Frame transport',
+              Text(
+                switch (viewerTransport()) {
+                  BridgeViewerTransport.sharedTexture =>
+                    ui.workspace.performance.useSharedTexture
+                        ? 'Shared texture (no copy)'
+                        : 'Read-back (shared texture available)',
+                  BridgeViewerTransport.dmaBuf =>
+                    ui.workspace.performance.useSharedTexture
+                        ? 'DMA-BUF (no copy)'
+                        : 'Read-back (DMA-BUF available)',
+                  BridgeViewerTransport.readBack =>
+                    'Read-back (this build has no zero-copy path)',
+                },
+                key: const ValueKey('settings-transport'),
+                style: t.small,
+                textAlign: TextAlign.right,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (viewerTransport() != BridgeViewerTransport.readBack)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: LumitTooltip(
+                    message: ui.workspace.performance.useSharedTexture
+                        ? 'Go back to copying the pixels across. Slower, but it '
+                            'is the path that has always worked.'
+                        : 'Let the engine draw straight into a texture the '
+                            'Viewer shows, with nothing copied. Much faster. If '
+                            'the Viewer goes blank, turn it off again — the '
+                            'picture comes back on the next frame.',
+                    child: HouseButton(
+                      key: const ValueKey('settings-shared-texture'),
+                      small: true,
+                      onPressed: () => setState(() {
+                        final p = ui.workspace.performance;
+                        p.useSharedTexture = !p.useSharedTexture;
+                        ui.workspace.touch();
+                      }),
+                      child: Text(
+                        ui.workspace.performance.useSharedTexture
+                            ? 'Use read-back instead'
+                            : 'Try the zero-copy path',
+                        style: t.small,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
           ]),
           _group(t, 'This build', [
             for (final line in bootLog())
@@ -200,7 +253,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
         child: Row(
           children: [
             Expanded(child: Text(label, style: t.body)),
-            control,
+            // Flexible, not bare: a long value — a transport name, a path —
+            // otherwise runs past the edge of the window and paints the
+            // overflow stripe over it.
+            Flexible(child: control),
           ],
         ),
       );

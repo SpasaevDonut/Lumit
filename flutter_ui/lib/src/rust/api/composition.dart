@@ -323,9 +323,14 @@ class CompositionReference {
   void renderFrame(
           {required BigInt frame,
           required double scale,
-          required BridgePlaybackMode mode}) =>
+          required BridgePlaybackMode mode,
+          required bool zeroCopy}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
-          that: this, frame: frame, scale: scale, mode: mode);
+          that: this,
+          frame: frame,
+          scale: scale,
+          mode: mode,
+          zeroCopy: zeroCopy);
 
   /// Ask for `frame` with `layer`'s effect stack replaced by `effects` — the
   /// live drag path, which never touches the document.

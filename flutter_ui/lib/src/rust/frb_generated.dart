@@ -208,7 +208,8 @@ abstract class BridgeLibApi extends BaseApi {
       {required CompositionReference that,
       required BigInt frame,
       required double scale,
-      required BridgePlaybackMode mode});
+      required BridgePlaybackMode mode,
+      required bool zeroCopy});
 
   void crateApiCompositionCompositionReferenceRenderFrameWithPreview(
       {required CompositionReference that,
@@ -1507,7 +1508,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       {required CompositionReference that,
       required BigInt frame,
       required double scale,
-      required BridgePlaybackMode mode}) {
+      required BridgePlaybackMode mode,
+      required bool zeroCopy}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
@@ -1515,6 +1517,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         sse_encode_u_64(frame, serializer);
         sse_encode_f_32(scale, serializer);
         sse_encode_bridge_playback_mode(mode, serializer);
+        sse_encode_bool(zeroCopy, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 38)!;
       },
       codec: SseCodec(
@@ -1523,7 +1526,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiCompositionCompositionReferenceRenderFrameConstMeta,
-      argValues: [that, frame, scale, mode],
+      argValues: [that, frame, scale, mode, zeroCopy],
       apiImpl: this,
     ));
   }
@@ -1532,7 +1535,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       get kCrateApiCompositionCompositionReferenceRenderFrameConstMeta =>
           const TaskConstMeta(
             debugName: "composition_reference_render_frame",
-            argNames: ["that", "frame", "scale", "mode"],
+            argNames: ["that", "frame", "scale", "mode", "zeroCopy"],
           );
 
   @override
