@@ -115,6 +115,37 @@ void main() {
       );
     });
 
+    /// **The drag regression.** A parameter could be typed into but not dragged:
+    /// the panel held the stack of effect handles across the whole gesture, and
+    /// a `BridgeEffectInstance` passed to `renderFrameWithPreview` is *moved* —
+    /// frb disposes the Dart side of it — so the first preview tick killed the
+    /// handles and every tick after it threw `DroppableDisposedException`. What
+    /// is staged now is the edit, not the handles.
+    testWidgets('a parameter can be dragged, not only typed into',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      await mount(tester, p);
+
+      final id = p.layer.getEffects().single.id();
+      double radius() => ((p.layer.getEffects().single.getValue(id: 'radius')
+              as BridgeEffectValue_Float)
+          .field0 as BridgeScalar_Static)
+          .field0;
+      final before = radius();
+
+      await tester.drag(
+        find.byKey(ValueKey<String>('fx-float-$id-radius')),
+        const Offset(60, 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull,
+          reason: 'no handle was used after it had been handed to Rust');
+      expect(radius(), greaterThan(before),
+          reason: 'the drag reached the document');
+    });
+
     testWidgets('the enable switch, reorder and remove all reach the document',
         (tester) async {
       final p = withLayer();

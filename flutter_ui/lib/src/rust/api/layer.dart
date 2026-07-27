@@ -453,6 +453,28 @@ class LayerReference {
         that: this,
       );
 
+  /// This layer's Volume, in dB (docs/09 §6): 0 is unity.
+  BridgeScalar getVolumeDb() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetVolumeDb(
+        that: this,
+      );
+
+  /// Whether this layer's source actually carries sound.
+  ///
+  /// What decides whether the Audio group appears under a layer at all
+  /// (docs/07 §4.3): every layer *has* a Volume property in the model, but on
+  /// a solid or a title it can never be heard, and a control that cannot do
+  /// anything is worse than no control. Footage is the case that matters, and
+  /// the answer is the container's own: a file with an audio stream.
+  ///
+  /// Probing opens the file with FFmpeg, so this is deliberately **not**
+  /// `#[frb(sync)]`. A layer whose media cannot be resolved answers false —
+  /// a missing file is not a reason to offer a volume control.
+  Future<bool> hasAudio() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceHasAudio(
+        that: this,
+      );
+
   /// Whether this layer positions in z and honours the active camera (K-023).
   ///
   /// Read-only for now: the switch's *toggle* is a Timeline op that has not
@@ -637,6 +659,11 @@ class LayerReference {
           required List<BridgeScalar> values}) =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceSetTransforms(
           that: this, props: props, values: values);
+
+  /// Set the Volume, as one undoable step — the same coarse-grained shape as
+  /// a transform property, and for the same invertibility reason.
+  void setVolumeDb({required BridgeScalar value}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetVolumeDb(that: this, value: value);
 
   @override
   int get hashCode =>

@@ -1212,6 +1212,46 @@ fn setting_one_property_leaves_the_others_alone_and_undoes_alone() {
     );
 }
 
+/// The Audio group's one control (docs/07 §4.3). Volume is a property like any
+/// other — one op, invertible — and a layer that cannot be heard says so, which
+/// is what decides whether the group is offered at all.
+#[test]
+fn volume_round_trips_and_a_solid_reports_no_audio() {
+    use crate::api::effect::BridgeScalar;
+
+    let (project, ..) = project_with_folder();
+    let comp = add_comp(&project, "Scene");
+    let layer = comp.add_solid_layer().expect("layer");
+
+    assert!(
+        matches!(
+            layer.get_volume_db().expect("volume"),
+            BridgeScalar::Static(db) if db == 0.0
+        ),
+        "unity to start with"
+    );
+
+    layer
+        .set_volume_db(BridgeScalar::Static(-6.0))
+        .expect("applied");
+    assert!(matches!(
+        layer.get_volume_db().expect("volume"),
+        BridgeScalar::Static(db) if db == -6.0
+    ));
+
+    // One op, so one undo puts it back.
+    project.undo().expect("undo");
+    assert!(matches!(
+        layer.get_volume_db().expect("volume"),
+        BridgeScalar::Static(db) if db == 0.0
+    ));
+
+    assert!(
+        !layer.has_audio().expect("asked"),
+        "a solid has no sound to set, so it is offered no Audio group"
+    );
+}
+
 /// A reference that outlives its layer is a calm error, never a panic — the
 /// same contract every other reference method keeps.
 #[test]

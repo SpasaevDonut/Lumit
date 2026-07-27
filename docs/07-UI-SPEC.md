@@ -350,16 +350,28 @@ outline and the lanes is a drag handle that sets the outline width.
   keyframe at that time, right-click for interpolation and *Ease* commands.
 - `U` reveals animated properties of selected layers; `UU` reveals all modified properties.
 
-  **Shipped (partial):** the caret on each layer row opens the **Transform** property rows —
-  stopwatch, ◄ ◆ ► navigator, label, and one scrub-drag/click-to-type value per axis, exactly
-  the rows the Effect controls panel shows (they are one widget, `transform_rows_frb.dart`,
-  used by both panels). A drag stages the value, previews it through the engine's patched
-  clone, and commits once on release: one undo step for the gesture. The lane beside each open
-  row is left empty and the outline reserves exactly its height, so bars never drift away from
-  their names. Still to build here: the intermediate section headings (Masks, Effects, Audio,
-  Retime — with only Transform implemented the caret opens straight onto it), the keyframe
-  diamonds on the lanes and their interaction, the expression toggle, and `U`/`UU`. Keyframes
-  are editable in the graph editor meanwhile.
+  **Shipped (partial):** the caret on each layer row opens onto the **section headings**, each
+  with its own caret, and nothing under them until one is opened — the tidy-list behaviour
+  above. Three groups exist:
+
+  - **Transform**, always: one row per property group with the stopwatch, the ◄ ◆ ► navigator,
+    the label, and a scrub-drag/click-to-type value per axis.
+  - **Effects**, only when the layer has any: one row per effect, opening onto that effect's
+    parameters — the same rows, with the same controls, that the Effect controls panel shows.
+  - **Audio**, only when the layer's source actually carries sound (`LayerReference::has_audio`
+    probes the container): the layer's **Volume** in dB, keyable like any other property. Every
+    layer has a Volume in the model, but on a solid or a title it can never be heard, and a
+    control that cannot do anything is worse than no control.
+
+  The rows are one implementation shared with the Effect controls panel
+  (`transform_rows_frb.dart`, `effect_param_row_frb.dart`) rather than a second copy, so a
+  parameter behaves the same wherever it is shown. A drag stages the value, previews it through
+  the engine's patched clone, and commits once on release: one undo step for the gesture. The
+  fold-out is worked out once as a list of rows (`layer_fold_frb.dart`) that *both* halves of
+  the table walk — the outline drawing each row, the lane side leaving its height — so bars
+  cannot drift away from their names. Still to build here: the Masks and Retime groups, the
+  keyframe diamonds on the lanes and their interaction, the expression toggle, and `U`/`UU`.
+  Keyframes are editable in the graph editor meanwhile.
 
 ### 4.4 Sequence layers
 

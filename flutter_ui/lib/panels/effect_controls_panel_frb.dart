@@ -33,20 +33,13 @@ import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
 import '../theme/theme.dart';
-import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
-import 'keyframe_controls_frb.dart';
+import 'effect_param_row_frb.dart';
 import 'transform_rows_frb.dart';
 import '../state/drag_payloads.dart';
 import 'placeholder.dart';
 import 'source_rows_frb.dart';
 
-/// How wide a value cell is, so the rows line up down the panel.
-const double _cellWidth = 78;
-
-/// Roughly one preview render per 20 ms, so a fast drag cannot outrun the
-/// renderer and queue up work it will only throw away.
-const Duration _previewInterval = Duration(milliseconds: 20);
 
 class EffectControlsPanelFrb extends StatefulWidget {
   const EffectControlsPanelFrb({super.key});
@@ -56,13 +49,9 @@ class EffectControlsPanelFrb extends StatefulWidget {
 }
 
 class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
-  /// The stack being dragged, held only for the length of one drag. Null the
-  /// rest of the time, so an ordinary build reads the document rather than a
-  /// copy that might have gone stale under it.
-  List<BridgeEffectInstance>? _staged;
-
-  final Stopwatch _since = Stopwatch()..start();
-  Duration _lastPreview = Duration.zero;
+  /// The drag in progress, and the writes that end it. Shared with the
+  /// Timeline's fold-out, which shows the same rows.
+  final EffectStackEditor _effects = EffectStackEditor();
 
   @override
   Widget build(BuildContext context) {
@@ -112,7 +101,7 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
   ) {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context, listen: false);
-    final effects = _staged ?? layer.getEffects();
+    final effects = _effects.stackWith(layer);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -178,13 +167,14 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                     index: index,
                     count: effects.length,
                     onStackChanged: () => setState(() {}),
-                    onCommit: () => _commit(layer, effects),
-                    onLive: () => _preview(comp, layer, effects),
-                    onDragStart: () => _staged = effects,
-                    onDragEnd: () {
-                      _commit(layer, effects);
-                      setState(() => _staged = null);
+                    onWrite: (id, param, value) {
+                      _effects.write(layer, id, param, value);
+                      setState(() {});
                     },
+                    onLive: (id, param, value) => setState(() {
+                      _effects.live(comp, layer, id, param, value,
+                          frame: ui.playheadFrame.value, scale: ui.viewerScale);
+                    }),
                     layer: layer,
                     comp: comp,
                     playheadFrame: playhead,
@@ -199,34 +189,6 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     );
   }
 
-  /// Commit the staged stack as one op. A stack another panel has changed under
-  /// us is refused engine-side (`StaleEffectStack`); re-reading is the recovery,
-  /// so the panel shows the document rather than insisting on its own copy.
-  void _commit(LayerReference layer, List<BridgeEffectInstance> effects) {
-    try {
-      layer.setEffects(effects: effects);
-    } catch (_) {
-      // Someone else edited the stack mid-drag. Drop ours and re-read.
-    }
-    if (mounted) setState(() => _staged = null);
-  }
-
-  /// Render the staged stack without committing it, throttled.
-  void _preview(
-    CompositionReference comp,
-    LayerReference layer,
-    List<BridgeEffectInstance> effects,
-  ) {
-    if (_since.elapsed - _lastPreview < _previewInterval) return;
-    _lastPreview = _since.elapsed;
-    final ui = Provider.of<LumitUiState>(context, listen: false);
-    comp.renderFrameWithPreview(
-      frame: BigInt.from(ui.playheadFrame.value),
-      scale: ui.viewerScale,
-      layer: layer,
-      effects: effects,
-    );
-  }
 }
 
 /// The panel header: which layer is being edited, and Add effect.
@@ -319,13 +281,13 @@ class _EffectCard extends StatelessWidget {
   /// The stack itself changed (enabled, reordered, removed) — re-read it.
   final VoidCallback onStackChanged;
 
-  /// A one-shot parameter edit: commit it now.
-  final VoidCallback onCommit;
+  /// Write a parameter — a typed value, or the release of a drag. One op.
+  final void Function(UuidValue effect, String param, BridgeEffectValue value)
+      onWrite;
 
-  /// A drag tick: render the staged stack, do not commit.
-  final VoidCallback onLive;
-  final VoidCallback onDragStart;
-  final VoidCallback onDragEnd;
+  /// A drag tick: preview it, do not commit it.
+  final void Function(UuidValue effect, String param, BridgeEffectValue value)
+      onLive;
 
   const _EffectCard({
     super.key,
@@ -337,10 +299,8 @@ class _EffectCard extends StatelessWidget {
     required this.playheadFrame,
     required this.onSeek,
     required this.onStackChanged,
-    required this.onCommit,
+    required this.onWrite,
     required this.onLive,
-    required this.onDragStart,
-    required this.onDragEnd,
   });
 
   @override
@@ -365,17 +325,15 @@ class _EffectCard extends StatelessWidget {
               child: Column(
                 children: [
                   for (final param in params)
-                    _ParamRow(
+                    EffectParamRowFrb(
                       key: ValueKey<String>('fx-row-${effect.id()}-${param.id}'),
                       effect: effect,
                       param: param,
                       comp: comp,
                       playheadFrame: playheadFrame,
                       onSeek: onSeek,
-                      onCommit: onCommit,
+                      onWrite: onWrite,
                       onLive: onLive,
-                      onDragStart: onDragStart,
-                      onDragEnd: onDragEnd,
                     ),
                 ],
               ),
@@ -478,363 +436,6 @@ String _titleOf(BridgeEffectInstance effect) {
     if (info.name == name) return info.label;
   }
   return name;
-}
-
-/// One parameter: its label, and the control its kind asks for.
-class _ParamRow extends StatelessWidget {
-  final BridgeEffectInstance effect;
-  final BridgeParamInfo param;
-  final CompositionReference comp;
-  final int playheadFrame;
-  final ValueChanged<int> onSeek;
-  final VoidCallback onCommit;
-  final VoidCallback onLive;
-  final VoidCallback onDragStart;
-  final VoidCallback onDragEnd;
-
-  const _ParamRow({
-    super.key,
-    required this.effect,
-    required this.param,
-    required this.comp,
-    required this.playheadFrame,
-    required this.onSeek,
-    required this.onCommit,
-    required this.onLive,
-    required this.onDragStart,
-    required this.onDragEnd,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    final scalar = _animatableScalar;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          // Only the number-shaped kinds animate; a choice or a file has nothing
-          // to interpolate, so those rows carry no stopwatch at all.
-          if (scalar != null)
-            KeyframeControlsFrb(
-              // An effect parameter is one value, so one channel.
-              scalars: [scalar],
-              comp: comp,
-              playheadFrame: playheadFrame,
-              onSeek: onSeek,
-              rowKey: '${effect.id()}-${param.id}',
-              onWrite: (next) => _set(BridgeEffectValue.float(next.single)),
-            ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(param.label,
-                style: t.body, overflow: TextOverflow.ellipsis),
-          ),
-          const SizedBox(width: 10),
-          _control(context, t),
-        ],
-      ),
-    );
-  }
-
-  /// The scalar behind this row when the kind is one that can animate, else
-  /// null. Float is the only single-scalar animatable kind the schema declares;
-  /// a colour animates per channel, which the swatch has no room to key.
-  BridgeScalar? get _animatableScalar {
-    if (param.kind is! BridgeParamKind_Float) return null;
-    return switch (_value) {
-      BridgeEffectValue_Float(:final field0) => field0,
-      _ => null,
-    };
-  }
-
-  /// The parameter's current value, or null when the instance does not carry it
-  /// (a schema newer than the saved document). A missing value draws nothing
-  /// rather than a misleading zero.
-  BridgeEffectValue? get _value {
-    try {
-      return effect.getValue(id: param.id);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// Write `value` onto the staged copy and commit. Refused kinds are the
-  /// engine's business — a control can never change what a parameter *is* — so a
-  /// rejection here is a bug in this file, not something to surface.
-  void _set(BridgeEffectValue value) {
-    effect.setValue(id: param.id, value: value);
-    onCommit();
-  }
-
-  Widget _control(BuildContext context, LumitTheme t) {
-    final value = _value;
-    if (value == null) return Text('—', style: t.small);
-
-    switch (param.kind) {
-      case BridgeParamKind_Float(
-          :final sliderMin,
-          :final sliderMax,
-          :final hardMin,
-          :final hardMax
-        ):
-        if (value case BridgeEffectValue_Float(:final field0)) {
-          return _scalarField(
-            context,
-            scalar: field0,
-            sliderMin: sliderMin,
-            sliderMax: sliderMax,
-            hardMin: hardMin,
-            hardMax: hardMax,
-            keyName: '${effect.id()}-${param.id}',
-            write: (s) => _set(BridgeEffectValue.float(s)),
-          );
-        }
-        return Text('—', style: t.small);
-
-      case BridgeParamKind_Colour(:final min, :final max):
-        if (value case BridgeEffectValue_Colour(:final field0)) {
-          return _colourSwatch(context, field0, min, max);
-        }
-        return Text('—', style: t.small);
-
-      case BridgeParamKind_Bool():
-        if (value case BridgeEffectValue_Bool(:final field0)) {
-          return SizedBox(
-            width: _cellWidth,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: HouseCheckbox(
-                key: ValueKey<String>('fx-bool-${effect.id()}-${param.id}'),
-                value: field0,
-                onChanged: (on) => _set(BridgeEffectValue.bool(on)),
-              ),
-            ),
-          );
-        }
-        return Text('—', style: t.small);
-
-      case BridgeParamKind_Choice(:final options):
-        if (value case BridgeEffectValue_Choice(:final field0)) {
-          final index = field0 < options.length ? field0.toInt() : 0;
-          return SizedBox(
-            width: _cellWidth + 40,
-            child: BareDropdown<int>(
-              key: ValueKey<String>('fx-choice-${effect.id()}-${param.id}'),
-              value: index,
-              options: [for (var i = 0; i < options.length; i++) i],
-              label: (i) => options[i],
-              onChanged: (i) => _set(BridgeEffectValue.choice(i)),
-            ),
-          );
-        }
-        return Text('—', style: t.small);
-
-      case BridgeParamKind_Seed():
-        if (value case BridgeEffectValue_Seed(:final field0)) {
-          return SizedBox(
-            width: _cellWidth,
-            child: DragValueField(
-              key: ValueKey<String>('fx-seed-${effect.id()}-${param.id}'),
-              value: field0,
-              min: 0,
-              max: 0xFFFFFFFF,
-              speed: 1,
-              onChanged: (v) =>
-                  _set(BridgeEffectValue.seed(v.toInt().clamp(0, 0xFFFFFFFF))),
-            ),
-          );
-        }
-        return Text('—', style: t.small);
-
-      case BridgeParamKind_Layer():
-        if (value case BridgeEffectValue_Layer(:final field0)) {
-          return _layerPicker(context, field0);
-        }
-        return Text('—', style: t.small);
-
-      case BridgeParamKind_File(:final filterName):
-        if (value case BridgeEffectValue_File(:final field0)) {
-          final paths = field0.paths;
-          return SizedBox(
-            width: _cellWidth + 60,
-            child: LumitTooltip(
-              message: paths.isEmpty ? 'No $filterName chosen' : paths.first,
-              child: Text(
-                paths.isEmpty ? 'None' : _basename(paths.first),
-                style: t.small,
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          );
-        }
-        return Text('—', style: t.small);
-    }
-  }
-
-  /// A number field for a scalar — or, when the scalar is a curve, a plain
-  /// "animated" label.
-  ///
-  /// An animated parameter is deliberately not editable here: `set_value` takes
-  /// a whole animation, so writing a static number over a curve would delete
-  /// every key on it in one undoable step that looks, on screen, like nudging a
-  /// value. The keyframe ops land with the graph editor (docs/TODO.md); until
-  /// then the honest thing is to show that it is animated and refuse to touch it.
-  Widget _scalarField(
-    BuildContext context, {
-    required BridgeScalar scalar,
-    required double sliderMin,
-    required double sliderMax,
-    required double? hardMin,
-    required double? hardMax,
-    required String keyName,
-    required void Function(BridgeScalar) write,
-  }) {
-    final t = ThemeScope.of(context).theme;
-    if (scalar is! BridgeScalar_Static) {
-      return SizedBox(
-        width: _cellWidth,
-        child: LumitTooltip(
-          message: 'Animated — edit its keys in the graph editor',
-          child: Text('animated',
-              style: t.small.copyWith(color: t.textMuted),
-              textAlign: TextAlign.right),
-        ),
-      );
-    }
-
-    // The drag paces itself by the declared slider span, so a 0–1 parameter and
-    // a 0–500 one both feel the same under the pointer.
-    final span = (sliderMax - sliderMin).abs();
-    final speed = span <= 0 ? 0.5 : span / 200;
-    return SizedBox(
-      width: _cellWidth,
-      child: DragValueField(
-        key: ValueKey<String>('fx-float-$keyName'),
-        value: scalar.field0,
-        // Typing may leave the slider's travel; only the hard bounds clamp
-        // (docs/08 §1.2).
-        min: hardMin ?? -1000000,
-        max: hardMax ?? 1000000,
-        speed: speed,
-        decimals: 2,
-        onChanged: (v) => write(BridgeScalar.static_(v.toDouble())),
-        onChangeStart: onDragStart,
-        onChangeLive: (v) {
-          effect.setValue(
-            id: param.id,
-            value: BridgeEffectValue.float(BridgeScalar.static_(v.toDouble())),
-          );
-          onLive();
-        },
-        onChangeEnd: (v) {
-          effect.setValue(
-            id: param.id,
-            value: BridgeEffectValue.float(BridgeScalar.static_(v.toDouble())),
-          );
-          onDragEnd();
-        },
-        onDragCancel: onDragEnd,
-      ),
-    );
-  }
-
-  /// A colour swatch. The four channels animate independently in the model, so a
-  /// swatch edit writes all four statics at once; an animated channel is left
-  /// alone for the same reason a scalar is.
-  Widget _colourSwatch(
-      BuildContext context, BridgeColour colour, double min, double max) {
-    double chan(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : 0;
-    final animated = colour.r is! BridgeScalar_Static ||
-        colour.g is! BridgeScalar_Static ||
-        colour.b is! BridgeScalar_Static;
-    final t = ThemeScope.of(context).theme;
-    if (animated) {
-      return SizedBox(
-        width: _cellWidth,
-        child: Text('animated',
-            style: t.small.copyWith(color: t.textMuted),
-            textAlign: TextAlign.right),
-      );
-    }
-
-    int byte(double f) => (f.clamp(0.0, 1.0) * 255).round();
-    final shown = documentColour(
-        byte(chan(colour.r)), byte(chan(colour.g)), byte(chan(colour.b)), 255);
-
-    return SizedBox(
-      width: _cellWidth,
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: GestureDetector(
-          key: ValueKey<String>('fx-colour-${effect.id()}-${param.id}'),
-          behavior: HitTestBehavior.opaque,
-          onTap: () async {
-            final box = context.findRenderObject();
-            if (box is! RenderBox) return;
-            final picked = await showColourPicker(
-              context: context,
-              position: box.localToGlobal(Offset(0, box.size.height + 4)),
-              initial: shown,
-            );
-            if (picked == null) return;
-            double clamp(double v) => v < min ? min : (v > max ? max : v);
-            _set(BridgeEffectValue.colour(BridgeColour(
-              r: BridgeScalar.static_(clamp(picked.r)),
-              g: BridgeScalar.static_(clamp(picked.g)),
-              b: BridgeScalar.static_(clamp(picked.b)),
-              a: colour.a,
-            )));
-          },
-          child: MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: Container(
-              width: 28,
-              height: 18,
-              decoration: BoxDecoration(
-                color: shown,
-                borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-                border: Border.all(color: t.hairlineStrong),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// A picker over the comp's own layers, with None. An unset or dangling
-  /// reference is a labelled no-op engine-side, never a fault, so None is a
-  /// first-class choice rather than an error state.
-  Widget _layerPicker(BuildContext context, UuidValue? current) {
-    final layers = comp.getLayers();
-    final names = {
-      for (final l in layers) l.internallayerId.toString(): l.getName(),
-    };
-    // The empty string stands for "unset", not `null`: `showLumitPopup`
-    // completes with null when its barrier is tapped, so a nullable option is
-    // indistinguishable from dismissing the menu and can never be chosen.
-    const unset = '';
-    final chosen = current?.toString();
-    return SizedBox(
-      width: _cellWidth + 40,
-      child: BareDropdown<String>(
-        key: ValueKey<String>('fx-layer-${effect.id()}-${param.id}'),
-        value: names.containsKey(chosen) ? chosen! : unset,
-        options: [unset, ...names.keys],
-        label: (id) => id == unset ? 'None' : (names[id] ?? 'Missing layer'),
-        onChanged: (id) => _set(BridgeEffectValue.layer(
-          id == unset ? null : UuidValue.fromString(id),
-        )),
-      ),
-    );
-  }
-}
-
-/// The last path segment, for showing a chosen file without its whole path.
-String _basename(String path) {
-  final cut = path.lastIndexOf(RegExp(r'[/\\]'));
-  return cut < 0 ? path : path.substring(cut + 1);
 }
 
 /// The Transform card: the layer's transform rows, in the panel's card chrome.

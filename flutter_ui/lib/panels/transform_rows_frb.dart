@@ -102,8 +102,12 @@ List<TransformGroup> transformGroups({required bool threeD}) => [
       ]),
     ];
 
-/// A layer's transform rows.
-class TransformRowsFrb extends StatefulWidget {
+/// A layer's transform rows, all of them.
+///
+/// The Effect controls card shows the whole set; the Timeline's fold-out draws
+/// them one at a time (its lanes are per row), so the row itself is the widget
+/// that carries the behaviour and this is a Column of them.
+class TransformRowsFrb extends StatelessWidget {
   final CompositionReference comp;
   final LayerReference layer;
   final int playheadFrame;
@@ -134,10 +138,55 @@ class TransformRowsFrb extends StatefulWidget {
   });
 
   @override
-  State<TransformRowsFrb> createState() => _TransformRowsFrbState();
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final group in transformGroups(threeD: layer.isThreeD()))
+            TransformRowFrb(
+              comp: comp,
+              layer: layer,
+              group: group,
+              playheadFrame: playheadFrame,
+              onSeek: onSeek,
+              onChanged: onChanged,
+              keyPrefix: keyPrefix,
+              rowHeight: rowHeight,
+              rowPadding: rowPadding,
+            ),
+        ],
+      );
 }
 
-class _TransformRowsFrbState extends State<TransformRowsFrb> {
+/// One transform property group as a row.
+class TransformRowFrb extends StatefulWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final TransformGroup group;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+  final String keyPrefix;
+  final double? rowHeight;
+  final EdgeInsets rowPadding;
+
+  const TransformRowFrb({
+    super.key,
+    required this.comp,
+    required this.layer,
+    required this.group,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+    this.keyPrefix = 'tf',
+    this.rowHeight,
+    this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+  });
+
+  @override
+  State<TransformRowFrb> createState() => _TransformRowFrbState();
+}
+
+class _TransformRowFrbState extends State<TransformRowFrb> {
   /// The transform being dragged, held only for the length of one drag, so the
   /// preview renders the other ten properties as the document has them.
   BridgeTransform? _staged;
@@ -146,16 +195,8 @@ class _TransformRowsFrbState extends State<TransformRowsFrb> {
   Duration _lastPreview = Duration.zero;
 
   @override
-  Widget build(BuildContext context) {
-    final transform = _staged ?? widget.layer.getTransform();
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final group in transformGroups(threeD: widget.layer.isThreeD()))
-          _row(transform, group),
-      ],
-    );
-  }
+  Widget build(BuildContext context) =>
+      _row(_staged ?? widget.layer.getTransform(), widget.group);
 
   Widget _row(BridgeTransform transform, TransformGroup group) {
     final t = ThemeScope.of(context).theme;

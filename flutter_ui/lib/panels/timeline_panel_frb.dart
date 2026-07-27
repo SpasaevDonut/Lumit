@@ -23,6 +23,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
@@ -33,6 +34,9 @@ import '../widgets/controls.dart';
 import 'placeholder.dart';
 import 'graph_editor_frb.dart';
 import 'timeline_extras_frb.dart';
+import 'effect_param_row_frb.dart';
+import 'keyframe_controls_frb.dart';
+import 'layer_fold_frb.dart';
 import 'transform_rows_frb.dart';
 
 /// The outline column's width. Wide enough for the number, four switches, a
@@ -57,16 +61,38 @@ class TimelinePanelFrb extends StatefulWidget {
 }
 
 class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
-  /// The layers twirled open, by id. Held by the panel rather than by each row
-  /// so the lane side can leave room for exactly the rows the outline draws —
-  /// the two halves are one table, and a name that does not line up with its bar
-  /// is worse than no fold-out at all.
+  /// What is twirled open: layer ids, and the paths of the groups under them
+  /// (`<layer>/transform`, `<layer>/effects/<effect>`, `<layer>/audio`). Held by
+  /// the panel rather than by each row so the lane side can leave room for
+  /// exactly the rows the outline draws — the two halves are one table, and a
+  /// name that does not line up with its bar is worse than no fold-out at all.
   final Set<String> _open = {};
 
-  void _toggleOpen(LayerReference layer) => setState(() {
-        final id = layer.internallayerId.toString();
-        if (!_open.remove(id)) _open.add(id);
+  /// Which layers' sources carry sound, by id. Cached because answering it
+  /// probes the file with FFmpeg, which must never happen in a build — the same
+  /// reason the Project panel caches missing media. Absent means "not asked
+  /// yet", and a layer with no entry simply shows no Audio group until the
+  /// answer arrives.
+  final Map<String, bool> _hasAudio = {};
+
+  void _toggle(String path) => setState(() {
+        if (!_open.remove(path)) _open.add(path);
       });
+
+  /// Fill in any layer's has-audio answer we do not have, off the build.
+  void _refreshAudio(List<LayerReference> layers) {
+    for (final layer in layers) {
+      final id = layer.internallayerId.toString();
+      if (_hasAudio.containsKey(id)) continue;
+      // Claim the slot first, so a rebuild mid-probe does not probe twice.
+      _hasAudio[id] = false;
+      layer.hasAudio().then((has) {
+        if (!mounted || _hasAudio[id] == has) return;
+        setState(() => _hasAudio[id] = has);
+      });
+    }
+  }
+
   String _search = '';
 
   /// The graph editor replaces the layer area rather than sitting beside it:
@@ -97,6 +123,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       for (final l in comp.getLayers())
         if (needle.isEmpty || l.getName().toLowerCase().contains(needle)) l,
     ];
+    _refreshAudio(layers);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -164,7 +191,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                           layers: layers,
                           selected: ui.selectedLayer.value,
                           open: _open,
-                          onToggleOpen: _toggleOpen,
+                          hasAudio: _hasAudio,
+                          onToggle: _toggle,
                           playheadFrame: ui.playheadFrame.value,
                           onSeek: (f) => ui.playheadFrame.value = f,
                           onSelect: (l) => setState(() {
@@ -193,6 +221,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                 comp: comp,
                                 layers: layers,
                                 open: _open,
+                                hasAudio: _hasAudio,
                                 axis: axis,
                                 playhead: ui.playheadFrame,
                                 razor: _razor,
@@ -210,6 +239,235 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           ),
         ),
         const CacheMeterFrb(),
+      ],
+    );
+  }
+}
+
+
+/// One row of a layer's fold-out, in the outline.
+///
+/// A heading draws its own twirl; a property row draws the same controls the
+/// Effect controls panel does, at exactly one lane's height so the two halves of
+/// the table stay in step.
+class _FoldRow extends StatelessWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final LayerFoldRow row;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final ValueChanged<String> onToggle;
+  final VoidCallback onChanged;
+
+  const _FoldRow({
+    required this.comp,
+    required this.layer,
+    required this.row,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onToggle,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    // 20 for the layer number, then one step per level, so a parameter sits
+    // under its effect and an effect under Effects.
+    final indent = 20.0 + row.depth * 14.0;
+    final child = switch (row) {
+      FoldGroupRow(:final path, :final label, :final open) => GestureDetector(
+          key: ValueKey<String>('tl-group-$path'),
+          behavior: HitTestBehavior.opaque,
+          onTap: () => onToggle(path),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              lumitIcon(
+                open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                size: 10,
+                color: open ? t.textPrimary : t.textMuted,
+              ),
+              const SizedBox(width: 4),
+              Text(label, style: t.body),
+            ],
+          ),
+        ),
+      FoldTransformRow(:final group) => TransformRowFrb(
+          comp: comp,
+          layer: layer,
+          group: group,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: onChanged,
+          keyPrefix: 'tl-tf',
+          rowPadding: EdgeInsets.zero,
+        ),
+      FoldEffectParamRow(:final effect, :final param) => _TimelineParamRow(
+          comp: comp,
+          layer: layer,
+          effect: effect,
+          param: param,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: onChanged,
+        ),
+      FoldVolumeRow() => _VolumeRow(
+          comp: comp,
+          layer: layer,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: onChanged,
+        ),
+    };
+
+    return SizedBox(
+      height: _rowHeight,
+      child: Padding(
+        padding: EdgeInsets.only(left: indent, right: 4),
+        child: child,
+      ),
+    );
+  }
+}
+
+/// One effect parameter in the Timeline. It owns the staging for its own drag,
+/// which is all the state a single row needs — the stack it writes is read fresh
+/// each time (see [EffectStackEditor]).
+class _TimelineParamRow extends StatefulWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final BridgeEffectInstance effect;
+  final BridgeParamInfo param;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const _TimelineParamRow({
+    required this.comp,
+    required this.layer,
+    required this.effect,
+    required this.param,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  @override
+  State<_TimelineParamRow> createState() => _TimelineParamRowState();
+}
+
+class _TimelineParamRowState extends State<_TimelineParamRow> {
+  final EffectStackEditor _editor = EffectStackEditor();
+
+  @override
+  Widget build(BuildContext context) {
+    // Read through the editor so the number under the pointer is the staged one
+    // while a drag is in flight.
+    final stack = _editor.stackWith(widget.layer);
+    final id = widget.effect.id();
+    BridgeEffectInstance? instance;
+    for (final candidate in stack) {
+      if (candidate.id() == id) instance = candidate;
+    }
+    if (instance == null) return const SizedBox.shrink();
+
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    return EffectParamRowFrb(
+      key: ValueKey<String>('tl-fx-$id-${widget.param.id}'),
+      effect: instance,
+      param: widget.param,
+      comp: widget.comp,
+      playheadFrame: widget.playheadFrame,
+      onSeek: widget.onSeek,
+      onWrite: (effect, param, value) {
+        _editor.write(widget.layer, effect, param, value);
+        setState(() {});
+        widget.onChanged();
+      },
+      onLive: (effect, param, value) => setState(() {
+        _editor.live(widget.comp, widget.layer, effect, param, value,
+            frame: ui.playheadFrame.value, scale: ui.viewerScale);
+      }),
+    );
+  }
+}
+
+/// The Audio group's one row: the layer's Volume, in dB.
+class _VolumeRow extends StatefulWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const _VolumeRow({
+    required this.comp,
+    required this.layer,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  @override
+  State<_VolumeRow> createState() => _VolumeRowState();
+}
+
+class _VolumeRowState extends State<_VolumeRow> {
+  /// The value under the pointer during a drag. Unlike a transform or an effect
+  /// there is no preview to render — sound is not redrawn — so a tick only holds
+  /// the number and the release commits it.
+  double? _staged;
+
+  void _commit(num value) {
+    widget.layer.setVolumeDb(value: BridgeScalar.static_(value.toDouble()));
+    setState(() => _staged = null);
+    widget.onChanged();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final scalar = widget.layer.getVolumeDb();
+    final animated = scalar is! BridgeScalar_Static;
+    final value = _staged ?? (animated ? 0.0 : scalar.field0);
+
+    return Row(
+      children: [
+        KeyframeControlsFrb(
+          scalars: [scalar],
+          comp: widget.comp,
+          playheadFrame: widget.playheadFrame,
+          onSeek: widget.onSeek,
+          rowKey: 'tl-volume',
+          onWrite: (next) {
+            widget.layer.setVolumeDb(value: next.single);
+            widget.onChanged();
+          },
+        ),
+        const SizedBox(width: 4),
+        Text('Volume', style: t.body),
+        const SizedBox(width: 10),
+        if (animated)
+          Text('animated', style: t.small.copyWith(color: t.textMuted))
+        else
+          SizedBox(
+            width: 74,
+            child: DragValueField(
+              key: const ValueKey('tl-volume-db'),
+              value: value,
+              // The engine's own range (docs/09 6): silence to a +12 dB boost.
+              min: -60,
+              max: 12,
+              decimals: 1,
+              suffix: ' dB',
+              speed: 0.2,
+              onChanged: _commit,
+              onChangeLive: (v) => setState(() => _staged = v.toDouble()),
+              onChangeEnd: _commit,
+              onDragCancel: () => setState(() => _staged = null),
+            ),
+          ),
       ],
     );
   }
@@ -431,7 +689,8 @@ class _Outline extends StatelessWidget {
   final List<LayerReference> layers;
   final LayerReference? selected;
   final Set<String> open;
-  final ValueChanged<LayerReference> onToggleOpen;
+  final Map<String, bool> hasAudio;
+  final ValueChanged<String> onToggle;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
   final ValueChanged<LayerReference> onSelect;
@@ -442,7 +701,8 @@ class _Outline extends StatelessWidget {
     required this.layers,
     required this.selected,
     required this.open,
-    required this.onToggleOpen,
+    required this.hasAudio,
+    required this.onToggle,
     required this.playheadFrame,
     required this.onSeek,
     required this.onSelect,
@@ -471,29 +731,28 @@ class _Outline extends StatelessWidget {
             count: layers.length,
             selected: selected?.equals(layer: layers[i]) ?? false,
             open: open.contains(layers[i].internallayerId.toString()),
-            onToggleOpen: () => onToggleOpen(layers[i]),
+            onToggleOpen: () =>
+                onToggle(layers[i].internallayerId.toString()),
             onSelect: () => onSelect(layers[i]),
             onChanged: onChanged,
           ),
-          // The property rows, when the layer is twirled open. Indented to the
-          // name column so they read as belonging to the layer above them.
+          // The fold-out, from the same list the lanes leave room for.
           if (open.contains(layers[i].internallayerId.toString()))
-            Padding(
-              padding: const EdgeInsets.only(left: 24),
-              child: TransformRowsFrb(
-                key: ValueKey<String>('tl-props-${layers[i].internallayerId}'),
+            for (final row in layerFoldRows(
+              layer: layers[i],
+              open: open,
+              hasAudio:
+                  hasAudio[layers[i].internallayerId.toString()] ?? false,
+            ))
+              _FoldRow(
                 comp: comp,
                 layer: layers[i],
+                row: row,
                 playheadFrame: playheadFrame,
                 onSeek: onSeek,
+                onToggle: onToggle,
                 onChanged: onChanged,
-                keyPrefix: 'tl-tf',
-                // Exactly one lane's worth each, because the lanes beside them
-                // are drawn at the same height from the same list.
-                rowHeight: _rowHeight,
-                rowPadding: EdgeInsets.zero,
               ),
-            ),
         ],
       ],
     );
@@ -689,6 +948,10 @@ class _LayerArea extends StatelessWidget {
   /// Which layers are twirled open in the outline. Read only to leave the same
   /// room their property rows take, so a bar never drifts away from its name.
   final Set<String> open;
+
+  /// Which layers carry sound — passed through only so the row list this side
+  /// builds is identical to the outline's.
+  final Map<String, bool> hasAudio;
   final _Axis axis;
 
   /// Listened to, not read: only the playhead line moves when it changes.
@@ -705,6 +968,7 @@ class _LayerArea extends StatelessWidget {
     required this.comp,
     required this.layers,
     required this.open,
+    required this.hasAudio,
     required this.axis,
     required this.playhead,
     required this.razor,
@@ -739,15 +1003,20 @@ class _LayerArea extends StatelessWidget {
                 playheadFrame: () => playhead.value,
                 onChanged: onChanged,
               ),
-              // One empty lane per property row the outline is showing. Empty
-              // for now — the keyframes themselves are drawn in the graph
-              // editor — but the room has to be here, or every bar below an
-              // open layer sits above its own name.
+              // One empty lane per fold-out row the outline is showing, from
+              // the same list it builds. Empty for now — the keyframes are drawn
+              // in the graph editor — but the room has to be here, or every bar
+              // below an open layer sits above its own name.
               if (open.contains(layer.internallayerId.toString()))
                 SizedBox(
                   key: ValueKey<String>('tl-lanes-${layer.internallayerId}'),
                   height: _rowHeight *
-                      transformGroups(threeD: layer.isThreeD()).length,
+                      layerFoldRows(
+                        layer: layer,
+                        open: open,
+                        hasAudio:
+                            hasAudio[layer.internallayerId.toString()] ?? false,
+                      ).length,
                 ),
             ],
           ],

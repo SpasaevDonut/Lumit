@@ -3659,3 +3659,40 @@ is what every other editor does. And a frame that comes back with no pixels in
 it (a render that failed) now still counts as an answer: before, it left the
 Viewer waiting for a reply that was never coming, which stopped it updating
 for the rest of the session.
+
+**The fold-out grows sections, and effect values become draggable.** Three
+things that belong together.
+
+*Sections, not one long list.* Twirling a layer open in the Timeline now shows
+a short list of **headings** — Transform, Effects, Audio — each with its own
+little arrow, and nothing under them until you open one. That is deliberate:
+a layer has eleven transform properties before you have added a single effect,
+and opening a layer straight onto all of them turns a busy composition into a
+wall of numbers. **Effects** only appears once the layer has an effect on it,
+and opens onto one row per effect, each of which opens onto that effect's own
+settings. **Audio** only appears when the layer's source can actually be heard
+— we ask the file itself whether it has a sound track — and holds the layer's
+**Volume** in decibels. Every layer has a volume in the underlying model, but
+on a coloured rectangle or a title it can never do anything, and a control
+that cannot do anything is worse than no control.
+
+*Effect values can be dragged now, and the reason they could not is worth
+knowing.* You could type into an effect's number but not scrub it. The cause
+was a piece of book-keeping across the language boundary. When Dart holds a
+Rust object it holds a *handle* to it, and some of the engine calls take that
+object **by value** — meaning the handle is handed over for good and the Dart
+side of it is emptied. The panel was keeping a whole stack of effect handles
+for the length of a drag and passing it to the engine on every tick to draw
+the preview: the first tick gave the handles away, and every tick after it was
+using something that no longer existed, so the drag died on its second frame.
+Typing worked because a single edit is one call and never reuses anything.
+
+The fix is a rule rather than a patch: **never hold a handle you have already
+handed over.** What is kept during a drag is the *edit* — which effect, which
+setting, what number — and fresh handles are made for each call that consumes
+them. The same rule is now written down beside the code that has to follow it.
+
+*One set of rows, two panels.* The rows the Timeline shows under a layer are
+literally the same widgets the Effect controls panel shows, moved into their
+own files so both use them. Writing a second set would have been quicker today
+and wrong by next month, when a fix to one quietly failed to reach the other.

@@ -5,6 +5,9 @@
 // panel has. What they assert about *behaviour* is reproduced here against the
 // document itself — a switch that does not reach the engine is not a switch.
 
+import 'dart:io';
+import 'dart:typed_data';
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -304,41 +307,52 @@ void main() {
       expect(p.uiState.playheadFrame.value, 30);
     });
 
-    /// The twirl-down the port dropped: a layer's transform properties, in the
-    /// Timeline, with values you can drag. They are the same rows the Effect
-    /// controls panel shows — one implementation, two panels.
-    testWidgets('the twirl opens a layer\'s property rows and closes them again',
-        (tester) async {
+    /// The twirl-down the port dropped. A layer opens onto its *section
+    /// headings* — Transform always, Effects when it has any, Audio only when
+    /// its source carries sound — and each heading opens onto its own rows
+    /// (docs/07 §4.3).
+    testWidgets('a layer opens onto its section headings', (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
 
-      final twirl = find
-          .byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
+      final twirl =
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
       expect(twirl, findsOneWidget, reason: 'every layer row has one');
-      expect(find.text('Opacity'), findsNothing,
+      expect(find.text('Transform'), findsNothing,
           reason: 'closed to start with, or a busy comp is a wall of numbers');
 
       await tester.tap(twirl);
       await tester.pump();
-      expect(find.text('Anchor point'), findsOneWidget);
-      expect(find.text('Position'), findsOneWidget);
-      expect(find.text('Scale'), findsOneWidget);
-      expect(find.text('Rotation'), findsOneWidget);
-      expect(find.text('Opacity'), findsOneWidget);
+      expect(find.text('Transform'), findsOneWidget);
+      expect(find.text('Position'), findsNothing,
+          reason: 'the heading opens first, not every property under it');
+      expect(find.text('Effects'), findsNothing,
+          reason: 'a layer with no effects has no Effects group to offer');
+      expect(find.text('Audio'), findsNothing,
+          reason: 'a solid cannot be heard, so it has no volume to set');
+
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+      for (final row in ['Anchor point', 'Position', 'Scale', 'Rotation',
+        'Opacity']) {
+        expect(find.text(row), findsOneWidget);
+      }
 
       await tester.tap(twirl);
       await tester.pump();
-      expect(find.text('Opacity'), findsNothing);
+      expect(find.text('Transform'), findsNothing);
     });
 
-    testWidgets('dragging a property value in the Timeline reaches the document',
+    testWidgets('dragging a transform value in the Timeline reaches the document',
         (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
-      await tester
-          .tap(find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
       await tester.pump();
 
       final before =
@@ -347,10 +361,87 @@ void main() {
           find.byKey(const ValueKey('tl-tf-positionX')), const Offset(40, 0));
       await tester.pump();
 
-      final after =
-          (layer.getTransform().positionX as BridgeScalar_Static).field0;
-      expect(after, greaterThan(before),
+      expect((layer.getTransform().positionX as BridgeScalar_Static).field0,
+          greaterThan(before),
           reason: 'the drag committed, exactly as it does in Effect controls');
+    });
+
+    /// An effect adds its own group, and each effect in it opens onto its
+    /// parameters — the same rows, and the same drag, the Effect controls panel
+    /// shows.
+    testWidgets('an effect adds a group whose parameters can be dragged',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addEffect(name: 'blur');
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      expect(find.text('Effects'), findsOneWidget,
+          reason: 'the group appears because there is something in it');
+
+      await tester.tap(find.text('Effects'));
+      await tester.pump();
+      expect(find.text('Gaussian blur'), findsOneWidget,
+          reason: 'one row per effect, by label');
+      expect(find.text('Radius'), findsNothing,
+          reason: 'and its parameters wait until it is opened');
+
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      expect(find.text('Radius'), findsOneWidget);
+
+      final id = layer.getEffects().single.id();
+      double radius() => ((layer.getEffects().single.getValue(id: 'radius')
+              as BridgeEffectValue_Float)
+          .field0 as BridgeScalar_Static)
+          .field0;
+      final before = radius();
+
+      await tester.drag(
+        find.byKey(ValueKey<String>('fx-float-$id-radius')),
+        const Offset(50, 0),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(radius(), greaterThan(before),
+          reason: 'the parameter drag reached the document');
+    });
+
+    /// The Audio group is offered only where there is sound to set. Both halves
+    /// matter: a silent layer must not carry a volume control, and one with
+    /// audio must.
+    testWidgets('the Audio group follows whether the layer can be heard',
+        (tester) async {
+      final p = withComp();
+      final silent = p.comp.addSolidLayer();
+      final audible = p.state.project!.importFootage(path: _wavFile('tone.wav'));
+      p.comp.addFootageLayer(footage: audible);
+      await mount(tester, p);
+
+      final footageLayer = p.comp.getLayers().first;
+      // The probe is a real trip into FFmpeg, so the answer arrives after a
+      // frame or two rather than during the first build.
+      await settleFrb(tester, minRounds: 8);
+
+      await tester.tap(find.byKey(
+          ValueKey<String>('tl-twirl-${footageLayer.internallayerId}')));
+      await tester.pump();
+      expect(find.text('Audio'), findsOneWidget,
+          reason: 'the file carries an audio stream');
+
+      await tester.tap(find.text('Audio'));
+      await tester.pump();
+      expect(find.text('Volume'), findsOneWidget);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${silent.internallayerId}')));
+      await tester.pump();
+      expect(find.text('Audio'), findsOneWidget,
+          reason: 'still only the one — a solid has nothing to be heard');
     });
 
     /// The outline and the lanes are one table. A fold-out that pushed the names
@@ -373,8 +464,10 @@ void main() {
             closeTo(tester.getTopLeft(barOf(layer)).dy, 0.01));
       }
 
-      await tester
-          .tap(find.byKey(ValueKey<String>('tl-twirl-${upper.internallayerId}')));
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${upper.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
       await tester.pump();
 
       for (final layer in [upper, lower]) {
@@ -385,5 +478,46 @@ void main() {
         );
       }
     });
+
   }, skip: !engineAvailable);
+}
+
+/// A real, probeable WAV: 16-bit mono PCM, a tenth of a second of silence.
+///
+/// Written to a temp file **synchronously** — an awaited async `dart:io` call in
+/// a `testWidgets` body hangs the test outright (see frb_test_support.dart). The
+/// point is only that FFmpeg reports an audio stream, so the samples can be
+/// anything.
+String _wavFile(String name) {
+  final dir = Directory.systemTemp.createTempSync('lumit-audio');
+  final file = File('${dir.path}/$name');
+  file.writeAsBytesSync(_tinyWav());
+  return file.path;
+}
+
+Uint8List _tinyWav() {
+  const rate = 8000;
+  const samples = 800;
+  const dataBytes = samples * 2;
+  final out = BytesBuilder();
+  void ascii(String s) => out.add(s.codeUnits);
+  void u16(int v) => out.add([v & 0xff, (v >> 8) & 0xff]);
+  void u32(int v) =>
+      out.add([v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff, (v >> 24) & 0xff]);
+
+  ascii('RIFF');
+  u32(36 + dataBytes);
+  ascii('WAVE');
+  ascii('fmt ');
+  u32(16); // PCM header length
+  u16(1); // PCM
+  u16(1); // mono
+  u32(rate);
+  u32(rate * 2); // byte rate
+  u16(2); // block align
+  u16(16); // bits per sample
+  ascii('data');
+  u32(dataBytes);
+  out.add(Uint8List(dataBytes));
+  return out.toBytes();
 }

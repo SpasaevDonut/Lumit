@@ -316,7 +316,10 @@ list, not a re-statement of the roadmap.
 
 - **Audio (the largest gap - [07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
     - **Audio panel** - the whole panel is missing in Flutter. The engine (playback,
-        volume, beat detection) works; there is no UI for it.
+        volume, beat detection) works; there is no UI for it. Per-layer **Volume** now
+        has one: the Audio group in the Timeline's fold-out, shown only on a layer whose
+        source carries sound ([07-UI-SPEC.md](07-UI-SPEC.md) §4.3). The panel itself,
+        level meters and the waveform lane are still missing.
     - **Beat-marker generation UI** (sensitivity, BPM-grid, range) - `detectBeatMarkers`
         exists on the bridge; the controls to drive it do not.
     **Beat tap** (press `8` during playback) and **level meters** - not wired.
