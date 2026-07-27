@@ -14,23 +14,18 @@ T _$identity<T>(T value) => value;
 
 /// @nodoc
 mixin _$WorkerResponse {
-  Object get field0;
-
   @override
   bool operator ==(Object other) {
     return identical(this, other) ||
-        (other.runtimeType == runtimeType &&
-            other is WorkerResponse &&
-            const DeepCollectionEquality().equals(other.field0, field0));
+        (other.runtimeType == runtimeType && other is WorkerResponse);
   }
 
   @override
-  int get hashCode =>
-      Object.hash(runtimeType, const DeepCollectionEquality().hash(field0));
+  int get hashCode => runtimeType.hashCode;
 
   @override
   String toString() {
-    return 'WorkerResponse(field0: $field0)';
+    return 'WorkerResponse()';
   }
 }
 
@@ -60,6 +55,7 @@ extension WorkerResponsePatterns on WorkerResponse {
         renderedSharedTexture,
     TResult Function(WorkerResponse_RenderedPixels value)? renderedPixels,
     TResult Function(WorkerResponse_Scope value)? scope,
+    TResult Function(WorkerResponse_PlaybackEnded value)? playbackEnded,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -73,6 +69,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return renderedPixels(_that);
       case WorkerResponse_Scope() when scope != null:
         return scope(_that);
+      case WorkerResponse_PlaybackEnded() when playbackEnded != null:
+        return playbackEnded(_that);
       case _:
         return orElse();
     }
@@ -100,6 +98,7 @@ extension WorkerResponsePatterns on WorkerResponse {
     required TResult Function(WorkerResponse_RenderedPixels value)
         renderedPixels,
     required TResult Function(WorkerResponse_Scope value) scope,
+    required TResult Function(WorkerResponse_PlaybackEnded value) playbackEnded,
   }) {
     final _that = this;
     switch (_that) {
@@ -111,6 +110,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return renderedPixels(_that);
       case WorkerResponse_Scope():
         return scope(_that);
+      case WorkerResponse_PlaybackEnded():
+        return playbackEnded(_that);
     }
   }
 
@@ -133,6 +134,7 @@ extension WorkerResponsePatterns on WorkerResponse {
         renderedSharedTexture,
     TResult? Function(WorkerResponse_RenderedPixels value)? renderedPixels,
     TResult? Function(WorkerResponse_Scope value)? scope,
+    TResult? Function(WorkerResponse_PlaybackEnded value)? playbackEnded,
   }) {
     final _that = this;
     switch (_that) {
@@ -145,6 +147,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return renderedPixels(_that);
       case WorkerResponse_Scope() when scope != null:
         return scope(_that);
+      case WorkerResponse_PlaybackEnded() when playbackEnded != null:
+        return playbackEnded(_that);
       case _:
         return null;
     }
@@ -168,6 +172,7 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult Function(BridgeSharedFrameInfo field0)? renderedSharedTexture,
     TResult Function(BridgeRenderedFrame field0)? renderedPixels,
     TResult Function(BridgeScopeTrace field0)? scope,
+    TResult Function()? playbackEnded,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -181,6 +186,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return renderedPixels(_that.field0);
       case WorkerResponse_Scope() when scope != null:
         return scope(_that.field0);
+      case WorkerResponse_PlaybackEnded() when playbackEnded != null:
+        return playbackEnded();
       case _:
         return orElse();
     }
@@ -206,6 +213,7 @@ extension WorkerResponsePatterns on WorkerResponse {
         renderedSharedTexture,
     required TResult Function(BridgeRenderedFrame field0) renderedPixels,
     required TResult Function(BridgeScopeTrace field0) scope,
+    required TResult Function() playbackEnded,
   }) {
     final _that = this;
     switch (_that) {
@@ -217,6 +225,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return renderedPixels(_that.field0);
       case WorkerResponse_Scope():
         return scope(_that.field0);
+      case WorkerResponse_PlaybackEnded():
+        return playbackEnded();
     }
   }
 
@@ -238,6 +248,7 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult? Function(BridgeSharedFrameInfo field0)? renderedSharedTexture,
     TResult? Function(BridgeRenderedFrame field0)? renderedPixels,
     TResult? Function(BridgeScopeTrace field0)? scope,
+    TResult? Function()? playbackEnded,
   }) {
     final _that = this;
     switch (_that) {
@@ -250,6 +261,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return renderedPixels(_that.field0);
       case WorkerResponse_Scope() when scope != null:
         return scope(_that.field0);
+      case WorkerResponse_PlaybackEnded() when playbackEnded != null:
+        return playbackEnded();
       case _:
         return null;
     }
@@ -261,7 +274,6 @@ extension WorkerResponsePatterns on WorkerResponse {
 class WorkerResponse_RenderedDMABuf extends WorkerResponse {
   const WorkerResponse_RenderedDMABuf(this.field0) : super._();
 
-  @override
   final BridgeSharedFrameInfoLinux field0;
 
   /// Create a copy of WorkerResponse
@@ -328,7 +340,6 @@ class _$WorkerResponse_RenderedDMABufCopyWithImpl<$Res>
 class WorkerResponse_RenderedSharedTexture extends WorkerResponse {
   const WorkerResponse_RenderedSharedTexture(this.field0) : super._();
 
-  @override
   final BridgeSharedFrameInfo field0;
 
   /// Create a copy of WorkerResponse
@@ -396,7 +407,6 @@ class _$WorkerResponse_RenderedSharedTextureCopyWithImpl<$Res>
 class WorkerResponse_RenderedPixels extends WorkerResponse {
   const WorkerResponse_RenderedPixels(this.field0) : super._();
 
-  @override
   final BridgeRenderedFrame field0;
 
   /// Create a copy of WorkerResponse
@@ -463,7 +473,6 @@ class _$WorkerResponse_RenderedPixelsCopyWithImpl<$Res>
 class WorkerResponse_Scope extends WorkerResponse {
   const WorkerResponse_Scope(this.field0) : super._();
 
-  @override
   final BridgeScopeTrace field0;
 
   /// Create a copy of WorkerResponse
@@ -521,6 +530,27 @@ class _$WorkerResponse_ScopeCopyWithImpl<$Res>
           : field0 // ignore: cast_nullable_to_non_nullable
               as BridgeScopeTrace,
     ));
+  }
+}
+
+/// @nodoc
+
+class WorkerResponse_PlaybackEnded extends WorkerResponse {
+  const WorkerResponse_PlaybackEnded() : super._();
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is WorkerResponse_PlaybackEnded);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'WorkerResponse.playbackEnded()';
   }
 }
 

@@ -275,6 +275,17 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
 - Retime Time-lens **vertical (source-position) boundary drag** has no bridge op
     (`SetLayerRetime`/`from_source_keyframes` unexposed).
 
+**Playback scheduler — the rest of it.** Playback now runs in the render worker
+rather than in Flutter (K-181), which was the boundary fix. What it is not yet is
+the scheduler [impl/playback-scheduler.md](impl/playback-scheduler.md) §5
+specifies: it renders one frame at a time, strictly serial, with no ring buffer,
+no lookahead adapted from measured p95 cost, and no epoch tokens — cancellation
+is still the coarse newest-wins drain. The serial hand-off costs roughly what the
+Dart-side two-deep pipeline used to hide (~4 fps on 1080p60 footage), so that is
+the number the ring has to beat. Its test plan (§6: cancellation latency,
+snapshot isolation, A/V drift, the underrun ladder, the realtime controller)
+lands with it.
+
 **Viewer / comp rendering (gated on the F2 comp-render path):**
 - Transform gizmo and motion paths ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3-§2.4);
     timeline razor/clip editing and overrun hatching surface here too.

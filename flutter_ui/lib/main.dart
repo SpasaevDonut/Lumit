@@ -20,6 +20,7 @@ import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/dock.dart';
+import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -244,12 +245,79 @@ class LumitUiState extends ChangeNotifier {
   void requestTogglePlay() => togglePlayRequest.value++;
 
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
-  /// transports.
-  ///
-  /// The Viewer waits on this to keep exactly one render in flight: without it
-  /// there is nothing to tell Dart that a request it made has been answered,
-  /// and the only option is to fire and hope.
+  /// transports. Watched by anything that redraws when the picture does — the
+  /// Timeline's cache bar, the Scopes panel.
   final ValueNotifier<int> frameArrived = ValueNotifier(0);
+
+  /// Whether the engine is playing.
+  ///
+  /// Mirrored, not decided: it goes true when [play] is called and false when
+  /// the engine says playback ended or the user stops it. The transport reads it
+  /// to know which button to draw.
+  final ValueNotifier<bool> playing = ValueNotifier(false);
+
+  /// Start playing the fronted composition from the playhead.
+  ///
+  /// Everything about *how* playback runs — which frame is next, whether the
+  /// clock has moved on, when to give up a tier — belongs to the engine
+  /// (K-181). This says go, and [_arrived] follows the frames back.
+  void play() {
+    final comp = selectedComp;
+    if (comp == null) return;
+    comp.play(
+      from: BigInt.from(playheadFrame.value),
+      scale: viewerScale,
+      mode: workspace.performance.playback == PlaybackMode.adaptive
+          ? BridgePlaybackMode.adaptive
+          : BridgePlaybackMode.everyFrame,
+      zeroCopy:
+          workspace.performance.useSharedTexture && controller.available,
+    );
+    playing.value = true;
+  }
+
+  void stopPlayback() {
+    playing.value = false;
+    selectedComp?.stopPlayback();
+  }
+
+  /// Ask for the frame under the playhead as the document now stands.
+  ///
+  /// Called when the playhead moves or an edit lands — both are *facts* the
+  /// engine is told, not requests the frontend schedules. The worker coalesces
+  /// whatever piles up behind a render in flight (`drain_to_newest`), which is
+  /// why this can be called freely and needs no in-flight bookkeeping here.
+  /// Ignored during playback, where the engine is already choosing frames.
+  void requestFrame() {
+    if (playing.value) return;
+    final comp = selectedComp;
+    if (comp == null) return;
+    try {
+      comp.renderFrame(
+        frame: BigInt.from(playheadFrame.value),
+        scale: viewerScale,
+        mode: workspace.performance.playback == PlaybackMode.adaptive
+            ? BridgePlaybackMode.adaptive
+            : BridgePlaybackMode.everyFrame,
+        zeroCopy:
+            workspace.performance.useSharedTexture && controller.available,
+      );
+    } catch (_) {
+      // No worker yet, or a composition that has gone away. The next playhead
+      // move or edit asks again; there is nothing to recover here.
+    }
+  }
+
+  /// A frame arrived. While playing, the picture leads and the playhead follows
+  /// it — that is what makes the transport show the frame actually on screen
+  /// rather than the one the engine was asked for. Paused, the playhead is the
+  /// user's and is left alone.
+  void _arrived(int frame) {
+    frameArrived.value++;
+    if (playing.value && playheadFrame.value != frame) {
+      playheadFrame.value = frame;
+    }
+  }
 
   /// Move the playhead by `delta` frames, clamped to the fronted composition.
   void stepFrame(int delta) {
@@ -334,6 +402,10 @@ class LumitUiState extends ChangeNotifier {
         // directly, so there is nothing for the Viewer to do with one.
         case WorkerResponse_Scope():
           break;
+        // Playback ran off the end on its own. Stopping because the *user* asked
+        // needs no message — `stopPlayback` already set the flag.
+        case WorkerResponse_PlaybackEnded():
+          playing.value = false;
       }
     });
   }
@@ -350,7 +422,7 @@ class LumitUiState extends ChangeNotifier {
             offset: f.offset,
             fourcc: f.drmFourcc,
             modifier: f.modifier.toInt())
-        .then(_adoptTexture);
+        .then((id) => _adoptTexture(id, f.frame.toInt()));
   }
 
   /// Windows zero-copy: register the shared D3D12 texture by its NT handle.
@@ -358,14 +430,14 @@ class LumitUiState extends ChangeNotifier {
   void _showSharedTexture(BridgeSharedFrameInfo f) {
     controller
         .ensureRegistered(f.handle.toInt(), f.width, f.height)
-        .then(_adoptTexture);
+        .then((id) => _adoptTexture(id, f.frame.toInt()));
   }
 
   /// A registered texture is now current: mark a frame available and, if the id
   /// changed, point the Viewer at it. Also drops any held read-back image, since
   /// the two paths are mutually exclusive.
-  void _adoptTexture(int? id) {
-    frameArrived.value++;
+  void _adoptTexture(int? id, int frame) {
+    _arrived(frame);
     if (id == null) return;
     controller.frameReady();
     // The texture may turn out never to be drawn (see `neverDrawn`). Clearing
@@ -385,10 +457,9 @@ class LumitUiState extends ChangeNotifier {
   /// a `ui.Image` holds native memory and is not collected for us.
   void _showPixels(BridgeRenderedFrame f) {
     if (f.width == 0 || f.height == 0) {
-      // Still an answer, even though there is nothing to draw. The Viewer holds
-      // one render in flight and waits for this before asking again, so a
-      // silent return here wedged it for the rest of the session.
-      frameArrived.value++;
+      // Still an answer, even though there is nothing to draw — playback keeps
+      // moving past a frame that would not render.
+      _arrived(f.frame.toInt());
       return;
     }
     ui.decodeImageFromPixels(
@@ -401,7 +472,7 @@ class LumitUiState extends ChangeNotifier {
         viewerImage.value = image;
         // Whichever path published last wins.
         viewerFrameid.value = null;
-        frameArrived.value++;
+        _arrived(f.frame.toInt());
         // Disposed a frame later, not now. `RawImage` does not take ownership:
         // the tree still holds the previous image until the rebuild this
         // assignment schedules has been painted. Disposing it here left a

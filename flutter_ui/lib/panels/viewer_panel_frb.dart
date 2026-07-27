@@ -13,6 +13,15 @@
 // the Viewer costs the same one undo step that dragging the number in Effect
 // controls does.
 //
+// **What the transport does, and does not, do.** It says play, stop and seek,
+// and it draws whichever frame last arrived. It runs no clock and schedules
+// nothing: the engine chooses frames, paces them against the audio, and stops
+// itself at the end, and every frame it publishes says which frame it is — so
+// the playhead follows the picture rather than predicting it (K-181). This panel
+// used to hold a `Ticker` polling the audio clock, an every-frame pump two deep,
+// an in-flight counter and a staleness flag, which is a scheduler sitting on the
+// far side of an FFI boundary from everything it had to schedule against.
+//
 // **What is not here.** The scale and rotate gizmo handles, motion paths, masks
 // and the shape tools; guides, the region of interest, and the colour-management
 // indicator. Recorded in docs/TODO.md — none is blocked on the engine.
@@ -20,7 +29,6 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
-import 'package:flutter/scheduler.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/audio.dart';
@@ -54,17 +62,11 @@ class ViewerPanelFrb extends StatefulWidget {
   State<ViewerPanelFrb> createState() => _ViewerPanelFrbState();
 }
 
-class _ViewerPanelFrbState extends State<ViewerPanelFrb>
-    with SingleTickerProviderStateMixin {
+class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
   double? _zoom;
   ViewerChannel _channel = ViewerChannel.rgb;
   bool _grid = true;
   Offset _pan = Offset.zero;
-
-  Ticker? _ticker;
-  int _startedFrom = 0;
-
-  bool get playing => _ticker?.isActive ?? false;
 
   /// Edits made anywhere in the document, which are the other reason the
   /// picture has to be asked for again.
@@ -74,35 +76,13 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
   void dispose() {
     _unbind();
     _changes?.cancel();
-    _ticker?.dispose();
     super.dispose();
   }
 
-  /// An edit landed since the render now in flight was asked for.
-  ///
-  /// The frame *number* alone cannot say whether the picture is up to date: an
-  /// edit changes what frame 40 looks like without changing that it is frame 40.
-  /// Without this, an edit that landed mid-render was answered by the frame
-  /// already on its way and never asked for again.
-  bool _stale = false;
-
-  /// Something changed the document: whatever is on screen is now a picture of
-  /// the document as it *was*.
-  ///
-  /// Every commit comes through here — this panel does not make edits itself, so
-  /// there is no local shortcut to take. During every-frame playback the pump
-  /// owns the request stream, exactly as in [_onPlayheadChanged].
-  void _onDocumentChanged() {
-    final ui = _boundUi;
-    final comp = ui?.selectedComp;
-    if (ui == null || comp == null) return;
-    if (playing &&
-        ui.workspace.performance.playback == PlaybackMode.everyFrame) {
-      return;
-    }
-    _stale = true;
-    _requestRender(comp, ui);
-  }
+  /// Something changed the document: tell the engine, which decides what to do
+  /// about it. Every commit comes through here — this panel makes no edits
+  /// itself, so there is no local shortcut to take.
+  void _onDocumentChanged() => _boundUi?.requestFrame();
 
   /// The shell's transport intent (the space bar). Subscribed here rather than
   /// exposed as a callback so the key is a quiet no-op when no Viewer is
@@ -114,15 +94,9 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     if (ui == null) return;
     ui.togglePlayRequest.removeListener(_onTogglePlayRequest);
     ui.playheadFrame.removeListener(_onPlayheadChanged);
-    ui.frameArrived.removeListener(_onFrameArrived);
   }
 
-  void _onTogglePlayRequest() {
-    final ui = _boundUi;
-    final comp = ui?.selectedComp;
-    if (ui == null || comp == null) return;
-    _togglePlay(comp, ui);
-  }
+  void _onTogglePlayRequest() => _togglePlay();
 
   @override
   Widget build(BuildContext context) {
@@ -132,7 +106,6 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       _boundUi = ui;
       ui.togglePlayRequest.addListener(_onTogglePlayRequest);
       ui.playheadFrame.addListener(_onPlayheadChanged);
-      ui.frameArrived.addListener(_onFrameArrived);
       _changes?.cancel();
       _changes = Provider.of<LumitState>(context, listen: false)
           .onChange
@@ -157,25 +130,30 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     final t = ThemeScope.of(context).theme;
     final round = t.shape == ThemeShape.round;
 
-    final bar = ValueListenableBuilder<int>(
-      valueListenable: ui.playheadFrame,
-      builder: (context, frame, _) => _Toolbar(
-        zoom: _zoom,
-        channel: _channel,
-        grid: _grid,
-        playing: playing,
-        frame: frame,
-        settings: settings,
-        comp: comp,
-        onZoom: (z) => setState(() {
-          _zoom = z;
-          _pan = Offset.zero;
-        }),
-        onChannel: (c) => setState(() => _channel = c),
-        onGrid: () => setState(() => _grid = !_grid),
-        onPlayPause: () => _togglePlay(comp, ui),
-        onSeek: (f) => _seek(comp, ui, f),
-        floating: round,
+    // Both notifiers, because the transport shows two things the engine owns:
+    // where the playhead is, and whether it is running.
+    final bar = ValueListenableBuilder<bool>(
+      valueListenable: ui.playing,
+      builder: (context, playing, _) => ValueListenableBuilder<int>(
+        valueListenable: ui.playheadFrame,
+        builder: (context, frame, _) => _Toolbar(
+          zoom: _zoom,
+          channel: _channel,
+          grid: _grid,
+          playing: playing,
+          frame: frame,
+          settings: settings,
+          comp: comp,
+          onZoom: (z) => setState(() {
+            _zoom = z;
+            _pan = Offset.zero;
+          }),
+          onChannel: (c) => setState(() => _channel = c),
+          onGrid: () => setState(() => _grid = !_grid),
+          onPlayPause: _togglePlay,
+          onSeek: (f) => _seek(comp, ui, f),
+          floating: round,
+        ),
       ),
     );
 
@@ -259,238 +237,32 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     state.reportViewerScale(fitted.width / size.width);
   }
 
-  /// The frame the engine is currently rendering for us, or null when idle.
-  ///
-  /// **One render in flight at a time.** Firing a request per tick queued about
-  /// ten of them per completed render, and the worker threw all but the newest
-  /// away — so most of that work was a lock, a document snapshot and a channel
-  /// send on the UI thread for a frame discarded on arrival. Asking again only
-  /// once the previous answer is in gets the same picture for a fraction of the
-  /// cost, and it is always the *newest* wanted frame that gets asked for, so
-  /// nothing lags behind.
-  int? _awaitingFrame;
-
-  /// The newest frame we have been asked to show, or null when the picture is
-  /// up to date. Cleared once satisfied — see [_onFrameArrived].
-  int? _wantedFrame;
-
-  void _requestRender(CompositionReference comp, LumitUiState state) {
-    _wantedFrame = state.playheadFrame.value;
-    if (_awaitingFrame != null) return;
-    _dispatchRender(comp, state);
-  }
-
-  void _dispatchRender(CompositionReference comp, LumitUiState state) {
-    final frame = _wantedFrame;
-    if (frame == null) return;
-    _awaitingFrame = frame;
-    // What goes out now is a picture of the document as it stands.
-    _stale = false;
-    try {
-      comp.renderFrame(
-        frame: BigInt.from(frame),
-        scale: state.viewerScale,
-        mode: state.workspace.performance.playback == PlaybackMode.adaptive
-            ? BridgePlaybackMode.adaptive
-            : BridgePlaybackMode.everyFrame,
-        // Only ask for a texture we can actually show. The controller latches
-        // itself unavailable the moment a registration fails, so a machine or a
-        // runner that cannot do this gets pixels from the next frame onwards
-        // rather than an empty Viewer for the rest of the session.
-        zeroCopy: state.workspace.performance.useSharedTexture &&
-            state.controller.available,
-      );
-    } catch (_) {
-      // A refused request is never answered, so holding the in-flight slot for
-      // it would wedge the Viewer for the rest of the session — every later
-      // frame would wait on a reply that is not coming.
-      _awaitingFrame = null;
-    }
-  }
-
-  /// A frame landed: ask for the next one only if the playhead has moved on.
-  ///
-  /// Clearing `_wantedFrame` once it is satisfied is what stops this looping.
-  /// Re-dispatching whenever anything was wanted meant every delivered frame
-  /// asked for itself again, and the engine rendered the same picture forever.
-  void _onFrameArrived() {
-    final delivered = _awaitingFrame;
-    _awaitingFrame = null;
-    final ui = _boundUi;
-    final comp = ui?.selectedComp;
-    if (ui == null || comp == null) return;
-
-    // Every-frame playback is driven by delivery, not by a clock: nothing is
-    // ever skipped however long each frame takes. That is the whole point of
-    // the mode — you are watching every frame and filling the cache, not
-    // keeping time.
-    if (playing &&
-        ui.workspace.performance.playback == PlaybackMode.everyFrame) {
-      final last = comp.durationFrames() - 1;
-      _efInFlight = (_efInFlight - 1).clamp(0, 8);
-      _efPump(comp, ui, last);
-      final next = ui.playheadFrame.value + 1;
-      if (next > last && _efInFlight == 0) {
-        _ticker?.stop();
-        setState(() {});
-        return;
-      }
-      if (next <= last) ui.playheadFrame.value = next;
-      return;
-    }
-
-    // A frame nobody here asked for: a live drag's preview, which the Effect
-    // controls and Timeline rows publish through `renderFrameWithPreview`.
-    // Answering one by dispatching a plain render is what made a drag flicker —
-    // every preview tick was immediately overpainted by the *unedited* document
-    // at the same frame, so the picture alternated between the dragged value and
-    // the value before the drag until the pointer was released. The preview owns
-    // the picture for as long as it keeps publishing; the commit that ends the
-    // drag comes back through [_onDocumentChanged].
-    if (delivered == null) return;
-
-    _wantedFrame = ui.playheadFrame.value;
-    // `_stale` is why this is not just a frame-number comparison: an edit that
-    // landed while this frame was rendering makes the delivered picture the
-    // right frame of the wrong document.
-    if (_wantedFrame == delivered && !_stale) {
-      _wantedFrame = null;
-      return;
-    }
-    _dispatchRender(comp, ui);
-  }
-
-  /// How many every-frame renders are outstanding, and the next frame to ask
-  /// for. Two are kept in flight so the worker renders frame N+1 while this
-  /// side is still decoding and displaying frame N — the pipeline was strictly
-  /// serial before, and the hand-off latency alone held 60 fps footage to ~56.
-  /// Safe only because the worker never supersedes an every-frame request.
-  int _efInFlight = 0;
-  int _efNext = 0;
-
-  void _efPump(CompositionReference comp, LumitUiState state, int last) {
-    while (_efInFlight < 2 && _efNext <= last) {
-      try {
-        comp.renderFrame(
-          frame: BigInt.from(_efNext),
-          scale: state.viewerScale,
-          mode: BridgePlaybackMode.everyFrame,
-          zeroCopy: false,
-        );
-      } catch (_) {
-        return;
-      }
-      _efNext++;
-      _efInFlight++;
-    }
-  }
 
   /// The playhead moved — from anywhere. The Timeline ruler, an arrow key and
-  /// the transport all just set it, and this is what turns that into a picture.
-  /// Rendering used to be the transport's own business, so dragging the
-  /// Timeline's playhead moved it and left the Viewer showing the old frame.
-  void _onPlayheadChanged() {
-    final ui = _boundUi;
-    final comp = ui?.selectedComp;
-    if (ui == null || comp == null) return;
-    // During every-frame playback the pump owns the request stream; the
-    // playhead moving here is the *result* of a delivery, not a seek.
-    if (playing &&
-        ui.workspace.performance.playback == PlaybackMode.everyFrame) {
-      return;
-    }
-    _requestRender(comp, ui);
-  }
+  /// the transport all just set it, and this is what tells the engine.
+  ///
+  /// It is only ever *told*: moving the playhead is the user's own gesture and
+  /// happens the instant they make it, with no round trip to wait on. What
+  /// happens next — which frame to render, whether the one in flight is now
+  /// worthless — is the engine's to decide.
+  void _onPlayheadChanged() => _boundUi?.requestFrame();
 
+  /// Move the playhead, taking the sound with it. Seeking while playing keeps
+  /// playing, which is what makes scrubbing during playback usable rather than
+  /// a stutter.
   void _seek(CompositionReference comp, LumitUiState state, int frame) {
-    final settings = comp.getSettings();
     final last = comp.durationFrames() - 1;
     state.playheadFrame.value = frame.clamp(0, last < 0 ? 0 : last);
-    // Take the sound with it. Seeking while playing keeps playing, which is
-    // what makes scrubbing during playback usable rather than a stutter.
-    final fps = settings.fpsDen == 0
-        ? 60.0
-        : settings.fpsNum.toDouble() / settings.fpsDen.toDouble();
-    audioSeek(secs: state.playheadFrame.value / fps);
+    audioSeek(secs: state.playheadFrame.value / comp.fps());
   }
 
-  /// Play from the playhead at the comp's own rate, with sound.
-  ///
-  /// **The sound is the master once it is playing.** A mix is handed to the
-  /// operating system and plays on its own; the picture asks where that
-  /// actually got to and draws that frame. Counting frames instead would drift
-  /// against the audio, and drift between picture and sound is the one timing
-  /// error everybody notices.
-  ///
-  /// Until a mix is loaded — while it is still decoding, or on a machine with
-  /// no sound device — the frame comes from elapsed wall time instead, so a
-  /// frame the renderer could not deliver is skipped rather than playback
-  /// falling further behind real time. Silence never stops the picture.
-  void _togglePlay(CompositionReference comp, LumitUiState state) {
-    if (playing) {
-      _ticker?.stop();
-      audioPause();
-      setState(() {});
-      return;
-    }
-
-    final settings = comp.getSettings();
-    final fps = settings.fpsDen == 0
-        ? 60.0
-        : settings.fpsNum.toDouble() / settings.fpsDen.toDouble();
-    final last = comp.durationFrames() - 1;
-
-    // Play from the end means play from the start. Otherwise pressing play with
-    // the playhead already at the last frame did nothing at all: the clock said
-    // "past the end" on its first tick, and every-frame's pump had no frame left
-    // to ask for — so the transport showed itself playing while nothing moved
-    // and no picture was ever requested.
-    if (state.playheadFrame.value >= last) state.playheadFrame.value = 0;
-
-    // Every-frame playback cannot keep time by definition, so it plays silent.
-    // Sound that drifts against the picture is worse than no sound, and worse
-    // than being told there will not be any.
-    if (state.workspace.performance.playback == PlaybackMode.everyFrame) {
-      audioStop();
-      _startedFrom = state.playheadFrame.value;
-      // The ticker exists only so `playing` is true and the transport shows
-      // its stop button; delivery drives the playhead (see `_onFrameArrived`).
-      _ticker?.dispose();
-      _ticker = createTicker((_) {});
-      _ticker!.start();
-      _efNext = state.playheadFrame.value;
-      _efInFlight = 0;
-      _efPump(comp, state, last);
-      setState(() {});
-      return;
-    }
-
-    _startedFrom = state.playheadFrame.value;
-    // Ask for the sound before the first tick, so the mix is being built while
-    // the picture is already running on the wall clock.
-    comp.audioPlay(start: _startedFrom / fps);
-    _ticker?.dispose();
-    // A `Ticker`'s elapsed already counts from when it started, so there is no
-    // baseline to subtract — and taking one would throw away the first tick.
-    _ticker = createTicker((elapsed) {
-      // The audio clock when there is one, the wall clock until then.
-      final clock = audioClock();
-      final seconds = clock.loaded && clock.playing
-          ? clock.seconds
-          : elapsed.inMicroseconds / 1e6 + _startedFrom / fps;
-      final frame = (seconds * fps).floor();
-      if (frame > last) {
-        _ticker?.stop();
-        audioStop();
-        setState(() {});
-        return;
-      }
-      if (frame == state.playheadFrame.value) return;
-      // Setting it is all that is needed: the playhead listener renders.
-      state.playheadFrame.value = frame;
-    });
-    _ticker!.start();
-    setState(() {});
+  /// Start or stop playback. Two calls, because that is all a transport is:
+  /// the clock, the frame choice, the sound and the end of the composition are
+  /// all the engine's (K-181).
+  void _togglePlay() {
+    final ui = _boundUi;
+    if (ui == null) return;
+    ui.playing.value ? ui.stopPlayback() : ui.play();
   }
 }
 

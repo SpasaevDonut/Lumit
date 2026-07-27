@@ -131,6 +131,16 @@ These are the contract. Three of them survived the change of transport unchanged
 
 The engine owns the document; the frontend never mutates it directly.
 
+**And the engine owns the decisions (K-181).** The frontend holds *interaction
+state* — where the playhead is, the zoom, the selection, the pan — and acts on it
+the instant the user does, with no round trip to wait on. What it does not hold
+is *policy*. It states facts ("the playhead is at 40", "play from here", "the
+document changed") and paints what comes back; scheduling, timing, invalidation
+and degradation are the engine's, because the engine is the half holding the
+inputs to those decisions. The test: if a Dart change would need a clock, a
+queue, a retry, a staleness flag, or a count of work in flight, it belongs on the
+other side of this boundary.
+
 - **Commands down.** Every user action becomes one call on a reference handle.
     Each edit maps onto a real, unit-tested `lumit_core` op (`AddLayer`,
     `SetTransformProperty`, `SetLayerEffects`, and so on), so undo/redo

@@ -711,6 +711,67 @@ impl CompositionReference {
         }))
     }
 
+    /// Play from `from` at this comp's own rate, with sound.
+    ///
+    /// The frontend calls this and then paints whatever frames arrive: each one
+    /// says which frame it is, so the transport and the playhead follow the
+    /// picture rather than predicting it. Playback stops when the frontend says
+    /// so ([`Self::stop_playback`]) or when it runs off the end, which arrives as
+    /// `WorkerResponse::PlaybackEnded`.
+    ///
+    /// The sound is started here too, so "play" is one call rather than a pair
+    /// the frontend has to keep in step. Every-frame mode is silent by
+    /// definition — it cannot keep time, and sound that drifts is worse than
+    /// none — so it stops the audio instead of starting it.
+    ///
+    /// `mode` comes from the frontend because it is a user *setting*, kept in the
+    /// workspace file the frontend owns — stating it is not deciding anything.
+    #[frb(sync)]
+    pub fn play(
+        &self,
+        from: u64,
+        scale: f32,
+        mode: BridgePlaybackMode,
+        zero_copy: bool,
+    ) -> Result<(), BridgeError> {
+        match mode {
+            BridgePlaybackMode::EveryFrame => crate::api::audio::audio_stop(),
+            BridgePlaybackMode::Adaptive => {
+                let fps = self.fps();
+                self.audio_play(from as f64 / fps)?;
+            }
+        }
+
+        self.dispatch(WorkerRequest::Play(
+            crate::api::worker_thread::PlayRequest {
+                comp: self.clone(),
+                from,
+                mode,
+                scale,
+                zero_copy,
+            },
+        ))
+    }
+
+    /// Stop playing, and silence the sound. Harmless when nothing is playing.
+    #[frb(sync)]
+    pub fn stop_playback(&self) -> Result<(), BridgeError> {
+        crate::api::audio::audio_pause();
+        self.dispatch(WorkerRequest::StopPlayback)
+    }
+
+    /// This composition's rate as a plain number, for turning frames into
+    /// seconds. Falls back to 60 for a comp with a nonsense rate rather than
+    /// dividing by zero.
+    #[frb(sync)]
+    pub fn fps(&self) -> f64 {
+        self.composition()
+            .map(|c| c.frame_rate.fps())
+            .ok()
+            .filter(|fps| *fps > 0.0)
+            .unwrap_or(60.0)
+    }
+
     /// The preview tier adaptive playback has settled on: 1 Full, 2 Half,
     /// 3 Third, 4 Quarter. Shown beside the mode so "why is it soft?" has an
     /// answer on screen rather than in a log.

@@ -92,24 +92,68 @@ void main() {
       expect(p.uiState.playheadFrame.value, 0);
     });
 
-    testWidgets('play advances the playhead and stops at the end',
+    /// **Playback runs in the engine (K-181).** Note what this test does *not*
+    /// do: elapse any fake time. `settleFrb` gives real event-loop turns and
+    /// deliberately advances no `FakeAsync` clock, so a Flutter `Ticker` would
+    /// never fire during it. The playhead moves here purely because the engine
+    /// chose frames and each arriving frame said which one it was — which is the
+    /// whole point of the move, and would fail if a clock crept back into Dart.
+    testWidgets('play advances the playhead, and stopping holds it',
         (tester) async {
       final p = withLayer();
       await mount(tester, p);
 
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
-      // Ticker time is fake here, so elapse enough for several frames.
-      await tester.pump(const Duration(milliseconds: 250));
+      expect(p.uiState.playing.value, isTrue);
+      await settleFrb(tester,
+          minRounds: 6,
+          maxRounds: 120,
+          until: () => p.uiState.playheadFrame.value > 0);
       expect(p.uiState.playheadFrame.value, greaterThan(0),
-          reason: 'playing moves the playhead');
+          reason: 'the engine chose frames and the playhead followed them');
 
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
+      expect(p.uiState.playing.value, isFalse);
+      await settleFrb(tester, minRounds: 4, maxRounds: 4);
       final stopped = p.uiState.playheadFrame.value;
-      await tester.pump(const Duration(milliseconds: 250));
+      await settleFrb(tester, minRounds: 8, maxRounds: 8);
       expect(p.uiState.playheadFrame.value, stopped,
-          reason: 'pausing stops it where it is');
+          reason: 'stopping stops it where it is, in-flight frames included');
+    });
+
+    /// Running off the end is the engine's to notice: it knows the length and it
+    /// is the one counting. The frontend is *told*, and that is the only reason
+    /// its transport goes back to showing a play button.
+    testWidgets('playback ends on its own at the end of the composition',
+        (tester) async {
+      final p = withLayer();
+      // A tenth of a second, so the end arrives inside a test rather than in the
+      // thirty seconds a default comp lasts.
+      final was = p.comp.getSettings();
+      p.comp.setSettings(
+        settings: BridgeCompSettings(
+          name: was.name,
+          width: 160,
+          height: 90,
+          fpsNum: was.fpsNum,
+          fpsDen: was.fpsDen,
+          duration: const BridgeRational(num: 1, den: 10),
+        ),
+      );
+      await mount(tester, p);
+      expect(p.comp.durationFrames(), 6, reason: '0.1 s at 60 fps');
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
+      await settleFrb(tester,
+          minRounds: 6,
+          maxRounds: 200,
+          until: () => !p.uiState.playing.value);
+
+      expect(p.uiState.playing.value, isFalse,
+          reason: 'the engine said it ended; nothing in Dart worked it out');
     });
 
     testWidgets('the timecode reads HH:MM:SS:FF at the comp rate',
@@ -257,10 +301,13 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 250));
+      await settleFrb(tester,
+          minRounds: 6,
+          maxRounds: 120,
+          until: () => p.uiState.playheadFrame.value > 0);
 
       expect(p.uiState.playheadFrame.value, greaterThan(0),
-          reason: 'no audio device, so the wall clock drives it');
+          reason: 'no audio device, so the engine falls back to its wall clock');
 
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
@@ -268,8 +315,8 @@ void main() {
           reason: 'pausing the transport pauses the sound too');
     });
 
-    /// The shell's space bar drives the transport through LumitUiState, because
-    /// the ticker belongs to this panel's state — nothing outside can call it.
+    /// The shell's space bar drives the transport through LumitUiState, so the
+    /// key is a quiet no-op when no Viewer is mounted.
     testWidgets('the transport request from the shell starts and stops it',
         (tester) async {
       final p = withLayer();
@@ -277,14 +324,18 @@ void main() {
 
       p.uiState.requestTogglePlay();
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 250));
+      await settleFrb(tester,
+          minRounds: 6,
+          maxRounds: 120,
+          until: () => p.uiState.playheadFrame.value > 0);
       expect(p.uiState.playheadFrame.value, greaterThan(0),
           reason: 'space started playback');
 
       p.uiState.requestTogglePlay();
       await tester.pump();
+      await settleFrb(tester, minRounds: 4, maxRounds: 4);
       final stopped = p.uiState.playheadFrame.value;
-      await tester.pump(const Duration(milliseconds: 250));
+      await settleFrb(tester, minRounds: 8, maxRounds: 8);
       expect(p.uiState.playheadFrame.value, stopped,
           reason: 'and space stopped it');
     });
@@ -327,35 +378,6 @@ void main() {
       );
       expect(p.uiState.viewerImage.value, isNotNull,
           reason: 'a frame was rendered for the moved playhead');
-    });
-
-    /// One request in flight at a time. Firing one per tick queued about ten
-    /// per completed render, all but the newest thrown away — a lock, a
-    /// snapshot and a channel send each, on the UI thread, for nothing.
-    testWidgets('playback keeps one render in flight, not one per tick',
-        (tester) async {
-      final p = withLayer();
-      await mount(tester, p);
-
-      var frames = 0;
-      final sub = p.state.onWorkerResponse.listen((_) => frames++);
-      addTearDown(sub.cancel);
-
-      await tester.tap(find.byKey(const ValueKey('viewer-play')));
-      await tester.pump();
-      // Many ticks, and so many playhead moves.
-      for (var i = 0; i < 30; i++) {
-        await tester.pump(const Duration(milliseconds: 16));
-      }
-      final moved = p.uiState.playheadFrame.value;
-      expect(moved, greaterThan(0), reason: 'the playhead ran');
-
-      await tester.tap(find.byKey(const ValueKey('viewer-play')));
-      await tester.pump();
-      await settleFrb(tester, minRounds: 10, maxRounds: 60);
-
-      expect(frames, lessThanOrEqualTo(moved),
-          reason: 'never more renders than frames the playhead visited');
     });
 
     /// A still Viewer must go quiet. While the in-flight rule was being built
@@ -409,21 +431,24 @@ void main() {
 
     /// Pressing play with the playhead already at the end used to do nothing at
     /// all: the clock read past the end on its first tick, so it stopped again
-    /// immediately, and every-frame's pump had no frame left to ask for.
+    /// immediately, and every-frame's pump had no frame left to ask for. The
+    /// rewind is the engine's now — it is the half that knows where the end is.
     testWidgets('play from the end starts from the beginning', (tester) async {
       final p = withLayer();
       await mount(tester, p);
-      p.uiState.playheadFrame.value = p.comp.durationFrames() - 1;
+      final last = p.comp.durationFrames() - 1;
+      p.uiState.playheadFrame.value = last;
       await tester.pump();
 
       p.uiState.requestTogglePlay();
       await tester.pump();
-      expect(p.uiState.playheadFrame.value, lessThan(10),
-          reason: 'it rewound rather than sitting at the end doing nothing');
+      await settleFrb(tester,
+          minRounds: 6,
+          maxRounds: 120,
+          until: () => p.uiState.playheadFrame.value < last);
 
-      await tester.pump(const Duration(milliseconds: 250));
-      expect(p.uiState.playheadFrame.value, greaterThan(0),
-          reason: 'and it is actually playing');
+      expect(p.uiState.playheadFrame.value, lessThan(100),
+          reason: 'it rewound rather than sitting at the end doing nothing');
     });
 
     /// The two playback behaviours, and the fact that you can see which is on.

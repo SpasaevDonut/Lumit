@@ -40,6 +40,9 @@ pub struct WorkerState {
     /// nothing else touches it. Every `publish_frame` variant reads it.
     pub renderer: HeadlessRenderer,
     pub project: ProjectReference,
+    /// Playback, when it is running. `None` means the worker is idle and blocks
+    /// waiting for something to do.
+    playback: Option<Playback>,
 }
 
 #[frb(ignore)]
@@ -47,6 +50,138 @@ pub enum WorkerRequest {
     RenderComp(RenderCompRequest),
     RenderCompWithPreview(RenderCompRequestWithPreview),
     TraceScope(RenderScopeRequest),
+    /// Start playing. The worker paces itself from here until it is stopped or
+    /// runs off the end.
+    Play(PlayRequest),
+    /// Stop playing. Harmless when nothing is playing.
+    StopPlayback,
+}
+
+/// Start playback of `comp` at `from`.
+///
+/// **Why the worker plays rather than the frontend driving it.** Playback is a
+/// decision made once per frame — which frame is next, is the clock ahead of us,
+/// is this mode allowed to skip — and every one of those needs the render cost
+/// of the frame just finished. The frontend has none of that. It used to guess:
+/// a Flutter `Ticker` polled the audio clock each vsync, worked out a frame, and
+/// asked for it, with a hand-rolled in-flight counter to stop the requests
+/// piling up. That is a scheduler living on the far side of an FFI boundary from
+/// everything it needs to schedule against. The frontend now says "play from
+/// here" and paints what arrives (K-181).
+#[frb(ignore)]
+pub struct PlayRequest {
+    pub comp: CompositionReference,
+    pub from: u64,
+    pub mode: BridgePlaybackMode,
+    pub scale: f32,
+    pub zero_copy: bool,
+}
+
+/// Playback in progress: what is being played, and where it has got to.
+///
+// ponytail: renders one frame at a time, strictly serial. docs/impl/playback-
+// scheduler.md §5 specifies a bounded ring with lookahead adapted from measured
+// p95 render cost, and epoch tokens for cancellation, so a frame can be
+// rendering while the previous one is still being shown. Upgrade when the
+// serial hand-off is measurably the limit — the pipelining the every-frame path
+// used to do in Dart bought ~4 fps on 1080p60 footage, which is the number to
+// beat.
+#[frb(ignore)]
+struct Playback {
+    comp: CompositionReference,
+    /// The frame to render next.
+    next: u64,
+    /// The last frame of the composition — playback ends after it.
+    last: u64,
+    mode: BridgePlaybackMode,
+    scale: f32,
+    zero_copy: bool,
+    /// The composition's rate, for turning a clock reading into a frame.
+    fps: f64,
+    /// Where playback started, and when — the wall clock's baseline for as long
+    /// as no mix is loaded to be master instead.
+    from: u64,
+    started: std::time::Instant,
+}
+
+impl Playback {
+    /// Where playback has actually got to, in seconds.
+    ///
+    /// The audio clock is master once a mix is loaded; until then — while it is
+    /// still decoding, or on a machine with no sound device — the wall clock
+    /// stands in, so silence never stops the picture.
+    fn elapsed_seconds(&self) -> f64 {
+        match clock_seconds() {
+            Some(seconds) => seconds,
+            None => self.started.elapsed().as_secs_f64() + self.from as f64 / self.fps,
+        }
+    }
+
+    /// How long until the next frame is *due*, or `None` when it is due now.
+    ///
+    /// **This is what keeps adaptive playback at the composition's rate.** A
+    /// comp that renders faster than realtime would otherwise play as fast as
+    /// the renderer managed — the frontend's `Ticker` used to supply this pacing
+    /// by only asking once per vsync, and moving playback without moving the
+    /// pacing with it made a 60 fps comp play at several hundred.
+    ///
+    /// Every-frame never waits: running at whatever rate the renderer manages is
+    /// the mode's whole definition (K-171).
+    fn wait_before_next(&self) -> Option<std::time::Duration> {
+        if matches!(self.mode, BridgePlaybackMode::EveryFrame) {
+            return None;
+        }
+        let due = self.next as f64 / self.fps;
+        let elapsed = self.elapsed_seconds();
+        (due > elapsed).then(|| std::time::Duration::from_secs_f64(due - elapsed))
+    }
+
+    /// The next frame to render, or `None` when playback has run off the end.
+    ///
+    /// The mode difference, and the policy that used to live in Dart:
+    ///
+    /// * **Every-frame** never skips — that is the mode's entire promise, since
+    ///   the point of it is to render and cache every frame at full quality
+    ///   however long that takes (K-171). It simply counts.
+    /// * **Adaptive** keeps time, so it asks the clock where playback actually
+    ///   is and renders *that* frame, letting frames the clock has already
+    ///   passed go by. Being *ahead* of the clock is [`Self::wait_before_next`]'s
+    ///   business, not this one's.
+    fn advance(&mut self) -> Option<u64> {
+        if self.next > self.last {
+            return None;
+        }
+        let frame = match self.mode {
+            BridgePlaybackMode::EveryFrame => self.next,
+            BridgePlaybackMode::Adaptive => {
+                let wanted = (self.elapsed_seconds() * self.fps).floor().max(0.0) as u64;
+                // Never go backwards. A clock reading behind the frame just
+                // drawn — a resync, or a mix loading part-way through — would
+                // otherwise play a short stretch twice.
+                wanted.max(self.next)
+            }
+        };
+        if frame > self.last {
+            self.next = frame;
+            return None;
+        }
+        self.next = frame + 1;
+        Some(frame)
+    }
+}
+
+/// Where the sound has got to, in seconds, or `None` when there is no mix to
+/// follow. The audio module's own clock — read here rather than in Dart so the
+/// frame it implies is chosen next to the renderer that has to make it.
+#[frb(ignore)]
+fn clock_seconds() -> Option<f64> {
+    #[cfg(feature = "media")]
+    {
+        let (seconds, playing, loaded) = crate::audio::clock();
+        (loaded && playing).then_some(seconds)
+    }
+    #[cfg(not(feature = "media"))]
+    None
 }
 
 #[frb(ignore)]
@@ -162,17 +297,133 @@ fn worker_loop(
         project,
         renderer,
         preview_engine: PreviewEngine::default(),
+        playback: None,
     };
 
     loop {
-        // Block until there is something to do. This used to be `try_recv` in a
-        // bare `loop` beside an empty `process_loop`, which spun a whole core
-        // continuously whether or not anything was rendering.
-        let Ok(request) = receiver.recv() else {
-            eprintln!("Receiver disconnected, stopping the worker");
-            return;
+        // While playing the worker has work of its own, so it must not block on
+        // the channel — it takes whatever has arrived and gets on with the next
+        // frame. Idle, it blocks, because an editor sitting still should spin no
+        // core at all. (This used to be `try_recv` in a bare loop, which spun one
+        // continuously whether or not anything was rendering.)
+        let request = if state.playback.is_some() {
+            match receiver.try_recv() {
+                Ok(request) => Some(request),
+                Err(std::sync::mpsc::TryRecvError::Empty) => None,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    eprintln!("Receiver disconnected, stopping the worker");
+                    return;
+                }
+            }
+        } else {
+            match receiver.recv() {
+                Ok(request) => Some(request),
+                Err(_) => {
+                    eprintln!("Receiver disconnected, stopping the worker");
+                    return;
+                }
+            }
         };
 
+        if let Some(request) = request {
+            handle_requests(request, &receiver, &mut state, &mut stream);
+        }
+
+        play_one_frame(&mut state, &mut stream);
+    }
+}
+
+/// Render the next frame of playback, if playback is running.
+///
+/// One frame per turn of the loop, so a stop or a seek that arrives mid-playback
+/// is seen between frames rather than after the whole run. Rendering is
+/// synchronous here on purpose: the next frame's choice depends on how long this
+/// one took, which is exactly the coupling that could not exist while the
+/// frontend was choosing.
+#[frb(ignore)]
+fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
+    let Some(playback) = &mut state.playback else {
+        return;
+    };
+
+    // Ahead of the clock: wait for this frame to be due rather than racing on.
+    // Capped well below a frame so a stop or a seek arriving mid-wait is still
+    // acted on promptly — the loop simply comes back round and waits again.
+    if let Some(wait) = playback.wait_before_next() {
+        std::thread::sleep(wait.min(std::time::Duration::from_millis(4)));
+        return;
+    }
+
+    let Some(frame) = playback.advance() else {
+        state.playback = None;
+        _ = stream.add(WorkerResponse::PlaybackEnded);
+        return;
+    };
+
+    let request = RenderCompRequest {
+        comp: playback.comp.clone(),
+        frame,
+        mode: playback.mode,
+        scale: playback.scale,
+        zero_copy: playback.zero_copy,
+    };
+    if let Err(err) = render_comp(request, state, stream) {
+        // A frame that will not render stops playback rather than spinning on it
+        // — the alternative is a silent loop burning a core on a comp that
+        // cannot be drawn.
+        eprintln!("Playback stopped: {err}");
+        state.playback = None;
+        _ = stream.add(WorkerResponse::PlaybackEnded);
+    }
+}
+
+/// Begin playing, reading the composition's rate and length once up front.
+///
+/// Playing from the last frame plays from the start, which is what a transport
+/// has to do: pressing play at the end otherwise showed itself playing while
+/// nothing moved.
+#[frb(ignore)]
+fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), BridgeError> {
+    let document = {
+        let document = state.project.state()?;
+        let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
+        document.store.snapshot()
+    };
+    let comp = document.comp(req.comp.id).ok_or(BridgeError::InvalidComp)?;
+    let fps = comp.frame_rate.fps();
+    // The same derivation `CompositionReference::duration_frames` uses: the
+    // document stores a length in seconds, and the count is that read at the
+    // comp's current rate.
+    let frames = comp
+        .frame_rate
+        .frame_at(lumit_core::time::CompTime(comp.duration.0));
+    let last = frames.max(1).saturating_sub(1) as u64;
+
+    let from = if req.from >= last { 0 } else { req.from };
+    state.playback = Some(Playback {
+        comp: req.comp,
+        next: from,
+        last,
+        mode: req.mode,
+        scale: req.scale,
+        zero_copy: req.zero_copy,
+        fps: if fps > 0.0 { fps } else { 60.0 },
+        from,
+        started: std::time::Instant::now(),
+    });
+    Ok(())
+}
+
+/// Take everything queued, throw away what has been superseded, and serve the
+/// rest.
+#[frb(ignore)]
+fn handle_requests(
+    request: WorkerRequest,
+    receiver: &Receiver<WorkerRequest>,
+    state: &mut WorkerState,
+    stream: &mut WorkerResponseStream,
+) {
+    {
         // Latest wins — but *per kind*, which is the whole point.
         //
         // Anything that queued while the previous frame rendered is superseded:
@@ -187,7 +438,7 @@ fn worker_loop(
         // asks every 120 ms while the Viewer asks every tick, so the picture
         // froze on its first frame while the scopes kept updating. A trace and
         // a frame are different jobs; neither is the other's replacement.
-        let (pictures, scope, superseded) = drain_to_newest(request, &receiver, |r| match r {
+        let (pictures, scope, superseded) = drain_to_newest(request, receiver, |r| match r {
             WorkerRequest::TraceScope(_) => DrainClass::Scope,
             // Every-frame requests are the mode's whole promise: each one is
             // rendered and cached, so none may be superseded — and it is what
@@ -197,6 +448,10 @@ fn worker_loop(
             {
                 DrainClass::PictureKeepAll
             }
+            // Transport commands are not pictures and must never be dropped:
+            // superseding a Stop would leave playback running with nothing left
+            // to stop it.
+            WorkerRequest::Play(_) | WorkerRequest::StopPlayback => DrainClass::PictureKeepAll,
             _ => DrainClass::PictureNewestWins,
         });
         // Deliberately not logged. Superseding is the normal, healthy case —
@@ -213,12 +468,17 @@ fn worker_loop(
         // to survive to serve the next request.
         for request in pictures.into_iter().chain(scope) {
             let outcome = match request {
-                WorkerRequest::RenderComp(req) => render_comp(req, &mut state, &mut stream),
+                WorkerRequest::RenderComp(req) => render_comp(req, state, stream),
                 // Named for what it does rather than "render", so the three
                 // variants do not all share a prefix that says nothing.
-                WorkerRequest::TraceScope(req) => trace_scope(req, &mut state, &mut stream),
+                WorkerRequest::TraceScope(req) => trace_scope(req, state, stream),
                 WorkerRequest::RenderCompWithPreview(req) => {
-                    render_comp_with_preview(req, &mut state, &mut stream)
+                    render_comp_with_preview(req, state, stream)
+                }
+                WorkerRequest::Play(req) => start_playback(req, state),
+                WorkerRequest::StopPlayback => {
+                    state.playback = None;
+                    Ok(())
                 }
             };
             if let Err(err) = outcome {
@@ -522,6 +782,7 @@ fn publish_zero_copy(
 
     _ = stream.add(WorkerResponse::RenderedDMABuf(BridgeSharedFrameInfoLinux {
         fd: shared.fd,
+        frame,
         width: shared.width,
         height: shared.height,
         stride: shared.stride,
@@ -561,6 +822,7 @@ fn publish_zero_copy(
     _ = stream.add(WorkerResponse::RenderedSharedTexture(
         BridgeSharedFrameInfo {
             handle: shared.handle,
+            frame,
             width: shared.width,
             height: shared.height,
         },
@@ -657,6 +919,7 @@ fn publish_read_back(
     }
 
     _ = stream.add(WorkerResponse::RenderedPixels(BridgeRenderedFrame {
+        frame,
         width,
         height,
         rgba,
@@ -666,8 +929,76 @@ fn publish_read_back(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
-    use super::{drain_to_newest, DrainClass};
+    use super::{drain_to_newest, DrainClass, Playback};
+    use crate::api::composition::{BridgePlaybackMode, CompositionReference};
     use std::sync::mpsc::channel;
+    use uuid::Uuid;
+
+    fn playback(mode: BridgePlaybackMode, last: u64) -> Playback {
+        Playback {
+            comp: CompositionReference::new(Uuid::nil(), Uuid::nil()),
+            next: 0,
+            last,
+            mode,
+            scale: 1.0,
+            zero_copy: false,
+            fps: 60.0,
+            from: 0,
+            started: std::time::Instant::now(),
+        }
+    }
+
+    /// **The pacing regression.** Playback moved from a Flutter `Ticker` to the
+    /// worker, and the Ticker had been supplying the pacing for free by only
+    /// asking once per vsync. Without [`Playback::wait_before_next`] the loop
+    /// renders as fast as the renderer manages, so a comp cheaper than realtime
+    /// plays at several times its own rate. Fails without the wait.
+    #[test]
+    fn adaptive_playback_waits_for_each_frame_to_be_due() {
+        let mut p = playback(BridgePlaybackMode::Adaptive, 100);
+
+        // Frame 0 is due the instant playback starts.
+        assert!(p.wait_before_next().is_none(), "the first frame is due now");
+        assert_eq!(p.advance(), Some(0));
+
+        // Frame 1 is not: at 60 fps it is due a sixtieth of a second in, and
+        // essentially none of that has passed.
+        let wait = p
+            .wait_before_next()
+            .expect("frame 1 is not due yet, so playback must wait for it");
+        assert!(
+            wait.as_secs_f64() > 0.010 && wait.as_secs_f64() <= 1.0 / 60.0,
+            "waits out most of a frame, not more than one: {wait:?}"
+        );
+    }
+
+    /// Every-frame renders each frame as fast as it can and never waits — that
+    /// is the mode's whole definition (K-171), and it is why it plays silent.
+    #[test]
+    fn every_frame_playback_never_waits_and_never_skips() {
+        let mut p = playback(BridgePlaybackMode::EveryFrame, 3);
+        for expected in 0..=3 {
+            assert!(p.wait_before_next().is_none(), "every-frame never waits");
+            assert_eq!(p.advance(), Some(expected), "and never skips one");
+        }
+        assert_eq!(p.advance(), None, "past the last frame, playback is over");
+    }
+
+    /// Adaptive skips frames the clock has already gone past, rather than
+    /// falling further behind. Driven by moving the start time into the past,
+    /// which is what a slow render does to the wall clock.
+    #[test]
+    fn adaptive_playback_skips_frames_the_clock_has_passed() {
+        let mut p = playback(BridgePlaybackMode::Adaptive, 100);
+        p.started = std::time::Instant::now() - std::time::Duration::from_millis(500);
+
+        assert!(p.wait_before_next().is_none(), "half a second overdue");
+        let frame = p.advance().expect("still inside the composition");
+        assert!(
+            frame >= 29,
+            "half a second at 60 fps is about frame 30, not frame 0: got {frame}"
+        );
+    }
 
     /// The requests these tests queue: an adaptive picture (newest wins), an
     /// every-frame picture (all kept, in order), and a scope trace. Standing in

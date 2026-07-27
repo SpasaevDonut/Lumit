@@ -2378,3 +2378,25 @@ composition button** opens it prefilled from the media's own size, rate and leng
 dropped item lands in the finished comp as a layer, which is what docs/07 §3.1 has always asked
 for; that is also why the Project panel now multi-selects (`Ctrl` adds, `Shift` takes the run)
 and why a drag carries the whole selection.
+
+**K-181 · DECIDED · The frontend holds no logic — it displays values and forwards calls.**
+K-017 says the UI thread never *evaluates*; 17-BRIDGE-CONTRACT says the engine owns the
+document and the frontend never mutates it directly. Both were narrower than the rule actually
+wanted, and the gap let a whole scheduler grow in Dart without breaking either: the Viewer's
+playback loop mutated nothing and evaluated nothing, it merely *decided* — which frame to ask
+for next, how many renders to keep in flight, whether the picture was stale, what frame the
+audio clock implied. Reported by the owner as "we need to move the logic for handling playback
+to the Rust side". **Binding now:** the frontend may own *interaction state* — where the
+playhead is, the zoom, the selection, the pan — and must act on it immediately, without a round
+trip; what it may not own is *policy*. It states facts to the engine ("the playhead is at 40",
+"play from here", "the document changed") and paints what comes back. Anything that has to be
+decided — scheduling, timing, invalidation, degradation, when work is worth doing — is the
+engine's, because the engine is the half that holds the inputs to those decisions. **The test
+of the rule:** if a Dart change would need a clock, a queue, a retry, a staleness flag, or a
+count of work in flight, it is on the wrong side of the boundary. **First application:**
+playback moved into `lumit-bridge`'s render worker, which now paces itself and publishes each
+frame with its own frame number, so the frontend no longer has to track what it asked for. The
+`Ticker`, the every-frame pump, the in-flight counter and the stale flag are all deleted.
+The worker is not yet the full scheduler `docs/impl/playback-scheduler.md` §5 specifies — no
+epoch tokens, no ring, no adaptive lookahead — and that gap is recorded in docs/TODO.md rather
+than pretended away.

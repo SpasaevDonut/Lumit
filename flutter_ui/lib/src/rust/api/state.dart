@@ -47,6 +47,15 @@ abstract class LumitBridgeState implements RustOpaqueInterface {
 /// rendering. Prefer a zero-copy build where the platform allows one; see
 /// docs/TODO.md for the fix.
 class BridgeRenderedFrame {
+  /// Which frame of the composition this is.
+  ///
+  /// **The frontend does not track this itself.** It used to: the Viewer held
+  /// the frame it had asked for and assumed the next arrival answered it,
+  /// which made a scheduler out of a panel and went wrong the moment anything
+  /// else published a frame. A picture that says which frame it is needs no
+  /// bookkeeping to place — the frontend paints it and moves the playhead
+  /// there.
+  final BigInt frame;
   final int width;
   final int height;
 
@@ -54,19 +63,22 @@ class BridgeRenderedFrame {
   final Uint8List rgba;
 
   const BridgeRenderedFrame({
+    required this.frame,
     required this.width,
     required this.height,
     required this.rgba,
   });
 
   @override
-  int get hashCode => width.hashCode ^ height.hashCode ^ rgba.hashCode;
+  int get hashCode =>
+      frame.hashCode ^ width.hashCode ^ height.hashCode ^ rgba.hashCode;
 
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
       other is BridgeRenderedFrame &&
           runtimeType == other.runtimeType &&
+          frame == other.frame &&
           width == other.width &&
           height == other.height &&
           rgba == other.rgba;
@@ -102,17 +114,22 @@ class BridgeSharedFrameInfo {
   /// The NT `HANDLE` value. `u64` because a Windows handle is 64-bit; it
   /// reaches Dart as a `BigInt`.
   final BigInt handle;
+
+  /// Which frame this is. See [`BridgeRenderedFrame::frame`].
+  final BigInt frame;
   final int width;
   final int height;
 
   const BridgeSharedFrameInfo({
     required this.handle,
+    required this.frame,
     required this.width,
     required this.height,
   });
 
   @override
-  int get hashCode => handle.hashCode ^ width.hashCode ^ height.hashCode;
+  int get hashCode =>
+      handle.hashCode ^ frame.hashCode ^ width.hashCode ^ height.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -120,12 +137,16 @@ class BridgeSharedFrameInfo {
       other is BridgeSharedFrameInfo &&
           runtimeType == other.runtimeType &&
           handle == other.handle &&
+          frame == other.frame &&
           width == other.width &&
           height == other.height;
 }
 
 class BridgeSharedFrameInfoLinux {
   final int fd;
+
+  /// Which frame this is. See [`BridgeRenderedFrame::frame`].
+  final BigInt frame;
   final int width;
   final int height;
   final int stride;
@@ -139,6 +160,7 @@ class BridgeSharedFrameInfoLinux {
 
   const BridgeSharedFrameInfoLinux({
     required this.fd,
+    required this.frame,
     required this.width,
     required this.height,
     required this.stride,
@@ -150,6 +172,7 @@ class BridgeSharedFrameInfoLinux {
   @override
   int get hashCode =>
       fd.hashCode ^
+      frame.hashCode ^
       width.hashCode ^
       height.hashCode ^
       stride.hashCode ^
@@ -163,6 +186,7 @@ class BridgeSharedFrameInfoLinux {
       other is BridgeSharedFrameInfoLinux &&
           runtimeType == other.runtimeType &&
           fd == other.fd &&
+          frame == other.frame &&
           width == other.width &&
           height == other.height &&
           stride == other.stride &&
@@ -228,4 +252,11 @@ sealed class WorkerResponse with _$WorkerResponse {
   const factory WorkerResponse.scope(
     BridgeScopeTrace field0,
   ) = WorkerResponse_Scope;
+
+  /// Playback finished on its own — it ran off the end of the composition.
+  ///
+  /// Sent so the transport can show itself stopped without the frontend having
+  /// to work out where the end was. Stopping *because the user asked* needs no
+  /// message: the frontend already knows, having asked.
+  const factory WorkerResponse.playbackEnded() = WorkerResponse_PlaybackEnded;
 }

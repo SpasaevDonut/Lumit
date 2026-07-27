@@ -61,6 +61,8 @@ pub struct ScopedChange {
 #[frb(non_opaque)]
 pub struct BridgeSharedFrameInfoLinux {
     pub fd: i32,
+    /// Which frame this is. See [`BridgeRenderedFrame::frame`].
+    pub frame: u64,
     pub width: u32,
     pub height: u32,
     pub stride: u32,
@@ -80,6 +82,8 @@ pub struct BridgeSharedFrameInfo {
     /// The NT `HANDLE` value. `u64` because a Windows handle is 64-bit; it
     /// reaches Dart as a `BigInt`.
     pub handle: u64,
+    /// Which frame this is. See [`BridgeRenderedFrame::frame`].
+    pub frame: u64,
     pub width: u32,
     pub height: u32,
 }
@@ -95,6 +99,15 @@ pub struct BridgeSharedFrameInfo {
 /// docs/TODO.md for the fix.
 #[frb(non_opaque)]
 pub struct BridgeRenderedFrame {
+    /// Which frame of the composition this is.
+    ///
+    /// **The frontend does not track this itself.** It used to: the Viewer held
+    /// the frame it had asked for and assumed the next arrival answered it,
+    /// which made a scheduler out of a panel and went wrong the moment anything
+    /// else published a frame. A picture that says which frame it is needs no
+    /// bookkeeping to place — the frontend paints it and moves the playhead
+    /// there.
+    pub frame: u64,
     pub width: u32,
     pub height: u32,
     /// Tightly packed, straight (non-premultiplied) RGBA8: `width * height * 4`.
@@ -126,6 +139,12 @@ pub enum WorkerResponse {
     /// A scope trace, which rides the same stream as the frames so the panel
     /// needs no second channel.
     Scope(BridgeScopeTrace),
+    /// Playback finished on its own — it ran off the end of the composition.
+    ///
+    /// Sent so the transport can show itself stopped without the frontend having
+    /// to work out where the end was. Stopping *because the user asked* needs no
+    /// message: the frontend already knows, having asked.
+    PlaybackEnded,
 }
 
 type CallbackStream = StreamSink<ScopedChange>;

@@ -291,6 +291,14 @@ class CompositionReference {
         that: this,
       );
 
+  /// This composition's rate as a plain number, for turning frames into
+  /// seconds. Falls back to 60 for a comp with a nonsense rate rather than
+  /// dividing by zero.
+  double fps() =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceFps(
+        that: this,
+      );
+
   /// The frame containing `time` (floored) — the inverse of
   /// [`Self::time_of_frame`], for drawing a key at a frame position.
   PlatformInt64 frameAtTime({required BridgeRational time}) =>
@@ -334,6 +342,29 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetWorkArea(
         that: this,
       );
+
+  /// Play from `from` at this comp's own rate, with sound.
+  ///
+  /// The frontend calls this and then paints whatever frames arrive: each one
+  /// says which frame it is, so the transport and the playhead follow the
+  /// picture rather than predicting it. Playback stops when the frontend says
+  /// so ([`Self::stop_playback`]) or when it runs off the end, which arrives as
+  /// `WorkerResponse::PlaybackEnded`.
+  ///
+  /// The sound is started here too, so "play" is one call rather than a pair
+  /// the frontend has to keep in step. Every-frame mode is silent by
+  /// definition — it cannot keep time, and sound that drifts is worse than
+  /// none — so it stops the audio instead of starting it.
+  ///
+  /// `mode` comes from the frontend because it is a user *setting*, kept in the
+  /// workspace file the frontend owns — stating it is not deciding anything.
+  void play(
+          {required BigInt from,
+          required double scale,
+          required BridgePlaybackMode mode,
+          required bool zeroCopy}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferencePlay(
+          that: this, from: from, scale: scale, mode: mode, zeroCopy: zeroCopy);
 
   /// The preview tier adaptive playback has settled on: 1 Full, 2 Half,
   /// 3 Third, 4 Quarter. Shown beside the mode so "why is it soft?" has an
@@ -436,6 +467,12 @@ class CompositionReference {
   void startExport({required BridgeExportSpec spec, required String path}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceStartExport(
           that: this, spec: spec, path: path);
+
+  /// Stop playing, and silence the sound. Harmless when nothing is playing.
+  void stopPlayback() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceStopPlayback(
+        that: this,
+      );
 
   /// The exact time frame `frame` starts at, as the rational the document
   /// stores.
