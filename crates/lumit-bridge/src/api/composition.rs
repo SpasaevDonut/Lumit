@@ -770,21 +770,19 @@ impl CompositionReference {
     /// `WorkerResponse::PlaybackEnded`.
     ///
     /// The sound is started here too, so "play" is one call rather than a pair
-    /// the frontend has to keep in step. Every-frame mode is silent by
-    /// definition — it cannot keep time, and sound that drifts is worse than
-    /// none — so it stops the audio instead of starting it.
+    /// the frontend has to keep in step — in BOTH modes. Every-frame used to
+    /// play silent outright, which was coarser than K-171 asks for: sound
+    /// plays while rendering keeps the comp's rate (which, cached, it mostly
+    /// does now), and the worker PAUSES it if the picture falls genuinely
+    /// behind — a paused track is honest, a drifting one is a lie in sync's
+    /// clothing. Timestretch-to-match is K-171's recorded "later".
     ///
     /// `mode` comes from the frontend because it is a user *setting*, kept in the
     /// workspace file the frontend owns — stating it is not deciding anything.
     #[frb(sync)]
     pub fn play(&self, from: u64, scale: f32, mode: BridgePlaybackMode) -> Result<(), BridgeError> {
-        match mode {
-            BridgePlaybackMode::EveryFrame => crate::api::audio::audio_stop(),
-            BridgePlaybackMode::Adaptive => {
-                let fps = self.fps();
-                self.audio_play(from as f64 / fps)?;
-            }
-        }
+        let fps = self.fps();
+        self.audio_play(from as f64 / fps)?;
 
         self.dispatch(WorkerRequest::Play(
             crate::api::worker_thread::PlayRequest {

@@ -245,7 +245,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                 onSeek: (f) => ui.playheadFrame.value =
                                     f.clamp(0, frames == 0 ? 0 : frames - 1),
                                 onChanged: ui.model.refresh,
-                                cacheRevision: ui.frameArrived,
+                                cacheRevision:
+                                    Listenable.merge([ui.frameArrived, ui.cacheChanged]),
                               ),
                       ),
                     ],
@@ -989,9 +990,10 @@ class _LayerArea extends StatelessWidget {
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
 
-  /// Bumped when something may have changed which frames are held, so the bar
-  /// repaints then rather than polling the cache on every frame it draws.
-  final ValueListenable<int> cacheRevision;
+  /// Fires when something may have changed which frames are held — a frame
+  /// arriving or the idle fill banking one — so the bar repaints then rather
+  /// than polling the cache on every frame it draws.
+  final Listenable cacheRevision;
 
   const _LayerArea({
     required this.comp,

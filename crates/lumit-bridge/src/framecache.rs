@@ -355,10 +355,14 @@ pub(crate) mod vram {
     static BUDGET: AtomicUsize = AtomicUsize::new(lumit_render::DEFAULT_VRAM_CACHE_BYTES);
     /// Bumped by Clear cache; the worker clears when it sees it move.
     static CLEARS: AtomicU64 = AtomicU64::new(0);
-    /// What the worker last reported holding: (used, budget, entries) and the
-    /// held keys `(comp low 64 bits ‖ frame ‖ scale)` packed exactly like
-    /// [`super::frame_key`], so the bar merge is integer comparisons.
-    static MIRROR: Mutex<(u64, u64, u64, Vec<u128>)> = Mutex::new((0, 0, 0, Vec::new()));
+    /// What the worker last reported holding: the invalidation generation it
+    /// held them under, (used, budget, entries), and the held keys
+    /// `(comp low 64 bits ‖ frame ‖ scale)` packed exactly like
+    /// [`super::frame_key`], so the bar merge is integer comparisons. The
+    /// generation is what keeps the bar honest across an edit: the worker's
+    /// clear-and-republish is a loop turn away, and until it lands these keys
+    /// describe frames that no longer exist.
+    static MIRROR: Mutex<(u64, u64, u64, u64, Vec<u128>)> = Mutex::new((0, 0, 0, 0, Vec::new()));
 
     pub(crate) fn set_budget(bytes: usize) {
         BUDGET.store(bytes, Ordering::Relaxed);
@@ -376,22 +380,28 @@ pub(crate) mod vram {
         CLEARS.load(Ordering::Relaxed)
     }
 
-    /// The worker's report of what it holds.
-    pub(crate) fn publish(used: u64, budget: u64, entries: u64, keys: Vec<u128>) {
+    /// The worker's report of what it holds, stamped with the invalidation
+    /// generation it holds them under.
+    pub(crate) fn publish(generation: u64, used: u64, budget: u64, entries: u64, keys: Vec<u128>) {
         let mut guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
-        *guard = (used, budget, entries, keys);
+        *guard = (generation, used, budget, entries, keys);
     }
 
     /// `(used, budget, entries)` as last published.
     pub(crate) fn stats() -> (u64, u64, u64) {
         let guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
-        (guard.0, guard.1, guard.2)
+        (guard.1, guard.2, guard.3)
     }
 
-    /// The held keys as last published.
+    /// The held keys as last published — empty when an edit has moved the
+    /// generation past the report, since those frames are already gone (the
+    /// worker just has not said so yet).
     pub(crate) fn keys() -> Vec<u128> {
         let guard = MIRROR.lock().unwrap_or_else(|p| p.into_inner());
-        guard.3.clone()
+        if guard.0 != super::generation() {
+            return Vec::new();
+        }
+        guard.4.clone()
     }
 }
 
@@ -619,6 +629,7 @@ mod tests {
         let comp = uuid::Uuid::now_v7();
         clear();
         vram::publish(
+            generation(),
             1,
             2,
             1,
@@ -635,8 +646,17 @@ mod tests {
             "frame 3 ready at this scale, frame 4 held only coarser"
         );
 
+        // A generation older than the present names frames that are already
+        // gone: the merge must ignore the whole report.
+        invalidate_all();
+        assert_eq!(
+            cached_tiers(comp, 6, 0.5),
+            vec![0; 6],
+            "a stale mirror must not promise dropped frames"
+        );
+
         // Leave the shared mirror empty for the other tests.
-        vram::publish(0, 0, 0, Vec::new());
+        vram::publish(generation(), 0, 0, 0, Vec::new());
         clear();
     }
 

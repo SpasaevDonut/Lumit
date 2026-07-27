@@ -259,5 +259,35 @@ void main() {
           TimelineCacheBar.height,
           reason: 'a thin stripe, per the design language');
     });
+
+    /// The idle fill (K-187): show a frame, leave the engine alone for a
+    /// moment, and it banks the frames around the playhead on its own —
+    /// forward-biased, so the ones ahead come first. Real wall-clock waits,
+    /// because the worker is a real thread with a real 200 ms lull gate;
+    /// without the fill this times out with nothing held but the shown frame.
+    testWidgets('the idle fill warms frames around the playhead',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      p.uiState.setSelectedComp(comp);
+
+      comp.renderFrame(
+        frame: BigInt.from(5),
+        scale: 1.0,
+        mode: BridgePlaybackMode.everyFrame,
+      );
+
+      await tester.runAsync(() async {
+        for (var i = 0; i < 50; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          final tiers = comp.cachedFrames(frames: BigInt.from(12), scale: 1.0);
+          // Ahead of the playhead fills first (two forward for one back),
+          // but all three neighbours arriving is the honest "it works".
+          if (tiers[6] == 2 && tiers[7] == 2 && tiers[4] == 2) return;
+        }
+        fail('the idle fill banked nothing around the playhead');
+      });
+    });
   }, skip: !engineAvailable);
 }

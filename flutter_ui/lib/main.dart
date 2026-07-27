@@ -234,6 +234,12 @@ class LumitUiState extends ChangeNotifier {
   /// Timeline's cache bar, the Scopes panel.
   final ValueNotifier<int> frameArrived = ValueNotifier(0);
 
+  /// Bumped when the engine banks a frame in the background (the idle cache
+  /// fill). Its own notifier, not [frameArrived]: the picture did not change,
+  /// so nothing that re-renders on a new picture (the Scopes) should stir —
+  /// only the cache bar, which listens to both.
+  final ValueNotifier<int> cacheChanged = ValueNotifier(0);
+
   /// Whether the engine is playing.
   ///
   /// Mirrored, not decided: it goes true when [play] is called and false when
@@ -387,6 +393,8 @@ class LumitUiState extends ChangeNotifier {
         // needs no message — `stopPlayback` already set the flag.
         case WorkerResponse_PlaybackEnded():
           playing.value = false;
+        case WorkerResponse_CacheFilled():
+          cacheChanged.value++;
       }
     });
   }
@@ -428,6 +436,7 @@ class LumitUiState extends ChangeNotifier {
     sub?.cancel();
     _changes?.cancel();
     model.dispose();
+    cacheChanged.dispose();
     viewerFrameid.dispose();
     selectedLayer.dispose();
     activePanel.dispose();

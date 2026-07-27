@@ -139,6 +139,11 @@ pub enum WorkerResponse {
     /// to work out where the end was. Stopping *because the user asked* needs no
     /// message: the frontend already knows, having asked.
     PlaybackEnded,
+    /// The idle fill banked another frame (docs/06 §5.5), so the Timeline's
+    /// cache bar has something new to draw. Carries nothing: the bar re-asks
+    /// `cached_frames` itself. Without this the fill worked invisibly — the
+    /// bar only redrew when a frame arrived, and a fill shows no frame.
+    CacheFilled,
 }
 
 type CallbackStream = StreamSink<ScopedChange>;

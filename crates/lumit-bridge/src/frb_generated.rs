@@ -6482,6 +6482,9 @@ impl SseDecode for crate::api::state::WorkerResponse {
             3 => {
                 return crate::api::state::WorkerResponse::PlaybackEnded;
             }
+            4 => {
+                return crate::api::state::WorkerResponse::CacheFilled;
+            }
             _ => {
                 unimplemented!("");
             }
@@ -8202,6 +8205,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::state::WorkerResponse {
                 [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
             crate::api::state::WorkerResponse::PlaybackEnded => [3.into_dart()].into_dart(),
+            crate::api::state::WorkerResponse::CacheFilled => [4.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -9561,6 +9565,9 @@ impl SseEncode for crate::api::state::WorkerResponse {
             }
             crate::api::state::WorkerResponse::PlaybackEnded => {
                 <i32>::sse_encode(3, serializer);
+            }
+            crate::api::state::WorkerResponse::CacheFilled => {
+                <i32>::sse_encode(4, serializer);
             }
             _ => {
                 unimplemented!("");

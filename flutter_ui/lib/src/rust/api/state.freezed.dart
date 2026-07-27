@@ -55,6 +55,7 @@ extension WorkerResponsePatterns on WorkerResponse {
         renderedSharedTexture,
     TResult Function(WorkerResponse_Scope value)? scope,
     TResult Function(WorkerResponse_PlaybackEnded value)? playbackEnded,
+    TResult Function(WorkerResponse_CacheFilled value)? cacheFilled,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -68,6 +69,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return scope(_that);
       case WorkerResponse_PlaybackEnded() when playbackEnded != null:
         return playbackEnded(_that);
+      case WorkerResponse_CacheFilled() when cacheFilled != null:
+        return cacheFilled(_that);
       case _:
         return orElse();
     }
@@ -94,6 +97,7 @@ extension WorkerResponsePatterns on WorkerResponse {
         renderedSharedTexture,
     required TResult Function(WorkerResponse_Scope value) scope,
     required TResult Function(WorkerResponse_PlaybackEnded value) playbackEnded,
+    required TResult Function(WorkerResponse_CacheFilled value) cacheFilled,
   }) {
     final _that = this;
     switch (_that) {
@@ -105,6 +109,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return scope(_that);
       case WorkerResponse_PlaybackEnded():
         return playbackEnded(_that);
+      case WorkerResponse_CacheFilled():
+        return cacheFilled(_that);
     }
   }
 
@@ -127,6 +133,7 @@ extension WorkerResponsePatterns on WorkerResponse {
         renderedSharedTexture,
     TResult? Function(WorkerResponse_Scope value)? scope,
     TResult? Function(WorkerResponse_PlaybackEnded value)? playbackEnded,
+    TResult? Function(WorkerResponse_CacheFilled value)? cacheFilled,
   }) {
     final _that = this;
     switch (_that) {
@@ -139,6 +146,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return scope(_that);
       case WorkerResponse_PlaybackEnded() when playbackEnded != null:
         return playbackEnded(_that);
+      case WorkerResponse_CacheFilled() when cacheFilled != null:
+        return cacheFilled(_that);
       case _:
         return null;
     }
@@ -162,6 +171,7 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult Function(BridgeSharedFrameInfo field0)? renderedSharedTexture,
     TResult Function(BridgeScopeTrace field0)? scope,
     TResult Function()? playbackEnded,
+    TResult Function()? cacheFilled,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -175,6 +185,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return scope(_that.field0);
       case WorkerResponse_PlaybackEnded() when playbackEnded != null:
         return playbackEnded();
+      case WorkerResponse_CacheFilled() when cacheFilled != null:
+        return cacheFilled();
       case _:
         return orElse();
     }
@@ -200,6 +212,7 @@ extension WorkerResponsePatterns on WorkerResponse {
         renderedSharedTexture,
     required TResult Function(BridgeScopeTrace field0) scope,
     required TResult Function() playbackEnded,
+    required TResult Function() cacheFilled,
   }) {
     final _that = this;
     switch (_that) {
@@ -211,6 +224,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return scope(_that.field0);
       case WorkerResponse_PlaybackEnded():
         return playbackEnded();
+      case WorkerResponse_CacheFilled():
+        return cacheFilled();
     }
   }
 
@@ -232,6 +247,7 @@ extension WorkerResponsePatterns on WorkerResponse {
     TResult? Function(BridgeSharedFrameInfo field0)? renderedSharedTexture,
     TResult? Function(BridgeScopeTrace field0)? scope,
     TResult? Function()? playbackEnded,
+    TResult? Function()? cacheFilled,
   }) {
     final _that = this;
     switch (_that) {
@@ -244,6 +260,8 @@ extension WorkerResponsePatterns on WorkerResponse {
         return scope(_that.field0);
       case WorkerResponse_PlaybackEnded() when playbackEnded != null:
         return playbackEnded();
+      case WorkerResponse_CacheFilled() when cacheFilled != null:
+        return cacheFilled();
       case _:
         return null;
     }
@@ -466,6 +484,27 @@ class WorkerResponse_PlaybackEnded extends WorkerResponse {
   @override
   String toString() {
     return 'WorkerResponse.playbackEnded()';
+  }
+}
+
+/// @nodoc
+
+class WorkerResponse_CacheFilled extends WorkerResponse {
+  const WorkerResponse_CacheFilled() : super._();
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is WorkerResponse_CacheFilled);
+  }
+
+  @override
+  int get hashCode => runtimeType.hashCode;
+
+  @override
+  String toString() {
+    return 'WorkerResponse.cacheFilled()';
   }
 }
 

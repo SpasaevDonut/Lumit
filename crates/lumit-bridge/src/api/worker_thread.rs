@@ -105,7 +105,13 @@ fn sync_caches(state: &mut WorkerState) {
                 crate::framecache::frame_key_quantised(comp, frame, scale_q)
             })
             .collect();
-        crate::framecache::vram::publish(used as u64, budget_now as u64, entries as u64, keys);
+        crate::framecache::vram::publish(
+            state.seen_generation,
+            used as u64,
+            budget_now as u64,
+            entries as u64,
+            keys,
+        );
     }
 }
 
@@ -115,7 +121,7 @@ fn sync_caches(state: &mut WorkerState) {
 /// mid-fill waits at most one render; sets `fill_exhausted` when there is
 /// nothing (or no room) left, so an idle editor stops spending the GPU.
 #[frb(ignore)]
-fn idle_fill(state: &mut WorkerState) {
+fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     let Some((comp_ref, anchor, scale)) = state.last_shown.clone() else {
         state.fill_exhausted = true;
         return;
@@ -166,13 +172,15 @@ fn idle_fill(state: &mut WorkerState) {
         {
             continue;
         }
-        if state
+        match state
             .renderer
             .render_prepared(&document, comp_ref.id, frame, quality, bgra, true)
-            .is_err()
         {
+            // Tell the frontend, or the fill is invisible: the cache bar only
+            // redraws when it hears something, and a fill shows no frame.
+            Ok(_) => _ = stream.add(WorkerResponse::CacheFilled),
             // A comp that will not render must not be retried in a loop.
-            state.fill_exhausted = true;
+            Err(_) => state.fill_exhausted = true,
         }
         return;
     }
@@ -542,7 +550,7 @@ fn worker_loop(
                     let lull =
                         state.last_request.elapsed() >= std::time::Duration::from_millis(200);
                     if !state.fill_exhausted && lull {
-                        idle_fill(&mut state);
+                        idle_fill(&mut state, &mut stream);
                     }
                     None
                 }
@@ -605,6 +613,20 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             // it, so a stop resumes filling from where the user actually is.
             state.last_shown = Some((playback.comp.clone(), frame, playback.scale));
             state.fill_exhausted = false;
+            // Every-frame plays WITH sound while it holds the comp's rate, and
+            // pauses the sound when the picture falls genuinely behind — the
+            // K-171 v1 behaviour (a paused track over a slow-motion picture,
+            // never a drifting one). Half a second of lag is well past any
+            // jitter the ring absorbs. Once paused the clock stops reporting,
+            // so this fires once per fall-behind, and the next press of play
+            // starts the sound afresh.
+            if matches!(playback.mode, BridgePlaybackMode::EveryFrame) {
+                if let Some(clock) = clock_seconds() {
+                    if clock - frame as f64 / playback.fps > 0.5 {
+                        crate::api::audio::audio_pause();
+                    }
+                }
+            }
             present_ring_frame(&mut state.renderer, frame, &prepared, stream);
             return;
         }
@@ -846,22 +868,7 @@ fn handle_requests(
         // asks every 120 ms while the Viewer asks every tick, so the picture
         // froze on its first frame while the scopes kept updating. A trace and
         // a frame are different jobs; neither is the other's replacement.
-        let (pictures, scope, superseded) = drain_to_newest(request, receiver, |r| match r {
-            WorkerRequest::TraceScope(_) => DrainClass::Scope,
-            // Every-frame requests are the mode's whole promise: each one is
-            // rendered and cached, so none may be superseded — and it is what
-            // lets the caller keep two in flight to hide its own latency.
-            WorkerRequest::RenderComp(req)
-                if matches!(req.mode, BridgePlaybackMode::EveryFrame) =>
-            {
-                DrainClass::PictureKeepAll
-            }
-            // Transport commands are not pictures and must never be dropped:
-            // superseding a Stop would leave playback running with nothing left
-            // to stop it.
-            WorkerRequest::Play(_) | WorkerRequest::StopPlayback => DrainClass::PictureKeepAll,
-            _ => DrainClass::PictureNewestWins,
-        });
+        let (pictures, scope, superseded) = drain_to_newest(request, receiver, classify_request);
         // Deliberately not logged. Superseding is the normal, healthy case —
         // it is how a drag stays attached to the pointer — and a line per
         // completed render is console I/O on the worker thread for something
@@ -897,15 +904,37 @@ fn handle_requests(
     }
 }
 
+/// How the drain treats each request kind.
+///
+/// A [`WorkerRequest::RenderComp`] is always newest-wins, WHATEVER its mode:
+/// since playback moved into the worker (K-181) the only RenderComp traffic
+/// is "show me the frame under the playhead", and a playhead position the
+/// user has already dragged past will never be looked at. Treating every-frame
+/// scrubs as keep-all — a leftover from the deleted Dart-side playback
+/// pipeline — made a playhead drag render every frame it crossed, in order,
+/// long after the user had let go.
+///
+/// Transport commands are not pictures and must never be dropped: superseding
+/// a Stop would leave playback running with nothing left to stop it.
+#[frb(ignore)]
+fn classify_request(r: &WorkerRequest) -> DrainClass {
+    match r {
+        WorkerRequest::TraceScope(_) => DrainClass::Scope,
+        WorkerRequest::Play(_) | WorkerRequest::StopPlayback => DrainClass::PictureKeepAll,
+        WorkerRequest::RenderComp(_) | WorkerRequest::RenderCompWithPreview(_) => {
+            DrainClass::PictureNewestWins
+        }
+    }
+}
+
 /// How the drain treats one queued request.
 #[frb(ignore)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum DrainClass {
-    /// A stale one is worthless: only the newest survives (a scrub, adaptive
-    /// playback — the frame behind the newest will never be looked at).
+    /// A stale one is worthless: only the newest survives (a scrub — the
+    /// playhead position behind the newest will never be looked at).
     PictureNewestWins,
-    /// Every one is served, in order (every-frame playback: each frame is
-    /// rendered and cached, and the caller may pipeline several).
+    /// Every one is served, in order (transport commands: Play and Stop).
     PictureKeepAll,
     /// A trace; the newest survives, served after the pictures.
     Scope,
@@ -1296,7 +1325,8 @@ mod tests {
     }
 
     /// Every-frame never skips, whatever it costs — that is the mode's whole
-    /// definition (K-171), and it is why it plays silent.
+    /// definition (K-171); when it cannot keep the comp's rate it plays slow
+    /// and the sound pauses rather than drifting.
     #[test]
     fn every_frame_playback_never_skips() {
         let mut p = playback(BridgePlaybackMode::EveryFrame, 3);
@@ -1433,6 +1463,9 @@ mod tests {
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     enum Req {
         Adaptive(u32),
+        // Kept-in-order requests — standing in for the transport commands
+        // (Play, Stop), the only keep-all class since scrubs became
+        // newest-wins in every mode.
         EveryFrame(u32),
         Scope(u32),
     }
@@ -1443,6 +1476,38 @@ mod tests {
             Req::EveryFrame(_) => DrainClass::PictureKeepAll,
             Req::Scope(_) => DrainClass::Scope,
         }
+    }
+
+    /// **The playhead-drag regression.** A scrub render is newest-wins in
+    /// EVERY transport mode: since playback moved into the worker (K-181),
+    /// a RenderComp only ever means "show the frame under the playhead", and
+    /// classifying every-frame scrubs as keep-all made a drag render every
+    /// frame it crossed, in order, long after the pointer had let go.
+    #[test]
+    fn a_scrub_supersedes_whatever_the_transport_mode() {
+        let comp = CompositionReference::new(Uuid::nil(), Uuid::nil());
+        let scrub = |frame: u64, mode: BridgePlaybackMode| {
+            super::WorkerRequest::RenderComp(super::RenderCompRequest {
+                comp: comp.clone(),
+                frame,
+                mode,
+                scale: 1.0,
+            })
+        };
+        assert!(matches!(
+            super::classify_request(&scrub(5, BridgePlaybackMode::EveryFrame)),
+            DrainClass::PictureNewestWins
+        ));
+        assert!(matches!(
+            super::classify_request(&scrub(5, BridgePlaybackMode::Adaptive)),
+            DrainClass::PictureNewestWins
+        ));
+        // The transport commands stay keep-all: superseding a Stop would leave
+        // playback running with nothing left to stop it.
+        assert!(matches!(
+            super::classify_request(&super::WorkerRequest::StopPlayback),
+            DrainClass::PictureKeepAll
+        ));
     }
 
     /// The bug this policy exists to fix: during playback the Viewer asks for a
@@ -1513,9 +1578,8 @@ mod tests {
         assert_eq!(superseded, 0);
     }
 
-    /// Every-frame's contract: nothing dropped, order preserved — it is what
-    /// makes keeping two requests in flight safe, and what makes the mode's
-    /// "every frame rendered and cached" true under a backlog.
+    /// The keep-all class's contract: nothing dropped, order preserved — what
+    /// keeps a Play or a Stop from vanishing under a backlog of pictures.
     #[test]
     fn every_frame_requests_all_survive_in_order() {
         let (tx, rx) = channel();

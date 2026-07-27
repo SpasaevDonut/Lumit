@@ -5829,6 +5829,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         );
       case 3:
         return WorkerResponse_PlaybackEnded();
+      case 4:
+        return WorkerResponse_CacheFilled();
       default:
         throw Exception("unreachable");
     }
@@ -7439,6 +7441,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         return WorkerResponse_Scope(var_field0);
       case 3:
         return WorkerResponse_PlaybackEnded();
+      case 4:
+        return WorkerResponse_CacheFilled();
       default:
         throw UnimplementedError('');
     }
@@ -8854,6 +8858,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         sse_encode_box_autoadd_bridge_scope_trace(field0, serializer);
       case WorkerResponse_PlaybackEnded():
         sse_encode_i_32(3, serializer);
+      case WorkerResponse_CacheFilled():
+        sse_encode_i_32(4, serializer);
     }
   }
 }

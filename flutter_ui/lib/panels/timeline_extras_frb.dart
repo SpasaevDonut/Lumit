@@ -473,7 +473,7 @@ LumitIcon iconForKind(BridgeLayerKind kind) => switch (kind) {
 class TimelineCacheBar extends StatelessWidget {
   final CompositionReference comp;
   final CacheBarAxis axis;
-  final ValueListenable<int> revision;
+  final Listenable revision;
 
   /// Two logical pixels, per docs/15 §6.3.
   static const double height = 2;
@@ -488,9 +488,9 @@ class TimelineCacheBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return ValueListenableBuilder<int>(
-      valueListenable: revision,
-      builder: (context, _, __) {
+    return ListenableBuilder(
+      listenable: revision,
+      builder: (context, _) {
         final frames = axis.frames;
         final tiers = frames <= 0
             ? Uint8List(0)

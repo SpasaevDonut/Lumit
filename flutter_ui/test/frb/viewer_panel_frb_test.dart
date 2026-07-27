@@ -15,6 +15,7 @@ import 'package:lumit_flutter/src/rust/api/audio.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
 
 import 'frb_test_support.dart';
 
@@ -392,7 +393,12 @@ void main() {
       await mount(tester, p);
 
       var frames = 0;
-      final sub = p.state.onWorkerResponse.listen((_) => frames++);
+      final sub = p.state.onWorkerResponse.listen((msg) {
+        // The idle cache fill is SUPPOSED to work while the playhead is still
+        // (K-187) and announces each banked frame; what must go quiet is the
+        // PICTURE being re-rendered and re-published.
+        if (msg is! WorkerResponse_CacheFilled) frames++;
+      });
       addTearDown(sub.cancel);
 
       // Let the mount render land, then count what follows it.
@@ -478,21 +484,26 @@ void main() {
       expect(find.textContaining('Adaptive'), findsOneWidget);
     });
 
-    /// Every-frame playback runs on delivery rather than a clock, so it must not
-    /// skip — and it plays silent, because sound that cannot keep time is worse
-    /// than none.
-    testWidgets('every-frame playback silences the sound', (tester) async {
+    /// Every-frame plays WITH sound now — K-171's actual wording: audio plays
+    /// while rendering holds the comp's rate, and the worker pauses it if the
+    /// picture falls genuinely behind (it used to be silenced outright).
+    /// Headless there is no output device or mix, so what is asserted is the
+    /// seam: play in every-frame starts cleanly, the clock stays readable,
+    /// and stopping silences whatever there was.
+    testWidgets('every-frame playback starts the sound like adaptive',
+        (tester) async {
       final p = withLayer();
       p.uiState.workspace.performance.playback = PlaybackMode.everyFrame;
       await mount(tester, p);
 
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
-      expect(audioClock().playing, isFalse,
-          reason: 'no sound in every-frame mode');
+      expect(audioClock().seconds, greaterThanOrEqualTo(0),
+          reason: 'the sound path engaged without a fault');
 
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
+      expect(audioClock().playing, isFalse, reason: 'stop silences it');
     });
 
     testWidgets('stepping takes the sound with it', (tester) async {
