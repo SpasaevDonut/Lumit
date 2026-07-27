@@ -114,6 +114,11 @@ impl GpuContext {
 pub struct ColourEngine {
     linearise: wgpu::RenderPipeline,
     display: wgpu::RenderPipeline,
+    /// The display pass again, targeting BGRA — for the shared-texture Viewer,
+    /// whose consumer (ANGLE inside Flutter) matches share-handle surfaces
+    /// against its own B8G8R8A8 configs. Same shader, same hardware sRGB
+    /// encode; only the channel order of the render target differs.
+    display_bgra: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     linear_sampler: wgpu::Sampler,
@@ -201,6 +206,7 @@ impl ColourEngine {
         Self {
             linearise: make(WORKING_FORMAT, "linearise"),
             display: make(SRGB_FORMAT, "display"),
+            display_bgra: make(wgpu::TextureFormat::Bgra8UnormSrgb, "display-bgra"),
             layout,
             sampler,
             linear_sampler,
@@ -360,6 +366,23 @@ impl ColourEngine {
             SRGB_FORMAT,
             wgpu::TextureUsages::COPY_SRC,
             "display",
+        )
+    }
+
+    /// Linear working texture → sRGB-encoded BGRA display texture.
+    ///
+    /// For the zero-copy Viewer only (see the field's comment): pixels bound for
+    /// a DXGI share handle must be BGRA or ANGLE cannot open the surface, and
+    /// it declines silently. Encoded by the same hardware sRGB write as
+    /// [`Self::display`], so the values are bit-identical, reordered.
+    pub fn display_bgra(&self, ctx: &GpuContext, src: &wgpu::Texture) -> wgpu::Texture {
+        self.pass(
+            ctx,
+            &self.display_bgra,
+            src,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+            wgpu::TextureUsages::COPY_SRC,
+            "display-bgra",
         )
     }
 

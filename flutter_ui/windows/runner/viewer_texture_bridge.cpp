@@ -113,9 +113,12 @@ int64_t ViewerTextureBridge::Register(uint64_t handle, uint32_t width,
   entry->descriptor.height = height;
   entry->descriptor.visible_width = width;
   entry->descriptor.visible_height = height;
-  // The engine's shared texture is DXGI_FORMAT_R8G8B8A8_UNORM holding the
-  // display-encoded bytes (K-177), shown as plain RGBA8888.
-  entry->descriptor.format = kFlutterDesktopPixelFormatRGBA8888;
+  // The engine's shared texture is DXGI_FORMAT_B8G8R8A8_UNORM holding the
+  // display-encoded bytes (K-177). BGRA, because ANGLE — which opens this
+  // handle inside the engine — matches share-handle surfaces against its own
+  // B8G8R8A8 configs and silently declines RGBA: the texture registers, the
+  // compositor asks for it every frame, and nothing appears.
+  entry->descriptor.format = kFlutterDesktopPixelFormatBGRA8888;
   entry->descriptor.release_callback = nullptr;
   entry->descriptor.release_context = nullptr;
 

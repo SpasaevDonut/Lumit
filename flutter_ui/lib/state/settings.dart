@@ -32,17 +32,14 @@ class PerformanceSettings {
 
   /// Whether the Viewer may use the zero-copy shared-texture path.
   ///
-  /// **Off by default, deliberately.** The escape hatch this was written as
-  /// turned out to be the wrong way round: the feature was never actually
-  /// enabled in a built application until 2026-07-26, so the path had never run
-  /// outside a developer's own build — and the first time it shipped, the Viewer
-  /// drew nothing at all while the playhead ran and the Scopes updated. A
-  /// texture that registers but presents nothing fails *silently and totally*,
-  /// and nothing else publishes a picture to cover for it.
-  ///
-  /// So the working path is the default and the fast one is opted into, until it
-  /// has been seen to work on a real window. The Viewer's transport is shown in
-  /// the playback-mode tooltip, so which one is in use is never a guess.
+  /// On by default: the path is verified on a real window (a rendered solid
+  /// screenshotted arriving through the shared texture — see the integration
+  /// test). It spent a day off by default while it silently drew nothing; the
+  /// cause was the handle kind (ANGLE takes legacy DXGI share handles, the
+  /// engine exported NT ones) and the channel order (ANGLE opens BGRA only).
+  /// The never-drawn watchdog stays: if a machine's driver declines the
+  /// texture, the Viewer falls back to read-back by itself and Settings says
+  /// so, rather than showing nothing.
   bool useSharedTexture;
 
   /// Which playback behaviour the Viewer uses. Kept here rather than only in
@@ -55,7 +52,7 @@ class PerformanceSettings {
     this.diskCacheMb = 50 * 1024,
     this.vramCacheMb = 512,
     this.backgroundFill = true,
-    this.useSharedTexture = false,
+    this.useSharedTexture = true,
     this.playback = PlaybackMode.adaptive,
     this.cacheRoot,
   }) : ramBudgetMb = ramBudgetMb ?? defaultRamBudgetMb();
@@ -114,7 +111,7 @@ class PerformanceSettings {
         diskCacheMb: j['disk_cache_mb'] as int? ?? 50 * 1024,
         vramCacheMb: j['vram_cache_mb'] as int? ?? 512,
         backgroundFill: j['background_fill'] as bool? ?? true,
-        useSharedTexture: j['use_shared_texture'] as bool? ?? false,
+        useSharedTexture: j['use_shared_texture'] as bool? ?? true,
         // An unknown name (an older or newer build) falls back to adaptive,
         // which is the mode that always plays.
         playback: PlaybackMode.values.firstWhere(

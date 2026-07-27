@@ -22,7 +22,7 @@
 //! Flutter's embedder opens as a `kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle`
 //! surface (it re-opens the shared resource on its own D3D11/ANGLE device).
 //!
-//! The texture is `DXGI_FORMAT_R8G8B8A8_UNORM` and holds the *already sRGB-encoded*
+//! The texture is `DXGI_FORMAT_B8G8R8A8_UNORM` and holds the *already sRGB-encoded*
 //! display bytes — byte-for-byte the same pixels the CPU read-back path produced,
 //! so Flutter shows them identically (it treats the texture as plain RGBA8888).
 //! We copy the engine's `Rgba8UnormSrgb` display texture into this `Rgba8Unorm`
@@ -45,33 +45,72 @@
 #![allow(unsafe_code)]
 
 use crate::GpuContext;
-use windows::core::PCWSTR;
+use windows::core::{Interface, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, GENERIC_ALL, HANDLE};
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
+use windows::Win32::Graphics::Direct3D11::{
+    D3D11CreateDevice, ID3D11Device, ID3D11Device1, ID3D11DeviceContext, ID3D11Texture2D,
+    D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_FLAG,
+    D3D11_RESOURCE_MISC_SHARED, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+};
 use windows::Win32::Graphics::Direct3D12::{
     ID3D12Device, ID3D12Resource, D3D12_HEAP_FLAG_SHARED, D3D12_HEAP_PROPERTIES,
     D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_DESC, D3D12_RESOURCE_DIMENSION_TEXTURE2D,
     D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET, D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS,
     D3D12_RESOURCE_STATE_COMMON, D3D12_TEXTURE_LAYOUT_UNKNOWN,
 };
-use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1, IDXGIResource,
+};
 
-/// The wgpu-side format of the shared texture. `Rgba8Unorm` (not `…Srgb`) so the
-/// display-encoded bytes are stored verbatim and Flutter reads them as plain
-/// RGBA8888 — the identical pixels the read-back path produced.
-const SHARED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+/// The wgpu-side format of the shared texture. **BGRA**, because the consumer
+/// dictates it: ANGLE (inside Flutter's embedder) matches share-handle surfaces
+/// against its own B8G8R8A8 configs, and an RGBA texture fails that match — not
+/// with an error, but with a surface that never opens and a Viewer that shows
+/// its checkerboard. Non-`Srgb` so the display-encoded bytes are stored
+/// verbatim; the copy in [`SharedTexture::present`] is legal because only
+/// srgb-ness differs from the BGRA display texture, which wgpu treats as
+/// copy-compatible.
+const SHARED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 
-/// A D3D12 texture in a shared heap, wrapped as a `wgpu::Texture` and paired with
-/// the NT handle Flutter opens. One is held for the whole Viewer session and
-/// re-created only when the comp's dimensions change (a new handle is reported
-/// then). Its `wgpu::Texture` keeps the underlying D3D12 resource alive, so the
-/// exported handle stays valid for the texture's lifetime.
+/// A D3D12 texture in a shared heap, wrapped as a `wgpu::Texture`, plus the
+/// D3D11 hop that turns it into something Flutter can actually open.
+///
+/// **Why the hop exists.** Flutter's `DxgiSharedHandle` external texture goes
+/// through ANGLE's `EGL_D3D_TEXTURE_2D_SHARE_HANDLE_ANGLE`, which takes a
+/// *legacy* DXGI share handle — the `IDXGIResource::GetSharedHandle` kind (the
+/// embedder header's own doc link says exactly this). An earlier version handed
+/// it the *NT* handle from `ID3D12Device::CreateSharedHandle` instead: ANGLE
+/// cannot open one of those, fails without a word, and composites a transparent
+/// quad — a Viewer showing its checkerboard while every counter says frames are
+/// flowing. D3D12 cannot create legacy handles at all, so the engine bridges:
+/// the D3D12 texture is opened on a same-adapter D3D11 device via its NT handle,
+/// and each frame is GPU-copied into a D3D11 texture created with legacy
+/// `MISC_SHARED` sharing, whose legacy handle is what Flutter gets. The pixels
+/// never leave the card; the price is one extra on-GPU copy.
+///
+/// One is held for the whole Viewer session and re-created only when the comp's
+/// dimensions change (a new handle is reported then). The `wgpu::Texture` keeps
+/// the D3D12 resource alive; the COM references keep the D3D11 side alive.
 pub struct SharedTexture {
     /// The copy destination the render path writes the finished frame into.
     pub texture: wgpu::Texture,
-    /// The NT handle value (`HANDLE.0 as isize`). Stored as an integer, not a
-    /// `HANDLE`, so this struct stays `Send`/`Sync` — the headless renderer that
-    /// owns it lives behind a process-wide lock and must remain shareable.
-    handle: isize,
+    /// The NT handle for the D3D12 resource (`HANDLE.0 as isize`). Held only to
+    /// be closed on drop — Flutter never sees it.
+    nt_handle: isize,
+    /// The *legacy* share handle of `d3d11_shared`, the one Flutter opens.
+    /// Legacy handles are identifiers rather than kernel handles and must NOT be
+    /// closed.
+    legacy_handle: isize,
+    /// The same-adapter D3D11 device and context that perform the per-frame hop.
+    d3d11_context: ID3D11DeviceContext,
+    /// The D3D12 resource as D3D11 sees it (opened from the NT handle).
+    d3d11_view_of_d3d12: ID3D11Texture2D,
+    /// The legacy-shared D3D11 texture Flutter samples.
+    d3d11_shared: ID3D11Texture2D,
+    /// Kept alive for the two textures above.
+    _d3d11_device: ID3D11Device,
     pub width: u32,
     pub height: u32,
 }
@@ -98,10 +137,29 @@ impl SharedTexture {
                     let hal_device = hal_device.ok_or_else(|| {
                         "shared texture: wgpu is not running on the D3D12 backend".to_string()
                     })?;
-                    create_shared_resource(hal_device.raw_device(), width, height)
+                    let device = hal_device.raw_device();
+                    let luid = device.GetAdapterLuid();
+                    create_shared_resource(device, width, height).map(|pair| (pair, luid))
                 })
         };
-        let (resource, handle) = created?;
+        let ((resource, handle), adapter_luid) = created?;
+
+        // The D3D11 hop — see the struct docs for why it must exist at all.
+        // Same adapter by LUID, or the NT open below fails: a handle shared
+        // from one GPU cannot be opened on another.
+        let hop = unsafe { create_d3d11_hop(adapter_luid, handle, width, height) };
+        let (d3d11_device, d3d11_context, d3d11_view_of_d3d12, d3d11_shared, legacy_handle) =
+            match hop {
+                Ok(parts) => parts,
+                Err(err) => {
+                    // Nothing D3D11 was kept; release the D3D12 side too.
+                    unsafe {
+                        let _ = CloseHandle(HANDLE(handle as *mut core::ffi::c_void));
+                    }
+                    drop(resource);
+                    return Err(err);
+                }
+            };
 
         // Wrap the very same D3D12 resource as a wgpu texture so the render path
         // can copy into it. `texture_from_raw` takes a clone (a COM ref-count
@@ -140,15 +198,22 @@ impl SharedTexture {
 
         Ok(Self {
             texture,
-            handle,
+            nt_handle: handle,
+            legacy_handle,
+            d3d11_context,
+            d3d11_view_of_d3d12,
+            d3d11_shared,
+            _d3d11_device: d3d11_device,
             width,
             height,
         })
     }
 
-    /// The NT handle value Flutter opens (`kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle`).
+    /// The handle Flutter opens (`kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle`) —
+    /// the *legacy* DXGI share handle of the D3D11 texture, which is the kind
+    /// that surface type actually takes.
     pub fn handle(&self) -> u64 {
-        self.handle as usize as u64
+        self.legacy_handle as usize as u64
     }
 
     /// Copy the finished display texture (`Rgba8UnormSrgb`) into the shared
@@ -175,17 +240,129 @@ impl SharedTexture {
         // torn frame (see the module note). Zero *CPU* pixel work still — the
         // bytes never leave the card.
         gpu.device.poll(wgpu::Maintain::Wait);
+
+        // The hop: D3D12 has finished writing the simultaneous-access resource,
+        // so copy it into the legacy-shared texture ANGLE samples, still on the
+        // GPU. Flush submits before Flutter's next composite.
+        unsafe {
+            self.d3d11_context
+                .CopyResource(&self.d3d11_shared, &self.d3d11_view_of_d3d12);
+            self.d3d11_context.Flush();
+        }
     }
 }
 
 impl Drop for SharedTexture {
     fn drop(&mut self) {
         // Release the NT handle we exported. The D3D12 resource itself is freed
-        // by the `wgpu::Texture` dropping its COM reference.
-        if self.handle != 0 {
-            let _ = unsafe { CloseHandle(HANDLE(self.handle as *mut core::ffi::c_void)) };
+        // by the `wgpu::Texture` dropping its COM reference, and the D3D11 side
+        // by its COM references. The legacy handle is an identifier, not a
+        // kernel handle — closing it would be an error.
+        if self.nt_handle != 0 {
+            let _ = unsafe { CloseHandle(HANDLE(self.nt_handle as *mut core::ffi::c_void)) };
         }
     }
+}
+
+/// Build the D3D11 side of the hop: a device on the adapter named by `luid`,
+/// the D3D12 resource opened there through its NT handle, and a legacy-shared
+/// texture whose share handle Flutter can open (see the struct docs).
+///
+/// # Safety
+/// `nt_handle` must be a valid NT handle to a shareable D3D12 resource created
+/// on the adapter named by `luid`.
+type D3d11Hop = (
+    ID3D11Device,
+    ID3D11DeviceContext,
+    ID3D11Texture2D,
+    ID3D11Texture2D,
+    isize,
+);
+
+unsafe fn create_d3d11_hop(
+    luid: windows::Win32::Foundation::LUID,
+    nt_handle: isize,
+    width: u32,
+    height: u32,
+) -> Result<D3d11Hop, String> {
+    // The adapter wgpu is on, found by LUID — sharing does not cross GPUs.
+    let factory: IDXGIFactory1 = CreateDXGIFactory1()
+        .map_err(|e| format!("shared texture: CreateDXGIFactory1 failed: {e}"))?;
+    let mut adapter: Option<IDXGIAdapter> = None;
+    for index in 0..16 {
+        let Ok(candidate) = factory.EnumAdapters(index) else {
+            break;
+        };
+        let desc = candidate
+            .GetDesc()
+            .map_err(|e| format!("shared texture: GetDesc failed: {e}"))?;
+        if desc.AdapterLuid.LowPart == luid.LowPart && desc.AdapterLuid.HighPart == luid.HighPart {
+            adapter = Some(candidate);
+            break;
+        }
+    }
+    let adapter =
+        adapter.ok_or_else(|| "shared texture: no DXGI adapter matches wgpu's LUID".to_string())?;
+
+    let mut device: Option<ID3D11Device> = None;
+    let mut context: Option<ID3D11DeviceContext> = None;
+    D3D11CreateDevice(
+        &adapter,
+        // UNKNOWN is required when an explicit adapter is given.
+        D3D_DRIVER_TYPE_UNKNOWN,
+        None,
+        D3D11_CREATE_DEVICE_FLAG(0),
+        None,
+        D3D11_SDK_VERSION,
+        Some(&mut device),
+        None,
+        Some(&mut context),
+    )
+    .map_err(|e| format!("shared texture: D3D11CreateDevice failed: {e}"))?;
+    let device = device.ok_or_else(|| "shared texture: D3D11 device is null".to_string())?;
+    let context = context.ok_or_else(|| "shared texture: D3D11 context is null".to_string())?;
+
+    // The D3D12 resource, as D3D11 sees it. `OpenSharedResource1` is the NT-handle
+    // open; it works across the API boundary because the resource was created
+    // with ALLOW_SIMULTANEOUS_ACCESS.
+    let device1: ID3D11Device1 = device
+        .cast()
+        .map_err(|e| format!("shared texture: no ID3D11Device1: {e}"))?;
+    let view: ID3D11Texture2D = device1
+        .OpenSharedResource1(HANDLE(nt_handle as *mut core::ffi::c_void))
+        .map_err(|e| format!("shared texture: OpenSharedResource1 failed: {e}"))?;
+
+    // The texture Flutter samples: legacy MISC_SHARED, which is the only kind
+    // ANGLE's share-handle path can open.
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: width,
+        Height: height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC {
+            Count: 1,
+            Quality: 0,
+        },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+        CPUAccessFlags: 0,
+        MiscFlags: D3D11_RESOURCE_MISC_SHARED.0 as u32,
+    };
+    let mut shared: Option<ID3D11Texture2D> = None;
+    device
+        .CreateTexture2D(&desc, None, Some(&mut shared))
+        .map_err(|e| format!("shared texture: CreateTexture2D failed: {e}"))?;
+    let shared = shared.ok_or_else(|| "shared texture: D3D11 texture is null".to_string())?;
+
+    let dxgi: IDXGIResource = shared
+        .cast()
+        .map_err(|e| format!("shared texture: no IDXGIResource: {e}"))?;
+    let legacy = dxgi
+        .GetSharedHandle()
+        .map_err(|e| format!("shared texture: GetSharedHandle failed: {e}"))?;
+
+    Ok((device, context, view, shared, legacy.0 as isize))
 }
 
 /// Create a shared, simultaneous-access D3D12 texture and export its NT handle.
@@ -208,7 +385,7 @@ unsafe fn create_shared_resource(
         Height: height,
         DepthOrArraySize: 1,
         MipLevels: 1,
-        Format: DXGI_FORMAT_R8G8B8A8_UNORM,
+        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
         SampleDesc: DXGI_SAMPLE_DESC {
             Count: 1,
             Quality: 0,
@@ -241,4 +418,148 @@ unsafe fn create_shared_resource(
         .map_err(|e| format!("shared texture: CreateSharedHandle failed: {e}"))?;
 
     Ok((resource, handle.0 as isize))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11_CPU_ACCESS_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ, D3D11_USAGE_STAGING,
+    };
+
+    /// The whole point of the hop, proven end to end: pixels written through the
+    /// wgpu texture come back out of the **legacy** share handle, opened on a
+    /// separate D3D11 device exactly as ANGLE opens it inside Flutter.
+    ///
+    /// This is the test that was missing when the NT handle shipped: everything
+    /// engine-side reported success while Flutter composited a transparent
+    /// quad, because ANGLE's share-handle path cannot open an NT handle at all.
+    /// A separate device making the legacy open is as close to ANGLE as a test
+    /// can get without an EGL display.
+    #[test]
+    fn the_legacy_handle_yields_the_pixels_angle_style() {
+        let Ok(gpu) = GpuContext::headless() else {
+            eprintln!("skipping: no D3D12 adapter");
+            return;
+        };
+        let shared = match SharedTexture::new(&gpu, 8, 4) {
+            Ok(shared) => shared,
+            Err(err) => {
+                eprintln!("skipping: {err}");
+                return;
+            }
+        };
+
+        // Orange, written through the wgpu texture like a rendered frame — an
+        // asymmetric colour, so a channel-order mistake cannot sneak past the
+        // way a symmetric one (magenta: R = B) would. In BGRA bytes, RGBA
+        // orange (255, 128, 0) is [0, 128, 255].
+        let magenta: Vec<u8> = [0u8, 128, 255, 255].repeat(8 * 4);
+        let display = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("test-display"),
+            size: wgpu::Extent3d {
+                width: 8,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SHARED_FORMAT,
+            usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        gpu.queue.write_texture(
+            display.as_image_copy(),
+            &magenta,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(8 * 4),
+                rows_per_image: Some(4),
+            },
+            wgpu::Extent3d {
+                width: 8,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
+        );
+        shared.present(&gpu, &display);
+
+        // ANGLE's side: a different D3D11 device, the LEGACY open, a staging
+        // read-back.
+        let rgba = unsafe { read_legacy_handle(shared.handle(), 8, 4) }.unwrap();
+        assert_eq!(
+            &rgba[0..4],
+            &[0, 128, 255, 255],
+            "the pixels reached the legacy-shared texture, in BGRA order"
+        );
+        assert!(
+            rgba.chunks(4).all(|px| px == [0, 128, 255, 255]),
+            "every pixel, not just the corner"
+        );
+    }
+
+    /// Open `legacy` on a fresh device (as ANGLE would) and read the texture.
+    unsafe fn read_legacy_handle(legacy: u64, width: u32, height: u32) -> Result<Vec<u8>, String> {
+        let mut device: Option<ID3D11Device> = None;
+        let mut context: Option<ID3D11DeviceContext> = None;
+        D3D11CreateDevice(
+            None,
+            windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE,
+            None,
+            D3D11_CREATE_DEVICE_FLAG(0),
+            None,
+            D3D11_SDK_VERSION,
+            Some(&mut device),
+            None,
+            Some(&mut context),
+        )
+        .map_err(|e| format!("D3D11CreateDevice: {e}"))?;
+        let device = device.unwrap();
+        let context = context.unwrap();
+
+        let mut opened: Option<ID3D11Texture2D> = None;
+        device
+            .OpenSharedResource(
+                HANDLE(legacy as isize as *mut core::ffi::c_void),
+                &mut opened,
+            )
+            .map_err(|e| format!("legacy OpenSharedResource: {e}"))?;
+        let opened = opened.ok_or("legacy OpenSharedResource returned null")?;
+
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_STAGING,
+            BindFlags: 0,
+            CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+            MiscFlags: 0,
+        };
+        let mut staging: Option<ID3D11Texture2D> = None;
+        device
+            .CreateTexture2D(&desc, None, Some(&mut staging))
+            .map_err(|e| format!("staging CreateTexture2D: {e}"))?;
+        let staging = staging.unwrap();
+
+        context.CopyResource(&staging, &opened);
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        context
+            .Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+            .map_err(|e| format!("Map: {e}"))?;
+        let mut out = Vec::with_capacity((width * height * 4) as usize);
+        for row in 0..height {
+            let src = (mapped.pData as *const u8).add((row * mapped.RowPitch) as usize);
+            out.extend_from_slice(core::slice::from_raw_parts(src, (width * 4) as usize));
+        }
+        context.Unmap(&staging, 0);
+        Ok(out)
+    }
 }

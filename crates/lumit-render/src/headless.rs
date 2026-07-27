@@ -275,6 +275,20 @@ impl HeadlessRenderer {
         quality: Quality,
         retime_override: Option<&RetimeOverride>,
     ) -> Result<(wgpu::Texture, u32, u32), String> {
+        self.preview_display_texture_fmt(doc, comp_id, frame, quality, retime_override, false)
+    }
+
+    /// [`Self::preview_display_texture`] with the output channel order chosen:
+    /// `bgra` is for the shared-texture Viewer only (see `render_to_shared`).
+    fn preview_display_texture_fmt(
+        &mut self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+        retime_override: Option<&RetimeOverride>,
+        bgra: bool,
+    ) -> Result<(wgpu::Texture, u32, u32), String> {
         let comp = doc
             .comp(comp_id)
             .ok_or_else(|| "headless preview: unknown composition".to_string())?;
@@ -340,7 +354,11 @@ impl HeadlessRenderer {
                 crate::build::build_comp_draws(doc, comp, t, &pixels_by_layer, &mut visited);
             let background = comp.background.0.map(f64::from);
             let linear = realiser.realise(comp.camera_pose(t), cw, ch, background, &draws);
-            Ok(parts.colour.display(&self.gpu, &linear))
+            Ok(if bgra {
+                parts.colour.display_bgra(&self.gpu, &linear)
+            } else {
+                parts.colour.display(&self.gpu, &linear)
+            })
         };
         // Return the engines to the pool even on error, so one failed frame does
         // not discard the compiled shaders.
@@ -580,7 +598,10 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
     ) -> Result<SharedFrameInfo, String> {
-        let (shown, cw, ch) = self.preview_display_texture(doc, comp_id, frame, quality, None)?;
+        // BGRA, not the RGBA every other path uses: the shared texture's
+        // consumer is ANGLE, which only opens BGRA share-handle surfaces.
+        let (shown, cw, ch) =
+            self.preview_display_texture_fmt(doc, comp_id, frame, quality, None, true)?;
         // Re-create the shared texture when it is missing or the comp changed
         // size — a new handle is reported then, which the bridge relays so Dart
         // re-registers.

@@ -147,6 +147,11 @@ class ViewerTextureController {
   /// True once the texture path has been seen to fail this way.
   bool get neverDrawn => _announced >= _graceFrames && _drawn == 0;
 
+  /// The raw counters, for the integration test that hunts the silent-failure
+  /// case on a real window — they mean nothing to production code.
+  int get debugAnnounced => _announced;
+  int get debugDrawn => _drawn;
+
   Future<void> frameReady() async {
     final id = _textureId;
     if (!_available || id == null) return;
