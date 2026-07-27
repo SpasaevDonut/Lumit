@@ -36,6 +36,7 @@ import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 import 'keyframe_controls_frb.dart';
+import 'transform_rows_frb.dart';
 import '../state/drag_payloads.dart';
 import 'placeholder.dart';
 import 'source_rows_frb.dart';
@@ -836,33 +837,12 @@ String _basename(String path) {
   return cut < 0 ? path : path.substring(cut + 1);
 }
 
-/// One axis of a transform row: which property it edits, and the display hints
-/// that make its drag feel right. Mirrors v0's `_AxisSpec`, minus the seed —
-/// the frb transform always carries a real value, where v0's read-back could be
-/// absent and needed a fallback.
-class _Axis {
-  final BridgeTransformProp prop;
-  final String? suffix;
-  final double min;
-  final double max;
-  final int decimals;
-  final double speed;
-  const _Axis(
-    this.prop, {
-    this.suffix,
-    this.min = -100000,
-    this.max = 100000,
-    this.decimals = 1,
-    this.speed = 1,
-  });
-}
-
-/// The Transform card: one row per property group, each with one cell per axis.
+/// The Transform card: the layer's transform rows, in the panel's card chrome.
 ///
-/// The 3D rows (Position z, Rotation x, Rotation y) appear only on a 3D layer.
-/// A 2D layer showing controls that cannot do anything is worse than not showing
-/// them, and `isThreeD` is the reader that decides.
-class _TransformCard extends StatefulWidget {
+/// The rows themselves are [TransformRowsFrb], shared with the Timeline's
+/// twirl-down — this is the card around them, which is all that is particular to
+/// this panel.
+class _TransformCard extends StatelessWidget {
   final LayerReference layer;
   final CompositionReference comp;
   final int playheadFrame;
@@ -879,23 +859,8 @@ class _TransformCard extends StatefulWidget {
   });
 
   @override
-  State<_TransformCard> createState() => _TransformCardState();
-}
-
-class _TransformCardState extends State<_TransformCard> {
-  /// The transform being dragged, held only for the length of one drag, so the
-  /// preview renders the other ten properties as the document has them.
-  BridgeTransform? _staged;
-
-  final Stopwatch _since = Stopwatch()..start();
-  Duration _lastPreview = Duration.zero;
-
-  @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final transform = _staged ?? widget.layer.getTransform();
-    final threeD = widget.layer.isThreeD();
-
     return Container(
       margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
       decoration: BoxDecoration(
@@ -912,182 +877,16 @@ class _TransformCardState extends State<_TransformCard> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-            child: Column(
-              children: [
-                _row(transform, 'Anchor point', const [
-                  _Axis(BridgeTransformProp.anchorX),
-                  _Axis(BridgeTransformProp.anchorY),
-                ]),
-                _row(transform, 'Position', [
-                  const _Axis(BridgeTransformProp.positionX),
-                  const _Axis(BridgeTransformProp.positionY),
-                  if (threeD) const _Axis(BridgeTransformProp.positionZ),
-                ]),
-                _row(transform, 'Scale', const [
-                  _Axis(BridgeTransformProp.scaleX, suffix: '%'),
-                  _Axis(BridgeTransformProp.scaleY, suffix: '%'),
-                ]),
-                _row(transform, 'Rotation', const [
-                  _Axis(BridgeTransformProp.rotation, suffix: '°', speed: 0.5),
-                ]),
-                if (threeD) ...[
-                  _row(transform, 'Rotation x', const [
-                    _Axis(BridgeTransformProp.rotationX,
-                        suffix: '°', speed: 0.5),
-                  ]),
-                  _row(transform, 'Rotation y', const [
-                    _Axis(BridgeTransformProp.rotationY,
-                        suffix: '°', speed: 0.5),
-                  ]),
-                ],
-                _row(transform, 'Opacity', const [
-                  _Axis(BridgeTransformProp.opacity,
-                      suffix: '%', min: 0, max: 100, decimals: 0, speed: 0.5),
-                ]),
-              ],
+            child: TransformRowsFrb(
+              comp: comp,
+              layer: layer,
+              playheadFrame: playheadFrame,
+              onSeek: onSeek,
+              onChanged: onChanged,
             ),
           ),
         ],
       ),
-    );
-  }
-
-  Widget _row(BridgeTransform transform, String label, List<_Axis> axes) {
-    final t = ThemeScope.of(context).theme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          // One stopwatch, every axis in the row — and one undo step, because
-          // `setTransforms` commits them as a batch. They are separate
-          // properties in the model (which is what makes a per-axis curve
-          // possible), but a control that says "Position" has to act on
-          // Position.
-          KeyframeControlsFrb(
-            scalars: [for (final axis in axes) _read(transform, axis.prop)],
-            comp: widget.comp,
-            playheadFrame: widget.playheadFrame,
-            onSeek: widget.onSeek,
-            rowKey: axes.first.prop.name,
-            onWrite: (next) {
-              widget.layer.setTransforms(
-                props: [for (final axis in axes) axis.prop],
-                values: next,
-              );
-              setState(() => _staged = null);
-              widget.onChanged();
-            },
-          ),
-          const SizedBox(width: 4),
-          Expanded(
-            child: Text(label, style: t.body, overflow: TextOverflow.ellipsis),
-          ),
-          for (final axis in axes) ...[
-            const SizedBox(width: 6),
-            _cell(transform, axis),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _cell(BridgeTransform transform, _Axis axis) {
-    final t = ThemeScope.of(context).theme;
-    final scalar = _read(transform, axis.prop);
-
-    // An animated property is left alone for the same reason an animated effect
-    // parameter is: writing a static value over it would delete the curve.
-    if (scalar is! BridgeScalar_Static) {
-      return SizedBox(
-        width: _cellWidth,
-        child: LumitTooltip(
-          message: 'Animated — edit its keys in the graph editor',
-          child: Text('animated',
-              style: t.small.copyWith(color: t.textMuted),
-              textAlign: TextAlign.right),
-        ),
-      );
-    }
-
-    return SizedBox(
-      width: _cellWidth,
-      child: DragValueField(
-        key: ValueKey<String>('tf-${axis.prop.name}'),
-        value: scalar.field0,
-        min: axis.min,
-        max: axis.max,
-        speed: axis.speed,
-        decimals: axis.decimals,
-        suffix: axis.suffix,
-        onChanged: (v) => _commit(axis.prop, v.toDouble()),
-        onChangeStart: () => _staged = transform,
-        onChangeLive: (v) => _live(axis.prop, v.toDouble()),
-        onChangeEnd: (v) => _commit(axis.prop, v.toDouble()),
-        onDragCancel: () => setState(() => _staged = null),
-      ),
-    );
-  }
-
-  /// A drag tick: hold the new value locally and render it, without committing.
-  void _live(BridgeTransformProp prop, double value) {
-    final staged = _write(_staged ?? widget.layer.getTransform(), prop, value);
-    setState(() => _staged = staged);
-
-    if (_since.elapsed - _lastPreview < _previewInterval) return;
-    _lastPreview = _since.elapsed;
-    final ui = Provider.of<LumitUiState>(context, listen: false);
-    widget.comp.renderFrameWithTransformPreview(
-      frame: BigInt.from(ui.playheadFrame.value),
-      scale: ui.viewerScale,
-      layer: widget.layer,
-      transform: staged,
-    );
-  }
-
-  /// Release, or a typed value: one op for the one property that changed.
-  void _commit(BridgeTransformProp prop, double value) {
-    widget.layer.setTransform(prop: prop, value: BridgeScalar.static_(value));
-    setState(() => _staged = null);
-    widget.onChanged();
-  }
-
-  BridgeScalar _read(BridgeTransform tf, BridgeTransformProp prop) =>
-      switch (prop) {
-        BridgeTransformProp.anchorX => tf.anchorX,
-        BridgeTransformProp.anchorY => tf.anchorY,
-        BridgeTransformProp.positionX => tf.positionX,
-        BridgeTransformProp.positionY => tf.positionY,
-        BridgeTransformProp.positionZ => tf.positionZ,
-        BridgeTransformProp.scaleX => tf.scaleX,
-        BridgeTransformProp.scaleY => tf.scaleY,
-        BridgeTransformProp.rotation => tf.rotation,
-        BridgeTransformProp.rotationX => tf.rotationX,
-        BridgeTransformProp.rotationY => tf.rotationY,
-        BridgeTransformProp.opacity => tf.opacity,
-      };
-
-  /// A copy of `tf` with one property replaced — what the preview renders.
-  ///
-  /// Rebuilt field by field because the generated type has no `copyWith`: it is
-  /// a plain data class across the seam, which is the point of it.
-  BridgeTransform _write(
-      BridgeTransform tf, BridgeTransformProp prop, double value) {
-    final replacement = BridgeScalar.static_(value);
-    BridgeScalar pick(BridgeTransformProp p, BridgeScalar current) =>
-        p == prop ? replacement : current;
-
-    return BridgeTransform(
-      anchorX: pick(BridgeTransformProp.anchorX, tf.anchorX),
-      anchorY: pick(BridgeTransformProp.anchorY, tf.anchorY),
-      positionX: pick(BridgeTransformProp.positionX, tf.positionX),
-      positionY: pick(BridgeTransformProp.positionY, tf.positionY),
-      positionZ: pick(BridgeTransformProp.positionZ, tf.positionZ),
-      scaleX: pick(BridgeTransformProp.scaleX, tf.scaleX),
-      scaleY: pick(BridgeTransformProp.scaleY, tf.scaleY),
-      rotation: pick(BridgeTransformProp.rotation, tf.rotation),
-      rotationX: pick(BridgeTransformProp.rotationX, tf.rotationX),
-      rotationY: pick(BridgeTransformProp.rotationY, tf.rotationY),
-      opacity: pick(BridgeTransformProp.opacity, tf.opacity),
     );
   }
 }

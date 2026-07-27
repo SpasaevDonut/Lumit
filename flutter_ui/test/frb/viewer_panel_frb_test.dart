@@ -379,6 +379,53 @@ void main() {
           reason: 'nothing moved, so nothing should have been rendered');
     });
 
+    /// **The stale-picture regression.** The Viewer asked for a frame when the
+    /// playhead moved and at no other time, so an edit made with the playhead
+    /// still — typing an opacity, adding an effect, anything another panel
+    /// commits — left the old picture on screen until something moved the
+    /// playhead. Playing was the usual accident that fixed it, which is exactly
+    /// how it was reported: "the Viewer does not update until I play".
+    testWidgets('an edit with the playhead still redraws the picture',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+      await settleFrb(tester,
+          minRounds: 10, until: () => p.uiState.frameArrived.value > 0);
+      final before = p.uiState.frameArrived.value;
+      final playhead = p.uiState.playheadFrame.value;
+
+      p.layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: const BridgeScalar.static_(25),
+      );
+      await settleFrb(tester,
+          minRounds: 8, until: () => p.uiState.frameArrived.value > before);
+
+      expect(p.uiState.frameArrived.value, greaterThan(before),
+          reason: 'the edit asked for the picture again');
+      expect(p.uiState.playheadFrame.value, playhead,
+          reason: 'and did it without moving the playhead to force it');
+    });
+
+    /// Pressing play with the playhead already at the end used to do nothing at
+    /// all: the clock read past the end on its first tick, so it stopped again
+    /// immediately, and every-frame's pump had no frame left to ask for.
+    testWidgets('play from the end starts from the beginning', (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+      p.uiState.playheadFrame.value = p.comp.durationFrames() - 1;
+      await tester.pump();
+
+      p.uiState.requestTogglePlay();
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, lessThan(10),
+          reason: 'it rewound rather than sitting at the end doing nothing');
+
+      await tester.pump(const Duration(milliseconds: 250));
+      expect(p.uiState.playheadFrame.value, greaterThan(0),
+          reason: 'and it is actually playing');
+    });
+
     /// The two playback behaviours, and the fact that you can see which is on.
     testWidgets('the playback mode is shown on the bar and toggles',
         (tester) async {

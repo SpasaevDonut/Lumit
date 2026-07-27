@@ -33,6 +33,7 @@ import '../widgets/controls.dart';
 import 'placeholder.dart';
 import 'graph_editor_frb.dart';
 import 'timeline_extras_frb.dart';
+import 'transform_rows_frb.dart';
 
 /// The outline column's width. Wide enough for the number, four switches, a
 /// name worth reading, and the blend and parent pickers side by side — about
@@ -56,6 +57,16 @@ class TimelinePanelFrb extends StatefulWidget {
 }
 
 class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
+  /// The layers twirled open, by id. Held by the panel rather than by each row
+  /// so the lane side can leave room for exactly the rows the outline draws —
+  /// the two halves are one table, and a name that does not line up with its bar
+  /// is worse than no fold-out at all.
+  final Set<String> _open = {};
+
+  void _toggleOpen(LayerReference layer) => setState(() {
+        final id = layer.internallayerId.toString();
+        if (!_open.remove(id)) _open.add(id);
+      });
   String _search = '';
 
   /// The graph editor replaces the layer area rather than sitting beside it:
@@ -152,6 +163,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                           comp: comp,
                           layers: layers,
                           selected: ui.selectedLayer.value,
+                          open: _open,
+                          onToggleOpen: _toggleOpen,
+                          playheadFrame: ui.playheadFrame.value,
+                          onSeek: (f) => ui.playheadFrame.value = f,
                           onSelect: (l) => setState(() {
                             ui.selectedLayer.value = l;
                           }),
@@ -177,6 +192,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                             : _LayerArea(
                                 comp: comp,
                                 layers: layers,
+                                open: _open,
                                 axis: axis,
                                 playhead: ui.playheadFrame,
                                 razor: _razor,
@@ -414,6 +430,10 @@ class _Outline extends StatelessWidget {
   final CompositionReference comp;
   final List<LayerReference> layers;
   final LayerReference? selected;
+  final Set<String> open;
+  final ValueChanged<LayerReference> onToggleOpen;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
   final ValueChanged<LayerReference> onSelect;
   final VoidCallback onChanged;
 
@@ -421,6 +441,10 @@ class _Outline extends StatelessWidget {
     required this.comp,
     required this.layers,
     required this.selected,
+    required this.open,
+    required this.onToggleOpen,
+    required this.playheadFrame,
+    required this.onSeek,
     required this.onSelect,
     required this.onChanged,
   });
@@ -431,9 +455,14 @@ class _Outline extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        // Aligns the first row with the first layer bar, under the ruler.
-        Container(height: _rulerHeight, color: t.surface2),
-        for (var i = 0; i < layers.length; i++)
+        // Aligns the first row with the first layer bar. The lane side puts the
+        // cache bar under the ruler, so this has to clear both — matching only
+        // the ruler left every name two pixels below its own bar.
+        Container(
+          height: _rulerHeight + TimelineCacheBar.height,
+          color: t.surface2,
+        ),
+        for (var i = 0; i < layers.length; i++) ...[
           _OutlineRow(
             key: ValueKey<String>('tl-row-${layers[i].internallayerId}'),
             comp: comp,
@@ -441,9 +470,31 @@ class _Outline extends StatelessWidget {
             index: i,
             count: layers.length,
             selected: selected?.equals(layer: layers[i]) ?? false,
+            open: open.contains(layers[i].internallayerId.toString()),
+            onToggleOpen: () => onToggleOpen(layers[i]),
             onSelect: () => onSelect(layers[i]),
             onChanged: onChanged,
           ),
+          // The property rows, when the layer is twirled open. Indented to the
+          // name column so they read as belonging to the layer above them.
+          if (open.contains(layers[i].internallayerId.toString()))
+            Padding(
+              padding: const EdgeInsets.only(left: 24),
+              child: TransformRowsFrb(
+                key: ValueKey<String>('tl-props-${layers[i].internallayerId}'),
+                comp: comp,
+                layer: layers[i],
+                playheadFrame: playheadFrame,
+                onSeek: onSeek,
+                onChanged: onChanged,
+                keyPrefix: 'tl-tf',
+                // Exactly one lane's worth each, because the lanes beside them
+                // are drawn at the same height from the same list.
+                rowHeight: _rowHeight,
+                rowPadding: EdgeInsets.zero,
+              ),
+            ),
+        ],
       ],
     );
   }
@@ -455,6 +506,8 @@ class _OutlineRow extends StatelessWidget {
   final int index;
   final int count;
   final bool selected;
+  final bool open;
+  final VoidCallback onToggleOpen;
   final VoidCallback onSelect;
   final VoidCallback onChanged;
 
@@ -465,6 +518,8 @@ class _OutlineRow extends StatelessWidget {
     required this.index,
     required this.count,
     required this.selected,
+    required this.open,
+    required this.onToggleOpen,
     required this.onSelect,
     required this.onChanged,
   });
@@ -489,6 +544,25 @@ class _OutlineRow extends StatelessWidget {
               width: 20,
               child: Text('${index + 1}',
                   style: t.small.copyWith(color: t.textMuted)),
+            ),
+            // The twirl: the layer's properties, where AE puts them. Its own
+            // gesture, so opening a layer does not also select it — you often
+            // want to look at one layer's values while another is selected.
+            GestureDetector(
+              key: ValueKey<String>('tl-twirl-$id'),
+              behavior: HitTestBehavior.opaque,
+              onTap: onToggleOpen,
+              child: SizedBox(
+                width: 16,
+                height: _rowHeight,
+                child: Center(
+                  child: lumitIcon(
+                    open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                    size: 11,
+                    color: open ? t.textPrimary : t.textMuted,
+                  ),
+                ),
+              ),
             ),
             _switch(context, id, 'visible', LumitIcon.eye, switches.visible,
                 BridgeLayerSwitch.visible),
@@ -611,6 +685,10 @@ class _OutlineRow extends StatelessWidget {
 class _LayerArea extends StatelessWidget {
   final CompositionReference comp;
   final List<LayerReference> layers;
+
+  /// Which layers are twirled open in the outline. Read only to leave the same
+  /// room their property rows take, so a bar never drifts away from its name.
+  final Set<String> open;
   final _Axis axis;
 
   /// Listened to, not read: only the playhead line moves when it changes.
@@ -626,6 +704,7 @@ class _LayerArea extends StatelessWidget {
   const _LayerArea({
     required this.comp,
     required this.layers,
+    required this.open,
     required this.axis,
     required this.playhead,
     required this.razor,
@@ -650,7 +729,7 @@ class _LayerArea extends StatelessWidget {
             // Directly under the ruler and above the lanes, which is where the
             // interface spec puts it (docs/07 §3.2).
             TimelineCacheBar(comp: comp, axis: axis, revision: cacheRevision),
-            for (final layer in layers)
+            for (final layer in layers) ...[
               _Bar(
                 key: ValueKey<String>('tl-bar-${layer.internallayerId}'),
                 comp: comp,
@@ -660,6 +739,17 @@ class _LayerArea extends StatelessWidget {
                 playheadFrame: () => playhead.value,
                 onChanged: onChanged,
               ),
+              // One empty lane per property row the outline is showing. Empty
+              // for now — the keyframes themselves are drawn in the graph
+              // editor — but the room has to be here, or every bar below an
+              // open layer sits above its own name.
+              if (open.contains(layer.internallayerId.toString()))
+                SizedBox(
+                  key: ValueKey<String>('tl-lanes-${layer.internallayerId}'),
+                  height: _rowHeight *
+                      transformGroups(threeD: layer.isThreeD()).length,
+                ),
+            ],
           ],
         ),
         // The playhead rides above every bar so it is never hidden behind one,

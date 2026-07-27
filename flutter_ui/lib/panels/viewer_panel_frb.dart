@@ -30,6 +30,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
@@ -65,11 +66,42 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
 
   bool get playing => _ticker?.isActive ?? false;
 
+  /// Edits made anywhere in the document, which are the other reason the
+  /// picture has to be asked for again.
+  StreamSubscription<ScopedChange>? _changes;
+
   @override
   void dispose() {
     _unbind();
+    _changes?.cancel();
     _ticker?.dispose();
     super.dispose();
+  }
+
+  /// An edit landed since the render now in flight was asked for.
+  ///
+  /// The frame *number* alone cannot say whether the picture is up to date: an
+  /// edit changes what frame 40 looks like without changing that it is frame 40.
+  /// Without this, an edit that landed mid-render was answered by the frame
+  /// already on its way and never asked for again.
+  bool _stale = false;
+
+  /// Something changed the document: whatever is on screen is now a picture of
+  /// the document as it *was*.
+  ///
+  /// Every commit comes through here — this panel does not make edits itself, so
+  /// there is no local shortcut to take. During every-frame playback the pump
+  /// owns the request stream, exactly as in [_onPlayheadChanged].
+  void _onDocumentChanged() {
+    final ui = _boundUi;
+    final comp = ui?.selectedComp;
+    if (ui == null || comp == null) return;
+    if (playing &&
+        ui.workspace.performance.playback == PlaybackMode.everyFrame) {
+      return;
+    }
+    _stale = true;
+    _requestRender(comp, ui);
   }
 
   /// The shell's transport intent (the space bar). Subscribed here rather than
@@ -101,6 +133,10 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       ui.togglePlayRequest.addListener(_onTogglePlayRequest);
       ui.playheadFrame.addListener(_onPlayheadChanged);
       ui.frameArrived.addListener(_onFrameArrived);
+      _changes?.cancel();
+      _changes = Provider.of<LumitState>(context, listen: false)
+          .onChange
+          .listen((_) => _onDocumentChanged());
       // The frame under the playhead as it stands: without this the Viewer
       // shows nothing at all until something moves the playhead. After the
       // frame, so the scale this asks at is the one just measured.
@@ -248,6 +284,8 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     final frame = _wantedFrame;
     if (frame == null) return;
     _awaitingFrame = frame;
+    // What goes out now is a picture of the document as it stands.
+    _stale = false;
     try {
       comp.renderFrame(
         frame: BigInt.from(frame),
@@ -302,7 +340,10 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     }
 
     _wantedFrame = ui.playheadFrame.value;
-    if (_wantedFrame == delivered) {
+    // `_stale` is why this is not just a frame-number comparison: an edit that
+    // landed while this frame was rendering makes the delivered picture the
+    // right frame of the wrong document.
+    if (_wantedFrame == delivered && !_stale) {
       _wantedFrame = null;
       return;
     }
@@ -388,6 +429,13 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
         ? 60.0
         : settings.fpsNum.toDouble() / settings.fpsDen.toDouble();
     final last = comp.durationFrames() - 1;
+
+    // Play from the end means play from the start. Otherwise pressing play with
+    // the playhead already at the last frame did nothing at all: the clock said
+    // "past the end" on its first tick, and every-frame's pump had no frame left
+    // to ask for — so the transport showed itself playing while nothing moved
+    // and no picture was ever requested.
+    if (state.playheadFrame.value >= last) state.playheadFrame.value = 0;
 
     // Every-frame playback cannot keep time by definition, so it plays silent.
     // Sound that drifts against the picture is worse than no sound, and worse

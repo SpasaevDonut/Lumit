@@ -12,6 +12,7 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
 import 'frb_test_support.dart';
@@ -303,5 +304,86 @@ void main() {
       expect(p.uiState.playheadFrame.value, 30);
     });
 
+    /// The twirl-down the port dropped: a layer's transform properties, in the
+    /// Timeline, with values you can drag. They are the same rows the Effect
+    /// controls panel shows — one implementation, two panels.
+    testWidgets('the twirl opens a layer\'s property rows and closes them again',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      final twirl = find
+          .byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
+      expect(twirl, findsOneWidget, reason: 'every layer row has one');
+      expect(find.text('Opacity'), findsNothing,
+          reason: 'closed to start with, or a busy comp is a wall of numbers');
+
+      await tester.tap(twirl);
+      await tester.pump();
+      expect(find.text('Anchor point'), findsOneWidget);
+      expect(find.text('Position'), findsOneWidget);
+      expect(find.text('Scale'), findsOneWidget);
+      expect(find.text('Rotation'), findsOneWidget);
+      expect(find.text('Opacity'), findsOneWidget);
+
+      await tester.tap(twirl);
+      await tester.pump();
+      expect(find.text('Opacity'), findsNothing);
+    });
+
+    testWidgets('dragging a property value in the Timeline reaches the document',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+
+      final before =
+          (layer.getTransform().positionX as BridgeScalar_Static).field0;
+      await tester.drag(
+          find.byKey(const ValueKey('tl-tf-positionX')), const Offset(40, 0));
+      await tester.pump();
+
+      final after =
+          (layer.getTransform().positionX as BridgeScalar_Static).field0;
+      expect(after, greaterThan(before),
+          reason: 'the drag committed, exactly as it does in Effect controls');
+    });
+
+    /// The outline and the lanes are one table. A fold-out that pushed the names
+    /// down without leaving the same room beside them would slide every bar
+    /// below it away from its own layer.
+    testWidgets('an open layer keeps its bars lined up with its names',
+        (tester) async {
+      final p = withComp();
+      final upper = p.comp.addSolidLayer();
+      final lower = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      Finder rowOf(LayerReference l) =>
+          find.byKey(ValueKey<String>('tl-row-${l.internallayerId}'));
+      Finder barOf(LayerReference l) =>
+          find.byKey(ValueKey<String>('tl-bar-${l.internallayerId}'));
+
+      for (final layer in [upper, lower]) {
+        expect(tester.getTopLeft(rowOf(layer)).dy,
+            closeTo(tester.getTopLeft(barOf(layer)).dy, 0.01));
+      }
+
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-twirl-${upper.internallayerId}')));
+      await tester.pump();
+
+      for (final layer in [upper, lower]) {
+        expect(
+          tester.getTopLeft(rowOf(layer)).dy,
+          closeTo(tester.getTopLeft(barOf(layer)).dy, 0.01),
+          reason: 'the layer below an open one still meets its own bar',
+        );
+      }
+    });
   }, skip: !engineAvailable);
 }

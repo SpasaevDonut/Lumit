@@ -350,6 +350,17 @@ outline and the lanes is a drag handle that sets the outline width.
   keyframe at that time, right-click for interpolation and *Ease* commands.
 - `U` reveals animated properties of selected layers; `UU` reveals all modified properties.
 
+  **Shipped (partial):** the caret on each layer row opens the **Transform** property rows —
+  stopwatch, ◄ ◆ ► navigator, label, and one scrub-drag/click-to-type value per axis, exactly
+  the rows the Effect controls panel shows (they are one widget, `transform_rows_frb.dart`,
+  used by both panels). A drag stages the value, previews it through the engine's patched
+  clone, and commits once on release: one undo step for the gesture. The lane beside each open
+  row is left empty and the outline reserves exactly its height, so bars never drift away from
+  their names. Still to build here: the intermediate section headings (Masks, Effects, Audio,
+  Retime — with only Transform implemented the caret opens straight onto it), the keyframe
+  diamonds on the lanes and their interaction, the expression toggle, and `U`/`UU`. Keyframes
+  are editable in the graph editor meanwhile.
+
 ### 4.4 Sequence layers
 
 A Sequence layer's row renders its clips back-to-back (glossary §2):
