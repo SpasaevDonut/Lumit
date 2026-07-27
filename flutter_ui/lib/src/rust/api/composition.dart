@@ -25,6 +25,30 @@ import 'package:uuid/uuid.dart';
 List<String> listBlendModes() =>
     BridgeLib.instance.api.crateApiCompositionListBlendModes();
 
+/// The comp read model (K-184): what one `get_model` crossing carries. Dart
+/// holds this and refreshes it when the engine reports a change; panels draw
+/// from it with no bridge calls at all.
+class BridgeCompModel {
+  final PlatformInt64 durationFrames;
+  final List<BridgeLayerEntry> layers;
+
+  const BridgeCompModel({
+    required this.durationFrames,
+    required this.layers,
+  });
+
+  @override
+  int get hashCode => durationFrames.hashCode ^ layers.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeCompModel &&
+          runtimeType == other.runtimeType &&
+          durationFrames == other.durationFrames &&
+          layers == other.layers;
+}
+
 /// Everything the Composition settings dialog reads and writes.
 ///
 /// The frame rate is the exact `num`/`den` pair and the duration is exact
@@ -105,6 +129,29 @@ class BridgeCompSize {
           runtimeType == other.runtimeType &&
           width == other.width &&
           height == other.height;
+}
+
+/// One layer of the comp read model (K-184): the plain-data handle Dart
+/// addresses edits by, and everything the panels draw for it.
+class BridgeLayerEntry {
+  final LayerReference layer;
+  final BridgeLayerInfo info;
+
+  const BridgeLayerEntry({
+    required this.layer,
+    required this.info,
+  });
+
+  @override
+  int get hashCode => layer.hashCode ^ info.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeLayerEntry &&
+          runtimeType == other.runtimeType &&
+          layer == other.layer &&
+          info == other.info;
 }
 
 /// One timeline marker (docs/03 §11): a cue on the comp's timebase.
@@ -281,6 +328,15 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceDetectBeats(
           that: this, sensitivityPercent: sensitivityPercent);
 
+  /// The document's revision number: bumped once per committed change, undo,
+  /// redo or recovery. The Dart read model compares it per rebuild — one
+  /// cheap crossing — and re-reads [`Self::get_model`] only when it moved,
+  /// so a rebuild of an unchanged document costs exactly one call (K-184).
+  BigInt documentRevision() => BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceDocumentRevision(
+        that: this,
+      );
+
   /// How many frames the comp is long at its own rate — the Timeline's axis,
   /// and one past the last frame the transport can reach.
   ///
@@ -313,6 +369,17 @@ class CompositionReference {
   /// Every marker on this comp, in the order the document holds them.
   List<BridgeMarker> getMarkers() =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetMarkers(
+        that: this,
+      );
+
+  /// The whole comp as the panels draw it, in ONE crossing (K-184): every
+  /// layer's handle and its full [`BridgeLayerInfo`] (switches, blend, span
+  /// as frames, transform, every effect's every value), plus the comp's
+  /// length. This is the Dart read model's refresh: read once per document
+  /// change, never per widget rebuild — so selecting a layer, or any other
+  /// pure-interface change, costs zero bridge calls.
+  BridgeCompModel getModel() =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferenceGetModel(
         that: this,
       );
 

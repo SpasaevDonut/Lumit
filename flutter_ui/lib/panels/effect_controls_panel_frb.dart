@@ -31,7 +31,6 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
-import '../builder/layer_builder.dart';
 import '../icons/icons.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -85,23 +84,20 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     BuildContext context,
     CompositionReference comp,
     LayerReference layer,
-  ) =>
-      // The keyframe controls read the playhead — which key is under it, whether
-      // the diamond is filled — so the rows have to redraw when it moves.
-      ValueListenableBuilder<int>(
-        valueListenable:
-            Provider.of<LumitUiState>(context, listen: false).playheadFrame,
-        // Wrapped so any op on this layer re-reads it — an undo or redo, or the
-        // same property dragged in the Timeline's fold-out. The effect stack in
-        // particular has to be read *again*, not just redrawn: the instances the
-        // rows hold are a staged copy taken when the panel last built, so
-        // without this an undone value stayed on screen until something else
-        // rebuilt the panel.
-        builder: (context, playhead, _) => LayerBuilder(
-          layer: layer,
-          builder: (context) => _rows(context, comp, layer, playhead),
-        ),
-      );
+  ) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    // The keyframe controls read the playhead — which key is under it, whether
+    // the diamond is filled — so the rows have to redraw when it moves. The
+    // read model repaints the panel when anything commits (K-184): an undo, a
+    // redo, or the same property dragged in the Timeline's fold-out.
+    return ValueListenableBuilder<int>(
+      valueListenable: ui.playheadFrame,
+      builder: (context, playhead, _) => ListenableBuilder(
+        listenable: ui.model,
+        builder: (context, _) => _rows(context, comp, layer, playhead),
+      ),
+    );
+  }
 
   Widget _rows(
     BuildContext context,
@@ -111,16 +107,26 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
   ) {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context, listen: false);
-    final effects = _effects.stackWith(layer);
+    final entry = ui.model.byId(layer.internallayerId);
+    if (entry == null) {
+      // The layer has gone (deleted, or another comp fronted) — nothing to
+      // draw until the selection catches up.
+      return const PlaceholderPanel(
+        icon: LumitIcon.fx,
+        title: 'Effect controls',
+        hint: 'Select a layer in the Timeline.',
+      );
+    }
+    final info = entry.info;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _Header(
-          layerName: layer.getName(),
+          layerName: info.name,
           onAdd: (name) {
             layer.addEffect(name: name);
-            setState(() {});
+            ui.model.refresh();
           },
         ),
         Expanded(
@@ -131,7 +137,7 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
           child: DragTarget<EffectDragData>(
             onAcceptWithDetails: (details) {
               layer.addEffect(name: details.data.name);
-              setState(() {});
+              ui.model.refresh();
             },
             builder: (context, candidate, _) => Container(
               // While something is over it, say so: a drop with no feedback is
@@ -150,17 +156,19 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
               SourceRowsFrb(
                 key: ValueKey<String>('src-card-${layer.internallayerId}'),
                 layer: layer,
-                onChanged: () => setState(() {}),
+                onChanged: ui.model.refresh,
               ),
               _TransformCard(
                 key: ValueKey<String>('tf-card-${layer.internallayerId}'),
                 layer: layer,
                 comp: comp,
+                transform: info.transform,
+                threeD: info.switches.threeD,
                 playheadFrame: playhead,
                 onSeek: (frame) => ui.playheadFrame.value = frame,
-                onChanged: () => setState(() {}),
+                onChanged: ui.model.refresh,
               ),
-              if (effects.isEmpty)
+              if (info.effects.isEmpty)
                 Padding(
                   padding: const EdgeInsets.symmetric(vertical: 18),
                   child: Text(
@@ -170,16 +178,17 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                   ),
                 )
               else
-                for (var index = 0; index < effects.length; index++)
+                for (var index = 0; index < info.effects.length; index++)
                   _EffectCard(
                     key: ValueKey<String>('fx-card-$index'),
-                    effect: effects[index],
+                    info: info.effects[index],
+                    stagedValue: _effects.stagedValue,
                     index: index,
-                    count: effects.length,
-                    onStackChanged: () => setState(() {}),
+                    count: info.effects.length,
+                    onStackChanged: ui.model.refresh,
                     onWrite: (id, param, value) {
                       _effects.write(layer, id, param, value);
-                      setState(() {});
+                      ui.model.refresh();
                     },
                     onLive: (id, param, value) => setState(() {
                       _effects.live(comp, layer, id, param, value,
@@ -279,8 +288,17 @@ Future<void> _showAddMenu(BuildContext context, ValueChanged<String> onAdd) asyn
 }
 
 /// One effect: its title row and a row per declared parameter.
+///
+/// Drawn entirely from the read model (K-184) — no bridge calls in build. The
+/// title-row ops need a live instance handle, which is fetched fresh at click
+/// time (the model's data is not a handle, deliberately: frb consumes handles
+/// passed by value).
 class _EffectCard extends StatelessWidget {
-  final BridgeEffectInstance effect;
+  final BridgeEffectInstanceInfo info;
+
+  /// The drag in flight's staged value for (effect, param), or null — overlaid
+  /// on the model's value so the number under the pointer is the staged one.
+  final BridgeEffectValue? Function(UuidValue effect, String param) stagedValue;
   final int index;
   final int count;
   final LayerReference layer;
@@ -301,7 +319,8 @@ class _EffectCard extends StatelessWidget {
 
   const _EffectCard({
     super.key,
-    required this.effect,
+    required this.info,
+    required this.stagedValue,
     required this.index,
     required this.count,
     required this.layer,
@@ -313,13 +332,19 @@ class _EffectCard extends StatelessWidget {
     required this.onLive,
   });
 
+  /// Run [op] on a freshly read handle for this card's effect.
+  void _withHandle(void Function(BridgeEffectInstance) op) {
+    for (final candidate in layer.getEffects()) {
+      if (candidate.getInfo().id == info.id) {
+        op(candidate);
+        return;
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    // ONE bridge call for everything this card draws (K-183): id, name, bypass
-    // state and every parameter's value. The schema is answered from the
-    // session cache.
-    final info = effect.getInfo();
     final params = cachedListParameters(info.name);
     final values = {for (final v in info.values) v.id: v.value};
 
@@ -333,7 +358,7 @@ class _EffectCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _titleRow(context, t, info),
+          _titleRow(context, t),
           if (params.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
@@ -344,7 +369,8 @@ class _EffectCard extends StatelessWidget {
                       key: ValueKey<String>('fx-row-${info.id}-${param.id}'),
                       effectId: info.id,
                       param: param,
-                      value: values[param.id],
+                      value:
+                          stagedValue(info.id, param.id) ?? values[param.id],
                       comp: comp,
                       playheadFrame: playheadFrame,
                       onSeek: onSeek,
@@ -359,8 +385,7 @@ class _EffectCard extends StatelessWidget {
     );
   }
 
-  Widget _titleRow(
-      BuildContext context, LumitTheme t, BridgeEffectInstanceInfo info) {
+  Widget _titleRow(BuildContext context, LumitTheme t) {
     final id = info.id;
     final enabled = info.enabled;
     return Padding(
@@ -373,7 +398,8 @@ class _EffectCard extends StatelessWidget {
                 key: ValueKey<String>('fx-enabled-$id'),
                 value: enabled,
                 onChanged: (on) {
-                  layer.setEffectEnabled(effect: effect, enabled: on);
+                  _withHandle(
+                      (e) => layer.setEffectEnabled(effect: e, enabled: on));
                   onStackChanged();
                 },
               ),
@@ -388,7 +414,8 @@ class _EffectCard extends StatelessWidget {
               enabled: index > 0,
               key: 'fx-up-$id',
               onPressed: () {
-                layer.reorderEffect(effect: effect, newIndex: index - 1);
+                _withHandle(
+                    (e) => layer.reorderEffect(effect: e, newIndex: index - 1));
                 onStackChanged();
               },
             ),
@@ -399,7 +426,8 @@ class _EffectCard extends StatelessWidget {
               enabled: index < count - 1,
               key: 'fx-down-$id',
               onPressed: () {
-                layer.reorderEffect(effect: effect, newIndex: index + 1);
+                _withHandle(
+                    (e) => layer.reorderEffect(effect: e, newIndex: index + 1));
                 onStackChanged();
               },
             ),
@@ -410,7 +438,7 @@ class _EffectCard extends StatelessWidget {
               enabled: true,
               key: 'fx-remove-$id',
               onPressed: () {
-                layer.removeEffect(effect: effect);
+                _withHandle((e) => layer.removeEffect(effect: e));
                 onStackChanged();
               },
             ),
@@ -458,6 +486,8 @@ class _EffectCard extends StatelessWidget {
 class _TransformCard extends StatelessWidget {
   final LayerReference layer;
   final CompositionReference comp;
+  final BridgeTransform transform;
+  final bool threeD;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
@@ -466,6 +496,8 @@ class _TransformCard extends StatelessWidget {
     super.key,
     required this.layer,
     required this.comp,
+    required this.transform,
+    required this.threeD,
     required this.playheadFrame,
     required this.onSeek,
     required this.onChanged,
@@ -493,6 +525,8 @@ class _TransformCard extends StatelessWidget {
             child: TransformRowsFrb(
               comp: comp,
               layer: layer,
+              transform: transform,
+              threeD: threeD,
               playheadFrame: playheadFrame,
               onSeek: onSeek,
               onChanged: onChanged,

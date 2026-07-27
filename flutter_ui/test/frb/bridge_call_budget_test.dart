@@ -132,11 +132,13 @@ void main() {
           reason: 'the click actually changed the selection');
       // ignore: avoid_print
       print('CLICK COST ${counter.total} calls\n${counter.ranking()}');
-      // Measured at 31 after the grouped get_info reads landed (K-183);
-      // the cap stays roughly 2x measured so honest growth does not trip it.
+      // Measured at 11 with the read model in place (K-184): a selection is
+      // pure interface state, so what remains is one revision check per panel
+      // rebuild plus the source card's own reads for the newly shown layer.
+      // The cap stays roughly 2x measured so honest growth does not trip it.
       expect(
         counter.total,
-        lessThan(64),
+        lessThan(24),
         reason: 'one click re-read far too much across the bridge:\n'
             '${counter.ranking()}',
       );

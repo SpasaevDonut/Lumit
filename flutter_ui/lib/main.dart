@@ -16,8 +16,10 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
+import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
+import 'package:lumit_flutter/state/comp_model.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/workspace.dart';
@@ -154,14 +156,42 @@ class LumitState extends ChangeNotifier {
   }
 
   void handleChange(ScopedChange event) {
+    // The item tree changed shape: the cached comp list is stale.
+    if (event.items || event.item != null) _compsCache = null;
+
     _onChange.add(event);
 
-    // A change that names a subtree is that subtree's business: LayerBuilder and
-    // ProjectItemBuilder subscribe to the stream themselves.
+    // A change that names a subtree is that subtree's business: the comp read
+    // model and ProjectItemBuilder subscribe to the stream themselves.
     if (event.layer != null || event.item != null) return;
 
+    _compsCache = null;
     // Nothing narrower to aim at — whoever listens to LumitState rebuilds.
     notifyListeners();
+  }
+
+  /// Every composition in the project with its name, folders walked — cached
+  /// so the comp tabs cost no bridge calls per rebuild (K-184). Invalidated
+  /// whenever the item tree changes.
+  List<(CompositionReference, String)>? _compsCache;
+  List<(CompositionReference, String)> comps() {
+    if (_compsCache != null) return _compsCache!;
+    final out = <(CompositionReference, String)>[];
+    void walk(List<ItemReference> items) {
+      for (final item in items) {
+        switch (item) {
+          case ItemReference_Composition(:final field0):
+            out.add((field0, field0.getSettings().name));
+          case ItemReference_Folder(:final field0):
+            walk(field0.getChildren());
+          case _:
+            break;
+        }
+      }
+    }
+
+    walk(project?.getItems() ?? const []);
+    return _compsCache = out;
   }
 }
 
@@ -292,6 +322,10 @@ class LumitUiState extends ChangeNotifier {
   CompositionReference? _selectedComp;
   CompositionReference? get selectedComp => _selectedComp;
 
+  /// The fronted comp as the panels draw it (K-184) — refreshed by one bridge
+  /// call when the engine reports a change, read by everything else for free.
+  final CompModel model = CompModel();
+
   ViewerTextureController controller = ViewerTextureController();
 
   /// The platform texture the Viewer draws — the only frame transport (K-183):
@@ -329,12 +363,16 @@ class LumitUiState extends ChangeNotifier {
   }
 
   StreamSubscription? sub;
+  StreamSubscription? _changes;
 
   LumitUiState(LumitState state, {Workspace? workspace})
       : workspace = workspace ?? (Workspace()..load()) {
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
+    // The read model re-reads on every committed change — one bridge call —
+    // and every panel that draws layers repaints from it (K-184).
+    _changes = state.onChange.listen((_) => model.refresh());
     sub = state.onWorkerResponse.listen((msg) {
       switch (msg) {
         case WorkerResponse_RenderedDMABuf frame:
@@ -388,6 +426,8 @@ class LumitUiState extends ChangeNotifier {
   @override
   void dispose() {
     sub?.cancel();
+    _changes?.cancel();
+    model.dispose();
     viewerFrameid.dispose();
     selectedLayer.dispose();
     activePanel.dispose();
@@ -396,6 +436,7 @@ class LumitUiState extends ChangeNotifier {
 
   void setSelectedComp(CompositionReference? reference) {
     _selectedComp = reference;
+    model.bind(reference);
     notifyListeners();
   }
 }

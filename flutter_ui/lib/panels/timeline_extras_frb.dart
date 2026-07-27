@@ -14,7 +14,6 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
-import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -32,30 +31,12 @@ class CompTabsFrb extends StatelessWidget {
   final LumitUiState uiState;
   const CompTabsFrb({super.key, required this.state, required this.uiState});
 
-  /// Every composition in the project, folders walked.
-  List<CompositionReference> _comps() {
-    final out = <CompositionReference>[];
-    void walk(List<ItemReference> items) {
-      for (final item in items) {
-        switch (item) {
-          case ItemReference_Composition(:final field0):
-            out.add(field0);
-          case ItemReference_Folder(:final field0):
-            walk(field0.getChildren());
-          case _:
-            break;
-        }
-      }
-    }
-
-    walk(state.project?.getItems() ?? const []);
-    return out;
-  }
-
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final comps = _comps();
+    // Served from LumitState's cached walk (K-184): the item tree is only
+    // re-read when the engine says it changed shape.
+    final comps = state.comps();
     if (comps.isEmpty) return const SizedBox.shrink();
 
     return Container(
@@ -64,10 +45,10 @@ class CompTabsFrb extends StatelessWidget {
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
-          for (final comp in comps)
+          for (final (comp, name) in comps)
             _CompTab(
               key: ValueKey<String>('tl-tab-${comp.internalid}'),
-              comp: comp,
+              name: name,
               active: uiState.selectedComp?.internalid == comp.internalid,
               onTap: () => uiState.setSelectedComp(comp),
             ),
@@ -78,12 +59,12 @@ class CompTabsFrb extends StatelessWidget {
 }
 
 class _CompTab extends StatelessWidget {
-  final CompositionReference comp;
+  final String name;
   final bool active;
   final VoidCallback onTap;
   const _CompTab({
     super.key,
-    required this.comp,
+    required this.name,
     required this.active,
     required this.onTap,
   });
@@ -107,7 +88,7 @@ class _CompTab extends StatelessWidget {
         ),
         child: Center(
           child: Text(
-            comp.getSettings().name,
+            name,
             style: active ? t.bodyPrimary : t.small,
           ),
         ),
@@ -218,21 +199,22 @@ class _LayerSearchFrbState extends State<LayerSearchFrb> {
 /// refuses it anyway, but offering a choice that always fails is a worse way to
 /// say so than not offering it.
 ///
-/// The resting button costs no bridge calls at all: the current parent's name
-/// rides in on the row's own [BridgeLayerInfo] (K-183). The other layers' names
-/// are read only when the menu opens — this used to be one name call per other
-/// layer per row per rebuild, which made the outline O(layers²).
+/// Costs no bridge calls at all (K-184): the current parent's name and every
+/// other layer's name come from the read model. This used to be one name call
+/// per other layer per row per rebuild — O(layers²) across the outline.
 class ParentPickerFrb extends StatelessWidget {
-  final CompositionReference comp;
   final LayerReference layer;
   final BridgeLayerInfo info;
+
+  /// Every layer in the comp, from the read model.
+  final List<BridgeLayerEntry> all;
   final VoidCallback onChanged;
 
   const ParentPickerFrb({
     super.key,
-    required this.comp,
     required this.layer,
     required this.info,
+    required this.all,
     required this.onChanged,
   });
 
@@ -245,9 +227,9 @@ class ParentPickerFrb extends StatelessWidget {
         label: info.parent == null ? 'None' : (info.parentName ?? 'None'),
         options: () => [
           (null, 'None'),
-          for (final l in comp.getLayers())
-            if (l.internallayerId != layer.internallayerId)
-              (l.internallayerId, l.getInfo().name),
+          for (final e in all)
+            if (e.layer.internallayerId != layer.internallayerId)
+              (e.layer.internallayerId, e.info.name),
         ],
         onChanged: (id) {
           // A cycle is refused engine-side; the picker reports nothing and the

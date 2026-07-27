@@ -252,23 +252,14 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
 - Retime Time-lens **vertical (source-position) boundary drag** has no bridge op
     (`SetLayerRetime`/`from_source_keyframes` unexposed).
 
-**Bridge chatter: mostly grouped away (K-183), remainder listed.** The grouped
-reads landed: `LayerReference::get_info` (name, kind, switches, blend, span as
-frames, clip frames, parent + its name in ONE crossing) and
-`BridgeEffectInstance::get_info` (id, name, enabled, every parameter value),
-with panels reading them once per widget rebuild, the parent picker building
-its menu lazily on click, and the transform rows sharing one `get_transform`.
-Selecting a layer in the two-layer budget document dropped ~75 → 31 calls
-(test/frb/bridge_call_budget_test.dart caps it at 64). Still open:
-- **Effect controls re-reads the stack once per playhead move** (its rows sit
-    under a `ValueListenableBuilder(playheadFrame)` so the keyframe diamonds
-    track the playhead) — during playback that is a per-frame re-read, ~60/s.
-    The diamonds should listen per row.
-- **`LayerReference.equals` is a bridge call** used for selection compares;
-    `internallayerId` is already on the Dart side — compare that.
-- **The comp tabs read the whole project item tree per Timeline rebuild**
-    (`get_items` + `get_children`); the Project panel already listens to the
-    change stream — the tabs should too.
+**Bridge chatter: solved by the read model (K-184).** The panels draw from
+`CompModel` (one `get_model` crossing, freshened by a one-call revision check
+per rebuild), so selecting a layer costs 11 calls (was ~75) and the budget test
+caps it at 24. What still reads per rebuild is deliberate and small: the
+Source card's text/camera fields for the one selected layer, the Viewer's
+missing-file probe, and the marker/work-area reads on a Timeline rebuild —
+fold any of these into `BridgeLayerInfo`/`BridgeCompModel` if they ever show
+up in the budget ranking.
 - **`LumitAppNew` rebuilds the whole app on any `LumitUiState.notifyListeners`**
     (a `ListenableBuilder` above everything), and un-scoped document changes do
     the same via `LumitState` — every panel then re-reads. Scope it.

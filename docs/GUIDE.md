@@ -3682,14 +3682,19 @@ neither per-frame. One honest consequence: a platform with no shared-texture
 code of its own (macOS today) shows no Viewer picture at all until it grows
 one, rather than quietly taking a slow road.
 
-**Ask once per redraw, not once per fact (K-183).** Every question the
-interface asks the engine — "what is this layer called?", "which switches are
-on?" — crosses the Rust/Flutter boundary, and each crossing costs a little.
-The panels used to ask one question per fact: a single timeline row asked
-seven times, and its parent dropdown asked once per *other* layer, every time
-anything redrew. Now the engine answers everything a row needs in one go —
-`get_info` returns the name, the kind, the switches, the blend mode, where the
-bar sits (already in frames), the clip cuts and the parent, in a single
-crossing — and the same for an effect (its id, name, on/off state and every
-parameter value at once). Clicking a layer used to cost about 75 crossings;
-it now costs 31, and a test fails the build if it creeps past 64.
+**Ask once per change, not once per redraw (K-183, K-184).** Every question
+the interface asks the engine — "what is this layer called?", "which switches
+are on?" — crosses the Rust/Flutter boundary, and each crossing costs a
+little. The panels used to ask one question per fact per redraw: a single
+timeline row asked seven times, and its parent dropdown asked once per *other*
+layer, every time anything redrew. Two steps fixed it. First the engine
+learned to answer everything about a layer in one go (`get_info`). Then came
+the **read model** (`state/comp_model.dart`): ONE call returns the whole
+fronted comp as the panels draw it — every layer's name, switches, bar
+position, transform and effect values — and Dart simply keeps that copy.
+Panels draw from the copy for free; the copy is re-read only when the document
+actually changes. How they know it changed is one number: the engine counts
+every committed edit (and undo, and redo), and a rebuilding panel asks "what's
+the count?" — one cheap call — re-reading only when the number moved. So
+clicking a layer, which changes nothing in the document, went from about 75
+crossings to 11, and a test fails the build if it creeps past 24.

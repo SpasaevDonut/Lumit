@@ -2440,3 +2440,25 @@ lazily on click (it was O(layers) calls per row, O(layers²) per outline), and t
 rows share one `get_transform`. Selecting a layer measured ~75 → 31 calls; the budget test
 caps it at 64. The per-field getters remain for one-shot call sites — grouping is for what
 rebuilds, not a ban.
+
+**K-184 · DECIDED · The panels draw from a Rust-built read model; a rebuild costs one call.**
+Follows K-183's grouping to its end, prompted by the owner: "why does selecting a layer take
+31 calls?? Surely one or two is all it needs?" The answer was that selection changed nothing
+in the document — the 31 were two panels repainting and re-asking for what they already knew.
+**Binding now:** `CompositionReference::get_model` returns the whole fronted comp as the
+panels draw it — every layer's handle plus name, kind, switches, blend, span as frames, clip
+frames, parent and its name, the full transform, and every effect's every value — in ONE
+crossing. Dart holds it in `CompModel` (state/comp_model.dart), and the panels (Timeline,
+Hierarchy, Effect controls, the parent picker, the comp tabs) draw from it with no bridge
+calls in build. **Freshness is a revision number, not faith:** `DocumentStore` counts every
+published snapshot (commit, undo, redo, recovery — regression-tested in lumit-core), and the
+model compares that one number per read, re-reading the world only when it moved. So any
+rebuild for any reason shows the current document — the exact contract the old
+read-everything-in-build code had — for one call instead of dozens, and the model needs no
+trust in the async change stream to be correct (the stream just triggers repaints; panels
+also nudge `refresh()` after their own ops so an edit is on screen without a round trip).
+The model is plain data, never handles: edits still go through the references, and effect
+ops fetch a fresh instance handle at click time (frb consumes handles passed by value).
+`LayerBuilder` is deleted — per-row change scoping existed because rebuilds were expensive,
+and rebuilds that cost one revision check need no scoping. Measured: selecting a layer is
+now 11 calls (was ~75 pre-K-183, 31 after it); the budget test caps it at 24.

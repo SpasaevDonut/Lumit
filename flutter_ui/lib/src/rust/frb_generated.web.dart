@@ -231,6 +231,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeColourRgba dco_decode_bridge_colour_rgba(dynamic raw);
 
   @protected
+  BridgeCompModel dco_decode_bridge_comp_model(dynamic raw);
+
+  @protected
   BridgeCompSettings dco_decode_bridge_comp_settings(dynamic raw);
 
   @protected
@@ -262,6 +265,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeKeyframe dco_decode_bridge_keyframe(dynamic raw);
+
+  @protected
+  BridgeLayerEntry dco_decode_bridge_layer_entry(dynamic raw);
 
   @protected
   BridgeLayerInfo dco_decode_bridge_layer_info(dynamic raw);
@@ -396,7 +402,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<BridgeEffectInfo> dco_decode_list_bridge_effect_info(dynamic raw);
 
   @protected
+  List<BridgeEffectInstanceInfo> dco_decode_list_bridge_effect_instance_info(
+      dynamic raw);
+
+  @protected
   List<BridgeKeyframe> dco_decode_list_bridge_keyframe(dynamic raw);
+
+  @protected
+  List<BridgeLayerEntry> dco_decode_list_bridge_layer_entry(dynamic raw);
 
   @protected
   List<BridgeMarker> dco_decode_list_bridge_marker(dynamic raw);
@@ -714,6 +727,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeColourRgba sse_decode_bridge_colour_rgba(SseDeserializer deserializer);
 
   @protected
+  BridgeCompModel sse_decode_bridge_comp_model(SseDeserializer deserializer);
+
+  @protected
   BridgeCompSettings sse_decode_bridge_comp_settings(
       SseDeserializer deserializer);
 
@@ -750,6 +766,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeKeyframe sse_decode_bridge_keyframe(SseDeserializer deserializer);
+
+  @protected
+  BridgeLayerEntry sse_decode_bridge_layer_entry(SseDeserializer deserializer);
 
   @protected
   BridgeLayerInfo sse_decode_bridge_layer_info(SseDeserializer deserializer);
@@ -897,7 +916,15 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<BridgeEffectInstanceInfo> sse_decode_list_bridge_effect_instance_info(
+      SseDeserializer deserializer);
+
+  @protected
   List<BridgeKeyframe> sse_decode_list_bridge_keyframe(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeLayerEntry> sse_decode_list_bridge_layer_entry(
       SseDeserializer deserializer);
 
   @protected
@@ -1240,6 +1267,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeColourRgba self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_comp_model(
+      BridgeCompModel self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_comp_settings(
       BridgeCompSettings self, SseSerializer serializer);
 
@@ -1281,6 +1312,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_keyframe(
       BridgeKeyframe self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_layer_entry(
+      BridgeLayerEntry self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_layer_info(
@@ -1444,8 +1479,16 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       List<BridgeEffectInfo> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_effect_instance_info(
+      List<BridgeEffectInstanceInfo> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_bridge_keyframe(
       List<BridgeKeyframe> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_layer_entry(
+      List<BridgeLayerEntry> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_marker(

@@ -224,8 +224,9 @@ void main() {
     /// **The stale-value regression.** A row only ever changed when it wrote
     /// the value itself. So an undo moved the picture and left the number
     /// behind, and the same property edited in the Timeline's fold-out never
-    /// reached this panel — one miss, two symptoms: nothing here listened to the
-    /// engine's change stream. Fails without the `LayerBuilder` around the rows.
+    /// reached this panel — one miss, two symptoms: nothing here listened to
+    /// the engine. Fails without the read model's change subscription and its
+    /// revision check (K-184).
     testWidgets('an edit made elsewhere, and an undo, both reach the rows',
         (tester) async {
       final p = withLayer();

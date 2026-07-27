@@ -15,6 +15,7 @@
 // only the one you want — which is what the spec asks for and what keeps a busy
 // comp from becoming a wall of numbers.
 
+import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
@@ -53,17 +54,16 @@ final class FoldTransformRow extends LayerFoldRow {
       : super(depth);
 }
 
-/// One parameter of one effect: the instance handle (for staging writes) plus
-/// everything the row draws, from the effect's one `getInfo` read (K-183).
+/// One parameter of one effect — everything the row draws, from the read
+/// model (K-184). Plain data; a write reads fresh instance handles at commit.
 final class FoldEffectParamRow extends LayerFoldRow {
-  final BridgeEffectInstance effect;
   final BridgeEffectInstanceInfo info;
   final BridgeParamInfo param;
 
   /// This parameter's current value, or null when the instance does not carry
   /// it (a schema newer than the saved document).
   final BridgeEffectValue? value;
-  const FoldEffectParamRow(this.effect, this.info, this.param, this.value,
+  const FoldEffectParamRow(this.info, this.param, this.value,
       {required int depth})
       : super(depth);
 }
@@ -92,11 +92,12 @@ String audioPath(String layerId) => '$layerId/audio';
 /// probing the file with FFmpeg, which is not work for a build — the Timeline
 /// caches it per layer, exactly as the Project panel caches missing media.
 List<LayerFoldRow> layerFoldRows({
-  required LayerReference layer,
+  required BridgeLayerEntry entry,
   required Set<String> open,
   required bool hasAudio,
 }) {
-  final id = layer.internallayerId.toString();
+  final id = entry.layer.internallayerId.toString();
+  final info = entry.info;
   final rows = <LayerFoldRow>[];
 
   final transformOpen = open.contains(transformPath(id));
@@ -107,16 +108,14 @@ List<LayerFoldRow> layerFoldRows({
     depth: 1,
   ));
   if (transformOpen) {
-    final transform = layer.getTransform();
-    for (final group in transformGroups(threeD: layer.isThreeD())) {
-      rows.add(FoldTransformRow(group, transform, depth: 2));
+    for (final group in transformGroups(threeD: info.switches.threeD)) {
+      rows.add(FoldTransformRow(group, info.transform, depth: 2));
     }
   }
 
   // Effects appear only once there are some: an empty heading is a promise the
   // row cannot keep.
-  final effects = layer.getEffects();
-  if (effects.isNotEmpty) {
+  if (info.effects.isNotEmpty) {
     final effectsOpen = open.contains(effectsPath(id));
     rows.add(FoldGroupRow(
       path: effectsPath(id),
@@ -125,22 +124,19 @@ List<LayerFoldRow> layerFoldRows({
       depth: 1,
     ));
     if (effectsOpen) {
-      for (final effect in effects) {
-        // One crossing per effect for everything its rows draw (K-183).
-        final info = effect.getInfo();
-        final path = effectPath(id, info.id.toString());
+      for (final fx in info.effects) {
+        final path = effectPath(id, fx.id.toString());
         final effectOpen = open.contains(path);
         rows.add(FoldGroupRow(
           path: path,
-          label: effectLabelOf(info.name),
+          label: effectLabelOf(fx.name),
           open: effectOpen,
           depth: 2,
         ));
         if (effectOpen) {
-          final values = {for (final v in info.values) v.id: v.value};
-          for (final param in cachedListParameters(info.name)) {
-            rows.add(
-                FoldEffectParamRow(effect, info, param, values[param.id], depth: 3));
+          final values = {for (final v in fx.values) v.id: v.value};
+          for (final param in cachedListParameters(fx.name)) {
+            rows.add(FoldEffectParamRow(fx, param, values[param.id], depth: 3));
           }
         }
       }

@@ -52,6 +52,23 @@ pub struct BridgeCompSize {
     pub height: u32,
 }
 
+/// One layer of the comp read model (K-184): the plain-data handle Dart
+/// addresses edits by, and everything the panels draw for it.
+#[frb(non_opaque)]
+pub struct BridgeLayerEntry {
+    pub layer: LayerReference,
+    pub info: crate::api::layer::BridgeLayerInfo,
+}
+
+/// The comp read model (K-184): what one `get_model` crossing carries. Dart
+/// holds this and refreshes it when the engine reports a change; panels draw
+/// from it with no bridge calls at all.
+#[frb(non_opaque)]
+pub struct BridgeCompModel {
+    pub duration_frames: i64,
+    pub layers: Vec<BridgeLayerEntry>,
+}
+
 /// Everything the Composition settings dialog reads and writes.
 ///
 /// The frame rate is the exact `num`/`den` pair and the duration is exact
@@ -211,6 +228,41 @@ impl CompositionReference {
         Ok(comp
             .frame_rate
             .frame_at(lumit_core::time::CompTime(comp.duration.0)))
+    }
+
+    /// The document's revision number: bumped once per committed change, undo,
+    /// redo or recovery. The Dart read model compares it per rebuild — one
+    /// cheap crossing — and re-reads [`Self::get_model`] only when it moved,
+    /// so a rebuild of an unchanged document costs exactly one call (K-184).
+    #[frb(sync)]
+    pub fn document_revision(&self) -> Result<u64, BridgeError> {
+        let proj = self.project()?;
+        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(proj.store.revision())
+    }
+
+    /// The whole comp as the panels draw it, in ONE crossing (K-184): every
+    /// layer's handle and its full [`BridgeLayerInfo`] (switches, blend, span
+    /// as frames, transform, every effect's every value), plus the comp's
+    /// length. This is the Dart read model's refresh: read once per document
+    /// change, never per widget rebuild — so selecting a layer, or any other
+    /// pure-interface change, costs zero bridge calls.
+    #[frb(sync)]
+    pub fn get_model(&self) -> Result<BridgeCompModel, BridgeError> {
+        let comp = self.composition()?;
+        Ok(BridgeCompModel {
+            duration_frames: comp
+                .frame_rate
+                .frame_at(lumit_core::time::CompTime(comp.duration.0)),
+            layers: comp
+                .layers
+                .iter()
+                .map(|layer| BridgeLayerEntry {
+                    layer: LayerReference::new(self.project, self.id, layer.id),
+                    info: crate::api::layer::read_layer_info(&comp, layer),
+                })
+                .collect(),
+        })
     }
 
     /// Apply the Composition settings dialog, as one undo step.

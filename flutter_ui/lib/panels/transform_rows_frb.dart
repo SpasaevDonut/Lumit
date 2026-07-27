@@ -110,6 +110,11 @@ List<TransformGroup> transformGroups({required bool threeD}) => [
 class TransformRowsFrb extends StatelessWidget {
   final CompositionReference comp;
   final LayerReference layer;
+
+  /// The layer's transform and 3D flag, from the read model (K-184) — so
+  /// drawing the rows costs no bridge calls.
+  final BridgeTransform transform;
+  final bool threeD;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
@@ -129,6 +134,8 @@ class TransformRowsFrb extends StatelessWidget {
     super.key,
     required this.comp,
     required this.layer,
+    required this.transform,
+    required this.threeD,
     required this.playheadFrame,
     required this.onSeek,
     required this.onChanged,
@@ -139,13 +146,10 @@ class TransformRowsFrb extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // One read shared by every row (K-183): each row reading its own copy of
-    // the same eleven-scalar struct was ten crossings per rebuild.
-    final transform = layer.getTransform();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (final group in transformGroups(threeD: layer.isThreeD()))
+        for (final group in transformGroups(threeD: threeD))
           TransformRowFrb(
             comp: comp,
             layer: layer,

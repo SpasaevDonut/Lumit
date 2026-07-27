@@ -573,6 +573,25 @@ pub struct BridgeEffectInstanceInfo {
     pub values: Vec<BridgeParamValue>,
 }
 
+/// Build one instance's [`BridgeEffectInstanceInfo`] — the shared body of
+/// [`BridgeEffectInstance::get_info`] and the comp read model (K-184).
+#[frb(ignore)]
+pub(crate) fn read_instance_info(effect: &EffectInstance) -> BridgeEffectInstanceInfo {
+    BridgeEffectInstanceInfo {
+        id: effect.id,
+        name: effect.effect.match_name.clone(),
+        enabled: effect.enabled,
+        values: effect
+            .params
+            .iter()
+            .map(|p| BridgeParamValue {
+                id: p.id.to_string(),
+                value: BridgeEffectValue::read(&p.value),
+            })
+            .collect(),
+    }
+}
+
 impl BridgeEffectInstance {
     pub fn new(effect: EffectInstance) -> BridgeEffectInstance {
         BridgeEffectInstance { effect }
@@ -581,20 +600,7 @@ impl BridgeEffectInstance {
     /// One read for everything a card draws — see [`BridgeEffectInstanceInfo`].
     #[frb(sync)]
     pub fn get_info(&self) -> BridgeEffectInstanceInfo {
-        BridgeEffectInstanceInfo {
-            id: self.effect.id,
-            name: self.effect.effect.match_name.clone(),
-            enabled: self.effect.enabled,
-            values: self
-                .effect
-                .params
-                .iter()
-                .map(|p| BridgeParamValue {
-                    id: p.id.to_string(),
-                    value: BridgeEffectValue::read(&p.value),
-                })
-                .collect(),
-        }
+        read_instance_info(&self.effect)
     }
 
     /// This instance's own id — what the stack ops on

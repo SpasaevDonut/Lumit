@@ -206,11 +206,18 @@ void main() {
         kind: 0,
         colours: scopeColoursFor(LumitTheme.dark()),
       );
+      // Wait for THIS comp's frame to be held, not for the process-wide entry
+      // count to be non-zero — earlier tests in this file leave residue in the
+      // shared cache, and a `before` snapshotted on their entries races the
+      // first trace (two queued traces collapse to the newest, so the first
+      // can vanish entirely).
       await settleFrb(
         tester,
         minRounds: 15,
-        maxRounds: 200,
-        until: () => cacheStats().entries > BigInt.zero,
+        maxRounds: 400,
+        until: () => comp
+                .cachedFrames(frames: BigInt.one, scale: p.uiState.viewerScale)[0] !=
+            0,
       );
 
       final before = cacheStats();

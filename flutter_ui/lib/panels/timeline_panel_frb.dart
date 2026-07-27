@@ -3,8 +3,8 @@
 // Two columns side by side over one shared time axis: an **outline** on the
 // left (layer number, label chip, name, switches, blend mode, parent) and a
 // **layer area** on the right (the ruler, the playhead, one bar per layer, the
-// work area and the markers). Everything reads through reference handles — there
-// is no snapshot to mirror, so a row asks the layer it draws.
+// work area and the markers). Everything draws from the comp read model
+// (state/comp_model.dart, K-184); edits go out through the reference handles.
 //
 // **What is here.** Adding every layer kind, deleting, duplicating, reordering,
 // the eight switches, blend mode, parenting, dragging and trimming a layer's
@@ -27,7 +27,6 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
-import '../builder/layer_builder.dart';
 import '../icons/icons.dart';
 import '../state/drag_payloads.dart';
 import '../theme/theme.dart';
@@ -85,13 +84,13 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       });
 
   /// Fill in any layer's has-audio answer we do not have, off the build.
-  void _refreshAudio(List<LayerReference> layers) {
-    for (final layer in layers) {
-      final id = layer.internallayerId.toString();
+  void _refreshAudio(List<BridgeLayerEntry> layers) {
+    for (final entry in layers) {
+      final id = entry.layer.internallayerId.toString();
       if (_hasAudio.containsKey(id)) continue;
       // Claim the slot first, so a rebuild mid-probe does not probe twice.
       _hasAudio[id] = false;
-      layer.hasAudio().then((has) {
+      entry.layer.hasAudio().then((has) {
         if (!mounted || _hasAudio[id] == has) return;
         setState(() => _hasAudio[id] = has);
       });
@@ -122,15 +121,24 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       );
     }
 
-    final frames = comp.durationFrames();
+    // Everything this panel draws comes from the read model (K-184): zero
+    // bridge calls per rebuild. The ListenableBuilder repaints the panel when
+    // the model refreshes — which happens once per committed change.
+    return ListenableBuilder(
+      listenable: ui.model,
+      builder: (context, _) => _body(context, ui, comp),
+    );
+  }
+
+  Widget _body(
+      BuildContext context, LumitUiState ui, CompositionReference comp) {
+    final frames = ui.model.durationFrames;
     final needle = _search.trim().toLowerCase();
-    // No search means no name reads: `getName` is a bridge call per layer, and
-    // paying it per rebuild to filter against an empty string was pure chatter.
     final layers = needle.isEmpty
-        ? comp.getLayers()
+        ? ui.model.layers
         : [
-            for (final l in comp.getLayers())
-              if (l.getName().toLowerCase().contains(needle)) l,
+            for (final e in ui.model.layers)
+              if (e.info.name.toLowerCase().contains(needle)) e,
           ];
     _refreshAudio(layers);
 
@@ -149,7 +157,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           playheadFrame: () => ui.playheadFrame.value,
           onToggleRazor: () => setState(() => _razor = !_razor),
           onSearch: (v) => setState(() => _search = v),
-          onChanged: () => setState(() {}),
+          onChanged: ui.model.refresh,
         ),
         Expanded(
           // Dropping footage from the Project panel adds it as a layer. The
@@ -163,7 +171,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
               for (final f in details.data.footage.reversed) {
                 comp.addFootageLayer(footage: f);
               }
-              setState(() {});
+              ui.model.refresh();
             },
             builder: (context, candidate, _) => Container(
               // A live outline while something is over it, so the drop is
@@ -207,7 +215,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                           onSelect: (l) => setState(() {
                             ui.selectedLayer.value = l;
                           }),
-                          onChanged: () => setState(() {}),
+                          onChanged: ui.model.refresh,
                         ),
                       ),
                       Expanded(
@@ -223,7 +231,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                   frames: frames,
                                   playheadFrame: playhead,
                                   onSeek: (f) => ui.playheadFrame.value = f,
-                                  onChanged: () => setState(() {}),
+                                  onChanged: ui.model.refresh,
                                 ),
                               )
                             : _LayerArea(
@@ -236,7 +244,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                 razor: _razor,
                                 onSeek: (f) => ui.playheadFrame.value =
                                     f.clamp(0, frames == 0 ? 0 : frames - 1),
-                                onChanged: () => setState(() {}),
+                                onChanged: ui.model.refresh,
                                 cacheRevision: ui.frameArrived,
                               ),
                       ),
@@ -284,16 +292,13 @@ class _FoldRow extends StatelessWidget {
     // under its effect and an effect under Effects.
     final indent = 20.0 + row.depth * 14.0;
 
+    // No per-row change listener: the whole panel repaints from the read model
+    // when anything commits (K-184), so the numbers shown are the document's.
     return SizedBox(
       height: _rowHeight,
       child: Padding(
         padding: EdgeInsets.only(left: indent, right: 4),
-        // Any op on this layer redraws the row, so the number shown is the
-        // document's: an undo, a redo, or the same property dragged in Effect
-        // controls. Without it a row only ever changed when *it* wrote — undo
-        // moved the picture and left the numbers behind, and the two panels
-        // showing the same property disagreed until one of them was rebuilt.
-        child: LayerBuilder(layer: layer, builder: _control),
+        child: _control(context),
       ),
     );
   }
@@ -350,8 +355,8 @@ class _FoldRow extends StatelessWidget {
 
 /// One effect parameter in the Timeline. It owns the staging for its own drag,
 /// which is all the state a single row needs — no stack is read to *display*:
-/// the value rides in on the fold row (K-183), and a drag in flight overlays
-/// its staged value on top.
+/// the value rides in on the fold row from the read model (K-184), and a drag
+/// in flight overlays its staged value on top.
 class _TimelineParamRow extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;
@@ -695,7 +700,7 @@ Future<void> _showLayerMenu(
 /// The left column: one row per layer, with its switches and columns.
 class _Outline extends StatelessWidget {
   final CompositionReference comp;
-  final List<LayerReference> layers;
+  final List<BridgeLayerEntry> layers;
   final LayerReference? selected;
   final Set<String> open;
   final Map<String, bool> hasAudio;
@@ -733,29 +738,34 @@ class _Outline extends StatelessWidget {
         ),
         for (var i = 0; i < layers.length; i++) ...[
           _OutlineRow(
-            key: ValueKey<String>('tl-row-${layers[i].internallayerId}'),
+            key: ValueKey<String>(
+                'tl-row-${layers[i].layer.internallayerId}'),
             comp: comp,
-            layer: layers[i],
+            entry: layers[i],
+            layers: layers,
             index: i,
             count: layers.length,
-            selected: selected?.equals(layer: layers[i]) ?? false,
-            open: open.contains(layers[i].internallayerId.toString()),
+            // A local compare, not a bridge call: both ids already sit here.
+            selected: selected?.internallayerId ==
+                layers[i].layer.internallayerId,
+            open: open.contains(layers[i].layer.internallayerId.toString()),
             onToggleOpen: () =>
-                onToggle(layers[i].internallayerId.toString()),
-            onSelect: () => onSelect(layers[i]),
+                onToggle(layers[i].layer.internallayerId.toString()),
+            onSelect: () => onSelect(layers[i].layer),
             onChanged: onChanged,
           ),
           // The fold-out, from the same list the lanes leave room for.
-          if (open.contains(layers[i].internallayerId.toString()))
+          if (open.contains(layers[i].layer.internallayerId.toString()))
             for (final row in layerFoldRows(
-              layer: layers[i],
+              entry: layers[i],
               open: open,
               hasAudio:
-                  hasAudio[layers[i].internallayerId.toString()] ?? false,
+                  hasAudio[layers[i].layer.internallayerId.toString()] ??
+                      false,
             ))
               _FoldRow(
                 comp: comp,
-                layer: layers[i],
+                layer: layers[i].layer,
                 row: row,
                 playheadFrame: playheadFrame,
                 onSeek: onSeek,
@@ -770,7 +780,11 @@ class _Outline extends StatelessWidget {
 
 class _OutlineRow extends StatelessWidget {
   final CompositionReference comp;
-  final LayerReference layer;
+  final BridgeLayerEntry entry;
+
+  /// Every layer in the comp, for the parent picker's menu — from the same
+  /// read model, so offering them costs nothing.
+  final List<BridgeLayerEntry> layers;
   final int index;
   final int count;
   final bool selected;
@@ -782,7 +796,8 @@ class _OutlineRow extends StatelessWidget {
   const _OutlineRow({
     super.key,
     required this.comp,
-    required this.layer,
+    required this.entry,
+    required this.layers,
     required this.index,
     required this.count,
     required this.selected,
@@ -792,12 +807,14 @@ class _OutlineRow extends StatelessWidget {
     required this.onChanged,
   });
 
+  LayerReference get layer => entry.layer;
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    // ONE bridge call for everything this row draws (K-183): name, switches,
-    // blend and kind used to be a crossing each, per row, per rebuild.
-    final info = layer.getInfo();
+    // ZERO bridge calls: everything this row draws is in the read model
+    // (K-184).
+    final info = entry.info;
     final switches = info.switches;
     final id = layer.internallayerId.toString();
 
@@ -852,9 +869,9 @@ class _OutlineRow extends StatelessWidget {
             _blendPicker(context, t, info.blend),
             const SizedBox(width: 4),
             ParentPickerFrb(
-              comp: comp,
               layer: layer,
               info: info,
+              all: layers,
               onChanged: onChanged,
             ),
           ],
@@ -955,7 +972,7 @@ class _OutlineRow extends StatelessWidget {
 /// The right column: the ruler, the playhead, and one bar per layer.
 class _LayerArea extends StatelessWidget {
   final CompositionReference comp;
-  final List<LayerReference> layers;
+  final List<BridgeLayerEntry> layers;
 
   /// Which layers are twirled open in the outline. Read only to leave the same
   /// room their property rows take, so a bar never drifts away from its name.
@@ -1005,11 +1022,12 @@ class _LayerArea extends StatelessWidget {
             // Directly under the ruler and above the lanes, which is where the
             // interface spec puts it (docs/07 §3.2).
             TimelineCacheBar(comp: comp, axis: axis, revision: cacheRevision),
-            for (final layer in layers) ...[
+            for (final entry in layers) ...[
               _Bar(
-                key: ValueKey<String>('tl-bar-${layer.internallayerId}'),
+                key: ValueKey<String>(
+                    'tl-bar-${entry.layer.internallayerId}'),
                 comp: comp,
-                layer: layer,
+                entry: entry,
                 axis: axis,
                 razor: razor,
                 playheadFrame: () => playhead.value,
@@ -1019,15 +1037,17 @@ class _LayerArea extends StatelessWidget {
               // the same list it builds. Empty for now — the keyframes are drawn
               // in the graph editor — but the room has to be here, or every bar
               // below an open layer sits above its own name.
-              if (open.contains(layer.internallayerId.toString()))
+              if (open.contains(entry.layer.internallayerId.toString()))
                 SizedBox(
-                  key: ValueKey<String>('tl-lanes-${layer.internallayerId}'),
+                  key: ValueKey<String>(
+                      'tl-lanes-${entry.layer.internallayerId}'),
                   height: _rowHeight *
                       layerFoldRows(
-                        layer: layer,
+                        entry: entry,
                         open: open,
-                        hasAudio:
-                            hasAudio[layer.internallayerId.toString()] ?? false,
+                        hasAudio: hasAudio[
+                                entry.layer.internallayerId.toString()] ??
+                            false,
                       ).length,
                 ),
             ],
@@ -1121,7 +1141,7 @@ class _Ruler extends StatelessWidget {
 /// One layer's bar: drag its middle to move it, its ends to trim.
 class _Bar extends StatefulWidget {
   final CompositionReference comp;
-  final LayerReference layer;
+  final BridgeLayerEntry entry;
   final _Axis axis;
   final bool razor;
   /// Read when the razor is clicked, not captured when the bar is built.
@@ -1131,7 +1151,7 @@ class _Bar extends StatefulWidget {
   const _Bar({
     super.key,
     required this.comp,
-    required this.layer,
+    required this.entry,
     required this.axis,
     required this.razor,
     required this.playheadFrame,
@@ -1154,10 +1174,9 @@ class _BarState extends State<_Bar> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    // ONE bridge call for everything the bar draws (K-183): the span already
-    // mapped to comp frames, the kind, and the clip split positions — this used
-    // to be a getter each plus a time→frame trip per edge and per clip.
-    final info = widget.layer.getInfo();
+    // ZERO bridge calls (K-184): the span already mapped to comp frames, the
+    // kind, and the clip split positions all ride in on the read model.
+    final info = widget.entry.info;
     final inFrame = info.inFrame;
     final outFrame = info.outFrame;
 
@@ -1189,7 +1208,8 @@ class _BarState extends State<_Bar> {
               onTap: widget.razor
                   ? () {
                       try {
-                        widget.layer.cutClipAt(frame: widget.playheadFrame());
+                        widget.entry.layer
+                            .cutClipAt(frame: widget.playheadFrame());
                       } catch (_) {
                         return;
                       }
@@ -1256,7 +1276,7 @@ class _BarState extends State<_Bar> {
     });
     if (grab == null || delta == 0) return;
 
-    final span = widget.layer.getSpan();
+    final span = widget.entry.info.span;
     var newIn = inFrame;
     var newOut = outFrame;
     var offsetShift = 0;
@@ -1275,7 +1295,7 @@ class _BarState extends State<_Bar> {
     // first means the gesture simply stops rather than raising.
     if (newOut <= newIn) return;
 
-    widget.layer.setSpan(
+    widget.entry.layer.setSpan(
       span: BridgeSpan(
         inPoint: widget.comp.timeOfFrame(frame: newIn),
         outPoint: widget.comp.timeOfFrame(frame: newOut),

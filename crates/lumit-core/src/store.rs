@@ -55,6 +55,11 @@ pub struct DocumentStore {
     current: ArcSwap<Document>,
     journal: Mutex<Journal>,
     on_change: Option<ChangeCallback>,
+    /// Bumped once per published snapshot (commit, undo, redo, replace).
+    /// A reader that remembers the number it last saw can ask "has anything
+    /// changed?" for the cost of one atomic load — the frontend's read model
+    /// freshens on this (K-184) instead of re-reading the world per rebuild.
+    revision: std::sync::atomic::AtomicU64,
 }
 
 impl DocumentStore {
@@ -63,7 +68,20 @@ impl DocumentStore {
             current: ArcSwap::from_pointee(doc),
             journal: Mutex::new(Journal::default()),
             on_change: None,
+            revision: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// The number of snapshots published so far. Equal numbers mean the
+    /// document has not changed; unequal mean it has. Never decreases.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// A snapshot is about to be published: move the number on.
+    fn bump_revision(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
     }
 
     /// Register the change observer. Optional by construction: the egui shell
@@ -100,6 +118,7 @@ impl DocumentStore {
         journal.undo.clear();
         journal.redo.clear();
         self.current.store(Arc::new(doc));
+        self.bump_revision();
     }
 
     /// Lock-free snapshot for readers (render jobs capture this at schedule time).
@@ -125,6 +144,7 @@ impl DocumentStore {
         }
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
+        self.bump_revision();
         drop(journal);
         self.notify(observed);
 
@@ -147,6 +167,7 @@ impl DocumentStore {
         });
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
+        self.bump_revision();
         drop(journal);
         // The observer sees the *inverse* — the op that actually moved the
         // document — not the op being undone.
@@ -170,6 +191,7 @@ impl DocumentStore {
         });
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
+        self.bump_revision();
         drop(journal);
         self.notify(observed);
 
@@ -1280,5 +1302,38 @@ mod tests {
         assert!(store.commit(bogus).is_err());
         assert_eq!(json(&store.snapshot()), before);
         assert!(!store.can_undo());
+    }
+
+    /// The read model's freshness check (K-184): every published snapshot has
+    /// a new revision number, and a refused op leaves it alone. Fails without
+    /// the bump on any one of commit, undo or redo — the frontend would then
+    /// keep drawing a stale copy after exactly that kind of edit.
+    #[test]
+    fn every_published_snapshot_has_a_new_revision() {
+        let store = DocumentStore::new(Document::new());
+        let r0 = store.revision();
+
+        let comp = test_comp();
+        let id = comp.id;
+        store
+            .commit(Op::AddItem {
+                index: 0,
+                item: Box::new(ProjectItem::Composition(comp)),
+            })
+            .unwrap();
+        let r1 = store.revision();
+        assert_ne!(r0, r1, "a commit publishes a new revision");
+
+        store.undo().unwrap();
+        let r2 = store.revision();
+        assert_ne!(r1, r2, "an undo publishes a new revision");
+
+        store.redo().unwrap();
+        let r3 = store.revision();
+        assert_ne!(r2, r3, "a redo publishes a new revision");
+        assert!(store.snapshot().comp(id).is_some());
+
+        assert!(store.commit(Op::RemoveItem { id: Uuid::now_v7() }).is_err());
+        assert_eq!(store.revision(), r3, "a refused op moves nothing");
     }
 }

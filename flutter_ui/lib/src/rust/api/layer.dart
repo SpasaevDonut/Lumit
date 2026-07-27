@@ -16,7 +16,7 @@ import 'project_item.dart';
 import 'retime.dart';
 import 'solid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read`, `with_effects`, `write`
+// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_layer_info`, `read`, `with_effects`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
@@ -77,6 +77,13 @@ class BridgeLayerInfo {
   /// with no second lookup. None when there is no parent, or it is dangling.
   final String? parentName;
 
+  /// The whole transform, one scalar per property (K-184).
+  final BridgeTransform transform;
+
+  /// Every effect on the layer, with every parameter's value (K-184). Plain
+  /// data for *drawing*; an edit reads fresh instance handles at commit time.
+  final List<BridgeEffectInstanceInfo> effects;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -88,6 +95,8 @@ class BridgeLayerInfo {
     required this.clipFrames,
     this.parent,
     this.parentName,
+    required this.transform,
+    required this.effects,
   });
 
   @override
@@ -101,7 +110,9 @@ class BridgeLayerInfo {
       outFrame.hashCode ^
       clipFrames.hashCode ^
       parent.hashCode ^
-      parentName.hashCode;
+      parentName.hashCode ^
+      transform.hashCode ^
+      effects.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -117,7 +128,9 @@ class BridgeLayerInfo {
           outFrame == other.outFrame &&
           clipFrames == other.clipFrames &&
           parent == other.parent &&
-          parentName == other.parentName;
+          parentName == other.parentName &&
+          transform == other.transform &&
+          effects == other.effects;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its

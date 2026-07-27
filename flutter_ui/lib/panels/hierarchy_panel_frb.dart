@@ -53,33 +53,40 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
       );
     }
 
-    final rows = <Widget>[];
-    _walk(context, comp, ui, rows, 0);
+    // The fronted comp's rows come from the read model — zero bridge calls
+    // (K-184); an expanded precomp's inside is read as it opens.
+    return ListenableBuilder(
+      listenable: ui.model,
+      builder: (context, _) {
+        final rows = <Widget>[];
+        _walkEntries(context, ui.model.layers, ui, rows, 0);
 
-    if (rows.isEmpty) {
-      return Center(
-        child: Text('This composition has no layers yet', style: t.small),
-      );
-    }
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      children: rows,
+        if (rows.isEmpty) {
+          return Center(
+            child: Text('This composition has no layers yet', style: t.small),
+          );
+        }
+        return ListView(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          children: rows,
+        );
+      },
     );
   }
 
-  void _walk(
+  void _walkEntries(
     BuildContext context,
-    CompositionReference comp,
+    List<BridgeLayerEntry> entries,
     LumitUiState ui,
     List<Widget> rows,
     int depth,
   ) {
     if (depth >= _maxDepth) return;
 
-    for (final layer in comp.getLayers()) {
+    for (final entry in entries) {
+      final layer = entry.layer;
       final id = layer.internallayerId.toString();
-      // One crossing per row (K-183) instead of a getter per field.
-      final info = layer.getInfo();
+      final info = entry.info;
       final kind = info.kind;
       final nested = kind == BridgeLayerKind.precomp ? _compOf(layer) : null;
       final open = _open.contains(id);
@@ -89,7 +96,8 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
         name: info.name,
         kind: kind,
         depth: depth,
-        selected: ui.selectedLayer.value?.equals(layer: layer) ?? false,
+        selected: ui.selectedLayer.value?.internallayerId ==
+            layer.internallayerId,
         expandable: nested != null,
         open: open,
         onTap: () => setState(() => ui.selectedLayer.value = layer),
@@ -108,7 +116,9 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
       ));
 
       if (nested != null && open) {
-        _walk(context, nested, ui, rows, depth + 1);
+        // Inside a precomp: not the fronted comp, so not in the model — one
+        // getModel read per expanded precomp per rebuild is the honest cost.
+        _walkEntries(context, nested.getModel().layers, ui, rows, depth + 1);
       }
     }
   }
