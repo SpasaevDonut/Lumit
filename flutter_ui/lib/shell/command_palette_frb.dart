@@ -19,15 +19,33 @@ import '../widgets/controls.dart';
 class PaletteCommand {
   final String label;
 
-  /// The group it belongs to, shown beside the label.
+  /// The group it belongs to, shown as the row's category badge (docs/07
+  /// §12: an effect must never be mistaken for a command).
   final String category;
+
+  /// The keyboard shortcut, taught in the result row where one exists.
+  final String? shortcut;
   final VoidCallback run;
 
   const PaletteCommand({
     required this.label,
     required this.category,
+    this.shortcut,
     required this.run,
   });
+}
+
+/// The labels of recently run entries, most recent first — what "recently
+/// used entries rank first" (docs/07 §12) means in practice: for an empty
+/// query they lead outright, and for a typed one they break score ties.
+/// Session-lived on purpose; a palette that remembers across restarts is a
+/// settings file for another day.
+final List<String> _recent = [];
+
+void _noteRun(String label) {
+  _recent.remove(label);
+  _recent.insert(0, label);
+  if (_recent.length > 20) _recent.removeLast();
 }
 
 Future<void> showCommandPaletteFrb({
@@ -93,18 +111,26 @@ class _PaletteState extends State<_Palette> {
 
   List<PaletteCommand> get _matches {
     final needle = _query.text.trim();
-    final scored = <(int, PaletteCommand)>[];
+    final scored = <(int, int, PaletteCommand)>[];
     for (final command in widget.commands) {
       final score = paletteScore(needle, command.label);
-      if (score != null) scored.add((score, command));
+      if (score == null) continue;
+      final recency = _recent.indexOf(command.label);
+      scored.add((score, recency < 0 ? _recent.length : recency, command));
     }
-    scored.sort((a, b) => a.$1.compareTo(b.$1));
-    return [for (final entry in scored) entry.$2];
+    // Relevance first, recency breaking ties — which, for the empty query
+    // where every score is zero, is exactly "recently used rank first".
+    scored.sort((a, b) {
+      final byScore = a.$1.compareTo(b.$1);
+      return byScore != 0 ? byScore : a.$2.compareTo(b.$2);
+    });
+    return [for (final entry in scored) entry.$3];
   }
 
   void _runHighlighted(List<PaletteCommand> matches) {
     if (matches.isEmpty) return;
     final command = matches[_highlighted.clamp(0, matches.length - 1)];
+    _noteRun(command.label);
     widget.onClose();
     command.run();
   }
@@ -166,15 +192,21 @@ class _PaletteState extends State<_Palette> {
                   children: [
                     for (var i = 0; i < matches.length; i++)
                       MenuRow(
-                        key: ValueKey<String>('palette-item-${matches[i].label}'),
+                        key: ValueKey<String>(
+                            'palette-item-${matches[i].label}'),
                         selected: i == _highlighted,
                         onPressed: () {
+                          _noteRun(matches[i].label);
                           widget.onClose();
                           matches[i].run();
                         },
                         child: Row(
                           children: [
                             Expanded(child: Text(matches[i].label)),
+                            if (matches[i].shortcut != null) ...[
+                              Text(matches[i].shortcut!, style: t.mono),
+                              const SizedBox(width: 8),
+                            ],
                             Text(matches[i].category,
                                 style: t.small.copyWith(color: t.textMuted)),
                           ],

@@ -126,8 +126,10 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 presets (Edit/Effects/Colour/Audio) are not built ([07-UI-SPEC.md](07-UI-SPEC.md) §1.6).
 - **First-run setup screen** (Vegas/AE preference primer, K-006) - absent
 ([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
-- **Command palette** - only the Commands category; Effects/Comps/Panels
-categories, recent-first ranking, and taught-shortcut hints are not built (§12).
+- **Command palette** - the Effects/Comps/Panels categories, recent-first
+ranking and taught shortcuts landed 2026-07-28; recents are session-lived, and
+only genuinely bound shortcuts are taught (today just undo/redo — grows with
+the keymap).
 
 **Timeline Panel**
 - **Graph editor / Lane Editor / keyframes ([04-RETIMING.md](04-RETIMING.md), archive/flutter-port/06 §C):**

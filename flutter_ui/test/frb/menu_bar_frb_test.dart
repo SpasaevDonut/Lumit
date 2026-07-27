@@ -394,6 +394,56 @@ void main() {
       expect(p.uiState.selectedComp!.getMarkers(), isEmpty);
     });
 
+    /// The palette's four categories (docs/07 §12): commands, and now every
+    /// effect, comp and panel under its own badge; Enter on each does its
+    /// kind of thing. The taught shortcut shows only where a real binding
+    /// exists.
+    testWidgets('the palette carries effects, comps and panels',
+        (tester) async {
+      final p = await mount(tester);
+      final comp = p.state.project!.newComposition(name: 'Scene beta');
+      final layer = comp.addSolidLayer();
+      p.uiState
+        ..setSelectedComp(comp)
+        ..selectedLayer.value = layer;
+      await tester.pump();
+
+      await choose(tester, 'Window', 'Command palette…');
+      await tester.pump();
+
+      // Each category surfaces under its badge when searched for (the list
+      // is lazy, so the badges are asserted where their rows are on screen).
+      final query = find.byKey(const ValueKey('palette-query'));
+      await tester.enterText(query, 'timeline');
+      await tester.pump();
+      expect(find.text('Panel'), findsWidgets);
+
+      await tester.enterText(query, 'undo');
+      await tester.pump();
+      expect(find.text('Ctrl+Z'), findsOneWidget,
+          reason: 'undo teaches its real shortcut, and only real ones taught');
+
+      // An effect entry applies to the selected layer.
+      await tester.enterText(query, 'gaussian');
+      await tester.pump();
+      expect(find.text('Effect'), findsWidgets);
+      await tester
+          .tap(find.byKey(const ValueKey('palette-item-Gaussian blur')));
+      await tester.pumpAndSettle();
+      expect(layer.getEffects().single.name(), 'blur');
+
+      // A comp entry fronts its comp; the recent run ranks it first next time.
+      await choose(tester, 'Window', 'Command palette…');
+      await tester.pump();
+      await tester.enterText(
+          find.byKey(const ValueKey('palette-query')), 'scene beta');
+      await tester.pump();
+      expect(find.text('Comp'), findsWidgets);
+      await tester.tap(find.byKey(const ValueKey('palette-item-Scene beta')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.selectedComp?.internalid, comp.internalid);
+    });
+
     testWidgets('the Window menu offers the palette, reset and settings',
         (tester) async {
       final p = await mount(tester);

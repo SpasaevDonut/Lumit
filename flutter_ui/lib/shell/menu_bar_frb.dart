@@ -14,8 +14,10 @@ import 'package:lumit_flutter/main.dart';
 import 'package:provider/provider.dart';
 
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:uuid/uuid.dart';
 
+import '../state/dock.dart';
 import '../state/file_dialogs.dart';
 import '../widgets/controls.dart';
 import 'command_palette_frb.dart';
@@ -247,8 +249,14 @@ class LumitMenuBarFrb extends StatelessWidget {
 
   /// The palette's commands are declared here, where the menu items are, so the
   /// two cannot drift apart into different ideas of what "New composition" does.
+  /// Only shortcuts the key handler genuinely serves are taught — a palette
+  /// that teaches a binding that does nothing is worse than one that is shy.
+  /// Beyond commands it carries the other three categories docs/07 §12 asks
+  /// for: every effect (applies to the selected layer), every comp (fronts
+  /// it), and every panel (focuses it) — each under its own badge.
   Future<void> _palette(BuildContext context) async {
     final project = app.project;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
     await showCommandPaletteFrb(
       context: context,
       commands: [
@@ -278,7 +286,46 @@ class LumitMenuBarFrb extends StatelessWidget {
             category: 'Composition',
             run: () => _newComposition(context),
           ),
+          PaletteCommand(
+            label: 'Undo',
+            category: 'Edit',
+            shortcut: 'Ctrl+Z',
+            run: () => _undo(context),
+          ),
+          PaletteCommand(
+            label: 'Redo',
+            category: 'Edit',
+            shortcut: 'Ctrl+Shift+Z',
+            run: () => _redo(context),
+          ),
+          PaletteCommand(
+            label: 'Export…',
+            category: 'File',
+            run: () => _export(context),
+          ),
+          // Every comp, by name: Enter fronts it in the Viewer and Timeline.
+          for (final (comp, name) in app.comps())
+            PaletteCommand(
+              label: name,
+              category: 'Comp',
+              run: () => ui.setSelectedComp(comp),
+            ),
+          // Every built-in effect: Enter applies it to the selected layer;
+          // with none selected it does nothing, exactly like the browser.
+          for (final effect in listEffects())
+            PaletteCommand(
+              label: effect.label,
+              category: 'Effect',
+              run: () => ui.selectedLayer.value?.addEffect(name: effect.name),
+            ),
         ],
+        // Every panel: Enter focuses it in the dock.
+        for (final panel in Panel.values)
+          PaletteCommand(
+            label: panel.title,
+            category: 'Panel',
+            run: () => ui.activePanel.value = panel,
+          ),
         PaletteCommand(
           label: 'Settings…',
           category: 'File',
