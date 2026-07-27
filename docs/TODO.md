@@ -60,59 +60,23 @@ and the transparency grid have landed. Still missing:
 
 **Bridge ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)):**
 
-- **The frb migration is done; v0 is deleted (2026-07-26).** `ffi.rs`, its 107
-    `extern "C"` exports, the `ABI_VERSION` surface, the v0 `Bridge` and its op
-    modules, `bridge/bridge.dart`, `state/app_state.dart`, every v0 panel and the
-    `--v0-shell` switch are gone. `crates/lumit-bridge/src/api/` is the whole
-    front/back boundary ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)).
-
-    *What survived the sweep, and why.* `edits.rs` keeps the layer and asset
-    defaults both frontends build from (a new solid is comp-sized and white, a
-    camera's zoom is the AE 50 mm model) — pure functions over lumit-core, so it
-    is no longer gated on the media and render features it once needed.
-    `render::quality_for` is the scale-to-decode-size policy; `framecache`,
-    `realtime`, `media` and `export` are shared infrastructure the frb worker now
-    drives directly. `viewer_layer_map.dart` needed no port at all.
-
-    *Two gaps the sweep closed rather than carried.* The frb worker now serves
-    frames from the rendered-frame cache instead of re-rendering a frame it has
-    already made, and reports each genuine render's cost to the realtime
-    controller — so playback can drop to a coarser tier on a comp too heavy to
-    keep up (K-171).
-
-    *Still outstanding on the frb path:*
-    - **A panic throws rather than reporting.** Containment is *not* missing —
-        this list previously said it was, wrongly. flutter_rust_bridge's handler
-        wraps every call in `catch_unwind` (twice, deliberately: see
-        `handler/implementation/handler.rs`), so a panic cannot unwind across the
-        boundary. But it surfaces as a thrown Dart exception, where the old
-        transport turned it into an ordinary `ok:false` reply the interface
-        showed calmly. So the remaining work is Dart-side: no call site should
-        treat a throw as impossible. The `no-panics-in-frb-api` grep stays, as
-        prevention — a panic is still a bug.
-    - **clippy is blind to the frb surface.** `#[frb(...)]` is a proc-macro
-        attribute and clippy's restriction lints skip macro-expanded code, so
-        `unwrap_used`/`panic`/`todo` do not fire on any annotated function.
-        Covered by that same grep; the real fix is to stop needing it.
-    - **`ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out**, so a
-        caller can hold a project lock for as long as it likes and in any order.
-        The lock order itself is now written down and tested beside `PROJECTS`;
-        what is left is that nothing *enforces* it at the type level.
-    - **`DocumentStore::set_callback` takes `&mut self`**, so the observer can
-        only be attached before the store is shared.
-
-    *cargokit is only wired up for two platforms.* The merge adapted
-    `rust_builder/linux/CMakeLists.txt` and left every other platform on the frb
-    template's values, so the Windows build failed outright. Windows is fixed and
-    verified; Android and the macOS/iOS podspecs are corrected by inspection but
-    **untested** (no target yet, K-033). Two things still open:
-    - The podspecs are named `rust_lib_lumit_flutter.podspec` with a matching
-      `s.name`, while the plugin's pubspec name is `lumit_bridge`. Check what
-      Flutter's CocoaPods resolution requires before renaming.
-    - **cargokit has no hook for cargo features**, so a Linux developer cannot
-      ask `flutter run` for `--features shared-texture-linux` and the zero-copy
-      Viewer silently is not in the build. Needs a `cargokit_options.yaml` (or an
-      env var read in the CMake) carrying per-platform features.
+- **A panic throws rather than reporting.** frb's handler contains every panic
+    (`catch_unwind`, twice), but it surfaces as a thrown Dart exception rather
+    than a calm reply — so no Dart call site may treat a throw as impossible.
+    The `no-panics-in-frb-api` grep stays as prevention; a panic is still a bug.
+- **clippy is blind to the frb surface.** `#[frb(...)]` is a proc-macro
+    attribute and clippy's restriction lints skip macro-expanded code, so
+    `unwrap_used`/`panic`/`todo` do not fire on any annotated function.
+    Covered by that same grep; the real fix is to stop needing it.
+- **`ProjectReference::state()` hands the raw `Arc<RwLock<…>>` out**, so a
+    caller can hold a project lock for as long as it likes and in any order.
+    The lock order is written down and tested beside `PROJECTS`; nothing
+    *enforces* it at the type level.
+- **`DocumentStore::set_callback` takes `&mut self`**, so the observer can
+    only be attached before the store is shared.
+- **The macOS/iOS podspecs are untested** (no target yet, K-033) and named
+    `rust_lib_lumit_flutter.podspec` while the plugin's pubspec name is
+    `lumit_bridge`; check what CocoaPods resolution requires before renaming.
 
 - **The frame cache keys by position, not by content (K-178's design).** Each
     entry is filed under `(comp, frame, scale)`, so an edit does not change any
@@ -129,35 +93,14 @@ and the transparency grid have landed. Still missing:
 - **No disk or VRAM frame cache**, so the cache bar can only ever show the RAM
     tier. The design language's steel blue for "on disk only" and the future VRAM
     tier have nothing behind them yet ([15-DESIGN.md](15-DESIGN.md) §6.3).
-- **The zero-copy Viewer works and is on by default (fixed 2026-07-27).** The
-    root cause was two-fold, found by driving a real window from an integration
-    test and screenshotting it: Flutter's `DxgiSharedHandle` surface goes through
-    ANGLE's share-handle path, which (a) takes a *legacy* DXGI share handle
-    (`IDXGIResource::GetSharedHandle`) while the engine exported an *NT* handle
-    from `ID3D12Device::CreateSharedHandle`, and (b) only opens **BGRA**
-    surfaces, while the engine shared RGBA. Both fail silently — the texture
-    registers, the compositor asks for it every frame, nothing appears. The
-    engine now hops D3D12 → same-adapter D3D11 (NT open, GPU `CopyResource`)
-    into a legacy `MISC_SHARED` B8G8R8A8 texture whose legacy handle Flutter
-    gets; `the_legacy_handle_yields_the_pixels_angle_style` proves the chain in
-    Rust and `integration_test/shared_texture_test.dart` proves it on a window.
-    Still open here: no keyed mutex (a torn frame is possible in principle), and
-    the D3D11 hop is Windows-only knowledge that docs/06 does not yet describe.
+- **The shared-texture chain has no keyed mutex** (a torn frame is possible in
+    principle — see the fence entry under Threading), and the D3D12 → D3D11
+    legacy-handle hop the Windows path rides is knowledge docs/06 does not yet
+    describe.
 - **The Scopes' trace still crosses the bridge as pixels**, serialised a byte at
     a time like any other `Vec<u8>`, and is decoded into an image Dart-side. Small
     next to a full frame, but it is on the same per-frame path and could take the
     shared-texture route the Viewer now takes.
-- **Playback keeps no frames on the zero-copy transport** (the only one,
-    K-183), because there are no bytes to keep — so the Scopes composite their
-    own frame (cached, so a re-trace is free) and the cache bar shows traced
-    frames only. Both would be solved by the engine keeping a small read-back
-    copy a few times a second (as the egui shell did) rather than per frame.
-- **Playback is driven from Dart**: the audio clock is read over the bridge each
-    tick, the playhead moved, and a render asked for back across the boundary.
-    With one render in flight that is one round trip per displayed frame rather
-    than per tick, so the overhead is small — but the loop would be tighter
-    entirely engine-side, which is worth revisiting if the frame budget gets
-    tight (docs/13 §B1).
 - **The Viewer composites at full comp resolution whatever the preview scale —
     the dominant playback cost.** `preview_display_texture` always renders the
     comp at `(comp.width, comp.height)`; `Quality::divisor` only shrinks the
@@ -171,9 +114,8 @@ and the transparency grid have landed. Still missing:
     while Dart sends the panel-fit scale, so the tier never moves. Both need
     fixing together; this is an `06-RENDER-PIPELINE` change (every layer
     transform is in comp pixels), not a patch.
-- **Both zero-copy features are default-on since K-183** (`cargokit.yaml`
-    deleted with them). The Linux DMA-BUF path is compiled and default but has
-    never run on a Linux machine (K-033) — first Linux run verifies it.
+- **The Linux DMA-BUF path has never run on a Linux machine** (K-033) — it is
+    compiled and default-on, so the first Linux run verifies it.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** (measured 8.8 ms per
     1080p payload). Frames no longer cross as bytes, so this now only taxes the
     thumbnails and the 256×256 scope traces — small, but the per-byte loop is
@@ -182,8 +124,8 @@ and the transparency grid have landed. Still missing:
 - **Engine subsystems with no frb API yet.** Masks (`add_mask`,
     `add_mask_geometry`); the Retime **graph** — the segment
     model (`segment_to_rate`, `set_segment_preset`, `drag_boundary`) and the
-    curve view that makes ramps editable; `trim_to_source_end`; the preset *listing*; and `decode_frame`, the
-    single-layer decode behind the Viewer's fallback.
+    curve view that makes ramps editable; `trim_to_source_end`; and the preset
+    *listing*.
 
 - **Audio is in, with one honest limit.** Playback, the transport and beat
     detection all work. What is *not* here: an audio waveform on the Timeline
@@ -252,30 +194,24 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
 - Retime Time-lens **vertical (source-position) boundary drag** has no bridge op
     (`SetLayerRetime`/`from_source_keyframes` unexposed).
 
-**Bridge chatter: solved by the read model (K-184).** The panels draw from
-`CompModel` (one `get_model` crossing, freshened by a one-call revision check
-per rebuild), so selecting a layer costs 11 calls (was ~75) and the budget test
-caps it at 24. What still reads per rebuild is deliberate and small: the
-Source card's text/camera fields for the one selected layer, the Viewer's
-missing-file probe, and the marker/work-area reads on a Timeline rebuild —
-fold any of these into `BridgeLayerInfo`/`BridgeCompModel` if they ever show
-up in the budget ranking.
+**Bridge reads left outside the read model (K-184)** — deliberate and small:
+the Source card's text/camera fields for the one selected layer, the Viewer's
+missing-file probe, and the marker/work-area reads on a Timeline rebuild. Fold
+any of these into `BridgeLayerInfo`/`BridgeCompModel` if they ever show up in
+the budget ranking (`bridge_call_budget_test.dart` prints it).
 - **`LumitAppNew` rebuilds the whole app on any `LumitUiState.notifyListeners`**
     (a `ListenableBuilder` above everything), and un-scoped document changes do
-    the same via `LumitState` — every panel then re-reads. Scope it.
+    the same via `LumitState`. Reads are nearly free now (K-184), but the
+    widget-tree rebuild itself is not. Scope it.
 
 **The frame cache is now the scope path's cache (K-183).** The shared texture
 keeps no bytes anywhere — that is what makes it fast — so with the read-back
 transport deleted, `framecache` is filled only by scope traces (which need CPU
 pixels and file what they render). The cache bar therefore shows traced frames
 only. The real fix remains docs/06 §5.6's: cache on the card, so coverage means
-something on the zero-copy transport.
-
-**Zero-copy is now the tested default** (`shared-texture` and
-`shared-texture-linux` are default features since K-183; `cargokit.yaml` is
-gone). The widget suite exercises the publish path; actually *registering* the
-texture still needs a real window (integration_test/shared_texture_test.dart,
-run by hand).
+something on the zero-copy transport. Registering a texture still cannot happen
+in a widget test; `integration_test/shared_texture_test.dart` (run by hand on a
+real window) is the coverage.
 
 **Playback scheduler — the rest of it.** Playback now runs in the render worker
 rather than in Flutter (K-181), which was the boundary fix. What it is not yet is
@@ -355,10 +291,9 @@ list, not a re-statement of the roadmap.
 - **Design ([15-DESIGN.md](15-DESIGN.md)).** Bundle JetBrains Mono, Schibsted
     Grotesk and Source Serif 4 (only Inter is wired); add the 13/14/20 px type-scale
     steps to the theme; add 'ScopeColours' to the Flutter theme (Rust has it).
-- **Bridge and platform.** Migrate the hand-written bridge to
-    `flutter rust_bridge` once the command surface stabilises
-    ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)); the macOS pass (native menu
-    bar, Metal/VideoToolbox, notarisation, K-033).
+- **Platform.** The macOS pass (native menu bar, Metal/VideoToolbox,
+    notarisation, K-033) — which since K-183 must include a Metal/IOSurface
+    zero-copy Viewer path, because macOS has no Viewer picture without one.
 - **Phase 2 - Retime.** Flow interpolation policies; audio waveforms in the
     Timeline; automatic beat snapping across edit/retime points
     ([04-RETIMING.md](04-RETIMING.md), [09-AUDIO.md](09-AUDIO.md)).
@@ -381,8 +316,6 @@ import, Lottie export, OpenTimelineIO interchange, render-farm/CLI export
 
 Recorded so they are not re-proposed as gaps:
 
-- **`flutter_rust_bridge` codegen** - deferred by design until the API stabilises
-    ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)).
 - **Rotation gizmo affordance** - egui never offered one; not a regression.
 - The two recorded behavioural deviations (export queue-snapshot timing;
     share-export VBR cap) - see [02-DECISIONS.md](02-DECISIONS.md).
