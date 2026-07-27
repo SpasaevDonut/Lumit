@@ -16,9 +16,10 @@ this file is the concrete backlog underneath it.
 
 ## Now - Flutter frontend parity and regressions
 
-The frontend moved from egui to Flutter (K-174). Flutter is now the frontend; the
-egui code remains only as the parity reference. These are v1-scope surfaces the
-Flutter frontend does not yet match, from the 2026-07-24 doc/code parity pass.
+The frontend moved from egui to Flutter (K-174). Flutter is the only frontend:
+the egui crates (`lumit-ui`, `lumit-app`) are deleted (K-182) and git history is
+the parity reference. These are v1-scope surfaces the Flutter frontend does not
+yet match, from the 2026-07-24 doc/code parity pass.
 
 **Playback measurements (2026-07-27, real window, `integration_test/playback_bench_test.dart`):**
 every-frame mode with one 1080p60 H.264 layer sustains ~64 fps (was ~56 before
@@ -54,9 +55,6 @@ and the transparency grid have landed. Still missing:
     accumulation motion blur, Retime blend/flow) must pass *before* the old walk
     is deleted. `the_preview_and_export_paths_agree_on_a_solid_comp` is the first
     row of that matrix.
-- Feed the egui Viewer's live drag through `HeadlessRenderer::render_preview` too,
-    so the retained-pixel path is one implementation rather than two (the shell
-    still has its own `last_comp` patch loop in `shell/app_update.rs`).
 - Surface `DecodePool::comp_decodes` in the bridge's cache stats, so a decode that
     should not have happened is visible rather than merely slow.
 
@@ -225,9 +223,11 @@ and the transparency grid have landed. Still missing:
   the menu bar and dock but not the bottom status line (notices, export progress
   and its cancel button) or the boot splash; `boot_log` and the export poll both
   exist on the frb API, so this is Dart-side only.
-- **Pop-out panel windows are switched off** in the frb shell (`canPopOut` is
-  hard-coded false). `popout_host_frb.dart` and `popout_main.dart` are ported and
-  the multi-window plugin is wired; only the shell's wiring is missing.
+- **Pop-out panel windows are removed** (K-182): the ported-but-never-wired
+  subsystem (`lib/popout/`, the `desktop_multi_window` plugin, the dock's
+  pop-out chrome) shipped ~500 unreachable lines. Rebuild from git history
+  (`flutter-frontend-alternative`, pre-K-182) when pop-out is actually wanted,
+  and land it wired end to end.
 - **Workspace presets** - only the single default layout exists; the four shipped
 presets (Edit/Effects/Colour/Audio) are not built ([07-UI-SPEC.md](07-UI-SPEC.md) §1.6).
 - **First-run setup screen** (Vegas/AE preference primer, K-006) - absent
@@ -254,12 +254,9 @@ categories, recent-first ranking, and taught-shortcut hints are not built (§12)
     - Currently marquee/selection box for dragging doesn't happen in flutter ui, needs adding
     - **Effect-param interpolation menu** on the fx keyframe lane.
 
-**Effects & presets / popout:**
+**Effects & presets:**
 - **Preset browser listing** - save/load a `.lumfx` works, but saved presets are
     not listed; needs a 'list_presets / presets_dir bridge op.
-- **Main-window resync from a popout** - a popout sees main-window edits via its
-    ~2 Hz poll, but the main window only sees a popout's edit on next interaction
-    (`AppStateStub` has no public resync). (archive/flutter-port/06 §E)
 
 ## Next - engine/bridge follow-ups
 
@@ -347,8 +344,15 @@ lands with it.
     timeline razor/clip editing and overrun hatching surface here too.
 
 **Settings pages not built ([07-UI-SPEC.md](07-UI-SPEC.md) §15):**
-- Keymap editor (`lumit-keymap` model exists); colour-management settings;
-    preview-mode (Cached/Realtime) toggle; CUDA on/off; plugins/decoder page.
+- Keymap editor (the `lumit-keymap` model was deleted unused in K-182; restore
+    it from git history when the editor is actually built); colour-management
+    settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
+    plugins/decoder page.
+- The egui shell's fuller Performance/General/Export pages are not rebuilt in
+    Flutter yet: disk and VRAM cache budgets, background fill, the cache root
+    folder, autosave interval/keep, and the export defaults (preset + filename
+    template). Each lands wired to the engine through the bridge, not as a
+    Dart-side setting nothing reads (K-181/K-182).
 
 **Threading / platform:**
 - **Move footage probing off-thread** - synchronous today; needs a probe worker
@@ -359,8 +363,12 @@ lands with it.
     export is the fix. (archive/flutter-port/06 §A)
 **Shared-texture producer/consumer fence** - only if the owner's live run shows
     tearing; verify on the machine first. (archive/flutter-port/06 §B)
-**Popout multi-window on-machine verification** - the native plugin/dispatch
-    compile only in a real `flutter build windows`. (archive/flutter-port/06 §E)
+**Linux packaging** - the flatpak shipped the egui `lumit-app` binary and was
+    retired with it (K-182); the Flutter Linux build needs its own packaging
+    when a Linux release matters.
+**Export status still speaks v0's idiom** - `export.rs` replies in JSON strings
+    (`err_json`) that the export dialog polls on a timer; the worker shows the
+    typed-stream way, and export should follow it.
 
 **Layer Area & Effect Control Panel Performance Indicator**
 - Display performance indicator, the ms time for layer (total including all effect changes etc.), this

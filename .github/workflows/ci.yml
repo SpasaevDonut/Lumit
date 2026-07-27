@@ -150,7 +150,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       # `cargo build -p lumit-bridge` (default features) pulls lumit-media
-      # (FFmpeg) and, through `render`, lumit-ui (wgpu/GL). The Flutter Linux
+      # (FFmpeg) and, through `render`, lumit-render (wgpu/GL). The Flutter Linux
       # runner additionally needs GTK 3 + clang/cmake/ninja. This is the
       # existing `linux` job's apt list PLUS the GTK + toolchain packages
       # `flutter build linux` requires.
@@ -247,53 +247,24 @@ jobs:
           key: ffmpeg-${{ steps.ffver.outputs.v }}
       # Engine crates must hold the line; the threshold may rise, never fall.
       # The FFmpeg-free engine crates are all gated (measured 87–99% locally).
-      # lumit-gpu is held out while its kernel tests skip on adapterless runners;
-      # UI crates join once the egui_kittest harness lands.
+      # lumit-gpu is held out while its kernel tests skip on adapterless runners.
       - run: >
           cargo llvm-cov
           -p lumit-core -p lumit-project -p lumit-eval
-          -p lumit-cache -p lumit-flow -p lumit-text -p lumit-keymap
+          -p lumit-cache -p lumit-flow -p lumit-text
           --fail-under-lines 80
-
-  flatpak:
-    name: flatpak bundle (installs on any distro)
-    runs-on: ubuntu-latest
-    container:
-      # Carries flatpak + flatpak-builder and the freedesktop 25.08 SDK the
-      # manifest builds against (24.08's Rust is 1.89; the tree needs 1.92).
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v5
-      # A Flatpak build runs offline, so every crate in the lockfile has to be
-      # declared as a source. Mechanical from Cargo.lock, so it is generated
-      # here rather than committed (see the manifest's header).
-      - name: Generate the offline cargo sources
-        env:
-          GENERATOR: https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
-        run: |
-          python3 -m pip install --user aiohttp toml ||
-            python3 -m pip install --break-system-packages aiohttp toml
-          curl -fsSL -o /tmp/generator.py "$GENERATOR"
-          python3 /tmp/generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
-      # Publishes the bundle as a run artifact: what a Linux tester installs
-      # with `flatpak install lumit.flatpak`, whatever distribution they run.
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          bundle: lumit.flatpak
-          manifest-path: packaging/flatpak/io.github.luminalmvm.Lumit.yml
-          cache-key: flatpak-builder-${{ github.sha }}
 
   no-hex-outside-theme:
     name: design-token lint (no hex literals outside the theme module)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # All colours live in the Flutter theme (flutter_ui/lib/theme/); no Rust
+      # crate may carry one.
       - run: |
-          hits=$(grep -rnE 'Color32::from_rgb|#[0-9a-fA-F]{6}' crates --include='*.rs' \
-            | grep -v 'crates/lumit-ui/src/theme.rs' || true)
+          hits=$(grep -rnE 'Color32::from_rgb|#[0-9a-fA-F]{6}' crates --include='*.rs' || true)
           if [ -n "$hits" ]; then
-            echo "Colour values outside lumit_ui::theme (docs/15-DESIGN.md):"
+            echo "Colour values outside the theme (docs/15-DESIGN.md):"
             echo "$hits"
             exit 1
           fi

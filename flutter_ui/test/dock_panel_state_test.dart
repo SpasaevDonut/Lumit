@@ -84,7 +84,6 @@ Widget _harness({
               buildPanel: buildPanel,
               onLayoutChanged: () {},
               activePanel: active,
-              onPopOut: (_) {},
             ),
           ),
         ],

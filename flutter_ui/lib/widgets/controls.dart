@@ -292,9 +292,10 @@ Future<T?> showLumitModal<T>({
   required Widget Function(void Function(T?) close) builder,
 }) {
   final overlay = Overlay.of(context);
-  final completer = _PopupCompleter<T>();
+  final completer = Completer<T?>();
   late OverlayEntry entry;
   void close(T? v) {
+    if (completer.isCompleted) return;
     completer.complete(v);
     entry.remove();
   }
@@ -376,9 +377,10 @@ Future<T?> showLumitPopup<T>({
   required Widget Function(void Function(T?) close) builder,
 }) {
   final overlay = Overlay.of(context);
-  final completer = _PopupCompleter<T>();
+  final completer = Completer<T?>();
   late OverlayEntry entry;
   void close(T? v) {
+    if (completer.isCompleted) return;
     completer.complete(v);
     entry.remove();
   }
@@ -444,19 +446,6 @@ class _PopupLayout extends SingleChildLayoutDelegate {
 
   @override
   bool shouldRelayout(_PopupLayout old) => old.anchor != anchor;
-}
-
-class _PopupCompleter<T> {
-  final _c = Completer<T?>();
-  bool _done = false;
-  void complete(T? v) {
-    if (!_done) {
-      _done = true;
-      _c.complete(v);
-    }
-  }
-
-  Future<T?> get future => _c.future;
 }
 
 /// A 14 px themed checkbox.

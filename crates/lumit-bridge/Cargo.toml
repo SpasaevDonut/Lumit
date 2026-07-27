@@ -57,8 +57,8 @@ lumit-project = { path = "../lumit-project" }
 # (engine crates never depend on the UI) is unbroken.
 lumit-eval = { path = "../lumit-eval" }
 lumit-media = { path = "../lumit-media", optional = true }
-# Beat detection maths (docs/09 §5), pulled by the `render` feature alongside
-# lumit-ui (the audio mixdown rides the same headless input path).
+# Beat detection maths (docs/09 §5); the audio mixdown rides the same
+# headless input path lumit-render provides.
 lumit-audio = { path = "../lumit-audio" }
 # The pixel pass (K-178): the headless renderer, the decode worker, the draw
 # builder and the compositor the Viewer and export both drive. An engine crate,

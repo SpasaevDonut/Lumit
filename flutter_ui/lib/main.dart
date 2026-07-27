@@ -27,36 +27,10 @@ import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:lumit_flutter/widgets/ui_scale.dart';
 import 'package:provider/provider.dart';
 
-import 'popout/popout_main.dart';
-
-/// Traces every call that crosses into Rust, so the frb seam can be watched
-/// while it is being built out. `debugPrint` rather than `print`: it compiles
-/// away in release, where a log per bridge call would be far too costly.
-class CustomHandler extends BaseHandler {
-  @override
-  Future<S> executeNormal<S, E extends Object>(NormalTask<S, E> task) {
-    debugPrint('Rust async call: ${task.argMap}');
-    return super.executeNormal(task);
-  }
-
-  @override
-  S executeSync<S, E extends Object, WireSyncType>(
-      SyncTask<S, E, WireSyncType> task) {
-    debugPrint('Rust sync call: ${task.argMap}');
-    return super.executeSync(task);
-  }
-}
-
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // A popped-out panel runs through this same entrypoint in its own engine
-  // (multi-window, same process). If this engine is a popout it takes over here;
-  // otherwise — the main window, or any build without the multi-window plugin —
-  // this is a swallowed no-op and the shell boots below.
-  if (await maybeRunPopout(args)) return;
-
-  await BridgeLib.init(handler: CustomHandler());
+  await BridgeLib.init();
 
   final state = LumitState();
   // Start with an empty project rather than nothing at all. Every document
@@ -88,24 +62,6 @@ class LumitState extends ChangeNotifier {
 
   void newProject() {
     _adopt(LumitBridgeState.newProject(onChangeStream: _changeSink()));
-  }
-
-  /// Take over the project this process already has open, without making one.
-  ///
-  /// What a popout window does. `desktop_multi_window` runs each window in the
-  /// same process, so the engine's project registry is the *same* registry —
-  /// the popout points at the document the main window is editing rather than
-  /// loading its own copy, which is what made v0's popouts drift out of step.
-  ///
-  /// No render worker is started: a second worker rendering the same comp would
-  /// compete with the main window's for the GPU, and every poppable panel is
-  /// read-mostly. Returns false when nothing is open.
-  bool adoptCurrentProject() {
-    final current = LumitBridgeState.getCurrentProject();
-    if (current == null) return false;
-    project = current;
-    notifyListeners();
-    return true;
   }
 
   void openProject(String path) {
@@ -593,8 +549,6 @@ class _LumitAppViewState extends State<LumitAppView> {
               // Persisted, so an arrangement survives a restart.
               onLayoutChanged: uiState.saveLayout,
               activePanel: uiState.activePanel,
-              onPopOut: (p0) {},
-              canPopOut: (panel) => false,
             ),
           )
         ],

@@ -8,17 +8,6 @@
 #include "flutter/generated_plugin_registrant.h"
 #include "viewer_texture_bridge.h"
 
-// Multi-window (pop-out panels). NOTE: this and its callback below compile only
-// in a real `flutter build linux` on a machine with the Flutter Linux toolchain
-// — the plugin's native header/lib are pulled in by `flutter pub get` + the
-// generated CMake, which do not run in the Windows implementing environment. If
-// the header is ever absent, this include and the
-// desktop_multi_window_plugin_set_window_created_callback block are the only two
-// additions to revert. This mirrors windows/runner/flutter_window.cpp; the
-// desktop_multi_window plugin ships a first-class Linux implementation (its
-// linux/ dir carries the GTK plugin), so pop-out is NOT gated off Linux.
-#include "desktop_multi_window/desktop_multi_window_plugin.h"
-
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
@@ -98,16 +87,6 @@ static void my_application_activate(GApplication* application) {
   FlEngine* engine = fl_view_get_engine(view);
   viewer_texture_bridge_register(fl_engine_get_binary_messenger(engine),
                                  fl_engine_get_texture_registrar(engine));
-
-  // Each popped-out panel is a second Flutter engine in THIS process. Register
-  // the app's plugins on every sub-window engine as it is created, so a popout
-  // has the same plugin surface (file_selector, etc.) as the main window. The
-  // engine bridge itself is dart:ffi, not a plugin, so it needs no registrant —
-  // the sub-window opens the same already-loaded liblumit_bridge.so directly.
-  // (The Windows runner does the equivalent with
-  // DesktopMultiWindowSetWindowCreatedCallback in flutter_window.cpp.)
-  desktop_multi_window_plugin_set_window_created_callback(
-      [](FlPluginRegistry* registry) { fl_register_plugins(registry); });
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

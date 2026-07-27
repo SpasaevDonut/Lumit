@@ -2400,3 +2400,22 @@ frame with its own frame number, so the frontend no longer has to track what it 
 The worker is not yet the full scheduler `docs/impl/playback-scheduler.md` §5 specifies — no
 epoch tokens, no ring, no adaptive lookahead — and that gap is recorded in docs/TODO.md rather
 than pretended away.
+
+**K-182 · DECIDED · The egui frontend is deleted; git history is the parity reference.**
+Supersedes the working stance (recorded in TODO.md after K-174) that the egui code stays in the
+tree as the parity reference. Reported by the owner: after egui → Flutter → frb, the project
+had "become bloated, over-engineered and far too complex", and a full over-engineering review
+confirmed the bloat was almost entirely migration corpses, not the live code. **Deleted in one
+sweep:** `crates/lumit-ui` (~30,600 lines) and `crates/lumit-app` — nothing else depended on
+them; `crates/lumit-keymap` — zero dependents, existed only for an unbuilt settings page;
+`packaging/flatpak` and its CI job — it shipped the egui binary; the never-wired pop-out
+subsystem (`flutter_ui/lib/popout/`, the `desktop_multi_window` plugin and the dock's pop-out
+chrome — `canPopOut` was hard-coded false, so all of it was unreachable); and the dead Dart the
+port left behind (`scope_maths.dart`, `AutosaveScheme`, the settings structs nothing read, the
+PowerShell RAM probe, the per-call bridge tracer). **Why deletion rather than keeping the
+reference:** a parity reference you can `git show` is exactly as available as one you compile,
+and the in-tree copy cost every CI run, every workspace build, and a standing invitation to
+"fix it in the old frontend too". **The rule going forward:** when a feature is parked (as
+pop-out is), it is *removed* and rebuilt from history when wanted — half-shipped code that
+ships its dependencies but not its entry point is the worst of both. K-174's decision itself
+is unchanged; this only deletes the superseded implementation.

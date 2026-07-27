@@ -9,7 +9,7 @@ sRGB-vs-linear confusion, texture churn, and treating device-loss as exotic.
   `Backends::DX12` on Windows, `Backends::METAL` on macOS. Do **not** use `Backends::PRIMARY`
   on Windows: it enumerates Vulkan and DX12 together, and on a hybrid-GPU machine wgpu can
   end up on a device that is lost on the first present (the window opens, then vanishes after
-  a second). This is set on eframe's `WgpuConfiguration` in `lumit-app` (`WGPU_BACKEND` still
+  a second). This is set where the device is created, in `lumit-gpu` (`WGPU_BACKEND` still
   overrides for debugging). Store `AdapterInfo` — the degradation ladder and bug workarounds
   key off vendor.
 - Required features: `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` not needed; do require

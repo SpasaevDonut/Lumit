@@ -31,10 +31,11 @@ The crates that exist today (v1), then the ones the doc reserves for later:
 | `lumit-text` | Text rasterisation (v1: single run, embedded Inter). |
 | `lumit-project` | Serialisation: `.lum` container read/write, the operation journal, autosave. Spec: [10-FILE-FORMAT.md](10-FILE-FORMAT.md). |
 | `lumit-render` | **The pixel pass** the eval graph will eventually own (K-178): media probing abstraction, decode planning, the decode worker and its decoded-frame cache, draw-list building, the GPU compositor, effect dispatch, frame naming and the cache tiers, export, and the headless renderer both frontends drive frame by frame. An engine crate — it names no frontend. |
-| `lumit-ui` | The original egui shell only (tiling dock, timeline/graph-editor/viewer widgets, theming per [15-DESIGN.md](15-DESIGN.md)) plus the egui side of showing a finished frame. Since K-174 it is the **parity reference**, not the shipping frontend, with the goal of removing it once full functionality has moved to the Flutter frontend. Its pixel pass moved to `lumit-render` in K-178. |
-| `lumit-keymap` | Remappable keyboard-shortcut model (pure data + matching logic; the Settings editor over it is not built yet). |
-| `lumit-bridge` | The Flutter/Rust seam (K-174): a cdylib exporting the C ABI the Flutter frontend calls, plus the JSON snapshot. A frontend leaf, not an engine crate; since K-178 it depends on `lumit-render` and on **no frontend**. Spec: [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md). | 
-| `lumit-app` | The binary: winit event loop, wiring, session lifecycle (the egui reference app). |
+| `lumit-bridge` | The Flutter/Rust seam (K-174): a cdylib whose `api` module is the whole surface the Flutter frontend calls through `flutter_rust_bridge`. A frontend leaf, not an engine crate; since K-178 it depends on `lumit-render` and on **no frontend**. Spec: [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md). |
+
+The original egui shell (`lumit-ui`, launched by `lumit-app`) and the unused
+`lumit-keymap` shortcut model were deleted in K-182; git history (pre-K-182) is
+the parity reference for anything the Flutter frontend has not rebuilt yet.
 
 Reserved for later (no crate exists yet):
 
@@ -50,14 +51,13 @@ Reserved for later (no crate exists yet):
 
 ### 1.1 Dependency direction rules
 
-- Dependencies point **downward only**: `lumit-app` → `lumit-ui` → engine crates →
+- Dependencies point **downward only**: `lumit-bridge` → engine crates →
   `lumit-core` (which holds the rational time types). No engine crate may depend on
-  `lumit-ui` or on egui, winit, or any UI crate. This is the K-012 escape hatch: the UI
+  the bridge or on any UI crate. This is the K-012 escape hatch: the UI
   layer MUST be replaceable without touching the engine - which is exactly what K-174 did,
-  swapping the egui shell for a Flutter frontend. Both frontends are leaves: `lumit-ui` and
-  `lumit-bridge` each depend on `lumit-render` and on no other frontend (K-178 retired the
-  temporary bridge → `lumit-ui` edge K-175 had recorded). No engine crate depends on either,
-  so the engine still never knows a UI exists.
+  swapping the egui shell for a Flutter frontend (the egui crates themselves were deleted
+  in K-182). The frontend is a leaf: `lumit-bridge` depends on `lumit-render` and no
+  engine crate depends on it, so the engine never knows a UI exists.
 - `lumit-core` MUST have no dependency on wgpu, rsmpeg, cpal, or QuickJS. The document model
   (and the time types folded into it) is testable on any machine with no GPU and no codecs.
 - `lumit-eval` depends **only on `lumit-core`** (it reads compiled snapshots). Its seams are
@@ -65,11 +65,11 @@ Reserved for later (no crate exists yet):
   the pixel-pass sockets `FrameSource` / `KernelExecutor` / `CacheStore` (`lumit-eval::exec`),
   so the demand-pull executor unit-tests against fakes with no GPU, codecs or disk. The *real*
   implementations (GPU kernels, decode, the cache) are wired in app-side; until that wiring
-  lands, the shipped render/present path is still the draw-list renderer in `lumit-ui`.
+  lands, the shipped render/present path is the draw-list renderer in `lumit-render`.
 - Heavy FFI crates (`rsmpeg`, cudarc, QuickJS bindings) live only in their one owning crate.
-  **Known deviation:** `wgpu` is a direct dependency of both `lumit-gpu` and `lumit-flow`
-  (the flow WGSL twin needs its own device access); it also appears in `lumit-ui`/`lumit-app`
-  for surface configuration. This is the one `-sys`-adjacent crate that spans tables in v1.
+  **Known deviation:** `wgpu` is a direct dependency of `lumit-gpu`, `lumit-flow` (the flow
+  WGSL twin needs its own device access) and `lumit-render` (the compositor speaks it
+  directly). This is the one `-sys`-adjacent crate that spans tables in v1.
 - Circular dependencies are a build error by construction; if two crates want each other, the
   shared piece moves down into a new crate or into `lumit-core`.
 
@@ -226,7 +226,7 @@ sampled frames' hashes fold in. Full pipeline detail: [06-RENDER-PIPELINE.md](06
 `lumit-media` wraps rsmpeg behind a `MediaSource` trait (open → probe → indexed frame
 server) so the binding choice stays swappable.
 
-**v1 status:** today `lumit-ui` does one-shot **CPU** decode plus the frame index below. 
+**v1 status:** today `lumit-render` does one-shot **CPU** decode plus the frame index below. 
 The persistent decoder pool, hardware decode, proxies, and image sequences described in the 
 rest of this section are the intended design but **not yet built** (they sit in §1's "reserved 
 for later" table; tracked in [TODO.md](TODO.md)).

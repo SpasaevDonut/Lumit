@@ -1,5 +1,5 @@
-// Settings defaults must reproduce the engine constants (the Rust
-// settings.rs tests), and the workspace JSON must round-trip.
+// Settings defaults must be a no-op for existing installs, and the workspace
+// JSON must round-trip.
 
 import 'dart:ui';
 
@@ -9,13 +9,10 @@ import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 
 void main() {
-  test('performance defaults match the hardcoded budgets', () {
+  test('performance defaults are the shipped ones', () {
     final p = PerformanceSettings();
-    expect(p.ramBudgetMb, greaterThanOrEqualTo(2048));
-    expect(p.diskCacheMb, 50 * 1024);
-    expect(p.vramCacheMb, 512);
-    expect(p.backgroundFill, isTrue);
-    expect(p.cacheRoot, isNull);
+    expect(p.useSharedTexture, isTrue);
+    expect(p.playback, PlaybackMode.adaptive);
   });
 
   test('interface defaults are a no-op for existing installs', () {
@@ -24,22 +21,9 @@ void main() {
     expect(i.showTooltips, isTrue);
   });
 
-  test('autosave defaults mirror AUTOSAVE_INTERVAL_SECS/AUTOSAVE_KEEP', () {
-    final a = AutosaveSettings();
-    expect(a.intervalMins, 5);
-    expect(a.keep, 3);
-  });
-
-  test('export defaults are a no-op for existing installs', () {
-    final e = ExportSettings();
-    expect(e.defaultPreset, ExportPreset.custom);
-    expect(e.filenameTemplate, isNull);
-  });
-
-  test('export preset labels are the shipped ones', () {
-    expect(ExportPreset.custom.label, 'Custom (comp size)');
-    expect(ExportPreset.youtube1080p60.label, 'YouTube 1080p60');
-    expect(ExportPreset.vertical1080p60.label, 'Vertical 1080×1920p60');
+  test('an unknown playback name falls back to adaptive', () {
+    final p = PerformanceSettings.fromJson(const {'playback': 'warp-speed'});
+    expect(p.playback, PlaybackMode.adaptive);
   });
 
   test('workspace JSON round-trips appearance and settings', () {
@@ -48,9 +32,7 @@ void main() {
     ws.themeShape = ThemeShape.round;
     ws.accentOverride = const Color(0xff804060);
     ws.animationLevel = AnimationLevel.minimal;
-    ws.autosave.intervalMins = 9;
-    ws.performance.diskCacheMb = 1234;
-    ws.export.defaultPreset = ExportPreset.youtube4k60;
+    ws.performance.playback = PlaybackMode.everyFrame;
     ws.lastProjectPath = 'C:/edit/last.lum';
     ws.recompose();
 
@@ -60,9 +42,7 @@ void main() {
     expect(back.lastProjectPath, 'C:/edit/last.lum');
     expect(back.themeShape, ThemeShape.round);
     expect(back.animationLevel, AnimationLevel.minimal);
-    expect(back.autosave.intervalMins, 9);
-    expect(back.performance.diskCacheMb, 1234);
-    expect(back.export.defaultPreset, ExportPreset.youtube4k60);
+    expect(back.performance.playback, PlaybackMode.everyFrame);
     expect((back.accentOverride!.r * 255).round(), 0x80);
     // The rebuilt theme carries the override and the shape tokens.
     expect(back.theme.tokens, ShapeTokens.round);

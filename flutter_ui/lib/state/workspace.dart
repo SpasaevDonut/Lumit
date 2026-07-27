@@ -55,7 +55,7 @@ class SavedSession {
       other.activeComp == activeComp &&
       other.frame == frame &&
       other.selectedLayer == selectedLayer &&
-      _listEq(other.openComps, openComps);
+      listEquals(other.openComps, openComps);
 
   @override
   int get hashCode => Object.hash(
@@ -64,71 +64,6 @@ class SavedSession {
         selectedLayer,
         Object.hashAll(openComps),
       );
-
-  static bool _listEq(List<String> a, List<String> b) {
-    if (a.length != b.length) return false;
-    for (var i = 0; i < a.length; i++) {
-      if (a[i] != b[i]) return false;
-    }
-    return true;
-  }
-}
-
-/// The autosave file scheme, mirroring `lumit_project::autosave` (rotating
-/// copies beside the project in an `autosaves/` sibling folder,
-/// `{stem}.autosave-1.lum` newest). Kept as pure functions so the naming and
-/// rotation are unit-tested without a bridge or a real save.
-class AutosaveScheme {
-  /// The `autosaves/` directory beside [projectPath].
-  static String dir(String projectPath) {
-    final sep = Platform.pathSeparator;
-    final parent = File(projectPath).parent.path;
-    return '$parent${sep}autosaves';
-  }
-
-  /// The project file's stem (name without its extension), the autosave prefix.
-  static String stem(String projectPath) {
-    var name = File(projectPath).uri.pathSegments.isNotEmpty
-        ? File(projectPath).uri.pathSegments.last
-        : projectPath;
-    // Strip the last extension only (`edit.lum` → `edit`), matching Rust's
-    // `file_stem`. A dotfile with no extension keeps its name.
-    final dot = name.lastIndexOf('.');
-    if (dot > 0) name = name.substring(0, dot);
-    return name.isEmpty ? 'project' : name;
-  }
-
-  /// The slot-[k] autosave path (k = 1 is newest).
-  static String slot(String projectPath, int k) {
-    final sep = Platform.pathSeparator;
-    return '${dir(projectPath)}$sep${stem(projectPath)}.autosave-$k.lum';
-  }
-
-  /// Rotate the existing autosaves up one slot and return the (now free) newest
-  /// slot to write. The oldest ([keep]) falls off the end. Best-effort file
-  /// moves: a missing slot is simply skipped, never an error. The main project
-  /// file is never touched. Creates the `autosaves/` folder if needed.
-  static String rotateAndNewestSlot(String projectPath, int keep) {
-    final k = keep < 1 ? 1 : keep;
-    Directory(dir(projectPath)).createSync(recursive: true);
-    // Drop the oldest.
-    final oldest = File(slot(projectPath, k));
-    if (oldest.existsSync()) {
-      try {
-        oldest.deleteSync();
-      } catch (_) {}
-    }
-    // Shift the rest up: k-1 → k, … , 1 → 2.
-    for (var i = k - 1; i >= 1; i--) {
-      final from = File(slot(projectPath, i));
-      if (from.existsSync()) {
-        try {
-          from.renameSync(slot(projectPath, i + 1));
-        } catch (_) {}
-      }
-    }
-    return slot(projectPath, 1);
-  }
 }
 
 class Workspace extends ChangeNotifier {
@@ -139,9 +74,7 @@ class Workspace extends ChangeNotifier {
   AnimationLevel animationLevel = AnimationLevel.all;
 
   PerformanceSettings performance = PerformanceSettings();
-  AutosaveSettings autosave = AutosaveSettings();
   InterfaceSettings interface = InterfaceSettings();
-  ExportSettings export = ExportSettings();
 
   /// The project last opened or saved with a path, restored on the next launch
   /// (the egui frontend reopens the last project the same way). Null until a
@@ -252,9 +185,7 @@ class Workspace extends ChangeNotifier {
               ],
         'animation_level': animationLevel.name,
         'performance': performance.toJson(),
-        'autosave': autosave.toJson(),
         'interface': interface.toJson(),
-        'export': export.toJson(),
         'last_project_path': lastProjectPath,
         'sessions': {
           for (final e in sessions.entries) e.key: e.value.toJson(),
@@ -280,14 +211,8 @@ class Workspace extends ChangeNotifier {
     if (j['performance'] is Map<String, dynamic>) {
       performance = PerformanceSettings.fromJson(j['performance']);
     }
-    if (j['autosave'] is Map<String, dynamic>) {
-      autosave = AutosaveSettings.fromJson(j['autosave']);
-    }
     if (j['interface'] is Map<String, dynamic>) {
       interface = InterfaceSettings.fromJson(j['interface']);
-    }
-    if (j['export'] is Map<String, dynamic>) {
-      export = ExportSettings.fromJson(j['export']);
     }
     lastProjectPath =
         j['last_project_path'] is String ? j['last_project_path'] as String : null;

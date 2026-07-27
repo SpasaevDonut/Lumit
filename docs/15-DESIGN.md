@@ -225,8 +225,8 @@ pub struct Theme {
 }
 ```
 
-**v1 status of this struct.** The struct above is the target shape. The shipped `Theme`
-(`lumit-ui/src/theme.rs`) carries the structural roles — the surfaces, text, hairlines,
+**v1 status of this struct.** The struct above is the target shape. The shipped `LumitTheme`
+(`flutter_ui/lib/theme/theme.dart`) carries the structural roles — the surfaces, text, hairlines,
 `accent`/`accent_hover`, `success`/`warning`/`error`, the `curve[4]` ramp, `layer`
 (`LayerColours`, §6.1) — plus two the code has split out that this listing does not yet name:
 `scope` (`ScopeColours`, the four scope-chrome accents) and `cache_disk` (the disk tier of the
@@ -311,8 +311,8 @@ full Timeline looks organised, not carnival. Selection (accent) must visibly bea
 of them.
 
 v1 ships an identity colour token for each of the six layer kinds that exist today. The
-`LayerColours` struct (`lumit-ui/src/theme.rs`) carries exactly these six; `panels.rs` maps
-each `LayerKind` to its token and glyph.
+`LayerColours` class (`flutter_ui/lib/theme/theme.dart`) carries exactly these six; the
+panels map each layer kind to its token and glyph.
 
 | Layer type | Token | Value | v1 |
 |---|---|---|---|

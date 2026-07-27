@@ -206,8 +206,9 @@ Windows .dll is built with it.
 
 ## Threading and long-running work
 
-- **Export** runs on its own encode thread inside `lumit-ui::export` (K-017). The
-    bridge holds the handle and drains progress on `api::export::export_poll`.
+- **Export** runs on its own encode thread inside `lumit-bridge::export`, driving
+    `lumit-render` (K-017). The bridge holds the handle and drains progress on
+    `api::export::export_poll`.
 - **Playback / realtime tier.** A genuine render reports its measured cost to
     `lumit-eval`'s realtime controller (K-171); the frontend reads the current tier
     and scale back through `api::shell::playback_tier` to drive the Auto

@@ -20,9 +20,7 @@ app's departments). They live in `crates/`:
 |---|---|---|
 | `lumit-core` | Time, the document, undo | The project file's brain: what a comp/layer *is*, and every edit that can happen to it |
 | `lumit-project` | `.lum` files, autosave, recovery | Saving and loading, and the "never lose work" machinery |
-| `lumit-ui` | Everything you see (egui) | Panels, menus, the theme — the shell around the engine |
 | `lumit-render` | Making the picture | The whole path from "here is the project" to "here are the pixels" — decoding, compositing, caching, export |
-| `lumit-app` | The `main()` entry | Ten lines that open the window and start the UI |
 | `lumit-media` | Decoding video | Turning an .mp4 into frames |
 | `lumit-gpu` | The GPU pipeline | Drawing and processing frames on the graphics card |
 | `lumit-audio` | Sound | Playback and the clock everything syncs to |
@@ -30,8 +28,13 @@ app's departments). They live in `crates/`:
 | `lumit-cache` | Caching | Remembering rendered frames so they're never rendered twice |
 | `lumit-flow` | Optical flow | Motion vectors for smooth-retime and flow motion blur |
 | `lumit-text` | Text | Rasterising text layers |
-| `lumit-keymap` | Keyboard shortcuts | The remappable shortcut model |
 | `lumit-bridge` | The Flutter seam | How the Flutter frontend talks to the engine (see [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)) |
+
+Everything you actually *see* lives outside `crates/`, in `flutter_ui/` — the
+Flutter application (panels, menus, the theme). The original egui shell
+(`lumit-ui` + `lumit-app`) and the unused `lumit-keymap` shortcut model were
+deleted in K-182; if you ever need to look at how the old frontend did
+something, it is one `git log` away.
 
 Three of these have proper names you'll see in the app and docs (decision K-083),
 drawn from the same astral register as the app itself: **Nova** (a burst of new light) is
@@ -1660,7 +1663,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   right — including that two layers blend in linear light and that a cache hit does zero
   GPU work. So the sockets are proven to fit the real machinery; what remains is teaching
   the adapters the full layer vocabulary (transforms, masks, retimes, effects) and then
-  switching preview and export over. Until then the shipped renderer in `lumit-ui` keeps
+  switching preview and export over. Until then the shipped renderer in `lumit-render` keeps
   drawing the picture.
 - **Two ways to play back (`lumit-eval::schedule::cached_step`, K-171)** — the important
   distinction between the two preview modes. In **Cached** mode (the default), Lumit shows you
@@ -1836,7 +1839,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   depth, AE-style, via a small button at the foot of the Project panel. Full float
   doubles every frame's memory and roughly halves compositing throughput, so 16-float
   stays the default; the heavy maths inside effects can run wider internally either way.
-- `crates/lumit-ui/src/theme.rs` — **the design tokens.** The only file allowed to contain
+- `flutter_ui/lib/theme/theme.dart` — **the design tokens.** The only file allowed to contain
   colour values. Change a colour here, it changes everywhere. As of K-084 the look follows
   the *structure* of rerun.io's viewer (a data-tools app whose interface the owner likes):
   the app's background is nearly black, panels sit just above it, and menus float a clear
@@ -1844,6 +1847,10 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   from pressed purely by how light their fill is; scrollbars are thin and solid; panel
   edges are single crisp 1px lines. The colours themselves (the clay accent, the cool grey
   family) are still Lumit's own — we borrowed the skeleton, not the skin.
+  *(A note on the Settings window paragraphs below: they record the full design as the
+  egui shell shipped it. The Flutter Settings window carries a subset today — appearance,
+  UI scale, tooltips, the cache budget and the playback controls — and the remaining pages
+  are tracked in [TODO.md](TODO.md).)*
   Five appearance controls live in the **Settings window** (K-098) — open it from
   **Window → Settings…** or **Ctrl/Cmd+comma**. That window is Lumit's application-settings
   surface, shaped like macOS's System Settings: a list of pages down the left (General,
@@ -1928,18 +1935,16 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   dropdown on the Settings window's Appearance page — the old separate light/dark and
   background-ramp rows folded into it. An older save that used the two-row picker migrates its
   choice into the new one automatically, so nobody's theme resets on upgrade.
-- `crates/lumit-ui/src/icons.rs` — **the icons: Iconoir, shipped as a font** (K-085).
+- `flutter_ui/lib/icons/icons.dart` — **the icons: Iconoir** (K-085).
   Little pictures like the play triangle or the padlock come from Iconoir, a free
-  professionally drawn icon family, baked into the program as a small font file — each icon
-  is a character in that font, so it stays crisp at any size and always takes the theme
-  colour (dimming on hover, turning accent when active) exactly like text does. Emoji are
-  still banned: a glyph is either from this set or deliberately drawn, never a character we
-  hope the user's fonts carry — that's how the invisible stopwatch/arrow bugs happened. To
-  add one, add a name to the `Icon` list and its Iconoir name in the lookup; a test fails
-  if the name doesn't exist in the set, so a typo can't ship.
-- `crates/lumit-ui/src/shell.rs` + `app_state.rs` — **the window**: panels, menus,
-  shortcuts, and the state glue (current project, dirty flag, autosave timer, recovery
-  prompt).
+  professionally drawn icon family, so every glyph stays crisp at any size and always
+  takes the theme colour (dimming on hover, turning accent when active) exactly like text
+  does. Emoji are banned: a glyph is either from this set or deliberately drawn, never a
+  character we hope the user's fonts carry — that's how the invisible stopwatch/arrow bugs
+  happened. To add one, add a name to the `LumitIcon` list and its Iconoir widget in the
+  lookup.
+- `flutter_ui/lib/main.dart` + `lib/shell/` — **the window**: panels, menus, shortcuts,
+  and the state glue (current project, selection, the render worker's reply stream).
 - **Layers can hang over the edges of the composition** (K-153, GEN-3). Think of a
   composition as a fixed-length window of time — say ten seconds. A layer used to be forced to
   live entirely inside that window: you could not slide it so it *started before* the comp's
@@ -2006,18 +2011,6 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   a set of **benchmarks** time the everyday operations on that project (open it, save it, make
   one edit, undo). They run when a developer asks (`cargo bench`), and they'll later become
   pass/fail speed budgets in the automated checks.
-- **Remappable keyboard shortcuts (`lumit-keymap`)** — the rules behind "every shortcut can be
-  changed" live in their own small, self-contained piece with no screen or window in sight, so
-  they can be proven correct on their own. A **chord** is a key plus its held modifiers
-  (`Shift+F3`, `Ctrl/Cmd+D`); a **context** is where you are (the whole app, the timeline, the
-  viewer…); a **binding** ties a chord in a context to an action. The interesting part is
-  spotting **clashes** — the same chord that would trigger two different things at once — with
-  the twist that an app-wide (Global) shortcut is live everywhere, so it clashes with a
-  same-chord shortcut in *any* panel, while two different panels may reuse a key harmlessly.
-  The default set (the whole documented table) and an "After Effects" preset both ship
-  clash-free, the map can be saved to a shareable file, and Ctrl/Cmd is stored as one
-  neutral "primary" key so a keymap works on both Windows and Mac. Still to come: wiring the
-  live key presses and the Settings → Keymap screen to this core.
 
 ## 5. Making a change safely (the recipe)
 
@@ -2119,8 +2112,8 @@ There are two moving parts, and it helps to know why each exists:
    FFmpeg folder and LLVM, points the build at them, and (`-Persist`) remembers the settings
    so every future terminal already knows. The leading dot is required — it means "apply
    these to my current shell", not "run and forget".
-4. Now the normal commands work: `cargo run -p lumit-app` to launch, `cargo test --workspace`
-   to run the whole test suite.
+4. Now the normal commands work: `cargo test --workspace` runs the engine's test suite,
+   and `flutter run` from `flutter_ui/` launches the app.
 
 ### On macOS
 
@@ -2136,7 +2129,8 @@ Linux finds FFmpeg the same way macOS does — by asking the system's package re
 generator reads), plus `pkg-config` and `clang`. On Debian 13 or Ubuntu 24.10 and newer
 that is one line: `sudo apt install pkg-config clang libavcodec-dev libavformat-dev
 libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev`. On Arch:
-`sudo pacman -S ffmpeg clang pkgconf`. Then `cargo run -p lumit-app` as usual.
+`sudo pacman -S ffmpeg clang pkgconf`. Then `cargo test --workspace`, and `flutter run`
+from `flutter_ui/` to launch the app.
 
 One honest caveat: the build needs FFmpeg **7**, and some distributions still ship
 FFmpeg 6 — Ubuntu 24.04 LTS is the big one. On those, `cargo build` will complain about
@@ -2144,33 +2138,9 @@ FFmpeg 6 — Ubuntu 24.04 LTS is the big one. On those, `cargo build` will compl
 newer distribution release, or building FFmpeg 7.1 from source and letting `pkg-config`
 find it.
 
-### Not building it at all: the Flatpak
-
-If you just want to *run* Lumit on Linux, there is now a **Flatpak** — the one artifact
-that sidesteps the whole FFmpeg-version problem. A Flatpak is an application packaged
-together with the exact libraries it was built against, run in a light sandbox. Because
-Lumit's bundle carries its own FFmpeg 7.1, it does not care what the distribution ships:
-the same file installs on Ubuntu, Fedora, Arch or anything else.
-
-Every CI run builds one and attaches it to the run as `lumit-x86_64.flatpak` (about 15 MB —
-the app plus its own FFmpeg). Download it, then:
-
-```
-flatpak install --user lumit-x86_64.flatpak
-flatpak run io.github.luminalmvm.Lumit
-```
-
-The recipe lives in `packaging/flatpak/`. Two parts of it are worth understanding, because
-they look strange otherwise. First, the manifest **builds FFmpeg 7.1 itself** rather than
-using the one in the Flatpak runtime — the runtime's is 6.x, the same version problem as
-above, just moved indoors. Second, a Flatpak build has **no network access** on purpose (so
-a build is reproducible and can't fetch surprises), which means every Rust crate Lumit
-depends on has to be listed in advance; CI generates that list mechanically from
-`Cargo.lock` before building, which is why you won't find it committed.
-
-The sandbox is granted the GPU (the whole compositor is GPU work), audio out, and access to
-your files — a video editor has to read footage from wherever you keep it, external drives
-included.
+(There used to be a **Flatpak** here — a ready-to-install Linux bundle. It packaged the
+old egui application and was retired with it in K-182; Linux packaging for the Flutter
+app is tracked in [TODO.md](TODO.md).)
 
 One Linux-only difference worth knowing, because it looks like a bug otherwise: on Windows
 and macOS Lumit *starts as* the little splash card — that small frameless window you see

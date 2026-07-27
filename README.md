@@ -2,7 +2,7 @@
 
 A native motion-graphics and compositing editor — After Effects' depth, Vegas' retiming
 soul, one application. Built first for gaming-edit and montage editors; growing into a full
-After Effects replacement. Rust · wgpu · egui · GPLv3.
+After Effects replacement. Rust · wgpu · Flutter · GPLv3.
 
 **Status: design phase.** The complete system is specified in [docs/](docs/) before the
 first line of application code; the specs are canonical and implementation follows them.

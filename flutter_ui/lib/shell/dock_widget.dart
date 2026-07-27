@@ -3,12 +3,11 @@
 // bare (K-086), and the Sharp/Round pane chrome (K-092). Tabs and bare panes
 // drag to re-dock (dock.rs drag-to-redock, via egui_tiles): a ghost pill
 // follows the cursor, the hovered pane shows a drop-zone preview, and release
-// commits the move through movePanel. Pop-out windows remain a checklist item.
+// commits the move through movePanel.
 
 import 'package:flutter/rendering.dart' show RenderOffstage;
 import 'package:flutter/widgets.dart';
 
-import '../icons/icons.dart';
 import '../state/dock.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -28,25 +27,13 @@ class DockWidget extends StatefulWidget {
   /// keyboard's home is always visible (Shell::active_panel).
   final ValueNotifier<Panel?> activePanel;
 
-  /// Called when a pane's context menu asks to pop out into its own window.
-  final void Function(Panel) onPopOut;
-
-  /// Whether [onPopOut] is offered for a panel — the pop-out button and the
-  /// bare-pane context-menu item are hidden when this returns false (the Viewer
-  /// and Timeline, and an already-floating panel). Defaults to always offered.
-  final bool Function(Panel)? canPopOut;
-
   const DockWidget({
     super.key,
     required this.root,
     required this.buildPanel,
     required this.onLayoutChanged,
     required this.activePanel,
-    required this.onPopOut,
-    this.canPopOut,
   });
-
-  bool _canPopOut(Panel panel) => canPopOut?.call(panel) ?? true;
 
   @override
   State<DockWidget> createState() => _DockWidgetState();
@@ -105,8 +92,6 @@ class _DockWidgetState extends State<DockWidget> {
             bare: true,
             panel: panel,
             activePanel: widget.activePanel,
-            onPopOut: widget.onPopOut,
-            offerPopOut: widget._canPopOut(panel),
             drag: _drag,
             child: widget.buildPanel(context, panel),
           ),
@@ -114,8 +99,6 @@ class _DockWidgetState extends State<DockWidget> {
             tabs: node,
             buildPanel: widget.buildPanel,
             activePanel: widget.activePanel,
-            onPopOut: widget.onPopOut,
-            canPopOut: widget._canPopOut,
             drag: _drag,
             onChanged: () {
               setState(() {});
@@ -462,8 +445,6 @@ class _TabGroup extends StatelessWidget {
   final PanelBuilder buildPanel;
   final VoidCallback onChanged;
   final ValueNotifier<Panel?> activePanel;
-  final void Function(Panel) onPopOut;
-  final bool Function(Panel) canPopOut;
   final _DragController drag;
 
   const _TabGroup({
@@ -471,8 +452,6 @@ class _TabGroup extends StatelessWidget {
     required this.buildPanel,
     required this.onChanged,
     required this.activePanel,
-    required this.onPopOut,
-    required this.canPopOut,
     required this.drag,
   });
 
@@ -513,21 +492,6 @@ class _TabGroup extends StatelessWidget {
                   ),
                 ),
               ),
-              // The pop-out button for the active tab (top_bar_right_ui), shown
-              // only for panels a popout can host.
-              if (canPopOut(tabs.activePane.panel)) ...[
-                LumitTooltip(
-                  message: 'Pop out into its own window',
-                  child: HouseButton(
-                    frameless: true,
-                    small: true,
-                    onPressed: () => onPopOut(tabs.activePane.panel),
-                    child: lumitIcon(LumitIcon.popOut,
-                        size: 12, color: t.textMuted),
-                  ),
-                ),
-                const SizedBox(width: 4),
-              ],
             ],
           ),
         ),
@@ -537,9 +501,13 @@ class _TabGroup extends StatelessWidget {
         // way egui's memory persists a hidden tab. Only the active body paints
         // or ticks; an offstage body still lays out on a rebuild but does no
         // per-frame work, which matches egui.
-        
         Expanded(
-          child: _paneBody(context, active.panel, true),
+          child: Stack(
+            children: [
+              for (final tab in tabs.children)
+                _paneBody(context, tab.panel, identical(tab, active)),
+            ],
+          ),
         ),
       ],
     );
@@ -559,8 +527,6 @@ class _TabGroup extends StatelessWidget {
             bare: false,
             panel: panel,
             activePanel: activePanel,
-            onPopOut: onPopOut,
-            offerPopOut: false,
             drag: drag,
             child: buildPanel(context, panel),
           ),
@@ -649,20 +615,13 @@ class _TabPillState extends State<_TabPill> {
 /// The pane body chrome: Sharp draws edge-to-edge on `surface1`; Round wraps
 /// the content in a rounded, shadowed, padded card (dock.rs::pane_ui). Any
 /// click inside makes this the active panel, which wears the accent boundary
-/// (Shell::active_panel); a right-click on a bare pane offers "pop out"
-/// (bare_pane_ui — tabbed panes get it from the tab bar's own button). A live
-/// re-dock drag paints the drop-zone preview over the hovered pane, and a bare
-/// pane carries the corner drag grip (dock.rs::paint_bare_pane_grip).
+/// (Shell::active_panel). A live re-dock drag paints the drop-zone preview
+/// over the hovered pane, and a bare pane carries the corner drag grip
+/// (dock.rs::paint_bare_pane_grip).
 class _PaneChrome extends StatelessWidget {
   final bool bare;
   final Panel panel;
   final ValueNotifier<Panel?> activePanel;
-  final void Function(Panel) onPopOut;
-
-  /// Whether this bare pane offers "pop out" in its context menu (hidden for
-  /// panels a popout cannot host). Ignored for a tabbed pane, which gets its
-  /// pop-out affordance from the tab bar's own button.
-  final bool offerPopOut;
   final _DragController drag;
   final Widget child;
 
@@ -670,27 +629,9 @@ class _PaneChrome extends StatelessWidget {
     required this.bare,
     required this.panel,
     required this.activePanel,
-    required this.onPopOut,
-    required this.offerPopOut,
     required this.drag,
     required this.child,
   });
-
-  void _contextMenu(BuildContext context, Offset globalPos) {
-    showLumitPopup<void>(
-      context: context,
-      position: globalPos,
-      builder: (close) => FloatSurface(
-        child: MenuRow(
-          onPressed: () {
-            close(null);
-            onPopOut(panel);
-          },
-          child: const Text('Pop out into its own window'),
-        ),
-      ),
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -704,9 +645,6 @@ class _PaneChrome extends StatelessWidget {
         onPointerDown: (_) => activePanel.value = panel,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onSecondaryTapDown: bare && offerPopOut
-              ? (d) => _contextMenu(context, d.globalPosition)
-              : null,
           child: Container(
             key: drag.paneKeys[panel],
             decoration: BoxDecoration(

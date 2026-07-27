@@ -33,7 +33,6 @@ import 'package:iconoir_flutter/regular/nav_arrow_down.dart' as ic;
 import 'package:iconoir_flutter/regular/nav_arrow_left.dart' as ic;
 import 'package:iconoir_flutter/regular/nav_arrow_right.dart' as ic;
 import 'package:iconoir_flutter/regular/network.dart' as ic;
-import 'package:iconoir_flutter/regular/open_new_window.dart' as ic;
 import 'package:iconoir_flutter/regular/pause.dart' as ic;
 import 'package:iconoir_flutter/regular/play.dart' as ic;
 import 'package:iconoir_flutter/regular/refresh_double.dart' as ic;
@@ -77,7 +76,6 @@ enum LumitIcon {
   eyeClosed,
   audio,
   mute,
-  popOut,
   prevKeyframe,
   nextKeyframe,
   keyframeAdd,
@@ -137,7 +135,6 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.eyeClosed => ic.EyeClosed(color: color),
       LumitIcon.audio => ic.SoundHigh(color: color),
       LumitIcon.mute => ic.SoundOff(color: color),
-      LumitIcon.popOut => ic.OpenNewWindow(color: color),
       LumitIcon.prevKeyframe => ic.NavArrowLeft(color: color),
       LumitIcon.nextKeyframe => ic.NavArrowRight(color: color),
       LumitIcon.keyframeAdd => ic.KeyframePlus(color: color),
