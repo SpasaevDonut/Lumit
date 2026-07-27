@@ -481,6 +481,9 @@ class _TabGroup extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final barColour =
         t.shape == ThemeShape.sharp ? t.surface2 : t.surface0;
+
+    final active = tabs.children[tabs.active];
+
     return Column(
       children: [
         Container(
@@ -534,14 +537,9 @@ class _TabGroup extends StatelessWidget {
         // way egui's memory persists a hidden tab. Only the active body paints
         // or ticks; an offstage body still lays out on a rebuild but does no
         // per-frame work, which matches egui.
+        
         Expanded(
-          child: Stack(
-            fit: StackFit.expand,
-            children: [
-              for (var i = 0; i < tabs.children.length; i++)
-                _paneBody(context, tabs.children[i].panel, i == tabs.active),
-            ],
-          ),
+          child: _paneBody(context, active.panel, true),
         ),
       ],
     );
