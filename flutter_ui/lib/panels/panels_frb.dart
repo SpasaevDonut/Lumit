@@ -9,6 +9,7 @@
 // "Bridge".
 
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/panels/debug_panel.dart';
 
 import '../state/dock.dart';
 import 'effect_controls_panel_frb.dart';
@@ -27,5 +28,6 @@ Widget buildPanelBodyFrb(BuildContext context, Panel panel) => switch (panel) {
       Panel.effectsAndPresets => const EffectsPresetsPanelFrb(),
       Panel.scopes => const ScopesPanelFrb(),
       Panel.hierarchy => const HierarchyPanelFrb(),
+      Panel.debug => const DebugPanel(),
     };
 
