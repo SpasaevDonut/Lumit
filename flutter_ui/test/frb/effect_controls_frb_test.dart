@@ -209,6 +209,61 @@ void main() {
           reason: 'a disabled arrow does nothing rather than wrapping around');
     });
 
+    testWidgets('an effect twirls shut, and its rows go with it',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      await mount(tester, p, transform: false);
+
+      final id = p.layer.getEffects().single.id();
+      expect(find.text('Radius'), findsOneWidget,
+          reason: 'a newly applied effect arrives open');
+
+      // The heading is the twirl: anywhere on it, not only the caret.
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      expect(find.text('Radius'), findsNothing);
+      expect(find.byKey(ValueKey<String>('fx-enabled-$id')), findsOneWidget,
+          reason: 'a shut effect still shows its heading and its switch');
+
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+      expect(find.text('Radius'), findsOneWidget);
+    });
+
+    testWidgets('Reset puts every parameter back and drops its keyframes',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      final before = p.layer.getEffects().single.getValue(id: 'radius');
+      await mount(tester, p, transform: false);
+
+      // Animate it and move it away from its default, so Reset has both a
+      // changed value and a curve to undo.
+      final id = p.layer.getEffects().single.id();
+      final stack = p.layer.getEffects();
+      stack.single.setValue(
+        id: 'radius',
+        value: BridgeEffectValue.float(BridgeScalar.keyframed([
+          BridgeKeyframe(
+            time: const BridgeRational(num: 0, den: 1),
+            value: 40,
+            interpIn: const BridgeSideInterp.linear(),
+            interpOut: const BridgeSideInterp.linear(),
+          ),
+        ])),
+      );
+      p.layer.setEffects(effects: stack);
+      p.uiState.model.refresh();
+      await tester.pump();
+
+      await tester.tap(find.byKey(ValueKey<String>('fx-reset-$id')));
+      await tester.pump();
+
+      expect(p.layer.getEffects().single.getValue(id: 'radius'), before,
+          reason: 'the schema default is written back, curve and all');
+    });
+
     testWidgets(
         'the Transform rows draw every property and commit one at a time',
         (tester) async {

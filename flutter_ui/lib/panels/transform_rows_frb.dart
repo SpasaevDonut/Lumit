@@ -29,6 +29,7 @@ import 'package:provider/provider.dart';
 
 import '../state/timeline_columns.dart';
 import '../widgets/controls.dart';
+import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
 
 /// How wide one value cell is. Fixed rather than flexible so the columns line
@@ -131,6 +132,9 @@ class TransformRowsFrb extends StatelessWidget {
   /// Padding inside each row.
   final EdgeInsets rowPadding;
 
+  /// Lay the rows out as the Effect controls panel's two columns.
+  final bool twoColumn;
+
   const TransformRowsFrb({
     super.key,
     required this.comp,
@@ -143,13 +147,12 @@ class TransformRowsFrb extends StatelessWidget {
     this.keyPrefix = 'tf',
     this.rowHeight,
     this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.twoColumn = false,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+  /// One widget per transform row — for a caller that has to put each row in its
+  /// own chrome (the Effect controls panel's hairline-separated rows).
+  List<Widget> rows(BuildContext context) => [
         for (final group in transformGroups(threeD: threeD))
           TransformRowFrb(
             comp: comp,
@@ -162,10 +165,15 @@ class TransformRowsFrb extends StatelessWidget {
             keyPrefix: keyPrefix,
             rowHeight: rowHeight,
             rowPadding: rowPadding,
+            twoColumn: twoColumn,
           ),
-      ],
-    );
-  }
+      ];
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: rows(context),
+      );
 }
 
 /// One transform property group as a row.
@@ -190,6 +198,10 @@ class TransformRowFrb extends StatefulWidget {
   /// column group whatever order the groups are dragged into (docs/07 §4.3).
   final ValueColumn? valueColumn;
 
+  /// Lay the row out as the Effect controls panel's two columns — name left,
+  /// axes left-aligned in the rest. Ignored when [valueColumn] is set.
+  final bool twoColumn;
+
   const TransformRowFrb({
     super.key,
     required this.comp,
@@ -203,6 +215,7 @@ class TransformRowFrb extends StatefulWidget {
     this.rowHeight,
     this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
     this.valueColumn,
+    this.twoColumn = false,
   });
 
   @override
@@ -233,29 +246,51 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
 
   Widget _row(BridgeTransform transform, TransformGroup group, int frame) {
     final t = ThemeScope.of(context).theme;
+    // One stopwatch, every axis in the row — and one undo step, because
+    // `setTransforms` commits them as a batch.
+    final keyframes = KeyframeControlsFrb(
+      scalars: [for (final axis in group.axes) read(transform, axis.prop)],
+      comp: widget.comp,
+      playheadFrame: widget.playheadFrame,
+      onSeek: widget.onSeek,
+      rowKey: '${widget.keyPrefix}-${group.axes.first.prop.name}',
+      onWrite: (next) {
+        widget.layer.setTransforms(
+          props: [for (final axis in group.axes) axis.prop],
+          values: next,
+        );
+        setState(() => _staged = null);
+        widget.onChanged();
+      },
+    );
+
+    if (widget.twoColumn && widget.valueColumn == null) {
+      final row = Padding(
+        padding: widget.rowPadding,
+        child: fxTwoColumnRow(
+          context: context,
+          name: group.label,
+          keyframeControls: keyframes,
+          control: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < group.axes.length; i++) ...[
+                if (i > 0) const SizedBox(width: 6),
+                _cell(transform, group.axes[i], frame),
+              ],
+            ],
+          ),
+        ),
+      );
+      final height = widget.rowHeight;
+      return height == null ? row : SizedBox(height: height, child: row);
+    }
+
     final row = Padding(
       padding: widget.rowPadding,
       child: Row(
         children: [
-          // One stopwatch, every axis in the row — and one undo step, because
-          // `setTransforms` commits them as a batch.
-          KeyframeControlsFrb(
-            scalars: [
-              for (final axis in group.axes) read(transform, axis.prop)
-            ],
-            comp: widget.comp,
-            playheadFrame: widget.playheadFrame,
-            onSeek: widget.onSeek,
-            rowKey: '${widget.keyPrefix}-${group.axes.first.prop.name}',
-            onWrite: (next) {
-              widget.layer.setTransforms(
-                props: [for (final axis in group.axes) axis.prop],
-                values: next,
-              );
-              setState(() => _staged = null);
-              widget.onChanged();
-            },
-          ),
+          keyframes,
           const SizedBox(width: 4),
           Expanded(
             child: Text(group.label,

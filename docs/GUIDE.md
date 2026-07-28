@@ -3682,7 +3682,7 @@ Clicking the arrow again folds it away.
 These are the same rows the Effect controls panel has always shown. Rather
 than write a second set that would slowly drift out of step with the first,
 the rows moved into their own file that both panels use — the Effect controls
-panel now just draws its card around them. So a fix to how a value behaves is
+panel now just draws its section around them. So a fix to how a value behaves is
 a fix in both places, which is the whole point.
 
 The lane to the right of an open property row is deliberately empty for now:
@@ -3923,3 +3923,52 @@ editor does), and the field grows with the rate: a 600 fps comp counts to
 `:599`, so it gets three digits. Typing a timecode into the duration box is
 read at the rate typed above it and converted to exact seconds before it is
 stored — the document itself never stores a frame count (K-180).
+
+**The Effect controls panel reads as one list.** For a while each effect on a
+layer sat in its own bordered box, and a layer with four effects on it looked
+like four unrelated cards stacked up. But a layer's effects *are* one list —
+they run in order, each feeding the next — and they are already drawn as one
+list in the Timeline when you twirl a layer open. So the panel draws them that
+way too, and the two surfaces now agree.
+
+Each part of the panel — Source, Transform, one per effect — is a **heading
+bar you can twirl**: click it and its rows fold away, click it again and they
+come back. Under the heading, every row sits on its own line with a hairline
+between it and the next, so a long list stays readable. A newly applied effect
+arrives open, because the moment after you apply one is exactly when you want
+its controls.
+
+Every row is **two columns**. The property's name is on the left, its control
+is on the right, and there is deliberately no line drawn between them: they
+read as columns because they *line up* down the whole panel — which is all a
+column really is. Making that true takes one small trick. The stopwatch that
+starts a property animating lives to the left of the name, but some
+settings — a dropdown, a filename — can never animate and so have no
+stopwatch. If those rows simply left it out, their names would start further
+left than everyone else's and the column would wobble. So a row with no
+stopwatch leaves an empty space exactly the stopwatch's width instead.
+
+The heading row follows the same two columns. On the left: the twirl, the
+effect's on/off tick, and its name. Then, at the top of the *value* column,
+**Reset** — placed there because that is what it acts on, the values below it.
+Reset puts every setting of that effect back to the value it shipped with,
+which also means any animation you put on it goes away; that is one single
+undo step, not one per setting. The buttons that move the effect up and down
+the stack, and the × that removes it, stay hard against the right-hand edge,
+away from Reset: removing an effect is not an adjustment to it, and the two
+should not sit side by side where a slip costs you your work.
+
+If you have the interface set to the **round** shape rather than the sharp
+one, the same rows come wrapped in the soft floating-card chrome. The two
+shapes differ in their chrome, never in their layout — the same names in the
+same column either way.
+
+One thing this layout knows it cannot cover: a handful of effects want a
+*picture* rather than a list of numbers. Levels wants a histogram with handles
+under it; Curves wants a spline you bend with the pointer. Neither is a stack
+of labelled rows, and squeezing them into one would be the wrong control for
+the job. So the panel asks a single question first — does this effect bring
+its own display? — and only draws rows when the answer is no. Nothing answers
+yes yet. The point of asking now is that when the first one arrives it says so
+in one place, rather than becoming a special case wedged into the middle of
+the layout.
