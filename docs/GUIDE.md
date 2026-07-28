@@ -2154,9 +2154,27 @@ Linux finds FFmpeg the same way macOS does — by asking the system's package re
 *development* packages (the ones ending `-dev`, which carry the headers the binding
 generator reads), plus `pkg-config` and `clang`. On Debian 13 or Ubuntu 24.10 and newer
 that is one line: `sudo apt install pkg-config clang libavcodec-dev libavformat-dev
-libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev`. On Arch:
-`sudo pacman -S ffmpeg clang pkgconf`. Then `cargo test --workspace`, and `flutter run`
-from `flutter_ui/` to launch the app.
+libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev`. On Arch
+or Artix: `sudo pacman -S ffmpeg pkgconf clang18 llvm18` — note the **18**: those
+distributions' plain `clang` package is a much newer LLVM, and as explained above a newer
+LLVM makes the translator produce nonsense, so the versioned packages are the ones to
+install.
+
+Two settings then have to be handed to the build, in the terminal you build from:
+
+```sh
+export LIBCLANG_PATH=/usr/lib/llvm18/lib          # Debian/Ubuntu: /usr/lib/llvm-18/lib
+export FFMPEG_PKG_CONFIG_PATH=/usr/lib/pkgconfig  # wherever libavcodec.pc lives
+```
+
+The first says "use the *18* translator, not whichever one is the default" — only needed
+where the default is newer than 18, which on Arch and Artix it always is. The second is an
+accident of the repo: `.cargo/config.toml` sets that variable to a macOS Homebrew folder
+for every platform, and Cargo gives no way to make it macOS-only, so on Linux it has to be
+overridden with the folder that actually holds FFmpeg's `.pc` description files (ask with
+`pkg-config --variable pc_path pkg-config` if `/usr/lib/pkgconfig` is not it). Put both
+lines in your shell profile and every future terminal has them. Then `cargo test
+--workspace`, and `flutter run` from `flutter_ui/` to launch the app.
 
 One honest caveat: the build needs FFmpeg **7**, and some distributions still ship
 FFmpeg 6 — Ubuntu 24.04 LTS is the big one. On those, `cargo build` will complain about
