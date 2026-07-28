@@ -29,6 +29,13 @@ void main() {
   setUpAll(initEngineForTests);
 
   group('Project panel (frb)', () {
+    /// A tree row's name text, as distinct from the info header's copy of it:
+    /// selecting an item mirrors its name into the header, so a bare
+    /// `find.text` goes ambiguous the moment anything is selected. The rows
+    /// live in the panel's ListView; the header does not.
+    Finder rowText(String name) =>
+        find.descendant(of: find.byType(ListView), matching: find.text(name));
+
     testWidgets('an empty project shows the quiet hint', (tester) async {
       final p = freshProject();
       await tester.pumpWidget(
@@ -125,14 +132,15 @@ void main() {
 
       // First click selects; the second (well outside the double-tap window)
       // starts the rename.
-      await tapAgain(tester, find.text('shot.mov'));
+      await tapAgain(tester, rowText('shot.mov'));
       expect(find.byKey(const ValueKey('rename-field')), findsOneWidget);
 
-      await tester.enterText(find.byType(EditableText), 'Intro');
+      await tester.enterText(
+          find.byKey(const ValueKey('rename-field')), 'Intro');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      expect(find.text('Intro'), findsOneWidget);
+      expect(rowText('Intro'), findsOneWidget);
       expect(find.text('shot.mov'), findsNothing,
           reason: 'the rename reached the document, not just the field');
     });
@@ -149,39 +157,98 @@ void main() {
       ));
       await tester.pump();
 
-      await tapAgain(tester, find.text('shot.mov'));
-      await tester.enterText(find.byType(EditableText), '   ');
+      await tapAgain(tester, rowText('shot.mov'));
+      await tester.enterText(find.byKey(const ValueKey('rename-field')), '   ');
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      expect(find.text('shot.mov'), findsOneWidget,
+      expect(rowText('shot.mov'), findsOneWidget,
           reason: 'a row must never be able to lose its label');
     });
 
-    testWidgets('double-clicking a composition fronts it', (tester) async {
+    /// Double-clicking a row is "select, then rename" in one motion (owner
+    /// request): the first click selects on its down stroke, the second opens
+    /// the rename immediately — no double-tap window to wait out. It must
+    /// also never fall through to the empty-area import.
+    testWidgets('double-clicking a row selects then renames, immediately',
+        (tester) async {
       final p = freshProject();
-      final comp = p.state.project!.newComposition(name: 'Scene');
-
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      var asked = 0;
       await tester.pumpWidget(hostPanel(
-        child: const ProjectPanelFrb(),
+        child: ProjectPanelFrb(importPicker: () async {
+          asked++;
+          return [];
+        }),
         state: p.state,
         uiState: p.uiState,
       ));
       await tester.pump();
 
-      expect(p.uiState.selectedComp, isNull);
-      await _doubleTap(tester, find.text('Scene'));
+      // Two quick clicks — a genuine double-click, with only zero-length
+      // pumps: any reliance on the 300ms arena would fail here.
+      final centre = tester.getCenter(rowText('shot.mov'));
+      for (var i = 0; i < 2; i++) {
+        final g = await tester.startGesture(centre);
+        await tester.pump();
+        await g.up();
+        await tester.pump();
+      }
 
-      expect(p.uiState.selectedComp?.internalid, comp.internalid);
+      expect(find.byKey(const ValueKey('rename-field')), findsOneWidget,
+          reason: 'the second click opens the rename with no arena delay');
+      expect(asked, 0,
+          reason: 'a double-click on a row is never an empty-area import');
+
+      // Let the row's arena-absorbing double-tap recogniser time out before
+      // the test tears down.
+      await tester.pump(const Duration(milliseconds: 400));
     });
 
-    testWidgets('double-clicking footage places it into the front comp',
+    /// A *composition* double-clicks open instead — what it means in every
+    /// editor — so its second click must front it in the Timeline and never
+    /// drop into a rename. Renaming a comp lives in its context menu.
+    testWidgets('double-clicking a composition opens it in the Timeline',
         (tester) async {
       final p = freshProject();
       final comp = p.state.project!.newComposition(name: 'Scene');
-      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
-      p.uiState.setSelectedComp(comp);
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      expect(p.uiState.selectedComp, isNull);
 
+      final centre = tester.getCenter(rowText('Scene'));
+      for (var i = 0; i < 2; i++) {
+        final g = await tester.startGesture(centre);
+        await tester.pump();
+        await g.up();
+        await tester.pump();
+      }
+
+      expect(p.uiState.selectedComp?.internalid, comp.internalid,
+          reason: 'the second click fronted the comp');
+      expect(find.byKey(const ValueKey('rename-field')), findsNothing,
+          reason: 'opening a comp is not renaming it');
+
+      // The rename it gave up is still reachable from the row menu.
+      await tester.tapAt(centre, buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('project-menu-rename')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('rename-field')), findsOneWidget);
+
+      await tester.pump(const Duration(milliseconds: 400));
+    });
+
+    /// The same, starting from an already-selected row: a double-click (or a
+    /// single click) on it opens the rename rather than doing nothing.
+    testWidgets('double-clicking an already-selected row opens the rename',
+        (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
       await tester.pumpWidget(hostPanel(
         child: const ProjectPanelFrb(),
         state: p.state,
@@ -189,12 +256,21 @@ void main() {
       ));
       await tester.pump();
 
-      expect(comp.getLayers(), isEmpty);
-      await _doubleTap(tester, find.text('shot.mov'));
+      // Select it first, as its own settled gesture.
+      await tester.tap(rowText('shot.mov'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.byKey(const ValueKey('rename-field')), findsNothing,
+          reason: 'the first click only selects');
 
-      final layers = comp.getLayers();
-      expect(layers, hasLength(1));
-      expect(layers.first.getName(), 'shot.mov');
+      final centre = tester.getCenter(rowText('shot.mov'));
+      final g = await tester.startGesture(centre);
+      await tester.pump();
+      await g.up();
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('rename-field')), findsOneWidget,
+          reason: 'a click on the selected row renames at once');
+      await tester.pump(const Duration(milliseconds: 400));
     });
 
     testWidgets('footage rows are draggable, carrying FootageDragData',
@@ -280,9 +356,9 @@ void main() {
       tester
           .widget<DragTarget<FootageDragData>>(target)
           .onAcceptWithDetails!(DragTargetDetails<FootageDragData>(
-            data: FootageDragData([a, b], '2 items'),
-            offset: tester.getCenter(target),
-          ));
+        data: FootageDragData([a, b], '2 items'),
+        offset: tester.getCenter(target),
+      ));
       // The dialogue opens only after every dropped item has been probed, which
       // is a real trip into FFmpeg — `settleFrb` waits on the engine rather than
       // on a frame count.
@@ -343,10 +419,10 @@ void main() {
       await tester.pump();
 
       // 'Scene' starts filed inside Compositions, so it is indented.
-      final indentedBefore = tester.getTopLeft(find.text('Scene')).dx;
+      final indentedBefore = tester.getTopLeft(rowText('Scene')).dx;
 
       await tester.tapAt(
-        tester.getCenter(find.text('Scene')),
+        tester.getCenter(rowText('Scene')),
         buttons: kSecondaryButton,
       );
       await tester.pumpAndSettle();
@@ -354,11 +430,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        tester.getTopLeft(find.text('Scene')).dx,
+        tester.getTopLeft(rowText('Scene')).dx,
         lessThan(indentedBefore),
         reason: 'unfiled, so it is no longer indented under the folder',
       );
-      expect(find.text('Scene'), findsOneWidget, reason: 'moved, not deleted');
+      expect(rowText('Scene'), findsOneWidget, reason: 'moved, not deleted');
     });
 
     /// Missing-media rows and the filter. The imported path does not exist, so the
@@ -468,7 +544,7 @@ void main() {
 
       // A composition: settings, move, delete. Relink and Find missing are
       // footage-only (egui panels.rs).
-      await tester.tapAt(tester.getCenter(find.text('Scene')),
+      await tester.tapAt(tester.getCenter(rowText('Scene')),
           buttons: kSecondaryButton);
       await tester.pumpAndSettle();
       expect(find.text('Composition settings…'), findsOneWidget);
@@ -481,7 +557,7 @@ void main() {
 
       // Present footage: no settings, and no Relink — that appears only on a
       // row that is actually broken.
-      await tester.tapAt(tester.getCenter(find.text('shot.mov')),
+      await tester.tapAt(tester.getCenter(rowText('shot.mov')),
           buttons: kSecondaryButton);
       await tester.pumpAndSettle();
       expect(find.text('Composition settings…'), findsNothing);
@@ -491,11 +567,11 @@ void main() {
       expect(find.text('Delete'), findsOneWidget);
     });
 
-    /// Migrated from the v0 suite (final_sweep_test.dart). v0 needed an isolate,
-    /// a wire protocol and a generation map to keep a cold decode off the UI
-    /// thread; `FootageReference.thumbnail` is simply async, so the whole
-    /// mechanism here is one `FutureBuilder`-shaped load.
-    testWidgets('a footage row decodes and shows a thumbnail', (tester) async {
+    /// The decoded picture lives in the info header now, not on the row: the
+    /// tree stays a tight list of names, and selecting an item is what asks
+    /// for its readout (docs/07 §3.1).
+    testWidgets('selecting footage shows its thumbnail in the info header',
+        (tester) async {
       final p = freshProject();
       p.state.project!.importFootage(path: _probeableImageFile('still.bmp'));
 
@@ -504,13 +580,144 @@ void main() {
         state: p.state,
         uiState: p.uiState,
       ));
+      await settleFrb(tester);
+
+      expect(find.byType(RawImage), findsNothing,
+          reason: 'rows carry glyphs; nothing is selected yet');
+
+      await tester.tap(rowText('still.bmp'));
+      // The single tap only wins the arena once the double-tap window closes.
+      await tester.pump(const Duration(milliseconds: 350));
       await settleFrb(
         tester,
         until: () => find.byType(RawImage).evaluate().isNotEmpty,
       );
 
+      expect(find.byKey(const ValueKey('project-info-header')), findsOneWidget);
       expect(find.byType(RawImage), findsOneWidget,
-          reason: 'the row drew the decoded picture, not the type glyph');
+          reason: 'the header drew the decoded picture');
+      expect(find.text('footage'), findsOneWidget,
+          reason: 'the header names the item type');
+    });
+
+    /// The header's second line: the media's own vital statistics, from
+    /// `mediaInfo`. A BMP has one frame and no rate worth speaking of, so the
+    /// line asserts presence of the dimensions rather than exact wording.
+    testWidgets('the info header reads out the media facts', (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: _probeableImageFile('still.bmp'));
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await settleFrb(tester);
+      await tester.tap(rowText('still.bmp'));
+      // The single tap only wins the arena once the double-tap window closes.
+      await tester.pump(const Duration(milliseconds: 350));
+      await settleFrb(
+        tester,
+        until: () => find
+            .byKey(const ValueKey('project-info-line'))
+            .evaluate()
+            .isNotEmpty,
+      );
+
+      expect(find.byKey(const ValueKey('project-info-line')), findsOneWidget,
+          reason: 'the probe answered and the line drew');
+    });
+
+    /// Selection must land the instant the button goes down — waiting out the
+    /// double-click window read as the panel lagging behind the mouse. Fails
+    /// without the row's pointer-down listener.
+    testWidgets('selection lands on pointer down, before the tap resolves',
+        (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      final gesture =
+          await tester.startGesture(tester.getCenter(rowText('shot.mov')));
+      await tester.pump();
+      // The header names the item while the button is still held down.
+      expect(find.byKey(const ValueKey('project-info-header')), findsOneWidget,
+          reason: 'selection must not wait for the gesture arena');
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+
+    /// The header is always there at one height, so selecting an item must
+    /// never shove the tree downward.
+    testWidgets('the info header keeps its height so rows never jump',
+        (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      final before = tester.getTopLeft(rowText('shot.mov'));
+      final gesture =
+          await tester.startGesture(tester.getCenter(rowText('shot.mov')));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(tester.getTopLeft(rowText('shot.mov')), before,
+          reason: 'the header filling in must not move the rows');
+    });
+
+    /// The persistent search field (docs/07 §3.1): the tree narrows live to
+    /// names that match, and a folder whose own name matches keeps its
+    /// children visible as the path to them.
+    testWidgets('the search field filters the tree live', (tester) async {
+      final p = freshProject();
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.state.project!.importFootage(path: 'C:/clips/other.avi');
+      p.state.project!.newComposition(name: 'Scene');
+
+      await tester.pumpWidget(hostPanel(
+        child: const ProjectPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await settleFrb(tester);
+
+      expect(find.text('shot.mov'), findsOneWidget);
+      expect(find.text('other.avi'), findsOneWidget);
+
+      await tester.enterText(
+          find.byKey(const ValueKey('project-search')), 'shot');
+      await tester.pump();
+
+      expect(find.text('shot.mov'), findsOneWidget);
+      expect(find.text('other.avi'), findsNothing,
+          reason: 'the needle narrowed the tree');
+      expect(find.text('Scene'), findsNothing);
+
+      // A folder name matches: its children show as the path to them.
+      await tester.enterText(
+          find.byKey(const ValueKey('project-search')), 'compositions');
+      await tester.pump();
+      expect(find.text('Compositions'), findsOneWidget);
+      expect(find.text('Scene'), findsOneWidget,
+          reason: 'a matching folder keeps what it holds visible');
+
+      await tester.enterText(find.byKey(const ValueKey('project-search')), '');
+      await tester.pump();
+      expect(find.text('other.avi'), findsOneWidget,
+          reason: 'clearing the needle widens back to everything');
     });
 
     /// The panel used to rebuild on *every* document change, so tweaking a layer
@@ -683,13 +890,6 @@ Future<void> _clickRow(
   await tester.tap(find.text(name));
   await tester.pump(kDoubleTapTimeout);
   if (held != null) await tester.sendKeyUpEvent(held);
-}
-
-Future<void> _doubleTap(WidgetTester tester, Finder target) async {
-  await tester.tap(target);
-  await tester.pump(kDoubleTapMinTime);
-  await tester.tap(target);
-  await tester.pumpAndSettle();
 }
 
 /// A temp file the engine's probe accepts, written **synchronously**.

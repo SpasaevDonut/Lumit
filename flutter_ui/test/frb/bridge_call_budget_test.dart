@@ -15,10 +15,12 @@
 
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
+import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 
@@ -120,10 +122,11 @@ void main() {
         ..reset()
         ..counting = true;
       // On the name, not the row's centre: the centre of a full outline row
-      // lands on the blend dropdown, which eats the tap.
-      final row =
-          find.byKey(ValueKey<String>('tl-row-${target.internallayerId}'));
-      await tester.tapAt(tester.getTopLeft(row) + const Offset(150, 10));
+      // lands on the blend dropdown, and a fixed offset lands on whichever
+      // cell the column groups put there — the name cell is the safe target.
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${target.internallayerId}'));
+      await tester.tapAt(tester.getTopLeft(name) + const Offset(5, 8));
       await tester.pump(const Duration(milliseconds: 350));
       await settleFrb(tester, minRounds: 4, maxRounds: 8);
       counter.counting = false;
@@ -141,6 +144,54 @@ void main() {
         lessThan(24),
         reason: 'one click re-read far too much across the bridge:\n'
             '${counter.ranking()}',
+      );
+    });
+
+    /// Hovering the Project panel used to re-fetch names (and once, the
+    /// thumbnail) on every enter/exit, because each row asked the engine
+    /// again on rebuild. The names ride in on the panel's walk and the
+    /// thumbnails live in a RAM cache now, so moving the mouse across the
+    /// rows must cost nothing at the seam.
+    testWidgets('hovering project rows costs no bridge calls', (tester) async {
+      final p = freshProject();
+      p.state.project!.newComposition(name: 'Scene');
+      p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.state.project!.importFootage(path: 'C:/clips/other.avi');
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        child: const ProjectPanelFrb(),
+      ));
+      // Let the probes (status, media info, thumbnails) finish and cache.
+      await settleFrb(tester, minRounds: 8);
+
+      final rows = [
+        find.text('Scene'),
+        find.text('shot.mov'),
+        find.text('other.avi'),
+      ];
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      await tester.pump();
+
+      counter
+        ..reset()
+        ..counting = true;
+      // Back and forth across every row, twice.
+      for (var pass = 0; pass < 2; pass++) {
+        for (final row in rows) {
+          await mouse.moveTo(tester.getCenter(row));
+          await tester.pump();
+        }
+      }
+      counter.counting = false;
+
+      expect(
+        counter.total,
+        0,
+        reason: 'hovering re-read the engine:\n${counter.ranking()}',
       );
     });
   }, skip: !engineAvailable);

@@ -19,6 +19,7 @@ pub mod retime;
 pub mod shell;
 pub mod solid;
 pub mod state;
+pub mod system;
 
 mod worker_thread;
 

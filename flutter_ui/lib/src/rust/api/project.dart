@@ -83,6 +83,14 @@ class ProjectReference {
       BridgeLib.instance.api
           .crateApiProjectProjectReferenceImportFootage(that: this, path: path);
 
+  /// Whether the document has moved since it was last saved (or opened).
+  /// The status bar's saved/unsaved readout. An undo after a save reads as
+  /// dirty: the revision moved, and only a save proves the file matches.
+  bool isDirty() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceIsDirty(
+        that: this,
+      );
+
   /// Add a composition, filed into the Compositions auto-folder, as one undo
   /// step. A blank name gets the next "Comp N".
   ///

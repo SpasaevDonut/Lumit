@@ -112,11 +112,31 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     bezier handles; and the Viewer's scale and rotate gizmo handles, motion
     paths, masks and shape tools.
 
+**Retime is still its own card, not a property group (K-194).** The owner's standing
+instruction is that Retime behaves like any other transform property — a group in the
+Timeline's fold-out, sitting *above* Transform, absent on kinds that cannot retime (solids,
+adjustments, nulls). Today it is a block of rows inside the Effect controls' Source card,
+which is why it hides with Transform there. Build the fold-out group; the Source card's
+retime rows then move into it.
+
+**System memory is only read on Windows (K-194).** `system_memory_bytes` and
+`video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB ceiling.
+macOS/Linux want `sysctl hw.memsize` and `/proc/meminfo` when those targets land (K-033).
+
+**Settings pages not rebuilt in Flutter (K-193).** The window is paged again — General,
+Appearance, Interface, Performance — but the egui build's **Export** page (default preset,
+filename template) and **Autosave** group (interval, copies kept) have nothing behind them
+on this frontend, so they are not listed rather than shown dead. Build the settings first,
+then the page. Same for the Keymap editor, colour management, CUDA and the plugins page
+(listed under *Settings pages not built* below).
+
 **Shell and onboarding:**
-- **The boot splash and a notices feed are not in the frb shell.** The bottom
-  status line landed 2026-07-28 (export progress and Cancel, under the dock);
-  what remains is the boot splash and a general notices channel for it to show —
-  the engine currently has no notice stream, only `boot_log`.
+- **The boot splash is not in the frb shell.** The bottom status line landed
+  2026-07-28 (saved/unsaved state, the cache meter, a notices area with a close
+  button, and export progress with Cancel, under the dock); what remains is the
+  boot splash. Notices are frontend-held (`LumitState.notice`) — the engine
+  still has no notice stream of its own, only `boot_log`, so engine-side events
+  cannot yet post one.
 - **Pop-out panel windows are removed** (K-182): the ported-but-never-wired
   subsystem (`lib/popout/`, the `desktop_multi_window` plugin, the dock's
   pop-out chrome) shipped ~500 unreachable lines. Rebuild from git history
@@ -139,6 +159,35 @@ the keymap).
 - **Graph editor / Lane Editor / keyframes ([04-RETIMING.md](04-RETIMING.md), archive/flutter-port/06 §C):**
     - All Retime specific's are to be implemented later, currently it should behave and have exact parity
         as all other properties in graph view, same value/speed graph etc. Nothing extra
+- **The Flow column is reserved, not wired (K-188).** Per-layer optical flow has no engine
+    backing (no switch, no settings group); the outline's flow cell shows collapse on a
+    Precomp and nothing elsewhere. Build the engine model first, then the fold-out's Flow
+    group with its settings.
+- **Lock guards the gestures, not the property rows (K-188).** A locked layer's bar,
+    razor, rename, reorder and delete all refuse; its transform/effect/volume rows are
+    still editable. Either guard the rows or enforce in the engine ops — decide which
+    before wiring.
+- **The lane keyframe selection selects, nothing more (K-189).** The marquee gathers
+    diamonds and shows them in accent, and a single diamond drags in time (K-190); moving
+    or deleting a *whole selection* is not built. Nor are `=`/`-`/`\` or edge-follow
+    during playback (the wheel bindings landed with K-190). The graph's y-axis is
+    auto-zoom only — a manual y-zoom (with its own scrollbar once free) awaits a real
+    need.
+- **Column widths and the property selection are session-lived (K-192).** Both reset when
+    the panel is rebuilt from scratch; fold them into the workspace when per-workspace
+    column layouts land (docs/07 §4.2's reorder/hide-per-workspace item).
+- **The Flutter suite has ~4 order-dependent tests.** `flutter test` occasionally fails a
+    different one or two of the playback/cache-bar tests each run; every one of them passes
+    alone, and the whole suite passes with `--concurrency=1`. They contend for the shared
+    engine (the audio device and the render worker) across test *files*, which run in
+    parallel processes. Give those files a serial marker, or make the engine per-file,
+    before this masks a real failure.
+- **The magnet snaps keyframes to frames, and nothing else yet (K-190).** Docs/07 §4.5
+    wants edit points, in/out points, markers, beat markers, the playhead and work-area
+    edges as snap sources and targets, plus `Ctrl`-hold to suspend mid-drag.
+- **Volume keyframes draw no lane diamonds.** Volume is not in the comp read model
+    (K-184's deliberate exceptions), so its fold row shows controls but no diamonds;
+    fold `volume` into `BridgeLayerInfo` if the lane matters.
 
 ## Next - engine/bridge follow-ups
 

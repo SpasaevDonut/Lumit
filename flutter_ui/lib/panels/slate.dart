@@ -21,13 +21,37 @@ final _blue = documentColour(20, 20, 220, 255);
 final _black = documentColour(0, 0, 0, 255);
 
 /// The seven main bars, left to right — the classic descending-luminance run.
-final List<Color> _bars = [_white, _yellow, _cyan, _green, _magenta, _red, _blue];
+final List<Color> _bars = [
+  _white,
+  _yellow,
+  _cyan,
+  _green,
+  _magenta,
+  _red,
+  _blue
+];
 
 /// The reversed band beneath, which is what makes it read as test bars.
-final List<Color> _under = [_blue, _magenta, _yellow, _red, _cyan, _black, _white];
+final List<Color> _under = [
+  _blue,
+  _magenta,
+  _yellow,
+  _red,
+  _cyan,
+  _black,
+  _white
+];
 
 /// Hue-sweep stops for the narrow strip beside the greyscale ramp.
-final List<Color> _hueStops = [_red, _yellow, _green, _cyan, _blue, _magenta, _red];
+final List<Color> _hueStops = [
+  _red,
+  _yellow,
+  _green,
+  _cyan,
+  _blue,
+  _magenta,
+  _red
+];
 
 // Band boundaries as fractions of the height, and the ramp/wedge split, exactly
 // as slate.rs defines them.
@@ -60,7 +84,8 @@ class SlatePainter extends CustomPainter {
     final underTop = h * _bandUnder;
     for (var c = 0; c < 7; c++) {
       paint.color = _bars[c];
-      canvas.drawRect(Rect.fromLTRB(c * colW, 0, (c + 1) * colW, underTop), paint);
+      canvas.drawRect(
+          Rect.fromLTRB(c * colW, 0, (c + 1) * colW, underTop), paint);
     }
 
     // Reversed band beneath.
@@ -85,8 +110,7 @@ class SlatePainter extends CustomPainter {
     final hueRect = Rect.fromLTRB(splitX, rampTop, w, stepsTop);
     canvas.drawRect(
       hueRect,
-      Paint()
-        ..shader = LinearGradient(colors: _hueStops).createShader(hueRect),
+      Paint()..shader = LinearGradient(colors: _hueStops).createShader(hueRect),
     );
 
     // Bottom band: stepped grey wedge on the left, black rest field on the right.

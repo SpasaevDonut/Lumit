@@ -16,8 +16,7 @@ void main() {
   /// straight to the binding does not update the mouse tracker, so `MouseRegion`
   /// never fires and a test using it would pass whatever the widget does.
   Future<TestGesture> mouse(WidgetTester tester) async {
-    final gesture =
-        await tester.createGesture(kind: PointerDeviceKind.mouse);
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
     await gesture.addPointer(location: Offset.zero);
     addTearDown(gesture.removePointer);
     return gesture;
@@ -30,7 +29,9 @@ void main() {
           animationLevel: AnimationLevel.none,
           showTooltips: tooltips,
           child: Overlay(
-            initialEntries: [OverlayEntry(builder: (_) => Center(child: child))],
+            initialEntries: [
+              OverlayEntry(builder: (_) => Center(child: child))
+            ],
           ),
         ),
       );

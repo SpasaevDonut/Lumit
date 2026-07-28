@@ -215,18 +215,21 @@ class LumitTheme {
   /// The default accent as plain RGB, for seeding the picker.
   static const defaultAccent = Color(0xffe05a72);
 
-  /// The layer-label palette (TL2): eight chips drawn from the theme's own
-  /// roles, index 0 the quiet default.
+  /// The layer-label palette (TL2, K-188): eight bright, clearly distinct
+  /// chips. A layer's label colours both its swatch and its bar in the lane
+  /// area, and each layer kind defaults to a different one — so the set is a
+  /// dedicated palette, not the theme's role colours, which were built to be
+  /// quiet rather than tellable-apart. Index 0 is the neutral default.
   Color labelColour(int i) {
-    final set = [
-      textMuted,
-      accent,
-      success,
-      warning,
-      error,
-      cacheDisk,
-      accentHover,
-      hairlineStrong,
+    const set = [
+      Color(0xff8b93a3), // slate — the quiet default
+      Color(0xff4aa3e0), // azure — footage
+      Color(0xffe0a33c), // amber — solids
+      Color(0xffa06ce0), // violet — precomps
+      Color(0xff46c98e), // mint — text
+      Color(0xff3cc9c0), // teal — cameras
+      Color(0xff6673e6), // indigo — sequences
+      Color(0xffd45cb8), // magenta — adjustments
     ];
     return set[i % set.length];
   }
@@ -564,6 +567,7 @@ class LumitTheme {
       color: textMuted,
       decoration: TextDecoration.none,
       fontWeight: FontWeight.w500);
+
   /// The note under a field explaining its format — smaller than a label so it
   /// reads as an aside rather than as another thing to fill in
   /// (docs/15-DESIGN.md §7.1).

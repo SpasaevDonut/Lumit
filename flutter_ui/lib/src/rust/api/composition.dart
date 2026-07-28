@@ -34,16 +34,35 @@ class BridgeCompModel {
   /// The comp's rate as a plain number, for panels that map seconds to
   /// pixels (the waveform lane) without a bridge call per paint.
   final double fps;
+
+  /// The exact rate, for the Timeline's timecode readout: 29.97 must count
+  /// 30 frames a second, which a double cannot say (docs/14 §2).
+  final int fpsNum;
+  final int fpsDen;
+
+  /// The comp's master motion-blur shutter (K-120): whether layers with
+  /// their own motion-blur switch actually blur. Drawn by the Timeline's
+  /// master button; written through `set_motion_blur_enabled`.
+  final bool motionBlurEnabled;
   final List<BridgeLayerEntry> layers;
 
   const BridgeCompModel({
     required this.durationFrames,
     required this.fps,
+    required this.fpsNum,
+    required this.fpsDen,
+    required this.motionBlurEnabled,
     required this.layers,
   });
 
   @override
-  int get hashCode => durationFrames.hashCode ^ fps.hashCode ^ layers.hashCode;
+  int get hashCode =>
+      durationFrames.hashCode ^
+      fps.hashCode ^
+      fpsNum.hashCode ^
+      fpsDen.hashCode ^
+      motionBlurEnabled.hashCode ^
+      layers.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -52,6 +71,9 @@ class BridgeCompModel {
           runtimeType == other.runtimeType &&
           durationFrames == other.durationFrames &&
           fps == other.fps &&
+          fpsNum == other.fpsNum &&
+          fpsDen == other.fpsDen &&
+          motionBlurEnabled == other.motionBlurEnabled &&
           layers == other.layers;
 }
 
@@ -512,6 +534,13 @@ class CompositionReference {
   void setMarkers({required List<BridgeMarker> markers}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceSetMarkers(
           that: this, markers: markers);
+
+  /// Turn the comp's master motion-blur shutter on or off (K-120), keeping
+  /// the shutter's angle, phase and sample count as they are. One op, one
+  /// undo step — the Timeline's master button.
+  void setMotionBlurEnabled({required bool on_}) => BridgeLib.instance.api
+      .crateApiCompositionCompositionReferenceSetMotionBlurEnabled(
+          that: this, on_: on_);
 
   /// Apply the Composition settings dialog, as one undo step.
   ///

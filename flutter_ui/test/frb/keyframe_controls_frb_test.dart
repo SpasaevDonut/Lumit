@@ -40,6 +40,13 @@ void main() {
     }
 
     Future<void> mount(WidgetTester tester, dynamic p) async {
+      // These exercise the Transform rows' keyframe controls, and the
+      // Transform card is off by default (K-193) — so the tests ask for it,
+      // exactly as a user would from Settings → Interface.
+      (p.uiState as LumitUiState)
+          .workspace
+          .interface
+          .transformInEffectControls = true;
       await tester.pumpWidget(hostPanel(
         child: const EffectControlsPanelFrb(),
         state: p.state as LumitState,
@@ -52,7 +59,8 @@ void main() {
     BridgeScalar opacityOf(LayerReference layer) =>
         layer.getTransform().opacity;
 
-    testWidgets('the stopwatch plants one key at the playhead without moving it',
+    testWidgets(
+        'the stopwatch plants one key at the playhead without moving it',
         (tester) async {
       final p = withLayer();
       p.uiState.playheadFrame.value = 24;
@@ -149,7 +157,8 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('kf-stopwatch-tf-opacity')));
       await tester.pump();
-      final keyed = (opacityOf(p.layer) as BridgeScalar_Keyframed).field0.single;
+      final keyed =
+          (opacityOf(p.layer) as BridgeScalar_Keyframed).field0.single;
 
       await tester.tap(find.byKey(const ValueKey('kf-toggle-tf-opacity')));
       await tester.pump();
@@ -200,7 +209,8 @@ void main() {
     /// The whole point of taking a whole animation across the seam: v0 needed
     /// two ops for a key that moved in time *and* value, so a single drag left
     /// two entries in the undo history.
-    testWidgets('each keyframe action is exactly one undo step', (tester) async {
+    testWidgets('each keyframe action is exactly one undo step',
+        (tester) async {
       final p = withLayer();
       p.uiState.playheadFrame.value = 24;
       await mount(tester, p);
@@ -235,6 +245,7 @@ void main() {
             reason: '${param.id} is a dropdown, so it cannot animate');
       }
     });
+
     /// One stopwatch on a multi-axis row keys every axis it covers, and does
     /// it in one undo step — two ops for one click is what the whole-value
     /// shape exists to avoid.
@@ -259,7 +270,8 @@ void main() {
           reason: 'and so was y — the row is one control');
       expect(
         p.comp.frameAtTime(
-            time: (after.positionY as BridgeScalar_Keyframed).field0.single.time),
+            time:
+                (after.positionY as BridgeScalar_Keyframed).field0.single.time),
         12,
         reason: 'both landed on the playhead',
       );

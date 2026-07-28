@@ -137,6 +137,13 @@ pub enum Op {
         layer: Uuid,
         motion_blur: bool,
     },
+    /// Toggle a layer's shy switch (docs/07 §4.2): hidden from the Timeline's
+    /// list while the comp's shy filter is on. Never changes what renders.
+    SetLayerShy {
+        comp: Uuid,
+        layer: Uuid,
+        shy: bool,
+    },
     /// Toggle a layer's lock (TL2): a locked layer's bar, trims and order are
     /// held still in the timeline.
     SetLayerLocked {
@@ -541,6 +548,20 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 comp: *comp,
                 layer: *layer,
                 solo: previous,
+            })
+        }
+        Op::SetLayerShy { comp, layer, shy } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let previous = std::mem::replace(&mut l.switches.shy, *shy);
+            Ok(Op::SetLayerShy {
+                comp: *comp,
+                layer: *layer,
+                shy: previous,
             })
         }
         Op::SetLayerLocked {

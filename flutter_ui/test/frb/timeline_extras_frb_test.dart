@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 
 import 'frb_test_support.dart';
@@ -25,16 +26,28 @@ void main() {
     }
 
     Future<void> mount(WidgetTester tester, dynamic p) async {
+      // The outline alone is 800 px of columns; the default 800×600 test
+      // surface would push its right edge (and the lanes) off screen.
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(hostPanel(
         child: const TimelinePanelFrb(),
         state: p.state as LumitState,
         uiState: p.uiState as LumitUiState,
-        size: const Size(1000, 400),
+        size: const Size(1280, 600),
       ));
       await tester.pump();
     }
 
-    testWidgets('the comp tabs list every composition and front one',
+    /// Open the toolbar's ⋯ menu, where the layer/work-area/marker commands
+    /// live now that the toolbar row belongs to the readouts and the search.
+    Future<void> openMore(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('tl-more')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the comp tabs show the open comps and front one',
         (tester) async {
       final p = withComp();
       final second = p.state.project!.newComposition(name: 'Titles');
@@ -42,13 +55,48 @@ void main() {
 
       expect(find.byKey(ValueKey<String>('tl-tab-${p.comp.internalid}')),
           findsOneWidget);
-      final tab = find.byKey(ValueKey<String>('tl-tab-${second.internalid}'));
-      expect(tab, findsOneWidget,
-          reason: 'a comp filed in a folder is still a tab');
+      expect(find.byKey(ValueKey<String>('tl-tab-${second.internalid}')),
+          findsNothing,
+          reason: 'a comp nobody has fronted is not an open tab');
 
-      await tester.tap(tab);
+      p.uiState.setSelectedComp(second);
       await tester.pump();
-      expect(p.uiState.selectedComp?.internalid, second.internalid);
+      final tab = find.byKey(ValueKey<String>('tl-tab-${second.internalid}'));
+      expect(tab, findsOneWidget, reason: 'fronting a comp opens its tab');
+
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-tab-${p.comp.internalid}')));
+      await tester.pump();
+      expect(p.uiState.selectedComp?.internalid, p.comp.internalid);
+      expect(tab, findsOneWidget, reason: 'switching away keeps the tab open');
+    });
+
+    /// The × closes only the tab: the comp stays in the project, and closing
+    /// the fronted tab fronts its nearest remaining neighbour.
+    testWidgets('closing a comp tab keeps the comp and fronts a neighbour',
+        (tester) async {
+      final p = withComp();
+      final second = p.state.project!.newComposition(name: 'Titles');
+      p.uiState.setSelectedComp(second);
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-tab-close-${second.internalid}')));
+      await tester.pump();
+
+      expect(find.byKey(ValueKey<String>('tl-tab-${second.internalid}')),
+          findsNothing);
+      expect(p.uiState.selectedComp?.internalid, p.comp.internalid,
+          reason: 'the neighbour fronted');
+      expect(p.state.comps().map((c) => c.$2), contains('Titles'),
+          reason: 'closing a tab never deletes the comp');
+
+      // Closing the last tab leaves no comp fronted, and the panel says so.
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-tab-close-${p.comp.internalid}')));
+      await tester.pump();
+      expect(p.uiState.selectedComp, isNull);
+      expect(find.textContaining('Open a composition'), findsOneWidget);
     });
 
     testWidgets('search narrows the outline to matching rows', (tester) async {
@@ -103,8 +151,9 @@ void main() {
 
       p.uiState.playheadFrame.value = 20;
       await tester.pump();
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-work-in')));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       var area = p.comp.getWorkArea();
       expect(area, isNotNull);
@@ -112,16 +161,18 @@ void main() {
 
       p.uiState.playheadFrame.value = 60;
       await tester.pump();
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-work-out')));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       area = p.comp.getWorkArea();
       expect(p.comp.frameAtTime(time: area!.outPoint), 60);
       expect(p.comp.frameAtTime(time: area.inPoint), 20,
           reason: 'setting the out point leaves the in point alone');
 
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-clear-work-area')));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(p.comp.getWorkArea(), isNull);
     });
 
@@ -135,13 +186,15 @@ void main() {
 
       p.uiState.playheadFrame.value = 40;
       await tester.pump();
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-work-in')));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       p.uiState.playheadFrame.value = 10;
       await tester.pump();
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-work-out')));
-      await tester.pump();
+      await tester.pumpAndSettle();
 
       final area = p.comp.getWorkArea()!;
       final start = p.comp.frameAtTime(time: area.inPoint);
@@ -157,6 +210,7 @@ void main() {
 
       p.uiState.playheadFrame.value = 33;
       await tester.pump();
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-markers')));
       await tester.pumpAndSettle();
 
@@ -172,8 +226,8 @@ void main() {
       expect(p.comp.frameAtTime(time: markers.single.time), 33,
           reason: 'the marker landed on the playhead');
 
-      await tester
-          .tap(find.byKey(ValueKey<String>('marker-remove-${markers.single.id}')));
+      await tester.tap(
+          find.byKey(ValueKey<String>('marker-remove-${markers.single.id}')));
       await tester.pumpAndSettle();
       expect(p.comp.getMarkers(), isEmpty);
 
@@ -184,8 +238,7 @@ void main() {
     testWidgets('the razor cuts a sequence clip and leaves other bars alone',
         (tester) async {
       final p = withComp();
-      final footage =
-          p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
       p.comp.addFootageLayer(footage: footage);
       final layer = p.comp.getLayers().single;
       layer.convertToSequenced();
@@ -197,15 +250,16 @@ void main() {
       await tester.pump();
 
       // Unarmed, a click on the bar does not cut.
-      final bar = find
-          .byKey(ValueKey<String>('tl-bar-${sequenced.internallayerId}'));
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-${sequenced.internallayerId}'));
       await tester.tapAt(tester.getCenter(bar));
       await tester.pump();
       expect(p.comp.getLayers().single.getClips(), hasLength(1),
           reason: 'the razor is a mode, not the default click');
 
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-razor')));
-      await tester.pump();
+      await tester.pumpAndSettle();
       await tester.tapAt(tester.getCenter(bar));
       await tester.pumpAndSettle();
 
@@ -215,16 +269,24 @@ void main() {
 
     testWidgets('the cache meter reads the engine and clears on click',
         (tester) async {
+      // The meter lives on the shell's status line now, so it is mounted
+      // directly rather than through the Timeline.
       final p = withComp();
-      p.comp.addAdjustmentLayer();
-      await mount(tester, p);
+      await tester.pumpWidget(hostPanel(
+        child: const CacheMeterFrb(),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
 
-      expect(find.byKey(const ValueKey('tl-cache-meter')), findsOneWidget);
+      expect(find.byKey(const ValueKey('cache-meter')), findsOneWidget);
+      expect(find.textContaining('MB'), findsOneWidget,
+          reason: 'the exact megabytes read out beside the bar');
       // Clicking empties it; the readout is live, so this must not throw with
       // no project rendered yet.
-      await tester.tap(find.byKey(const ValueKey('tl-cache-meter')));
+      await tester.tap(find.byKey(const ValueKey('cache-meter')));
       await tester.pump();
-      expect(find.byKey(const ValueKey('tl-cache-meter')), findsOneWidget);
+      expect(find.byKey(const ValueKey('cache-meter')), findsOneWidget);
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
@@ -234,14 +296,14 @@ void main() {
       p.comp.addAdjustmentLayer();
       await mount(tester, p);
 
+      await openMore(tester);
       expect(find.byKey(const ValueKey('tl-detect-beats')), findsOneWidget);
 
       // No audio in this comp — and on CI no pipeline either. Either way the
-      // button does nothing rather than raising, and no markers appear.
+      // command does nothing rather than raising, and no markers appear.
       await tester.tap(find.byKey(const ValueKey('tl-detect-beats')));
       await tester.pumpAndSettle();
       expect(p.comp.getMarkers(), isEmpty);
     });
-
   }, skip: !engineAvailable);
 }

@@ -66,9 +66,7 @@ class _SplashOverlayState extends State<SplashOverlay>
   int get _shown {
     final total = _controller.duration!.inMilliseconds;
     final elapsed = _controller.value * total;
-    return (elapsed / _perLine.inMilliseconds)
-        .floor()
-        .clamp(0, _lines.length);
+    return (elapsed / _perLine.inMilliseconds).floor().clamp(0, _lines.length);
   }
 
   @override

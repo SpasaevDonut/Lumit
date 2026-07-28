@@ -55,11 +55,16 @@ void main() {
     }
 
     Future<void> mountGraph(WidgetTester tester, dynamic p) async {
+      // The outline alone is 800 px of columns; the default 800×600 test
+      // surface would push the Graph button (and the lanes) off screen.
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(hostPanel(
         child: const TimelinePanelFrb(),
         state: p.state as LumitState,
         uiState: p.uiState as LumitUiState,
-        size: const Size(1000, 500),
+        size: const Size(1280, 600),
       ));
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('tl-graph')));
@@ -243,8 +248,8 @@ void main() {
       final effect = p.layer.getEffects().single;
       await mountGraph(tester, p);
 
-      final key = find.byKey(
-          ValueKey<String>('graph-key-${effect.id()}-radius#0'));
+      final key =
+          find.byKey(ValueKey<String>('graph-key-${effect.id()}-radius#0'));
       expect(key, findsOneWidget, reason: 'the effect parameter has a lane');
       await tester.tapAt(tester.getCenter(key), buttons: kSecondaryButton);
       await tester.pumpAndSettle();

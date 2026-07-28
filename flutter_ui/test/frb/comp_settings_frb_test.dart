@@ -10,6 +10,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/state/timecode.dart';
 
 import 'frb_test_support.dart';
 
@@ -48,7 +49,8 @@ void main() {
     });
 
     test('a colon before the milliseconds reads the same as a full stop', () {
-      expect(parseDurationHms('00:00:11:892'), parseDurationHms('00:00:11.892'));
+      expect(
+          parseDurationHms('00:00:11:892'), parseDurationHms('00:00:11.892'));
     });
 
     test('shorter forms mean what they obviously mean', () {
@@ -64,6 +66,45 @@ void main() {
     test('nonsense is refused, so a typo cannot shorten a comp', () {
       expect(parseDurationHms('soon'), isNull);
       expect(parseDurationHms(''), isNull);
+    });
+  });
+
+  group('the duration field speaks HH:MM:SS:FF timecode', () {
+    test('timecode round-trips at plain, NTSC and high rates', () {
+      expect(timecodeOfRate(90, 60, 1), '00:00:01:30');
+      // 29.97 counts thirty frames to the second (the Viewer's own rule).
+      expect(timecodeOfRate(899, 30000, 1001), '00:00:29:29');
+      // A wide rate widens the frames field rather than lying in two digits.
+      expect(timecodeOfRate(7135, 600, 1), '00:00:11:535');
+      expect(framesOfTimecode('00:00:11:535', 600, 1), 7135);
+      expect(framesOfTimecode('00:00:01:30', 60, 1), 90);
+    });
+
+    test('shorter forms mean what they obviously mean', () {
+      expect(framesOfTimecode('1:30', 60, 1), 90 * 60);
+      expect(framesOfTimecode('30', 60, 1), 30 * 60);
+      expect(framesOfTimecode('soon', 60, 1), isNull);
+      expect(framesOfTimecode('', 60, 1), isNull);
+    });
+
+    test('audio lengths read HH:MM:SS:mmm — milliseconds, not frames', () {
+      expect(timecodeOfSecondsMs(11.892), '00:00:11:892');
+      expect(timecodeOfSecondsMs(90.5), '00:01:30:500');
+      expect(timecodeOfSecondsMs(0), '00:00:00:000');
+    });
+
+    test('a duration prints as timecode and parses back to exact seconds', () {
+      final second = secondsOfFrames(600, 600, 1);
+      expect(second.num.toInt(), 1);
+      expect(second.den.toInt(), 1);
+      expect(timecodeOfDuration(second, 600, 1), '00:00:01:000');
+
+      // The whole loop: what the field shows, read back at the same rate,
+      // is the seconds the document stores.
+      final shown = timecodeOfDuration(second, 600, 1);
+      final frames = framesOfTimecode(shown, 600, 1)!;
+      final stored = secondsOfFrames(frames, 600, 1);
+      expect(stored.num.toInt() / stored.den.toInt(), 1.0);
     });
   });
 
@@ -102,8 +143,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('open')));
       await tester.pumpAndSettle();
 
-      expect(find.text('00:00:30.000'), findsOneWidget,
-          reason: 'the duration opens as a wall-clock length, not a count');
+      expect(find.text('00:00:30:00'), findsOneWidget,
+          reason: 'the duration opens as timecode at the comp rate');
 
       await tester.enterText(find.byKey(const ValueKey('comp-fps')), '30');
       await tester.tap(find.byKey(const ValueKey('comp-apply')));

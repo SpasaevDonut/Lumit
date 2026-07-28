@@ -139,10 +139,8 @@ class ViewerLayerMap {
     // Un-rotate the screen delta into the layer's un-scaled frame.
     final ux = ex * cos + ey * sin;
     final uy = -ex * sin + ey * cos;
-    final newSx =
-        dxFromAnchor.abs() < 1e-9 ? sx : ux / dxFromAnchor;
-    final newSy =
-        dyFromAnchor.abs() < 1e-9 ? sy : uy / dyFromAnchor;
+    final newSx = dxFromAnchor.abs() < 1e-9 ? sx : ux / dxFromAnchor;
+    final newSy = dyFromAnchor.abs() < 1e-9 ? sy : uy / dyFromAnchor;
     return (newSx * 100.0, newSy * 100.0);
   }
 }

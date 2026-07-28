@@ -232,6 +232,11 @@ The library of assets: footage items, audio items, comps, folders.
 - **Hover-scrub thumbnails**: hovering a footage item's thumbnail and moving horizontally
   scrubs a low-resolution preview. This MUST be served from proxy/thumbnail data only and
   MUST NOT trigger full decodes. Double-click opens the item in a Viewer (footage mode).
+  **Shipped (owner request, 2026-07-28):** selection lands on the pointer's *down* stroke,
+  and a click on the lone selected row opens the in-place rename immediately — so a
+  double-click is "select, then rename" in one motion, on any row. Double-clicking empty
+  panel space imports. The footage-Viewer double-click above is deferred until footage
+  mode exists; comps front via the Timeline's comp tabs.
 - Drag an item into a comp's Timeline or Viewer to create a layer; drag onto the
   **New comp** button to create a comp matching the footage (dimensions, fps, duration).
   **Shipped:** rows multi-select — `Ctrl`/`Cmd`-click adds or removes one, `Shift`-click takes
@@ -303,9 +308,27 @@ layer lanes.
   as three distinguishable states (visual treatment in [15-DESIGN.md](15-DESIGN.md)).
   The bar MUST update live as background rendering fills the cache (K-016).
 
+**Shipped header arrangement (K-188).** The comp tabs span the panel; each tab is an
+*open* comp — fronting a comp opens its tab, its × closes only the tab, and closing the
+fronted tab fronts its nearest neighbour. Below them the outline carries two header rows
+of its own: the **toolbar** (the playhead as `HH:MM:SS:FF` timecode plus a zero-based
+frame readout `f72`, the layer search, the master motion-blur button, the shy filter, the
+Lane and Graph view buttons, and a ⋯ menu with the layer / razor / work-area / marker /
+beat commands) and the **column-group header** (§4.2). The lane side gives those two
+rows' height to a taller, labelled time ruler — a bigger playhead grab — with the cache
+bar tucked under it. Markers currently draw on the ruler itself; the separate ribbon,
+double-click-to-create and marker dragging are still to come.
+
 ### 4.2 Layer outline columns
 
 Default column order, all reorderable and hideable per workspace:
+
+**Opening a composition (K-191).** Double-clicking a comp in the Project panel opens it in
+the Timeline, which is what a double-click means everywhere; a comp is therefore renamed
+from its row menu (**Rename**) or its settings dialogue rather than by a second click on
+the row — every other item kind still renames on that second click. Dropping footage on a
+Timeline with nothing open raises the **New composition** dialogue, opened on the media's
+own size, rate and length, and the dropped items land in the finished comp as layers.
 
 1. **Index** (render order; bottom layer renders first).
 2. **Name / source toggle**: click the column header to flip between the user-given layer
@@ -317,20 +340,30 @@ Default column order, all reorderable and hideable per workspace:
 4. **Blend mode** dropdown.
 5. **Matte** dropdown + pick-whip: choose any layer in the comp as this layer's matte
    (AE 2023 semantics — glossary §6), with alpha/luma and invert toggles. One matte layer
-   MAY serve many layers.
+   MAY serve many layers. The menu offers only layers that *have* a picture to gate with —
+   never a camera, an audio-only clip, or the layer itself (K-194). Layer-valued **effect
+   parameters** (a depth map, a displacement source) are filtered the same way.
 6. **Parent** dropdown + pick-whip.
 7. Optional columns: in, out, duration, stretch.
 
-**Shipped arrangement (K-168, pass 5):** the columns sit in After Effects' five clusters,
-left to right — 1 visibility · audio · solo · lock; 2 label-colour chip · index · name;
-3 flow-or-collapse · fx bypass · motion blur · 3D; 4 matte · blend; 5 parent (dropdown; the
-pick-whip is a follow-up). Shy, quality and preserve-underlying-transparency await their
-backing machinery (see K-168); reorder/hide-per-workspace and the optional in/out/duration
-columns remain open. A row of small icons sits over the outline, level with the time ruler,
-labelling each cluster. Right-clicking a layer's name opens the **layer menu** — rename, add an effect
-(by category) or a mask, duplicate, delete, and the solo/enable toggles — so the things you
-do to a layer live in one place rather than scattered buttons. The thin divider between the
-outline and the lanes is a drag handle that sets the outline width.
+**Shipped arrangement (K-188, superseding K-168's):** the columns sit in FOUR groups,
+left to right — 1 visibility · audio · solo · lock · shy; 2 twirl · label-colour chip ·
+layer number · name; 3 flow-or-collapse · fx bypass · motion blur · 3D; 4 matte · blend ·
+parent (dropdowns; the pick-whips are a follow-up). **Dragging a group's header moves the
+whole group**, which is how the column order is changed, and **dragging the seam after a
+group resizes it** (K-192) — every other group keeps its width, so the outline grows or
+shrinks by what the drag moved, and what sits inside a group grows with it: the fold-out's
+value cells span the render group, and the compose group's three pickers share theirs. The
+header icons are indicators only, and the switches live on the rows. Visibility and audio swap glyph when off (closed
+eye, muted speaker) rather than only dimming. **Shy** is a real switch on the layer: it
+hides the row from this list while the toolbar's shy filter is on, and never changes what
+renders. **Lock** holds the layer still where the gestures live — bar move/trim, razor,
+rename, reorder and delete all refuse — though property-row edits are not yet guarded
+(docs/TODO.md). The flow cell awaits per-layer optical flow in the engine; a Precomp
+shows collapse there and other kinds leave it empty. Quality and
+preserve-underlying-transparency still await their backing machinery (K-168);
+hide-per-workspace and the optional in/out/duration columns remain open. Right-clicking a
+layer row opens the **layer menu** — duplicate, reorder, delete.
 
 ### 4.3 Layer lanes and property twirl-down
 
@@ -369,9 +402,20 @@ outline and the lanes is a drag handle that sets the outline width.
   the engine's patched clone, and commits once on release: one undo step for the gesture. The
   fold-out is worked out once as a list of rows (`layer_fold_frb.dart`) that *both* halves of
   the table walk — the outline drawing each row, the lane side leaving its height — so bars
-  cannot drift away from their names. Still to build here: the Masks and Retime groups, the
-  keyframe diamonds on the lanes and their interaction, the expression toggle, and `U`/`UU`.
-  Keyframes are editable in the graph editor meanwhile.
+  cannot drift away from their names. Each property row leads with its keyframe controls —
+  the stopwatch, and once animating the ◄ ◆ ► buttons, the ◆ filled exactly while the
+  playhead sits on a key — then the name; the value cells all share the span of column
+  group 3 (K-188), aligned to both its edges, so the numbers stack into one column wherever
+  the groups are dragged. **An animated value stays editable** (K-189): the field shows the
+  value under the playhead, and an edit writes the key sitting there — or plants a linear
+  one — never flattening the curve. A drag on one is **one undo step**, staged in Dart and
+  committed on release (K-192). **Clicking a property row selects it**, and every row
+  containing it — its group heading, its effect, its layer — marks itself a shade dimmer,
+  which is how the graph editor will know which curve is meant; selecting keyframes on a
+  lane selects their property the same way. **Keyed rows draw their keyframes as diamonds on their
+  lanes**, and dragging empty lane space boxes them up for selection (the shared marquee
+  the graph editor also uses). Still to build here: acting on that selection (move/delete),
+  the Masks and Retime groups, the expression toggle, and `U`/`UU`.
 
 ### 4.4 Sequence layers
 
@@ -394,7 +438,14 @@ A Sequence layer's row renders its clips back-to-back (glossary §2):
 
 Snapping MUST cover, as sources and targets: edit points, layer in/out points, keyframes,
 markers, **beat markers**, the playhead, and work area edges. On by default; a header toggle
-plus `Ctrl`-hold to suspend during a drag. Snap distance is measured in screen pixels, not
+plus `Ctrl`-hold to suspend during a drag.
+
+**Shipped (K-190):** the **magnet** in the lane bottom bar, on by default, covering the
+one snap that exists so far — a keyframe dragged on its lane lands on a whole frame. With
+it off the key may sit *between* frames: the time is quantised to a thousandth of a frame
+and built from the comp's exact rate, so it stays rational (docs/14 §2) rather than
+becoming a rounded double. The other sources and targets, and `Ctrl`-hold, are still to
+build. Snap distance is measured in screen pixels, not
 time, so zoom level controls precision. The snapped-to target MUST be indicated at the
 moment of capture. Beat-marker snapping is the beat-sync covenant's daily face: dragging an
 edit point near a beat marker lands exactly on it.
@@ -411,10 +462,25 @@ edit point near a beat marker lands exactly on it.
   smooth per user setting); the timeline MUST NOT recentre while the user is dragging
   anything.
 
+**Shipped (K-189, K-190):** the outline and lanes scroll vertically as one table — one
+linked scroll, the visible thumb on the lane side; in graph view each side scrolls alone
+with its own thumb. Each thumb lives in a fixed-width **gutter** down the right of its
+half, outside the horizontal scroller so it stays pinned to the viewport edge, and the
+outline reserves the same gutter with an undraggable block level with its toolbar and
+column header — so the columns never shift as the view changes. The lane bottom bar
+carries − / + / Fit time zoom, the magnet, and the horizontal scrollbar. **The wheel
+scrolls, dragging never does**: a plain wheel moves the rows, `Shift+wheel` scrolls
+sideways, `Ctrl+wheel` zooms time about the pointer, and a drag on empty lane space is the
+keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
+
 ### 4.7 Editing behaviours
 
 - Layer drag moves in time; vertical drag reorders the stack. `[`/`]` move the selected
   layer's in/out to the playhead; `Alt+[`/`Alt+]` trim in/out at the playhead.
+
+  **Shipped (K-193):** dragging a layer's **bar** moves it in time, and dragging a layer's
+  **name** in the outline moves it up or down the stack — drop it on a row and it takes
+  that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
 - There is **no ripple mode anywhere** (K-022): nothing moves unless the user moves it.
 - Multi-selection supports all of the above; relative offsets are preserved.
 - Every destructive-feeling action (razor, delete, retime reset) is a single undo step.
@@ -737,9 +803,12 @@ footage on that button (§3.1).
   **Presets** list offers the common rates including the NTSC family. The denominator is never
   shown. It still crosses the bridge as the exact `num`/`den` pair — 23.976 reaches the engine
   as 24000/1001 — but that pair is derived from what was typed (docs/14 §2 is unchanged).
-- **Duration**: `HH:MM:SS.mmm`, a length of time. Never a frame count: a count means nothing
-  without the rate it was counted at, and writing one back at a *changed* rate is what used to
-  make the comp longer or shorter under layers that had not moved (K-180).
+- **Duration**: reads and edits as `HH:MM:SS:FF` timecode at the frame rate above (the same
+  clock face the Viewer shows; the frames field widens with the rate, so 600 fps counts to
+  `:599`). What is *written* is still a length of time in exact seconds, converted at the
+  typed rate — never a frame count: a count means nothing without the rate it was counted at,
+  and writing one back at a *changed* rate is what used to make the comp longer or shorter
+  under layers that had not moved (K-180).
 
 **Changing the frame rate MUST change only the frame rate.** The comp keeps its length, every
 layer keeps its timing, and nothing plays faster or slower — the comp is simply shown at more
@@ -828,6 +897,20 @@ conceptually, but it shipped earlier under Appearance and stays there. The remai
 decoder pool size, worker thread cap, proxy generation policy, Preview, Colour, export priority,
 encoder preference order, Keymap, Plugins) fill in on this same surface as those systems gain
 their controls.
+
+**Shipped in Flutter (K-193, K-194):** the paged surface is back, in the same shape — a
+sidebar of pages, each a stack of named sections, each section a card of rows carrying what
+the setting is, a line saying what it does, and its control on the right. Its pages are
+**General** (reset workspace, version and build), **Appearance** (colour scheme, corners,
+interface motion), **Interface** (UI scale, tooltips, and whether the Effect controls panel
+repeats the layer's Source, Transform and Retime rows — off by default, since the Timeline's
+fold-out already shows them), and **Performance** (playback mode, quality tier and reset,
+and the RAM and VRAM frame-cache budgets with their readouts and Clear buttons). The two
+budgets are **typed and draggable numbers capped at what the machine has** — installed RAM
+and the adapter's dedicated video memory, asked of the engine — rather than a pick from a
+fixed list of sizes (K-194). The egui build's
+**Export** and **Autosave** groups are *not* rebuilt yet: neither has anything behind it on
+this frontend (docs/TODO.md), and an empty page is a promise the window cannot keep.
 
 All bindings are remappable in Settings → Keymap (search, conflict detection, per-context
 display); the keymap serialises to a shareable file. An "After Effects" alternate preset

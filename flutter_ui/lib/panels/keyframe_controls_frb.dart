@@ -23,11 +23,125 @@
 // value cost two.
 
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
 import '../widgets/controls.dart';
+
+/// The scalar with `value` written at `frame`: the key already there is
+/// updated, or a new linear key is inserted in order. This is what typing or
+/// dragging an *animated* value in the outline means (docs/07 §4.3) — on a
+/// keyframe it edits that keyframe; between keyframes it plants one, exactly
+/// as After Effects does. A static scalar just becomes the new value.
+BridgeScalar scalarWithValueAt(
+  BridgeScalar scalar,
+  double value,
+  CompositionReference comp,
+  int frame,
+) {
+  if (scalar is! BridgeScalar_Keyframed) return BridgeScalar.static_(value);
+  final next = <BridgeKeyframe>[];
+  var replaced = false;
+  for (final key in scalar.field0) {
+    if (comp.frameAtTime(time: key.time) == frame) {
+      next.add(BridgeKeyframe(
+        time: key.time,
+        value: value,
+        interpIn: key.interpIn,
+        interpOut: key.interpOut,
+      ));
+      replaced = true;
+    } else {
+      next.add(key);
+    }
+  }
+  if (!replaced) {
+    next
+      ..add(BridgeKeyframe(
+        time: comp.timeOfFrame(frame: frame),
+        value: value,
+        interpIn: const BridgeSideInterp.linear(),
+        interpOut: const BridgeSideInterp.linear(),
+      ))
+      ..sort((a, b) => comp
+          .frameAtTime(time: a.time)
+          .compareTo(comp.frameAtTime(time: b.time)));
+  }
+  return BridgeScalar.keyframed(next);
+}
+
+/// A value field for a scalar that is **keyframed**: it shows the value under
+/// the playhead and an edit writes the key sitting there (docs/07 §4.3).
+///
+/// The drag is staged in Dart and committed exactly once, on release — which
+/// is the whole point of it existing. [DragValueField] falls back to
+/// `onChanged` for every tick when no `onChangeLive` is given, so a keyframed
+/// drag was writing one op per pixel: the undo stack filled with a step per
+/// tick and a single undo moved the value back by one hair instead of undoing
+/// the gesture. A drag that plants a *new* key was worse — it planted one per
+/// tick.
+class KeyedValueField extends StatefulWidget {
+  /// The key on the inner field, so tests and callers address it as they
+  /// would an ordinary value field.
+  final Key fieldKey;
+
+  /// The document's value at the playhead.
+  final double value;
+  final double min;
+  final double max;
+  final double speed;
+  final int decimals;
+  final String? suffix;
+
+  /// The finished edit: a released drag, or a typed value. Called once.
+  final ValueChanged<double> onCommit;
+
+  const KeyedValueField({
+    super.key,
+    required this.fieldKey,
+    required this.value,
+    required this.onCommit,
+    this.min = -1000000,
+    this.max = 1000000,
+    this.speed = 1,
+    this.decimals = 2,
+    this.suffix,
+  });
+
+  @override
+  State<KeyedValueField> createState() => _KeyedValueFieldState();
+}
+
+class _KeyedValueFieldState extends State<KeyedValueField> {
+  /// The value under the pointer mid-drag; null when nothing is in flight.
+  double? _staged;
+
+  void _commit(num value) {
+    setState(() => _staged = null);
+    widget.onCommit(value.toDouble());
+  }
+
+  @override
+  Widget build(BuildContext context) => DragValueField(
+        key: widget.fieldKey,
+        value: _staged ?? widget.value,
+        min: widget.min,
+        max: widget.max,
+        speed: widget.speed,
+        decimals: widget.decimals,
+        suffix: widget.suffix,
+        // Typed, reset and pasted values are already one-shot edits.
+        onChanged: _commit,
+        onChangeStart: () => setState(() => _staged = widget.value),
+        // A tick moves the number on screen and nothing else.
+        onChangeLive: (v) => setState(() => _staged = v.toDouble()),
+        onChangeEnd: _commit,
+        onDragCancel: () => setState(() => _staged = null),
+      );
+}
 
 class KeyframeControlsFrb extends StatelessWidget {
   /// The animations this control covers — one for a single value, several for a
@@ -82,28 +196,41 @@ class KeyframeControlsFrb extends StatelessWidget {
   /// action.
   bool get _animated => scalars.any((s) => _keysOf(s).isNotEmpty);
 
-  /// What each axis reads at the playhead — what a new key on it takes, so
-  /// adding one never moves anything.
-  List<double> get _valuesNow {
-    final time = comp.timeOfFrame(frame: playheadFrame);
+  /// What each axis reads at `frame` — what a new key on it takes, so adding
+  /// one never moves anything.
+  List<double> _valuesNow(int frame) {
+    final time = comp.timeOfFrame(frame: frame);
     return [for (final s in scalars) sampleScalar(scalar: s, time: time)];
   }
 
-  /// The key sitting exactly on the playhead, if there is one.
+  /// The key sitting exactly on `frame`, if there is one.
   ///
   /// Compared by *frame*, not by rational equality: a key placed at frame 24
   /// and the playhead at frame 24 are the same key to the user even if some
   /// other route stored an unreduced time.
-  BridgeKeyframe? get _keyAtPlayhead {
+  BridgeKeyframe? _keyAt(int frame) {
     for (final key in _keys) {
-      if (comp.frameAtTime(time: key.time) == playheadFrame) return key;
+      if (comp.frameAtTime(time: key.time) == frame) return key;
     }
     return null;
   }
 
   @override
   Widget build(BuildContext context) {
+    // The live playhead, not the one captured when the panel last drew: the
+    // diamond fills exactly while the playhead sits on a key, and hollows the
+    // moment it scrubs away (docs/07 §4.3).
+    final playhead =
+        Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+    return ValueListenableBuilder<int>(
+      valueListenable: playhead,
+      builder: (context, frame, _) => _build(context, frame),
+    );
+  }
+
+  Widget _build(BuildContext context, int frame) {
     final t = ThemeScope.of(context).theme;
+    final onKey = _keyAt(frame) != null;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -114,48 +241,44 @@ class KeyframeControlsFrb extends StatelessWidget {
             keyName: 'kf-stopwatch-$rowKey',
             child: lumitIcon(LumitIcon.stopwatch,
                 size: 12, color: _animated ? t.accent : t.textMuted),
-            onPressed: _toggleAnimated,
+            onPressed: () => _toggleAnimated(frame),
           ),
         ),
         if (_animated) ...[
           _button(
             context,
             keyName: 'kf-prev-$rowKey',
-            enabled: _neighbour(before: true) != null,
+            enabled: _neighbour(frame, before: true) != null,
             child: Text('◄',
                 style: t.small.copyWith(
-                    color: _neighbour(before: true) == null
+                    color: _neighbour(frame, before: true) == null
                         ? t.textDisabled
                         : t.textMuted)),
-            onPressed: () => _seekTo(_neighbour(before: true)),
+            onPressed: () => _seekTo(_neighbour(frame, before: true)),
           ),
           LumitTooltip(
-            message: _keyAtPlayhead == null
-                ? 'Add a keyframe here'
-                : 'Remove this keyframe',
+            message: onKey ? 'Remove this keyframe' : 'Add a keyframe here',
             child: _button(
               context,
               keyName: 'kf-toggle-$rowKey',
               child: lumitIcon(
-                _keyAtPlayhead == null
-                    ? LumitIcon.keyframe
-                    : LumitIcon.keyframeFilled,
+                onKey ? LumitIcon.keyframeFilled : LumitIcon.keyframe,
                 size: 11,
-                color: _keyAtPlayhead == null ? t.textMuted : t.accent,
+                color: onKey ? t.accent : t.textMuted,
               ),
-              onPressed: _toggleKeyHere,
+              onPressed: () => _toggleKeyHere(frame),
             ),
           ),
           _button(
             context,
             keyName: 'kf-next-$rowKey',
-            enabled: _neighbour(before: false) != null,
+            enabled: _neighbour(frame, before: false) != null,
             child: Text('►',
                 style: t.small.copyWith(
-                    color: _neighbour(before: false) == null
+                    color: _neighbour(frame, before: false) == null
                         ? t.textDisabled
                         : t.textMuted)),
-            onPressed: () => _seekTo(_neighbour(before: false)),
+            onPressed: () => _seekTo(_neighbour(frame, before: false)),
           ),
         ],
       ],
@@ -181,15 +304,14 @@ class KeyframeControlsFrb extends StatelessWidget {
   /// Animation on: one key at the playhead holding what is already there.
   /// Animation off: the value the curve reads at the playhead, so turning it off
   /// leaves the picture where it is rather than jumping to the first key.
-  void _toggleAnimated() {
-    final values = _valuesNow;
+  void _toggleAnimated(int frame) {
+    final values = _valuesNow(frame);
     if (_animated) {
       onWrite([for (final v in values) BridgeScalar.static_(v)]);
       return;
     }
     onWrite([
-      for (final v in values)
-        BridgeScalar.keyframed([_newKeyAt(playheadFrame, v)])
+      for (final v in values) BridgeScalar.keyframed([_newKeyAt(frame, v)])
     ]);
   }
 
@@ -198,9 +320,9 @@ class KeyframeControlsFrb extends StatelessWidget {
   /// Removing the last key does not leave an empty curve — an animation with no
   /// keys is not a curve anything can evaluate — so it falls back to a static
   /// value holding what that key held.
-  void _toggleKeyHere() {
-    final removing = _keyAtPlayhead != null;
-    final values = _valuesNow;
+  void _toggleKeyHere(int frame) {
+    final removing = _keyAt(frame) != null;
+    final values = _valuesNow(frame);
     final next = <BridgeScalar>[];
 
     for (var axis = 0; axis < scalars.length; axis++) {
@@ -208,7 +330,7 @@ class KeyframeControlsFrb extends StatelessWidget {
       if (removing) {
         final rest = [
           for (final k in keys)
-            if (comp.frameAtTime(time: k.time) != playheadFrame) k,
+            if (comp.frameAtTime(time: k.time) != frame) k,
         ];
         // A curve with no keys is not something the engine can evaluate, so the
         // last one removed leaves a static value holding what it held.
@@ -219,10 +341,10 @@ class KeyframeControlsFrb extends StatelessWidget {
       }
       // Keys must stay strictly ascending in time — the engine enforces it on
       // the way in, so this inserts in order rather than appending and hoping.
-      final added = [...keys, _newKeyAt(playheadFrame, values[axis])]
-        ..sort((a, b) => comp
-            .frameAtTime(time: a.time)
-            .compareTo(comp.frameAtTime(time: b.time)));
+      final added = [...keys, _newKeyAt(frame, values[axis])]..sort((a, b) =>
+          comp
+              .frameAtTime(time: a.time)
+              .compareTo(comp.frameAtTime(time: b.time)));
       next.add(BridgeScalar.keyframed(added));
     }
     onWrite(next);
@@ -238,17 +360,16 @@ class KeyframeControlsFrb extends StatelessWidget {
         interpOut: const BridgeSideInterp.linear(),
       );
 
-  /// The nearest key strictly before or after the playhead.
-  BridgeKeyframe? _neighbour({required bool before}) {
+  /// The nearest key strictly before or after `frame`.
+  BridgeKeyframe? _neighbour(int frame, {required bool before}) {
     BridgeKeyframe? best;
     int? bestFrame;
     for (final key in _keys) {
-      final frame = comp.frameAtTime(time: key.time);
-      if (before ? frame >= playheadFrame : frame <= playheadFrame) continue;
-      if (bestFrame == null ||
-          (before ? frame > bestFrame : frame < bestFrame)) {
+      final at = comp.frameAtTime(time: key.time);
+      if (before ? at >= frame : at <= frame) continue;
+      if (bestFrame == null || (before ? at > bestFrame : at < bestFrame)) {
         best = key;
-        bestFrame = frame;
+        bestFrame = at;
       }
     }
     return best;

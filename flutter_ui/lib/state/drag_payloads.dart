@@ -7,6 +7,7 @@
 // live here together rather than beside whichever panel happened to need one
 // first.
 
+import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
 
 /// Footage dragged from the Project panel onto the Timeline, or onto the New
@@ -27,6 +28,17 @@ class FootageDragData {
   /// a count for several.
   final String label;
   const FootageDragData(this.footage, this.label);
+}
+
+/// A composition dragged from the Project panel onto another comp's Timeline,
+/// where the drop nests it as a Precomp layer. One comp, not a list: nesting
+/// is a deliberate act on a specific comp, not a batch operation.
+class CompDragData {
+  final CompositionReference comp;
+
+  /// What the floating label under the pointer reads.
+  final String label;
+  const CompDragData(this.comp, this.label);
 }
 
 /// An effect dragged from the Effects & presets panel onto a layer.

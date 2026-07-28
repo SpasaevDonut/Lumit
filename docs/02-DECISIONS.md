@@ -2517,3 +2517,176 @@ content keying (K-178) remain open. Regression tests:
 `a_cacheable_frame_is_served_from_vram_and_a_drag_never_is` (lumit-render),
 `the_fill_order_is_forward_biased_and_complete` and `cached_tiers_merges_the_vram_mirror`
 (lumit-bridge).
+
+**K-188 · DECIDED · The Timeline header rework: four draggable column groups, open comp tabs, shy.**
+Supersedes K-168's shipped five-cluster arrangement. The outline's columns sit in FOUR
+groups, each draggable in the header to reorder as a unit — 1 visibility · audio · solo ·
+lock · shy; 2 twirl · label chip · layer number · name; 3 flow-or-collapse · fx · motion
+blur · 3D; 4 matte · blend · parent. The header icons are indicators only; the switches
+live on the rows, and visibility/audio swap glyph when off (closed eye, muted speaker)
+rather than only dimming. **Shy is a real engine switch** (`Switches::shy`, `SetLayerShy`):
+it hides the layer from the Timeline's list while the toolbar's shy filter is on and never
+changes what renders. **Comp tabs are open tabs now**, not the whole project: fronting a
+comp opens its tab, the tab's × closes only the tab, and closing the fronted tab fronts
+its nearest neighbour. **The toolbar lives inside the outline** (timecode `HH:MM:SS:FF`
+plus a zero-based frame readout, the layer search, a master motion-blur button writing
+`Composition::motion_blur.enabled` through the new `set_motion_blur_enabled`, the shy
+filter, Lane/Graph view buttons, and a ⋯ menu holding the layer/work-area/marker
+commands); the lane side gives that whole height to a taller labelled time ruler. The
+fold-out's value cells span exactly the render group's width, so values line up under it
+wherever the groups are dragged. The flow column is reserved: optical flow has no
+per-layer engine backing yet (docs/TODO.md), so a Precomp shows collapse there and other
+kinds leave the cell empty. Lock is enforced UI-side where the gestures live (bar
+move/trim, razor, rename, reorder/delete); property-row edits on a locked layer are a
+recorded gap. Master motion blur does NOT cascade into nested comps — each comp's own
+master gates its own layers (lumit-eval reads `comp.motion_blur.enabled` per comp).
+Regression tests: `timeline_panel_frb_test.dart` (group drag, switches, readouts, shy,
+lock, master toggle), `timeline_extras_frb_test.dart` (tab open/close), and
+`the_master_motion_blur_toggle_flips_only_the_enable` (lumit-bridge).
+
+**K-189 · DECIDED · Timeline round two: label colours drive the bars, animated values stay editable, drags never scroll.**
+Follows K-188 in the same rework. **Labels colour the lanes:** a layer's label chip and its
+bar in the lane area are the same colour, from a dedicated bright eight-chip palette in the
+theme (replacing TL2's role-colour chips, which were built to be quiet rather than tellable
+apart), and each layer kind starts on its own chip (`base_layer` assigns it; the user's
+pick simply overwrites). One palette for both themes. **Animated values stay editable
+everywhere they show:** an outline value field on a keyframed property shows the value
+under the playhead and an edit writes the key sitting there — or plants a linear one — via
+`scalarWithValueAt`; a static write over a curve is no longer possible from a value field.
+The keyframe controls read the *live* playhead (the ◆ diamond fills exactly while the
+playhead sits on a key). **Keyframes show in lane view:** keyed rows draw their diamonds
+on their lanes, and dragging empty lane space boxes them up with the shared `MarqueeSelect`
+(the same widget the graph editor's lanes use). **Dragging never scrolls the timeline** —
+the wheel and the scrollbars do: the outline and lanes share a linked vertical scroll (one
+thumb on the lane side; two independent ones in graph view), and the lane bottom bar holds
+− / + / Fit time zoom with a horizontal scrollbar. Lane painters decline hit-tests (a
+`CustomPaint` background painter otherwise absorbs the marquee's drag). The graph editor's
+command bar moved to the bottom and its lanes label their value axis. Regression tests:
+`timeline_panel_frb_test.dart` (key-at-playhead edits, live diamond, lane marquee, zoom,
+bar colour, tall-stack scroll), `effect_controls_frb_test.dart` (animated field edits the
+key), `theme_test.dart` (distinct chips).
+
+**K-190 · DECIDED · Timeline round three: row seams, key dragging, and the scroll gutters.**
+Continues K-188/K-189. **Column metrics:** every gap *inside* a group is now the same
+`cellGap` — the render switches pack left in ordinary switch cells (the rest of that
+group's span is the fold-out's value column, not spare icon room) and matte · blend ·
+parent sit a cell-gap apart. The compose group's header titles carry the dropdown's own
+`dropdownTextInset`, so each title sits over the text in the cell below it. The group seam
+is a hairline **in the header only** — the rows keep the same width as plain space,
+because a rule down every row of a tall stack is noise. **Row seams** run the full width of
+the lane area, drawn as ONE `IgnorePointer` overlay per lane column rather than as a border
+per row: `RenderDecoratedBox.hitTestSelf` delegates to the decoration, so a `Container`
+with a `decoration` **absorbs pointers** — a per-row border silently ate the keyframe
+marquee under it (the same trap as a `CustomPaint` background painter, which needs
+`hitTest => false`). Bars fill their whole row height and the seam draws over them.
+**Lane keyframes drag in time**: each diamond is a handle, the gesture is held in Dart and
+committed once (`moveLaneKey`), and a move onto a neighbour is refused rather than clamped.
+The **magnet** (lane bottom bar, on by default) decides whether a dragged key lands on a
+whole frame or between two; off, the time is quantised to a thousandth of a frame and built
+from the comp's exact rate, so it stays rational (docs/14 §2). **Scroll gutters:** the
+vertical thumb lives in a fixed-width gutter *outside* the horizontal scroller, pinned to
+the viewport's right edge — it used to ride the scrolled content and drift off screen. The
+outline reserves the same gutter, with a fixed undraggable block level with its toolbar and
+column header (After Effects' reserved corner), so the columns do not shift when graph view
+gives the outline its own thumb. **Wheel:** plain scrolls the rows (both halves, linked),
+`Shift` scrolls sideways, `Ctrl` zooms time about the pointer — handled by a `Listener`
+placed *inside* the scrollables so the pointer-signal resolver offers it the wheel first,
+and left alone otherwise so a plain wheel still reaches the scrollable. Effect parameter
+rows take the fold-out's zero row padding, matching the transform rows they sit beside;
+the card keeps its own. Regression tests: `timeline_panel_frb_test.dart` (key drag with
+magnet on and off, marquee, dividers via the passing marquee, zoom, bar colour).
+
+**K-191 · DECIDED · A composition double-clicks open; an empty Timeline takes a drop.**
+Two dead ends closed. **Double-clicking a comp row in the Project panel opens it in the
+Timeline** rather than renaming it — what a double-click means in every editor. The panel's
+click model is otherwise unchanged (a second click on the lone selected row still renames
+footage, solids and folders in place, resolved on the raw pointer-up so there is no arena
+delay); only compositions divert. Renaming a comp therefore moved to the row menu's new
+**Rename** entry, which is offered for every item kind so nothing lost a rename path, and
+its settings dialogue still carries the name field. **Dropping footage on a Timeline with
+no composition open** raises the New composition dialogue seeded from the media — the same
+gesture the Project panel's New composition button already took — and fronts the finished
+comp; dropping a comp there simply opens it. The panel used to show a placeholder with no
+drop target at all, so the drag lifted, showed its feedback and dropped into nothing.
+Regression tests: `double-clicking a composition opens it in the Timeline`
+(project_panel_frb_test.dart) and `footage dropped on an empty Timeline offers a new comp`
+(timeline_panel_frb_test.dart).
+
+**K-192 · DECIDED · Resizable column groups, property selection, and a keyframed drag as one undo step.**
+**The undo bug first, because it was a real one:** [`DragValueField`] falls back to
+`onChanged` on *every drag tick* when no `onChangeLive` is given, so a drag on a keyframed
+value (K-189's editable animated cells) committed one op per pixel — the undo stack filled
+with a step per tick and a single undo moved the value back by a hair instead of undoing the
+gesture; a drag that planted a new key planted one per tick. `KeyedValueField`
+(keyframe_controls_frb.dart) now stages the drag in Dart and commits exactly once on
+release, and the transform rows, effect parameter rows and the Volume row all use it.
+**Column groups resize:** each group carries its own width, the header seam between two
+groups is a drag handle for the one on its left, and every other group keeps its width — so
+the outline grows by exactly what the drag moved. The fold-out's value cells span the render
+group *as it currently is*, and the compose group's three pickers share theirs
+proportionally, so widening a group widens what sits in it. The identity group is a plain
+width now rather than flexing. **Properties select:** every fold row has a hierarchical
+path (`<layer>/effects/<fx>/<param>`, sharing its prefixes with the group paths), clicking a
+property row selects it, and every row *containing* it — the effect's heading, the layer's
+own row — marks itself a shade dimmer, which is what will tell the graph editor which curve
+is meant. Boxing keyframes on a lane selects their property too. **Two Flutter traps, both
+found the hard way and both now guarded:** `ScrollController.offset`/`.position` assert
+when a rebuild momentarily leaves two views attached (a drop target lighting up was
+enough) — read through `_positionOf`, which returns null unless exactly one is attached;
+and `RawScrollbar` learns where its scrollable is from `ScrollNotification`s rising through
+its *own* subtree, so one sat in a gutter beside the scroll view never repaints and its
+thumb is simply invisible — replaced by `_GutterScrollbar`, which listens to the controller
+and drags it directly. The outline's row seams are now one scroll-phased overlay across the
+columns *and* the gutter, so they meet the lane area's. Regression tests: `a drag on a
+keyframed value is one undo step`, `clicking a property selects it and marks its parents`,
+`boxing keyframes on a lane selects their property`, `dragging a header seam resizes just
+that group` (timeline_panel_frb_test.dart).
+
+**K-193 · DECIDED · Layers reorder by drag, the Transform card is a choice, and Settings has pages.**
+**Reordering:** a layer's name is its stack handle — drag it onto another row and it takes
+that row's place, one op and one undo step. Layers were otherwise stuck in the order they
+were added, movable only from the row menu one place at a time. A locked layer neither
+drags nor accepts a drop. **The Transform card in Effect controls is off by default**
+(Settings → Interface turns it on): the Timeline's fold-out already carries Transform, and
+repeating it pushed the effect stack — what the panel is *for* — a screen down on a 3D
+layer. It stays available because it is a habit After Effects users bring with them.
+**Settings is paged** (General · Appearance · Interface · Performance), each page a stack
+of named sections and each section a card of rows that read the same way: what it is, a
+line saying what it does, its control on the right. That is the egui shell's arrangement,
+restored; it replaces one scrolling column of five groups that had outgrown a window. The
+rebuild also surfaces settings that existed but were never exposed — UI scale, tooltips,
+the animation level, and the playback mode, all of which were being persisted while
+unreachable. `Workspace.settingsChanged()` is the one call that makes an in-place edit to
+`interface`/`performance` stick, since those are plain structs rather than a setter per
+field. **Pages with nothing behind them are not listed:** Export defaults, the keymap
+editor and colour management are unbuilt (docs/TODO.md), and an empty page is a promise
+the window cannot keep. Regression tests: `dragging a layer by its name reorders the
+stack` (timeline_panel_frb_test.dart) and `the pages divide the settings, and a choice
+persists` (shell_frb_test.dart).
+
+**K-194 · DECIDED · A test may not touch the real settings; budgets are typed; menus have submenus.**
+**The settings-reset bug first.** `Workspace.save()` wrote to
+`%APPDATA%\lumit\flutter-workspace.json` unconditionally, and every test that builds a
+`Workspace` and touches a setter calls it — so a `flutter test` run wrote *defaults* over
+the developer's own settings, every run. `Workspace.storeOverride` redirects the store, and
+the frb test harness points it at a temp file. Machine state is not something a test run may
+reach. **Cache budgets are typed numbers** (drag or type, in MB) rather than a pick from a
+fixed list, capped at what the machine actually has: `system_memory_bytes()` via
+`GlobalMemoryStatusEx` and `video_memory_bytes()` via the first DXGI adapter's dedicated
+memory (`crates/lumit-bridge/src/api/system.rs`; both answer 0 off Windows and the frontend
+falls back to a documented 16 GB ceiling rather than pretending). The old dropdown could not
+express "3 GB on a 32 GB machine" and its options were a guess at what hardware would turn
+up. The **Frame transport** row is deleted — it named an implementation detail the user
+cannot act on. **Menus nest** (`SubmenuRow`, widgets/controls.dart): Window → Workspaces
+holds the four presets and Reset, and Add effect → *category* → effect replaces one 380 px
+scrolling list. The submenu opens *over* its parent rather than replacing it: closing the
+parent first would take the row's `BuildContext` with it, and the overlay the submenu needs
+is reached through that context. The Add-effect menu now drops from the **button** (a
+`Builder` gives it its own context) instead of the panel's left edge. **Source and Retime
+join Transform** behind the Settings → Interface toggle: all three describe the *layer*, and
+this panel is about the effects on it. **Matte and layer-valued effect parameters offer only
+layers with a picture** — `LayerReference::has_picture()`, the mirror of `has_audio`, false
+for a camera and for an audio-only clip — and never the layer they sit on. Both pickers are
+lazy, so the probe happens when a menu opens and never while drawing a row (K-184).
+Regression tests: the settings/menu/effect tests in `shell_frb_test.dart`,
+`menu_bar_frb_test.dart` and `effect_controls_frb_test.dart`.

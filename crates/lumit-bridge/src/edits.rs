@@ -50,6 +50,18 @@ pub(crate) fn base_layer(
     out: Rational,
     transform: TransformGroup,
 ) -> Layer {
+    // Each kind starts on its own label colour (K-188): the label drives both
+    // the outline's swatch and the bar's fill, so a fresh stack is tellable
+    // apart at a glance. The user's own pick simply overwrites it.
+    let label = match &kind {
+        LayerKind::Footage { .. } => 1,
+        LayerKind::Solid { .. } => 2,
+        LayerKind::Precomp { .. } => 3,
+        LayerKind::Text { .. } => 4,
+        LayerKind::Camera { .. } => 5,
+        LayerKind::Sequence { .. } => 6,
+        LayerKind::Adjustment => 7,
+    };
     Layer {
         id: Uuid::now_v7(),
         name,
@@ -60,7 +72,7 @@ pub(crate) fn base_layer(
         transform,
         matte: None,
         parent: None,
-        label: 0,
+        label,
         volume_db: lumit_core::anim::Property::zero(),
         blend: lumit_core::model::BlendMode::Normal,
         masks: Vec::new(),

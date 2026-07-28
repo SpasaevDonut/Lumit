@@ -27,6 +27,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
+import '../state/timeline_columns.dart';
 import '../widgets/controls.dart';
 import 'keyframe_controls_frb.dart';
 
@@ -183,6 +184,12 @@ class TransformRowFrb extends StatefulWidget {
   final double? rowHeight;
   final EdgeInsets rowPadding;
 
+  /// When set (the Timeline's fold-out), the value cells share this fixed
+  /// span — aligned to both its edges — instead of each taking
+  /// [transformCellWidth], so the values sit exactly under the render-switch
+  /// column group whatever order the groups are dragged into (docs/07 §4.3).
+  final ValueColumn? valueColumn;
+
   const TransformRowFrb({
     super.key,
     required this.comp,
@@ -195,6 +202,7 @@ class TransformRowFrb extends StatefulWidget {
     this.keyPrefix = 'tf',
     this.rowHeight,
     this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.valueColumn,
   });
 
   @override
@@ -210,10 +218,20 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
   Duration _lastPreview = Duration.zero;
 
   @override
-  Widget build(BuildContext context) =>
-      _row(_staged ?? widget.transform, widget.group);
+  Widget build(BuildContext context) {
+    // The live playhead: an animated cell shows (and edits) the value under
+    // the playhead, so it must follow a scrub rather than hold the frame the
+    // panel last drew at.
+    final playhead =
+        Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+    return ValueListenableBuilder<int>(
+      valueListenable: playhead,
+      builder: (context, frame, _) =>
+          _row(_staged ?? widget.transform, widget.group, frame),
+    );
+  }
 
-  Widget _row(BridgeTransform transform, TransformGroup group) {
+  Widget _row(BridgeTransform transform, TransformGroup group, int frame) {
     final t = ThemeScope.of(context).theme;
     final row = Padding(
       padding: widget.rowPadding,
@@ -222,7 +240,9 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
           // One stopwatch, every axis in the row — and one undo step, because
           // `setTransforms` commits them as a batch.
           KeyframeControlsFrb(
-            scalars: [for (final axis in group.axes) read(transform, axis.prop)],
+            scalars: [
+              for (final axis in group.axes) read(transform, axis.prop)
+            ],
             comp: widget.comp,
             playheadFrame: widget.playheadFrame,
             onSeek: widget.onSeek,
@@ -241,10 +261,26 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
             child: Text(group.label,
                 style: t.body, overflow: TextOverflow.ellipsis),
           ),
-          for (final axis in group.axes) ...[
-            const SizedBox(width: 6),
-            _cell(transform, axis),
-          ],
+          if (widget.valueColumn case final col?) ...[
+            SizedBox(
+              width: col.width,
+              child: Row(
+                children: [
+                  for (var i = 0; i < group.axes.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 4),
+                    Expanded(
+                        child: _cell(transform, group.axes[i], frame,
+                            fixed: false)),
+                  ],
+                ],
+              ),
+            ),
+            SizedBox(width: col.rightInset),
+          ] else
+            for (final axis in group.axes) ...[
+              const SizedBox(width: 6),
+              _cell(transform, axis, frame),
+            ],
         ],
       ),
     );
@@ -252,41 +288,63 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     return height == null ? row : SizedBox(height: height, child: row);
   }
 
-  Widget _cell(BridgeTransform transform, TransformAxis axis) {
-    final t = ThemeScope.of(context).theme;
+  Widget _cell(BridgeTransform transform, TransformAxis axis, int frame,
+      {bool fixed = true}) {
     final scalar = read(transform, axis.prop);
 
-    // An animated property is left alone for the same reason an animated effect
-    // parameter is: writing a static value over it would delete the curve.
-    if (scalar is! BridgeScalar_Static) {
+    // An animated property stays editable (docs/07 §4.3): the field shows the
+    // value under the playhead, and a change writes it into the key sitting
+    // there — or plants a new one — never flattening the curve.
+    if (scalar is! BridgeScalar_Keyframed) {
+      final static_ = (scalar as BridgeScalar_Static).field0;
       return SizedBox(
-        width: transformCellWidth,
-        child: LumitTooltip(
-          message: 'Animated — edit its keys in the graph editor',
-          child: Text('animated',
-              style: t.small.copyWith(color: t.textMuted),
-              textAlign: TextAlign.right),
+        width: fixed ? transformCellWidth : null,
+        child: DragValueField(
+          key: ValueKey<String>('${widget.keyPrefix}-${axis.prop.name}'),
+          value: static_,
+          min: axis.min,
+          max: axis.max,
+          speed: axis.speed,
+          decimals: axis.decimals,
+          suffix: axis.suffix,
+          onChanged: (v) => _commit(axis.prop, v.toDouble()),
+          onChangeStart: () => _staged = transform,
+          onChangeLive: (v) => _live(axis.prop, v.toDouble()),
+          onChangeEnd: (v) => _commit(axis.prop, v.toDouble()),
+          onDragCancel: () => setState(() => _staged = null),
         ),
       );
     }
 
+    final sampled = sampleScalar(
+        scalar: scalar, time: widget.comp.timeOfFrame(frame: frame));
+    // No live preview mid-drag: staging a keyframed transform through the
+    // static-preview path would lie about the curve. The release commits one
+    // op — the key at the playhead updated or planted.
     return SizedBox(
-      width: transformCellWidth,
-      child: DragValueField(
-        key: ValueKey<String>('${widget.keyPrefix}-${axis.prop.name}'),
-        value: scalar.field0,
+      width: fixed ? transformCellWidth : null,
+      child: KeyedValueField(
+        fieldKey: ValueKey<String>('${widget.keyPrefix}-${axis.prop.name}'),
+        value: sampled,
         min: axis.min,
         max: axis.max,
         speed: axis.speed,
         decimals: axis.decimals,
         suffix: axis.suffix,
-        onChanged: (v) => _commit(axis.prop, v.toDouble()),
-        onChangeStart: () => _staged = transform,
-        onChangeLive: (v) => _live(axis.prop, v.toDouble()),
-        onChangeEnd: (v) => _commit(axis.prop, v.toDouble()),
-        onDragCancel: () => setState(() => _staged = null),
+        onCommit: (v) => _commitKeyed(axis.prop, scalar, v, frame),
       ),
     );
+  }
+
+  /// Write `value` into the animated property's key at `frame` (or plant one
+  /// there) — one op, one undo step.
+  void _commitKeyed(
+      BridgeTransformProp prop, BridgeScalar scalar, double value, int frame) {
+    widget.layer.setTransform(
+      prop: prop,
+      value: scalarWithValueAt(scalar, value, widget.comp, frame),
+    );
+    widget.onChanged();
   }
 
   /// A drag tick: hold the new value locally and render it, without committing.

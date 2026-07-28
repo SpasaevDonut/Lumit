@@ -66,17 +66,23 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('open-settings')));
       await tester.pumpAndSettle();
 
-      // The boot log states facts about this build, so at least its version.
+      // General opens first, and states facts about this build.
       expect(find.textContaining('lumit-bridge'), findsOneWidget);
+
+      // The engine's own readouts and buttons live on Performance (K-193).
+      await tester.tap(find.byKey(const ValueKey('settings-page-performance')));
+      await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('settings-tier')), findsOneWidget);
       expect(find.byKey(const ValueKey('settings-cache-used')), findsOneWidget);
 
-      // The budget picker changes what the engine holds, not just the label.
-      await tester.tap(find.byKey(const ValueKey('settings-cache-budget')));
+      // The budget is a typed number now (K-194), not a pick from a list:
+      // dragging it changes what the engine holds, not just the label.
+      final before = cacheStats().budgetBytes.toInt();
+      await tester.drag(find.byKey(const ValueKey('settings-cache-budget')),
+          const Offset(60, 0));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('256 MB').last);
-      await tester.pumpAndSettle();
-      expect(cacheStats().budgetBytes.toInt(), 256 << 20);
+      expect(cacheStats().budgetBytes.toInt(), greaterThan(before),
+          reason: 'the drag reached the engine');
 
       await tester.tap(find.byKey(const ValueKey('settings-cache-clear')));
       await tester.pump();
@@ -85,6 +91,46 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('settings-tier-reset')));
       await tester.pump();
       expect(playbackTier().tier, 1);
+    });
+
+    /// The pages are the point of the window: each shows its own settings and
+    /// only its own, and a preference edited on one sticks (K-193).
+    testWidgets('the pages divide the settings, and a choice persists',
+        (tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: Builder(
+          builder: (context) => HouseButton(
+            key: const ValueKey('open-settings'),
+            onPressed: () => showSettingsWindowFrb(context),
+            child: const Text('Open'),
+          ),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('open-settings')));
+      await tester.pumpAndSettle();
+
+      // General is open: nothing from another page is on screen with it.
+      expect(find.byKey(const ValueKey('settings-reset-workspace')),
+          findsOneWidget);
+      expect(find.byKey(const ValueKey('settings-scheme')), findsNothing);
+      expect(find.byKey(const ValueKey('settings-cache-budget')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('settings-page-interface')));
+      await tester.pumpAndSettle();
+      expect(
+          find.byKey(const ValueKey('settings-reset-workspace')), findsNothing);
+
+      // The Transform card's toggle: off by default, and it stays where it
+      // is put (K-193).
+      expect(p.uiState.workspace.interface.transformInEffectControls, isFalse,
+          reason: 'the Effect controls panel is about effects by default');
+      await tester.tap(find.byKey(const ValueKey('settings-transform-in-fx')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.workspace.interface.transformInEffectControls, isTrue);
     });
 
     testWidgets('the appearance controls change the shell theme',
@@ -107,6 +153,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('open-settings')));
       await tester.pumpAndSettle();
 
+      await tester.tap(find.byKey(const ValueKey('settings-page-appearance')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('settings-scheme')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Light').last);
@@ -228,6 +276,58 @@ void main() {
       state = const BridgeExportState.failed(error: 'cancelled');
       await tester.pump(const Duration(milliseconds: 600));
       expect(find.text('Export cancelled'), findsOneWidget);
+    });
+
+    /// The left end of the strip: whether the document is saved. Fails
+    /// without the engine's `is_dirty` (saved_revision stamped on save).
+    testWidgets('the saved state follows edits and saves', (tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: StatusLineFrb(poll: () => const BridgeExportState.idle()),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      expect(find.text('Not saved yet'), findsOneWidget,
+          reason: 'a fresh untouched project has nothing to lose');
+
+      p.state.project!.newComposition(name: 'Scene');
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('Unsaved changes'), findsOneWidget);
+
+      final dir = Directory.systemTemp.createTempSync('lumit-status');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      // Not awaited: save is an async frb call, and its continuation only
+      // lands on the real turns settleFrb provides.
+      p.state.project!.save(path: '${dir.path}/probe.lum');
+      await settleFrb(tester, until: () => !p.state.project!.isDirty());
+      await tester.pump(const Duration(milliseconds: 600));
+      expect(find.text('Saved'), findsOneWidget,
+          reason: 'the save stamped the revision clean');
+    });
+
+    /// The notice area: the latest message shows with its close button, and
+    /// closing it leaves the strip quiet.
+    testWidgets('a notice shows in the strip until closed', (tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: StatusLineFrb(poll: () => const BridgeExportState.idle()),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('status-notice')), findsNothing);
+
+      p.state.postNotice('Could not open C:/gone.lum', error: true);
+      await tester.pump();
+      expect(find.byKey(const ValueKey('status-notice')), findsOneWidget);
+      expect(find.textContaining('Could not open'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('status-notice-close')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('status-notice')), findsNothing,
+          reason: 'every notice carries its close button');
     });
   }, skip: !engineAvailable);
 

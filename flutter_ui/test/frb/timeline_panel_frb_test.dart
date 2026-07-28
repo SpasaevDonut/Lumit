@@ -16,6 +16,7 @@ import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/state/timeline_columns.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -35,13 +36,25 @@ void main() {
     }
 
     Future<void> mount(WidgetTester tester, dynamic p) async {
+      // The outline alone is 800 px of columns; the default 800×600 test
+      // surface would push its right edge (and the lanes) off screen.
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
       await tester.pumpWidget(hostPanel(
         child: const TimelinePanelFrb(),
         state: p.state as LumitState,
         uiState: p.uiState as LumitUiState,
-        size: const Size(900, 400),
+        size: const Size(1280, 600),
       ));
       await tester.pump();
+    }
+
+    /// Open the toolbar's ⋯ menu, where the layer/work-area/marker commands
+    /// live now that the toolbar row belongs to the readouts and the search.
+    Future<void> openMore(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('tl-more')));
+      await tester.pumpAndSettle();
     }
 
     testWidgets('without a composition it says so', (tester) async {
@@ -52,7 +65,61 @@ void main() {
         uiState: p.uiState,
       ));
       await tester.pump();
-      expect(find.textContaining('Select a composition'), findsOneWidget);
+      expect(find.textContaining('Open a composition'), findsOneWidget);
+    });
+
+    /// Dropping footage with nothing open offers to make the composition it
+    /// would go in, rather than dead-ending on the placeholder: the drag used
+    /// to lift, show its feedback and drop into nothing.
+    testWidgets('footage dropped on an empty Timeline offers a new comp',
+        (tester) async {
+      final p = freshProject();
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      expect(p.uiState.selectedComp, isNull);
+
+      await tester.pumpWidget(hostPanel(
+        child: const Row(
+          children: [
+            SizedBox(width: 300, child: ProjectPanelFrb()),
+            Expanded(child: TimelinePanelFrb()),
+          ],
+        ),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1400, 700),
+      ));
+      await tester.pump();
+      expect(find.textContaining('Open a composition'), findsOneWidget);
+
+      final row =
+          find.byKey(ValueKey<String>('project-row-${footage.internalid}'));
+      final gesture = await tester.startGesture(tester.getCenter(row));
+      await tester.pump(const Duration(milliseconds: 200));
+      // Stepped, because one large move leaves the gesture arena resolving
+      // the drag against the row's own recognisers.
+      // 40 px a step: the test surface is 800 px wide whatever MediaQuery
+      // says, so a bigger stride drops the drag off the edge of it.
+      for (var i = 0; i < 10; i++) {
+        await gesture.moveBy(const Offset(40, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      // The dialog probes the dropped media before it opens, so it appears
+      // after a real async round trip rather than on the next pump.
+      await settleFrb(tester, minRounds: 8);
+
+      expect(find.byKey(const ValueKey('comp-apply')), findsOneWidget,
+          reason: 'the drop asks for the new comp settings');
+      await tester.enterText(
+          find.byKey(const ValueKey('comp-name')), 'From drop');
+      await tester.tap(find.byKey(const ValueKey('comp-apply')));
+      await tester.pumpAndSettle();
+
+      final comp = p.uiState.selectedComp;
+      expect(comp, isNotNull, reason: 'the new comp is fronted');
+      expect(comp!.getSettings().name, 'From drop');
+      expect(comp.getLayers(), hasLength(1),
+          reason: 'the dropped footage landed in it as a layer');
     });
 
     testWidgets('New layer adds every kind, newest on top', (tester) async {
@@ -66,6 +133,7 @@ void main() {
         'Adjustment',
         'Sequence'
       ]) {
+        await openMore(tester);
         await tester.tap(find.byKey(const ValueKey('tl-add-layer')));
         await tester.pumpAndSettle();
         await tester.tap(find.text(kind));
@@ -208,6 +276,575 @@ void main() {
       expect(p.comp.frameAtTime(time: layer.getSpan().inPoint), beforeIn);
     });
 
+    /// The mouse-acceleration bug: frames were rounded per pointer event and
+    /// summed, so a slow drag's sub-frame deltas all rounded to nothing while
+    /// a fast drag's rounded up — the bar moved a different distance than the
+    /// pointer depending on speed. The frame delta must come from the pixel
+    /// total. Fails without the `_deltaPx` accumulator.
+    testWidgets('a slow drag moves the bar exactly as far as a fast one',
+        (tester) async {
+      final p = withComp();
+      final fast = p.comp.addAdjustmentLayer();
+      final slow = p.comp.addAdjustmentLayer();
+      await mount(tester, p);
+
+      Future<void> dragBar(LayerReference layer, List<Offset> moves) async {
+        final bar =
+            find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
+        final rect = tester.getRect(bar);
+        final g = await tester
+            .startGesture(Offset(rect.left + rect.width * 0.5, rect.center.dy));
+        for (final m in moves) {
+          await g.moveBy(m);
+          await tester.pump();
+        }
+        await g.up();
+        await tester.pumpAndSettle();
+      }
+
+      // Identical first events, so both gestures clear the touch slop the
+      // same way — then the same 36 pixels: once in one event, once in 72
+      // half-pixel events, the slow careful drag that used to fall behind
+      // the pointer.
+      await dragBar(fast, [const Offset(24, 0), const Offset(36, 0)]);
+      await dragBar(slow, [
+        const Offset(24, 0),
+        for (var i = 0; i < 72; i++) const Offset(0.5, 0),
+      ]);
+
+      int inOf(LayerReference l) =>
+          p.comp.frameAtTime(time: l.getSpan().inPoint);
+      expect(inOf(fast), greaterThan(0), reason: 'the fast drag moved the bar');
+      expect(inOf(slow), inOf(fast),
+          reason: 'frames come from the pixel total, not per-event rounding');
+    });
+
+    /// An animated value stays editable in the outline (docs/07 §4.3): on a
+    /// keyframe the edit lands in that key; between keyframes it plants one.
+    /// Fails if the cell falls back to a read-only "animated" label, or if it
+    /// writes a static value over the curve.
+    testWidgets('editing an animated value edits the key under the playhead',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final (f, v) in [(0, 20.0), (60, 80.0)])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: v,
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+
+      // On the first key: the drag edits that key, not the curve's shape.
+      p.uiState.playheadFrame.value = 0;
+      await tester.pump();
+      await tester.drag(
+          find.byKey(const ValueKey('tl-tf-opacity')), const Offset(40, 0));
+      await tester.pumpAndSettle();
+      expect(keys(), hasLength(2), reason: 'no key was added or lost');
+      expect(keys().first.value, greaterThan(20),
+          reason: 'the edit landed in the key under the playhead');
+
+      // Between keys: the drag plants a new one there.
+      p.uiState.playheadFrame.value = 30;
+      await tester.pump();
+      await tester.drag(
+          find.byKey(const ValueKey('tl-tf-opacity')), const Offset(40, 0));
+      await tester.pumpAndSettle();
+      expect(keys(), hasLength(3),
+          reason: 'editing between keys plants one at the playhead');
+      expect(p.comp.frameAtTime(time: keys()[1].time), 30);
+    });
+
+    /// The ◆ button acts at the playhead's *current* frame — the diamond used
+    /// to read the frame captured when the panel last drew, so after a scrub
+    /// it removed the wrong key.
+    testWidgets('the key diamond follows the playhead as it scrubs',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [0, 60])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+
+      // On the second key: ◆ removes it.
+      p.uiState.playheadFrame.value = 60;
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-tl-tf-opacity')));
+      await tester.pumpAndSettle();
+      expect(keys(), hasLength(1), reason: 'the key under the playhead went');
+
+      // Off any key: ◆ adds one exactly there.
+      p.uiState.playheadFrame.value = 30;
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('kf-toggle-tl-tf-opacity')));
+      await tester.pumpAndSettle();
+      expect(keys(), hasLength(2));
+      expect(p.comp.frameAtTime(time: keys()[1].time), 30);
+    });
+
+    /// Keyframes draw as diamonds on the lane (docs/07 §4.3), and a marquee
+    /// dragged over empty lane space gathers them.
+    testWidgets('lane diamonds appear and the marquee selects them',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      // Well apart on the axis, so the box can start on empty lane rather
+      // than on a key's own drag handle.
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 1500])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      expect(find.byKey(laneKey), findsOneWidget,
+          reason: 'an animated row draws its diamonds on the lane');
+
+      Set<int> selected() {
+        final paint = find.descendant(
+          of: find.byKey(laneKey),
+          matching: find.byType(CustomPaint),
+        );
+        return ((tester.widget<CustomPaint>(paint.first).painter as dynamic)
+                .selected as Set<int>)
+            .cast<int>();
+      }
+
+      expect(selected(), isEmpty);
+
+      // A box over the whole lane row takes both keys.
+      final rect = tester.getRect(find.byKey(laneKey));
+      final gesture =
+          await tester.startGesture(Offset(rect.left + 2, rect.top + 2));
+      await tester.pump(const Duration(milliseconds: 100));
+      for (var i = 0; i < 8; i++) {
+        await gesture.moveBy(Offset(rect.width / 8, rect.height / 10));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(selected(), hasLength(2),
+          reason: 'the marquee gathered the keys it enclosed');
+    });
+
+    /// Dragging a lane diamond moves the keyframe in time — one op — and the
+    /// magnet decides whether it lands on a whole frame or between two
+    /// (docs/07 §4.5).
+    testWidgets('a lane keyframe drags in time, and the magnet snaps it',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 2400])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      final handle = find.byKey(ValueKey<String>(
+          'tl-key-${layer.internallayerId}/transform/opacity#0'));
+      expect(handle, findsOneWidget, reason: 'each diamond is a drag handle');
+
+      // Measured, not assumed: the axis is as wide as the panel leaves it,
+      // and the columns can be resized, so the test asks how many pixels a
+      // frame is worth rather than hard-coding one.
+      final perFrame =
+          tester.getRect(find.byKey(laneKey)).width / p.comp.durationFrames();
+
+      // Magnet on (the default): a drag of ten and a half frames still lands
+      // on a whole one.
+      await tester.drag(handle, Offset(perFrame * 10.5, 0));
+      await tester.pumpAndSettle();
+      final snapped = keys().first.time;
+      expect(p.comp.frameAtTime(time: snapped), greaterThan(600),
+          reason: 'the drag moved the key later');
+      expect(snapped.num * 60 % snapped.den, 0,
+          reason: 'with the magnet on it sits exactly on a frame');
+      expect(keys(), hasLength(2), reason: 'no key added or lost');
+
+      // One op for the gesture: a single undo puts it back.
+      p.state.project!.undo();
+      expect(p.comp.frameAtTime(time: keys().first.time), 600);
+
+      // Magnet off: the same half-frame drag lands between two frames.
+      await tester.tap(find.byKey(const ValueKey('tl-magnet')));
+      await tester.pump();
+      await tester.drag(handle, Offset(perFrame * 10.5, 0));
+      await tester.pumpAndSettle();
+      final free = keys().first.time;
+      expect(free.num * 60 % free.den, isNot(0),
+          reason: 'with the magnet off it may land between frames');
+    });
+
+    /// **The undo regression.** A drag on a *keyframed* value used to commit
+    /// on every tick — [DragValueField] falls back to `onChanged` per tick
+    /// when no `onChangeLive` is given — so the undo stack filled with a step
+    /// per pixel and one undo moved the value back by a hair. The whole
+    /// gesture must be a single step, back to the value before the drag.
+    testWidgets('a drag on a keyframed value is one undo step', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final (f, v) in [(0, 20.0), (60, 80.0)])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: v,
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+
+      // On the first key, dragged in many small steps — the shape that used
+      // to write one op each.
+      p.uiState.playheadFrame.value = 0;
+      await tester.pump();
+      final field = find.byKey(const ValueKey('tl-tf-opacity'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(3, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(keys().first.value, greaterThan(20),
+          reason: 'the drag reached the key');
+      expect(keys(), hasLength(2), reason: 'and planted nothing extra');
+
+      p.state.project!.undo();
+      expect(keys().first.value, 20,
+          reason: 'ONE undo returns the value it had before the drag');
+    });
+
+    /// Clicking a property row selects it, and everything containing it —
+    /// its group heading and its layer's row — marks itself, so switching to
+    /// the graph knows which curve is meant (docs/07 §4.3).
+    testWidgets('clicking a property selects it and marks its parents',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addEffect(name: 'blur');
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.text('Effects'));
+      await tester.pump();
+      await tester.tap(find.text('Gaussian blur'));
+      await tester.pump();
+
+      final t = LumitTheme.dark();
+      // The innermost Container over a row's label is that row's own.
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+
+      expect(fillOver('Radius'), isNull,
+          reason: 'nothing is picked to start with');
+
+      await tester.tap(find.text('Radius'));
+      await tester.pump();
+
+      expect(fillOver('Radius'), t.surface2,
+          reason: 'the property row is the one selected');
+      expect(fillOver('Gaussian blur'), t.surface2.withValues(alpha: 0.45),
+          reason: 'the effect holding it marks itself, a shade dimmer');
+      expect(
+          (tester
+                  .widget<Container>(
+                      find.byKey(ValueKey<String>('tl-rowbody-$id')))
+                  .decoration as BoxDecoration)
+              .color,
+          t.surface2.withValues(alpha: 0.45),
+          reason: "and so does the property's layer");
+    });
+
+    /// Selecting keyframes on a lane selects the property they belong to, so
+    /// the outline follows what was boxed (docs/07 §4.3).
+    testWidgets('boxing keyframes on a lane selects their property',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 1500])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      final laneKey = ValueKey<String>(
+          'tl-keys-${layer.internallayerId}/transform/opacity');
+      final rect = tester.getRect(find.byKey(laneKey));
+      final gesture =
+          await tester.startGesture(Offset(rect.left + 2, rect.top + 2));
+      await tester.pump(const Duration(milliseconds: 100));
+      for (var i = 0; i < 8; i++) {
+        await gesture.moveBy(Offset(rect.width / 8, rect.height / 10));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final t = LumitTheme.dark();
+      final row = find.ancestor(
+        of: find.text('Opacity'),
+        matching: find.byType(Container),
+      );
+      expect(
+          (tester.widget<Container>(row.first).decoration as BoxDecoration)
+              .color,
+          t.surface2,
+          reason: 'the boxed keys picked their own property row');
+    });
+
+    /// Dragging a header seam resizes that group and leaves the rest alone,
+    /// so the outline grows by what the drag moved — and the fold-out's value
+    /// cells, which span the render group, grow with it (docs/07 §4.2).
+    testWidgets('dragging a header seam resizes just that group',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      double widthOf(String key) =>
+          tester.getSize(find.byKey(ValueKey<String>(key))).width;
+      final composeBefore = widthOf('tl-blend-$id');
+      final valueBefore = widthOf('tl-tf-opacity');
+
+      await tester.drag(
+          find.byKey(const ValueKey('tl-seam-render')), const Offset(60, 0));
+      await tester.pumpAndSettle();
+
+      expect(widthOf('tl-tf-opacity'), greaterThan(valueBefore),
+          reason: 'the render group grew, so its value cells did');
+      expect(widthOf('tl-blend-$id'), composeBefore,
+          reason: 'every other group kept its width');
+    });
+
+    /// The bottom bar's zoom: + widens the time axis (the bar stretches) and
+    /// the readout says so; Fit brings it back.
+    testWidgets('the zoom buttons widen the lanes and read out the factor',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      expect(find.text('100%'), findsOneWidget);
+      final before = tester
+          .getRect(
+              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .width;
+
+      await tester.tap(find.byKey(const ValueKey('tl-zoom-in')));
+      await tester.pumpAndSettle();
+      expect(find.text('150%'), findsOneWidget);
+      final zoomed = tester
+          .getRect(
+              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .width;
+      expect(zoomed, greaterThan(before),
+          reason: 'the comp takes more pixels when zoomed in');
+
+      await tester.tap(find.byKey(const ValueKey('tl-zoom-fit')));
+      await tester.pumpAndSettle();
+      expect(find.text('100%'), findsOneWidget);
+    });
+
+    /// The bar wears the layer's label colour (K-188), so recolouring the
+    /// label recolours the bar — and a solid starts on the solid chip.
+    testWidgets('the bar wears the label colour', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      Color barColour() {
+        final fill = find
+            .byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+        final deco = tester.widget<Container>(fill).decoration as BoxDecoration;
+        return deco.color!;
+      }
+
+      final t = LumitTheme.dark();
+      expect(barColour(), t.labelColour(2),
+          reason: 'a solid starts on its kind\'s chip');
+
+      layer.setLabel(label: 6);
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(barColour(), t.labelColour(6),
+          reason: 'picking a label recolours the bar');
+    });
+
+    /// A stack taller than the panel scrolls rather than overflowing, and
+    /// the two halves stay one table while it does.
+    testWidgets('a tall stack scrolls without overflowing', (tester) async {
+      final p = withComp();
+      for (var i = 0; i < 40; i++) {
+        p.comp.addSolidLayer();
+      }
+      await mount(tester, p);
+      expect(tester.takeException(), isNull,
+          reason: '40 rows in a 600px panel must scroll, not overflow');
+    });
+
+    /// The group reorder rule: the dragged group takes the target's slot,
+    /// whichever side it came from, and dropping on itself changes nothing.
+    test('reorderedGroups moves a group to the target slot', () {
+      const g = TimelineGroup.values;
+      expect(
+        reorderedGroups(defaultGroupOrder, g[0], g[3]),
+        [g[1], g[2], g[3], g[0]],
+        reason: 'dragged right, it lands after the target',
+      );
+      expect(
+        reorderedGroups(defaultGroupOrder, g[3], g[0]),
+        [g[3], g[0], g[1], g[2]],
+        reason: 'dragged left, it lands before the target',
+      );
+      expect(reorderedGroups(defaultGroupOrder, g[1], g[1]), defaultGroupOrder);
+    });
+
+    /// The value column sits under the render group: everything right of it
+    /// in the order contributes its fixed width to the inset.
+    test('valueColumnFor measures what sits right of the render group', () {
+      expect(valueColumnFor(defaultGroupOrder, defaultGroupWidths).rightInset,
+          groupDividerWidth + composeGroupWidth);
+      final renderLast = reorderedGroups(
+          defaultGroupOrder, TimelineGroup.render, TimelineGroup.compose);
+      expect(valueColumnFor(renderLast, defaultGroupWidths).rightInset, 0);
+
+      // The value cells span the render group as it stands, so dragging that
+      // group's seam widens the fields under it (K-192).
+      final wider = {
+        ...defaultGroupWidths,
+        TimelineGroup.render: renderGroupWidth + 60,
+      };
+      expect(valueColumnFor(defaultGroupOrder, wider).width,
+          renderGroupWidth + 60);
+    });
+
+    /// The ruler's label spacing thins as the comp zooms out, and its labels
+    /// speak the familiar editor idiom.
+    test('the ruler picks nice label steps and formats them', () {
+      expect(rulerLabelStepSeconds(pixelsPerSecond: 100), 1);
+      expect(rulerLabelStepSeconds(pixelsPerSecond: 20), 5);
+      expect(rulerLabelStepSeconds(pixelsPerSecond: 2), 60);
+      expect(rulerLabelOf(5), '05s');
+      expect(rulerLabelOf(0.5), '0.5s');
+      expect(rulerLabelOf(60), '1:00s');
+      expect(rulerLabelOf(90), '1:30s');
+    });
+
+    /// What a grab does to the waveform's preview of the span — the mapping
+    /// the lane draws while the gesture is still in flight (K-172).
+    test('barDragPreview maps each grab onto the span', () {
+      final move = barDragPreview('a', BarGrab.move, 5);
+      expect((move.deltaIn, move.deltaOut, move.offsetShift), (5, 5, 5));
+      final trimIn = barDragPreview('a', BarGrab.trimIn, -3);
+      expect((trimIn.deltaIn, trimIn.deltaOut, trimIn.offsetShift), (-3, 0, 0));
+      final trimOut = barDragPreview('a', BarGrab.trimOut, 7);
+      expect(
+          (trimOut.deltaIn, trimOut.deltaOut, trimOut.offsetShift), (0, 7, 0));
+    });
+
     /// A layer can start BEFORE the comp (docs/TODO: "re-introduce"): drag a
     /// bar left past frame zero and the span goes negative, carrying its
     /// content with it — the comp shows the part that overlaps.
@@ -285,8 +922,9 @@ void main() {
 
       expect(find.byKey(const ValueKey('tl-work-area')), findsOneWidget);
 
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-clear-work-area')));
-      await tester.pump();
+      await tester.pumpAndSettle();
       expect(p.comp.getWorkArea(), isNull);
       expect(find.byKey(const ValueKey('tl-work-area')), findsNothing);
     });
@@ -337,6 +975,49 @@ void main() {
       expect(p.comp.getLayers().single.getName(), contains('shot'));
     });
 
+    /// Comps nest by the same gesture: drag one from the Project panel onto
+    /// another's Timeline and it lands as a Precomp layer.
+    testWidgets('a comp dragged from the Project panel nests as a precomp',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Titles');
+
+      await tester.pumpWidget(hostPanel(
+        child: const Row(
+          children: [
+            SizedBox(width: 300, child: ProjectPanelFrb()),
+            Expanded(child: TimelinePanelFrb()),
+          ],
+        ),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1400, 700),
+      ));
+      await tester.pump();
+
+      expect(p.comp.getLayers(), isEmpty);
+
+      final row =
+          find.byKey(ValueKey<String>('project-row-${inner.internalid}'));
+      expect(row, findsOneWidget, reason: 'the comp row is there to drag');
+
+      final gesture = await tester.startGesture(tester.getCenter(row));
+      await tester.pump(const Duration(milliseconds: 200));
+      for (var i = 0; i < 10; i++) {
+        await gesture.moveBy(const Offset(40, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final layers = p.comp.getLayers();
+      expect(layers, hasLength(1), reason: 'the drop reached the document');
+      expect(layers.single.getKind(), BridgeLayerKind.precomp,
+          reason: 'a dropped comp nests as a Precomp layer');
+      // The inner comp itself is untouched — nesting places, never moves.
+      expect(inner.getLayers(), isEmpty);
+    });
+
     /// The layer rows deliberately do *not* rebuild when the playhead moves —
     /// they used to, sixty times a second during playback, re-asking the engine
     /// for every layer's name and span each time, and the cost grew with the
@@ -355,8 +1036,9 @@ void main() {
 
       // Turn the razor on, then move the playhead — without touching anything
       // that would rebuild the bar.
+      await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-razor')));
-      await tester.pump();
+      await tester.pumpAndSettle();
       p.uiState.playheadFrame.value = 30;
       await tester.pump();
 
@@ -415,9 +1097,9 @@ void main() {
       expect(find.text('Transform'), findsNothing);
     });
 
-    /// The owner's column groupings (docs/TODO): visibility and sound first,
-    /// then twirl + label colour + name, then the remaining switches, with
-    /// matte and blend closing the row.
+    /// The four column groups in their shipped order (docs/07 §4.2):
+    /// visibility · audio · solo · lock · shy, then twirl · label · number ·
+    /// name, then fx · motion blur · 3D, then matte · blend · parent.
     testWidgets('the outline columns sit in their groups', (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
@@ -429,19 +1111,226 @@ void main() {
       final order = [
         'tl-visible-$id',
         'tl-audible-$id',
+        'tl-solo-$id',
+        'tl-locked-$id',
+        'tl-shy-$id',
         'tl-twirl-$id',
         'tl-label-$id',
         'tl-name-$id',
-        'tl-solo-$id',
-        'tl-locked-$id',
-        'tl-parent-$id',
+        'tl-fx-$id',
+        'tl-mb-$id',
+        'tl-3d-$id',
         'tl-matte-$id',
         'tl-blend-$id',
+        'tl-parent-$id',
       ];
       for (var i = 1; i < order.length; i++) {
         expect(dx(order[i]), greaterThan(dx(order[i - 1])),
             reason: '${order[i]} sits right of ${order[i - 1]}');
       }
+    });
+
+    /// Dragging a header group moves the whole cluster: dropping the
+    /// switches group onto the compose group puts every switch cell right of
+    /// the pickers, in one gesture.
+    testWidgets('dragging a header group reorders the columns as a unit',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      double dx(String key) =>
+          tester.getTopLeft(find.byKey(ValueKey<String>(key))).dx;
+      expect(dx('tl-visible-$id'), lessThan(dx('tl-matte-$id')));
+
+      final from =
+          tester.getCenter(find.byKey(const ValueKey('tl-colgroup-switches')));
+      final to =
+          tester.getCenter(find.byKey(const ValueKey('tl-colgroup-compose')));
+      final gesture = await tester.startGesture(from);
+      await tester.pump(const Duration(milliseconds: 200));
+      final step = (to - from) / 8;
+      for (var i = 0; i < 8; i++) {
+        await gesture.moveBy(step);
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      for (final key in [
+        'tl-visible-$id',
+        'tl-audible-$id',
+        'tl-solo-$id',
+        'tl-locked-$id',
+        'tl-shy-$id',
+      ]) {
+        expect(dx(key), greaterThan(dx('tl-parent-$id')),
+            reason: 'the whole switches cluster moved past the pickers');
+      }
+    });
+
+    /// The render switches reach the document like the A/V ones do.
+    testWidgets('the fx, motion-blur and 3D switches reach the document',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      expect(layer.getSwitches().fx, isTrue);
+      await tester.tap(find.byKey(ValueKey<String>('tl-fx-$id')));
+      await tester.pump();
+      expect(layer.getSwitches().fx, isFalse);
+
+      expect(layer.getSwitches().motionBlur, isFalse);
+      await tester.tap(find.byKey(ValueKey<String>('tl-mb-$id')));
+      await tester.pump();
+      expect(layer.getSwitches().motionBlur, isTrue);
+
+      expect(layer.getSwitches().threeD, isFalse);
+      await tester.tap(find.byKey(ValueKey<String>('tl-3d-$id')));
+      await tester.pump();
+      expect(layer.getSwitches().threeD, isTrue);
+    });
+
+    /// The toolbar's readouts: the timecode counts frames at the comp's own
+    /// rate and the frame count is zero-based, so frame 0 is 00:00:00:00.
+    testWidgets('the timecode and frame readouts follow the playhead',
+        (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      expect(find.text('00:00:00:00'), findsOneWidget);
+      expect(find.text('f0'), findsOneWidget);
+
+      // 60 fps is the default comp rate: frame 90 is a second and a half in.
+      p.uiState.playheadFrame.value = 90;
+      await tester.pump();
+      expect(find.text('00:00:01:30'), findsOneWidget);
+      expect(find.text('f90'), findsOneWidget);
+    });
+
+    /// The master motion-blur button writes the comp's shutter enable — one
+    /// op, undoable — and lights when it is on.
+    testWidgets('the master motion-blur button toggles the comp shutter',
+        (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('tl-mb-master')));
+      await tester.pump();
+      expect(p.uiState.model.motionBlurEnabled, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('tl-mb-master')));
+      await tester.pump();
+      expect(p.uiState.model.motionBlurEnabled, isFalse);
+    });
+
+    /// Shy (docs/07 §4.2): the row switch marks the layer, the toolbar's
+    /// filter hides marked rows from the list — and only from the list.
+    testWidgets('the shy filter hides shy rows without touching visibility',
+        (tester) async {
+      final p = withComp();
+      final shy = p.comp.addSolidLayer();
+      shy.rename(name: 'Backplate');
+      final loud = p.comp.addSolidLayer();
+      loud.rename(name: 'Hero');
+      await mount(tester, p);
+
+      await tester
+          .tap(find.byKey(ValueKey<String>('tl-shy-${shy.internallayerId}')));
+      await tester.pump();
+      expect(shy.getSwitches().shy, isTrue,
+          reason: 'shy is a document switch, so it survives the session');
+      expect(find.text('Backplate'), findsOneWidget,
+          reason: 'marking a layer shy does not hide it yet');
+
+      await tester.tap(find.byKey(const ValueKey('tl-hide-shy')));
+      await tester.pump();
+      expect(find.text('Backplate'), findsNothing);
+      expect(find.text('Hero'), findsOneWidget);
+      expect(shy.getSwitches().visible, isTrue,
+          reason: 'shy hides the row, never the picture');
+
+      await tester.tap(find.byKey(const ValueKey('tl-hide-shy')));
+      await tester.pump();
+      expect(find.text('Backplate'), findsOneWidget);
+    });
+
+    /// Dragging a layer by its name moves it up or down the stack — layers
+    /// used to be stuck in the order they were added, reorderable only from
+    /// the row menu one place at a time (docs/07 §4.7).
+    testWidgets('dragging a layer by its name reorders the stack',
+        (tester) async {
+      final p = withComp();
+      for (final name in ['Bottom', 'Middle', 'Top']) {
+        p.comp.addSolidLayer().rename(name: name);
+      }
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      List<String> stack() => [for (final l in p.comp.getLayers()) l.getName()];
+      expect(stack(), ['Top', 'Middle', 'Bottom'],
+          reason: 'newest on top, as added');
+
+      // Drag the top layer's name down onto the bottom row.
+      final from = find.byKey(ValueKey<String>(
+          'tl-name-${p.comp.getLayers().first.internallayerId}'));
+      final onto = find.byKey(ValueKey<String>(
+          'tl-row-${p.comp.getLayers().last.internallayerId}'));
+      final start = tester.getCenter(from);
+      final end = tester.getCenter(onto);
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 200));
+      for (var i = 1; i <= 8; i++) {
+        await gesture.moveTo(start + (end - start) * (i / 8));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(stack(), ['Middle', 'Bottom', 'Top'],
+          reason: 'the dragged layer took the row it was dropped on');
+
+      // One op: a single undo puts the stack back.
+      p.state.project!.undo();
+      p.uiState.model.refresh();
+      expect(stack(), ['Top', 'Middle', 'Bottom']);
+    });
+
+    /// Lock (docs/07 §4.2): a locked layer's bar refuses the drag and its
+    /// name refuses the rename, until it is unlocked.
+    testWidgets('a locked layer cannot be dragged or renamed', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-locked-$id')));
+      await tester.pump();
+      expect(layer.getSwitches().locked, isTrue);
+
+      final before = p.comp.frameAtTime(time: layer.getSpan().inPoint);
+      final bar = find.byKey(ValueKey<String>('tl-bar-$id'));
+      final rect = tester.getRect(bar);
+      await tester.dragFrom(
+        Offset(rect.left + rect.width * 0.5, rect.center.dy),
+        const Offset(80, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: layer.getSpan().inPoint), before,
+          reason: 'a locked bar holds still');
+
+      final name = find.byKey(ValueKey<String>('tl-name-$id'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pump();
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'a locked name does not open the editor');
     });
 
     /// Double-clicking the name turns it into an editor; submitting renames
@@ -510,11 +1399,12 @@ void main() {
       await tester.pump();
 
       Color? rowColour(UuidValue id) {
-        final row = find.descendant(
-          of: find.byKey(ValueKey<String>('tl-row-$id')),
-          matching: find.byType(Container),
-        );
-        return tester.widget<Container>(row.first).color;
+        // The row's fill rides in the body's decoration, inside the drop
+        // target that makes the row a reorder destination (K-193).
+        final deco = tester
+            .widget<Container>(find.byKey(ValueKey<String>('tl-rowbody-$id')))
+            .decoration as BoxDecoration;
+        return deco.color;
       }
 
       final t = LumitTheme.dark();
@@ -566,7 +1456,8 @@ void main() {
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
 
-      expect(layer.getInfo().label, 0);
+      expect(layer.getInfo().label, 2,
+          reason: 'a solid starts on its kind\'s default chip (K-188)');
       await tester.tap(
           find.byKey(ValueKey<String>('tl-label-${layer.internallayerId}')));
       await tester.pumpAndSettle();

@@ -60,6 +60,20 @@ serde_json = "1"
 uuid = { version = "1", features = ["v7", "serde"] }
 flutter_rust_bridge = { version = "=2.12.0", features = ["uuid"] }
 
+# What the machine has, for the cache budgets that spend it (K-194):
+# `GlobalMemoryStatusEx` for installed RAM and the first DXGI adapter's
+# dedicated video memory. Pinned to the 0.58 lumit-gpu's shared-texture path
+# already links, so the workspace resolves one copy rather than two.
+[target.'cfg(windows)'.dependencies.windows]
+version = "0.58"
+default-features = false
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dxgi",
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_System_SystemInformation",
+]
+
 [dev-dependencies]
 tempfile = "3"
 

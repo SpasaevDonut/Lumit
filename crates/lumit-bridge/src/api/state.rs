@@ -21,6 +21,10 @@ use crate::{
 pub struct LumitBridgeState {
     pub store: DocumentStore,
     pub path: Option<PathBuf>,
+    /// The store revision the last save wrote (or the revision the project
+    /// opened at). `is_dirty` is "the store has moved past this" — an undo
+    /// after a save counts as dirty, the same answer AE gives.
+    pub saved_revision: u64,
     pub(crate) media: MediaCache,
     /// Where committed ops are journalled for crash recovery.
     ///
@@ -223,6 +227,7 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         | Op::SetLayerVisible { comp, layer, .. }
         | Op::SetLayerSolo { comp, layer, .. }
         | Op::SetLayerMotionBlur { comp, layer, .. }
+        | Op::SetLayerShy { comp, layer, .. }
         | Op::SetLayerLocked { comp, layer, .. }
         | Op::SetLayerLabel { comp, layer, .. }
         | Op::SetLayerCollapse { comp, layer, .. }
@@ -260,8 +265,10 @@ impl LumitBridgeState {
 
         let document = Document::new();
         let journal = journal_for(&document);
+        let store = DocumentStore::new(document);
         let mut state = LumitBridgeState {
-            store: DocumentStore::new(document),
+            saved_revision: store.revision(),
+            store,
             path: None,
             media: MediaCache::default(),
             journal: Arc::clone(&journal),
@@ -365,8 +372,10 @@ impl LumitBridgeState {
         let (_relinked, _missing) = lumit_project::resolve_all_media(&mut doc, project_dir, &[]);
 
         let journal = journal_for(&doc);
+        let store = DocumentStore::new(doc);
         let mut state = LumitBridgeState {
-            store: DocumentStore::new(doc),
+            saved_revision: store.revision(),
+            store,
             path: Some(path),
             media: MediaCache::default(),
             journal: Arc::clone(&journal),

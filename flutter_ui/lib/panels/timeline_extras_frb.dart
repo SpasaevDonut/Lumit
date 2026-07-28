@@ -1,5 +1,6 @@
 // The Timeline's smaller surfaces: comp tabs, the cache bar, the search field,
-// the parent picker, and the marker / work-area editors.
+// the parent picker, and the marker / work-area editors. (The cache *meter*
+// moved to the shell's status line, where whole-store readouts belong.)
 //
 // A file of their own rather than more of timeline_panel_frb.dart, which is
 // already the length it wants to be. Each is small, self-contained and used
@@ -11,22 +12,19 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
-import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
-/// The open compositions, as tabs. Clicking one fronts it.
-///
-/// "Open" here means every composition in the project, which is what the egui
-/// frontend shows too: a comp you can see in the Project panel is one you can
-/// switch to, and a separate notion of open-ness would be state to keep in step
-/// for no gain.
+/// The open compositions, as tabs. Clicking one fronts it; its × closes the
+/// tab (docs/07 §4: one tab per *open* comp — the comp itself stays in the
+/// project, and fronting it from the Project panel opens it again).
 class CompTabsFrb extends StatelessWidget {
   final LumitState state;
   final LumitUiState uiState;
@@ -36,8 +34,15 @@ class CompTabsFrb extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     // Served from LumitState's cached walk (K-184): the item tree is only
-    // re-read when the engine says it changed shape.
-    final comps = state.comps();
+    // re-read when the engine says it changed shape. Filtered to the tabs the
+    // user has opened, so a deleted comp's tab also simply stops matching.
+    final selected = uiState.selectedComp?.internalid;
+    final comps = [
+      for (final entry in state.comps())
+        if (uiState.openComps.contains(entry.$1.internalid) ||
+            entry.$1.internalid == selected)
+          entry,
+    ];
     if (comps.isEmpty) return const SizedBox.shrink();
 
     return Container(
@@ -46,12 +51,21 @@ class CompTabsFrb extends StatelessWidget {
       child: ListView(
         scrollDirection: Axis.horizontal,
         children: [
-          for (final (comp, name) in comps)
+          for (var i = 0; i < comps.length; i++)
             _CompTab(
-              key: ValueKey<String>('tl-tab-${comp.internalid}'),
-              name: name,
-              active: uiState.selectedComp?.internalid == comp.internalid,
-              onTap: () => uiState.setSelectedComp(comp),
+              key: ValueKey<String>('tl-tab-${comps[i].$1.internalid}'),
+              name: comps[i].$2,
+              active: selected == comps[i].$1.internalid,
+              onTap: () => uiState.setSelectedComp(comps[i].$1),
+              closeKey:
+                  ValueKey<String>('tl-tab-close-${comps[i].$1.internalid}'),
+              onClose: () => uiState.closeComp(
+                comps[i].$1.internalid,
+                // The nearest remaining neighbour fronts: the one to the
+                // left, or the next one when the first tab closes.
+                fallback:
+                    comps.length == 1 ? null : comps[i == 0 ? 1 : i - 1].$1,
+              ),
             ),
         ],
       ),
@@ -63,11 +77,15 @@ class _CompTab extends StatelessWidget {
   final String name;
   final bool active;
   final VoidCallback onTap;
+  final Key closeKey;
+  final VoidCallback onClose;
   const _CompTab({
     super.key,
     required this.name,
     required this.active,
     required this.onTap,
+    required this.closeKey,
+    required this.onClose,
   });
 
   @override
@@ -77,7 +95,7 @@ class _CompTab extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10),
+        padding: const EdgeInsets.only(left: 10, right: 4),
         decoration: BoxDecoration(
           color: active ? t.surface0 : null,
           border: Border(
@@ -87,85 +105,40 @@ class _CompTab extends StatelessWidget {
             ),
           ),
         ),
-        child: Center(
-          child: Text(
-            name,
-            style: active ? t.bodyPrimary : t.small,
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// How full the rendered-frame cache is, and how often it saved a render.
-///
-/// Polled on the panel's own rebuilds rather than on a timer: the numbers only
-/// change when something renders, and a timer would wake the interface up to
-/// redraw a meter nobody is watching. Never read per paint — the lock it takes
-/// is the one a render holds.
-///
-/// Named a *meter*, not a bar: the **cache bar** is the stripe under the time
-/// ruler showing which frames are held ([`TimelineCacheBar`], and the glossary's
-/// own definition). This measures how full the store is, which is a different
-/// question.
-class CacheMeterFrb extends StatelessWidget {
-  const CacheMeterFrb({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    final stats = cacheStats();
-    final budget = stats.budgetBytes.toInt();
-    final used = stats.usedBytes.toInt();
-    final fraction = budget <= 0 ? 0.0 : (used / budget).clamp(0.0, 1.0);
-    final requests = stats.hits.toInt() + stats.misses.toInt();
-
-    return LumitTooltip(
-      message: requests == 0
-          ? 'Nothing rendered yet'
-          : '${stats.hits} served from the cache, ${stats.misses} rendered',
-      child: GestureDetector(
-        key: const ValueKey('tl-cache-meter'),
-        behavior: HitTestBehavior.opaque,
-        onTap: () => clearCache(),
-        child: Container(
-          height: 14,
-          color: t.surface1,
-          child: Row(
-            children: [
-              const SizedBox(width: 6),
-              Text('Cache', style: t.small.copyWith(color: t.textMuted)),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Stack(
-                  children: [
-                    Container(height: 6, color: t.surface3),
-                    FractionallySizedBox(
-                      widthFactor: fraction,
-                      child: Container(height: 6, color: t.accent),
-                    ),
-                  ],
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Center(
+              child: Text(
+                name,
+                style: active ? t.bodyPrimary : t.small,
+              ),
+            ),
+            const SizedBox(width: 4),
+            GestureDetector(
+              key: closeKey,
+              behavior: HitTestBehavior.opaque,
+              onTap: onClose,
+              child: SizedBox(
+                width: 14,
+                height: 22,
+                child: Center(
+                  child: Text('×', style: t.small.copyWith(color: t.textMuted)),
                 ),
               ),
-              const SizedBox(width: 6),
-              Text('${_mib(used)} / ${_mib(budget)} MB',
-                  style: t.small.copyWith(color: t.textMuted)),
-              const SizedBox(width: 6),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
   }
-
-  static String _mib(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
 }
 
 /// The outline's search field: narrows the rows to those whose name matches.
 class LayerSearchFrb extends StatefulWidget {
   final ValueChanged<String> onChanged;
-  const LayerSearchFrb({super.key, required this.onChanged});
+  final double width;
+  const LayerSearchFrb({super.key, required this.onChanged, this.width = 120});
 
   @override
   State<LayerSearchFrb> createState() => _LayerSearchFrbState();
@@ -190,7 +163,8 @@ class _LayerSearchFrbState extends State<LayerSearchFrb> {
   Widget build(BuildContext context) => HouseTextField(
         key: const ValueKey('tl-search'),
         controller: _controller,
-        width: 120,
+        width: widget.width,
+        hint: 'Search layers',
       );
 }
 
@@ -209,6 +183,10 @@ class ParentPickerFrb extends StatelessWidget {
 
   /// Every layer in the comp, from the read model.
   final List<BridgeLayerEntry> all;
+
+  /// The cell's width — its share of the compose group, which the header's
+  /// seam can be dragged to widen.
+  final double width;
   final VoidCallback onChanged;
 
   const ParentPickerFrb({
@@ -217,12 +195,13 @@ class ParentPickerFrb extends StatelessWidget {
     required this.info,
     required this.all,
     required this.onChanged,
+    this.width = parentCellWidth,
   });
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      width: 96,
+      width: width,
       child: BareLazyDropdown(
         key: ValueKey<String>('tl-parent-${layer.internallayerId}'),
         label: info.parent == null ? 'None' : (info.parentName ?? 'None'),
@@ -256,6 +235,10 @@ class MattePickerFrb extends StatelessWidget {
 
   /// Every layer in the comp, from the read model.
   final List<BridgeLayerEntry> all;
+
+  /// The cell's width — its share of the compose group, which the header's
+  /// seam can be dragged to widen.
+  final double width;
   final VoidCallback onChanged;
 
   const MattePickerFrb({
@@ -264,6 +247,7 @@ class MattePickerFrb extends StatelessWidget {
     required this.info,
     required this.all,
     required this.onChanged,
+    this.width = matteCellWidth,
   });
 
   void _set(BridgeMatte? matte) {
@@ -287,55 +271,70 @@ class MattePickerFrb extends StatelessWidget {
                 .firstOrNull ??
             'Matte';
 
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox(
-          width: 88,
-          child: BareLazyDropdown<UuidValue?>(
-            key: ValueKey<String>('tl-matte-${layer.internallayerId}'),
-            label: sourceName,
-            options: () => [
-              (null, 'No matte'),
-              for (final e in all)
-                if (e.layer.internallayerId != layer.internallayerId)
-                  (e.layer.internallayerId, e.info.name),
-            ],
-            onChanged: (id) => _set(id == null
-                ? null
-                : BridgeMatte(
-                    layer: id,
-                    luma: matte?.luma ?? false,
-                    inverted: matte?.inverted ?? false,
-                  )),
+    // A fixed overall width whether or not the mode toggles are showing, so
+    // the columns after the matte cell never shift as mattes come and go —
+    // with no matte set, the dropdown takes the toggles' room rather than
+    // leaving a dead gap before the blend cell.
+    return SizedBox(
+      width: width,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            // The two mode toggles are 28 px between them; with no matte set
+            // the dropdown takes that room rather than leaving a dead gap.
+            width: matte == null ? width : (width - 28).clamp(40.0, width),
+            child: BareLazyDropdown<UuidValue?>(
+              key: ValueKey<String>('tl-matte-${layer.internallayerId}'),
+              label: sourceName,
+              // Built when the menu opens, never per rebuild — which is what
+              // lets it probe (K-194). A matte gates this layer with another
+              // layer's *picture*, so a layer with none (a camera, an
+              // audio-only clip) is not offered, and neither is this one:
+              // matting a layer with itself has no meaning.
+              options: () => [
+                (null, 'No matte'),
+                for (final e in all)
+                  if (e.layer.internallayerId != layer.internallayerId &&
+                      e.layer.hasPicture())
+                    (e.layer.internallayerId, e.info.name),
+              ],
+              onChanged: (id) => _set(id == null
+                  ? null
+                  : BridgeMatte(
+                      layer: id,
+                      luma: matte?.luma ?? false,
+                      inverted: matte?.inverted ?? false,
+                    )),
+            ),
           ),
-        ),
-        // The mode toggles only mean something once a source is set.
-        if (matte != null) ...[
-          _toggle(
-            t,
-            key: 'tl-matte-luma-${layer.internallayerId}',
-            glyph: matte.luma ? 'L' : 'α',
-            on: true,
-            tip: matte.luma ? 'Luma matte' : 'Alpha matte',
-            onTap: () => _set(BridgeMatte(
-                layer: matte.layer,
-                luma: !matte.luma,
-                inverted: matte.inverted)),
-          ),
-          _toggle(
-            t,
-            key: 'tl-matte-invert-${layer.internallayerId}',
-            glyph: '−',
-            on: matte.inverted,
-            tip: matte.inverted ? 'Inverted' : 'Not inverted',
-            onTap: () => _set(BridgeMatte(
-                layer: matte.layer,
-                luma: matte.luma,
-                inverted: !matte.inverted)),
-          ),
+          // The mode toggles only mean something once a source is set.
+          if (matte != null) ...[
+            _toggle(
+              t,
+              key: 'tl-matte-luma-${layer.internallayerId}',
+              glyph: matte.luma ? 'L' : 'α',
+              on: true,
+              tip: matte.luma ? 'Luma matte' : 'Alpha matte',
+              onTap: () => _set(BridgeMatte(
+                  layer: matte.layer,
+                  luma: !matte.luma,
+                  inverted: matte.inverted)),
+            ),
+            _toggle(
+              t,
+              key: 'tl-matte-invert-${layer.internallayerId}',
+              glyph: '−',
+              on: matte.inverted,
+              tip: matte.inverted ? 'Inverted' : 'Not inverted',
+              onTap: () => _set(BridgeMatte(
+                  layer: matte.layer,
+                  luma: matte.luma,
+                  inverted: !matte.inverted)),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 

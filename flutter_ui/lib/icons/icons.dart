@@ -22,6 +22,7 @@ import 'package:iconoir_flutter/regular/frame.dart' as ic;
 import 'package:iconoir_flutter/regular/fx.dart' as ic;
 import 'package:iconoir_flutter/regular/keyframe.dart' as ic;
 import 'package:iconoir_flutter/regular/keyframe_plus.dart' as ic;
+import 'package:iconoir_flutter/regular/label.dart' as ic;
 import 'package:iconoir_flutter/regular/link.dart' as ic;
 import 'package:iconoir_flutter/regular/link_xmark.dart' as ic;
 import 'package:iconoir_flutter/regular/lock.dart' as ic;
@@ -92,16 +93,35 @@ enum LumitIcon {
   reset,
   motionBlur,
   fx,
+
+  /// The label-colour column's tag (docs/07 §4.2).
+  label,
+
+  /// Shy: hide-from-the-layer-list, and the master filter that honours it.
+  /// Drawn, not looked up (Iconoir has no peek): lines standing above the
+  /// list's baseline.
+  shy,
+
+  /// The shy mark's hidden state: the lines ducked down to a stub over the
+  /// baseline — this layer is (or these layers are) hidden from the list.
+  shyHidden,
+
+  /// A filled circle — the solo switch's on state; [ellipse] is its off.
+  circleFilled,
 }
 
 /// Build `icon` at `size` in `color`. The motion-blur mark is drawn, not
 /// looked up, exactly as in the Rust frontend.
 Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
-  if (icon == LumitIcon.motionBlur) {
-    return CustomPaint(
-      size: Size.square(size),
-      painter: MotionBlurPainter(color),
-    );
+  final painter = switch (icon) {
+    LumitIcon.motionBlur => MotionBlurPainter(color) as CustomPainter,
+    LumitIcon.shy => ShyPainter(color, hidden: false),
+    LumitIcon.shyHidden => ShyPainter(color, hidden: true),
+    LumitIcon.circleFilled => CircleFillPainter(color),
+    _ => null,
+  };
+  if (painter != null) {
+    return CustomPaint(size: Size.square(size), painter: painter);
   }
   final w = _glyph(icon, color);
   return SizedBox(width: size, height: size, child: w);
@@ -151,6 +171,12 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.reset => ic.RefreshDouble(color: color),
       LumitIcon.motionBlur => const SizedBox.shrink(), // handled above
       LumitIcon.fx => ic.Fx(color: color),
+      LumitIcon.label => ic.Label(color: color),
+      // Painter-drawn, handled above.
+      LumitIcon.shy ||
+      LumitIcon.shyHidden ||
+      LumitIcon.circleFilled =>
+        const SizedBox.shrink(),
     };
 
 /// The motion-blur mark: a ring with speed streaks running into it, from the
@@ -192,4 +218,53 @@ class MotionBlurPainter extends CustomPainter {
   @override
   bool shouldRepaint(MotionBlurPainter oldDelegate) =>
       oldDelegate.color != color;
+}
+
+/// The shy mark, on a 24×24 grid. Not hidden: two lines standing over the
+/// list's long baseline. Hidden: just a stub ducked close over the baseline —
+/// the layers have dropped out of the list.
+class ShyPainter extends CustomPainter {
+  final Color color;
+  final bool hidden;
+  const ShyPainter(this.color, {required this.hidden});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide / 24.0;
+    Offset at(double x, double y) => Offset(x * s, y * s);
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 2.0 * s
+      ..strokeCap = StrokeCap.round;
+    // The baseline: the layer list itself.
+    canvas.drawLine(at(4, 19), at(20, 19), paint);
+    if (hidden) {
+      canvas.drawLine(at(9, 13), at(15, 13), paint);
+    } else {
+      canvas.drawLine(at(6, 12), at(18, 12), paint);
+      canvas.drawLine(at(9, 5), at(15, 5), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(ShyPainter old) =>
+      old.color != color || old.hidden != hidden;
+}
+
+/// A filled circle: the solo switch's on state.
+class CircleFillPainter extends CustomPainter {
+  final Color color;
+  const CircleFillPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawCircle(
+      size.center(Offset.zero),
+      size.shortestSide * 0.32,
+      Paint()..color = color,
+    );
+  }
+
+  @override
+  bool shouldRepaint(CircleFillPainter old) => old.color != color;
 }

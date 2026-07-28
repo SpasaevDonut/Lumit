@@ -399,12 +399,17 @@ class HouseTextField extends StatefulWidget {
   /// asking the user to say it twice.
   final bool autofocus;
 
+  /// Muted placeholder shown while the field is empty — what the field is
+  /// *for*, on fields whose surroundings do not already say.
+  final String? hint;
+
   const HouseTextField({
     super.key,
     required this.controller,
     this.width = 200,
     this.onSubmitted,
     this.autofocus = false,
+    this.hint,
   });
 
   @override
@@ -415,7 +420,17 @@ class _HouseTextFieldState extends State<HouseTextField> {
   final FocusNode _focus = FocusNode();
 
   @override
+  void initState() {
+    super.initState();
+    // The hint draws only while empty, so emptiness changing must redraw.
+    widget.controller.addListener(_changed);
+  }
+
+  void _changed() => setState(() {});
+
+  @override
   void dispose() {
+    widget.controller.removeListener(_changed);
     _focus.dispose();
     super.dispose();
   }
@@ -423,6 +438,7 @@ class _HouseTextFieldState extends State<HouseTextField> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    final hint = widget.hint;
     return Container(
       width: widget.width,
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
@@ -431,15 +447,74 @@ class _HouseTextFieldState extends State<HouseTextField> {
         borderRadius: BorderRadius.circular(t.tokens.controlRadius),
         border: Border.all(color: t.hairline),
       ),
-      child: EditableText(
-        controller: widget.controller,
-        focusNode: _focus,
-        autofocus: widget.autofocus,
-        style: t.bodyPrimary,
-        cursorColor: t.accent,
-        backgroundCursorColor: t.surface2,
-        selectionColor: t.accent.withValues(alpha: 0.5),
-        onSubmitted: widget.onSubmitted,
+      child: Stack(
+        children: [
+          if (hint != null && widget.controller.text.isEmpty)
+            Text(hint, style: t.body.copyWith(color: t.textMuted)),
+          EditableText(
+            controller: widget.controller,
+            focusNode: _focus,
+            autofocus: widget.autofocus,
+            style: t.bodyPrimary,
+            cursorColor: t.accent,
+            backgroundCursorColor: t.surface2,
+            selectionColor: t.accent.withValues(alpha: 0.5),
+            onSubmitted: widget.onSubmitted,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// A menu row that opens a submenu beside it (K-194).
+///
+/// The parent menu stays open underneath while the submenu is up — closing it
+/// first would take this row's `BuildContext` with it, and the overlay the
+/// submenu needs is reached *through* that context. Picking something in the
+/// submenu dismisses both.
+class SubmenuRow extends StatelessWidget {
+  final Widget child;
+
+  /// Closes the menu this row belongs to.
+  final VoidCallback closeParent;
+
+  /// Builds the submenu's surface. `dismiss` closes the submenu *and* the
+  /// parent, which is what picking an item means.
+  final Widget Function(VoidCallback dismiss) submenu;
+
+  const SubmenuRow({
+    super.key,
+    required this.child,
+    required this.closeParent,
+    required this.submenu,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Builder(
+      builder: (rowContext) => MenuRow(
+        onPressed: () {
+          final box = rowContext.findRenderObject();
+          if (box is! RenderBox) return;
+          // Beside the row, overlapping it slightly, the way a flyout sits.
+          final at = box.localToGlobal(Offset(box.size.width - 6, -4));
+          showLumitPopup<void>(
+            context: rowContext,
+            position: at,
+            builder: (close) => submenu(() {
+              close(null);
+              closeParent();
+            }),
+          );
+        },
+        child: Row(
+          children: [
+            Expanded(child: child),
+            Text('›', style: t.body.copyWith(color: t.textMuted)),
+          ],
+        ),
       ),
     );
   }

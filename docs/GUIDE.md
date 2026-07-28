@@ -1453,41 +1453,61 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   and behave identically wherever you meet them.
 - **Getting around the Timeline** — the panel is split into the **layer outline** on the left
   (the stack of names, stopwatches and toggles) and the **lane area** on the right (the time
-  ruler with each layer's bar on its own *lane*). Each bar wears its layer's identity colour:
-  a 3px tab on its left edge plus a very faint tint across the fill, so a tall stack reads at
-  a glance — footage is steel, sequences indigo, precomps plum, solids neutral grey, text
-  parchment, cameras dry gold. The colours are deliberately muted siblings, so the clay
-  selection colour still beats all of them. Drag a layer's bar body to slide it earlier
-  or later in time (one undo per drag). Every drag in the lane area — moving a bar, trimming
-  an edge, scrubbing the ruler — follows the cursor one-for-one at any zoom, and the small
-  "magnetic" pull towards nearby markers stays the same ~6 px on screen however far in you
-  are (both used to speed up with zoom, which felt like the timeline slipping out from under
-  the mouse); a twirled-open layer's keyframe diamonds line up under its bar at any zoom
-  too. The twirl — the little triangle at the far left of each layer row that opens
-  its property rows — is drawn at a readable size and brightens under the cursor, so it is
-  findable rather than a four-pixel smudge. Zoom the time ruler with **Alt + wheel** — it zooms
-  toward the cursor so the frame under the pointer stays put — and scroll it with **Shift +
-  wheel** (or a trackpad's horizontal wheel); a plain wheel scrolls the rows up and down. Along
-  the bottom of the lanes sits a small contained bar: `−`, `+` and **Fit** with the current
-  zoom per cent on the left, a **Grid** picker and a **magnet** toggle (on by default) that
-  governs whether a dragged keyframe snaps its time to the nearest whole frame — the magnet
-  shows in both the Layers and Graph views — the Layers/Graph view toggle on the right, and a
-  draggable horizontal scrollbar just above it (the vertical scrollbar stops above the bar so
-  the two never fight). Layers/Graph is only a change of what the lanes *draw* — the outline stays
-  identical between the two, so twirling a layer open shows the same rows either way.
+  ruler with each layer's bar on its own *lane*). Each bar wears its layer's **label
+  colour** — the same chip its outline swatch shows (K-189) — so a tall stack reads at a
+  glance and picking a new label recolours the bar. Drag a layer's bar body to slide it
+  earlier or later in time (one undo per drag); drag its ends to trim. A layer twirled
+  open shows its **keyframes as diamonds on the lanes**: drag a diamond to move that
+  keyframe in time, or drag a box on empty lane space to select the diamonds inside it.
+  Dragging never scrolls the timeline — the wheel and the scrollbars do: a plain wheel
+  moves the rows, **Shift + wheel** scrolls sideways, and **Ctrl + wheel** zooms time
+  around wherever the pointer is. The two halves scroll vertically **as one table**, with
+  the shared scrollbar on the lane side's far right (in Graph view each side gets its
+  own, and the outline keeps that strip reserved either way so the columns never jump).
+  Along the bottom of the lanes sits a small bar: `−`, `+` and **Fit** with the current
+  zoom per cent, the **magnet**, and the horizontal scrollbar that moves the view once
+  you are zoomed in. The magnet — on by default — is what makes a dragged keyframe land
+  on a whole frame; switch it off and a keyframe can sit between two frames, which is
+  occasionally what a fast move needs.
+  The Lane/Graph view buttons live in the Timeline's toolbar; Graph is only a change of
+  what the right side *draws* — the outline stays identical between the two, so twirling
+  a layer open shows the same rows either way.
 - **Working the layer outline** — a few habits from other editors now work the way you
-  would expect. The outline's switches sit in After Effects' five familiar clusters
-  (K-168), left to right: first the **eye, speaker, solo dot and padlock**; then a small
-  **label-colour chip**, the layer's **stack number** and its **name**; then the
-  **flow-or-collapse glyph, an fx bypass switch, motion blur and 3D**; then the **Matte
-  and Blend** dropdowns; and at the far right a **Parent** dropdown (the same
-  parent-and-inherit link the Effect Controls tab offers — pick another layer and this one
-  rides its transform). The padlock freezes a layer's *timing*: while locked, its bar
-  will not slide, its ends will not trim and it will not reorder in the stack — though its
-  values stay editable, since the lock exists to stop stray drags, not work. The label
-  chip cycles through eight theme colours with a click, purely for telling layers apart
-  in a tall stack; it changes nothing about the picture. A row of tiny icons sits over
-  the outline columns, level with the time ruler, naming each cluster at a glance. The
+  would expect. The outline's columns sit in **four groups** (K-188), left to right:
+  first the **eye, speaker, solo star, padlock and shy** switches; then the **twirl, a
+  small label-colour chip, the layer's stack number and its name**; then the
+  **flow-or-collapse glyph, an fx bypass switch, motion blur and 3D**; then the **Matte,
+  Blend and Parent** dropdowns (Parent is the same parent-and-inherit link the Effect
+  Controls tab offers — pick another layer and this one rides its transform). The row of
+  tiny icons over the columns names each group — and it is also a handle: **drag a
+  group's header to move the whole group**, which is how you reorder the columns, and
+  **drag the little line after a group to make it wider or narrower**. Only that group
+  changes; the others keep the width you gave them, so the whole layer area grows or
+  shrinks to suit. Whatever lives in a group grows with it — widen the switches group and
+  the value boxes under it widen to match, so a long number always has room.
+  **Drag a layer by its name** to move it up or down the stack — drop it on another
+  row and it takes that row's place, in one undo step. (Dragging its *bar*, over in the
+  lane area, moves it in time instead.)
+  **Clicking a property** (a Position, an effect's Radius, a Volume) selects it, and
+  everything it belongs to — its effect, its layer — lights up faintly behind it, so you
+  can see at a glance whose property you are looking at. That is also what the graph view
+  will use to know which curve you meant. The eye
+  and speaker swap to a closed eye and a muted speaker when off, so a hidden or silent
+  layer reads at a glance. **Shy** is list housekeeping borrowed from After Effects: mark
+  the layers you are done fiddling with as shy, press the shy filter in the Timeline's
+  toolbar, and they vanish from the *list* — never from the picture — until you press it
+  again. The padlock freezes a layer: while locked, its bar will not slide, its ends will
+  not trim, it will not rename, reorder or delete. The label chip opens a small
+  eight-colour picker, and the colour you pick is also the colour of the layer's **bar in
+  the lane area** — each kind of layer starts on its own bright chip (footage azure,
+  solids amber, precomps violet, text mint, cameras teal, sequences indigo, adjustments
+  magenta), so a fresh stack is tellable apart before you name anything. It changes
+  nothing about the picture itself. The toolbar above the columns shows the playhead twice —
+  as `HH:MM:SS:FF` timecode and as a plain frame count like `f72` (both start at zero,
+  so frame 0 is 00:00:00:00) — plus the layer search, and a **master motion blur**
+  button: the comp-wide shutter switch that decides whether the layers whose own motion
+  blur switch is on actually blur. The master is per comp — a nested comp inside a
+  Precomp layer has its own master and follows that one, not the parent's. The
   thin line between the
   outline and the lanes is a handle — drag it to widen or narrow the outline; if you drag
   it hard against a limit and keep pushing, it now waits for the cursor to travel back to
@@ -1609,9 +1629,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   whatever you select, so the tree beneath it no longer jumps around as you click between
   items; and when the selected item is footage it shows a small **thumbnail** of the frame on
   the left — reusing the very frame the Viewer already decoded rather than decoding a fresh
-  one, with a plain placeholder shown until a frame is to hand (UI-4, K-157). Drag footage
-  onto the Timeline or Viewer to make a layer; with no comp open yet, the composition dialogue
-  appears already filled in from that footage. Solids are proper assets now — one "White solid"
+  one, with a plain placeholder shown until a frame is to hand (UI-4, K-157). **Double-click
+  a composition to open it** in the Timeline; double-clicking anything else renames it where
+  it sits, and a comp is renamed from its right-click menu or its settings dialogue instead.
+  Drag footage onto the Timeline or Viewer to make a layer; with no comp open yet, dropping
+  it on the empty Timeline raises the composition dialogue already filled in from that
+  footage, and the clips land in the comp it makes. Solids are proper assets now — one "White solid"
   in the project can back fifty layers, and the first one you make creates a Solids
   folder that future solids follow even if you rename it or tuck it inside another
   folder (Lumit remembers the folder itself, not its name). Compositions do the same
@@ -1848,9 +1871,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   edges are single crisp 1px lines. The colours themselves (the clay accent, the cool grey
   family) are still Lumit's own — we borrowed the skeleton, not the skin.
   *(A note on the Settings window paragraphs below: they record the full design as the
-  egui shell shipped it. The Flutter Settings window carries a subset today — appearance,
-  UI scale, tooltips, the cache budget and the playback controls — and the remaining pages
-  are tracked in [TODO.md](TODO.md).)*
+  egui shell shipped it. The Flutter Settings window is now the same shape — a sidebar of
+  pages, grouped cards, a setting's name and a line about it on the left of each row and
+  its control on the right — but carries four pages rather than five: **General**,
+  **Appearance**, **Interface** and **Performance**. Export and Autosave have nothing
+  behind them on this frontend yet, and a page with no working controls would be a promise
+  the window cannot keep; they are tracked in [TODO.md](TODO.md).)*
   Five appearance controls live in the **Settings window** (K-098) — open it from
   **Window → Settings…** or **Ctrl/Cmd+comma**. That window is Lumit's application-settings
   surface, shaped like macOS's System Settings: a list of pages down the left (General,
@@ -3093,11 +3119,16 @@ composition (a "precomp") gets a fold-out triangle you can open to see the
 layers inside it, and so on down. Clicking a row picks that layer. (One honest
 limitation: the bridge does not yet tell us *which* composition a precomp layer
 points at, only that it is one, so we match it up by name for now — a later
-bridge version will carry the exact link.) The **Effect controls** panel shows
+bridge version will carry the exact link.) The **Effect controls** panel can show
 the picked layer's **Transform** values — its anchor point, position, scale,
 rotation and opacity — as editable number boxes in the same card style as the
 Settings window; typing or dragging a box sends the change straight to the
-engine as one undoable step. Those boxes now read the **current** values back
+engine as one undoable step. That card is **off unless you ask for it**
+(Settings → Interface), along with the layer's Source and Retime rows: the
+Timeline already shows all three when you twirl a layer open, and repeating
+them here pushed the effects — what the panel is actually for — a screen
+further down. The **Add effect** button drops its menu underneath itself, one
+row per category, each opening onto the effects in it. Those boxes now read the **current** values back
 from the engine (the em-dash placeholder is gone), each row carries a stopwatch
 to start or stop animating that value and a ◄ ◆ ► navigator to step between or
 add and remove its keyframes, and below the transform sits the layer's stack of
@@ -3807,3 +3838,29 @@ decode and composite, not the two added together. There is no shared state to
 fight over: the decode thread has its own decoders, and the hand-off is a
 one-way delivery of finished pixels. A stop or seek marks everything in flight
 as unwanted, and late deliveries are dropped on arrival.
+
+**The bottom strip tells you where you stand.** The thin bar under the panels
+now answers three quiet questions at a glance. On the left, whether your work
+is on disk: the document store stamps every committed change with a running
+revision number, a save records which revision it wrote, and "Unsaved changes"
+simply means the two no longer agree — which is why undoing back to how things
+looked still reads as unsaved: only a save proves the file matches. (A brand
+new, untouched project says "Not saved yet" instead, because there is nothing
+to lose.) Next to that sits the cache meter — how full the rendered-frame
+store is, with the exact megabytes beside it; clicking it empties the store.
+And after that comes the notice area: one line of feedback at a time ("Saved
+to…", or "Could not open…" in the warning tint for a genuine error), each with
+a × to dismiss it. Notices live in the frontend for now — the engine has no
+message stream of its own yet — so only things the interface itself does can
+post one.
+
+**One clock face for every length.** Durations and positions read as
+`HH:MM:SS:FF` timecode everywhere — the Viewer's readout, the Project panel's
+info header, the Composition settings duration box — from one tiny shared
+module (`state/timecode.dart`), so a length can never print two different ways
+in two panels. The `FF` part is "frames past the last whole second", counted
+at the rate rounded up (29.97 fps counts thirty to the second, as every
+editor does), and the field grows with the rate: a 600 fps comp counts to
+`:599`, so it gets three digits. Typing a timecode into the duration box is
+read at the rate typed above it and converted to exact seconds before it is
+stored — the document itself never stores a frame count (K-180).

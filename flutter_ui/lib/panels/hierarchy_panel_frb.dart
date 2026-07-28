@@ -96,8 +96,8 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
         name: info.name,
         kind: kind,
         depth: depth,
-        selected: ui.selectedLayer.value?.internallayerId ==
-            layer.internallayerId,
+        selected:
+            ui.selectedLayer.value?.internallayerId == layer.internallayerId,
         expandable: nested != null,
         open: open,
         onTap: () => setState(() => ui.selectedLayer.value = layer),
@@ -184,8 +184,7 @@ class _HierarchyRow extends StatelessWidget {
             lumitIcon(iconForKind(kind), size: 12, color: t.textMuted),
             const SizedBox(width: 6),
             Expanded(
-              child:
-                  Text(name, style: t.body, overflow: TextOverflow.ellipsis),
+              child: Text(name, style: t.body, overflow: TextOverflow.ellipsis),
             ),
             if (expandable)
               Text('precomp', style: t.small.copyWith(color: t.textMuted)),

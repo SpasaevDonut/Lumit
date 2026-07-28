@@ -477,6 +477,48 @@ fn save_reports_its_path_and_refuses_to_guess_one() {
     std::fs::remove_dir_all(&dir).ok();
 }
 
+/// The status bar's saved/unsaved readout. Fails without `saved_revision`
+/// being stamped on save.
+#[test]
+fn is_dirty_tracks_edits_saves_and_undo() {
+    let (project, ..) = project_with_folder();
+    // project_with_folder commits its seed items, so the project starts dirty
+    // relative to "never saved" — which is the honest answer.
+    assert!(
+        project.is_dirty().expect("dirty"),
+        "unsaved edits are dirty"
+    );
+
+    let dir = std::env::temp_dir().join("lumit-dirty-probe");
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let target = dir.join("probe.lum");
+    project
+        .save(target.to_string_lossy().into_owned())
+        .expect("saved");
+    assert!(
+        !project.is_dirty().expect("dirty"),
+        "a save cleans the flag"
+    );
+
+    project.new_composition("Scene".into(), None).expect("comp");
+    assert!(
+        project.is_dirty().expect("dirty"),
+        "an edit dirties it again"
+    );
+
+    project.save(String::new()).expect("saved in place");
+    assert!(!project.is_dirty().expect("dirty"));
+
+    // An undo moves the revision too: only a save proves the file matches.
+    project.undo().expect("undone");
+    assert!(
+        project.is_dirty().expect("dirty"),
+        "undo after save is dirty"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 /// The menu bar greys Undo and Redo from this, so it has to track the store.
 #[test]
 fn history_reports_what_undo_and_redo_can_do() {
@@ -1393,6 +1435,7 @@ fn the_switches_are_independent_and_each_is_one_undo_step() {
         S::Fx,
         S::MotionBlur,
         S::Collapse,
+        S::Shy,
     ] {
         let start = layer.get_switches().expect("switches");
         let now = match switch {
@@ -1404,6 +1447,7 @@ fn the_switches_are_independent_and_each_is_one_undo_step() {
             S::Fx => start.fx,
             S::MotionBlur => start.motion_blur,
             S::Collapse => start.collapse,
+            S::Shy => start.shy,
         };
         layer.set_switch(switch, !now).expect("toggled");
         assert_ne!(
@@ -1418,6 +1462,35 @@ fn the_switches_are_independent_and_each_is_one_undo_step() {
             "{switch:?} undid cleanly"
         );
     }
+}
+
+/// The comp's master motion-blur shutter (K-120): the read model reports it,
+/// the setter flips only the enable — angle, phase and samples keep their
+/// values — and the flip is one undo step.
+#[test]
+fn the_master_motion_blur_toggle_flips_only_the_enable() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = add_comp(&project, "Scene");
+
+    assert!(
+        !comp.get_model().expect("model").motion_blur_enabled,
+        "the master starts off"
+    );
+
+    comp.set_motion_blur_enabled(true).expect("enabled");
+    assert!(comp.get_model().expect("model").motion_blur_enabled);
+    let mb = comp.composition().expect("comp").motion_blur;
+    assert_eq!(
+        (mb.shutter_angle, mb.shutter_phase, mb.samples),
+        (180.0, -90.0, 16),
+        "the shutter shape kept its defaults"
+    );
+
+    project.undo().expect("undone");
+    assert!(
+        !comp.get_model().expect("model").motion_blur_enabled,
+        "one undo step turned it back off"
+    );
 }
 
 /// A span is one op even when the drag moved all three edges — a slip edit
@@ -2612,10 +2685,16 @@ fn rename_label_and_matte_each_undo_in_one_step() {
         "one undo step returns the old name"
     );
 
+    // A solid starts on its kind's default label (K-188), not on 0.
+    let default_label = layer.get_info().expect("info").label;
+    assert_eq!(
+        default_label, 2,
+        "a solid's default label is the solid chip"
+    );
     layer.set_label(5).expect("labelled");
     assert_eq!(layer.get_info().expect("info").label, 5);
     project.undo().expect("undo label");
-    assert_eq!(layer.get_info().expect("info").label, 0);
+    assert_eq!(layer.get_info().expect("info").label, default_label);
 
     layer
         .set_matte(Some(BridgeMatte {

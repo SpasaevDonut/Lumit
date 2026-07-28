@@ -8,10 +8,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/viewer_layer_map.dart';
 
 void expectOffset(Offset a, Offset b, {double eps = 1e-9}) {
-  expect((a.dx - b.dx).abs() < eps, isTrue,
-      reason: 'dx: ${a.dx} vs ${b.dx}');
-  expect((a.dy - b.dy).abs() < eps, isTrue,
-      reason: 'dy: ${a.dy} vs ${b.dy}');
+  expect((a.dx - b.dx).abs() < eps, isTrue, reason: 'dx: ${a.dx} vs ${b.dx}');
+  expect((a.dy - b.dy).abs() < eps, isTrue, reason: 'dy: ${a.dy} vs ${b.dy}');
 }
 
 void main() {

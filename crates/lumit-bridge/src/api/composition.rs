@@ -69,6 +69,14 @@ pub struct BridgeCompModel {
     /// The comp's rate as a plain number, for panels that map seconds to
     /// pixels (the waveform lane) without a bridge call per paint.
     pub fps: f64,
+    /// The exact rate, for the Timeline's timecode readout: 29.97 must count
+    /// 30 frames a second, which a double cannot say (docs/14 §2).
+    pub fps_num: u32,
+    pub fps_den: u32,
+    /// The comp's master motion-blur shutter (K-120): whether layers with
+    /// their own motion-blur switch actually blur. Drawn by the Timeline's
+    /// master button; written through `set_motion_blur_enabled`.
+    pub motion_blur_enabled: bool,
     pub layers: Vec<BridgeLayerEntry>,
 }
 
@@ -258,6 +266,9 @@ impl CompositionReference {
                 .frame_rate
                 .frame_at(lumit_core::time::CompTime(comp.duration.0)),
             fps: comp.frame_rate.fps(),
+            fps_num: comp.frame_rate.num(),
+            fps_den: comp.frame_rate.den(),
+            motion_blur_enabled: comp.motion_blur.enabled,
             layers: comp
                 .layers
                 .iter()
@@ -296,6 +307,26 @@ impl CompositionReference {
                 frame_rate,
                 duration,
                 background: comp.background,
+            })
+            .map_err(BridgeError::OpError)?;
+        Ok(())
+    }
+
+    /// Turn the comp's master motion-blur shutter on or off (K-120), keeping
+    /// the shutter's angle, phase and sample count as they are. One op, one
+    /// undo step — the Timeline's master button.
+    #[frb(sync)]
+    pub fn set_motion_blur_enabled(&self, on: bool) -> Result<(), BridgeError> {
+        let comp = self.composition()?;
+        let proj = self.project()?;
+        let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+        proj.store
+            .commit(lumit_core::Op::SetCompMotionBlur {
+                comp: self.id,
+                motion_blur: lumit_core::model::MotionBlur {
+                    enabled: on,
+                    ..comp.motion_blur
+                },
             })
             .map_err(BridgeError::OpError)?;
         Ok(())

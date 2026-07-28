@@ -32,7 +32,9 @@ void main() {
     }
   });
 
-  test('scheme mode matches built theme and is light for the three light schemes only', () {
+  test(
+      'scheme mode matches built theme and is light for the three light schemes only',
+      () {
     const lightSchemes = [
       LumitColorScheme.light,
       LumitColorScheme.gruvboxLight,
@@ -57,7 +59,8 @@ void main() {
     }
   });
 
-  test('with_accent hover shift direction differs by mode (Rust test values)', () {
+  test('with_accent hover shift direction differs by mode (Rust test values)',
+      () {
     const rgb = Color(0xff804060);
     final dark = LumitTheme.dark().withAccent(rgb);
     expect(r(dark.accentHover), 0x92);
@@ -105,11 +108,13 @@ void main() {
     expect(b(gruvLight.accent), 0x03);
   });
 
-  test('label colours cycle over the eight role chips', () {
+  test('label colours cycle over eight distinct chips', () {
     final t = LumitTheme.dark();
-    expect(t.labelColour(0), t.textMuted);
-    expect(t.labelColour(1), t.accent);
-    expect(t.labelColour(8), t.textMuted);
+    // A dedicated bright palette (K-189), not the theme's role colours: the
+    // chips colour the lane bars, so they must be tellable apart.
+    final chips = {for (var i = 0; i < 8; i++) t.labelColour(i)};
+    expect(chips, hasLength(8), reason: 'no two chips share a colour');
+    expect(t.labelColour(8), t.labelColour(0), reason: 'the palette cycles');
   });
 
   test('animation levels map to the documented durations', () {

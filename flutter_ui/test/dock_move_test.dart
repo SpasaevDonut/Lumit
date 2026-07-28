@@ -53,8 +53,8 @@ void main() {
     movePanel(root, Panel.scopes, Panel.viewer, DropPosition.stack);
 
     final tabs = root.children[0] as DockTabs;
-    expect([for (final c in tabs.children) c.panel],
-        [Panel.viewer, Panel.scopes]);
+    expect(
+        [for (final c in tabs.children) c.panel], [Panel.viewer, Panel.scopes]);
     expect(tabs.active, 1, reason: 'the dragged tab is fronted');
     // Scopes left its old slot; the split is now Viewer-group + Timeline.
     expect(root.children.length, 2);

@@ -115,7 +115,6 @@ void main() {
       expect(p.uiState.playheadFrame.value, greaterThan(0),
           reason: 'the engine chose frames and the playhead followed them');
 
-
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
       expect(p.uiState.playing.value, isFalse);

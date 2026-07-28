@@ -25,6 +25,12 @@ void main() {
     }
 
     Future<void> mount(WidgetTester tester, dynamic p) async {
+      // The Transform card is off by default (K-193); this file asserts it
+      // sits beside the Source card, so it asks for it.
+      (p.uiState as LumitUiState)
+          .workspace
+          .interface
+          .transformInEffectControls = true;
       await tester.pumpWidget(hostPanel(
         child: const EffectControlsPanelFrb(),
         state: p.state as LumitState,
@@ -84,7 +90,8 @@ void main() {
       await mount(tester, p);
 
       expect(find.byKey(const ValueKey('src-solid-colour')), findsOneWidget);
-      expect(find.textContaining('every layer using it changes'), findsOneWidget,
+      expect(
+          find.textContaining('every layer using it changes'), findsOneWidget,
           reason: 'the row warns that this is not a per-layer setting');
 
       await tester.tap(find.byKey(const ValueKey('src-solid-width')));
@@ -112,8 +119,7 @@ void main() {
     testWidgets('a footage layer retimes, and a ramp refuses a single speed',
         (tester) async {
       final p = withComp();
-      final footage =
-          p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
       p.comp.addFootageLayer(footage: footage);
       final layer = p.comp.getLayers().single;
       p.uiState.selectedLayer.value = layer;

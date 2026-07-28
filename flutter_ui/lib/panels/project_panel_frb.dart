@@ -1,12 +1,16 @@
 // The Project panel, on the flutter_rust_bridge API — the first full panel port.
 //
-// One row per document item, folders nesting their children. A click selects; a
-// second click on the selected row renames it in place; a double-click opens a
-// composition or places a footage item into the front comp; a right-click raises
-// the project menu; a footage row is draggable onto the Timeline. Missing footage
-// wears a badge with an inline Relink… button, and a "show only missing" toggle
-// appears in the header while anything is missing. Footage rows show a decoded
-// thumbnail in place of their type glyph.
+// Top to bottom: a search field that filters the tree live, an info header
+// reading out the selected item (thumbnail, dimensions, rate, length), the
+// Import / New composition glyph buttons, then one row per document item with
+// folders nesting their children. A click selects the instant the button goes
+// down; a click on the lone selected row renames it in place immediately —
+// which makes a double-click "select, then rename" in one motion; a
+// right-click raises the project menu; footage and comp rows drag onto the
+// Timeline (a comp lands as a Precomp layer); double-clicking empty space
+// imports. Missing footage wears a badge with an inline Relink… button, and a
+// "show only missing" toggle appears while anything is missing. Rows carry
+// their type glyph; the decoded thumbnail lives in the info header.
 //
 // **What changed from the v0 panel, and why it is shorter.** v0 read one big
 // snapshot, mirrored it into `BridgeItem` trees, and addressed every edit by UUID
@@ -15,11 +19,13 @@
 // there is no snapshot to diff, no mirror class to keep in step, and no id
 // lookup. The thumbnail is the clearest case — v0 needed an isolate, a wire
 // protocol and a generation map to keep a cold FFmpeg decode off the UI thread;
-// `FootageReference.thumbnail` is simply async, so `FutureBuilder` does it.
+// `FootageReference.thumbnail` is simply async, decoded once per item into a
+// RAM cache the info header draws from.
 
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
@@ -32,12 +38,13 @@ import '../icons/icons.dart';
 import '../state/drag_payloads.dart';
 import '../shell/comp_settings_frb.dart';
 import '../state/file_dialogs.dart';
+import '../state/timecode.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
-/// The longer edge a row thumbnail is decoded at: ~28 logical px at 2× for
-/// crispness on a high-DPI display.
-const int _thumbMaxEdge = 56;
+/// The longer edge the info header's thumbnail is decoded at: ~64 logical px
+/// at 2× for crispness on a high-DPI display.
+const int _thumbMaxEdge = 128;
 
 /// What a click on a row does to the selection.
 enum SelectMode {
@@ -90,6 +97,10 @@ class ProjectPanelFrb extends StatefulWidget {
 class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
   bool _missingOnly = false;
 
+  /// The live search needle (docs/07 §3.1): lowercase, empty means "show all".
+  final TextEditingController _searchController = TextEditingController();
+  String _search = '';
+
   StreamSubscription<ScopedChange>? _changes;
 
   @override
@@ -112,11 +123,17 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     _changes = state.onChange.listen((event) {
       if (event.items) _documentChanged();
     });
+    _searchController.addListener(() {
+      final needle = _searchController.text.trim().toLowerCase();
+      if (needle != _search) setState(() => _search = needle);
+    });
   }
 
   @override
   void dispose() {
     _changes?.cancel();
+    _searchController.dispose();
+    _dropThumbs();
     super.dispose();
   }
 
@@ -142,6 +159,20 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
   /// The footage handle behind each row, so a drag can carry the whole selection
   /// without walking the tree again. Rebuilt with the rows.
   final Map<String, FootageReference> _footageById = {};
+
+  /// Every item drawn this build, by id — what the info header looks the
+  /// anchor up in. Rebuilt with the rows.
+  final Map<String, ItemReference> _itemById = {};
+
+  /// Decoded media facts per footage id, for the info header's readout.
+  /// Cached because `mediaInfo` probes the file; cleared with the epoch.
+  final Map<String, BridgeMediaInfo?> _mediaInfo = {};
+
+  /// Decoded poster frames by footage id, held in RAM for the session so the
+  /// info header never re-decodes for a selection change. A null entry claims
+  /// the slot while the decode is in flight (or records that the item has no
+  /// picture to give). Cleared — and every image disposed — with the epoch.
+  final Map<String, ui.Image?> _thumbs = {};
 
   /// The selected footage, in the order the panel lists it. Anything selected
   /// that is not footage — a folder, a comp — is simply not part of a drag.
@@ -209,6 +240,9 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          _searchBar(t),
+          _infoHeader(t),
+          _toolbar(t),
           Expanded(
             child: _importOnDoubleTap(
               child: Center(
@@ -223,7 +257,6 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
               ),
             ),
           ),
-          _footer(t),
         ],
       );
     }
@@ -237,19 +270,31 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
 
     final rows = <Widget>[];
     _visibleIds.clear();
-    void walk(ItemReference item, int depth) {
+
+    // A row shows when its own name matches, or an ancestor folder's did —
+    // searching a folder finds what it holds (docs/07 §3.1). Missing-only is
+    // stricter: it is never widened by a folder name, so every visible row is
+    // something to fix (docs/07 §3.3).
+    void walk(ItemReference item, int depth, bool ancestorMatched) {
       final id = _idOf(item);
+      _itemById[id] = item;
+      final name = _nameOf(item);
+      final ownMatch = _search.isEmpty || name.toLowerCase().contains(_search);
+      final selfMatched = ancestorMatched || ownMatch;
       final isMissingFootage =
           item is ItemReference_Footage && (_missing[id] ?? false);
-      // In missing-only mode every visible row is something to fix (docs/07 §3.3).
-      if (!missingOnly || isMissingFootage) {
+      final searchHit = selfMatched ||
+          (item is ItemReference_Folder && _subtreeMatches(item));
+      // Missing-only is matched on the row's own name alone (docs/07 §3.3).
+      final show = missingOnly ? isMissingFootage && ownMatch : searchHit;
+      if (show) {
         _visibleIds.add(id);
         rows.add(_ProjectRowFrb(
           key: ValueKey<String>('project-row-$id'),
           item: item,
+          name: name,
           depth: depth,
           missing: isMissingFootage,
-          epoch: _epoch,
           selected: _selectedIds.contains(id),
           renaming: _renamingId == id,
           selectionCount: _selectedIds.length,
@@ -264,28 +309,38 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
       }
       if (item case ItemReference_Footage(:final field0)) {
         _footageById[id] = field0;
+        // Decoded ahead of selection and held in RAM, so the info header
+        // shows the picture and the facts the instant a row is clicked.
+        // Poster frames are ~48 px, so even a large project holds
+        // kilobytes, not megabytes.
+        _refreshThumb(field0);
+        _refreshMediaInfo(field0);
       }
       if (item is ItemReference_Folder) {
         for (final child in item.field0.getChildren()) {
-          walk(child, depth + 1);
+          walk(child, depth + 1, selfMatched);
         }
       }
     }
 
     _footageById.clear();
+    _itemById.clear();
     for (final item in roots) {
-      walk(item, 0);
+      walk(item, 0, false);
     }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _searchBar(t),
+        _infoHeader(t),
         if (anyMissing)
           _MissingHeaderFrb(
             count: _missing.values.where((m) => m).length,
             active: missingOnly,
             onToggle: () => setState(() => _missingOnly = !_missingOnly),
           ),
+        _toolbar(t),
         Expanded(
           // Wrapping the list rather than sitting behind it: a sibling under a
           // ListView never sees a pointer, because the list is opaque across
@@ -298,10 +353,30 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
             ),
           ),
         ),
-        _footer(t),
       ],
     );
   }
+
+  /// Whether anything under this folder matches the needle, so a folder that
+  /// holds a hit stays visible as the path to it.
+  bool _subtreeMatches(ItemReference_Folder folder) {
+    if (_search.isEmpty) return true;
+    for (final child in folder.field0.getChildren()) {
+      if (_nameOf(child).toLowerCase().contains(_search)) return true;
+      if (child is ItemReference_Folder && _subtreeMatches(child)) return true;
+    }
+    return false;
+  }
+
+  Widget _searchBar(LumitTheme t) => Padding(
+        padding: const EdgeInsets.all(6),
+        child: HouseTextField(
+          key: const ValueKey('project-search'),
+          controller: _searchController,
+          width: double.infinity,
+          hint: 'Search project',
+        ),
+      );
 
   /// Double-clicking the panel's blank space imports, which is the gesture
   /// every editor has and the one people reach for before finding a menu.
@@ -312,51 +387,206 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
         child: child,
       );
 
-  /// Import and New composition, where the Project panel can reach them.
+  /// Import and New composition as glyph buttons above the tree, where the
+  /// egui panel kept them.
   ///
   /// They are on the menu bar too, and that is not duplication worth removing:
   /// the panel is where you are looking when you want them, and a panel that
   /// can only show what someone else put in it is a dead end.
-  Widget _footer(LumitTheme t) => Container(
+  Widget _toolbar(LumitTheme t) => Container(
         height: 24,
-        color: t.surface1,
         padding: const EdgeInsets.symmetric(horizontal: 6),
-        // Scrolls rather than overflowing — this panel is often docked narrow.
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              HouseButton(
+        decoration: BoxDecoration(
+          border: Border(top: BorderSide(color: t.hairline)),
+        ),
+        child: Row(
+          children: [
+            LumitTooltip(
+              message: 'Import footage',
+              child: HouseButton(
                 key: const ValueKey('project-import'),
                 small: true,
                 frameless: true,
                 onPressed: _import,
-                child: Text('Import…', style: t.small),
+                child:
+                    lumitIcon(LumitIcon.folder, size: 14, color: t.textMuted),
               ),
-              const SizedBox(width: 6),
-              // Footage dropped here makes a comp that matches it (docs/07 §3.1)
-              // — the same dialog the button opens, with the media's own size,
-              // rate and length already filled in, and every dropped item landing
-              // in the finished comp as a layer.
-              DragTarget<FootageDragData>(
-                onAcceptWithDetails: (d) => _newComposition(d.data.footage),
-                builder: (context, candidate, _) => Container(
-                  foregroundDecoration: candidate.isEmpty
-                      ? null
-                      : BoxDecoration(border: Border.all(color: t.accent)),
+            ),
+            const SizedBox(width: 4),
+            // Footage dropped here makes a comp that matches it (docs/07 §3.1)
+            // — the same dialog the button opens, with the media's own size,
+            // rate and length already filled in, and every dropped item landing
+            // in the finished comp as a layer.
+            DragTarget<FootageDragData>(
+              onAcceptWithDetails: (d) => _newComposition(d.data.footage),
+              builder: (context, candidate, _) => Container(
+                foregroundDecoration: candidate.isEmpty
+                    ? null
+                    : BoxDecoration(border: Border.all(color: t.accent)),
+                child: LumitTooltip(
+                  message: 'New composition',
                   child: HouseButton(
                     key: const ValueKey('project-new-comp'),
                     small: true,
                     frameless: true,
                     onPressed: _newComposition,
-                    child: Text('New composition', style: t.small),
+                    child:
+                        lumitIcon(LumitIcon.comp, size: 14, color: t.textMuted),
                   ),
                 ),
               ),
+            ),
+          ],
+        ),
+      );
+
+  /// The height the info header always occupies: a 36px thumbnail plus its
+  /// padding. Constant whether or not anything is selected, so the tree below
+  /// never jumps when the selection changes.
+  static const double _infoHeaderHeight = 48;
+
+  /// The selected item's readout (docs/07 §3.1): thumbnail, name, type, and
+  /// the item's own vital statistics. Always present at a fixed height; with
+  /// nothing selected it is simply quiet.
+  Widget _infoHeader(LumitTheme t) {
+    final id = _anchorId;
+    final item = id != null && _selectedIds.contains(id) ? _itemById[id] : null;
+
+    return SizedBox(
+      height: _infoHeaderHeight,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
+        child: item == null || id == null
+            ? const SizedBox.expand()
+            : _infoHeaderContent(t, item, id),
+      ),
+    );
+  }
+
+  Widget _infoHeaderContent(LumitTheme t, ItemReference item, String id) {
+    final missing = item is ItemReference_Footage && (_missing[id] ?? false);
+    final type = switch (item) {
+      ItemReference_Footage() => 'footage',
+      ItemReference_Folder() => 'folder',
+      ItemReference_Composition() => 'composition',
+      ItemReference_Solid() => 'solid',
+    };
+
+    Widget? thumb;
+    if (item case ItemReference_Footage() when !missing) {
+      // The picture comes straight from the RAM cache the walk prefilled, so
+      // switching the selection redraws it in the same frame.
+      final image = _thumbs[id];
+      thumb = SizedBox(
+        width: 64,
+        height: 36,
+        child: image == null
+            ? Center(
+                child: lumitIcon(LumitIcon.footage,
+                    size: 14, color: t.layer.footage))
+            : ClipRRect(
+                borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+                child: Container(
+                  color: t.surface0,
+                  child: RawImage(image: image, fit: BoxFit.contain),
+                ),
+              ),
+      );
+    }
+
+    return Row(
+      key: const ValueKey('project-info-header'),
+      children: [
+        if (thumb != null) ...[thumb, const SizedBox(width: 8)],
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Flexible(
+                    child: Text(_nameOf(item),
+                        style: t.bodyPrimary, overflow: TextOverflow.ellipsis),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(type, style: t.small.copyWith(color: t.textMuted)),
+                ],
+              ),
+              _infoLine(t, item, id, missing),
             ],
           ),
         ),
-      );
+      ],
+    );
+  }
+
+  /// The header's second line: the facts this item can truthfully state. The
+  /// length reads as `HH:MM:SS:FF` timecode at the item's own rate — the same
+  /// clock face the Viewer shows — never as a bare frame count.
+  Widget _infoLine(LumitTheme t, ItemReference item, String id, bool missing) {
+    String? line;
+    switch (item) {
+      case ItemReference_Footage():
+        if (missing) {
+          return Text('missing', style: t.small.copyWith(color: t.warning));
+        }
+        final info = _mediaInfo[id];
+        if (info != null) {
+          final fps = info.fpsDen == 0 ? 0.0 : info.fpsNum / info.fpsDen;
+          final seconds = info.duration.den == 0
+              ? 0.0
+              : info.duration.num / info.duration.den;
+          final frames = (seconds * fps).round();
+          // Audio has no frames worth counting, so its last field is
+          // milliseconds rather than a frame number.
+          line = info.width > 0
+              ? '${info.width}×${info.height} · ${fps.toStringAsFixed(2)} fps'
+                  ' · ${timecodeOfRate(frames, info.fpsNum, info.fpsDen)}'
+              : 'audio · ${timecodeOfSecondsMs(seconds)}';
+        }
+      case ItemReference_Composition(:final field0):
+        final s = field0.getSettings();
+        final fps = s.fpsDen == 0 ? 0.0 : s.fpsNum / s.fpsDen;
+        final frames = field0.durationFrames();
+        line = '${s.width}×${s.height} · ${fps.toStringAsFixed(2)} fps'
+            ' · ${timecodeOfRate(frames, s.fpsNum, s.fpsDen)}';
+      case ItemReference_Folder(:final field0):
+        final count = field0.getChildren().length;
+        line = '$count item${count == 1 ? '' : 's'}';
+      case ItemReference_Solid():
+        break;
+    }
+    if (line == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 1),
+      child: Text(line,
+          key: const ValueKey('project-info-line'),
+          style: t.small.copyWith(color: t.textMuted),
+          overflow: TextOverflow.ellipsis),
+    );
+  }
+
+  /// Fill in a footage item's media facts, off the build.
+  void _refreshMediaInfo(FootageReference footage) {
+    final id = footage.internalid.toString();
+    if (_mediaInfo.containsKey(id)) return;
+    // Claim the slot first, so a rebuild mid-probe does not probe twice.
+    _mediaInfo[id] = null;
+    footage.mediaInfo().then((info) {
+      if (!mounted || info == null) return;
+      setState(() => _mediaInfo[id] = info);
+    });
+  }
+
+  /// An item's name, calm when it was deleted from under the panel.
+  String _nameOf(ItemReference item) {
+    try {
+      return item.name();
+    } catch (_) {
+      return '';
+    }
+  }
 
   Future<void> _import() async {
     final state = Provider.of<LumitState>(context, listen: false);
@@ -385,6 +615,41 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
     setState(() {
       _epoch++;
       _missing.clear();
+      _mediaInfo.clear();
+      _dropThumbs();
+    });
+  }
+
+  void _dropThumbs() {
+    for (final image in _thumbs.values) {
+      image?.dispose();
+    }
+    _thumbs.clear();
+  }
+
+  /// Decode a footage item's poster frame into the RAM cache, off the build.
+  void _refreshThumb(FootageReference footage) {
+    final id = footage.internalid.toString();
+    if (_thumbs.containsKey(id)) return;
+    // Claim the slot first, so a rebuild mid-decode does not decode twice.
+    _thumbs[id] = null;
+    final epoch = _epoch;
+    footage.thumbnail(maxEdge: _thumbMaxEdge).then((frame) {
+      if (!mounted || epoch != _epoch) return;
+      if (frame == null || frame.width == 0 || frame.height == 0) return;
+      ui.decodeImageFromPixels(
+        frame.rgba,
+        frame.width,
+        frame.height,
+        ui.PixelFormat.rgba8888,
+        (image) {
+          if (!mounted || epoch != _epoch) {
+            image.dispose();
+            return;
+          }
+          setState(() => _thumbs[id] = image);
+        },
+      );
     });
   }
 
@@ -477,9 +742,13 @@ class _MissingHeaderFrb extends StatelessWidget {
 /// One Project panel row.
 class _ProjectRowFrb extends StatefulWidget {
   final ItemReference item;
+
+  /// The item's name, read once by the panel's walk. Passed in rather than
+  /// fetched here because this row rebuilds on every hover flicker, and a
+  /// bridge call per hover was exactly the chatter Airyzz measured.
+  final String name;
   final int depth;
   final bool missing;
-  final int epoch;
   final bool selected;
   final bool renaming;
 
@@ -503,9 +772,9 @@ class _ProjectRowFrb extends StatefulWidget {
   const _ProjectRowFrb({
     super.key,
     required this.item,
+    required this.name,
     required this.depth,
     required this.missing,
-    required this.epoch,
     required this.selected,
     required this.renaming,
     required this.selectionCount,
@@ -540,23 +809,14 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
   void didUpdateWidget(_ProjectRowFrb old) {
     super.didUpdateWidget(old);
     if (widget.renaming && !old.renaming) {
-      _rename = TextEditingController(text: _name());
+      _rename = TextEditingController(text: widget.name);
       _renameFocus.requestFocus();
-    }
-  }
-
-  String _name() {
-    try {
-      return item.name();
-    } catch (_) {
-      // The item was deleted from under us; the row is about to go anyway.
-      return '';
     }
   }
 
   void _commitRename() {
     final text = _rename?.text.trim() ?? '';
-    if (text.isNotEmpty && text != _name()) {
+    if (text.isNotEmpty && text != widget.name) {
       item.rename(name: text);
       widget.onLocalEdit();
     }
@@ -565,41 +825,61 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
     widget.onEndRename();
   }
 
-  /// A second click on the already-selected row starts an in-place rename — the
-  /// AE click-to-rename-when-selected gesture. Held modifiers mean the click is
-  /// about the *selection*, so they never start a rename, and neither does a
-  /// click on a row that is one of several selected: renaming one row of four is
-  /// not what that click asked for.
-  void _handleTap() {
+  /// Whether this row was already selected when the pointer went down — what
+  /// decides, at mouse-up, between renaming and collapsing the selection.
+  bool _wasSelectedAtDown = false;
+
+  /// The click in flight: where it started, whether it wandered past the
+  /// touch slop (a drag, not a click), and whether it was the primary button.
+  Offset _downAt = Offset.zero;
+  bool _dragged = false;
+  bool _primaryDown = false;
+
+  /// Selection happens on pointer DOWN, not on the resolved tap: the tap
+  /// gesture waits out the double-click window and the drag arena, which read
+  /// as the panel lagging behind the mouse. The one case that must wait is a
+  /// plain press on an already-selected row — collapsing a multi-selection on
+  /// the down stroke would make dragging that selection impossible.
+  void _handlePointerDown(PointerDownEvent event) {
+    if (event.buttons != kPrimaryButton) return;
+    _primaryDown = true;
+    _downAt = event.position;
+    _dragged = false;
+    _wasSelectedAtDown = widget.selected;
     final mode = _selectModeFromKeyboard();
-    if (mode == SelectMode.replace &&
-        widget.selected &&
-        widget.selectionCount <= 1 &&
-        !widget.renaming) {
-      widget.onStartRename();
-      return;
-    }
+    if (mode == SelectMode.replace && widget.selected) return;
     widget.onSelect(mode);
   }
 
-  void _handleDoubleTap() {
-    final uiState = Provider.of<LumitUiState>(context, listen: false);
-    switch (item) {
-      case ItemReference_Composition(:final field0):
-        uiState.setSelectedComp(field0);
-      case ItemReference_Footage(:final field0):
-        _placeIntoFrontComp(uiState, field0);
-      case ItemReference_Folder():
-      case ItemReference_Solid():
-        break;
-    }
+  void _handlePointerMove(PointerMoveEvent event) {
+    if ((event.position - _downAt).distance > kTouchSlop) _dragged = true;
   }
 
-  void _placeIntoFrontComp(LumitUiState uiState, FootageReference footage) {
-    final comp = uiState.selectedComp;
-    if (comp == null) return;
-    comp.addFootageLayer(footage: footage);
-    widget.onLocalEdit();
+  /// The click, resolved on the raw pointer UP rather than through the
+  /// gesture arena — the arena waits out the empty-area double-tap window,
+  /// which is exactly the lag being avoided. A second click on the lone
+  /// selected row *opens* it: a composition fronts in the Timeline, anything
+  /// else renames in place. The second click of a double-click, or any later
+  /// click, both land here. A plain click on one row of a multi-selection
+  /// collapses the selection to it.
+  void _handlePointerUp(PointerUpEvent event) {
+    if (!_primaryDown) return;
+    _primaryDown = false;
+    if (_dragged || !_wasSelectedAtDown) return;
+    if (_selectModeFromKeyboard() != SelectMode.replace) return;
+    if (widget.selectionCount <= 1 && !widget.renaming) {
+      // Double-clicking a comp opens it, which is what it means in every
+      // editor — so a comp is renamed from its context menu or its settings
+      // dialogue instead, never by a stray second click on the row.
+      if (item case ItemReference_Composition(:final field0)) {
+        Provider.of<LumitUiState>(context, listen: false)
+            .setSelectedComp(field0);
+        return;
+      }
+      widget.onStartRename();
+      return;
+    }
+    widget.onSelect(SelectMode.replace);
   }
 
   Future<void> _doRelink(FootageReference footage) async {
@@ -619,69 +899,81 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
     final row = MouseRegion(
       onEnter: (_) => setState(() => _hover = true),
       onExit: (_) => setState(() => _hover = false),
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _handleTap,
-        onDoubleTap: _handleDoubleTap,
-        onSecondaryTapDown: (d) {
-          // A right-click on a row already in the selection keeps it: the menu
-          // is about what is picked, and collapsing four rows to one because the
-          // menu was opened would throw the selection away.
-          if (!widget.selected) widget.onSelect(SelectMode.replace);
-          showProjectMenuFrb(
-            context: context,
-            item: item,
-            missing: widget.missing,
-            position: d.globalPosition,
-            onFindMissing: widget.onFindMissing,
-            onLocalEdit: widget.onLocalEdit,
-            onRelink: item is ItemReference_Footage
-                ? () => _doRelink((item as ItemReference_Footage).field0)
-                : null,
-          );
-        },
-        child: Container(
-          constraints: const BoxConstraints(minHeight: 22),
-          color: widget.selected
-              ? t.surface2
-              : _hover
-                  ? t.surface4
+      // A raw listener, not a gesture: down and up fire the instant they
+      // happen, without waiting for the tap/drag/double-tap arena to resolve.
+      child: Listener(
+        onPointerDown: _handlePointerDown,
+        onPointerMove: _handlePointerMove,
+        onPointerUp: _handlePointerUp,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          // Registered but empty: it claims double-clicks on the row in the
+          // gesture arena, so the panel's empty-area double-tap (import) never
+          // fires for a double-click on an item. The rename those clicks mean
+          // already happened on the raw pointer-up above.
+          onDoubleTap: () {},
+          onSecondaryTapDown: (d) {
+            // A right-click on a row already in the selection keeps it: the menu
+            // is about what is picked, and collapsing four rows to one because the
+            // menu was opened would throw the selection away.
+            if (!widget.selected) widget.onSelect(SelectMode.replace);
+            showProjectMenuFrb(
+              context: context,
+              item: item,
+              missing: widget.missing,
+              position: d.globalPosition,
+              onFindMissing: widget.onFindMissing,
+              onLocalEdit: widget.onLocalEdit,
+              onStartRename: widget.onStartRename,
+              onRelink: item is ItemReference_Footage
+                  ? () => _doRelink((item as ItemReference_Footage).field0)
                   : null,
-          padding: EdgeInsets.only(
-            left: 6 + widget.depth * _indentPerDepth,
-            right: 6,
-          ),
-          child: Row(
-            children: [
-              _leading(t),
-              const SizedBox(width: 6),
-              Expanded(child: _nameOrEditor(t)),
-              if (widget.missing) ...[
+            );
+          },
+          child: Container(
+            constraints: const BoxConstraints(minHeight: 22),
+            color: widget.selected
+                ? t.surface2
+                : _hover
+                    ? t.surface4
+                    : null,
+            padding: EdgeInsets.only(
+              left: 6 + widget.depth * _indentPerDepth,
+              right: 6,
+            ),
+            child: Row(
+              children: [
+                _leading(t),
                 const SizedBox(width: 6),
-                Text('missing', style: t.small.copyWith(color: t.warning)),
-                const SizedBox(width: 6),
-                LumitTooltip(
-                  message: 'Relink this file to its new location',
-                  child: HouseButton(
-                    key: ValueKey<String>('relink-${_idOf(item)}'),
-                    small: true,
-                    onPressed: () =>
-                        _doRelink((item as ItemReference_Footage).field0),
-                    child: Text('Relink…', style: t.small),
+                Expanded(child: _nameOrEditor(t)),
+                if (widget.missing) ...[
+                  const SizedBox(width: 6),
+                  Text('missing', style: t.small.copyWith(color: t.warning)),
+                  const SizedBox(width: 6),
+                  LumitTooltip(
+                    message: 'Relink this file to its new location',
+                    child: HouseButton(
+                      key: ValueKey<String>('relink-${_idOf(item)}'),
+                      small: true,
+                      onPressed: () =>
+                          _doRelink((item as ItemReference_Footage).field0),
+                      child: Text('Relink…', style: t.small),
+                    ),
                   ),
-                ),
+                ],
               ],
-            ],
+            ),
           ),
         ),
       ),
     );
 
-    // Only footage drags onto the Timeline (or onto New composition), and the
-    // payload must stay `FootageDragData` — those drop targets consume exactly
-    // that, and nothing else produces it.
+    // Footage drags onto the Timeline (or onto New composition) as
+    // `FootageDragData`; a composition drags onto the Timeline alone, as
+    // `CompDragData`, to nest as a Precomp layer. The payload types are the
+    // contract — the drop targets consume exactly these.
     if (item case ItemReference_Footage(:final field0)) {
-      final name = _name();
+      final name = widget.name;
       // Dragging a row that is part of the selection brings the whole selection;
       // dragging an unselected row is about that row alone, which is what every
       // file list does and what stops a stale selection following the pointer.
@@ -701,25 +993,26 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
         child: row,
       );
     }
+    if (item case ItemReference_Composition(:final field0)) {
+      return Draggable<CompDragData>(
+        data: CompDragData(field0, widget.name),
+        dragAnchorStrategy: pointerDragAnchorStrategy,
+        feedback: _DragFeedbackFrb(name: widget.name, icon: LumitIcon.comp),
+        child: row,
+      );
+    }
     return row;
   }
 
-  /// A decoded thumbnail for present footage, else the type glyph. Missing
-  /// footage keeps the warning-tinted unlink glyph.
+  /// The row's type glyph. Missing footage wears the warning-tinted unlink
+  /// glyph. No thumbnail here — the info header carries the picture, so the
+  /// tree stays a tight list of names.
   Widget _leading(LumitTheme t) {
     final (icon, tint) = _iconFor(item, t);
-    final glyph = lumitIcon(
+    return lumitIcon(
       widget.missing ? LumitIcon.unlink : icon,
       size: 14,
       color: widget.missing ? t.warning : tint,
-    );
-    if (item is! ItemReference_Footage || widget.missing) return glyph;
-
-    return _FootageThumbnailFrb(
-      key: ValueKey<String>('thumb-${_idOf(item)}'),
-      footage: (item as ItemReference_Footage).field0,
-      epoch: widget.epoch,
-      placeholder: glyph,
     );
   }
 
@@ -746,7 +1039,7 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
         ),
       );
     }
-    return Text(_name(), style: t.body, overflow: TextOverflow.ellipsis);
+    return Text(widget.name, style: t.body, overflow: TextOverflow.ellipsis);
   }
 
   (LumitIcon, Color) _iconFor(ItemReference item, LumitTheme t) =>
@@ -758,113 +1051,11 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
       };
 }
 
-/// A footage row's thumbnail.
-///
-/// `FootageReference.thumbnail` is async on the Rust side, so a `FutureBuilder`
-/// is the whole mechanism — the decode is already off the UI isolate. Keyed on
-/// the document epoch so a relink re-decodes; the previous picture is held on
-/// screen until the new one lands rather than flashing back to the glyph.
-class _FootageThumbnailFrb extends StatefulWidget {
-  final FootageReference footage;
-  final int epoch;
-  final Widget placeholder;
-
-  const _FootageThumbnailFrb({
-    super.key,
-    required this.footage,
-    required this.epoch,
-    required this.placeholder,
-  });
-
-  @override
-  State<_FootageThumbnailFrb> createState() => _FootageThumbnailFrbState();
-}
-
-class _FootageThumbnailFrbState extends State<_FootageThumbnailFrb> {
-  static const double _w = 30;
-  static const double _h = 17;
-
-  ui.Image? _image;
-  int _loadedEpoch = -1;
-
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  @override
-  void didUpdateWidget(_FootageThumbnailFrb old) {
-    super.didUpdateWidget(old);
-    if (old.epoch != widget.epoch) _load();
-  }
-
-  @override
-  void dispose() {
-    _image?.dispose();
-    super.dispose();
-  }
-
-  Future<void> _load() async {
-    final epoch = widget.epoch;
-    if (_loadedEpoch == epoch) return;
-
-    final frame = await widget.footage.thumbnail(maxEdge: _thumbMaxEdge);
-    if (!mounted) return;
-    if (frame == null || frame.width == 0 || frame.height == 0) {
-      // Do not hammer an item that has no thumbnail to give.
-      _loadedEpoch = epoch;
-      return;
-    }
-
-    ui.decodeImageFromPixels(
-      frame.rgba,
-      frame.width,
-      frame.height,
-      ui.PixelFormat.rgba8888,
-      (image) {
-        _loadedEpoch = epoch;
-        if (!mounted) {
-          image.dispose();
-          return;
-        }
-        setState(() {
-          _image?.dispose();
-          _image = image;
-        });
-      },
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    final image = _image;
-    if (image == null) {
-      return SizedBox(
-        width: _w,
-        height: _h,
-        child: Center(child: widget.placeholder),
-      );
-    }
-    return SizedBox(
-      width: _w,
-      height: _h,
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(2),
-        child: Container(
-          color: t.surface0,
-          child: RawImage(image: image, fit: BoxFit.contain),
-        ),
-      ),
-    );
-  }
-}
-
-/// The floating label shown under the pointer while a footage row is dragged.
+/// The floating label shown under the pointer while a row is dragged.
 class _DragFeedbackFrb extends StatelessWidget {
   final String name;
-  const _DragFeedbackFrb({required this.name});
+  final LumitIcon icon;
+  const _DragFeedbackFrb({required this.name, this.icon = LumitIcon.footage});
 
   @override
   Widget build(BuildContext context) {
@@ -875,7 +1066,10 @@ class _DragFeedbackFrb extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            lumitIcon(LumitIcon.footage, size: 13, color: t.layer.footage),
+            lumitIcon(icon,
+                size: 13,
+                color:
+                    icon == LumitIcon.comp ? t.layer.precomp : t.layer.footage),
             const SizedBox(width: 6),
             Text(name, style: t.small),
           ],
@@ -887,6 +1081,7 @@ class _DragFeedbackFrb extends StatelessWidget {
 
 enum _ProjectMenuAction {
   compSettings,
+  rename,
   relink,
   findMissing,
   moveToRoot,
@@ -902,6 +1097,10 @@ Future<void> showProjectMenuFrb({
   required VoidCallback onFindMissing,
   required VoidCallback onLocalEdit,
   Future<void> Function()? onRelink,
+
+  /// Put the row into its in-place rename editor. Null where the menu is
+  /// raised from somewhere with no row to edit.
+  VoidCallback? onStartRename,
 }) async {
   final isFootage = item is ItemReference_Footage;
   final isComp = item is ItemReference_Composition;
@@ -919,6 +1118,13 @@ Future<void> showProjectMenuFrb({
               onPressed: () => close(_ProjectMenuAction.compSettings),
               child: const Text('Composition settings…'),
             ),
+          // Every kind can be renamed from here. It matters most for a comp,
+          // whose second click opens it rather than renaming it.
+          MenuRow(
+            key: const ValueKey('project-menu-rename'),
+            onPressed: () => close(_ProjectMenuAction.rename),
+            child: const Text('Rename'),
+          ),
           // Relink is offered only on a row that is actually broken.
           if (isFootage && missing)
             MenuRow(
@@ -954,6 +1160,8 @@ Future<void> showProjectMenuFrb({
           onLocalEdit();
         }
       }
+    case _ProjectMenuAction.rename:
+      onStartRename?.call();
     case _ProjectMenuAction.relink:
       await onRelink?.call();
     case _ProjectMenuAction.findMissing:

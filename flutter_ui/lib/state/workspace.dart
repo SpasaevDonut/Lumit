@@ -133,6 +133,17 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  /// A field of [interface] or [performance] was edited in place: persist it
+  /// and tell everything drawing from it.
+  ///
+  /// Those two are plain mutable structs rather than a setter per field —
+  /// they carry working preferences, not document state — so this is the one
+  /// call that makes such an edit stick.
+  void settingsChanged() {
+    notifyListeners();
+    save();
+  }
+
   void resetWorkspaceLayout() {
     dock = defaultLayout();
     notifyListeners();
@@ -174,10 +185,22 @@ class Workspace extends ChangeNotifier {
 
   // --- Persistence ---------------------------------------------------------
 
+  /// Somewhere other than the real settings file to read and write — set by
+  /// the test harness, null in the application.
+  ///
+  /// **Why this exists.** A test builds a `Workspace` and any setter on it
+  /// calls [save]; without a redirect that wrote *defaults* straight over the
+  /// developer's own `%APPDATA%` file, so every `flutter test` run silently
+  /// reset their settings. The store is machine state, and a test run must
+  /// not be able to reach it.
+  static String? storeOverride;
+
   /// `%APPDATA%\lumit\flutter-workspace.json` on Windows; a dotfolder
   /// fallback elsewhere. No plugin needed, and nothing machine-specific ever
   /// enters the repository.
   static File storeFile() {
+    final override = storeOverride;
+    if (override != null) return File(override);
     final base = Platform.environment['APPDATA'] ??
         '${Platform.environment['HOME'] ?? '.'}/.config';
     return File('$base${Platform.pathSeparator}lumit'

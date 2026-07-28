@@ -156,8 +156,8 @@ class _ExportDialogState extends State<_ExportDialog> {
                     child: Text(
                       _path == null ? 'Not chosen' : _leaf(_path!),
                       key: const ValueKey('export-path'),
-                      style: t.small.copyWith(
-                          color: _path == null ? t.textMuted : null),
+                      style: t.small
+                          .copyWith(color: _path == null ? t.textMuted : null),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),

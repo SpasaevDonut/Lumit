@@ -138,7 +138,8 @@ void main() {
       File(path).writeAsStringSync(donor.layer.savePreset(name: 'Soft glow'));
 
       await mount(tester, p,
-          presetsLister: () => [BridgePresetInfo(name: 'Soft glow', path: path)]);
+          presetsLister: () =>
+              [BridgePresetInfo(name: 'Soft glow', path: path)]);
 
       expect(find.text('Saved presets'), findsOneWidget);
       final row = find.byKey(const ValueKey('preset-item-Soft glow'));
@@ -296,8 +297,8 @@ void main() {
       expect(find.text('Camera'), findsOneWidget);
       expect(find.text('Text'), findsOneWidget);
 
-      await tester.tap(find.byKey(
-          ValueKey<String>('hierarchy-row-${camera.internallayerId}')));
+      await tester.tap(find
+          .byKey(ValueKey<String>('hierarchy-row-${camera.internallayerId}')));
       await tester.pump();
       expect(p.uiState.selectedLayer.value?.internallayerId,
           camera.internallayerId);
@@ -325,8 +326,8 @@ void main() {
           reason: 'a closed precomp does not show its insides');
 
       final row = outer.getLayers().single;
-      await tester.tap(find
-          .byKey(ValueKey<String>('hierarchy-row-${row.internallayerId}')));
+      await tester.tap(
+          find.byKey(ValueKey<String>('hierarchy-row-${row.internallayerId}')));
       await tester.pump();
       // The twirl is the small target at the row's left edge.
       final twirl = tester.getTopLeft(find.byKey(

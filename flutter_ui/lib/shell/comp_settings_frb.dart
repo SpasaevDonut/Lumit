@@ -15,13 +15,14 @@
 //   round trip would not give that back (docs/14 §2) — but the pair is worked out
 //   here from the number typed, and the awkward rates are one click away in the
 //   Presets list, so nobody has to know that 1001 exists.
-// * The duration is `HH:MM:SS.mmm`, not a frame count, and that is what fixes the
-//   old "changing the rate retimes the comp" bug (K-180). A frame count means
-//   nothing without the rate it was counted at, so writing yesterday's count back
-//   at a new rate changed how long the comp really was while every layer kept its
-//   own seconds — which looked exactly like the layers speeding up or slowing
-//   down. Seconds are what the document stores, so a rate change is only ever a
-//   rate change.
+// * The duration reads and edits as `HH:MM:SS:FF` timecode — the same clock
+//   face the Viewer shows — but what is *written* is still a length in seconds,
+//   converted at the rate typed above it. Seconds in the document is what fixes
+//   the old "changing the rate retimes the comp" bug (K-180): a frame count
+//   means nothing without the rate it was counted at, so storing yesterday's
+//   count back at a new rate changed how long the comp really was while every
+//   layer kept its own seconds — which looked exactly like the layers speeding
+//   up or slowing down.
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -30,6 +31,7 @@ import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/project.dart';
 
 import '../icons/icons.dart';
+import '../state/timecode.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
@@ -177,7 +179,8 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
       // follow every keystroke — not wait for the field to be submitted, which
       // would leave it naming the rate before last.
       ..addListener(() => setState(() {}));
-    _duration = TextEditingController(text: formatDurationHms(s.duration));
+    _duration = TextEditingController(
+        text: timecodeOfDuration(s.duration, s.fpsNum, s.fpsDen));
     _width = s.width;
     _height = s.height;
   }
@@ -201,12 +204,16 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
   }
 
   void _confirm() {
-    final rate = parseRate(_fps.text) ??
-        (widget.initial.fpsNum, widget.initial.fpsDen);
-    // A duration that cannot be read is the one that was already there rather
-    // than a comp of no length: a typo must not be able to throw work away.
-    final duration =
-        parseDurationHms(_duration.text) ?? widget.initial.duration;
+    final rate =
+        parseRate(_fps.text) ?? (widget.initial.fpsNum, widget.initial.fpsDen);
+    // Timecode first, at the rate typed above; the old `HH:MM:SS.mmm` and
+    // bare-seconds forms still parse as a courtesy. A duration that cannot be
+    // read at all is the one that was already there rather than a comp of no
+    // length: a typo must not be able to throw work away.
+    final frames = framesOfTimecode(_duration.text, rate.$1, rate.$2);
+    final duration = frames != null
+        ? secondsOfFrames(frames, rate.$1, rate.$2)
+        : parseDurationHms(_duration.text) ?? widget.initial.duration;
     widget.onConfirm(BridgeCompSettings(
       name: _name.text.trim().isEmpty ? widget.initial.name : _name.text.trim(),
       width: _width,
@@ -279,8 +286,10 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
           Padding(
             // Indented to the field column, not the label column: it explains
             // the box above it, so it lines up with that box.
-            padding: const EdgeInsets.only(left: _labelWidth, top: 4, bottom: 10),
-            child: Text('Duration is HH:MM:SS.mmm.', style: t.caption),
+            padding:
+                const EdgeInsets.only(left: _labelWidth, top: 4, bottom: 10),
+            child: Text('Duration is HH:MM:SS:FF at the frame rate above.',
+                style: t.caption),
           ),
           Row(
             children: [
@@ -401,7 +410,9 @@ String _formatRate(int num, int den) {
   if (den <= 0) return '$num';
   if (num % den == 0) return '${num ~/ den}';
   final decimal = (num / den).toStringAsFixed(3);
-  return decimal.replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  return decimal
+      .replaceFirst(RegExp(r'0+$'), '')
+      .replaceFirst(RegExp(r'\.$'), '');
 }
 
 /// A typed rate as the exact `(num, den)` pair the engine stores.
@@ -420,6 +431,26 @@ String _formatRate(int num, int den) {
   final num = (value * den).round();
   final g = _gcd(num, den);
   return (num ~/ g, den ~/ g);
+}
+
+/// A duration in exact seconds as `HH:MM:SS:FF` timecode at `fpsNum/fpsDen`.
+String timecodeOfDuration(BridgeRational seconds, int fpsNum, int fpsDen) {
+  final den = seconds.den.toInt();
+  final fps = fpsDen == 0 ? 0.0 : fpsNum / fpsDen;
+  final secs = den == 0 ? 0.0 : seconds.num.toInt() / den;
+  return timecodeOfRate((secs * fps).round(), fpsNum, fpsDen);
+}
+
+/// A whole frame count back to exact seconds at `fpsNum/fpsDen` — the pair the
+/// document stores (K-180: seconds, never a frame count).
+BridgeRational secondsOfFrames(int frames, int fpsNum, int fpsDen) {
+  if (fpsNum <= 0) return BridgeRational(num: frames, den: 1);
+  final num = frames * (fpsDen <= 0 ? 1 : fpsDen);
+  final g = _gcd(num, fpsNum);
+  return BridgeRational(
+    num: num ~/ (g == 0 ? 1 : g),
+    den: fpsNum ~/ (g == 0 ? 1 : g),
+  );
 }
 
 /// `HH:MM:SS.mmm` for an exact number of seconds.

@@ -296,7 +296,18 @@ impl ProjectReference {
         }
         let written = target.to_string_lossy().into_owned();
         state.path = Some(target);
+        state.saved_revision = state.store.revision();
         Ok(written)
+    }
+
+    /// Whether the document has moved since it was last saved (or opened).
+    /// The status bar's saved/unsaved readout. An undo after a save reads as
+    /// dirty: the revision moved, and only a save proves the file matches.
+    #[frb(sync)]
+    pub fn is_dirty(&self) -> Result<bool, BridgeError> {
+        let state = self.state()?;
+        let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(state.store.revision() != state.saved_revision)
     }
 
     /// Where this project was last saved, or null when it never has been. The

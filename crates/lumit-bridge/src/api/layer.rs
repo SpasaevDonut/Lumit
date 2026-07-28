@@ -31,6 +31,9 @@ pub struct BridgeLayerSwitches {
     pub motion_blur: bool,
     /// Precomp layers only: collapse transformations (docs/06 §1.4).
     pub collapse: bool,
+    /// Shy (docs/07 §4.2): hidden from the Timeline's list while the comp's
+    /// shy filter is on. Never changes what renders.
+    pub shy: bool,
 }
 
 /// Which switch an edit names. One enum rather than eight methods so the
@@ -47,6 +50,7 @@ pub enum BridgeLayerSwitch {
     Fx,
     MotionBlur,
     Collapse,
+    Shy,
 }
 
 /// Where a layer sits on the comp timeline, in exact rational seconds.
@@ -167,6 +171,7 @@ pub(crate) fn read_layer_info(
             fx: s.fx,
             motion_blur: s.motion_blur,
             collapse: s.collapse,
+            shy: s.shy,
         },
         blend: lumit_core::model::BlendMode::ALL
             .iter()
@@ -719,6 +724,7 @@ impl LayerReference {
             fx: s.fx,
             motion_blur: s.motion_blur,
             collapse: s.collapse,
+            shy: s.shy,
         })
     }
 
@@ -766,6 +772,11 @@ impl LayerReference {
                 comp,
                 layer,
                 collapse: on,
+            },
+            BridgeLayerSwitch::Shy => lumit_core::Op::SetLayerShy {
+                comp,
+                layer,
+                shy: on,
             },
         })
     }
@@ -1026,6 +1037,53 @@ impl LayerReference {
         {
             let _ = buckets;
             Ok(empty)
+        }
+    }
+
+    /// Whether this layer has a picture to sample — the mirror of
+    /// [`Self::has_audio`], and what tells a matte or a layer-valued effect
+    /// parameter which layers are worth offering (K-194).
+    ///
+    /// Every synthetic kind draws; a Camera does not (it *is* a viewpoint);
+    /// footage draws only when its container carries a video stream, so an
+    /// audio-only clip answers false. Probing costs an FFmpeg open, so callers
+    /// ask when a menu opens, never while drawing a row.
+    #[frb(sync)]
+    pub fn has_picture(&self) -> Result<bool, BridgeError> {
+        use lumit_core::model::LayerKind as K;
+        let layer = self.item()?;
+        let item = match layer.kind {
+            K::Camera { .. } => return Ok(false),
+            K::Footage { item, .. } => item,
+            // Solids, text, precomps, sequences and adjustments all draw.
+            _ => return Ok(true),
+        };
+
+        let proj = self.project()?;
+        let proj = proj.read().map_err(|_| BridgeError::ReadFailed)?;
+        let snapshot = proj.store.snapshot();
+        let Some(lumit_core::model::ProjectItem::Footage(footage)) = snapshot.item(item) else {
+            return Ok(false);
+        };
+
+        #[cfg(feature = "media")]
+        {
+            let Some(path) = crate::api::footage::FootageReference::resolve_path(&proj, footage)
+            else {
+                return Ok(false);
+            };
+            Ok(lumit_media::probe::probe(&path)
+                .map(|p| p.video.is_some())
+                .unwrap_or(false))
+        }
+
+        // Without a decoder nothing can be probed. Footage is assumed to draw
+        // rather than assumed not to: the opposite would empty every matte
+        // menu on a build with no media feature.
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = footage;
+            Ok(true)
         }
     }
 

@@ -23,7 +23,8 @@ void main() {
   group('Effect controls (frb)', () {
     /// A project with one comp, one layer in it, and that layer selected — the
     /// state the panel needs before it draws anything at all.
-    ({LumitState state, LumitUiState uiState, LayerReference layer}) withLayer() {
+    ({LumitState state, LumitUiState uiState, LayerReference layer})
+        withLayer() {
       final p = freshProject();
       final comp = p.state.project!.newComposition(name: 'Scene');
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
@@ -37,8 +38,13 @@ void main() {
 
     Future<void> mount(
       WidgetTester tester,
-      ({LumitState state, LumitUiState uiState, LayerReference layer}) p,
-    ) async {
+      ({LumitState state, LumitUiState uiState, LayerReference layer}) p, {
+      // The Transform card is off by default (K-193); the rows it holds are
+      // still this panel's to test, so the tests that want them ask for it
+      // exactly as a user would.
+      bool transform = true,
+    }) async {
+      p.uiState.workspace.interface.transformInEffectControls = transform;
       await tester.pumpWidget(hostPanel(
         child: const EffectControlsPanelFrb(),
         state: p.state,
@@ -73,8 +79,13 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('fx-add')));
       await tester.pumpAndSettle();
-      // The menu lists built-ins by their sentence-case label, under a category
-      // heading — the raw match_name never reaches the user.
+      // The menu lists categories, each opening onto its effects by their
+      // sentence-case label — the raw match_name never reaches the user
+      // (K-194: Add effect → Blur & sharpen → Gaussian blur).
+      expect(find.text('Gaussian blur'), findsNothing,
+          reason: 'the effects wait behind their category');
+      await tester.tap(find.byKey(const ValueKey('fx-category-blur_sharpen')));
+      await tester.pumpAndSettle();
       expect(find.text('Gaussian blur'), findsOneWidget);
       await tester.tap(find.text('Gaussian blur'));
       await tester.pumpAndSettle();
@@ -102,8 +113,7 @@ void main() {
       await tester.testTextInput.receiveAction(TextInputAction.done);
       await tester.pump();
 
-      final radius =
-          p.layer.getEffects().single.getValue(id: 'radius');
+      final radius = p.layer.getEffects().single.getValue(id: 'radius');
       expect(
         radius,
         isA<BridgeEffectValue_Float>().having(
@@ -129,8 +139,8 @@ void main() {
 
       final id = p.layer.getEffects().single.id();
       double radius() => ((p.layer.getEffects().single.getValue(id: 'radius')
-              as BridgeEffectValue_Float)
-          .field0 as BridgeScalar_Static)
+                  as BridgeEffectValue_Float)
+              .field0 as BridgeScalar_Static)
           .field0;
       final before = radius();
 
@@ -156,7 +166,8 @@ void main() {
       final first = p.layer.getEffects().first;
       expect(first.enabled(), isTrue);
 
-      await tester.tap(find.byKey(ValueKey<String>('fx-enabled-${first.id()}')));
+      await tester
+          .tap(find.byKey(ValueKey<String>('fx-enabled-${first.id()}')));
       await tester.pump();
       expect(p.layer.getEffects().first.enabled(), isFalse,
           reason: 'bypassing an effect is a document edit, not a view state');
@@ -187,7 +198,8 @@ void main() {
       final order = effects.map((e) => e.name()).toList();
 
       // Both are present but inert, so the row's shape does not shift.
-      await tester.tap(find.byKey(ValueKey<String>('fx-up-${effects[0].id()}')));
+      await tester
+          .tap(find.byKey(ValueKey<String>('fx-up-${effects[0].id()}')));
       await tester.pump();
       await tester
           .tap(find.byKey(ValueKey<String>('fx-down-${effects[1].id()}')));
@@ -197,14 +209,20 @@ void main() {
           reason: 'a disabled arrow does nothing rather than wrapping around');
     });
 
-    testWidgets('the Transform rows draw every property and commit one at a time',
+    testWidgets(
+        'the Transform rows draw every property and commit one at a time',
         (tester) async {
       final p = withLayer();
       await mount(tester, p);
 
       expect(find.text('Transform'), findsOneWidget);
-      for (final row in ['Anchor point', 'Position', 'Scale', 'Rotation',
-          'Opacity']) {
+      for (final row in [
+        'Anchor point',
+        'Position',
+        'Scale',
+        'Rotation',
+        'Opacity'
+      ]) {
         expect(find.text(row), findsOneWidget, reason: row);
       }
 
@@ -263,17 +281,15 @@ void main() {
       expect(find.byKey(const ValueKey('tf-positionY')), findsOneWidget);
     });
 
-    /// The one thing a panel that cannot yet edit curves must not do: flatten
-    /// one. `set_value` takes a whole animation, so a static write over a
-    /// keyframed parameter would delete every key in a single undoable step
-    /// that looks like nudging a number.
-    testWidgets('an animated parameter is shown as animated, not as a field',
+    /// An animated parameter stays a field (docs/07 §4.3): editing it writes
+    /// the key under the playhead — never a static value over the curve,
+    /// which would delete every key in one step that looks like nudging a
+    /// number.
+    testWidgets('editing an animated parameter edits the key, not the curve',
         (tester) async {
       final p = withLayer();
       p.layer.addEffect(name: 'blur');
 
-      // Animate the radius behind the panel's back, the way the graph editor
-      // will once it exists.
       final staged = p.layer.getEffects();
       staged.single.setValue(
         id: 'radius',
@@ -297,19 +313,23 @@ void main() {
       await mount(tester, p);
 
       final id = p.layer.getEffects().single.id();
-      expect(find.text('animated'), findsOneWidget);
-      expect(find.byKey(ValueKey<String>('fx-float-$id-radius')), findsNothing,
-          reason: 'no editor is offered, so the curve cannot be flattened');
-      // The effect's other float is untouched: only the animated one loses its
-      // field, not the whole card.
-      expect(find.byKey(ValueKey<String>('fx-float-$id-mix')), findsOneWidget);
+      final field = find.byKey(ValueKey<String>('fx-float-$id-radius'));
+      expect(field, findsOneWidget,
+          reason: 'an animated parameter keeps its field');
 
-      // …and it is still a curve after the panel has drawn it.
+      // The playhead sits on the first key: the drag edits that key.
+      await tester.drag(field, const Offset(40, 0));
+      await tester.pumpAndSettle();
+
       final after = p.layer.getEffects().single.getValue(id: 'radius');
-      expect(
-        (after as BridgeEffectValue_Float).field0,
-        isA<BridgeScalar_Keyframed>(),
-      );
+      final scalar = (after as BridgeEffectValue_Float).field0;
+      expect(scalar, isA<BridgeScalar_Keyframed>(),
+          reason: 'the curve survives the edit');
+      final keys = (scalar as BridgeScalar_Keyframed).field0;
+      expect(keys, hasLength(2), reason: 'no key added or lost at a key');
+      expect(keys.first.value, greaterThan(4),
+          reason: 'the edit landed in the key under the playhead');
+      expect(keys.last.value, 40, reason: 'the other key is untouched');
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.

@@ -86,7 +86,8 @@ void main() {
           tester,
           minRounds: 20,
           maxRounds: 200,
-          until: () => comp.cachedFrames(
+          until: () =>
+              comp.cachedFrames(
                   frames: BigInt.from(8), scale: p.uiState.viewerScale)[0] !=
               0,
         );
@@ -131,12 +132,14 @@ void main() {
         tester,
         minRounds: 20,
         maxRounds: 200,
-        until: () => comp
-                .cachedFrames(frames: BigInt.from(4), scale: p.uiState.viewerScale)[0] !=
+        until: () =>
+            comp.cachedFrames(
+                frames: BigInt.from(4), scale: p.uiState.viewerScale)[0] !=
             0,
       );
       expect(
-        comp.cachedFrames(frames: BigInt.from(4), scale: p.uiState.viewerScale)[0],
+        comp.cachedFrames(
+            frames: BigInt.from(4), scale: p.uiState.viewerScale)[0],
         2,
       );
 
@@ -222,8 +225,9 @@ void main() {
         tester,
         minRounds: 15,
         maxRounds: 400,
-        until: () => comp
-                .cachedFrames(frames: BigInt.one, scale: p.uiState.viewerScale)[0] !=
+        until: () =>
+            comp.cachedFrames(
+                frames: BigInt.one, scale: p.uiState.viewerScale)[0] !=
             0,
       );
 

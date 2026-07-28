@@ -198,6 +198,7 @@ enum BridgeLayerSwitch {
   fx,
   motionBlur,
   collapse,
+  shy,
   ;
 }
 
@@ -223,6 +224,10 @@ class BridgeLayerSwitches {
   /// Precomp layers only: collapse transformations (docs/06 §1.4).
   final bool collapse;
 
+  /// Shy (docs/07 §4.2): hidden from the Timeline's list while the comp's
+  /// shy filter is on. Never changes what renders.
+  final bool shy;
+
   const BridgeLayerSwitches({
     required this.visible,
     required this.audible,
@@ -232,6 +237,7 @@ class BridgeLayerSwitches {
     required this.fx,
     required this.motionBlur,
     required this.collapse,
+    required this.shy,
   });
 
   @override
@@ -243,7 +249,8 @@ class BridgeLayerSwitches {
       threeD.hashCode ^
       fx.hashCode ^
       motionBlur.hashCode ^
-      collapse.hashCode;
+      collapse.hashCode ^
+      shy.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -257,7 +264,8 @@ class BridgeLayerSwitches {
           threeD == other.threeD &&
           fx == other.fx &&
           motionBlur == other.motionBlur &&
-          collapse == other.collapse;
+          collapse == other.collapse &&
+          shy == other.shy;
 }
 
 /// A layer used as another layer's matte (docs/03 §5.1).
@@ -610,6 +618,19 @@ class LayerReference {
 
   Future<bool> hasAudio() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceHasAudio(
+        that: this,
+      );
+
+  /// Whether this layer has a picture to sample — the mirror of
+  /// [`Self::has_audio`], and what tells a matte or a layer-valued effect
+  /// parameter which layers are worth offering (K-194).
+  ///
+  /// Every synthetic kind draws; a Camera does not (it *is* a viewpoint);
+  /// footage draws only when its container carries a video stream, so an
+  /// audio-only clip answers false. Probing costs an FFmpeg open, so callers
+  /// ask when a menu opens, never while drawing a row.
+  bool hasPicture() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceHasPicture(
         that: this,
       );
 

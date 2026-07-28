@@ -40,7 +40,6 @@ import '../state/drag_payloads.dart';
 import 'placeholder.dart';
 import 'source_rows_frb.dart';
 
-
 class EffectControlsPanelFrb extends StatefulWidget {
   const EffectControlsPanelFrb({super.key});
 
@@ -149,57 +148,67 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                       color: t.accent.withValues(alpha: 0.06),
                     ),
               child: ListView(
-            padding: const EdgeInsets.symmetric(vertical: 4),
-            children: [
-              // What the layer is made of comes before where it sits: a text
-              // layer's words are the first thing you want when you select one.
-              SourceRowsFrb(
-                key: ValueKey<String>('src-card-${layer.internallayerId}'),
-                layer: layer,
-                onChanged: ui.model.refresh,
-              ),
-              _TransformCard(
-                key: ValueKey<String>('tf-card-${layer.internallayerId}'),
-                layer: layer,
-                comp: comp,
-                transform: info.transform,
-                threeD: info.switches.threeD,
-                playheadFrame: playhead,
-                onSeek: (frame) => ui.playheadFrame.value = frame,
-                onChanged: ui.model.refresh,
-              ),
-              if (info.effects.isEmpty)
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 18),
-                  child: Text(
-                    'No effects on this layer yet',
-                    style: t.small,
-                    textAlign: TextAlign.center,
-                  ),
-                )
-              else
-                for (var index = 0; index < info.effects.length; index++)
-                  _EffectCard(
-                    key: ValueKey<String>('fx-card-$index'),
-                    info: info.effects[index],
-                    stagedValue: _effects.stagedValue,
-                    index: index,
-                    count: info.effects.length,
-                    onStackChanged: ui.model.refresh,
-                    onWrite: (id, param, value) {
-                      _effects.write(layer, id, param, value);
-                      ui.model.refresh();
-                    },
-                    onLive: (id, param, value) => setState(() {
-                      _effects.live(comp, layer, id, param, value,
-                          frame: ui.playheadFrame.value, scale: ui.viewerScale);
-                    }),
-                    layer: layer,
-                    comp: comp,
-                    playheadFrame: playhead,
-                    onSeek: (frame) => ui.playheadFrame.value = frame,
-                  ),
-            ],
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                children: [
+                  // Source (a text layer's words, a solid's colour) and Retime
+                  // ride with Transform behind the same choice: all three are
+                  // the *layer*, and this panel is about the effects on it.
+                  // Settings → Interface brings them back together.
+                  if (ui.workspace.interface.transformInEffectControls) ...[
+                    // What the layer is made of comes before where it sits: a
+                    // text layer's words are the first thing you want when
+                    // you select one.
+                    SourceRowsFrb(
+                      key:
+                          ValueKey<String>('src-card-${layer.internallayerId}'),
+                      layer: layer,
+                      onChanged: ui.model.refresh,
+                    ),
+                    _TransformCard(
+                      key: ValueKey<String>('tf-card-${layer.internallayerId}'),
+                      layer: layer,
+                      comp: comp,
+                      transform: info.transform,
+                      threeD: info.switches.threeD,
+                      playheadFrame: playhead,
+                      onSeek: (frame) => ui.playheadFrame.value = frame,
+                      onChanged: ui.model.refresh,
+                    ),
+                  ],
+                  if (info.effects.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 18),
+                      child: Text(
+                        'No effects on this layer yet',
+                        style: t.small,
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  else
+                    for (var index = 0; index < info.effects.length; index++)
+                      _EffectCard(
+                        key: ValueKey<String>('fx-card-$index'),
+                        info: info.effects[index],
+                        stagedValue: _effects.stagedValue,
+                        index: index,
+                        count: info.effects.length,
+                        onStackChanged: ui.model.refresh,
+                        onWrite: (id, param, value) {
+                          _effects.write(layer, id, param, value);
+                          ui.model.refresh();
+                        },
+                        onLive: (id, param, value) => setState(() {
+                          _effects.live(comp, layer, id, param, value,
+                              frame: ui.playheadFrame.value,
+                              scale: ui.viewerScale);
+                        }),
+                        layer: layer,
+                        allLayers: ui.model.layers,
+                        comp: comp,
+                        playheadFrame: playhead,
+                        onSeek: (frame) => ui.playheadFrame.value = frame,
+                      ),
+                ],
               ),
             ),
           ),
@@ -207,7 +216,6 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
       ],
     );
   }
-
 }
 
 /// The panel header: which layer is being edited, and Add effect.
@@ -230,11 +238,15 @@ class _Header extends StatelessWidget {
             child: Text(layerName,
                 style: t.bodyPrimary, overflow: TextOverflow.ellipsis),
           ),
-          HouseButton(
-            key: const ValueKey('fx-add'),
-            small: true,
-            onPressed: () => _showAddMenu(context, onAdd),
-            child: Text('Add effect', style: t.small),
+          // Its own context, so the menu drops from the *button* rather than
+          // from the header row's left edge — which is where it used to land.
+          Builder(
+            builder: (buttonContext) => HouseButton(
+              key: const ValueKey('fx-add'),
+              small: true,
+              onPressed: () => _showAddMenu(buttonContext, onAdd),
+              child: Text('Add effect', style: t.small),
+            ),
           ),
         ],
       ),
@@ -242,12 +254,19 @@ class _Header extends StatelessWidget {
   }
 }
 
-/// The Add-effect menu: every built-in, under its category heading (K-090).
-Future<void> _showAddMenu(BuildContext context, ValueChanged<String> onAdd) async {
+/// The Add-effect menu: one row per category, each opening onto its effects
+/// (K-090, K-194 — Add effect → Stylise → Glow).
+///
+/// [context] is the *button's*, so the menu drops from it rather than from the
+/// panel's left edge. The whole list used to be one 380 px scroller, which is
+/// a lot of reading to find one effect.
+Future<void> _showAddMenu(
+    BuildContext context, ValueChanged<String> onAdd) async {
   final box = context.findRenderObject();
   if (box is! RenderBox) return;
-  final t = ThemeScope.of(context).theme;
-  final origin = box.localToGlobal(Offset(0, box.size.height + 2));
+  // Dropped from the button's left edge so a wide menu opens back across the
+  // panel rather than off its right side.
+  final origin = box.localToGlobal(Offset(0, box.size.height + 4));
 
   // Grouped in schema order, so the headings come out in the order the engine
   // declares rather than alphabetically by accident.
@@ -258,33 +277,42 @@ Future<void> _showAddMenu(BuildContext context, ValueChanged<String> onAdd) asyn
     headings[e.category] = e.categoryLabel;
   }
 
-  final picked = await showLumitPopup<String>(
+  await showLumitPopup<void>(
     context: context,
     position: origin,
     builder: (close) => FloatSurface(
-      width: 240,
-      child: SizedBox(
-        height: 380,
-        child: ListView(
-          children: [
-            for (final entry in grouped.entries) ...[
-              Padding(
-                padding: const EdgeInsets.fromLTRB(10, 6, 10, 2),
-                child: Text(headings[entry.key] ?? entry.key,
-                    style: t.small.copyWith(color: t.textMuted)),
-              ),
-              for (final effect in entry.value)
-                MenuRow(
-                  onPressed: () => close(effect.name),
-                  child: Text(effect.label),
+      width: 200,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          for (final entry in grouped.entries)
+            SubmenuRow(
+              key: ValueKey<String>('fx-category-${entry.key}'),
+              closeParent: () => close(null),
+              submenu: (dismiss) => FloatSurface(
+                width: 200,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final effect in entry.value)
+                      MenuRow(
+                        onPressed: () {
+                          dismiss();
+                          onAdd(effect.name);
+                        },
+                        child: Text(effect.label),
+                      ),
+                  ],
                 ),
-            ],
-          ],
-        ),
+              ),
+              child: Text(headings[entry.key] ?? entry.key),
+            ),
+        ],
       ),
     ),
   );
-  if (picked != null) onAdd(picked);
 }
 
 /// One effect: its title row and a row per declared parameter.
@@ -302,6 +330,10 @@ class _EffectCard extends StatelessWidget {
   final int index;
   final int count;
   final LayerReference layer;
+
+  /// Every layer in the comp, from the read model — what a layer-valued
+  /// parameter picks from (K-194).
+  final List<BridgeLayerEntry> allLayers;
   final CompositionReference comp;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
@@ -324,6 +356,7 @@ class _EffectCard extends StatelessWidget {
     required this.index,
     required this.count,
     required this.layer,
+    required this.allLayers,
     required this.comp,
     required this.playheadFrame,
     required this.onSeek,
@@ -369,9 +402,10 @@ class _EffectCard extends StatelessWidget {
                       key: ValueKey<String>('fx-row-${info.id}-${param.id}'),
                       effectId: info.id,
                       param: param,
-                      value:
-                          stagedValue(info.id, param.id) ?? values[param.id],
+                      value: stagedValue(info.id, param.id) ?? values[param.id],
                       comp: comp,
+                      ownerLayerId: layer.internallayerId,
+                      ownerLayers: allLayers,
                       playheadFrame: playheadFrame,
                       onSeek: onSeek,
                       onWrite: onWrite,
@@ -389,62 +423,61 @@ class _EffectCard extends StatelessWidget {
     final id = info.id;
     final enabled = info.enabled;
     return Padding(
-        padding: const EdgeInsets.fromLTRB(8, 5, 6, 5),
-        child: Row(
-          children: [
-            LumitTooltip(
-              message: enabled ? 'Disable this effect' : 'Enable it',
-              child: HouseCheckbox(
-                key: ValueKey<String>('fx-enabled-$id'),
-                value: enabled,
-                onChanged: (on) {
-                  _withHandle(
-                      (e) => layer.setEffectEnabled(effect: e, enabled: on));
-                  onStackChanged();
-                },
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-                child: Text(effectLabelOf(info.name), style: t.bodyPrimary)),
-            _markButton(
-              context,
-              mark: '▲',
-              tip: 'Move up the stack',
-              enabled: index > 0,
-              key: 'fx-up-$id',
-              onPressed: () {
+      padding: const EdgeInsets.fromLTRB(8, 5, 6, 5),
+      child: Row(
+        children: [
+          LumitTooltip(
+            message: enabled ? 'Disable this effect' : 'Enable it',
+            child: HouseCheckbox(
+              key: ValueKey<String>('fx-enabled-$id'),
+              value: enabled,
+              onChanged: (on) {
                 _withHandle(
-                    (e) => layer.reorderEffect(effect: e, newIndex: index - 1));
+                    (e) => layer.setEffectEnabled(effect: e, enabled: on));
                 onStackChanged();
               },
             ),
-            _markButton(
-              context,
-              mark: '▼',
-              tip: 'Move down the stack',
-              enabled: index < count - 1,
-              key: 'fx-down-$id',
-              onPressed: () {
-                _withHandle(
-                    (e) => layer.reorderEffect(effect: e, newIndex: index + 1));
-                onStackChanged();
-              },
-            ),
-            _markButton(
-              context,
-              mark: '×',
-              tip: 'Remove this effect',
-              enabled: true,
-              key: 'fx-remove-$id',
-              onPressed: () {
-                _withHandle((e) => layer.removeEffect(effect: e));
-                onStackChanged();
-              },
-            ),
-          ],
-        ),
-      );
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Text(effectLabelOf(info.name), style: t.bodyPrimary)),
+          _markButton(
+            context,
+            mark: '▲',
+            tip: 'Move up the stack',
+            enabled: index > 0,
+            key: 'fx-up-$id',
+            onPressed: () {
+              _withHandle(
+                  (e) => layer.reorderEffect(effect: e, newIndex: index - 1));
+              onStackChanged();
+            },
+          ),
+          _markButton(
+            context,
+            mark: '▼',
+            tip: 'Move down the stack',
+            enabled: index < count - 1,
+            key: 'fx-down-$id',
+            onPressed: () {
+              _withHandle(
+                  (e) => layer.reorderEffect(effect: e, newIndex: index + 1));
+              onStackChanged();
+            },
+          ),
+          _markButton(
+            context,
+            mark: '×',
+            tip: 'Remove this effect',
+            enabled: true,
+            key: 'fx-remove-$id',
+            onPressed: () {
+              _withHandle((e) => layer.removeEffect(effect: e));
+              onStackChanged();
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   /// A small text mark rather than an icon, matching v0's × for Remove — the
@@ -469,14 +502,13 @@ class _EffectCard extends StatelessWidget {
         onPressed: enabled ? onPressed : null,
         child: Text(
           mark,
-          style: t.small
-              .copyWith(color: enabled ? t.textMuted : t.textDisabled),
+          style:
+              t.small.copyWith(color: enabled ? t.textMuted : t.textDisabled),
         ),
       ),
     );
   }
 }
-
 
 /// The Transform card: the layer's transform rows, in the panel's card chrome.
 ///

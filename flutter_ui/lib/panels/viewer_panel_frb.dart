@@ -44,6 +44,7 @@ import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
 import '../state/settings.dart';
+import '../state/timecode.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'placeholder.dart';
@@ -909,25 +910,10 @@ class _Toolbar extends StatelessWidget {
       };
 }
 
-/// `HH:MM:SS:FF` for `frame` at the comp's rate.
-///
-/// The frame count per second is the rate *rounded up* — 29.97 fps counts 30
-/// frames in a second of timecode, which is what every editor shows and what
-/// makes 00:00:29:29 the last frame of a 30-second 29.97 comp rather than an
-/// impossible one.
-String timecodeOf(int frame, BridgeCompSettings settings) {
-  final den = settings.fpsDen == 0 ? 1 : settings.fpsDen;
-  final perSecond = (settings.fpsNum / den).ceil().clamp(1, 1000);
-  final total = frame < 0 ? 0 : frame;
-
-  final frames = total % perSecond;
-  final seconds = (total ~/ perSecond) % 60;
-  final minutes = (total ~/ (perSecond * 60)) % 60;
-  final hours = total ~/ (perSecond * 3600);
-
-  String two(int v) => v.toString().padLeft(2, '0');
-  return '${two(hours)}:${two(minutes)}:${two(seconds)}:${two(frames)}';
-}
+/// `HH:MM:SS:FF` for `frame` at the comp's rate — the shared clock face in
+/// state/timecode.dart, bound to this comp's settings.
+String timecodeOf(int frame, BridgeCompSettings settings) =>
+    timecodeOfRate(frame, settings.fpsNum, settings.fpsDen);
 
 /// Which playback behaviour is in force, and a click to change it.
 ///

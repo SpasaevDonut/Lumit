@@ -28,6 +28,7 @@ import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:lumit_flutter/widgets/ui_scale.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -62,6 +63,14 @@ class LumitState extends ChangeNotifier {
 
   Stream<WorkerResponse> get onWorkerResponse => _onWorkerResponse.stream;
 
+  /// The status bar's one-line notice: the latest quiet message or genuine
+  /// error, dismissed by its close button. One current notice rather than a
+  /// feed, which is what the egui shell's `app.notice` was too.
+  final ValueNotifier<LumitNotice?> notice = ValueNotifier(null);
+
+  void postNotice(String message, {bool error = false}) =>
+      notice.value = LumitNotice(message, error: error);
+
   void newProject() {
     _adopt(LumitBridgeState.newProject(onChangeStream: _changeSink()));
   }
@@ -72,7 +81,7 @@ class LumitState extends ChangeNotifier {
     final opened =
         LumitBridgeState.openProject(path: path, onChangeStream: _changeSink());
     if (opened == null) {
-      debugPrint('Could not open $path');
+      postNotice('Could not open $path', error: true);
       return;
     }
     _adopt(opened);
@@ -194,6 +203,14 @@ class LumitState extends ChangeNotifier {
     walk(project?.getItems() ?? const []);
     return _compsCache = out;
   }
+}
+
+/// One status-bar notice: what to say, and whether it is a genuine error
+/// (drawn in the warning tint) rather than quiet feedback.
+class LumitNotice {
+  final String message;
+  final bool error;
+  const LumitNotice(this.message, {this.error = false});
 }
 
 class LumitUiState extends ChangeNotifier {
@@ -444,10 +461,29 @@ class LumitUiState extends ChangeNotifier {
     super.dispose();
   }
 
+  /// The comps open as Timeline tabs (docs/07 §4: one tab per open comp), in
+  /// the order first fronted. Fronting a comp opens its tab; closing a tab
+  /// only closes the tab — the comp stays in the project.
+  final List<UuidValue> openComps = [];
+
   void setSelectedComp(CompositionReference? reference) {
+    if (reference != null && !openComps.contains(reference.internalid)) {
+      openComps.add(reference.internalid);
+    }
     _selectedComp = reference;
     model.bind(reference);
     notifyListeners();
+  }
+
+  /// Close a comp's Timeline tab. When the closed tab was fronted, [fallback]
+  /// — the tab bar's nearest remaining neighbour — fronts instead.
+  void closeComp(UuidValue id, {CompositionReference? fallback}) {
+    openComps.remove(id);
+    if (_selectedComp?.internalid == id) {
+      setSelectedComp(fallback);
+    } else {
+      notifyListeners();
+    }
   }
 }
 

@@ -75,9 +75,16 @@ void main() {
     /// The Composition menu is taller than an 800x600 test surface, so it
     /// scrolls — and a row below the fold has to be brought into view before it
     /// can be tapped, which is what a user does with the wheel.
-    Future<void> choose(WidgetTester tester, String menu, String item) async {
+    /// Open [menu] and click [item]. [under] names a submenu to step through
+    /// first — Window → Workspaces → Audio (K-194).
+    Future<void> choose(WidgetTester tester, String menu, String item,
+        {String? under}) async {
       await tester.tap(find.byKey(ValueKey<String>('menu-$menu')));
       await tester.pump();
+      if (under != null) {
+        await tester.tap(find.text(under));
+        await tester.pump();
+      }
       await tester.ensureVisible(find.text(item));
       await tester.pump();
       await tester.tap(find.text(item));
@@ -451,7 +458,8 @@ void main() {
         (tester) async {
       final p = await mount(tester);
 
-      await choose(tester, 'Window', 'Workspace: Effects');
+      // The presets live under their own heading now (K-194).
+      await choose(tester, 'Window', 'Effects', under: 'Workspaces');
       await tester.pump();
       expect(panelsIn(p.uiState.split),
           panelsIn(presetLayout(WorkspacePreset.effects)));
@@ -459,13 +467,13 @@ void main() {
           isNot(presetLayout(WorkspacePreset.colour).toJson()),
           reason: 'the presets are genuinely different arrangements');
 
-      await choose(tester, 'Window', 'Workspace: Audio');
+      await choose(tester, 'Window', 'Audio', under: 'Workspaces');
       await tester.pump();
       expect(p.uiState.split.toJson(),
           presetLayout(WorkspacePreset.audio).toJson());
 
       // Reset still means the default (Edit) arrangement.
-      await choose(tester, 'Window', 'Reset workspace');
+      await choose(tester, 'Window', 'Reset workspace', under: 'Workspaces');
       await tester.pump();
       expect(panelsIn(p.uiState.split), panelsIn(defaultLayout()));
     });
@@ -478,7 +486,11 @@ void main() {
       await tester.pump();
       expect(find.text('Command palette…'), findsOneWidget);
       expect(find.text('Settings…'), findsOneWidget);
-      expect(find.text('Reset workspace'), findsOneWidget);
+      // The arrangements sit behind their own heading now (K-194), so the
+      // Window menu is four rows rather than eight.
+      expect(find.text('Workspaces'), findsOneWidget);
+      expect(find.text('Reset workspace'), findsNothing,
+          reason: 'reset lives with the arrangements it undoes');
       await dismiss(tester);
 
       // Reset puts a rearranged workspace back to the default.
@@ -487,7 +499,7 @@ void main() {
         [DockPane(Panel.viewer), DockPane(Panel.timeline)],
         [0.5, 0.5],
       );
-      await choose(tester, 'Window', 'Reset workspace');
+      await choose(tester, 'Window', 'Reset workspace', under: 'Workspaces');
       await tester.pump();
       expect(panelsIn(p.uiState.split), panelsIn(defaultLayout()),
           reason: 'the default arrangement is back');

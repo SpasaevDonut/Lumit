@@ -43,13 +43,32 @@ class PerformanceSettings {
 class InterfaceSettings {
   double uiScale;
   bool showTooltips;
-  InterfaceSettings({this.uiScale = 1.0, this.showTooltips = true});
 
-  Map<String, dynamic> toJson() =>
-      {'ui_scale': uiScale, 'show_tooltips': showTooltips};
+  /// Whether the Effect controls panel repeats the layer's Transform rows
+  /// above its effect stack.
+  ///
+  /// Off by default: the Timeline's fold-out already shows Transform, and
+  /// the panel is for the *effects* on a layer — the repeat pushed the stack
+  /// down a screen on a 3D layer. Kept as a choice because it is a habit
+  /// After Effects users bring with them.
+  bool transformInEffectControls;
+
+  InterfaceSettings({
+    this.uiScale = 1.0,
+    this.showTooltips = true,
+    this.transformInEffectControls = false,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'ui_scale': uiScale,
+        'show_tooltips': showTooltips,
+        'transform_in_effect_controls': transformInEffectControls,
+      };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
         uiScale: (j['ui_scale'] as num?)?.toDouble() ?? 1.0,
         showTooltips: j['show_tooltips'] as bool? ?? true,
+        transformInEffectControls:
+            j['transform_in_effect_controls'] as bool? ?? false,
       );
 }

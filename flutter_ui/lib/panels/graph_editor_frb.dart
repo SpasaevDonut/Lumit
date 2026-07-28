@@ -25,6 +25,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import '../widgets/marquee.dart';
 
 /// One animatable channel: what to call it, what it currently is, and how to
 /// write a new animation for it.
@@ -146,6 +147,16 @@ class _GraphEditorFrbState extends State<GraphEditorFrb> {
   /// `channelId#index` for each selected key.
   final Set<String> _selected = {};
 
+  /// The lanes' own vertical scroll, with a visible thumb on the far right —
+  /// the graph scrolls apart from the outline (docs/07 §4.6).
+  final ScrollController _scroll = ScrollController();
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
@@ -171,24 +182,31 @@ class _GraphEditorFrbState extends State<GraphEditorFrb> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _toolbar(t, channels),
         Expanded(
-          child: ListView(
-            children: [
-              for (final channel in channels)
-                _Lane(
-                  key: ValueKey<String>('graph-lane-${channel.id}'),
-                  channel: channel,
-                  comp: widget.comp,
-                  frames: widget.frames,
-                  playheadFrame: widget.playheadFrame,
-                  selected: _selected,
-                  onSelectionChanged: () => setState(() {}),
-                  onChanged: widget.onChanged,
-                ),
-            ],
+          child: RawScrollbar(
+            controller: _scroll,
+            thumbVisibility: true,
+            child: ListView(
+              controller: _scroll,
+              children: [
+                for (final channel in channels)
+                  _Lane(
+                    key: ValueKey<String>('graph-lane-${channel.id}'),
+                    channel: channel,
+                    comp: widget.comp,
+                    frames: widget.frames,
+                    playheadFrame: widget.playheadFrame,
+                    selected: _selected,
+                    onSelectionChanged: () => setState(() {}),
+                    onChanged: widget.onChanged,
+                  ),
+              ],
+            ),
           ),
         ),
+        // The command bar sits under the curves, where the egui editor kept
+        // its own; the buttons grow here as they return (docs/TODO.md).
+        _toolbar(t, channels),
       ],
     );
   }
@@ -313,23 +331,10 @@ class _LaneState extends State<_Lane> {
   int? _dragging;
   Offset _delta = Offset.zero;
 
-  /// The marquee, while one is being dragged on the lane's background: where
-  /// it started and where the pointer is now.
-  Offset? _marqueeFrom;
-  Offset? _marqueeTo;
-
-  /// Select exactly the keys the marquee encloses — replacing this lane's
+  /// Select exactly the keys the box encloses — replacing this lane's
   /// previous selection, so a marquee around nothing also clears it, which is
   /// what a selection box means everywhere.
-  void _applyMarquee(_View view, List<BridgeKeyframe> keys) {
-    final from = _marqueeFrom;
-    final to = _marqueeTo;
-    setState(() {
-      _marqueeFrom = null;
-      _marqueeTo = null;
-    });
-    if (from == null || to == null) return;
-    final rect = Rect.fromPoints(from, to);
+  void _applyMarquee(_View view, List<BridgeKeyframe> keys, Rect rect) {
     widget.selected.removeWhere((id) => id.startsWith('${widget.channel.id}#'));
     for (var i = 0; i < keys.length; i++) {
       if (rect.contains(view.pointOf(keys[i]))) {
@@ -375,51 +380,26 @@ class _LaneState extends State<_Lane> {
                           view: view,
                           line: t.accent,
                           grid: t.hairline,
+                          label: t.small.copyWith(color: t.textMuted),
                         ),
                       ),
                     ),
                     // The marquee: dragging on the lane's background draws a
                     // box and selects the keys inside it (the key handles sit
-                    // above, so grabbing a key still moves it). A plain click
-                    // on the background clears this lane's selection.
+                    // above, so grabbing a key still moves it) — the same
+                    // shared widget the Timeline's lanes use.
                     Positioned.fill(
-                      child: GestureDetector(
+                      child: MarqueeSelect(
                         key: ValueKey<String>(
                             'graph-marquee-${widget.channel.id}'),
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {
+                        onSelect: (rect) => _applyMarquee(view, keys, rect),
+                        onClear: () {
                           widget.selected.removeWhere(
                               (id) => id.startsWith('${widget.channel.id}#'));
                           widget.onSelectionChanged();
                         },
-                        // Down, not start: a pan's start position is where
-                        // the slop was exceeded, which would eat the box's
-                        // first corner and the keys nearest it.
-                        onPanDown: (d) => _marqueeFrom = d.localPosition,
-                        onPanStart: (d) => setState(() {
-                          _marqueeTo = d.localPosition;
-                        }),
-                        onPanUpdate: (d) =>
-                            setState(() => _marqueeTo = d.localPosition),
-                        onPanEnd: (_) => _applyMarquee(view, keys),
-                        onPanCancel: () => setState(() {
-                          _marqueeFrom = null;
-                          _marqueeTo = null;
-                        }),
                       ),
                     ),
-                    if (_marqueeFrom != null && _marqueeTo != null)
-                      Positioned.fromRect(
-                        rect: Rect.fromPoints(_marqueeFrom!, _marqueeTo!),
-                        child: IgnorePointer(
-                          child: Container(
-                            decoration: BoxDecoration(
-                              color: t.accent.withValues(alpha: 0.12),
-                              border: Border.all(color: t.accent, width: 1),
-                            ),
-                          ),
-                        ),
-                      ),
                     for (var i = 0; i < keys.length; i++)
                       _keyHandle(t, view, keys, i),
                   ],
@@ -643,11 +623,29 @@ class _CurvePainter extends CustomPainter {
   final _View view;
   final Color line;
   final Color grid;
+
+  /// The value-axis labels' style — the units on the lane's left edge.
+  final TextStyle label;
   const _CurvePainter({
     required this.view,
     required this.line,
     required this.grid,
+    required this.label,
   });
+
+  /// A value label at the left edge, its baseline on `y`.
+  void _valueLabel(Canvas canvas, double value, double y, Size size) {
+    final text = TextPainter(
+      text: TextSpan(
+          text: value.abs() >= 100
+              ? value.toStringAsFixed(0)
+              : value.toStringAsFixed(1),
+          style: label),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    text.paint(
+        canvas, Offset(2, (y - text.height / 2).clamp(0, size.height - 12)));
+  }
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -656,6 +654,12 @@ class _CurvePainter extends CustomPainter {
       ..strokeWidth = 1;
     canvas.drawLine(
         Offset(0, size.height / 2), Offset(size.width, size.height / 2), axis);
+
+    // The value units on the left (docs/07 §5): what the lane's top, middle
+    // and bottom are worth, so a curve's numbers are readable in place.
+    _valueLabel(canvas, view.valueAt(0), 4, size);
+    _valueLabel(canvas, view.valueAt(size.height / 2), size.height / 2, size);
+    _valueLabel(canvas, view.valueAt(size.height), size.height - 4, size);
 
     if (view.keys.length < 2) return;
 

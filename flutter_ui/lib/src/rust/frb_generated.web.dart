@@ -22,6 +22,7 @@ import 'api/retime.dart';
 import 'api/shell.dart';
 import 'api/solid.dart';
 import 'api/state.dart';
+import 'api/system.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'frb_generated.dart';

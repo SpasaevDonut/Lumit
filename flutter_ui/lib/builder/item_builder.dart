@@ -7,7 +7,8 @@ import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
 
 class ProjectItemBuilder extends StatefulWidget {
-  const ProjectItemBuilder({required this.item, required this.builder, super.key});
+  const ProjectItemBuilder(
+      {required this.item, required this.builder, super.key});
 
   final ItemReference item;
   final Widget Function(BuildContext context) builder;
@@ -38,7 +39,6 @@ class _ProjectItemBuilderState extends State<ProjectItemBuilder> {
   }
 
   void onChange(ScopedChange event) {
-
     // The scope of this change is below this item, dont rebuild
     if (event.layer != null) return;
 

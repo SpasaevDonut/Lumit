@@ -61,6 +61,12 @@ Future<void> initEngineForTests() async {
     );
   }
   await BridgeLib.init(externalLibrary: ExternalLibrary.open(_libraryPath));
+  // A test must never reach the developer's own settings file. Any setter on
+  // a Workspace calls `save()`, so without this redirect a run wrote defaults
+  // straight over `%APPDATA%\lumit\flutter-workspace.json` — which is exactly
+  // why settings kept resetting between builds.
+  Workspace.storeOverride =
+      '${Directory.systemTemp.createTempSync('lumit-ws').path}/workspace.json';
   _initialised = true;
 }
 

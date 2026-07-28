@@ -46,6 +46,22 @@ class CompModel extends ChangeNotifier {
     return fps > 0 ? fps : 60.0;
   }
 
+  /// The comp's exact rate, for the timecode readout: 29.97 must count 30
+  /// frames a second, which the plain [fps] double cannot say (docs/14 §2).
+  (int, int) get fpsExact {
+    _freshen();
+    final m = _model;
+    return m == null ? (60, 1) : (m.fpsNum, m.fpsDen);
+  }
+
+  /// Whether the comp's master motion-blur shutter is on (K-120) — what the
+  /// Timeline's master button draws. Writes go through
+  /// `CompositionReference.setMotionBlurEnabled`.
+  bool get motionBlurEnabled {
+    _freshen();
+    return _model?.motionBlurEnabled ?? false;
+  }
+
   /// Point the model at [comp] (or null) and read it.
   void bind(CompositionReference? comp) {
     _comp = comp;

@@ -79,6 +79,149 @@ final class FoldWaveformRow extends LayerFoldRow {
   const FoldWaveformRow({required int depth}) : super(depth);
 }
 
+/// The keyframes a fold row shows as diamonds on its lane (docs/07 §4.3), or
+/// empty for rows with nothing keyed. A multi-axis transform row reads its
+/// lead axis: the axes key together, so one axis's times are the row's.
+List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
+      FoldTransformRow(:final group, :final transform) => switch (
+            read(transform, group.axes.first.prop)) {
+          BridgeScalar_Keyframed(:final field0) => field0,
+          BridgeScalar_Static() => const [],
+        },
+      FoldEffectParamRow(:final value) => switch (value) {
+          BridgeEffectValue_Float(
+            field0: BridgeScalar_Keyframed(:final field0)
+          ) =>
+            field0,
+          _ => const [],
+        },
+      _ => const [],
+    };
+
+/// A key's position on the comp's frame axis, computed Dart-side from its
+/// exact time and the comp's rate so a paint never crosses the bridge for it.
+///
+/// Fractional on purpose: with the magnet off a key may sit *between* frames
+/// (docs/07 §4.5), and it has to draw where it actually is.
+double laneKeyFrame(BridgeKeyframe key, double fps) =>
+    key.time.num / key.time.den.toDouble() * fps;
+
+/// The exact time of a (possibly fractional) frame position — what a lane key
+/// drag commits.
+///
+/// Quantised to a thousandth of a frame and built from the comp's exact rate,
+/// so the time stays rational (docs/14 §2): at 29.97 a whole frame is exactly
+/// 1001/30000 s and half of one is exactly 1001/60000, never a rounded double.
+BridgeRational timeOfSubframe(double frame, int fpsNum, int fpsDen) {
+  final milliframes = (frame * 1000).round();
+  return BridgeRational(
+    num: milliframes * fpsDen,
+    den: 1000 * (fpsNum == 0 ? 1 : fpsNum),
+  );
+}
+
+/// Move a lane row's keyframe [index] to [time], as ONE op — one undo step
+/// for the whole drag.
+///
+/// A transform row moves the key on *every* axis it covers: the axes key
+/// together, so the row's one diamond stands for all of their keys. Refused
+/// (returning false, changing nothing) when the move would land on or past a
+/// neighbour — two keys cannot share a time, and the engine refuses a curve
+/// whose times do not strictly ascend.
+bool moveLaneKey({
+  required BridgeLayerEntry entry,
+  required LayerFoldRow row,
+  required int index,
+  required BridgeRational time,
+}) {
+  double at(BridgeRational r) => r.num / r.den.toDouble();
+  final target = at(time);
+
+  List<BridgeKeyframe>? moved(List<BridgeKeyframe> keys) {
+    if (index >= keys.length) return null;
+    for (var i = 0; i < keys.length; i++) {
+      if (i == index) continue;
+      final other = at(keys[i].time);
+      if (i < index ? other >= target : other <= target) return null;
+    }
+    return [
+      for (var i = 0; i < keys.length; i++)
+        if (i == index)
+          BridgeKeyframe(
+            time: time,
+            value: keys[i].value,
+            interpIn: keys[i].interpIn,
+            interpOut: keys[i].interpOut,
+          )
+        else
+          keys[i],
+    ];
+  }
+
+  switch (row) {
+    case FoldTransformRow(:final group, :final transform):
+      final props = <BridgeTransformProp>[];
+      final values = <BridgeScalar>[];
+      for (final axis in group.axes) {
+        final scalar = read(transform, axis.prop);
+        if (scalar is! BridgeScalar_Keyframed) return false;
+        final next = moved(scalar.field0);
+        // Every axis or none: a half-applied move would leave the row's axes
+        // keyed at different times, which is not a row any more.
+        if (next == null) return false;
+        props.add(axis.prop);
+        values.add(BridgeScalar.keyframed(next));
+      }
+      if (props.isEmpty) return false;
+      entry.layer.setTransforms(props: props, values: values);
+      return true;
+
+    case FoldEffectParamRow(:final info, :final param):
+      final stack = entry.layer.getEffects();
+      for (final instance in stack) {
+        if (instance.id() != info.id) continue;
+        final value = instance.getValue(id: param.id);
+        if (value is! BridgeEffectValue_Float) return false;
+        final scalar = value.field0;
+        if (scalar is! BridgeScalar_Keyframed) return false;
+        final next = moved(scalar.field0);
+        if (next == null) return false;
+        instance.setValue(
+          id: param.id,
+          value: BridgeEffectValue.float(BridgeScalar.keyframed(next)),
+        );
+        entry.layer.setEffects(effects: stack);
+        return true;
+      }
+      return false;
+
+    case _:
+      return false;
+  }
+}
+
+/// A fold row's stable path — its id for selection, for the lane's keyframes,
+/// and for working out what contains it.
+///
+/// Hierarchical on purpose, sharing its prefixes with [FoldGroupRow.path]:
+/// selecting `<layer>/effects/<effect>/<param>` is what tells the outline to
+/// highlight that effect's heading and that layer's row (docs/07 §4.3), and
+/// `startsWith` is the whole of the "is this my ancestor" test.
+String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
+      FoldGroupRow(:final path) => path,
+      FoldTransformRow(:final group) =>
+        '${transformPath(layerId)}/${group.axes.first.prop.name}',
+      FoldEffectParamRow(:final info, :final param) =>
+        '${effectPath(layerId, info.id.toString())}/${param.id}',
+      FoldVolumeRow() => '${audioPath(layerId)}/volume',
+      FoldWaveformRow() => waveformPath(layerId),
+    };
+
+/// Whether [path] sits under [ancestor] — a property under its group, a
+/// parameter under its effect, anything under its layer.
+bool isUnderPath(String ancestor, String path) =>
+    ancestor.isNotEmpty && path.startsWith('$ancestor/');
+
 /// The path of a layer's Transform group in the open set.
 String transformPath(String layerId) => '$layerId/transform';
 

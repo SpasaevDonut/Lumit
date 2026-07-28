@@ -136,16 +136,23 @@ class LumitMenuBarFrb extends StatelessWidget {
           ]),
           _menu(context, 'Window', [
             _Item('Command palette…', () => _palette(context)),
-            // The four shipped presets (docs/07 §1.6): pick an arrangement;
-            // nothing closes or reloads, panels just move.
-            for (final preset in WorkspacePreset.values)
-              _Item('Workspace: ${preset.title}', () {
-                Provider.of<LumitUiState>(context, listen: false)
-                    .workspace
-                    .applyWorkspacePreset(preset);
-              }),
-            _Item('Reset workspace',
-                () => context.read<LumitUiState>().resetLayout()),
+            // The four shipped presets (docs/07 §1.6) behind their own
+            // heading rather than four siblings of everything else: pick an
+            // arrangement and panels move, nothing closes or reloads.
+            _Item.submenu(
+              'Workspaces',
+              [
+                for (final preset in WorkspacePreset.values)
+                  _Item(preset.title, () {
+                    Provider.of<LumitUiState>(context, listen: false)
+                        .workspace
+                        .applyWorkspacePreset(preset);
+                  }),
+                _Item.divider(),
+                _Item('Reset workspace',
+                    () => context.read<LumitUiState>().resetLayout()),
+              ],
+            ),
             _Item.divider(),
             _Item('Settings…', () => showSettingsWindowFrb(context)),
           ]),
@@ -211,7 +218,14 @@ class LumitMenuBarFrb extends StatelessWidget {
       if (picked == null) return;
       target = picked;
     }
-    await project.save(path: target);
+    try {
+      final written = await project.save(path: target);
+      app.postNotice('Saved to $written');
+    } catch (_) {
+      // The work is still in the document and the journal; say so calmly and
+      // let the user pick somewhere writable.
+      app.postNotice('Could not save the project', error: true);
+    }
     app.notifyDocumentChanged();
   }
 
@@ -364,11 +378,20 @@ class _Item {
   final VoidCallback? onPressed;
   final bool isDivider;
 
-  _Item(this.label, this.onPressed) : isDivider = false;
+  /// The rows this one opens onto, for a heading like Window → Workspaces.
+  final List<_Item>? children;
+
+  _Item(this.label, this.onPressed)
+      : isDivider = false,
+        children = null;
   _Item.divider()
       : label = null,
         onPressed = null,
-        isDivider = true;
+        isDivider = true,
+        children = null;
+  _Item.submenu(this.label, this.children)
+      : onPressed = null,
+        isDivider = false;
 }
 
 class _MenuButton extends StatelessWidget {
@@ -427,6 +450,14 @@ class _MenuList extends StatelessWidget {
                     height: 1,
                     margin: const EdgeInsets.symmetric(vertical: 4),
                     color: t.hairline,
+                  )
+                else if (item.children case final children?)
+                  SubmenuRow(
+                    key: ValueKey<String>('menu-sub-${item.label}'),
+                    closeParent: close,
+                    submenu: (dismiss) =>
+                        _MenuList(items: children, close: dismiss),
+                    child: Text(item.label ?? ''),
                   )
                 else
                   MenuRow(

@@ -687,6 +687,11 @@ pub struct Switches {
     /// samples averaged, smearing it along its own motion. Off by default.
     #[serde(default)]
     pub motion_blur: bool,
+    /// Shy (docs/07 §4.2): hidden from the Timeline's layer list while the
+    /// comp's shy filter is on. Pure list housekeeping — it never changes what
+    /// renders, which is why the evaluator does not read it.
+    #[serde(default)]
+    pub shy: bool,
 }
 
 /// Whether any layer in `comp` is soloed (K-105). When true, the compositor
@@ -707,6 +712,7 @@ impl Default for Switches {
             fx: true,
             solo: false,
             motion_blur: false,
+            shy: false,
         }
     }
 }
@@ -1423,6 +1429,8 @@ mod tests {
         assert_eq!(comp.motion_blur, MotionBlur::default());
         // And a layer without the `motion_blur` switch defaults it off.
         assert!(!Switches::default().motion_blur);
+        // Same forward-compat rule for shy: absent means off.
+        assert!(!Switches::default().shy);
     }
 
     #[test]

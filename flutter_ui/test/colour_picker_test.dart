@@ -59,8 +59,7 @@ void main() {
       ]) {
         final hsv = rgbToHsv(sample);
         final back = hsvToRgb(hsv.$1, hsv.$2, hsv.$3);
-        expect([r(back), g(back), b(back)],
-            [r(sample), g(sample), b(sample)]);
+        expect([r(back), g(back), b(back)], [r(sample), g(sample), b(sample)]);
       }
     });
   });

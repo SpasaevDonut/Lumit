@@ -28,4 +28,3 @@ Widget buildPanelBodyFrb(BuildContext context, Panel panel) => switch (panel) {
       Panel.scopes => const ScopesPanelFrb(),
       Panel.hierarchy => const HierarchyPanelFrb(),
     };
-

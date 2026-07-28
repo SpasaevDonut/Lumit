@@ -94,7 +94,8 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     // The controller is created against the document the layer currently has,
     // and rebuilt only when the text changed underneath us — otherwise typing
     // would fight the rebuild its own commit triggers.
-    if (_text == null || (_text!.text != document.text && !_text!.selection.isValid)) {
+    if (_text == null ||
+        (_text!.text != document.text && !_text!.selection.isValid)) {
       _text?.dispose();
       _text = TextEditingController(text: document.text);
     }
@@ -173,7 +174,8 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
           speed: 4,
           decimals: 0,
           onChanged: (v) {
-            widget.layer.setCameraZoom(zoom: BridgeScalar.static_(v.toDouble()));
+            widget.layer
+                .setCameraZoom(zoom: BridgeScalar.static_(v.toDouble()));
             widget.onChanged();
           },
         ),
