@@ -193,7 +193,7 @@ void main() {
       ),
       buildPanel: (context, panel) {
         builds[panel] = (builds[panel] ?? 0) + 1;
-        return Text('body of ' + panel.title);
+        return Text('body of ${panel.title}');
       },
       active: active,
     ));
