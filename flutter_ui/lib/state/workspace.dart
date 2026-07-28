@@ -41,12 +41,17 @@ class SavedSession {
 
   factory SavedSession.fromJson(Map<String, dynamic> j) => SavedSession(
         openComps: j['open_comps'] is List
-            ? [for (final c in j['open_comps'] as List) if (c is String) c]
+            ? [
+                for (final c in j['open_comps'] as List)
+                  if (c is String) c
+              ]
             : const [],
-        activeComp: j['active_comp'] is String ? j['active_comp'] as String : null,
+        activeComp:
+            j['active_comp'] is String ? j['active_comp'] as String : null,
         frame: j['frame'] is num ? (j['frame'] as num).toInt() : 0,
-        selectedLayer:
-            j['selected_layer'] is String ? j['selected_layer'] as String : null,
+        selectedLayer: j['selected_layer'] is String
+            ? j['selected_layer'] as String
+            : null,
       );
 
   @override
@@ -134,6 +139,14 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  /// Rearrange to one of the four shipped presets (docs/07 §1.6). Only the
+  /// arrangement changes: no panel closes, reloads or re-evaluates anything.
+  void applyWorkspacePreset(WorkspacePreset preset) {
+    dock = presetLayout(preset);
+    notifyListeners();
+    save();
+  }
+
   void touch() {
     notifyListeners();
     save();
@@ -214,8 +227,9 @@ class Workspace extends ChangeNotifier {
     if (j['interface'] is Map<String, dynamic>) {
       interface = InterfaceSettings.fromJson(j['interface']);
     }
-    lastProjectPath =
-        j['last_project_path'] is String ? j['last_project_path'] as String : null;
+    lastProjectPath = j['last_project_path'] is String
+        ? j['last_project_path'] as String
+        : null;
     sessions.clear();
     final rawSessions = j['sessions'];
     if (rawSessions is Map) {

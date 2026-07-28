@@ -136,6 +136,14 @@ class LumitMenuBarFrb extends StatelessWidget {
           ]),
           _menu(context, 'Window', [
             _Item('Command palette…', () => _palette(context)),
+            // The four shipped presets (docs/07 §1.6): pick an arrangement;
+            // nothing closes or reloads, panels just move.
+            for (final preset in WorkspacePreset.values)
+              _Item('Workspace: ${preset.title}', () {
+                Provider.of<LumitUiState>(context, listen: false)
+                    .workspace
+                    .applyWorkspacePreset(preset);
+              }),
             _Item('Reset workspace',
                 () => context.read<LumitUiState>().resetLayout()),
             _Item.divider(),

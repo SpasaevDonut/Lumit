@@ -38,12 +38,18 @@ sealed class DockNode {
   static DockNode fromJson(Map<String, dynamic> j) => switch (j['kind']) {
         'pane' => DockPane(Panel.values.asNameMap()[j['panel']]!),
         'tabs' => DockTabs(
-            [for (final c in j['children'] as List) fromJson(c as Map<String, dynamic>) as DockPane],
+            [
+              for (final c in j['children'] as List)
+                fromJson(c as Map<String, dynamic>) as DockPane
+            ],
             active: j['active'] as int? ?? 0,
           ),
         'split' => DockSplit(
             j['axis'] == 'vertical' ? DockAxis.vertical : DockAxis.horizontal,
-            [for (final c in j['children'] as List) fromJson(c as Map<String, dynamic>)],
+            [
+              for (final c in j['children'] as List)
+                fromJson(c as Map<String, dynamic>)
+            ],
             [for (final s in j['shares'] as List) (s as num).toDouble()],
           ),
         _ => throw FormatException('unknown dock node: ${j['kind']}'),
@@ -123,6 +129,103 @@ DockSplit defaultLayout() => DockSplit(
       ],
       [0.68, 0.32],
     );
+
+/// The four shipped workspace presets (docs/07 §1.6): the same panel
+/// inventory, four arrangements. Structure only, per the spec; the Audio
+/// preset stands in with a taller Timeline (whose waveform lanes are the v1
+/// audio surface) until the Audio panel itself is built.
+enum WorkspacePreset {
+  edit,
+  effects,
+  colour,
+  audio;
+
+  String get title => switch (this) {
+        WorkspacePreset.edit => 'Edit',
+        WorkspacePreset.effects => 'Effects',
+        WorkspacePreset.colour => 'Colour',
+        WorkspacePreset.audio => 'Audio',
+      };
+}
+
+/// The factory layout of one preset — restorable at any time, never touched
+/// by the user's own rearranging (that persists separately).
+DockSplit presetLayout(WorkspacePreset preset) => switch (preset) {
+      // Edit is the default arrangement.
+      WorkspacePreset.edit => defaultLayout(),
+      // Effect controls promoted to its own column beside the Project panel;
+      // Effects & presets expanded right with Scopes tabbed behind; the
+      // Timeline slightly shorter than Edit.
+      WorkspacePreset.effects => DockSplit(
+          DockAxis.vertical,
+          [
+            DockSplit(
+              DockAxis.horizontal,
+              [
+                DockTabs([
+                  DockPane(Panel.project),
+                  DockPane(Panel.hierarchy),
+                ]),
+                DockPane(Panel.effectControls),
+                DockPane(Panel.viewer),
+                DockTabs([
+                  DockPane(Panel.effectsAndPresets),
+                  DockPane(Panel.scopes),
+                ]),
+              ],
+              [0.16, 0.20, 0.44, 0.20],
+            ),
+            DockPane(Panel.timeline),
+          ],
+          [0.72, 0.28],
+        ),
+      // Scopes given a wide right-hand column; Effect controls left;
+      // Effects & presets tabbed away; Viewer centre-dominant.
+      WorkspacePreset.colour => DockSplit(
+          DockAxis.vertical,
+          [
+            DockSplit(
+              DockAxis.horizontal,
+              [
+                DockTabs([
+                  DockPane(Panel.effectControls),
+                  DockPane(Panel.project),
+                  DockPane(Panel.effectsAndPresets),
+                  DockPane(Panel.hierarchy),
+                ]),
+                DockPane(Panel.viewer),
+                DockPane(Panel.scopes),
+              ],
+              [0.18, 0.52, 0.30],
+            ),
+            DockPane(Panel.timeline),
+          ],
+          [0.72, 0.28],
+        ),
+      // The Timeline taller than Edit with its waveform lanes; the Viewer
+      // reduced. The Audio panel joins this arrangement when it is built.
+      WorkspacePreset.audio => DockSplit(
+          DockAxis.vertical,
+          [
+            DockSplit(
+              DockAxis.horizontal,
+              [
+                DockTabs([
+                  DockPane(Panel.project),
+                  DockPane(Panel.effectControls),
+                  DockPane(Panel.effectsAndPresets),
+                  DockPane(Panel.hierarchy),
+                ]),
+                DockPane(Panel.viewer),
+                DockPane(Panel.scopes),
+              ],
+              [0.24, 0.56, 0.20],
+            ),
+            DockPane(Panel.timeline),
+          ],
+          [0.55, 0.45],
+        ),
+    };
 
 /// Every panel present in the tree, in visit order.
 List<Panel> panelsIn(DockNode node) => switch (node) {

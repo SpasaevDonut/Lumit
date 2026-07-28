@@ -70,23 +70,30 @@ void main() {
         size: const Size(700, 500),
       ));
       await tester.pump();
-      comp.renderScope(
-        frame: BigInt.zero,
-        scale: p.uiState.viewerScale,
-        kind: 0,
-        colours: scopeColoursFor(LumitTheme.dark()),
-      );
-      await settleFrb(
-        tester,
-        minRounds: 20,
-        maxRounds: 200,
-        until: () => comp
-                .cachedFrames(frames: BigInt.from(8), scale: p.uiState.viewerScale)[0] !=
-            0,
-      );
-
-      final tiers =
-          comp.cachedFrames(frames: BigInt.from(8), scale: p.uiState.viewerScale);
+      // Retried, because the cache is process-global and every parallel test
+      // suite's committed edit invalidates it: a hold observed and then
+      // snatched away by a neighbour's commit is the environment, not the
+      // regression this test exists for.
+      late List<int> tiers;
+      for (var attempt = 0; attempt < 5; attempt++) {
+        comp.renderScope(
+          frame: BigInt.zero,
+          scale: p.uiState.viewerScale,
+          kind: 0,
+          colours: scopeColoursFor(LumitTheme.dark()),
+        );
+        await settleFrb(
+          tester,
+          minRounds: 20,
+          maxRounds: 200,
+          until: () => comp.cachedFrames(
+                  frames: BigInt.from(8), scale: p.uiState.viewerScale)[0] !=
+              0,
+        );
+        tiers = comp.cachedFrames(
+            frames: BigInt.from(8), scale: p.uiState.viewerScale);
+        if (tiers[0] != 0) break;
+      }
       expect(tiers[0], 2, reason: 'the frame under the playhead is held');
       expect(tiers.skip(1), everyElement(0), reason: 'and only that one');
     });

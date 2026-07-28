@@ -627,18 +627,39 @@ class LumitAppView extends StatefulWidget {
 
 class _LumitAppViewState extends State<LumitAppView> {
   @override
+  void initState() {
+    super.initState();
+    // Shortcuts are handled GLOBALLY, not through the focus tree. Every menu,
+    // popup and palette lives in the Overlay outside this view's scope, so
+    // any of them could walk focus away and never bring it back — and every
+    // shortcut died until something was clicked (the space bar's recurring
+    // funeral). A hardware-keyboard handler fires wherever focus is; the
+    // focused-text-field guard inside _onKey keeps typing safe.
+    HardwareKeyboard.instance.addHandler(_handleKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleKey);
+    super.dispose();
+  }
+
+  bool _handleKey(KeyEvent event) {
+    if (!mounted) return false;
+    return _onKey(
+            context.read<LumitState>(), context.read<LumitUiState>(), event) ==
+        KeyEventResult.handled;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    var state = context.watch<LumitState>();
-
     var uiState = context.watch<LumitUiState>();
+    final state = context.watch<LumitState>();
 
-    // A scope, not a bare Focus: when a text field gives focus up, focus falls
-    // back to the enclosing *scope*. With a bare Focus here it fell back to
-    // nothing at all, and every shortcut stopped working after the first rename
-    // until something was clicked.
+    // The scope stays for the text fields: when one gives focus up, focus
+    // falls back to the enclosing scope rather than to nothing.
     return FocusScope(
       autofocus: true,
-      onKeyEvent: (node, event) => _onKey(state, uiState, event),
       child: Column(
         children: [
           LumitMenuBarFrb(app: state),

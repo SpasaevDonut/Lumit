@@ -122,10 +122,14 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
   pop-out chrome) shipped ~500 unreachable lines. Rebuild from git history
   (`flutter-frontend-alternative`, pre-K-182) when pop-out is actually wanted,
   and land it wired end to end.
-- **Workspace presets** - only the single default layout exists; the four shipped
-presets (Edit/Effects/Colour/Audio) are not built ([07-UI-SPEC.md](07-UI-SPEC.md) §1.6).
-- **First-run setup screen** (Vegas/AE preference primer, K-006) - absent
-([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
+- **Workspace machinery beyond the presets** - the four shipped presets landed
+2026-07-28 (Window menu; the Audio preset stands in with a taller Timeline
+until the Audio panel exists). Still unbuilt from §1.6: user workspaces
+(save-as/rename/export), the chrome switcher strip, and Alt+Shift+1-9.
+- **First-run setup screen** (Vegas/AE preference primer, K-006) - absent, and
+GATED: spec marks it post-v1 polish and its cards set preferences that do not
+exist yet (Retime graph-lens default, keymap presets, mapping tips) — build
+those first or the screen writes settings nothing reads (K-181/K-182).
 - **Command palette** - the Effects/Comps/Panels categories, recent-first
 ranking and taught shortcuts landed 2026-07-28; recents are session-lived, and
 only genuinely bound shortcuts are taught (today just undo/redo — grows with
@@ -158,7 +162,9 @@ the budget ranking (`bridge_call_budget_test.dart` prints it).
 - **`LumitAppNew` rebuilds the whole app on any `LumitUiState.notifyListeners`**
     (a `ListenableBuilder` above everything), and un-scoped document changes do
     the same via `LumitState`. Reads are nearly free now (K-184), but the
-    widget-tree rebuild itself is not. Scope it.
+    widget-tree rebuild itself is not. Hidden dock tabs are already out of it
+    (they are never built while hidden, 2026-07-28); scoping the visible tree
+    remains.
 
 **The RAM frame cache is now only the scope path's cache (K-183, narrowed by
 K-187).** The zero-copy transport keeps no CPU bytes, so `framecache` is filled
@@ -234,7 +240,8 @@ list, not a re-statement of the roadmap.
     unit, transfer to system memory, sw fallback —
     [impl/media-io.md](impl/media-io.md) §4); still to come are the one-copy
     D3D11→DX12 interop and VideoToolbox (K-033). Also: proxy generation;
-    image-sequence footage; the VRAM cache tier + resource governor;
+    image-sequence footage; the resource governor (the VRAM cache tier itself
+    landed 2026-07-27, K-187);
     ProRes/DNxHR intermediate export (v1 is H.264/HEVC only); the 8-/32-bpc
     working-depth switch (v1 is fp16 only); OCI0 v2 colour management and the
     colour-management UI.
@@ -243,10 +250,11 @@ list, not a re-statement of the roadmap.
     - **Audio panel** - the whole panel is missing in Flutter. The engine (playback,
         volume, beat detection) works; there is no UI for it. Per-layer **Volume** now
         has one: the Audio group in the Timeline's fold-out, shown only on a layer whose
-        source carries sound ([07-UI-SPEC.md](07-UI-SPEC.md) §4.3). The panel itself,
-        level meters and the waveform lane are still missing.
-    - **Beat-marker generation UI** (sensitivity, BPM-grid, range) - `detectBeatMarkers`
-        exists on the bridge; the controls to drive it do not.
+        source carries sound ([07-UI-SPEC.md](07-UI-SPEC.md) §4.3), and the waveform
+        lane landed 2026-07-28. The panel itself and level meters are still missing.
+    - **Beat-marker generation UI** (sensitivity, BPM-grid, range) - a one-click
+        detect button landed 2026-07-28 in the layer fold-out; the tuning
+        controls do not exist.
     **Beat tap** (press `8` during playback) and **level meters** - not wired.
     - **Persistent waveform peak** Persistent waveform peak files (peaks are
         computed on demand today);
@@ -259,12 +267,14 @@ list, not a re-statement of the roadmap.
 - **Platform.** The macOS pass (native menu bar, Metal/VideoToolbox,
     notarisation, K-033) — which since K-183 must include a Metal/IOSurface
     zero-copy Viewer path, because macOS has no Viewer picture without one.
-- **Phase 2 - Retime.** Flow interpolation policies; audio waveforms in the
-    Timeline; automatic beat snapping across edit/retime points
-    ([04-RETIMING.md](04-RETIMING.md), [09-AUDIO.md](09-AUDIO.md)).
-- **Phase 3 - The look.** Per-layer motion blur polish, preset import/export,
-    scopes GPU pass ([08-EFFECTS.md](08-EFFECTS.md)). The Tier-1 effect suite itself
-    is already shipped. This gate is the v1.0 milestone.
+- **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
+    across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
+    [09-AUDIO.md](09-AUDIO.md)). The Timeline audio waveforms landed 2026-07-28.
+- **Phase 3 - The look.** Per-layer motion blur polish and the scopes GPU pass
+    ([08-EFFECTS.md](08-EFFECTS.md)). Preset save/list/apply landed 2026-07-28
+    (the Effects & presets panel's Saved presets group); importing a preset
+    file from outside the presets folder is still a manual copy. The Tier-1
+    effect suite itself is already shipped. This gate is the v1.0 milestone.
 **Phase 4 - Extensibility (whole docs, nothing built -
 [11-AE-IMPORT.md](11-AE-IMPORT.md), [12-PLUGINS.md](12-PLUGINS.md)).** AE import
 (Bridge panel, `.aep` parser, Lottie, fidelity report); the OFX host; the LFX C

@@ -444,6 +444,32 @@ void main() {
       expect(p.uiState.selectedComp?.internalid, comp.internalid);
     });
 
+    /// The four shipped workspace presets (docs/07 §1.6): each rearranges the
+    /// dock to its factory layout; the same panel inventory throughout, and a
+    /// distinct arrangement per preset.
+    testWidgets('the Window menu applies the four workspace presets',
+        (tester) async {
+      final p = await mount(tester);
+
+      await choose(tester, 'Window', 'Workspace: Effects');
+      await tester.pump();
+      expect(panelsIn(p.uiState.split),
+          panelsIn(presetLayout(WorkspacePreset.effects)));
+      expect(p.uiState.split.toJson(),
+          isNot(presetLayout(WorkspacePreset.colour).toJson()),
+          reason: 'the presets are genuinely different arrangements');
+
+      await choose(tester, 'Window', 'Workspace: Audio');
+      await tester.pump();
+      expect(p.uiState.split.toJson(),
+          presetLayout(WorkspacePreset.audio).toJson());
+
+      // Reset still means the default (Edit) arrangement.
+      await choose(tester, 'Window', 'Reset workspace');
+      await tester.pump();
+      expect(panelsIn(p.uiState.split), panelsIn(defaultLayout()));
+    });
+
     testWidgets('the Window menu offers the palette, reset and settings',
         (tester) async {
       final p = await mount(tester);
