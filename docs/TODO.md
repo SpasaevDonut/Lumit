@@ -135,7 +135,6 @@ the keymap).
 - **Graph editor / Lane Editor / keyframes ([04-RETIMING.md](04-RETIMING.md), archive/flutter-port/06 §C):**
     - All Retime specific's are to be implemented later, currently it should behave and have exact parity
         as all other properties in graph view, same value/speed graph etc. Nothing extra
-    - **Effect-param interpolation menu** on the fx keyframe lane.
 
 ## Next - engine/bridge follow-ups
 

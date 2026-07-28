@@ -212,6 +212,52 @@ void main() {
       expect(keys, hasLength(1));
     });
 
+    /// The fx keyframe lane carries the same interpolation menu the transform
+    /// lanes do (docs/TODO: "Effect-param interpolation menu") — the lane
+    /// machinery is one implementation, so an eased blur is one right-click.
+    testWidgets('an effect parameter lane has the interpolation menu',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'blur');
+      // A staged copy plus set_effects is the commit, exactly as the Effect
+      // controls panel writes (K-065).
+      final staged = p.layer.getEffects();
+      staged.single.setValue(
+        id: 'radius',
+        value: BridgeEffectValue.float(BridgeScalar.keyframed([
+          BridgeKeyframe(
+            time: p.comp.timeOfFrame(frame: 0),
+            value: 0,
+            interpIn: const BridgeSideInterp.linear(),
+            interpOut: const BridgeSideInterp.linear(),
+          ),
+          BridgeKeyframe(
+            time: p.comp.timeOfFrame(frame: 900),
+            value: 40,
+            interpIn: const BridgeSideInterp.linear(),
+            interpOut: const BridgeSideInterp.linear(),
+          ),
+        ])),
+      );
+      p.layer.setEffects(effects: staged);
+      final effect = p.layer.getEffects().single;
+      await mountGraph(tester, p);
+
+      final key = find.byKey(
+          ValueKey<String>('graph-key-${effect.id()}-radius#0'));
+      expect(key, findsOneWidget, reason: 'the effect parameter has a lane');
+      await tester.tapAt(tester.getCenter(key), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Easy ease'));
+      await tester.pumpAndSettle();
+
+      final value = p.layer.getEffects().single.getValue(id: 'radius')
+          as BridgeEffectValue_Float;
+      final keys = (value.field0 as BridgeScalar_Keyframed).field0;
+      expect(keys[0].interpOut, isA<BridgeSideInterp_Bezier>(),
+          reason: 'the ease reached the effect keyframe in the document');
+    });
+
     /// A curve with no keys is not something the engine can evaluate, so the
     /// last key deleted has to leave a static value rather than an empty list.
     testWidgets('deleting the last key leaves a static value', (tester) async {
