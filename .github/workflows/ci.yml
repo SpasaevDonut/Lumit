@@ -287,12 +287,25 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: |
-          # src/api/tests.rs is excluded by name: test code may legitimately
-          # `expect`, and it is not on any path Dart calls. Excluding one known
-          # file beats teaching a grep where a `#[cfg(test)]` module begins.
-          hits=$(grep -rnE '\.unwrap\(\)|\.expect\(|\btodo!\(|\bunimplemented!\(|\bpanic!\(' \
-            crates/lumit-bridge/src/api crates/lumit-bridge/src/api.rs --include='*.rs' \
-            | grep -v '^crates/lumit-bridge/src/api/tests\.rs:' || true)
+          # Only the *shipping* half of each file is linted: everything from a
+          # `#[cfg(test)]` onward is test code, which may legitimately `expect`
+          # and is on no path Dart calls. This used to exclude src/api/tests.rs
+          # by name, on the reasoning that excluding one known file beat
+          # teaching a grep where a test module begins — which held right up
+          # until a second file grew an inline one (worker_thread.rs), and the
+          # job started failing on code that was never on the API surface.
+          # src/api/tests.rs is still named here: it is test code end to end
+          # and carries no `#[cfg(test)]` of its own to stop at.
+          hits=$(
+            find crates/lumit-bridge/src/api crates/lumit-bridge/src/api.rs \
+              -name '*.rs' -type f \
+              ! -path 'crates/lumit-bridge/src/api/tests.rs' \
+            | while read -r file; do
+                awk -v f="$file" \
+                  '/^#\[cfg\(test\)\]/ { exit } { print f ":" NR ":" $0 }' "$file"
+              done \
+            | grep -E '\.unwrap\(\)|\.expect\(|\btodo!\(|\bunimplemented!\(|\bpanic!\(' \
+            || true)
           if [ -n "$hits" ]; then
             echo "Panic paths in the frb API surface, which clippy cannot see"
             echo "(docs/14-ENGINEERING-RULES.md §4). Return Result<_, BridgeError>:"
