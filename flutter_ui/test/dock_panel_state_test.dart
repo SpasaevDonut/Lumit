@@ -38,7 +38,8 @@ class _ScrollBodyState extends State<_ScrollBody> {
     return ListView(
       controller: widget.controller,
       children: [
-        for (var i = 0; i < 60; i++) SizedBox(height: 30, child: Text('row $i')),
+        for (var i = 0; i < 60; i++)
+          SizedBox(height: 30, child: Text('row $i')),
       ],
     );
   }
@@ -93,8 +94,7 @@ Widget _harness({
 }
 
 void main() {
-  testWidgets(
-      'flipping a bare pane inactive keeps its State and scroll offset',
+  testWidgets('flipping a bare pane inactive keeps its State and scroll offset',
       (tester) async {
     final controller = ScrollController(keepScrollOffset: false);
     addTearDown(controller.dispose);
@@ -127,7 +127,8 @@ void main() {
     await tester.pump();
 
     expect(active.value, Panel.viewer);
-    expect(identical(tester.state(find.byType(_ScrollBody)), stateBefore), isTrue,
+    expect(
+        identical(tester.state(find.byType(_ScrollBody)), stateBefore), isTrue,
         reason: 'pane A kept the same State object across the flip');
     expect(_scrollBodyBuilds, buildsBefore,
         reason: 'pane A body was not reconstructed');
@@ -137,7 +138,8 @@ void main() {
   testWidgets('a drag begun on an inactive pane works on the first gesture',
       (tester) async {
     var drags = 0;
-    final active = ValueNotifier<Panel?>(Panel.viewer); // pane A starts inactive
+    final active =
+        ValueNotifier<Panel?>(Panel.viewer); // pane A starts inactive
     addTearDown(active.dispose);
 
     await tester.pumpWidget(_harness(
@@ -170,7 +172,58 @@ void main() {
         reason: 'the drag took effect on the first gesture');
   });
 
-  testWidgets('a tab group preserves a hidden tab\'s scroll offset', (tester) async {
+  /// Airyzz's rule (663b6cc, restored after a merge overwrote it): invisible
+  /// panels are not built — not at all before first shown, and not again
+  /// while hidden, however often the dock itself rebuilds.
+  testWidgets(
+      'a hidden tab is never built until shown, nor rebuilt while hidden',
+      (tester) async {
+    final builds = <Panel, int>{};
+    final active = ValueNotifier<Panel?>(null);
+    addTearDown(active.dispose);
+
+    await tester.pumpWidget(_harness(
+      root: DockSplit(
+        DockAxis.horizontal,
+        [
+          DockTabs([DockPane(Panel.project), DockPane(Panel.hierarchy)],
+              active: 0),
+        ],
+        [1.0],
+      ),
+      buildPanel: (context, panel) {
+        builds[panel] = (builds[panel] ?? 0) + 1;
+        return Text('body of ' + panel.title);
+      },
+      active: active,
+    ));
+    await tester.pump();
+
+    expect(builds[Panel.project], isNotNull, reason: 'the visible tab built');
+    expect(builds[Panel.hierarchy], isNull,
+        reason: 'a tab never shown builds nothing at all');
+
+    // A dock-level rebuild for an unrelated reason must not reach it either.
+    active.value = Panel.project;
+    await tester.pump();
+    expect(builds[Panel.hierarchy], isNull,
+        reason: 'dock rebuilds never cascade into hidden tabs');
+
+    // Showing it builds it; hiding it again freezes it at that count.
+    await tester.tap(find.text('Hierarchy'));
+    await tester.pump();
+    expect(builds[Panel.hierarchy], isNotNull);
+    final shown = builds[Panel.hierarchy]!;
+    await tester.tap(find.text('Project'));
+    await tester.pump();
+    active.value = null;
+    await tester.pump();
+    expect(builds[Panel.hierarchy], shown,
+        reason: 'hidden again, it is not rebuilt however the dock stirs');
+  });
+
+  testWidgets('a tab group preserves a hidden tab\'s scroll offset',
+      (tester) async {
     final controller = ScrollController(keepScrollOffset: false);
     addTearDown(controller.dispose);
     final active = ValueNotifier<Panel?>(null);

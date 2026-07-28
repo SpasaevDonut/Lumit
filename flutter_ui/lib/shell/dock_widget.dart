@@ -342,7 +342,8 @@ class _GhostLayer extends StatelessWidget {
           return Positioned(
             left: drag.pointer.dx + 10,
             top: drag.pointer.dy + 8,
-            child: IgnorePointer(child: _GhostPill(title: panel.title, theme: t)),
+            child:
+                IgnorePointer(child: _GhostPill(title: panel.title, theme: t)),
           );
         },
       );
@@ -415,9 +416,8 @@ class _DividerState extends State<_Divider> {
         onPanEnd: (_) => setState(() => _dragging = false),
         onPanCancel: () => setState(() => _dragging = false),
         onPanUpdate: (d) {
-          final parent = context
-              .findAncestorRenderObjectOfType<RenderBox>()
-              ?.size;
+          final parent =
+              context.findAncestorRenderObjectOfType<RenderBox>()?.size;
           final extent = parent == null
               ? 0.0
               : (widget.horizontal ? parent.width : parent.height);
@@ -458,8 +458,7 @@ class _TabGroup extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final barColour =
-        t.shape == ThemeShape.sharp ? t.surface2 : t.surface0;
+    final barColour = t.shape == ThemeShape.sharp ? t.surface2 : t.surface0;
 
     final active = tabs.children[tabs.active];
 
@@ -495,12 +494,15 @@ class _TabGroup extends StatelessWidget {
             ],
           ),
         ),
-        // Every tab's body is built and kept alive, not just the active one:
-        // the inactive tabs sit offstage with their ticker paused, so their
-        // panel state (scroll offsets, twirl-downs) survives a tab switch, the
-        // way egui's memory persists a hidden tab. Only the active body paints
-        // or ticks; an offstage body still lays out on a rebuild but does no
-        // per-frame work, which matches egui.
+        // Two requirements meet here, each once lost to the other. Panel
+        // state — scroll offsets, twirl-downs — survives a tab switch, so a
+        // hidden tab's subtree stays MOUNTED (the TF round 5 fix, pinned by
+        // dock_panel_state_test). And a hidden tab is never BUILT (Airyzz's
+        // "dont build invisible panels", restored after K-182's merge
+        // overwrote it): not at all before it is first shown, and not again
+        // while hidden — _KeepAlivePane returns the same built instance, and
+        // an identical child short-circuits Flutter's rebuild, so the dock
+        // rebuilding sixty times a second never reaches a hidden panel.
         Expanded(
           child: Stack(
             children: [
@@ -513,25 +515,53 @@ class _TabGroup extends StatelessWidget {
     );
   }
 
-  /// One tab's body, wrapped identically whether shown or hidden so its State
-  /// is preserved across the flip. Keyed per panel so reordering the tabs never
+  /// One tab's body. Keyed per panel so reordering the tabs never
   /// cross-matches one panel's State onto another.
   Widget _paneBody(BuildContext context, Panel panel, bool visible) {
     return KeyedSubtree(
       key: ValueKey(panel),
-      child: Offstage(
-        offstage: !visible,
-        child: TickerMode(
-          enabled: visible,
-          child: _PaneChrome(
-            bare: false,
-            panel: panel,
-            activePanel: activePanel,
-            drag: drag,
-            child: buildPanel(context, panel),
-          ),
+      child: _KeepAlivePane(
+        visible: visible,
+        builder: (context) => _PaneChrome(
+          bare: false,
+          panel: panel,
+          activePanel: activePanel,
+          drag: drag,
+          child: buildPanel(context, panel),
         ),
       ),
+    );
+  }
+}
+
+/// A tab body that is mounted always, built only while visible.
+///
+/// While visible it rebuilds normally. While hidden it returns the widget
+/// instance it last built — Flutter skips rebuilding an identical child, so
+/// no build work cascades into hidden panels (their own listeners still fire;
+/// that is each panel's business) — and a tab never yet shown builds nothing
+/// at all. The subtree stays in the tree offstage with its ticker paused, so
+/// State (scroll, twirls, search text) survives the flip either way.
+class _KeepAlivePane extends StatefulWidget {
+  final bool visible;
+  final WidgetBuilder builder;
+  const _KeepAlivePane({required this.visible, required this.builder});
+
+  @override
+  State<_KeepAlivePane> createState() => _KeepAlivePaneState();
+}
+
+class _KeepAlivePaneState extends State<_KeepAlivePane> {
+  Widget? _built;
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.visible) _built = widget.builder(context);
+    final built = _built;
+    if (built == null) return const SizedBox.shrink();
+    return Offstage(
+      offstage: !widget.visible,
+      child: TickerMode(enabled: widget.visible, child: built),
     );
   }
 }
