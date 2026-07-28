@@ -28,7 +28,12 @@ void main() {
     expect(left.active, 0, reason: 'the left group opens on Project');
 
     expect((upper.children[1] as DockPane).panel, Panel.viewer);
-    expect((upper.children[2] as DockPane).panel, Panel.scopes);
+    // The right group tabs the Debug view over Scopes (Airyz's panel).
+    final right = upper.children[2] as DockTabs;
+    expect(
+      [for (final c in right.children) c.panel],
+      [Panel.debug, Panel.scopes],
+    );
     expect((root.children[1] as DockPane).panel, Panel.timeline);
   });
 

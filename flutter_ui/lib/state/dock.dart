@@ -171,6 +171,7 @@ DockSplit presetLayout(WorkspacePreset preset) => switch (preset) {
                 DockTabs([
                   DockPane(Panel.effectsAndPresets),
                   DockPane(Panel.scopes),
+                  DockPane(Panel.debug),
                 ]),
               ],
               [0.16, 0.20, 0.44, 0.20],
@@ -194,7 +195,10 @@ DockSplit presetLayout(WorkspacePreset preset) => switch (preset) {
                   DockPane(Panel.hierarchy),
                 ]),
                 DockPane(Panel.viewer),
-                DockPane(Panel.scopes),
+                DockTabs([
+                  DockPane(Panel.scopes),
+                  DockPane(Panel.debug),
+                ]),
               ],
               [0.18, 0.52, 0.30],
             ),
@@ -217,7 +221,10 @@ DockSplit presetLayout(WorkspacePreset preset) => switch (preset) {
                   DockPane(Panel.hierarchy),
                 ]),
                 DockPane(Panel.viewer),
-                DockPane(Panel.scopes),
+                DockTabs([
+                  DockPane(Panel.scopes),
+                  DockPane(Panel.debug),
+                ]),
               ],
               [0.24, 0.56, 0.20],
             ),

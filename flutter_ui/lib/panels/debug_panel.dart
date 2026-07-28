@@ -32,6 +32,9 @@ class _DebugPanelState extends State<DebugPanel> {
   @override
   void dispose() {
     sub?.cancel();
+    // The refresh tick dies with the panel — left running it outlives the
+    // widget tree, which the test binding rightly calls a leak.
+    t.cancel();
     super.dispose();
   }
 
@@ -132,7 +135,7 @@ class _DebugPanelState extends State<DebugPanel> {
           children: [
             HouseButton(
               child: Text(
-                "${len} in last second",
+                "$len in last second",
                 style: theme.body.copyWith(color: len > 20 ? Colors.red : null),
               ),
             ),

@@ -30,8 +30,6 @@ import 'package:lumit_flutter/widgets/ui_scale.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
-
-
 class StackTraceEntry {
   StackTrace trace;
   String name;
@@ -52,9 +50,8 @@ class FunctionCallStats {
   int numCalls = 0;
   Duration totalTime = Duration.zero;
 
-
-
-  double get averageMs => totalTime.inMilliseconds.toDouble() / numCalls.toDouble();
+  double get averageMs =>
+      totalTime.inMilliseconds.toDouble() / numCalls.toDouble();
 }
 
 class LumitDebugUI {
@@ -65,14 +62,14 @@ class LumitDebugUI {
 
   void addStackTrace(StackTraceEntry trace) {
     rustCalls.insert(0, trace);
-    
+
     const maxLen = 100;
 
     if (stats.containsKey(trace.name) == false) {
       stats[trace.name] = FunctionCallStats();
     }
     var stat = stats[trace.name]!;
-    
+
     stat.numCalls += 1;
     stat.totalTime += trace.duration;
 
