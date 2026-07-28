@@ -171,6 +171,34 @@ void main() {
           reason: 'off removes it rather than flattening it');
     });
 
+    /// **Ctrl+Alt+T does the same, and on Windows it is the one that lands.**
+    /// Left Alt with Shift is the system's input-language switch there: with a
+    /// second keyboard layout installed the OS takes the chord and the
+    /// application never sees the T, so the spec's own shortcut silently does
+    /// nothing on the machines most likely to have two layouts. This is After
+    /// Effects' own Time Remap chord, and nothing intercepts it.
+    testWidgets('Ctrl+Alt+T toggles Retime as well', (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      comp.addSolidLayer();
+      final layer = comp.getLayers().single;
+      p.uiState.selectedLayer.value = layer;
+
+      Future<void> press() async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pump();
+      }
+
+      await press();
+      expect(layer.getRetimeProperty(), isNotNull);
+      await press();
+      expect(layer.getRetimeProperty(), isNull);
+    });
+
     /// Otherwise every letter typed into a layer name would also be a command.
     ///
     /// Driven through the Timeline's own search field, which lives inside the

@@ -240,6 +240,24 @@ class LumitState extends ChangeNotifier {
   /// its own result — see the same reasoning in project_panel_frb.dart.
   void notifyDocumentChanged() => notifyListeners();
 
+  /// Give [layer] a Retime, or take it away again — the one implementation,
+  /// shared by the keyboard chords and the Composition menu (K-197, docs/04
+  /// §12), so no route can drift from the others.
+  ///
+  /// The engine refuses nothing here, but the call is a bridge crossing like
+  /// any other: a layer deleted between the menu opening and the click would
+  /// throw, and a command that cannot be performed should do nothing rather
+  /// than take the interface down with it.
+  bool toggleRetime(LayerReference layer) {
+    try {
+      layer.toggleRetimeProperty();
+    } catch (_) {
+      return false;
+    }
+    notifyDocumentChanged();
+    return true;
+  }
+
   /// Import footage into the open project, and say whether anything landed.
   ///
   /// Here rather than in the menu bar because the Project panel offers the same
@@ -766,16 +784,25 @@ class _LumitAppViewState extends State<LumitAppView> {
     } else if (key == LogicalKeyboardKey.end) {
       final last = (comp?.durationFrames() ?? 1) - 1;
       ui.playheadFrame.value = last < 0 ? 0 : last;
-    } else if (alt && shift && key == LogicalKeyboardKey.keyT) {
+    } else if (key == LogicalKeyboardKey.keyT &&
+        ((alt && shift) || (alt && ctrl))) {
       // Give the selected layer a Retime, or take it away again (docs/04 §12).
       // On installs the identity map, so the picture does not move — it just
       // gains a row above Transform to key.
+      //
+      // Two chords on purpose. Alt+Shift+T is the one the spec names, but on
+      // Windows **left Alt with Shift is the input-language switch**: with a
+      // second keyboard layout installed the system takes the chord and the
+      // application never sees the T, so the command silently does nothing on
+      // exactly the machines most likely to have two layouts. Ctrl+Alt+T is
+      // After Effects' own Time Remap chord and nothing intercepts it, so it
+      // is here as the one that always lands. The Composition menu carries the
+      // command too, for when neither is convenient.
       final layer = ui.selectedLayer.value;
       if (layer == null) {
         handled = false;
       } else {
-        layer.toggleRetimeProperty();
-        state.notifyDocumentChanged();
+        state.toggleRetime(layer);
       }
     } else if (ctrl && key == LogicalKeyboardKey.keyD) {
       final layer = ui.selectedLayer.value;

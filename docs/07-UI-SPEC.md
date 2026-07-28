@@ -387,7 +387,8 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
   with its own caret, and nothing under them until one is opened — the tidy-list behaviour
   above. Three groups exist, plus the Retime row above them:
 
-  - **Retime**, only on a layer that has been given one with **Alt+Shift+T** (K-197): a single
+  - **Retime**, only on a layer that has been given one with **Alt+Shift+T**, **Ctrl+Alt+T**
+    or Composition ▸ Enable Retime (K-197, K-198): a single
     row, not a group, sitting *above* Transform and outside every group — it decides which
     moment of the source the rest of the fold-out then transforms. Its value is that source
     time in seconds, and it is an ordinary keyframable property: the same stopwatch, the same
@@ -1019,7 +1020,7 @@ navigation moves to `,`/`.`; Viewer zoom therefore lives on `Ctrl+=`/`Ctrl+-` an
 | Timeline | `Ctrl+Shift+D` | Split layer / cut clip at playhead |
 | Timeline | `Ctrl+D` | Duplicate selection |
 | Timeline | `Ctrl+Shift+C` | Precompose |
-| Timeline | `Alt+Shift+T` | Give the selected layer a Retime, or take it away (K-197; was `Ctrl+Alt+T`) |
+| Timeline | `Alt+Shift+T` *or* `Ctrl+Alt+T` | Give the selected layer a Retime, or take it away (K-197; the second chord and the Composition-menu item are K-198, because Windows takes `Alt+Shift` for its input-language switch) |
 | Timeline | `=` / `-` | Zoom time in / out (`Ctrl+wheel` at pointer) |
 | Timeline | `\` | Toggle full-comp zoom / previous zoom |
 | Timeline | `Enter` | Rename selected layer |

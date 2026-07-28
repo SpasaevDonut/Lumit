@@ -15,6 +15,7 @@ import 'package:provider/provider.dart';
 
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:uuid/uuid.dart';
 
 import '../state/dock.dart';
@@ -109,6 +110,15 @@ class LumitMenuBarFrb extends StatelessWidget {
             _Item('Add sequence layer',
                 _onComp(context, (c) => c.addSequenceLayer())),
             _Item.divider(),
+            // The selected layer's Retime (K-197). Reachable here as well as
+            // on the keyboard because Alt+Shift+T is the Windows
+            // input-language switch on a machine with two layouts, which eats
+            // the chord before the application sees it.
+            _Item(
+              _retimeLabel(context),
+              _onSelectedLayer(context, (l) => app.toggleRetime(l)),
+            ),
+            _Item.divider(),
             _Item('Cut clip at playhead',
                 _onComp(context, (c) => _cutAtPlayhead(context, c))),
             _Item('Add marker at playhead',
@@ -171,6 +181,29 @@ class LumitMenuBarFrb extends StatelessWidget {
       run(comp);
       app.notifyDocumentChanged();
     };
+  }
+
+  /// The same, for a command that acts on the selected *layer* — greyed out
+  /// with nothing selected rather than offered and inert.
+  VoidCallback? _onSelectedLayer(
+      BuildContext context, void Function(LayerReference) run) {
+    final layer = context.read<LumitUiState>().selectedLayer.value;
+    if (layer == null) return null;
+    return () => run(layer);
+  }
+
+  /// What the Retime item says: the command names what it will do, so a layer
+  /// that already has one offers to take it away.
+  String _retimeLabel(BuildContext context) {
+    final layer = context.read<LumitUiState>().selectedLayer.value;
+    if (layer == null) return 'Enable Retime';
+    try {
+      return layer.getRetimeProperty() == null
+          ? 'Enable Retime'
+          : 'Disable Retime';
+    } catch (_) {
+      return 'Enable Retime';
+    }
   }
 
   /// Razor the selected layer at the playhead. Only Sequence layers hold

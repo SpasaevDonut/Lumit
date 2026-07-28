@@ -919,7 +919,11 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   "which moment of the source does this layer show?", and the new one is the simple one.
   A layer carries a `retime` field that is just an animatable number — the same kind of
   number Position and Opacity are — and its value *is* the source time, in seconds. Press
-  Alt+Shift+T on a layer and it gains one; press again and it loses it. While it has one, a
+  Alt+Shift+T on a layer and it gains one; press again and it loses it. (**Ctrl+Alt+T** does
+  the same, and on Windows it is the one to reach for: the system claims Alt+Shift for
+  switching keyboard layout, so on a machine with two languages installed it can swallow the
+  first chord before Lumit ever sees it. The command is in the Composition menu too, which
+  nothing can intercept.) While it has one, a
   **Retime** row appears in the Timeline's twirl-down above Transform, with the same
   stopwatch, the same diamonds and the same graph-editor lane as every other property,
   because it genuinely *is* every other property — there is no Retime-specific code in any

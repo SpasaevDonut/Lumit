@@ -2803,3 +2803,20 @@ only once the layer has one` (timeline_panel_frb_test.dart) and `Alt+Shift+T tog
 selected layer's Retime` (shortcuts_frb_test.dart). The shortcut is **Alt+Shift+T**, the
 owner's choice, replacing docs/07 §15's never-built `Ctrl+Alt+T`; that table is updated in
 the same commit.
+
+**K-198 · DECIDED · Retime keeps its chord and gains one the operating system cannot
+take.** From Mack (2026-07-28), extending K-197 rather than reversing it. K-197's
+**Alt+Shift+T** is unchanged and stays the shortcut the specs name. It also, on Windows,
+collides with the system's **input-language switch**: left Alt with Shift is how Windows
+cycles keyboard layouts, so on any machine with a second layout installed the OS consumes
+the chord and the application never receives the T — the command appears simply not to
+work, which is how this was found. Two additions, no removals: **Ctrl+Alt+T** does the same
+thing (After Effects' own Time Remap chord, and the one K-197 had replaced — nothing
+intercepts it), and **Composition ▸ Enable Retime / Disable Retime** carries the command in
+the menus, naming what it will do to the selected layer and greyed out when there is none.
+Both routes go through one `LumitState.toggleRetime`, so they cannot drift apart, and it
+swallows a failed call rather than letting a menu click take the interface down. Covered by
+`Ctrl+Alt+T toggles Retime as well` beside K-197's own shortcut test. The general lesson
+outlives this shortcut: a chord the OS claims is not a chord the application has, so a
+command whose only route is the keyboard has no route at all — every keyboard command
+wants a menu or palette entry beside it.

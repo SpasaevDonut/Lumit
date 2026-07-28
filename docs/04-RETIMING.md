@@ -24,7 +24,8 @@ is the intended surface, not the current one.
 **Restarted as a property (K-197, 2026-07-28).** The frontend's Retime is no longer this
 segment model at all. A layer carries `retime: Option<Property>` — an ordinary keyframable
 scalar whose value is the source time in seconds, the AE Time Remap shape — given to a layer
-with **Alt+Shift+T** and shown as a single row above Transform in the Timeline's fold-out,
+with **Alt+Shift+T** (or **Ctrl+Alt+T**, or Composition ▸ Enable Retime — K-198) and shown
+as a single row above Transform in the Timeline's fold-out,
 with exactly the graph options every other property has and **nothing else**: no lenses, no
 ease presets, no freeze, no interpolation policy on that path. Everything specified below
 remains canonical for the segment engine, which still evaluates for documents that carry one
