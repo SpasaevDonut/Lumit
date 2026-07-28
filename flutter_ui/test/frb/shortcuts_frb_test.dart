@@ -48,8 +48,28 @@ void main() {
       expect(asked, 1, reason: 'space reached the transport');
     });
 
-    testWidgets('the arrows step the playhead within the comp',
+    /// **The recurring space-bar funeral.** Menus, popups and the palette all
+    /// live in the Overlay outside the shell's focus scope; any of them could
+    /// walk focus away for good, and every shortcut died until something was
+    /// clicked. Shortcuts are global now — they work with focus parked
+    /// nowhere at all, which is exactly the broken state this reproduces.
+    testWidgets('space still toggles when focus has wandered off',
         (tester) async {
+      final p = await mount(tester);
+      var asked = 0;
+      p.uiState.togglePlayRequest.addListener(() => asked++);
+
+      // The broken state: nothing in the app holds focus.
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.space);
+      await tester.pump();
+      expect(asked, 1,
+          reason: 'shortcuts must not depend on where focus is sitting');
+    });
+
+    testWidgets('the arrows step the playhead within the comp', (tester) async {
       final p = await mount(tester);
 
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
@@ -95,7 +115,8 @@ void main() {
       await tester.pump();
       await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
-      expect(comp.getLayers(), hasLength(1), reason: 'and Ctrl+Shift+Z put it back');
+      expect(comp.getLayers(), hasLength(1),
+          reason: 'and Ctrl+Shift+Z put it back');
     });
 
     testWidgets('Delete removes the selected layer, and nothing without one',
