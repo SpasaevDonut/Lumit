@@ -288,6 +288,24 @@ void main() {
         (tester) async {
       final p = freshProject();
       final comp = p.state.project!.newComposition(name: 'Scene');
+      // A postage-stamp comp, because the question is whether the fill *banks*
+      // frames, not how fast a machine can composite one. At the default
+      // 1920×1080 this waited on three real 2-megapixel composites, which the
+      // CI runner does on a software rasteriser: it ran out of patience there
+      // and failed as though the fill were broken. Shrinking the picture makes
+      // each fill render trivial on any machine, and changes nothing about the
+      // behaviour being pinned.
+      final was = comp.getSettings();
+      comp.setSettings(
+        settings: BridgeCompSettings(
+          name: was.name,
+          width: 160,
+          height: 90,
+          fpsNum: was.fpsNum,
+          fpsDen: was.fpsDen,
+          duration: was.duration,
+        ),
+      );
       comp.addSolidLayer();
       p.uiState.setSelectedComp(comp);
 
@@ -297,8 +315,12 @@ void main() {
         mode: BridgePlaybackMode.everyFrame,
       );
 
+      // Fifteen seconds of patience, not five: the first render of a session
+      // also builds the renderer and compiles its shaders, which on a software
+      // adapter is seconds by itself. A generous ceiling costs nothing when the
+      // fill works — the loop returns the moment it does.
       await tester.runAsync(() async {
-        for (var i = 0; i < 50; i++) {
+        for (var i = 0; i < 150; i++) {
           await Future<void>.delayed(const Duration(milliseconds: 100));
           final tiers = comp.cachedFrames(frames: BigInt.from(12), scale: 1.0);
           // Ahead of the playhead fills first (two forward for one back),
