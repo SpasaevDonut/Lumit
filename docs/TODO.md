@@ -126,8 +126,10 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 2026-07-28 (Window menu; the Audio preset stands in with a taller Timeline
 until the Audio panel exists). Still unbuilt from §1.6: user workspaces
 (save-as/rename/export), the chrome switcher strip, and Alt+Shift+1-9.
-- **First-run setup screen** (Vegas/AE preference primer, K-006) - absent
-([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
+- **First-run setup screen** (Vegas/AE preference primer, K-006) - absent, and
+GATED: spec marks it post-v1 polish and its cards set preferences that do not
+exist yet (Retime graph-lens default, keymap presets, mapping tips) — build
+those first or the screen writes settings nothing reads (K-181/K-182).
 - **Command palette** - the Effects/Comps/Panels categories, recent-first
 ranking and taught shortcuts landed 2026-07-28; recents are session-lived, and
 only genuinely bound shortcuts are taught (today just undo/redo — grows with
