@@ -122,8 +122,10 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
   pop-out chrome) shipped ~500 unreachable lines. Rebuild from git history
   (`flutter-frontend-alternative`, pre-K-182) when pop-out is actually wanted,
   and land it wired end to end.
-- **Workspace presets** - only the single default layout exists; the four shipped
-presets (Edit/Effects/Colour/Audio) are not built ([07-UI-SPEC.md](07-UI-SPEC.md) §1.6).
+- **Workspace machinery beyond the presets** - the four shipped presets landed
+2026-07-28 (Window menu; the Audio preset stands in with a taller Timeline
+until the Audio panel exists). Still unbuilt from §1.6: user workspaces
+(save-as/rename/export), the chrome switcher strip, and Alt+Shift+1-9.
 - **First-run setup screen** (Vegas/AE preference primer, K-006) - absent
 ([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
 - **Command palette** - the Effects/Comps/Panels categories, recent-first
