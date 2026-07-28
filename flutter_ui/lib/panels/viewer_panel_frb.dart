@@ -773,6 +773,7 @@ class _Toolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    final tier = comp.playbackTier();
     return Container(
       height: 26,
       decoration: BoxDecoration(
@@ -795,8 +796,7 @@ class _Toolbar extends StatelessWidget {
                 key: const ValueKey('viewer-zoom'),
                 // -1: a wheel zoom between the listed steps; the button shows
                 // the true percentage and the menu still offers the steps.
-                value:
-                    _zoomSteps.contains(zoom) ? _zoomSteps.indexOf(zoom) : -1,
+                value: _zoomSteps.indexOf(zoom),
                 options: [for (var i = 0; i < _zoomSteps.length; i++) i],
                 label: (i) => i == -1
                     ? '${((zoom ?? 1) * 100).round()}%'
@@ -879,7 +879,7 @@ class _Toolbar extends StatelessWidget {
             // playback has dropped below Full, say so on the bar — a softer
             // picture must never be a mystery. Reading the tier is one atomic;
             // this bar already rebuilds per shown frame.
-            if (playing && comp.playbackTier() > 1) ...[
+            if (playing && tier > 1) ...[
               const SizedBox(width: 8),
               Container(
                 key: const ValueKey('viewer-tier-badge'),
@@ -889,11 +889,7 @@ class _Toolbar extends StatelessWidget {
                   borderRadius: BorderRadius.circular(t.tokens.controlRadius),
                 ),
                 child: Text(
-                  switch (comp.playbackTier()) {
-                    2 => 'Half',
-                    3 => 'Third',
-                    _ => 'Quarter',
-                  },
+                  _PlaybackModeButton._tierNames[tier.clamp(0, 4)],
                   style: t.small.copyWith(color: t.warning),
                 ),
               ),

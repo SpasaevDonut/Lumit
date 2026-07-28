@@ -70,12 +70,6 @@ void main() {
         size: const Size(700, 500),
       ));
       await tester.pump();
-      comp.renderScope(
-        frame: BigInt.zero,
-        scale: p.uiState.viewerScale,
-        kind: 0,
-        colours: scopeColoursFor(LumitTheme.dark()),
-      );
       // Retried, because the cache is process-global and every parallel test
       // suite's committed edit invalidates it: a hold observed and then
       // snatched away by a neighbour's commit is the environment, not the
