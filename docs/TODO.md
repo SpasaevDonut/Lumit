@@ -178,6 +178,15 @@ the keymap).
 - **Column widths and the property selection are session-lived (K-192).** Both reset when
     the panel is rebuilt from scratch; fold them into the workspace when per-workspace
     column layouts land (docs/07 §4.2's reorder/hide-per-workspace item).
+- **No CI job proves a Viewer frame ever arrives.** The Linux job is the only one that
+    runs the Flutter suite, and it has no GPU: wgpu lands on Mesa's lavapipe, whose
+    `vkAllocateMemory` refuses the exportable allocation DMA-BUF needs, so every frame is
+    dropped at the publish step. Zero-copy is the only transport (K-183), so the six
+    Viewer tests that wait for a frame skip there on `LUMIT_NO_ZERO_COPY_VIEWER=1`. They
+    run on any machine with a real adapter, so the owner's box still catches a regression
+    — but between that and the DMA-BUF path below, frame delivery is proven by hand on
+    Windows and by nothing anywhere else. A Linux runner with a GPU, or a Windows job that
+    runs the Flutter suite, closes both at once.
 - **The Flutter suite has ~4 order-dependent tests.** `flutter test` occasionally fails a
     different one or two of the playback/cache-bar tests each run; every one of them passes
     alone, and the whole suite passes with `--concurrency=1` — which is what CI now runs,

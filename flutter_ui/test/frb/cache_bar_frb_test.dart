@@ -96,7 +96,15 @@ void main() {
         if (tiers[0] != 0) break;
       }
       expect(tiers[0], 2, reason: 'the frame under the playhead is held');
-      expect(tiers.skip(1), everyElement(0), reason: 'and only that one');
+      // The other half of the name — "an unrendered one does not" — is the
+      // `everyElement(0)` above, taken before anything was rendered. It cannot
+      // be asserted again down here: the idle fill works outwards from the
+      // anchor, two frames ahead for every one behind, for as long as the
+      // settle loop keeps turning (docs/06 §5.5, and the sibling test that pins
+      // that behaviour). So which neighbours are still cold at this instant is
+      // a race between the fill and the assertion — one the owner's machine
+      // happened to win and the Linux runner lost, which makes it a statement
+      // about timing rather than about the bar.
     });
 
     /// Positional keys do not change when the picture does, so a committed edit

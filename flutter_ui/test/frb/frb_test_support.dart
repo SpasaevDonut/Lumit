@@ -73,6 +73,31 @@ Future<void> initEngineForTests() async {
 /// True when the engine library is present, for `skip:` on a whole group.
 bool get engineAvailable => File(_libraryPath).existsSync();
 
+/// True when this machine cannot hand the Viewer a frame at all.
+///
+/// Zero-copy is the only Viewer transport (K-183): a frame reaches Dart as a
+/// platform texture handle or it does not reach Dart. On a machine whose Vulkan
+/// driver cannot export the shared image — Mesa's lavapipe, the software
+/// rasteriser the Linux CI runner has instead of a GPU, where
+/// `vkAllocateMemory` refuses the exportable allocation — every frame is
+/// dropped at the publish step. The engine says so on stderr and carries on;
+/// nothing crashes, and nothing arrives.
+///
+/// So the tests that wait for a frame cannot pass there, and would not be
+/// telling the truth if they did. They skip on this flag rather than being
+/// deleted or loosened, because on a machine with a real adapter — the owner's
+/// Windows box, any developer's — they still run and still fail on a genuine
+/// regression. Set `LUMIT_NO_ZERO_COPY_VIEWER=1` to declare a machine
+/// transportless; CI sets it for the Linux job (.github/workflows/ci.yml) and
+/// nothing else does.
+///
+/// This is a hole in the gate and worth closing: the Linux DMA-BUF path
+/// (docs/TODO.md) has still never run against hardware, and until a Linux
+/// machine with a real GPU runs these, no CI job exercises frame delivery on
+/// any platform.
+bool get zeroCopyViewerUnavailable =>
+    Platform.environment['LUMIT_NO_ZERO_COPY_VIEWER'] == '1';
+
 /// Mount [child] with the providers and theme scope a panel needs.
 ///
 /// The `Overlay` is load-bearing: the project context menu and every dialog are

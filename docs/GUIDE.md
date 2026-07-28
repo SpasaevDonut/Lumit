@@ -2897,7 +2897,7 @@ https://github.com/flutter/flutter`, put its `bin` on PATH — it fetches its ow
 Dart on first run; the Windows build also wants the same VS 2022 C++ tools the
 Rust build uses). Then, from `flutter_ui/`: `flutter run -d windows` to launch,
 `flutter test` for the tests, `flutter analyze` for the lint pass. The bridge
-library builds separately with `cargo build -p lumit-bridge`, which drops
+library builds separately with `cargo build -p lumit_bridge`, which drops
 `lumit_bridge.dll` in `target/debug/` where the Flutter app looks for it.
 
 **Running it on Linux (for the Linux collaborator).** The Flutter frontend now
@@ -2909,7 +2909,7 @@ desktop toolchain (`sudo apt-get install clang cmake ninja-build pkg-config
 libgtk-3-dev`); and the same X11/Wayland/ALSA/GL dev libraries the engine's own
 Linux build wants (the `libasound2-dev libgl-dev libegl-dev libxkbcommon-dev …`
 list in §8). Then, from `flutter_ui/`: build the engine bridge with `cargo build
--p lumit-bridge` — on Linux this produces `liblumit_bridge.so` in `target/debug/`
+-p lumit_bridge` — on Linux this produces `liblumit_bridge.so` in `target/debug/`
 (the loader looks there, then `target/release/`, then beside the executable, then
 the system library path; the `lib` prefix and `.so` suffix are Cargo's Unix name
 for the same crate that becomes `lumit_bridge.dll` on Windows). Run the app with
@@ -2920,9 +2920,13 @@ packages. Two things behave differently on Linux by design, both degrading
 cleanly rather than failing: the Viewer's zero-copy Viewer path uses **DMA-BUF**
 rather than the Windows DXGI shared handle (built behind
 `--features shared-texture-linux`, K-177 — see the DMA-BUF sections in §9 above);
-if that flag is off or the graphics card cannot support it, the Viewer falls back
-to the **CPU frame path** (the copy-the-bytes way), a little heavier but
-everything still draws; and **popping a panel out into its own OS window works** —
+there is **no CPU fallback behind it**, because K-183 deleted the copy-the-bytes
+path outright — so on a machine whose driver cannot export the shared image (a
+software rasteriser such as Mesa's lavapipe, which is what CI has), every frame
+is dropped at the publish step and the Viewer simply stays empty. It says so on
+stderr and nothing crashes, but it does not draw. That is why the six Flutter
+tests that wait for a frame skip on CI (`LUMIT_NO_ZERO_COPY_VIEWER=1`, in
+docs/TODO.md); and **popping a panel out into its own OS window works** —
 the `desktop_multi_window` plugin ships a first-class Linux (GTK) implementation,
 so pop-out is *not* gated off Linux. Because this box cannot build
 Flutter-for-Linux, the Linux build is proven by the CI `flutter-linux` job, not
@@ -2936,7 +2940,7 @@ Windows path was proven):
 
 1. **Build the engine with the flag.** From the repo root, build the bridge
    library with the Linux zero-copy feature on:
-   `cargo build -p lumit-bridge --features shared-texture-linux --release`. This
+   `cargo build -p lumit_bridge --features shared-texture-linux --release`. This
    is the `.so` the Flutter app loads. Then build and run the app:
    `cd flutter_ui && flutter run -d linux --release` (the runner links EGL +
    GLESv2 for the DMA-BUF import — the CI `flutter-linux` job installs
@@ -2968,7 +2972,7 @@ proves the bytes come back off a real surface in the right channel order on a
 unified-memory Mac. Whether the picture reaches the screen needs a Mac with a
 window:
 
-1. Build the bridge and run: `cargo build -p lumit-bridge`, then `flutter run -d
+1. Build the bridge and run: `cargo build -p lumit_bridge`, then `flutter run -d
    macos` from `flutter_ui/`. No flag — `shared-texture-macos` is default-on.
 2. Open a composition. A picture in the Viewer *is* the proof: there is no
    fallback transport left, so a working picture can only have come through the
@@ -2989,7 +2993,7 @@ towards it, not the full pass — see below for what is still deferred). You
 need Xcode installed (the full app, not just the Command Line Tools — `flutter
 doctor` will say so plainly if only the tools are present) and CocoaPods
 (`brew install cocoapods`). Build the bridge library the same way as the other
-two platforms: `cargo build -p lumit-bridge`, which drops
+two platforms: `cargo build -p lumit_bridge`, which drops
 `liblumit_bridge.dylib` in `target/debug/` (Cargo's Unix cdylib naming, same as
 Linux's `.so` but with the macOS suffix). Then, from `flutter_ui/`: `flutter
 run -d macos` to launch, `flutter test` for the tests, `flutter analyze` for

@@ -5,6 +5,15 @@
 // What is asserted is everything around it: the transport, the timecode, the
 // magnification and channel pickers, the grid, and the move gizmo, all of which
 // are the parts a user actually operates.
+//
+// Six of them do still need a frame to *arrive*, because that arrival is what
+// moves the playhead and bumps `frameArrived` — the engine drives playback
+// (K-181), so a Viewer that is told nothing shows nothing and counts nothing.
+// Those carry `skip: zeroCopyViewerUnavailable`, which is true only on a machine
+// with no working zero-copy transport (see `frb_test_support.dart`). Today that
+// means the Linux CI runner and its software Vulkan, so on CI these six do not
+// run at all. They are among the tests most worth having; the skip is a
+// statement about the runner, not about them.
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
@@ -130,7 +139,7 @@ void main() {
       // The while-playing half is not asserted — it races a live controller.
       expect(find.byKey(const ValueKey('viewer-tier-badge')), findsNothing,
           reason: 'no degradation badge once playback has stopped');
-    });
+    }, skip: zeroCopyViewerUnavailable);
 
     /// Running off the end is the engine's to notice: it knows the length and it
     /// is the one counting. The frontend is *told*, and that is the only reason
@@ -321,7 +330,7 @@ void main() {
       await tester.pump();
       expect(audioClock().playing, isFalse,
           reason: 'pausing the transport pauses the sound too');
-    });
+    }, skip: zeroCopyViewerUnavailable);
 
     /// The shell's space bar drives the transport through LumitUiState, so the
     /// key is a quiet no-op when no Viewer is mounted.
@@ -346,7 +355,7 @@ void main() {
       await settleFrb(tester, minRounds: 8, maxRounds: 8);
       expect(p.uiState.playheadFrame.value, stopped,
           reason: 'and space stopped it');
-    });
+    }, skip: zeroCopyViewerUnavailable);
 
     /// A transport belongs under the picture. Asserted by position rather than
     /// by reading the widget tree's shape, because what matters is where the
@@ -390,7 +399,7 @@ void main() {
       );
       expect(p.uiState.frameArrived.value, greaterThan(before),
           reason: 'a frame was rendered for the moved playhead');
-    });
+    }, skip: zeroCopyViewerUnavailable);
 
     /// A still Viewer must go quiet. While the in-flight rule was being built
     /// it re-asked for the frame it had just been given, so the engine rendered
@@ -477,7 +486,7 @@ void main() {
           reason: 'the edit asked for the picture again');
       expect(p.uiState.playheadFrame.value, playhead,
           reason: 'and did it without moving the playhead to force it');
-    });
+    }, skip: zeroCopyViewerUnavailable);
 
     /// Pressing play with the playhead already at the end used to do nothing at
     /// all: the clock read past the end on its first tick, so it stopped again
@@ -499,7 +508,7 @@ void main() {
 
       expect(p.uiState.playheadFrame.value, lessThan(100),
           reason: 'it rewound rather than sitting at the end doing nothing');
-    });
+    }, skip: zeroCopyViewerUnavailable);
 
     /// The two playback behaviours, and the fact that you can see which is on.
     testWidgets('the playback mode is shown on the bar and toggles',

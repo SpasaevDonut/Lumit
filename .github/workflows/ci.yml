@@ -224,8 +224,18 @@ jobs:
       # parallel run had them contending for it — a different one or two failing
       # per run, each passing alone (docs/TODO.md). Serial is a few minutes
       # slower and it is the difference between a gate and a coin toss.
+      #
+      # `LUMIT_NO_ZERO_COPY_VIEWER` declares this runner transportless. It has
+      # no GPU: wgpu lands on Mesa's lavapipe, whose `vkAllocateMemory` refuses
+      # the exportable allocation the DMA-BUF path needs, so every Viewer frame
+      # is dropped at the publish step and none reaches Dart. Zero-copy is the
+      # only transport (K-183), so the six tests that wait for a frame skip
+      # here — see `test/frb/frb_test_support.dart`, and docs/TODO.md for what
+      # that costs.
       - name: flutter test
         working-directory: flutter_ui
+        env:
+          LUMIT_NO_ZERO_COPY_VIEWER: "1"
         run: flutter test --concurrency=1
       # Compile the Linux DMA-BUF zero-copy Viewer path (K-177): the Vulkan/ash
       # export code lives behind `shared-texture-linux` and cfg(target_os =
