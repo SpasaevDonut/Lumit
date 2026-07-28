@@ -22,6 +22,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 
 import 'frb_test_support.dart';
@@ -135,13 +137,13 @@ void main() {
           reason: 'the click actually changed the selection');
       // ignore: avoid_print
       print('CLICK COST ${counter.total} calls\n${counter.ranking()}');
-      // Measured at 11 with the read model in place (K-184): a selection is
-      // pure interface state, so what remains is one revision check per panel
-      // rebuild plus the source card's own reads for the newly shown layer.
-      // The cap stays roughly 2x measured so honest growth does not trip it.
+      // Measured at 5 with the read model in place (K-184) and its revision
+      // check folded to one per frame: a selection is pure interface state, so
+      // what remains is that one check plus the ruler's own reads. The cap
+      // stays roughly 2x measured so honest growth does not trip it.
       expect(
         counter.total,
-        lessThan(24),
+        lessThan(12),
         reason: 'one click re-read far too much across the bridge:\n'
             '${counter.ranking()}',
       );
@@ -192,6 +194,124 @@ void main() {
         counter.total,
         0,
         reason: 'hovering re-read the engine:\n${counter.ranking()}',
+      );
+    });
+
+    /// Twirling a layer open changes nothing in the document, so it should
+    /// cost nothing at the seam. It used to cost a stack of
+    /// `document_revision` calls: the read model checked whether the document
+    /// had moved once per *getter*, and a rebuilding timeline reads several.
+    testWidgets('twirling a layer open costs few bridge calls', (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer().addEffect(name: 'blur');
+      comp.addTextLayer();
+      p.uiState.setSelectedComp(comp);
+      final target = comp.getLayers().first;
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 700),
+        child: const TimelinePanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      final id = target.internallayerId.toString();
+      counter
+        ..reset()
+        ..counting = true;
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 2, maxRounds: 6);
+      await tester.tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 2, maxRounds: 6);
+      counter.counting = false;
+
+      // ignore: avoid_print
+      print('TWIRL COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.total,
+        lessThan(12),
+        reason: 'opening a twirl re-read the engine:\n${counter.ranking()}',
+      );
+    });
+
+    /// Clicking a new spot on the ruler used to cost one `time_of_frame` per
+    /// animated row on screen — the same question, asked twenty ways, because
+    /// each row converted the playhead frame for itself. The answers are
+    /// remembered in `state/comp_time.dart` now, so a scrub asks once.
+    testWidgets('moving the playhead converts the frame once', (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      // Several animated properties, which is what multiplied the calls.
+      for (var i = 0; i < 3; i++) {
+        final layer = comp.addSolidLayer();
+        for (final prop in [
+          BridgeTransformProp.opacity,
+          BridgeTransformProp.rotation,
+        ]) {
+          layer.setTransform(
+            prop: prop,
+            value: BridgeScalar.keyframed([
+              for (final (f, v) in [(0, 20.0), (60, 80.0)])
+                BridgeKeyframe(
+                  time: comp.timeOfFrame(frame: f),
+                  value: v,
+                  interpIn: const BridgeSideInterp.linear(),
+                  interpOut: const BridgeSideInterp.linear(),
+                ),
+            ]),
+          );
+        }
+      }
+      p.uiState.setSelectedComp(comp);
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 700),
+        child: const TimelinePanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+      // Twirl every layer's Transform open, so the rows that sample at the
+      // playhead are actually on screen.
+      for (final layer in comp.getLayers()) {
+        final id = layer.internallayerId.toString();
+        await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+        await tester.pump();
+        await tester
+            .tap(find.byKey(ValueKey<String>('tl-group-$id/transform')));
+        await tester.pump();
+      }
+      await settleFrb(tester, minRounds: 4, maxRounds: 8);
+
+      counter
+        ..reset()
+        ..counting = true;
+      p.uiState.playheadFrame.value = 30;
+      await tester.pump();
+      await settleFrb(tester, minRounds: 2, maxRounds: 6);
+      counter.counting = false;
+
+      // ignore: avoid_print
+      print('SCRUB COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.calls['composition_reference_time_of_frame'] ?? 0,
+        lessThanOrEqualTo(1),
+        reason: 'each row converted the playhead frame for itself:\n'
+            '${counter.ranking()}',
+      );
+      // Measured at 7: one conversion, plus one sample per animated row —
+      // those are genuinely different questions. The keyframe rows used to
+      // walk their key lists asking `frame_at_time` per key as well, which is
+      // what put this at 67.
+      expect(
+        counter.total,
+        lessThan(20),
+        reason: 'a scrub re-read too much across the bridge:\n'
+            '${counter.ranking()}',
       );
     });
   }, skip: !engineAvailable);

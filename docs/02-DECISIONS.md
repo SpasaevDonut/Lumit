@@ -2717,3 +2717,55 @@ mistake that would otherwise cost a silent blank session (the Windows sibling's 
 for the same reason). Extends K-177; supersedes K-183's "macOS has no Viewer picture until
 it grows its own" — it has grown one. The rest of K-033's Mac release list (VideoToolbox,
 ProRes, notarisation, the native menu bar) is untouched and still outstanding.
+
+**K-196 · DECIDED · The graph editor is the AE graph, and the keyframe clipboard speaks
+AE's format.** From Mack (2026-07-28), replacing the per-channel mini-lanes the frb port
+shipped with the behaviour docs/07 §5 always specified. The graph is **one full-height
+pane** sharing the Timeline's ruler, zoom and horizontal scroll; the curves it draws are
+evaluated by a Dart port of the engine's own cubic (`flutter_ui/lib/panels/graph_maths.dart`,
+pinned to `crates/lumit-core/src/anim.rs` by docs/impl/keyframe-eval.md §1–2 and held
+together by golden tests), because a paint may not cross the bridge (K-184). Decisions
+folded in: **(a)** property selection rides on the property's *name* in the outline —
+`Ctrl` toggles, `Shift` ranges, across layers — and editing a value or keying a property
+selects it too; a click elsewhere on the row selects nothing. Every selected property is a
+coloured curve (the theme's `curve` palette, per axis — Position is AE's red/green pair)
+and the outline label takes its curve's colour. **(b)** Wheel bindings match the lane view:
+`Ctrl`+wheel zooms time about the pointer, `Shift`+wheel scrolls sideways; the value axis
+auto-fits until the Auto fit toggle is off, and then a plain wheel pans it and `Alt`+wheel
+zooms it. **(c)** Tangent handles are per side and joined by default: a drag swings the partner
+**live and in screen space**, keeping the pixel length it had when the gesture began, and
+`Alt` held at drag start flips broken/joined. Screen space, not value space, because the
+two axes carry different units at independent zooms — mirroring in value space bends the
+line the pair is supposed to draw and appears to stretch the partner as the tangent swings
+toward vertical, which is the exact complaint that killed this in the egui frontend. For
+the same reason the handles' hit targets never grow past their own reach: a handle sits a
+few pixels from its key on a long composition, and a fixed target made which one you
+grabbed a coin toss. The pixel length holds at *every* angle, with two supports rather
+than a compromise: a tangent may never stand exactly upright (its reach is floored at a
+thousandth of its span — sub-pixel at any sane zoom), because a vertical tangent covers no
+time and so has no speed that describes it, which is the one state the geometry cannot
+come back from; and each handle's drawn length is **remembered** per keyframe and side,
+against the scales it was measured under, so swinging a pair out to near-vertical and back
+returns both handles exactly as long as they went in. Reach in time is therefore allowed
+to become very small at the extreme — that is what a near-upright tangent *is* — without
+the length on screen following it down. One consequence is worth stating rather than
+patching around: a joined partner moves when the pair **rotates**, so dragging a handle
+straight out from an already-steep tangent lengthens it without turning it and the other
+side barely stirs. That is the see-saw behaving, not sticking.
+**(d)** The speed lens draws the exact derivative (K-080): each key is an independent
+in-speed and out-speed dot, dragged vertically for that side's speed and **sideways to move
+the keyframe in time**, with one influence handle each; editing either lens writes the same
+speed/influence store losslessly (K-025). **(e)** The keyframe clipboard: in-app it keeps
+full fidelity; the system clipboard simultaneously receives a tab-separated table headed
+**`Lumit <version> Keyframe Data`** (the rate, the source size, then a property group per
+copied property with a column per value) — extended with **two easing columns per value**,
+`linear` / `hold` / `bezier(speed,influence)`, so shaping survives the round trip instead
+of flattening. The easing columns come last, after every value, so a reader that does not
+know them stops at the values it does; a foreign keyframe table with no easing columns
+parses back as linear keys. Copy and paste are bound to the keyframe *selection*, not to
+the graph, so they work from the lane view too. **(f)** The F9 family
+(F9 / `Shift+F9` / `Ctrl+Shift+F9`) and the footer's Linear / Bezier / Hold act on the key
+selection in *either* view — the lane marquee's catch included. Retime stays an ordinary
+property here (per the standing TODO): no Retime channel, no §5.2 lenses yet; the
+acceleration lens (K-070), numeric entry, transform-box scaling, beat-marker snapping and
+waveform ghosting remain open in docs/07 §5.

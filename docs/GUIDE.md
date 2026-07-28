@@ -1244,97 +1244,83 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   made them. It's built by `waveform_peaks` (in `lumit-audio::mix`), which buckets the mono
   mixdown into (min, max) pairs — a pure, tested down-sample — computed once when the comp's
   audio is mixed for playback.
-- The **graph editor** — a toggle in the Timeline's bottom-right corner, like After
-  Effects' graph button. Switching it on does not replace the timeline: the layer outline
-  on the left, the ruler, the scrollbars and the bottom bar all stay exactly where they
-  were, and only the lane area on the right (where the layer bars normally sit) swaps to
-  the selected property's live curve. Twirl a layer open and click a property's name to
-  choose what the curve shows (a retimed footage layer's "Speed %" row graphs its Retime
-  channel); on the curve you drag the keyframes (value and time together, one
-  undo per drag), double-click the background to add a key, right-click a key for a menu
-  (Easy ease / Linear / Hold, or Delete). Each key's shape tells you its interpolation at a
-  glance — a diamond is linear, a circle is eased (bezier), a square is a hold.
-  You can also edit **several keyframes at once**: drag a box over the curve's empty
-  background (a *marquee*) and every key inside it is selected, shown with a ring around it.
-  Dragging any selected key then moves the whole selection up or down by the same amount —
-  values only, times stay put — as one undo step; dragging a key outside the selection
-  drops the selection and moves just that key, as before. With two or more keys selected,
-  *typing* a number into that property's value field in the layer outline sets every
-  selected key to exactly that value (dragging the field keeps its usual one-value
-  behaviour). A plain click on the graph's background, or switching to another curve,
-  clears the selection. Under the bonnet the selection remembers each key by its position
-  *and* its time, so if anything else edits the curve underneath, the selection simply
-  clears rather than ever grabbing the wrong keys.
-  The curve you see is sampled from the same evaluator that renders the comp, so what the
-  graph shows is exactly what plays. There are two ways to look at any property: the **value**
-  view (the raw number over time) and the **speed** view (its rate of change — the
-  derivative). Both are editable, and they are the *same* data seen two ways (K-070): in the
-  speed view you drag a key up or down to set how fast the value is moving at that moment,
-  which is often the easier way to make motion feel right. Editing one view updates the other.
-  The speed curve is the *exact* derivative of the value curve (K-080), so any bezier shaping you
-  give a key in the value view carries straight across: an eased key that starts and ends slow
-  shows in the speed view as a smooth hump, a straight run shows as a flat line, a hold as zero.
-  You can shape a key from *either* view (K-081): click a key in the speed view to select it and
-  the same **gold tangent handles** appear, here drawn as horizontal ease bars — drag a handle up
-  or down to set that side's speed, and left or right to set its influence (how long the ease
-  holds). It edits the very same curve, so the value view updates in step.
-  The value/speed switch lives in the timeline's **bottom bar** (its own little group next to
-  the zoom buttons, shown only in graph mode) rather than in each curve's header, because it
-  is one setting shared by every curve. The plot also carries a small **y-axis**: a few faint
-  gridlines down the left edge labelled with the value at that height — degrees or per cent
-  for the transform properties, `HH:MM:SS:FF` timecode or per cent for a Retime channel, and
-  units-per-second in a property's speed view. And the graph **follows your edits**: adding
-  or changing a keyframe anywhere in the timeline — a stopwatch click, scrubbing a value in a
-  property row, dragging a key — selects that layer and points the graph at that channel, so
-  the curve you see is always the one you just touched.
-  **Panning and zooming the graph (K-079).** The graph now shares the timeline's time axis, so
-  **Alt + wheel** zooms and **Shift + wheel** (or a horizontal wheel) scrolls the curve left
-  and right in step with the layer bars. Up and down, the value view **auto-fits** by default —
-  and the fit covers the whole editable picture: a bezier that overshoots its keys stays fully
-  on screen, and so do the tips of every key's gold tangent handles, so a steep handle never
-  pokes out of view (and because the fit reads every key's handles, not just the selected
-  ones, selecting a key never makes the view jump). The **Fit** button in the bottom bar is a
-  toggle: while it is lit the graph keeps re-fitting as the curve changes; click it while lit
-  to freeze the view exactly where it is. A plain wheel over the graph scrolls it vertically
-  and **Ctrl + wheel** zooms the value range toward the cursor; either one switches the toggle
-  off and takes over, and clicking **Fit** back on drops that manual framing and resumes
-  fitting. While you hold a manual framing, resizing the timeline panel keeps the graph's
-  *scale* rather than its range: making the panel taller reveals **more** of the value range
-  about the same centre instead of stretching the curve (auto-fit simply re-fits to the new
-  height, as you'd expect). Because the graph fills the lane area and the layer
-  outline sits to its left, the two scroll **completely apart** in graph mode (UI-8): the layer
-  list gets its own vertical scrollbar tucked against the **right edge of the outline**, a wheel
-  over the graph pans the *curve* only, and a wheel over the outline (or a drag of that
-  scrollbar) moves the *layer list* only — neither ever nudges the other. This is the one place
-  they differ from the ordinary lane view, where the outline and the lanes ride a **single**
-  shared scroll so a row's controls and its bar always move together.
-  **Shaping a key (bezier handles).** New keys are **linear** — straight lines in, straight
-  lines out. Select a key (click it, or marquee several) and press **F9**, or the **Bezier**
-  button in the bottom bar, to *easy-ease* it — After Effects' smooth default. A bezier key
-  grows two short **gold handles** in the value view, one reaching back toward the previous
-  key and one forward toward the next. Drag a handle to shape the curve: how steeply it leaves
-  the handle sets the **speed** there, how far the handle reaches sets the **influence** (how
-  long that ease holds sway). By default the two handles are **unified** — they stay in a
-  straight line through the key, so the motion glides through smoothly. When they are unified,
-  moving one handle rotates the other to stay opposite it, but the *other* handle keeps the
-  length you last gave it — it only pivots, it never grows or shrinks as you swing the one you
-  are holding — and "length" here means what you see: the partner keeps its on-screen pixel
-  length whatever the axes' units or zoom, however steep the drag. The handle you are dragging
-  simply follows the cursor: no snapping to vertical, no sudden lengthening near the top or
-  bottom. While a handle is being dragged the graph's y-axis **holds still** — the view only
-  re-fits once you let go, so the curve isn't sliding under your cursor mid-shape. And however
-  wild the curve gets, it stays inside the graph: it never paints over the ruler, the layer
-  outline, or the bottom bar.
-  **Alt-drag** a handle to *break* it and shape the two sides independently (a corner). The
-  break is decided per drag and it *sticks*: once you've started moving with Alt held you can
-  let go of Alt and the handles stay broken. The same gesture reverses it — **Alt-drag a broken
-  handle** and the pair re-unifies, snapping collinear again. (Right-click → **Unify handles**
-  still works too.) The **Linear** button (bottom bar) straightens
-  the selected keys again, and its neighbour the **Hold** button *steps* them — the value
-  freezes at the key and jumps to the next one only when the playhead reaches it, never
-  blending in between (a square key; the discrete choice a File param uses). Right-clicking a
-  key still offers the same Easy ease / Linear / Hold / Delete. Whatever the handles, the
-  curve always passes exactly through the keys.
+- The **graph editor** — the curve view of the Timeline, like After Effects' graph button
+  (the Graph toggle in the Timeline toolbar, or `Shift+F3`). Switching it on keeps the layer
+  outline on the left and swaps the lane area for **one full-height pane of curves**, under
+  the same time ruler, zoom and horizontal scroll as the lanes — a frame sits at the same
+  x whichever view you are in, and the playhead line runs through both.
+  **Choosing what to graph.** Click a property's *name* in the outline (twirl the layer
+  open first) and its value-over-time appears as a line — even a property with no keyframes
+  shows as a flat line of its value. **Ctrl+click** more names to add them, **Shift+click**
+  to take a whole run of rows, across layers; each curve gets its own colour from the
+  theme's curve palette, and the property's name in the outline is tinted to match, so you
+  always know which line is which. A property with more than one axis shows every axis —
+  Position is an x curve and a y curve, like AE's red/green pair, with a coloured dot per
+  axis beside the label. Selection rides on the *name* on purpose: clicking a value field
+  or a stopwatch never re-aims the graph, but *editing* a value or adding a keyframe does
+  select that property, so the curve you see is the one you just touched.
+  **Reading the curve.** Each key's glyph tells you its interpolation at a glance — a
+  diamond is linear, a circle is eased (bezier), a square is a hold. The curve between keys
+  is drawn by a Dart copy of the *engine's own* evaluator (`graph_maths.dart`, pinned to
+  `anim.rs` by docs/impl/keyframe-eval.md and golden tests), so the shape on screen is
+  exactly the motion that renders — and drawing it costs no bridge calls at all.
+  **Editing keys.** Drag a key to move it in time *and* value at once — one undo step per
+  property, even when a drag moves a whole selection. Drag a box over empty pane (the
+  *marquee*) to select many keys; Shift or Ctrl adds to the selection; a plain click on
+  the background clears it; **Ctrl+click** on a curve plants a new key right on it;
+  Delete removes the selected keys (the last key of a curve leaves a static value holding
+  what it held). Keys may pass each other in a drag — the curve just re-sorts — but two
+  keys can never share a frame: a drag that would collide simply stops, nothing is lost.
+  The magnet in the bottom bar decides whether dragged keys land on whole frames.
+  **Shaping a key (bezier handles).** New keys are linear. Select some and press **F9**
+  (or the **Bezier** button in the bottom bar) to *easy-ease* them — AE's smooth default:
+  the curve arrives and leaves flat, and the key grows two **tangent handles**, one
+  reaching toward each neighbour. Drag a handle to shape the curve: its steepness is the
+  **speed** there (units per second) and its reach is the **influence** (how much of the
+  gap the ease covers). The two handles are **in sync** by default — they behave as one
+  straight line through the key, so dragging one swings the other round to stay opposite it
+  and motion glides *through* the key. The partner keeps the length it *looks* on screen
+  rather than its length in values, at every angle — so it never appears to shoot out as
+  the pair steepens, and swinging one handle out to near-upright and back brings the other
+  home exactly as long as it started. Two small things make that hold. A tangent can never
+  be made *perfectly* vertical, only a hair off it: an upright tangent spans no time at
+  all, and there is no speed that describes such a thing, so it is the one shape the editor
+  could not undo (the difference is well under a pixel — no ease you shape can tell). And
+  each handle's length is remembered as you leave it, rather than worked back out of the
+  ease, which at that extreme is where the arithmetic gets thin. (One thing worth knowing
+  about the see-saw: the partner moves when the line *rotates*. Dragging a handle straight
+  out from an already-steep tangent lengthens it without turning it much, so the other side
+  barely stirs — that is the geometry, not a stuck handle.) Hold **Alt** as you start a
+  drag to break the two apart and shape a corner; Alt-drag again re-joins them. `Shift+F9`
+  eases only the way *in*, `Ctrl+Shift+F9` only the way *out*, and the **Linear** and
+  **Hold** buttons put selected keys back to straight lines or steps.
+  **Value and speed.** The bottom bar's **Value / Speed** buttons switch what the pane
+  plots (docs/07 §5.1). The speed graph is the value curve's *exact derivative* (K-080) —
+  an eased key reads as a smooth dip to zero, a straight run as a flat line, a hold as
+  zero. Here each key is really **two dots** — the speed coming *in* and the speed going
+  *out* — that drag up and down independently, each with a single horizontal **influence
+  handle**; this is AE's speed graph, and both views edit the same store, so shaping one
+  always updates the other losslessly.
+  **Framing and the wheel.** Vertically the pane **auto-fits** by default: the curves,
+  every handle tip and any bezier overshoot stay in view, and the framing holds still
+  during a drag so the curve isn't sliding under your cursor. Toggle **Auto fit** off in
+  the bottom bar to take the vertical axis yourself: a plain wheel pans it, **Alt+wheel**
+  zooms it about the cursor, and **F** re-frames whenever you want. **Ctrl+wheel** zooms
+  time about the pointer and **Shift+wheel** scrolls sideways — the same bindings as the
+  lane view, because it is the same axis. A y-axis of faint gridlines down the left edge
+  labels the values.
+  **Copy and paste.** `Ctrl+C` copies the selected keys and `Ctrl+V` pastes them into the
+  selected properties, the earliest key landing on the playhead. It is not a graph-only
+  gesture: keys boxed up on a *lane* copy and paste exactly the same way. The in-app
+  clipboard keeps everything — times, values, both sides' easing. The *system* clipboard
+  gets the same keys as a **tab-separated table** headed `Lumit <version> Keyframe Data`:
+  the rate and source size, then a row per frame with a column per value — and, after
+  those, two more columns per value carrying that key's easing (`linear`, `hold`, or
+  `bezier(speed,influence)`). So a copied ramp can be read by a script, dropped into a
+  spreadsheet, or carried into another tool *with its shaping intact*, which is the part
+  a plain values table always loses. Reading is deliberately forgiving: a keyframe table
+  from another editor — same shape, no easing columns — pastes in as linear keys rather
+  than being refused.
   **A file parameter** (K-111) — some effects need a *file* rather than a number, a colour LUT
   being the first. Its row in Effect Controls shows the chosen file's name and a **Select…**
   button that opens the usual file picker, filtered to the kind the effect wants (a LUT shows
@@ -3785,9 +3771,17 @@ position, transform and effect values — and Dart simply keeps that copy.
 Panels draw from the copy for free; the copy is re-read only when the document
 actually changes. How they know it changed is one number: the engine counts
 every committed edit (and undo, and redo), and a rebuilding panel asks "what's
-the count?" — one cheap call — re-reading only when the number moved. So
-clicking a layer, which changes nothing in the document, went from about 75
-crossings to 11, and a test fails the build if it creeps past 24.
+the count?" — one cheap call — re-reading only when the number moved.
+
+Even that question is asked at most once per drawn frame. The copy is read
+through several getters — the layers, the length, the rate — and each of them
+used to ask for the count on its own behalf, so twirling one layer open still
+cost a dozen crossings for an answer that cannot change part-way through a
+frame being drawn. The model now remembers which frame it last asked in and
+answers the rest from that; anything editing the document calls `refresh()`
+directly, so nothing waits on the next frame to see its own change. Clicking a
+layer went from about 75 crossings to five, and twirling one open from eighteen
+to six — tests fail the build if either creeps back up.
 
 **One walk from project to pixels (K-185).** For a long time there were two
 separate pieces of code that could turn your project into a picture: one drew
@@ -3923,3 +3917,22 @@ editor does), and the field grows with the rate: a 600 fps comp counts to
 `:599`, so it gets three digits. Typing a timecode into the duration box is
 read at the rate typed above it and converted to exact seconds before it is
 stored — the document itself never stores a frame count (K-180).
+
+**Frames and times, remembered rather than re-asked.** Inside the document a
+keyframe sits at an exact *time* — a fraction of a second — not at a frame
+number (K-180), so the interface is forever converting between the two: "the
+playhead is on frame 30, what time is that?", "this key is at 1/2 second, which
+frame is that?" Both conversions belong to the engine, because frame-rate
+arithmetic done twice in two languages is frame-rate arithmetic done two
+slightly different ways. But asking is a crossing of the boundary, and every
+animated row was asking for itself: clicking a new spot on the timeline made
+sixty-seven crossings, sixty of which were the same handful of questions asked
+over and over by rows that all happen to be looking at the same playhead.
+
+The fix is a notebook (`state/comp_time.dart`). The engine still works out each
+answer; Dart writes it down and reads it back the next time the same question
+comes up. Only one thing can make an old answer wrong — changing the
+composition's frame rate — so the whole notebook is torn up whenever the engine
+reports a committed change to the document, which covers a settings edit and an
+undo of one alike. The same click now costs seven crossings, and the bridge-call
+budget test fails the build if it climbs back past twenty.

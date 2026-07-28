@@ -17,10 +17,16 @@ class MarqueeSelect extends StatefulWidget {
   /// A plain click on the background: clear the owner's selection.
   final VoidCallback onClear;
 
+  /// When set, a click reports *where* it landed instead of calling
+  /// [onClear] — for owners whose background click means more than "clear"
+  /// (the graph editor's Ctrl+click plants a key on the curve there).
+  final void Function(Offset local)? onTapAt;
+
   const MarqueeSelect({
     super.key,
     required this.onSelect,
     required this.onClear,
+    this.onTapAt,
   });
 
   @override
@@ -50,7 +56,10 @@ class _MarqueeSelectState extends State<MarqueeSelect> {
         Positioned.fill(
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: widget.onClear,
+            onTap: widget.onTapAt == null ? widget.onClear : null,
+            onTapUp: widget.onTapAt == null
+                ? null
+                : (d) => widget.onTapAt!(d.localPosition),
             // Down, not start: a pan's start position is where the slop was
             // exceeded, which would eat the box's first corner and whatever
             // sat nearest it.

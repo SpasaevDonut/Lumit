@@ -11,6 +11,7 @@
 // this holds what to *show*, never what to *do*.
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:uuid/uuid.dart';
 
@@ -23,6 +24,15 @@ class CompModel extends ChangeNotifier {
   /// rebuilds for any reason sees the current document, exactly as when every
   /// widget re-read the engine itself — for one call instead of dozens.
   BigInt? _revision;
+
+  /// The frame [_freshen] last asked the engine for its revision in.
+  ///
+  /// Asking is itself a bridge call, and a rebuild reads several getters —
+  /// layers, duration, rate — each of which used to ask for itself. Twirling
+  /// one layer open cost a dozen. The document cannot move part-way through a
+  /// frame we are drawing, so one question per frame answers all of them; an
+  /// edit made between frames calls [refresh] anyway, which forces a re-read.
+  Duration? _checkedIn;
 
   /// The layers of the fronted comp, top of the stack first. Empty when no
   /// comp is fronted (panels then show their placeholder anyway).
@@ -75,6 +85,7 @@ class CompModel extends ChangeNotifier {
   /// change stream's round trip.
   void refresh() {
     _revision = null;
+    _checkedIn = null;
     _freshen();
     notifyListeners();
   }
@@ -86,6 +97,14 @@ class CompModel extends ChangeNotifier {
       _model = null;
       return;
     }
+    // Between frames there is no timestamp to group by — and a read there is
+    // usually code checking its own edit landed — so those always ask.
+    final binding = SchedulerBinding.instance;
+    final frame = binding.schedulerPhase == SchedulerPhase.idle
+        ? null
+        : binding.currentFrameTimeStamp;
+    if (frame != null && frame == _checkedIn && _model != null) return;
+    _checkedIn = frame;
     try {
       final revision = comp.documentRevision();
       if (revision == _revision && _model != null) return;

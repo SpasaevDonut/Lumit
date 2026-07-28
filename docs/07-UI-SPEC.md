@@ -409,13 +409,19 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
   the groups are dragged. **An animated value stays editable** (K-189): the field shows the
   value under the playhead, and an edit writes the key sitting there — or plants a linear
   one — never flattening the curve. A drag on one is **one undo step**, staged in Dart and
-  committed on release (K-192). **Clicking a property row selects it**, and every row
-  containing it — its group heading, its effect, its layer — marks itself a shade dimmer,
-  which is how the graph editor will know which curve is meant; selecting keyframes on a
-  lane selects their property the same way. **Keyed rows draw their keyframes as diamonds on their
-  lanes**, and dragging empty lane space boxes them up for selection (the shared marquee
-  the graph editor also uses). Still to build here: acting on that selection (move/delete),
-  the Masks and Retime groups, the expression toggle, and `U`/`UU`.
+  committed on release (K-192). **Clicking a property's name selects it** (K-196): the
+  name, not the whole row, so grabbing a value field or a stopwatch never re-aims the
+  graph — though *editing* a value or keying the property selects it too. `Ctrl`/`Cmd`-click
+  toggles a property in and out of the selection and `Shift`-click takes the visible run of
+  rows between, across layers; every selected property is a coloured curve in the graph
+  editor and its label text takes its curve's colour. Every row containing a selected
+  property — its group heading, its effect, its layer — marks itself a shade dimmer;
+  selecting keyframes on a lane selects their properties the same way. **Keyed rows draw
+  their keyframes as diamonds on their lanes**, and dragging empty lane space boxes them up
+  for selection (the shared marquee the graph editor also uses); the F9 family and the
+  bottom bar's easing buttons act on that selection in either view. Still to build here:
+  moving/deleting a whole *lane* selection, the Masks and Retime groups, the expression
+  toggle, and `U`/`UU`.
 
 ### 4.4 Sequence layers
 
@@ -549,6 +555,28 @@ inside the sequenced-layer view (K-071, §4.x) — see K-075.
 - **Auto-zoom fit** (`F`): frame the selected keys, or all keys of shown properties when
   nothing is selected. Manual zoom/pan matches Timeline conventions (§4.6).
 - Audio waveforms MAY be ghosted behind curves (toggle) for sync work.
+
+**Shipped (K-196):** the graph editor is one **full-height pane** over the Timeline's own
+ruler, zoom and horizontal scroll (`Shift+F3` or the toolbar's Graph toggle), drawing every
+selected property as its own coloured curve — a multi-axis property contributes one curve
+per axis, and a static property draws as its flat value line. The curves are evaluated by a
+Dart port of the engine's cubic (`graph_maths.dart`, pinned to `anim.rs` by
+docs/impl/keyframe-eval.md and golden tests), so a paint costs zero bridge calls (K-184).
+Landed from the lists above: the **value and speed lenses** (bottom-bar buttons; the speed
+lens is the exact derivative, each key an independent in/out dot with one influence handle
+each); **per-side tangent handles** with `Alt`-drag breaking and re-joining; **box-select**
+with `Shift`/`Ctrl` add; the **preset eases** — F9 / `Shift+F9` / `Ctrl+Shift+F9`, and
+Linear / Bezier / Hold buttons in the footer and the key context menu, acting on the lane
+selection too; `Ctrl`+click planting a key on the curve under the pointer; **auto-zoom fit**
+(`F`, and an Auto fit toggle — off, the wheel pans the value axis and `Alt`+wheel zooms it;
+`Ctrl`/`Shift`+wheel stay the Timeline's time bindings); selection-key drags that move a
+whole selection in time and value as one write per property; and **keyframe copy/paste**
+(`Ctrl+C`/`Ctrl+V`, from the lane view as much as the graph) — full fidelity in-app,
+mirrored to the system clipboard as a tab-separated `Lumit <version> Keyframe Data` table
+whose per-value easing columns carry the shaping across, and which parses foreign
+keyframe tables back in as linear keys. Still to build:
+the acceleration lens and auto view (K-070), numeric entry, the transform-box scaling,
+snap-to-beat-markers in the graph, waveform ghosting, and the Retime lenses of §5.2.
 
 ---
 

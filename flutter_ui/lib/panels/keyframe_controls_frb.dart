@@ -29,6 +29,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
+import '../state/comp_time.dart';
 import '../widgets/controls.dart';
 
 /// The scalar with `value` written at `frame`: the key already there is
@@ -199,7 +200,7 @@ class KeyframeControlsFrb extends StatelessWidget {
   /// What each axis reads at `frame` — what a new key on it takes, so adding
   /// one never moves anything.
   List<double> _valuesNow(int frame) {
-    final time = comp.timeOfFrame(frame: frame);
+    final time = timeOfFrame(comp, frame);
     return [for (final s in scalars) sampleScalar(scalar: s, time: time)];
   }
 
@@ -210,7 +211,7 @@ class KeyframeControlsFrb extends StatelessWidget {
   /// other route stored an unreduced time.
   BridgeKeyframe? _keyAt(int frame) {
     for (final key in _keys) {
-      if (comp.frameAtTime(time: key.time) == frame) return key;
+      if (frameAtTime(comp, key.time) == frame) return key;
     }
     return null;
   }
@@ -365,7 +366,7 @@ class KeyframeControlsFrb extends StatelessWidget {
     BridgeKeyframe? best;
     int? bestFrame;
     for (final key in _keys) {
-      final at = comp.frameAtTime(time: key.time);
+      final at = frameAtTime(comp, key.time);
       if (before ? at >= frame : at <= frame) continue;
       if (bestFrame == null || (before ? at > bestFrame : at < bestFrame)) {
         best = key;

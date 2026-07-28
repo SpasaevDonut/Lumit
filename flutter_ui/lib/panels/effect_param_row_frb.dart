@@ -24,6 +24,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../state/comp_time.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
@@ -74,6 +75,13 @@ class EffectParamRowFrb extends StatelessWidget {
   final UuidValue ownerLayerId;
   final List<BridgeLayerEntry> ownerLayers;
 
+  /// Clicking the parameter's *name* selects it for the graph editor
+  /// (docs/07 §4.3) — the name, not the whole row.
+  final VoidCallback? onLabelTap;
+
+  /// The parameter's graph line colour while it is selected.
+  final Color? graphColour;
+
   const EffectParamRowFrb({
     super.key,
     required this.effectId,
@@ -88,6 +96,8 @@ class EffectParamRowFrb extends StatelessWidget {
     required this.ownerLayers,
     this.valueColumn,
     this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.onLabelTap,
+    this.graphColour,
   });
 
   @override
@@ -124,8 +134,17 @@ class EffectParamRowFrb extends StatelessWidget {
             ),
           const SizedBox(width: 4),
           Expanded(
-            child: Text(param.label,
-                style: t.body, overflow: TextOverflow.ellipsis),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: onLabelTap,
+              child: Text(
+                param.label,
+                style: graphColour == null
+                    ? t.body
+                    : t.body.copyWith(color: graphColour),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
           ),
           if (valueColumn case final col?) ...[
             SizedBox(
@@ -292,7 +311,7 @@ class EffectParamRowFrb extends StatelessWidget {
 
     if (scalar case BridgeScalar_Keyframed()) {
       final sampled =
-          sampleScalar(scalar: scalar, time: comp.timeOfFrame(frame: frame));
+          sampleScalar(scalar: scalar, time: timeOfFrame(comp, frame));
       // No live preview mid-drag on a curve; the release is one op — the key
       // at the playhead updated or planted.
       return SizedBox(

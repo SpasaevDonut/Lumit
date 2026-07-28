@@ -21,6 +21,7 @@ import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
+import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/workspace.dart';
@@ -510,7 +511,10 @@ class LumitUiState extends ChangeNotifier {
     this.workspace.addListener(notifyListeners);
     // The read model re-reads on every committed change — one bridge call —
     // and every panel that draws layers repaints from it (K-184).
-    _changes = state.onChange.listen((_) => model.refresh());
+    _changes = state.onChange.listen((_) {
+      clearCompTimeCache();
+      model.refresh();
+    });
     sub = state.onWorkerResponse.listen((msg) {
       switch (msg) {
         case WorkerResponse_RenderedDMABuf frame:

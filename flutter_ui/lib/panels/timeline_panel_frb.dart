@@ -31,14 +31,20 @@ import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
 import '../state/comp_model.dart';
+import '../state/comp_time.dart';
 import '../state/drag_payloads.dart';
 import '../state/timecode.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
+// The ruler helpers moved with the ruler (shared with the graph editor); the
+// re-export keeps their long-standing import path alive for their tests.
+export 'timeline_extras_frb.dart' show rulerLabelStepSeconds, rulerLabelOf;
+
 import 'placeholder.dart';
 import 'graph_editor_frb.dart';
+import 'graph_maths.dart';
 import 'timeline_extras_frb.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
@@ -159,19 +165,72 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// answer at a glance without stealing the selection.
   String? _highlighted;
 
-  /// The selected property, as its fold path (`<layer>/effects/<fx>/<param>`)
-  /// — set by clicking a property row, or by selecting its keyframes on a
-  /// lane. Everything containing it highlights, and the graph editor will
-  /// open on it (docs/07 §4.3).
-  String? _selectedProperty;
+  /// The selected properties, as fold paths (`<layer>/effects/<fx>/<param>`),
+  /// in selection order — clicking a property's name selects it, Ctrl+click
+  /// toggles it, Shift+click extends the range, across layers (docs/07 §4.3,
+  /// §5). Each is a coloured curve in the graph editor.
+  final List<String> _selectedProperties = [];
 
-  /// Select [path] and mark its layer, so the row it belongs to reads as the
-  /// one being worked on.
+  /// The graph editor's selected keyframes, as `channelId#index` — owned here
+  /// so the bottom bar's buttons and the shortcuts act on the same set.
+  final Set<String> _graphKeySelection = {};
+
+  /// Which reading of the curves the graph shows (docs/07 §5.1).
+  GraphLens _graphLens = GraphLens.value;
+
+  /// Auto-fit: the graph frames its curves vertically by itself; toggled off,
+  /// the wheel pans and `Alt`+wheel zooms the value axis (docs/07 §5.3).
+  bool _graphAutoFit = true;
+
+  final GlobalKey<GraphEditorFrbState> _graphPane = GlobalKey();
+
+  /// The property rows currently on screen, in display order — what a
+  /// Shift+click range runs along. Rebuilt by every build.
+  List<String> _visiblePropertyPaths = const [];
+
+  /// Select [path] by click: plain replaces, Ctrl toggles, Shift extends from
+  /// the last selected along the visible rows. Marks its layer either way.
   void _selectProperty(String path) => setState(() {
-        _selectedProperty = path;
+        final keys = HardwareKeyboard.instance;
+        if (keys.isControlPressed || keys.isMetaPressed) {
+          if (!_selectedProperties.remove(path)) _selectedProperties.add(path);
+        } else if (keys.isShiftPressed && _selectedProperties.isNotEmpty) {
+          final a = _visiblePropertyPaths.indexOf(_selectedProperties.last);
+          final b = _visiblePropertyPaths.indexOf(path);
+          if (a < 0 || b < 0) {
+            if (!_selectedProperties.contains(path)) {
+              _selectedProperties.add(path);
+            }
+          } else {
+            for (var i = a < b ? a : b; i <= (a < b ? b : a); i++) {
+              if (!_selectedProperties.contains(_visiblePropertyPaths[i])) {
+                _selectedProperties.add(_visiblePropertyPaths[i]);
+              }
+            }
+          }
+        } else {
+          _selectedProperties
+            ..clear()
+            ..add(path);
+        }
+        _graphKeySelection.clear();
         final cut = path.indexOf('/');
         if (cut > 0) _highlighted = path.substring(0, cut);
       });
+
+  /// Editing a value or keying a property selects it too (docs/07 §4.3) —
+  /// quietly: an already-selected property stays where it is in the order.
+  void _selectOnEdit(String path) {
+    if (_selectedProperties.contains(path)) return;
+    setState(() {
+      _selectedProperties
+        ..clear()
+        ..add(path);
+      _graphKeySelection.clear();
+      final cut = path.indexOf('/');
+      if (cut > 0) _highlighted = path.substring(0, cut);
+    });
+  }
 
   /// The graph editor replaces the layer area rather than sitting beside it:
   /// the two want the same width, and a curve squeezed into half a panel is not
@@ -215,6 +274,135 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     super.initState();
     _vOutline.addListener(() => _followScroll(_vOutline, _vLane));
     _vLane.addListener(() => _followScroll(_vLane, _vOutline));
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  /// The graph editor's channels right now, resolved from the read model.
+  List<GraphChannel> _channelsNow() {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    return graphChannels(
+        layers: ui.model.layers, selected: _selectedProperties);
+  }
+
+  /// The key selection the current view acts on: the graph's own, or the lane
+  /// marquee's translated onto channels (a lane diamond stands for every axis
+  /// of its row, so `row#i` fans out to each channel of that path).
+  Set<String> _actionKeySelection(List<GraphChannel> channels) {
+    if (_graph) return _graphKeySelection;
+    final out = <String>{};
+    for (final id in _laneKeySelection) {
+      final hash = id.lastIndexOf('#');
+      if (hash <= 0) continue;
+      final path = id.substring(0, hash);
+      final index = id.substring(hash + 1);
+      for (final channel in channels) {
+        if (channel.path == path) out.add('${channel.id}#$index');
+      }
+    }
+    return out;
+  }
+
+  /// Set the selected keys' easing (the F9 family and the bottom bar's
+  /// Linear / Bezier / Hold): both sides, or one for ease-in/ease-out.
+  void _applyInterp(BridgeSideInterp side,
+      {bool inSide = true, bool outSide = true}) {
+    // In lane view the selection speaks in row paths, so the channels have to
+    // cover those too, not only the selected properties.
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final paths = _graph
+        ? _selectedProperties
+        : {
+            for (final id in _laneKeySelection)
+              if (id.lastIndexOf('#') > 0) id.substring(0, id.lastIndexOf('#'))
+          }.toList();
+    final channels = graphChannels(layers: ui.model.layers, selected: paths);
+    final selection = _actionKeySelection(channels);
+    if (selection.isEmpty) return;
+    applyInterpToSelection(
+      channels: channels,
+      selectedKeys: selection,
+      side: side,
+      inSide: inSide,
+      outSide: outSide,
+    );
+    ui.model.refresh();
+  }
+
+  /// The Timeline's keyboard commands: `Shift+F3` toggles the graph, the F9
+  /// family sets easing, `F` re-frames the graph, `Ctrl+C`/`Ctrl+V` copy and
+  /// paste keyframes, Delete removes the graph's selected keys. Registered on
+  /// the hardware keyboard (panels do not hold focus); a focused text field
+  /// keeps its keys.
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent || !mounted) return false;
+    final focused = FocusManager.instance.primaryFocus?.context;
+    if (focused != null &&
+        (focused.widget is EditableText ||
+            focused.findAncestorWidgetOfExactType<EditableText>() != null)) {
+      return false;
+    }
+    final keyboard = HardwareKeyboard.instance;
+    final ctrl = keyboard.isControlPressed || keyboard.isMetaPressed;
+    final shift = keyboard.isShiftPressed;
+    final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.f3 && shift) {
+      setState(() => _graph = !_graph);
+      return true;
+    }
+    if (key == LogicalKeyboardKey.f9) {
+      // F9 easy-eases both sides; Shift+F9 the way in; Ctrl+Shift+F9 the way
+      // out (docs/07 §5.3).
+      _applyInterp(easyEase, inSide: !(ctrl && shift), outSide: !shift || ctrl);
+      return true;
+    }
+    // Copy and paste work wherever keyframes are selected — the lane view's
+    // marquee catch as much as the graph's (K-196).
+    if (ctrl && key == LogicalKeyboardKey.keyC) {
+      final ui = Provider.of<LumitUiState>(context, listen: false);
+      final comp = ui.selectedComp;
+      if (comp == null) return false;
+      final channels = _channelsNow();
+      final selection = _actionKeySelection(channels);
+      if (selection.isEmpty) return false;
+      copySelectedKeys(
+        comp: comp,
+        channels: channels,
+        selectedKeys: selection,
+        fps: ui.model.fps,
+      );
+      return true;
+    }
+    if (ctrl && key == LogicalKeyboardKey.keyV) {
+      final ui = Provider.of<LumitUiState>(context, listen: false);
+      final channels = _channelsNow();
+      if (channels.isEmpty) return false;
+      final (fpsNum, fpsDen) = ui.model.fpsExact;
+      pasteKeysAtPlayhead(
+        channels: channels,
+        playheadFrame: ui.playheadFrame.value,
+        fps: ui.model.fps,
+        fpsNum: fpsNum,
+        fpsDen: fpsDen,
+      ).then((pasted) {
+        if (pasted && mounted) ui.model.refresh();
+      });
+      return true;
+    }
+
+    if (!_graph) return false;
+
+    if (key == LogicalKeyboardKey.keyF && !ctrl && !shift) {
+      _graphPane.currentState?.fitNow();
+      return true;
+    }
+    if ((key == LogicalKeyboardKey.delete ||
+            key == LogicalKeyboardKey.backspace) &&
+        _graphKeySelection.isNotEmpty) {
+      _graphPane.currentState?.deleteSelectedKeys();
+      return true;
+    }
+    return false;
   }
 
   /// Mirror one side's scroll onto the other, guarded against the echo.
@@ -228,6 +416,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _barDrag.dispose();
     _vOutline.dispose();
     _vLane.dispose();
@@ -325,6 +514,28 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     _refreshAudio(layers);
     _refreshPeaks(layers);
 
+    // The property rows on screen, in display order — what a Shift+click
+    // range runs along — and the graph channels the selection resolves to,
+    // each with its stroke colour for the outline's labels to match.
+    _visiblePropertyPaths = [
+      for (final e in layers)
+        if (_open.contains(e.layer.internallayerId.toString()))
+          for (final row in layerFoldRows(
+            entry: e,
+            open: _open,
+            hasAudio: _hasAudio[e.layer.internallayerId.toString()] ?? false,
+          ))
+            if (row is! FoldGroupRow && row is! FoldWaveformRow)
+              foldRowPath(e.layer.internallayerId.toString(), row),
+    ];
+    final channels =
+        graphChannels(layers: ui.model.layers, selected: _selectedProperties);
+    final graphColours = <String, List<Color>>{};
+    for (final channel in channels) {
+      (graphColours[channel.path] ??= [])
+          .add(t.curve[channel.colourIndex % t.curve.length]);
+    }
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -390,7 +601,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                           scrollGutterWidth)
                       .clamp(1.0, 1e6);
                   final axis =
-                      _Axis(frames: frames, width: laneViewport * _zoom);
+                      TimelineAxis(frames: frames, width: laneViewport * _zoom);
 
                   // **Not** wrapped in a playhead listener. Every layer row and
                   // every bar used to rebuild each time the playhead moved —
@@ -471,10 +682,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   selected:
                                                       ui.selectedLayer.value,
                                                   highlighted: _highlighted,
-                                                  selectedProperty:
-                                                      _selectedProperty,
+                                                  selectedProperties:
+                                                      _selectedProperties,
+                                                  graphColours: graphColours,
                                                   onSelectProperty:
                                                       _selectProperty,
+                                                  onEditProperty: _selectOnEdit,
                                                   open: _open,
                                                   hasAudio: _hasAudio,
                                                   onToggle: _toggle,
@@ -545,19 +758,144 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                         ),
                         Expanded(
                           child: _graph
-                              // The graph draws the playhead through its own
-                              // curves, so it does still redraw on every move.
-                              ? ValueListenableBuilder<int>(
-                                  valueListenable: ui.playheadFrame,
-                                  builder: (context, playhead, _) =>
-                                      GraphEditorFrb(
-                                    comp: comp,
-                                    layer: ui.selectedLayer.value,
-                                    frames: frames,
-                                    playheadFrame: playhead,
-                                    onSeek: (f) => ui.playheadFrame.value = f,
-                                    onChanged: ui.model.refresh,
-                                  ),
+                              // The graph editor: the same ruler, zoom and
+                              // horizontal scroll as the lane view, over one
+                              // full-height pane of curves (docs/07 §5).
+                              ? Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Expanded(
+                                      child: Row(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.stretch,
+                                        children: [
+                                          Expanded(
+                                            child: SingleChildScrollView(
+                                              scrollDirection: Axis.horizontal,
+                                              controller: _hLane,
+                                              child: SizedBox(
+                                                width: axis.width,
+                                                child: Stack(
+                                                  children: [
+                                                    Column(
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .stretch,
+                                                      children: [
+                                                        TimelineRuler(
+                                                          comp: comp,
+                                                          axis: axis,
+                                                          fps: ui.model.fps,
+                                                          height: _rulerHeight,
+                                                          onSeek: (f) => ui
+                                                                  .playheadFrame
+                                                                  .value =
+                                                              f.clamp(
+                                                                  0,
+                                                                  frames == 0
+                                                                      ? 0
+                                                                      : frames -
+                                                                          1),
+                                                        ),
+                                                        TimelineCacheBar(
+                                                          comp: comp,
+                                                          axis: axis,
+                                                          revision:
+                                                              Listenable.merge([
+                                                            ui.frameArrived,
+                                                            ui.cacheChanged
+                                                          ]),
+                                                        ),
+                                                        Expanded(
+                                                          child: GraphEditorFrb(
+                                                            key: _graphPane,
+                                                            comp: comp,
+                                                            channels: channels,
+                                                            axis: axis,
+                                                            frames: frames,
+                                                            fps: ui.model.fps,
+                                                            fpsNum: fpsNum,
+                                                            fpsDen: fpsDen,
+                                                            magnet: _magnet,
+                                                            lens: _graphLens,
+                                                            autoFit:
+                                                                _graphAutoFit,
+                                                            selectedKeys:
+                                                                _graphKeySelection,
+                                                            onSelectionChanged:
+                                                                () => setState(
+                                                                    () {}),
+                                                            onChanged: ui
+                                                                .model.refresh,
+                                                            onWheelTime: (e,
+                                                                    x) =>
+                                                                _wheel(e, x,
+                                                                    axis.perFrame),
+                                                          ),
+                                                        ),
+                                                      ],
+                                                    ),
+                                                    // The playhead, over the
+                                                    // ruler and curves alike.
+                                                    ValueListenableBuilder<int>(
+                                                      valueListenable:
+                                                          ui.playheadFrame,
+                                                      builder: (context, frame,
+                                                              child) =>
+                                                          Positioned(
+                                                        left: axis.xOf(frame),
+                                                        top: 0,
+                                                        bottom: 0,
+                                                        child: child!,
+                                                      ),
+                                                      child: IgnorePointer(
+                                                        child: Container(
+                                                            width: 1,
+                                                            color: t.accent),
+                                                      ),
+                                                    ),
+                                                  ],
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                          // The pane frames itself vertically
+                                          // (or the wheel does); the gutter
+                                          // block keeps the columns level
+                                          // with the lane view's.
+                                          _scrollGutter(
+                                            t,
+                                            controller: _vLane,
+                                            showThumb: false,
+                                            header: [
+                                              Container(
+                                                height: _rulerHeight +
+                                                    TimelineCacheBar.height,
+                                                color: t.surface2,
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    _LaneBottomBar(
+                                      zoom: _zoom,
+                                      hScroll: _hLane,
+                                      magnet: _magnet,
+                                      onToggleMagnet: () =>
+                                          setState(() => _magnet = !_magnet),
+                                      onZoom: (z) => setState(
+                                          () => _zoom = z.clamp(1.0, 64.0)),
+                                      lens: _graphLens,
+                                      onLens: (lens) =>
+                                          setState(() => _graphLens = lens),
+                                      autoFit: _graphAutoFit,
+                                      onToggleAutoFit: () => setState(
+                                          () => _graphAutoFit = !_graphAutoFit),
+                                      onInterp: (side) => _applyInterp(side),
+                                    ),
+                                  ],
                                 )
                               : Column(
                                   crossAxisAlignment:
@@ -591,24 +929,42 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   selectedKeys:
                                                       _laneKeySelection,
                                                   onKeysSelected: (keys) {
+                                                    // Picking keyframes picks
+                                                    // their properties too —
+                                                    // every distinct one the
+                                                    // box caught — so the
+                                                    // outline and the graph
+                                                    // show what was boxed
+                                                    // (docs/07 §4.3).
                                                     setState(() {
                                                       _laneKeySelection
                                                         ..clear()
                                                         ..addAll(keys);
+                                                      if (keys.isEmpty) return;
+                                                      _selectedProperties
+                                                          .clear();
+                                                      for (final id in keys) {
+                                                        final path =
+                                                            id.substring(
+                                                                0,
+                                                                id.lastIndexOf(
+                                                                    '#'));
+                                                        if (!_selectedProperties
+                                                            .contains(path)) {
+                                                          _selectedProperties
+                                                              .add(path);
+                                                        }
+                                                      }
+                                                      final first =
+                                                          _selectedProperties
+                                                              .first;
+                                                      final cut =
+                                                          first.indexOf('/');
+                                                      if (cut > 0) {
+                                                        _highlighted = first
+                                                            .substring(0, cut);
+                                                      }
                                                     });
-                                                    // Picking a keyframe
-                                                    // picks its property too,
-                                                    // so the outline shows
-                                                    // what the box caught
-                                                    // (docs/07 §4.3).
-                                                    if (keys.isNotEmpty) {
-                                                      final id = keys.first;
-                                                      _selectProperty(
-                                                          id.substring(
-                                                              0,
-                                                              id.lastIndexOf(
-                                                                  '#')));
-                                                    }
                                                   },
                                                   onWheel: (e, x) => _wheel(
                                                       e, x, axis.perFrame),
@@ -741,12 +1097,20 @@ class _FoldRow extends StatelessWidget {
   /// rather than at the row's far left.
   final double baseIndent;
 
-  /// This row's path, and the selected property's — the row draws itself
-  /// selected when they match, and highlighted when the selection sits
+  /// This row's path, and the selected properties' — the row draws itself
+  /// selected when it is among them, and highlighted when a selection sits
   /// *under* it (an effect's heading while one of its parameters is picked).
   final String path;
-  final String? selectedProperty;
+  final List<String> selectedProperties;
+
+  /// Each selected path's graph line colours, one per axis — the label text
+  /// takes them so the outline names its curves (docs/07 §5).
+  final Map<String, List<Color>> graphColours;
   final ValueChanged<String> onSelectProperty;
+
+  /// Editing a value (or keying) selects the property too, without the
+  /// click-gesture modifiers.
+  final ValueChanged<String> onEditProperty;
   final int playheadFrame;
   final ValueChanged<int> onSeek;
   final ValueChanged<String> onToggle;
@@ -759,8 +1123,10 @@ class _FoldRow extends StatelessWidget {
     required this.valueColumn,
     required this.baseIndent,
     required this.path,
-    required this.selectedProperty,
+    required this.selectedProperties,
+    required this.graphColours,
     required this.onSelectProperty,
+    required this.onEditProperty,
     required this.playheadFrame,
     required this.onSeek,
     required this.onToggle,
@@ -776,30 +1142,26 @@ class _FoldRow extends StatelessWidget {
     // No per-row change listener: the whole panel repaints from the read model
     // when anything commits (K-184), so the numbers shown are the document's.
     final t = ThemeScope.of(context).theme;
-    final chosen = selectedProperty;
-    final selected = chosen == path;
-    final contains = chosen != null && isUnderPath(path, chosen);
-    return GestureDetector(
-      // A click anywhere on the row picks the property (docs/07 §4.3) — the
-      // controls on it take their own gestures first, so this is the label
-      // and the empty space beside it.
-      behavior: HitTestBehavior.opaque,
-      onTap: () => onSelectProperty(path),
-      child: Container(
-        height: _rowHeight,
-        // Selected is the full surface; a row that merely *contains* the
-        // selection — the effect heading over a picked parameter — is the
-        // same at half strength, exactly as a layer row marks itself.
-        decoration: BoxDecoration(
-          color: selected
-              ? t.surface2
-              : contains
-                  ? t.surface2.withValues(alpha: 0.45)
-                  : null,
-        ),
-        padding: EdgeInsets.only(left: indent, right: 4),
-        child: _control(context),
+    final selected = selectedProperties.contains(path);
+    final contains =
+        !selected && selectedProperties.any((p) => isUnderPath(path, p));
+    // Selection rides on the property's *name* (docs/07 §4.3): the label
+    // taps inside the row widgets call [onSelectProperty]; a click on the
+    // rest of the row — its fields, its empty space — selects nothing.
+    return Container(
+      height: _rowHeight,
+      // Selected is the full surface; a row that merely *contains* the
+      // selection — the effect heading over a picked parameter — is the
+      // same at half strength, exactly as a layer row marks itself.
+      decoration: BoxDecoration(
+        color: selected
+            ? t.surface2
+            : contains
+                ? t.surface2.withValues(alpha: 0.45)
+                : null,
       ),
+      padding: EdgeInsets.only(left: indent, right: 4),
+      child: _control(context),
     );
   }
 
@@ -833,10 +1195,15 @@ class _FoldRow extends StatelessWidget {
           group: group,
           playheadFrame: playheadFrame,
           onSeek: onSeek,
-          onChanged: onChanged,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
           keyPrefix: 'tl-tf',
           rowPadding: EdgeInsets.zero,
           valueColumn: valueColumn,
+          onLabelTap: () => onSelectProperty(path),
+          graphColours: graphColours[path],
         ),
       FoldEffectParamRow() => _TimelineParamRow(
           comp: comp,
@@ -845,7 +1212,12 @@ class _FoldRow extends StatelessWidget {
           valueColumn: valueColumn,
           playheadFrame: playheadFrame,
           onSeek: onSeek,
-          onChanged: onChanged,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
+          onLabelTap: () => onSelectProperty(path),
+          graphColour: graphColours[path]?.firstOrNull,
         ),
       FoldVolumeRow() => _VolumeRow(
           comp: comp,
@@ -853,7 +1225,10 @@ class _FoldRow extends StatelessWidget {
           valueColumn: valueColumn,
           playheadFrame: playheadFrame,
           onSeek: onSeek,
-          onChanged: onChanged,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
         ),
     };
   }
@@ -871,6 +1246,8 @@ class _TimelineParamRow extends StatefulWidget {
   final int playheadFrame;
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
+  final VoidCallback? onLabelTap;
+  final Color? graphColour;
 
   const _TimelineParamRow({
     required this.comp,
@@ -880,6 +1257,8 @@ class _TimelineParamRow extends StatefulWidget {
     required this.playheadFrame,
     required this.onSeek,
     required this.onChanged,
+    this.onLabelTap,
+    this.graphColour,
   });
 
   @override
@@ -908,6 +1287,8 @@ class _TimelineParamRowState extends State<_TimelineParamRow> {
       ownerLayers: ui.model.layers,
       playheadFrame: widget.playheadFrame,
       onSeek: widget.onSeek,
+      onLabelTap: widget.onLabelTap,
+      graphColour: widget.graphColour,
       onWrite: (effect, param, value) {
         _editor.write(widget.layer, effect, param, value);
         setState(() {});
@@ -963,7 +1344,7 @@ class _VolumeRowState extends State<_VolumeRow> {
         final value = _staged ??
             (animated
                 ? sampleScalar(
-                    scalar: scalar, time: widget.comp.timeOfFrame(frame: frame))
+                    scalar: scalar, time: timeOfFrame(widget.comp, frame))
                 : (scalar as BridgeScalar_Static).field0);
         return Row(
           children: [
@@ -1062,7 +1443,7 @@ class _WaveformPainter extends CustomPainter {
   final int inFrame;
   final int outFrame;
   final double startOffsetSeconds;
-  final _Axis axis;
+  final TimelineAxis axis;
   final double fps;
   final Color colour;
 
@@ -1127,18 +1508,6 @@ class _WaveformPainter extends CustomPainter {
   /// not a control.
   @override
   bool? hitTest(Offset position) => false;
-}
-
-class _Axis implements CacheBarAxis {
-  @override
-  final int frames;
-  final double width;
-  const _Axis({required this.frames, required this.width});
-
-  double get perFrame => frames <= 0 ? 0 : width / frames;
-  @override
-  double xOf(num frame) => frame * perFrame;
-  int frameAt(double x) => perFrame <= 0 ? 0 : (x / perFrame).round();
 }
 
 /// The outline's toolbar (docs/07 §4.1): the timecode and frame readouts, the
@@ -1715,10 +2084,15 @@ class _Outline extends StatelessWidget {
   final LayerReference? selected;
   final String? highlighted;
 
-  /// The selected property's fold path, if any: the row it names draws
-  /// selected, and every row containing it highlights.
-  final String? selectedProperty;
+  /// The selected properties' fold paths, in selection order: each is a
+  /// curve in the graph, its row draws selected, and every row containing
+  /// one highlights (docs/07 §4.3, §5).
+  final List<String> selectedProperties;
+
+  /// Each selected path's graph line colours, for tinting its label.
+  final Map<String, List<Color>> graphColours;
   final ValueChanged<String> onSelectProperty;
+  final ValueChanged<String> onEditProperty;
   final Set<String> open;
   final Map<String, bool> hasAudio;
   final ValueChanged<String> onToggle;
@@ -1735,8 +2109,10 @@ class _Outline extends StatelessWidget {
     required this.widths,
     required this.selected,
     required this.highlighted,
-    required this.selectedProperty,
+    required this.selectedProperties,
+    required this.graphColours,
     required this.onSelectProperty,
+    required this.onEditProperty,
     required this.open,
     required this.hasAudio,
     required this.onToggle,
@@ -1767,11 +2143,11 @@ class _Outline extends StatelessWidget {
             selected:
                 selected?.internallayerId == layers[i].layer.internallayerId,
             // A layer marks itself when its fold was last touched, and when
-            // the selected property is one of its own (docs/07 §4.3).
-            highlighted:
-                highlighted == layers[i].layer.internallayerId.toString() ||
-                    isUnderPath(layers[i].layer.internallayerId.toString(),
-                        selectedProperty ?? ''),
+            // a selected property is one of its own (docs/07 §4.3).
+            highlighted: highlighted ==
+                    layers[i].layer.internallayerId.toString() ||
+                selectedProperties.any((p) =>
+                    isUnderPath(layers[i].layer.internallayerId.toString(), p)),
             open: open.contains(layers[i].layer.internallayerId.toString()),
             onToggleOpen: () =>
                 onToggle(layers[i].layer.internallayerId.toString()),
@@ -1800,8 +2176,10 @@ class _Outline extends StatelessWidget {
                   baseIndent: identityStart(groupOrder, widths),
                   path: foldRowPath(
                       layers[i].layer.internallayerId.toString(), row),
-                  selectedProperty: selectedProperty,
+                  selectedProperties: selectedProperties,
+                  graphColours: graphColours,
                   onSelectProperty: onSelectProperty,
+                  onEditProperty: onEditProperty,
                   playheadFrame: playheadFrame,
                   onSeek: onSeek,
                   onToggle: onToggle,
@@ -2376,7 +2754,7 @@ class _LayerArea extends StatelessWidget {
 
   /// The comp's rate, mapping the lane's pixels onto source seconds.
   final double fps;
-  final _Axis axis;
+  final TimelineAxis axis;
 
   /// Listened to, not read: only the playhead line moves when it changes.
   final ValueListenable<int> playhead;
@@ -2482,10 +2860,11 @@ class _LayerArea extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _Ruler(
+            TimelineRuler(
               comp: comp,
               axis: axis,
               fps: fps,
+              height: _rulerHeight,
               onSeek: onSeek,
             ),
             // Directly under the ruler and above the lanes, which is where the
@@ -2502,10 +2881,22 @@ class _LayerArea extends StatelessWidget {
                 // wheel before the scrollables do — a modified wheel zooms or
                 // pans instead of scrolling, and a plain one is left alone.
                 child: Listener(
+                  // A *modified* wheel is claimed through the resolver, so the
+                  // scroll views around this one cannot act on the same event
+                  // as well — a Ctrl+wheel zoom that also scrolled the lanes
+                  // sideways is what an unclaimed signal looks like. A plain
+                  // wheel is deliberately left unregistered: it belongs to the
+                  // scrollable, which is what moves the rows (docs/07 §4.6).
                   onPointerSignal: (event) {
-                    if (event is PointerScrollEvent) {
-                      onWheel(event, event.localPosition.dx);
-                    }
+                    if (event is! PointerScrollEvent) return;
+                    final keys = HardwareKeyboard.instance;
+                    if (!keys.isControlPressed && !keys.isShiftPressed) return;
+                    GestureBinding.instance.pointerSignalResolver
+                        .register(event, (resolved) {
+                      if (resolved is PointerScrollEvent) {
+                        onWheel(resolved, resolved.localPosition.dx);
+                      }
+                    });
                   },
                   child: Stack(
                     children: [
@@ -2657,7 +3048,7 @@ class _KeyLane extends StatefulWidget {
   final LayerFoldRow row;
   final String rowId;
   final List<BridgeKeyframe> keys;
-  final _Axis axis;
+  final TimelineAxis axis;
   final double fps;
   final int fpsNum;
   final int fpsDen;
@@ -2818,7 +3209,7 @@ class _LaneKeysPainter extends CustomPainter {
   /// Fractional, so a key placed between frames draws between them.
   final List<double> frames;
   final Set<int> selected;
-  final _Axis axis;
+  final TimelineAxis axis;
   final Color colour;
   final Color chosen;
 
@@ -2866,6 +3257,10 @@ class _LaneKeysPainter extends CustomPainter {
 
 /// The lanes' bottom bar (docs/07 §4.5-§4.6): − / + / Fit with the zoom read
 /// out, the magnet, and the horizontal scrollbar that moves the zoomed view.
+///
+/// In graph view it also carries the graph's own commands (docs/07 §5.3):
+/// Linear / Bezier / Hold for the selected keys, the value/speed lens
+/// switch, and the auto-fit toggle.
 class _LaneBottomBar extends StatelessWidget {
   final double zoom;
   final ScrollController hScroll;
@@ -2873,13 +3268,48 @@ class _LaneBottomBar extends StatelessWidget {
   final bool magnet;
   final VoidCallback onToggleMagnet;
 
+  /// Set in graph view; null hides the graph commands (the lane view).
+  final GraphLens? lens;
+  final ValueChanged<GraphLens>? onLens;
+  final bool autoFit;
+  final VoidCallback? onToggleAutoFit;
+  final ValueChanged<BridgeSideInterp>? onInterp;
+
   const _LaneBottomBar({
     required this.zoom,
     required this.hScroll,
     required this.onZoom,
     required this.magnet,
     required this.onToggleMagnet,
+    this.lens,
+    this.onLens,
+    this.autoFit = true,
+    this.onToggleAutoFit,
+    this.onInterp,
   });
+
+  Widget _graphButton(
+    LumitTheme t, {
+    required String keyName,
+    required String label,
+    required String tip,
+    required bool on,
+    required VoidCallback onPressed,
+  }) =>
+      LumitTooltip(
+        message: tip,
+        child: HouseButton(
+          key: ValueKey<String>(keyName),
+          small: true,
+          frameless: true,
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          onPressed: onPressed,
+          child: Text(label,
+              style: TextStyle(
+                  color: on ? t.accent : t.textMuted,
+                  fontSize: t.small.fontSize)),
+        ),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -2889,257 +3319,143 @@ class _LaneBottomBar extends StatelessWidget {
       color: t.surface1,
       padding: const EdgeInsets.symmetric(horizontal: 4),
       child: LayoutBuilder(
-        builder: (context, constraints) => Row(
-          children: [
-            // A sliver of a panel keeps the scrollbar and drops the buttons:
-            // an overflow stripe is a layout fault, not a feature.
-            if (constraints.maxWidth >= 170) ...[
-              HouseButton(
-                key: const ValueKey('tl-zoom-out'),
-                small: true,
-                frameless: true,
-                onPressed: () => onZoom(zoom / 1.5),
-                child: Text('−', style: t.small),
-              ),
-              SizedBox(
-                width: 44,
-                child: Text('${(zoom * 100).round()}%',
-                    key: const ValueKey('tl-zoom-label'),
-                    style: t.small.copyWith(color: t.textMuted),
-                    textAlign: TextAlign.center),
-              ),
-              HouseButton(
-                key: const ValueKey('tl-zoom-in'),
-                small: true,
-                frameless: true,
-                onPressed: () => onZoom(zoom * 1.5),
-                child: Text('+', style: t.small),
-              ),
-              HouseButton(
-                key: const ValueKey('tl-zoom-fit'),
-                small: true,
-                frameless: true,
-                onPressed: () => onZoom(1),
-                child: Text('Fit', style: t.small),
-              ),
-              const SizedBox(width: 6),
-              LumitTooltip(
-                message: magnet
-                    ? 'Magnet on — dragged keyframes land on whole frames'
-                    : 'Magnet off — keyframes may sit between frames',
-                child: HouseButton(
-                  key: const ValueKey('tl-magnet'),
-                  small: true,
-                  frameless: true,
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                  onPressed: onToggleMagnet,
-                  child: lumitIcon(LumitIcon.magnet,
-                      size: 13, color: magnet ? t.accent : t.textMuted),
+        builder: (context, constraints) {
+          // The buttons scroll sideways when the panel is narrow — the same
+          // answer the Timeline toolbar gives; an overflow stripe is a
+          // layout fault. The scrollbar keeps its share of the bar whatever
+          // the buttons need.
+          final buttonRoom =
+              (constraints.maxWidth - 120).clamp(0.0, constraints.maxWidth);
+          return Row(
+            children: [
+              ConstrainedBox(
+                constraints: BoxConstraints(maxWidth: buttonRoom),
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      if (lens != null) ...[
+                        // The selected keys' easing, one click each — the F9 family's
+                        // buttons (docs/07 §5.3).
+                        _graphButton(t,
+                            keyName: 'graph-interp-linear',
+                            label: 'Linear',
+                            tip:
+                                'Selected keyframes: straight lines both sides',
+                            on: false,
+                            onPressed: () => onInterp
+                                ?.call(const BridgeSideInterp.linear())),
+                        _graphButton(t,
+                            keyName: 'graph-interp-bezier',
+                            label: 'Bezier',
+                            tip:
+                                'Selected keyframes: easy ease (F9) — handles appear',
+                            on: false,
+                            onPressed: () => onInterp?.call(easyEase)),
+                        _graphButton(t,
+                            keyName: 'graph-interp-hold',
+                            label: 'Hold',
+                            tip: 'Selected keyframes: hold until the next key',
+                            on: false,
+                            onPressed: () =>
+                                onInterp?.call(const BridgeSideInterp.hold())),
+                        const SizedBox(width: 6),
+                        _graphButton(t,
+                            keyName: 'graph-lens-value',
+                            label: 'Value',
+                            tip: 'Value graph — value against time',
+                            on: lens == GraphLens.value,
+                            onPressed: () => onLens?.call(GraphLens.value)),
+                        _graphButton(t,
+                            keyName: 'graph-lens-speed',
+                            label: 'Speed',
+                            tip: 'Speed graph — how fast the value changes',
+                            on: lens == GraphLens.speed,
+                            onPressed: () => onLens?.call(GraphLens.speed)),
+                        const SizedBox(width: 6),
+                        _graphButton(t,
+                            keyName: 'graph-autofit',
+                            label: 'Auto fit',
+                            tip: autoFit
+                                ? 'Auto fit on — the graph frames its curves; click for '
+                                    'manual scroll (wheel pans, Alt+wheel zooms)'
+                                : 'Auto fit off — the wheel pans and Alt+wheel zooms '
+                                    'the value axis',
+                            on: autoFit,
+                            onPressed: () => onToggleAutoFit?.call()),
+                        const SizedBox(width: 6),
+                      ],
+                      ...[
+                        HouseButton(
+                          key: const ValueKey('tl-zoom-out'),
+                          small: true,
+                          frameless: true,
+                          onPressed: () => onZoom(zoom / 1.5),
+                          child: Text('−', style: t.small),
+                        ),
+                        SizedBox(
+                          width: 44,
+                          child: Text('${(zoom * 100).round()}%',
+                              key: const ValueKey('tl-zoom-label'),
+                              style: t.small.copyWith(color: t.textMuted),
+                              textAlign: TextAlign.center),
+                        ),
+                        HouseButton(
+                          key: const ValueKey('tl-zoom-in'),
+                          small: true,
+                          frameless: true,
+                          onPressed: () => onZoom(zoom * 1.5),
+                          child: Text('+', style: t.small),
+                        ),
+                        HouseButton(
+                          key: const ValueKey('tl-zoom-fit'),
+                          small: true,
+                          frameless: true,
+                          onPressed: () => onZoom(1),
+                          child: Text('Fit', style: t.small),
+                        ),
+                        const SizedBox(width: 6),
+                        LumitTooltip(
+                          message: magnet
+                              ? 'Magnet on — dragged keyframes land on whole frames'
+                              : 'Magnet off — keyframes may sit between frames',
+                          child: HouseButton(
+                            key: const ValueKey('tl-magnet'),
+                            small: true,
+                            frameless: true,
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 2),
+                            onPressed: onToggleMagnet,
+                            child: lumitIcon(LumitIcon.magnet,
+                                size: 13,
+                                color: magnet ? t.accent : t.textMuted),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                      ],
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 6),
+              Expanded(
+                child: _GutterScrollbar(
+                  controller: hScroll,
+                  axis: Axis.horizontal,
+                ),
+              ),
             ],
-            Expanded(
-              child: _GutterScrollbar(
-                controller: hScroll,
-                axis: Axis.horizontal,
-              ),
-            ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
-}
-
-/// The ruler: the time labels and ticks, the work area, the markers, and the
-/// scrub surface. As tall as the outline's toolbar and column header combined
-/// (docs/07 §4.1) — a taller bar is an easier playhead grab.
-class _Ruler extends StatelessWidget {
-  final CompositionReference comp;
-  final _Axis axis;
-
-  /// The comp's rate, turning frames into the seconds the labels speak.
-  final double fps;
-  final ValueChanged<int> onSeek;
-
-  const _Ruler({
-    required this.comp,
-    required this.axis,
-    required this.fps,
-    required this.onSeek,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    final work = comp.getWorkArea();
-    final markers = comp.getMarkers();
-
-    return GestureDetector(
-      key: const ValueKey('tl-ruler'),
-      behavior: HitTestBehavior.opaque,
-      onTapDown: (d) => onSeek(axis.frameAt(d.localPosition.dx)),
-      onHorizontalDragUpdate: (d) => onSeek(axis.frameAt(d.localPosition.dx)),
-      child: Container(
-        height: _rulerHeight,
-        color: t.surface2,
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: _RulerTicksPainter(
-                    axis: axis,
-                    fps: fps,
-                    tick: t.hairlineStrong,
-                    label: t.small.copyWith(color: t.textMuted),
-                  ),
-                ),
-              ),
-            ),
-            // The work area, when there is one: the span the Viewer previews
-            // and the export writes.
-            if (work != null)
-              Positioned(
-                left: axis.xOf(comp.frameAtTime(time: work.inPoint)),
-                width: (axis.xOf(comp.frameAtTime(time: work.outPoint)) -
-                        axis.xOf(comp.frameAtTime(time: work.inPoint)))
-                    .clamp(1.0, 1e6),
-                top: 0,
-                bottom: 0,
-                child: IgnorePointer(
-                  child: Container(
-                    key: const ValueKey('tl-work-area'),
-                    color: t.accent.withValues(alpha: 0.14),
-                  ),
-                ),
-              ),
-            for (final marker in markers)
-              Positioned(
-                left: axis.xOf(comp.frameAtTime(time: marker.time)) - 3,
-                top: 4,
-                child: IgnorePointer(
-                  child: LumitTooltip(
-                    message: marker.label,
-                    child: Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: t.warning,
-                        borderRadius: BorderRadius.circular(1),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-/// The label step for a ruler: the smallest nice second count whose labels
-/// sit at least ~80 px apart, so zooming out thins the labels rather than
-/// piling them up. Exposed for its test.
-double rulerLabelStepSeconds({required double pixelsPerSecond}) {
-  const nice = [
-    0.5,
-    1.0,
-    2.0,
-    5.0,
-    10.0,
-    15.0,
-    30.0,
-    60.0,
-    120.0,
-    300.0,
-    600.0
-  ];
-  for (final step in nice) {
-    if (step * pixelsPerSecond >= 80) return step;
-  }
-  return nice.last;
-}
-
-/// A ruler label: seconds under a minute as `05s`, above as `01:00s` — the
-/// familiar editor idiom.
-String rulerLabelOf(double seconds) {
-  final whole = seconds.round();
-  if (seconds < 60) {
-    final text = seconds == whole
-        ? whole.toString().padLeft(2, '0')
-        : seconds.toStringAsFixed(1);
-    return '${text}s';
-  }
-  final m = whole ~/ 60;
-  final s = whole % 60;
-  return '$m:${s.toString().padLeft(2, '0')}s';
-}
-
-/// The ruler's ticks and time labels: a labelled tick per nice step, minor
-/// ticks per second when there is room.
-class _RulerTicksPainter extends CustomPainter {
-  final _Axis axis;
-  final double fps;
-  final Color tick;
-  final TextStyle label;
-
-  const _RulerTicksPainter({
-    required this.axis,
-    required this.fps,
-    required this.tick,
-    required this.label,
-  });
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (axis.frames <= 0 || fps <= 0 || size.width <= 0) return;
-    final seconds = axis.frames / fps;
-    final pxPerSec = size.width / seconds;
-    final step = rulerLabelStepSeconds(pixelsPerSecond: pxPerSec);
-    final paint = Paint()
-      ..color = tick
-      ..strokeWidth = 1;
-
-    // Minor ticks each second, only when they have a few pixels each.
-    if (pxPerSec >= 6) {
-      for (var s = 0.0; s <= seconds; s += 1) {
-        final x = s * pxPerSec;
-        canvas.drawLine(
-            Offset(x, size.height - 4), Offset(x, size.height), paint);
-      }
-    }
-
-    for (var s = 0.0; s <= seconds; s += step) {
-      final x = s * pxPerSec;
-      canvas.drawLine(
-          Offset(x, size.height - 9), Offset(x, size.height), paint);
-      final text = TextPainter(
-        text: TextSpan(text: rulerLabelOf(s), style: label),
-        textDirection: TextDirection.ltr,
-      )..layout();
-      // Labels sit just right of their tick; the last one may clip out at the
-      // comp's end rather than jumping inside, which would misplace it.
-      text.paint(canvas, Offset(x + 3, 2));
-    }
-  }
-
-  @override
-  bool shouldRepaint(_RulerTicksPainter old) =>
-      old.fps != fps ||
-      old.tick != tick ||
-      old.axis.frames != axis.frames ||
-      old.axis.width != axis.width;
 }
 
 /// One layer's bar: drag its middle to move it, its ends to trim.
 class _Bar extends StatefulWidget {
   final CompositionReference comp;
   final BridgeLayerEntry entry;
-  final _Axis axis;
+  final TimelineAxis axis;
   final bool razor;
 
   /// Read when the razor is clicked, not captured when the bar is built.

@@ -27,6 +27,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
+import '../state/comp_time.dart';
 import '../state/timeline_columns.dart';
 import '../widgets/controls.dart';
 import 'keyframe_controls_frb.dart';
@@ -190,6 +191,16 @@ class TransformRowFrb extends StatefulWidget {
   /// column group whatever order the groups are dragged into (docs/07 §4.3).
   final ValueColumn? valueColumn;
 
+  /// Clicking the property's *name* selects it for the graph editor
+  /// (docs/07 §4.3) — the name, not the whole row, so grabbing a value field
+  /// or a stopwatch never re-aims the graph.
+  final VoidCallback? onLabelTap;
+
+  /// The property's graph line colours while it is selected — one per axis,
+  /// so Position reads as its x and y strokes (docs/07 §5). The label takes
+  /// the first; a multi-axis row shows one dot per axis beside it.
+  final List<Color>? graphColours;
+
   const TransformRowFrb({
     super.key,
     required this.comp,
@@ -203,6 +214,8 @@ class TransformRowFrb extends StatefulWidget {
     this.rowHeight,
     this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
     this.valueColumn,
+    this.onLabelTap,
+    this.graphColours,
   });
 
   @override
@@ -258,8 +271,38 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
           ),
           const SizedBox(width: 4),
           Expanded(
-            child: Text(group.label,
-                style: t.body, overflow: TextOverflow.ellipsis),
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onLabelTap,
+              child: Row(
+                children: [
+                  Flexible(
+                    child: Text(
+                      group.label,
+                      style: widget.graphColours?.isNotEmpty ?? false
+                          ? t.body.copyWith(color: widget.graphColours!.first)
+                          : t.body,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  // One dot per axis in its stroke colour, so a two-axis
+                  // property names both of its curves.
+                  if ((widget.graphColours?.length ?? 0) > 1)
+                    for (final colour in widget.graphColours!)
+                      Padding(
+                        padding: const EdgeInsets.only(left: 3),
+                        child: Container(
+                          width: 5,
+                          height: 5,
+                          decoration: BoxDecoration(
+                            color: colour,
+                            borderRadius: BorderRadius.circular(3),
+                          ),
+                        ),
+                      ),
+                ],
+              ),
+            ),
           ),
           if (widget.valueColumn case final col?) ...[
             SizedBox(
@@ -316,8 +359,8 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
       );
     }
 
-    final sampled = sampleScalar(
-        scalar: scalar, time: widget.comp.timeOfFrame(frame: frame));
+    final sampled =
+        sampleScalar(scalar: scalar, time: timeOfFrame(widget.comp, frame));
     // No live preview mid-drag: staging a keyframed transform through the
     // static-preview path would lie about the curve. The release commits one
     // op — the key at the playhead updated or planted.

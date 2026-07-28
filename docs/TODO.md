@@ -108,9 +108,9 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     mix is rebuilt from scratch whenever the comp's audio signature changes
     rather than patched.
 
-- **Panel work left.** The graph editor's speed and time lenses and draggable
-    bezier handles; and the Viewer's scale and rotate gizmo handles, motion
-    paths, masks and shape tools.
+- **Panel work left.** The graph editor's Retime time lens (the speed lens and
+    draggable bezier handles landed with K-196); and the Viewer's scale and
+    rotate gizmo handles, motion paths, masks and shape tools.
 
 **Retime is still its own card, not a property group (K-194).** The owner's standing
 instruction is that Retime behaves like any other transform property — a group in the
@@ -167,12 +167,11 @@ the keymap).
     razor, rename, reorder and delete all refuse; its transform/effect/volume rows are
     still editable. Either guard the rows or enforce in the engine ops — decide which
     before wiring.
-- **The lane keyframe selection selects, nothing more (K-189).** The marquee gathers
-    diamonds and shows them in accent, and a single diamond drags in time (K-190); moving
-    or deleting a *whole selection* is not built. Nor are `=`/`-`/`\` or edge-follow
-    during playback (the wheel bindings landed with K-190). The graph's y-axis is
-    auto-zoom only — a manual y-zoom (with its own scrollbar once free) awaits a real
-    need.
+- **The lane keyframe selection selects and eases, nothing more (K-189, K-196).** The
+    marquee gathers diamonds, a single diamond drags in time (K-190), and the F9 family
+    and the bottom bar's easing buttons act on the catch — but moving or deleting a
+    *whole lane selection* is still not built (the graph view has both). Nor are
+    `=`/`-`/`\` or edge-follow during playback (the wheel bindings landed with K-190).
 - **Column widths and the property selection are session-lived (K-192).** Both reset when
     the panel is rebuilt from scratch; fold them into the workspace when per-workspace
     column layouts land (docs/07 §4.2's reorder/hide-per-workspace item).
@@ -185,9 +184,10 @@ the keymap).
 - **The magnet snaps keyframes to frames, and nothing else yet (K-190).** Docs/07 §4.5
     wants edit points, in/out points, markers, beat markers, the playhead and work-area
     edges as snap sources and targets, plus `Ctrl`-hold to suspend mid-drag.
-- **Volume keyframes draw no lane diamonds.** Volume is not in the comp read model
-    (K-184's deliberate exceptions), so its fold row shows controls but no diamonds;
-    fold `volume` into `BridgeLayerInfo` if the lane matters.
+- **Volume keyframes draw no lane diamonds and no graph curve.** Volume is not in the
+    comp read model (K-184's deliberate exceptions), so its fold row shows controls but
+    no diamonds, and selecting it puts nothing in the graph editor (`graphChannels`
+    skips it); fold `volume` into `BridgeLayerInfo` if either matters.
 
 ## Next - engine/bridge follow-ups
 

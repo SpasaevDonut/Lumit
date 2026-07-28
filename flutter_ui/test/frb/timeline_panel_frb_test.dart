@@ -1387,9 +1387,8 @@ void main() {
       await mount(tester, p);
       expect(p.uiState.selectedLayer.value, isNull);
 
-      final gesture = await tester.startGesture(
-          tester.getCenter(find.byKey(
-              ValueKey<String>('tl-name-${top.internallayerId}'))));
+      final gesture = await tester.startGesture(tester.getCenter(
+          find.byKey(ValueKey<String>('tl-name-${top.internallayerId}'))));
       await tester.pump();
 
       // Still mid-press: the button has not even come up yet.

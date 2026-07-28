@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../state/comp_time.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -432,7 +433,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                   SizedBox(
                     width: 44,
                     child: Text(
-                      '${widget.comp.frameAtTime(time: marker.time)}',
+                      '${frameAtTime(widget.comp, marker.time)}',
                       style: t.mono,
                     ),
                   ),
@@ -641,6 +642,206 @@ class TimelineCacheBar extends StatelessWidget {
 abstract class CacheBarAxis {
   int get frames;
   double xOf(int frame);
+}
+
+/// The Timeline's one frames-to-pixels mapping, shared by the lane view and
+/// the graph editor so a frame sits at the same x in both — zoom and scroll
+/// included.
+class TimelineAxis implements CacheBarAxis {
+  @override
+  final int frames;
+  final double width;
+  const TimelineAxis({required this.frames, required this.width});
+
+  double get perFrame => frames <= 0 ? 0 : width / frames;
+  @override
+  double xOf(num frame) => frame * perFrame;
+  int frameAt(double x) => perFrame <= 0 ? 0 : (x / perFrame).round();
+}
+
+/// The time ruler: the time labels and ticks, the work area, the markers, and
+/// the scrub surface — drawn over the lanes in lane view and over the curves
+/// in graph view, so neither loses the clock (docs/07 §4.1, §5).
+class TimelineRuler extends StatelessWidget {
+  final CompositionReference comp;
+  final TimelineAxis axis;
+
+  /// The comp's rate, turning frames into the seconds the labels speak.
+  final double fps;
+  final double height;
+  final ValueChanged<int> onSeek;
+
+  const TimelineRuler({
+    super.key,
+    required this.comp,
+    required this.axis,
+    required this.fps,
+    required this.height,
+    required this.onSeek,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final work = comp.getWorkArea();
+    final markers = comp.getMarkers();
+
+    return GestureDetector(
+      key: const ValueKey('tl-ruler'),
+      behavior: HitTestBehavior.opaque,
+      onTapDown: (d) => onSeek(axis.frameAt(d.localPosition.dx)),
+      onHorizontalDragUpdate: (d) => onSeek(axis.frameAt(d.localPosition.dx)),
+      child: Container(
+        height: height,
+        color: t.surface2,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _RulerTicksPainter(
+                    axis: axis,
+                    fps: fps,
+                    tick: t.hairlineStrong,
+                    label: t.small.copyWith(color: t.textMuted),
+                  ),
+                ),
+              ),
+            ),
+            // The work area, when there is one: the span the Viewer previews
+            // and the export writes.
+            if (work != null)
+              Positioned(
+                left: axis.xOf(frameAtTime(comp, work.inPoint)),
+                width: (axis.xOf(frameAtTime(comp, work.outPoint)) -
+                        axis.xOf(frameAtTime(comp, work.inPoint)))
+                    .clamp(1.0, 1e6),
+                top: 0,
+                bottom: 0,
+                child: IgnorePointer(
+                  child: Container(
+                    key: const ValueKey('tl-work-area'),
+                    color: t.accent.withValues(alpha: 0.14),
+                  ),
+                ),
+              ),
+            for (final marker in markers)
+              Positioned(
+                left: axis.xOf(frameAtTime(comp, marker.time)) - 3,
+                top: 4,
+                child: IgnorePointer(
+                  child: LumitTooltip(
+                    message: marker.label,
+                    child: Container(
+                      width: 6,
+                      height: 6,
+                      decoration: BoxDecoration(
+                        color: t.warning,
+                        borderRadius: BorderRadius.circular(1),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The label step for a ruler: the smallest nice second count whose labels
+/// sit at least ~80 px apart, so zooming out thins the labels rather than
+/// piling them up. Exposed for its test.
+double rulerLabelStepSeconds({required double pixelsPerSecond}) {
+  const nice = [
+    0.5,
+    1.0,
+    2.0,
+    5.0,
+    10.0,
+    15.0,
+    30.0,
+    60.0,
+    120.0,
+    300.0,
+    600.0
+  ];
+  for (final step in nice) {
+    if (step * pixelsPerSecond >= 80) return step;
+  }
+  return nice.last;
+}
+
+/// A ruler label: seconds under a minute as `05s`, above as `01:00s` — the
+/// familiar editor idiom.
+String rulerLabelOf(double seconds) {
+  final whole = seconds.round();
+  if (seconds < 60) {
+    final text = seconds == whole
+        ? whole.toString().padLeft(2, '0')
+        : seconds.toStringAsFixed(1);
+    return '${text}s';
+  }
+  final m = whole ~/ 60;
+  final s = whole % 60;
+  return '$m:${s.toString().padLeft(2, '0')}s';
+}
+
+/// The ruler's ticks and time labels: a labelled tick per nice step, minor
+/// ticks per second when there is room.
+class _RulerTicksPainter extends CustomPainter {
+  final TimelineAxis axis;
+  final double fps;
+  final Color tick;
+  final TextStyle label;
+
+  const _RulerTicksPainter({
+    required this.axis,
+    required this.fps,
+    required this.tick,
+    required this.label,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (axis.frames <= 0 || fps <= 0 || size.width <= 0) return;
+    final seconds = axis.frames / fps;
+    final pxPerSec = size.width / seconds;
+    final step = rulerLabelStepSeconds(pixelsPerSecond: pxPerSec);
+    final paint = Paint()
+      ..color = tick
+      ..strokeWidth = 1;
+
+    // Minor ticks each second, only when they have a few pixels each.
+    if (pxPerSec >= 6) {
+      for (var s = 0.0; s <= seconds; s += 1) {
+        final x = s * pxPerSec;
+        canvas.drawLine(
+            Offset(x, size.height - 4), Offset(x, size.height), paint);
+      }
+    }
+
+    for (var s = 0.0; s <= seconds; s += step) {
+      final x = s * pxPerSec;
+      canvas.drawLine(
+          Offset(x, size.height - 9), Offset(x, size.height), paint);
+      final text = TextPainter(
+        text: TextSpan(text: rulerLabelOf(s), style: label),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      // Labels sit just right of their tick; the last one may clip out at the
+      // comp's end rather than jumping inside, which would misplace it.
+      text.paint(canvas, Offset(x + 3, 2));
+    }
+  }
+
+  @override
+  bool shouldRepaint(_RulerTicksPainter old) =>
+      old.fps != fps ||
+      old.tick != tick ||
+      old.axis.frames != axis.frames ||
+      old.axis.width != axis.width;
 }
 
 /// Collapse per-frame tiers into the fewest contiguous runs, so a 3000-frame
