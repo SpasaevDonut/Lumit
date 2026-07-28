@@ -742,6 +742,7 @@ class _LumitAppViewState extends State<LumitAppView> {
     final keyboard = HardwareKeyboard.instance;
     final ctrl = keyboard.isControlPressed || keyboard.isMetaPressed;
     final shift = keyboard.isShiftPressed;
+    final alt = keyboard.isAltPressed;
     final key = event.logicalKey;
     final project = state.project;
     final comp = ui.selectedComp;
@@ -765,6 +766,17 @@ class _LumitAppViewState extends State<LumitAppView> {
     } else if (key == LogicalKeyboardKey.end) {
       final last = (comp?.durationFrames() ?? 1) - 1;
       ui.playheadFrame.value = last < 0 ? 0 : last;
+    } else if (alt && shift && key == LogicalKeyboardKey.keyT) {
+      // Give the selected layer a Retime, or take it away again (docs/04 §12).
+      // On installs the identity map, so the picture does not move — it just
+      // gains a row above Transform to key.
+      final layer = ui.selectedLayer.value;
+      if (layer == null) {
+        handled = false;
+      } else {
+        layer.toggleRetimeProperty();
+        state.notifyDocumentChanged();
+      }
     } else if (ctrl && key == LogicalKeyboardKey.keyD) {
       final layer = ui.selectedLayer.value;
       if (layer == null) {

@@ -278,9 +278,19 @@ pub fn collect_comp_jobs(
                 let Some((fps, nat_w, nat_h, src_frames)) = probe.video() else {
                     continue;
                 };
-                // Retime maps local time → source time before frame pick;
-                // its interpolation policy decides nearest vs blend.
-                let source_time = retime.as_ref().map(|r| r.evaluate(lt)).unwrap_or(lt);
+                // Retime maps local time → source time before frame pick; the
+                // layer decides which map answers (K-197: the keyframable
+                // property, else the segment store). Its interpolation policy
+                // decides nearest vs blend.
+                let source_at = |t: f64| match retime {
+                    // A live "Time" drag is the segment store by construction,
+                    // so an override speaks for itself.
+                    Some(r) if retime_override.is_some_and(|o| o.layer == layer.id) => {
+                        r.evaluate(t)
+                    }
+                    _ => layer.source_time_at(t),
+                };
+                let source_time = source_at(lt);
                 use lumit_core::retime::Interpolation;
                 let interp = retime.as_ref().map(|r| &r.interpolation);
                 let blend_on =
@@ -313,7 +323,7 @@ pub fn collect_comp_jobs(
                             .filter(|&o| o != 0)
                             .map(|o| {
                                 let nlt = lt + f64::from(o) * comp_dt;
-                                let nst = retime.as_ref().map(|r| r.evaluate(nlt)).unwrap_or(nlt);
+                                let nst = source_at(nlt);
                                 let (nf, _) = lumit_core::pixels::frame_pick(
                                     nst, fps, src_frames, false, None,
                                 );

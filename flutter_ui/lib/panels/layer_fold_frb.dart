@@ -10,7 +10,8 @@
 //
 // **The groups.** Transform always (every layer has one), Effects when the layer
 // has any, Audio only when the layer's source actually carries sound
-// (docs/07 §4.3). Masks and Retime are not built yet. A group is a heading with
+// (docs/07 §4.3), and Retime above them all when the layer has one. Masks are
+// not built yet. A group is a heading with
 // its own twirl, so opening a layer shows a tidy list of headings and you open
 // only the one you want — which is what the spec asks for and what keeps a busy
 // comp from becoming a wall of numbers.
@@ -73,6 +74,16 @@ final class FoldVolumeRow extends LayerFoldRow {
   const FoldVolumeRow({required int depth}) : super(depth);
 }
 
+/// The layer's Retime (K-197): source time in seconds, keyframable like any
+/// other property. It sits above Transform rather than inside it, and only
+/// appears on a layer that has been given one (Alt+Shift+T) — which is why the
+/// scalar rides on the row: `null` retime means no row at all, so a row that
+/// exists always has a curve to draw.
+final class FoldRetimeRow extends LayerFoldRow {
+  final BridgeScalar scalar;
+  const FoldRetimeRow(this.scalar, {required int depth}) : super(depth);
+}
+
 /// The waveform lane (K-172): the outline names it, the lane side draws the
 /// layer's source peaks through its live in/out/offset.
 final class FoldWaveformRow extends LayerFoldRow {
@@ -85,6 +96,10 @@ final class FoldWaveformRow extends LayerFoldRow {
 List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
       FoldTransformRow(:final group, :final transform) => switch (
             read(transform, group.axes.first.prop)) {
+          BridgeScalar_Keyframed(:final field0) => field0,
+          BridgeScalar_Static() => const [],
+        },
+      FoldRetimeRow(:final scalar) => switch (scalar) {
           BridgeScalar_Keyframed(:final field0) => field0,
           BridgeScalar_Static() => const [],
         },
@@ -195,6 +210,13 @@ bool moveLaneKey({
       }
       return false;
 
+    case FoldRetimeRow(:final scalar):
+      if (scalar is! BridgeScalar_Keyframed) return false;
+      final next = moved(scalar.field0);
+      if (next == null) return false;
+      entry.layer.setRetimeProperty(value: BridgeScalar.keyframed(next));
+      return true;
+
     case _:
       return false;
   }
@@ -214,6 +236,7 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldEffectParamRow(:final info, :final param) =>
         '${effectPath(layerId, info.id.toString())}/${param.id}',
       FoldVolumeRow() => '${audioPath(layerId)}/volume',
+      FoldRetimeRow() => retimePath(layerId),
       FoldWaveformRow() => waveformPath(layerId),
     };
 
@@ -221,6 +244,9 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
 /// parameter under its effect, anything under its layer.
 bool isUnderPath(String ancestor, String path) =>
     ancestor.isNotEmpty && path.startsWith('$ancestor/');
+
+/// The path of a layer's Retime row.
+String retimePath(String layerId) => '$layerId/retime';
 
 /// The path of a layer's Transform group in the open set.
 String transformPath(String layerId) => '$layerId/transform';
@@ -251,6 +277,13 @@ List<LayerFoldRow> layerFoldRows({
   final id = entry.layer.internallayerId.toString();
   final info = entry.info;
   final rows = <LayerFoldRow>[];
+
+  // Retime first, above everything (docs/07 §4.3): it decides *which* frame of
+  // the source the rest of the fold-out then transforms. A layer that has not
+  // been given one shows no row rather than a dead control.
+  if (info.retime case final retime?) {
+    rows.add(FoldRetimeRow(retime, depth: 1));
+  }
 
   final transformOpen = open.contains(transformPath(id));
   rows.add(FoldGroupRow(

@@ -385,8 +385,15 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
 
   **Shipped (partial):** the caret on each layer row opens onto the **section headings**, each
   with its own caret, and nothing under them until one is opened — the tidy-list behaviour
-  above. Three groups exist:
+  above. Three groups exist, plus the Retime row above them:
 
+  - **Retime**, only on a layer that has been given one with **Alt+Shift+T** (K-197): a single
+    row, not a group, sitting *above* Transform and outside every group — it decides which
+    moment of the source the rest of the fold-out then transforms. Its value is that source
+    time in seconds, and it is an ordinary keyframable property: the same stopwatch, the same
+    navigator, the same lane diamonds and the same graph lane as Position, with nothing
+    Retime-specific attached. Switching it on installs the identity map, so the picture does
+    not move; switching it off removes the property rather than flattening it.
   - **Transform**, always: one row per property group with the stopwatch, the ◄ ◆ ► navigator,
     the label, and a scrub-drag/click-to-type value per axis.
   - **Effects**, only when the layer has any: one row per effect, opening onto that effect's
@@ -420,7 +427,7 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
   their keyframes as diamonds on their lanes**, and dragging empty lane space boxes them up
   for selection (the shared marquee the graph editor also uses); the F9 family and the
   bottom bar's easing buttons act on that selection in either view. Still to build here:
-  moving/deleting a whole *lane* selection, the Masks and Retime groups, the expression
+  moving/deleting a whole *lane* selection, the Masks group, the expression
   toggle, and `U`/`UU`.
 
 ### 4.4 Sequence layers
@@ -1012,7 +1019,7 @@ navigation moves to `,`/`.`; Viewer zoom therefore lives on `Ctrl+=`/`Ctrl+-` an
 | Timeline | `Ctrl+Shift+D` | Split layer / cut clip at playhead |
 | Timeline | `Ctrl+D` | Duplicate selection |
 | Timeline | `Ctrl+Shift+C` | Precompose |
-| Timeline | `Ctrl+Alt+T` | Enable Retime on selected layer/clip |
+| Timeline | `Alt+Shift+T` | Give the selected layer a Retime, or take it away (K-197; was `Ctrl+Alt+T`) |
 | Timeline | `=` / `-` | Zoom time in / out (`Ctrl+wheel` at pointer) |
 | Timeline | `\` | Toggle full-comp zoom / previous zoom |
 | Timeline | `Enter` | Rename selected layer |

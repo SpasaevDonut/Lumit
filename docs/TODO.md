@@ -112,12 +112,15 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     draggable bezier handles landed with K-196); and the Viewer's scale and
     rotate gizmo handles, motion paths, masks and shape tools.
 
-**Retime is still its own card, not a property group (K-194).** The owner's standing
-instruction is that Retime behaves like any other transform property — a group in the
-Timeline's fold-out, sitting *above* Transform, absent on kinds that cannot retime (solids,
-adjustments, nulls). Today it is a block of rows inside the Effect controls' Source card,
-which is why it hides with Transform there. Build the fold-out group; the Source card's
-retime rows then move into it.
+**Retime is a property row now, and the segment card is the leftover (K-197).** A layer
+carries `retime: Option<Property>` — source time in seconds, keyframable like any other
+property, given with Alt+Shift+T and drawn above Transform in the fold-out. Deliberately
+bare: no lenses, no ease presets, no freeze, no interpolation policy. What is left over is
+the **old segment path**, still in the model (`LayerKind::Footage::retime`), still evaluated
+as the fallback in `Layer::source_time_at`, and still edited by the Source card's
+speed/reverse/frames rows. Decide its fate before building anything else on Retime: either
+the new property grows what is worth keeping and the segment store is deleted, or the two are
+reconciled. Two ways to retime one layer is the state to leave, not to extend.
 
 **System memory is only read on Windows (K-194).** `system_memory_bytes` and
 `video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB ceiling.

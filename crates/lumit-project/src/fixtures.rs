@@ -166,6 +166,7 @@ pub fn stress_document(p: &StressParams) -> Document {
                 parent: None,
                 label: 0,
                 volume_db: lumit_core::anim::Property::zero(),
+                retime: None,
                 blend: Default::default(),
                 masks: Vec::new(),
                 effects: Vec::new(),

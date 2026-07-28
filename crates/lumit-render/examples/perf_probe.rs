@@ -38,6 +38,7 @@ fn layer(kind: LayerKind, name: &str) -> lumit_core::model::Layer {
         parent: None,
         label: 0,
         volume_db: Property::zero(),
+        retime: None,
         blend: Default::default(),
         masks: Vec::new(),
         effects: Vec::new(),

@@ -230,6 +230,16 @@ pub enum Op {
         layer: Uuid,
         animation: Animation,
     },
+    /// Replace a layer's Retime property — local time → source time, in
+    /// seconds (K-197). `None` removes it, which is "not retimed" rather than
+    /// "retimed to exactly 1×": only the first skips the map. Same
+    /// coarse-grained shape as SetTransformProperty, for the same
+    /// invertibility reason.
+    SetRetimeProperty {
+        comp: Uuid,
+        layer: Uuid,
+        retime: Option<crate::anim::Property>,
+    },
     /// Replace a Footage layer's Retime map (None = play at source rate).
     SetLayerRetime {
         comp: Uuid,
@@ -781,6 +791,24 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 comp: *comp,
                 layer: *layer,
                 animation: previous,
+            })
+        }
+        Op::SetRetimeProperty {
+            comp,
+            layer,
+            retime,
+        } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let previous = std::mem::replace(&mut l.retime, retime.clone());
+            Ok(Op::SetRetimeProperty {
+                comp: *comp,
+                layer: *layer,
+                retime: previous,
             })
         }
         Op::SetLayerRetime {

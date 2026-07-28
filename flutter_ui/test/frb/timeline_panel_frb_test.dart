@@ -319,6 +319,48 @@ void main() {
           reason: 'frames come from the pixel total, not per-event rounding');
     });
 
+    /// Retime is an ordinary property row (K-197): hidden until the layer is
+    /// given one, then sitting above Transform — outside it, not inside — and
+    /// editable exactly like Opacity. Fails if it is filed under Transform, or
+    /// if it shows on a layer with no Retime.
+    testWidgets('Retime shows above Transform only once the layer has one',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      expect(find.text('Retime'), findsNothing,
+          reason: 'a layer with no Retime shows no row for it');
+
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(find.text('Retime'), findsOneWidget);
+      expect(
+        tester.getTopLeft(find.text('Retime')).dy,
+        lessThan(tester.getTopLeft(find.text('Transform')).dy),
+        reason: 'Retime sits above Transform, not inside it',
+      );
+      // Transform is still shut: a row that only appears when Transform is
+      // twirled open would be inside it, whatever its indent says.
+      expect(find.text('Opacity'), findsNothing);
+
+      // The identity map is keyed, so the field edits the key at the playhead.
+      List<BridgeKeyframe> keys() =>
+          (layer.getRetimeProperty() as BridgeScalar_Keyframed).field0;
+      expect(keys(), hasLength(2));
+      p.uiState.playheadFrame.value = 0;
+      await tester.pump();
+      await tester.drag(
+          find.byKey(const ValueKey('tl-retime-seconds')), const Offset(40, 0));
+      await tester.pumpAndSettle();
+      expect(keys(), hasLength(2), reason: 'no key was added or lost');
+      expect(keys().first.value, greaterThan(0),
+          reason: 'the edit landed in the key under the playhead');
+    });
+
     /// An animated value stays editable in the outline (docs/07 §4.3): on a
     /// keyframe the edit lands in that key; between keyframes it plants one.
     /// Fails if the cell falls back to a read-only "animated" label, or if it

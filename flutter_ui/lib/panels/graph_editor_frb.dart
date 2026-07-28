@@ -68,6 +68,10 @@ class GraphChannel {
   final BridgeEffectInstanceInfo? effect;
   final BridgeParamInfo? param;
 
+  /// True for the layer's Retime channel (K-197), which is neither a transform
+  /// property nor an effect parameter but reads and writes like both.
+  final bool retime;
+
   const GraphChannel({
     required this.path,
     required this.id,
@@ -78,6 +82,7 @@ class GraphChannel {
     this.prop,
     this.effect,
     this.param,
+    this.retime = false,
   });
 
   List<BridgeKeyframe> get keys => keysOf(scalar);
@@ -111,6 +116,23 @@ List<GraphChannel> graphChannels({
       }
     }
     if (entry == null) continue;
+
+    // Retime (K-197): one channel, source time in seconds. An ordinary curve
+    // here — the lens, the handles and the interp buttons all treat it as one.
+    if (path == retimePath(layerId)) {
+      if (entry.info.retime case final scalar?) {
+        out.add(GraphChannel(
+          path: path,
+          id: path,
+          label: '${entry.info.name} · Retime',
+          colourIndex: out.length,
+          scalar: scalar,
+          entry: entry,
+          retime: true,
+        ));
+      }
+      continue;
+    }
 
     if (path.startsWith('${transformPath(layerId)}/')) {
       final lead = path.substring(path.lastIndexOf('/') + 1);
@@ -187,6 +209,10 @@ void commitChannelEdits(Map<GraphChannel, BridgeScalar> edits) {
       final slot = transforms[layerId] ??= (channel.entry.layer, [], []);
       slot.$2.add(channel.prop!);
       slot.$3.add(next);
+    } else if (channel.retime) {
+      // One Retime per layer, so there is nothing to batch: the write is
+      // already one op and therefore one undo step.
+      channel.entry.layer.setRetimeProperty(value: next);
     } else if (channel.effect != null && channel.param != null) {
       final slot = effects[layerId] ??= (channel.entry.layer, {});
       (slot.$2[channel.effect!.id.toString()] ??= {})[channel.param!.id] = next;

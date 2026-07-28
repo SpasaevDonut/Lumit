@@ -2769,3 +2769,37 @@ selection in *either* view — the lane marquee's catch included. Retime stays a
 property here (per the standing TODO): no Retime channel, no §5.2 lenses yet; the
 acceleration lens (K-070), numeric entry, transform-box scaling, beat-marker snapping and
 waveform ghosting remain open in docs/07 §5.
+
+**K-197 · DECIDED · Retime starts again as an ordinary keyframable property.** The segment
+model (docs/04-RETIMING.md: Rate/Map segments, eases, boundaries with exact rational source
+positions) is a fine *destination* and a poor starting point — it has cost more than it has
+paid, and none of its editing affordances ever reached the frontend (docs/TODO.md lists a
+dozen). So Retime restarts as the simplest thing that is honestly a retime: a
+`lumit_core::anim::Property` on the **layer** (`Layer::retime`, `Option<Property>`) whose
+value is the source time, in seconds, the layer shows at its own local time — the After
+Effects Time Remap shape. It is a graph-editor channel like any other, which supersedes
+K-196's "no Retime channel" — that clause meant no *segment* channel and no lenses, and
+neither is what this is. Being an ordinary `Property` is the whole point: the stopwatch,
+the ◄ ◆ ► navigator, the lane diamonds, the graph editor's lane, its handles and its interp
+menu all work on it already, with no Retime-specific code anywhere. **No extras at all** —
+no speed lens, no ease presets, no ramp editing, no freeze, no overrun band, no
+interpolation policy on this path. Those return, if they return, on top of a property that
+already works. `Option` rather than an always-present property because "not retimed" and
+"retimed to exactly 1×" are different states in the file, and only the first skips the map:
+a layer with no Retime shows **no row**, and Alt+Shift+T installs the identity map (two
+linear keys, source running alongside local time) so switching it on changes nothing
+visible. The row sits **above** Transform, outside every group, because it decides which
+frame of the source the rest of the fold-out then transforms. `Layer::source_time_at` is the
+single place the mapping is decided, so the render plan (`plan.rs`) and the frame-cache key
+(`lumit-eval`) can never disagree about which source frame a layer shows; it prefers the
+property and falls back to the old `LayerKind::Footage::retime` store for documents that
+carry one. Supersedes K-194's "build the fold-out group and move the Source card's retime
+rows into it" — the rows being moved would have been the segment card's, and this is a
+different property with a different model; the Source card's speed/reverse/interpolation
+rows stay where they are until the new path replaces them outright. Regression tests:
+`retime_property_round_trips_and_maps_source_time` (lumit-core),
+`the_retime_property_toggles_and_reads_back` (lumit-bridge), `Retime shows above Transform
+only once the layer has one` (timeline_panel_frb_test.dart) and `Alt+Shift+T toggles the
+selected layer's Retime` (shortcuts_frb_test.dart). The shortcut is **Alt+Shift+T**, the
+owner's choice, replacing docs/07 §15's never-built `Ctrl+Alt+T`; that table is updated in
+the same commit.

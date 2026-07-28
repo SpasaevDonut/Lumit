@@ -139,6 +139,38 @@ void main() {
           reason: 'the selection cannot outlive the layer');
     });
 
+    /// Alt+Shift+T gives the selected layer a Retime — and takes it away again
+    /// (K-197). Off is the property gone, not a 100% curve left behind.
+    testWidgets('Alt+Shift+T toggles the selected layer\'s Retime',
+        (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      comp.addSolidLayer();
+      final layer = comp.getLayers().single;
+
+      Future<void> press() async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+        await tester.pump();
+      }
+
+      // Nothing selected: inert, like every other layer command.
+      await press();
+      expect(layer.getRetimeProperty(), isNull);
+
+      p.uiState.selectedLayer.value = layer;
+      await press();
+      expect(layer.getRetimeProperty(), isNotNull,
+          reason: 'the layer now has a Retime to key');
+
+      await press();
+      expect(layer.getRetimeProperty(), isNull,
+          reason: 'off removes it rather than flattening it');
+    });
+
     /// Otherwise every letter typed into a layer name would also be a command.
     ///
     /// Driven through the Timeline's own search field, which lives inside the
