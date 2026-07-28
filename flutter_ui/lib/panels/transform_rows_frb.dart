@@ -30,6 +30,7 @@ import 'package:provider/provider.dart';
 import '../state/comp_time.dart';
 import '../state/timeline_columns.dart';
 import '../widgets/controls.dart';
+import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
 
 /// How wide one value cell is. Fixed rather than flexible so the columns line
@@ -132,6 +133,9 @@ class TransformRowsFrb extends StatelessWidget {
   /// Padding inside each row.
   final EdgeInsets rowPadding;
 
+  /// Lay the rows out as the Effect controls panel's two columns.
+  final bool twoColumn;
+
   const TransformRowsFrb({
     super.key,
     required this.comp,
@@ -144,13 +148,12 @@ class TransformRowsFrb extends StatelessWidget {
     this.keyPrefix = 'tf',
     this.rowHeight,
     this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
+    this.twoColumn = false,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+  /// One widget per transform row — for a caller that has to put each row in its
+  /// own chrome (the Effect controls panel's hairline-separated rows).
+  List<Widget> rows(BuildContext context) => [
         for (final group in transformGroups(threeD: threeD))
           TransformRowFrb(
             comp: comp,
@@ -163,10 +166,15 @@ class TransformRowsFrb extends StatelessWidget {
             keyPrefix: keyPrefix,
             rowHeight: rowHeight,
             rowPadding: rowPadding,
+            twoColumn: twoColumn,
           ),
-      ],
-    );
-  }
+      ];
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: rows(context),
+      );
 }
 
 /// One transform property group as a row.
@@ -201,6 +209,10 @@ class TransformRowFrb extends StatefulWidget {
   /// the first; a multi-axis row shows one dot per axis beside it.
   final List<Color>? graphColours;
 
+  /// Lay the row out as the Effect controls panel's two columns — name left,
+  /// axes left-aligned in the rest. Ignored when [valueColumn] is set.
+  final bool twoColumn;
+
   const TransformRowFrb({
     super.key,
     required this.comp,
@@ -216,6 +228,7 @@ class TransformRowFrb extends StatefulWidget {
     this.valueColumn,
     this.onLabelTap,
     this.graphColours,
+    this.twoColumn = false,
   });
 
   @override
@@ -246,64 +259,88 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
 
   Widget _row(BridgeTransform transform, TransformGroup group, int frame) {
     final t = ThemeScope.of(context).theme;
+    // One stopwatch, every axis in the row — and one undo step, because
+    // `setTransforms` commits them as a batch.
+    final keyframes = KeyframeControlsFrb(
+      scalars: [for (final axis in group.axes) read(transform, axis.prop)],
+      comp: widget.comp,
+      playheadFrame: widget.playheadFrame,
+      onSeek: widget.onSeek,
+      rowKey: '${widget.keyPrefix}-${group.axes.first.prop.name}',
+      onWrite: (next) {
+        widget.layer.setTransforms(
+          props: [for (final axis in group.axes) axis.prop],
+          values: next,
+        );
+        setState(() => _staged = null);
+        widget.onChanged();
+      },
+    );
+
+    // The name is the row's handle for the graph editor, so it is built once
+    // and drawn by whichever layout the row takes.
+    final label = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: widget.onLabelTap,
+      child: Row(
+        children: [
+          Flexible(
+            child: Text(
+              group.label,
+              style: widget.graphColours?.isNotEmpty ?? false
+                  ? t.body.copyWith(color: widget.graphColours!.first)
+                  : t.body,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // One dot per axis in its stroke colour, so a two-axis property names
+          // both of its curves.
+          if ((widget.graphColours?.length ?? 0) > 1)
+            for (final colour in widget.graphColours!)
+              Padding(
+                padding: const EdgeInsets.only(left: 3),
+                child: Container(
+                  width: 5,
+                  height: 5,
+                  decoration: BoxDecoration(
+                    color: colour,
+                    borderRadius: BorderRadius.circular(3),
+                  ),
+                ),
+              ),
+        ],
+      ),
+    );
+
+    if (widget.twoColumn && widget.valueColumn == null) {
+      final row = Padding(
+        padding: widget.rowPadding,
+        child: fxTwoColumnRow(
+          context: context,
+          name: label,
+          keyframeControls: keyframes,
+          control: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < group.axes.length; i++) ...[
+                if (i > 0) const SizedBox(width: 6),
+                _cell(transform, group.axes[i], frame),
+              ],
+            ],
+          ),
+        ),
+      );
+      final height = widget.rowHeight;
+      return height == null ? row : SizedBox(height: height, child: row);
+    }
+
     final row = Padding(
       padding: widget.rowPadding,
       child: Row(
         children: [
-          // One stopwatch, every axis in the row — and one undo step, because
-          // `setTransforms` commits them as a batch.
-          KeyframeControlsFrb(
-            scalars: [
-              for (final axis in group.axes) read(transform, axis.prop)
-            ],
-            comp: widget.comp,
-            playheadFrame: widget.playheadFrame,
-            onSeek: widget.onSeek,
-            rowKey: '${widget.keyPrefix}-${group.axes.first.prop.name}',
-            onWrite: (next) {
-              widget.layer.setTransforms(
-                props: [for (final axis in group.axes) axis.prop],
-                values: next,
-              );
-              setState(() => _staged = null);
-              widget.onChanged();
-            },
-          ),
+          keyframes,
           const SizedBox(width: 4),
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: widget.onLabelTap,
-              child: Row(
-                children: [
-                  Flexible(
-                    child: Text(
-                      group.label,
-                      style: widget.graphColours?.isNotEmpty ?? false
-                          ? t.body.copyWith(color: widget.graphColours!.first)
-                          : t.body,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  // One dot per axis in its stroke colour, so a two-axis
-                  // property names both of its curves.
-                  if ((widget.graphColours?.length ?? 0) > 1)
-                    for (final colour in widget.graphColours!)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 3),
-                        child: Container(
-                          width: 5,
-                          height: 5,
-                          decoration: BoxDecoration(
-                            color: colour,
-                            borderRadius: BorderRadius.circular(3),
-                          ),
-                        ),
-                      ),
-                ],
-              ),
-            ),
-          ),
+          Expanded(child: label),
           if (widget.valueColumn case final col?) ...[
             SizedBox(
               width: col.width,

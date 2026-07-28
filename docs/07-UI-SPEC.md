@@ -601,6 +601,36 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   appear in Effects & Presets (§7) and serialise per [10-FILE-FORMAT.md](10-FILE-FORMAT.md)
   for sharing (K-065).
 
+  **Shipped: the panel's layout.** The panel is **one list, not a stack of cards** — the same
+  reading as the Timeline's twirl-down (§4.3), which is where the same parameters also appear.
+  Each section (Source, Transform, and one per effect) is a **heading bar that twirls**, with a
+  hairline under every row beneath it. A section arrives open, so an effect shows its
+  parameters the moment it is applied.
+
+  Every row is **two columns, undivided**: the property's name left-aligned in a fixed-width
+  name column, its control left-aligned in the rest. They read as columns because they line
+  up down the panel, not because anything is drawn between them; the name column also reserves
+  its keyframe-controls gutter on rows that cannot animate, so labels align whether or not
+  the property is animatable (`flutter_ui/lib/panels/fx_section.dart`).
+
+  The **heading row** runs: twirl, the effect's enable switch, the effect's name — all in the
+  name column — then **Reset** at the top of the value column, because that is what it acts
+  on. Reset writes every parameter's declared default and so drops any curve on it, as one op
+  and therefore one undo step. The stack arrows and the close mark sit hard right, away from
+  Reset: removing an effect is not an adjustment to it.
+
+  **Round shape keeps its bubble** (K-092): the same rows, wrapped in floating-card chrome.
+  The two shapes differ in chrome, not in layout.
+
+  **Effects with their own display** — Levels' histogram, Curves' spline — are the expected
+  exception. `customEffectRows` in `effect_controls_panel_frb.dart` is asked before the panel
+  falls back to a row per declared parameter; it is the one place such an effect declares
+  itself, so the first one does not become a special case in the middle of the layout. Nothing
+  claims a display yet.
+
+  Still to build here: drag-to-reorder by the effect's name, solo, rename, and the expression
+  toggle.
+
 ---
 
 ## 7. Effects & Presets

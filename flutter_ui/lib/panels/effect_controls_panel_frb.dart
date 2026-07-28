@@ -1,11 +1,23 @@
 // The Effect controls panel, on the flutter_rust_bridge API — the effect stack.
 //
-// One card per effect on the selected layer: an enable switch, reorder and
-// remove, and a row per declared parameter drawn as the control its *kind* asks
-// for. Add effect offers every built-in, grouped by category.
+// **The shape of it.** One twirl-open section per effect, read the same way the
+// Timeline's fold-out reads: a heading bar carrying the effect's enable switch
+// and its name, then a row per declared parameter under it, each row separated
+// from the next by a hairline. Every row is two columns — the parameter's name
+// left-aligned in a fixed-width name column, its control left-aligned in the
+// rest — with nothing drawn between them; they read as columns because they line
+// up, which is all a column is (`fx_section.dart`). The heading's Reset sits at
+// the top of the value column because that is what it acts on; the close mark
+// stays hard right, away from it.
 //
-// Above the stack sit the Transform rows — anchor, position, scale, rotation,
-// opacity, plus the z and x/y-rotation rows when the layer is 3D.
+// Add effect offers every built-in, grouped by category. Above the stack sit the
+// Transform rows — anchor, position, scale, rotation, opacity, plus the z and
+// x/y-rotation rows when the layer is 3D — in a section of the same shape.
+//
+// **Effects that want their own display** (Levels' histogram, Curves' spline)
+// are the exception this layout expects: [customEffectRows] is asked first, and
+// only when it has nothing to say does the panel fall back to a row per declared
+// parameter. Nothing claims it yet.
 //
 // Every animatable row carries the stopwatch and the ◄ ◆ ► navigator
 // (keyframe_controls_frb.dart). An animated row shows "animated" in place of its
@@ -32,9 +44,9 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
-import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import 'effect_param_row_frb.dart';
+import 'fx_section.dart';
 import 'transform_rows_frb.dart';
 import '../state/drag_payloads.dart';
 import 'placeholder.dart';
@@ -51,6 +63,16 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
   /// The drag in progress, and the writes that end it. Shared with the
   /// Timeline's fold-out, which shows the same rows.
   final EffectStackEditor _effects = EffectStackEditor();
+
+  /// Which sections are twirled shut, by their path. Held closed-set rather than
+  /// open-set so a newly applied effect arrives open, which is what you want the
+  /// moment after applying one.
+  final Set<String> _shut = <String>{};
+
+  bool _isOpen(String path) => !_shut.contains(path);
+  void _toggle(String path) => setState(() {
+        if (!_shut.remove(path)) _shut.add(path);
+      });
 
   @override
   Widget build(BuildContext context) {
@@ -163,8 +185,10 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                           ValueKey<String>('src-card-${layer.internallayerId}'),
                       layer: layer,
                       onChanged: ui.model.refresh,
+                      open: _isOpen('source'),
+                      onToggle: () => _toggle('source'),
                     ),
-                    _TransformCard(
+                    _TransformSection(
                       key: ValueKey<String>('tf-card-${layer.internallayerId}'),
                       layer: layer,
                       comp: comp,
@@ -173,6 +197,8 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                       playheadFrame: playhead,
                       onSeek: (frame) => ui.playheadFrame.value = frame,
                       onChanged: ui.model.refresh,
+                      open: _isOpen('transform'),
+                      onToggle: () => _toggle('transform'),
                     ),
                   ],
                   if (info.effects.isEmpty)
@@ -186,9 +212,11 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                     )
                   else
                     for (var index = 0; index < info.effects.length; index++)
-                      _EffectCard(
+                      _EffectSection(
                         key: ValueKey<String>('fx-card-$index'),
                         info: info.effects[index],
+                        open: _isOpen('fx-${info.effects[index].id}'),
+                        onToggle: () => _toggle('fx-${info.effects[index].id}'),
                         stagedValue: _effects.stagedValue,
                         index: index,
                         count: info.effects.length,
@@ -315,14 +343,16 @@ Future<void> _showAddMenu(
   );
 }
 
-/// One effect: its title row and a row per declared parameter.
+/// One effect: its heading row and a row per declared parameter.
 ///
 /// Drawn entirely from the read model (K-184) — no bridge calls in build. The
-/// title-row ops need a live instance handle, which is fetched fresh at click
+/// heading-row ops need a live instance handle, which is fetched fresh at click
 /// time (the model's data is not a handle, deliberately: frb consumes handles
 /// passed by value).
-class _EffectCard extends StatelessWidget {
+class _EffectSection extends StatelessWidget {
   final BridgeEffectInstanceInfo info;
+  final bool open;
+  final VoidCallback onToggle;
 
   /// The drag in flight's staged value for (effect, param), or null — overlaid
   /// on the model's value so the number under the pointer is the staged one.
@@ -349,9 +379,11 @@ class _EffectCard extends StatelessWidget {
   final void Function(UuidValue effect, String param, BridgeEffectValue value)
       onLive;
 
-  const _EffectCard({
+  const _EffectSection({
     super.key,
     required this.info,
+    required this.open,
+    required this.onToggle,
     required this.stagedValue,
     required this.index,
     required this.count,
@@ -375,71 +407,61 @@ class _EffectCard extends StatelessWidget {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    final params = cachedListParameters(info.name);
-    final values = {for (final v in info.values) v.id: v.value};
-
-    return Container(
-      margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
-      decoration: BoxDecoration(
-        color: t.surface1,
-        borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-        border: Border.all(color: t.hairline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _titleRow(context, t),
-          if (params.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 2, 8, 6),
-              child: Column(
-                children: [
-                  for (final param in params)
-                    EffectParamRowFrb(
-                      key: ValueKey<String>('fx-row-${info.id}-${param.id}'),
-                      effectId: info.id,
-                      param: param,
-                      value: stagedValue(info.id, param.id) ?? values[param.id],
-                      comp: comp,
-                      ownerLayerId: layer.internallayerId,
-                      ownerLayers: allLayers,
-                      playheadFrame: playheadFrame,
-                      onSeek: onSeek,
-                      onWrite: onWrite,
-                      onLive: onLive,
-                    ),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
+  /// Put every parameter back to the value its schema declares, and drop any
+  /// curve on it — one op, so one undo step for the whole reset.
+  ///
+  /// Written straight through the stack rather than through [EffectStackEditor],
+  /// which stages exactly one parameter: a reset is every parameter at once, and
+  /// staging them one at a time would be one undo entry each.
+  void _reset() {
+    final stack = layer.getEffects();
+    for (final instance in stack) {
+      if (instance.id() != info.id) continue;
+      for (final param in cachedListParameters(info.name)) {
+        instance.setValue(id: param.id, value: defaultEffectValue(param.kind));
+      }
+      try {
+        layer.setEffects(effects: stack);
+      } catch (_) {
+        // The stack changed under us; re-reading is the recovery.
+      }
+      break;
+    }
+    onStackChanged();
   }
 
-  Widget _titleRow(BuildContext context, LumitTheme t) {
+  @override
+  Widget build(BuildContext context) {
     final id = info.id;
-    final enabled = info.enabled;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 5, 6, 5),
-      child: Row(
+    final values = {for (final v in info.values) v.id: v.value};
+
+    return FxSection(
+      title: effectLabelOf(info.name),
+      open: open,
+      onToggle: onToggle,
+      leading: LumitTooltip(
+        message: info.enabled ? 'Disable this effect' : 'Enable it',
+        child: HouseCheckbox(
+          key: ValueKey<String>('fx-enabled-$id'),
+          value: info.enabled,
+          onChanged: (on) {
+            _withHandle((e) => layer.setEffectEnabled(effect: e, enabled: on));
+            onStackChanged();
+          },
+        ),
+      ),
+      actions: [
+        fxTextAction(
+          context,
+          label: 'Reset',
+          tip:
+              'Put every parameter back to its default, removing its keyframes',
+          keyName: 'fx-reset-$id',
+          onPressed: _reset,
+        ),
+      ],
+      trailing: Row(
         children: [
-          LumitTooltip(
-            message: enabled ? 'Disable this effect' : 'Enable it',
-            child: HouseCheckbox(
-              key: ValueKey<String>('fx-enabled-$id'),
-              value: enabled,
-              onChanged: (on) {
-                _withHandle(
-                    (e) => layer.setEffectEnabled(effect: e, enabled: on));
-                onStackChanged();
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(child: Text(effectLabelOf(info.name), style: t.bodyPrimary)),
           _markButton(
             context,
             mark: '▲',
@@ -477,6 +499,26 @@ class _EffectCard extends StatelessWidget {
           ),
         ],
       ),
+      // An effect with its own display draws that instead of a row per
+      // parameter; nothing claims one yet.
+      rows: customEffectRows(info.name) ??
+          [
+            for (final param in cachedListParameters(info.name))
+              EffectParamRowFrb(
+                key: ValueKey<String>('fx-row-$id-${param.id}'),
+                effectId: id,
+                param: param,
+                value: stagedValue(id, param.id) ?? values[param.id],
+                comp: comp,
+                ownerLayerId: layer.internallayerId,
+                ownerLayers: allLayers,
+                playheadFrame: playheadFrame,
+                onSeek: onSeek,
+                onWrite: onWrite,
+                onLive: onLive,
+                twoColumn: true,
+              ),
+          ],
     );
   }
 
@@ -510,12 +552,13 @@ class _EffectCard extends StatelessWidget {
   }
 }
 
-/// The Transform card: the layer's transform rows, in the panel's card chrome.
+/// The Transform section: the layer's transform rows, in the panel's section
+/// chrome.
 ///
 /// The rows themselves are [TransformRowsFrb], shared with the Timeline's
-/// twirl-down — this is the card around them, which is all that is particular to
-/// this panel.
-class _TransformCard extends StatelessWidget {
+/// twirl-down — this is the section around them, which is all that is particular
+/// to this panel.
+class _TransformSection extends StatelessWidget {
   final LayerReference layer;
   final CompositionReference comp;
   final BridgeTransform transform;
@@ -523,8 +566,10 @@ class _TransformCard extends StatelessWidget {
   final int playheadFrame;
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
+  final bool open;
+  final VoidCallback onToggle;
 
-  const _TransformCard({
+  const _TransformSection({
     super.key,
     required this.layer,
     required this.comp,
@@ -533,39 +578,35 @@ class _TransformCard extends StatelessWidget {
     required this.playheadFrame,
     required this.onSeek,
     required this.onChanged,
+    required this.open,
+    required this.onToggle,
   });
 
   @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
-      decoration: BoxDecoration(
-        color: t.surface1,
-        borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-        border: Border.all(color: t.hairline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 5, 8, 3),
-            child: Text('Transform', style: t.bodyPrimary),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-            child: TransformRowsFrb(
-              comp: comp,
-              layer: layer,
-              transform: transform,
-              threeD: threeD,
-              playheadFrame: playheadFrame,
-              onSeek: onSeek,
-              onChanged: onChanged,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => FxSection(
+        title: 'Transform',
+        open: open,
+        onToggle: onToggle,
+        rows: TransformRowsFrb(
+          comp: comp,
+          layer: layer,
+          transform: transform,
+          threeD: threeD,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: onChanged,
+          twoColumn: true,
+        ).rows(context),
+      );
 }
+
+/// The rows an effect that draws its *own* display wants, or null to fall back
+/// to a row per declared parameter.
+///
+/// Levels wants a histogram with its input and output handles under it; Curves
+/// wants a spline the pointer shapes. Neither is a list of numbered rows, and
+/// forcing them into one would be the wrong control for the job. Nothing claims
+/// a display yet, so this answers null for everything — it exists as the one
+/// place such an effect declares itself, rather than the panel growing a special
+/// case in the middle of its layout when the first one arrives.
+List<Widget>? customEffectRows(String matchName) => null;

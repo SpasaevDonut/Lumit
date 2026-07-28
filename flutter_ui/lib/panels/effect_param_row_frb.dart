@@ -29,6 +29,7 @@ import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
+import 'fx_section.dart';
 import 'keyframe_controls_frb.dart';
 
 /// How wide one value cell is.
@@ -69,6 +70,12 @@ class EffectParamRowFrb extends StatelessWidget {
   /// (the Effect controls card has the room, so it keeps its breathing space).
   final EdgeInsets rowPadding;
 
+  /// Lay the row out as the Effect controls panel's two columns — name left,
+  /// control left-aligned in the rest — rather than pushing the control to the
+  /// row's right edge. Ignored when [valueColumn] is set: the Timeline's rows
+  /// answer to the render-switch column group instead.
+  final bool twoColumn;
+
   /// The layer this effect sits on, and every layer in the comp — what a
   /// layer-valued parameter picks from, minus the owner itself (K-194). Both
   /// ride in from the read model, so the closed picker costs nothing.
@@ -98,6 +105,7 @@ class EffectParamRowFrb extends StatelessWidget {
     this.rowPadding = const EdgeInsets.symmetric(vertical: 3),
     this.onLabelTap,
     this.graphColour,
+    this.twoColumn = false,
   });
 
   @override
@@ -116,36 +124,52 @@ class EffectParamRowFrb extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final id = effectId;
     final scalar = _animatableScalarOf(value);
+    // Only the number-shaped kinds animate; a choice or a file has nothing to
+    // interpolate, so those rows carry no stopwatch at all.
+    final keyframes = scalar == null
+        ? null
+        : KeyframeControlsFrb(
+            // An effect parameter is one value, so one channel.
+            scalars: [scalar],
+            comp: comp,
+            playheadFrame: playheadFrame,
+            onSeek: onSeek,
+            rowKey: '$id-${param.id}',
+            onWrite: (next) => _set(BridgeEffectValue.float(next.single)),
+          );
+
+    // The name is the row's handle for the graph editor, so it is built once
+    // and drawn by whichever layout the row takes.
+    final label = GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onLabelTap,
+      child: Text(
+        param.label,
+        style:
+            graphColour == null ? t.body : t.body.copyWith(color: graphColour),
+        overflow: TextOverflow.ellipsis,
+      ),
+    );
+
+    if (twoColumn && valueColumn == null) {
+      return Padding(
+        padding: rowPadding,
+        child: fxTwoColumnRow(
+          context: context,
+          name: label,
+          keyframeControls: keyframes,
+          control: _control(context, t, id, value, frame),
+        ),
+      );
+    }
+
     return Padding(
       padding: rowPadding,
       child: Row(
         children: [
-          // Only the number-shaped kinds animate; a choice or a file has nothing
-          // to interpolate, so those rows carry no stopwatch at all.
-          if (scalar != null)
-            KeyframeControlsFrb(
-              // An effect parameter is one value, so one channel.
-              scalars: [scalar],
-              comp: comp,
-              playheadFrame: playheadFrame,
-              onSeek: onSeek,
-              rowKey: '$id-${param.id}',
-              onWrite: (next) => _set(BridgeEffectValue.float(next.single)),
-            ),
+          if (keyframes != null) keyframes,
           const SizedBox(width: 4),
-          Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: onLabelTap,
-              child: Text(
-                param.label,
-                style: graphColour == null
-                    ? t.body
-                    : t.body.copyWith(color: graphColour),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-          ),
+          Expanded(child: label),
           if (valueColumn case final col?) ...[
             SizedBox(
               width: col.width,
@@ -471,6 +495,37 @@ String effectLabelOf(String name) {
   }
   return name;
 }
+
+/// What a parameter holds before anything touches it — what Reset writes.
+///
+/// Read straight off the schema, which already carries every default and is
+/// memoised here, so resetting an effect costs no bridge call to work out *what*
+/// to write. Seed, file and layer declare none: a seed's default is zero, an
+/// unset file is no paths, and an unset layer reference is None — each of which
+/// is the identity the effect treats as "not configured".
+BridgeEffectValue defaultEffectValue(BridgeParamKind kind) => switch (kind) {
+      BridgeParamKind_Float(:final default_) =>
+        BridgeEffectValue.float(BridgeScalar.static_(default_)),
+      BridgeParamKind_Choice(:final default_) =>
+        BridgeEffectValue.choice(default_),
+      BridgeParamKind_Bool(:final default_) => BridgeEffectValue.bool(default_),
+      BridgeParamKind_Colour(:final default_) =>
+        BridgeEffectValue.colour(BridgeColour(
+          r: BridgeScalar.static_(_channel(default_, 0)),
+          g: BridgeScalar.static_(_channel(default_, 1)),
+          b: BridgeScalar.static_(_channel(default_, 2)),
+          a: BridgeScalar.static_(_channel(default_, 3, fallback: 1)),
+        )),
+      BridgeParamKind_Seed() => const BridgeEffectValue.seed(0),
+      BridgeParamKind_File() => BridgeEffectValue.file(
+          const BridgeFileParam(paths: [], index: BridgeScalar.static_(0))),
+      BridgeParamKind_Layer() => const BridgeEffectValue.layer(),
+    };
+
+/// One channel of a declared colour default, tolerating a short list — a schema
+/// that names only RGB still resets to an opaque colour rather than throwing.
+double _channel(List<double> rgba, int i, {double fallback = 0}) =>
+    i < rgba.length ? rgba[i] : fallback;
 
 /// The last path segment, for showing a chosen file without its whole path.
 String _basename(String path) {

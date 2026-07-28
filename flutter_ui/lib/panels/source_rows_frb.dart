@@ -21,16 +21,24 @@ import 'package:lumit_flutter/src/rust/api/solid.dart';
 import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
+import 'fx_section.dart';
 
-/// The card of source rows for [layer], or nothing when its kind has none.
+/// The section of source rows for [layer], or nothing when its kind has none.
 class SourceRowsFrb extends StatefulWidget {
   final LayerReference layer;
   final VoidCallback onChanged;
+
+  /// Whether the section is twirled open, and how to toggle it — held by the
+  /// panel so the open set survives a rebuild of these rows.
+  final bool open;
+  final VoidCallback onToggle;
 
   const SourceRowsFrb({
     super.key,
     required this.layer,
     required this.onChanged,
+    required this.open,
+    required this.onToggle,
   });
 
   @override
@@ -61,26 +69,11 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     ];
     if (rows.isEmpty) return const SizedBox.shrink();
 
-    return Container(
-      margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
-      decoration: BoxDecoration(
-        color: t.surface1,
-        borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-        border: Border.all(color: t.hairline),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 5, 8, 3),
-            child: Text('Source', style: t.bodyPrimary),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-            child: Column(children: rows),
-          ),
-        ],
-      ),
+    return FxSection(
+      title: 'Source',
+      open: widget.open,
+      onToggle: widget.onToggle,
+      rows: rows,
     );
   }
 
@@ -389,19 +382,16 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
 
   Widget _row(LumitTheme t, String label, Widget control) => Padding(
         padding: const EdgeInsets.symmetric(vertical: 3),
-        child: Row(
-          children: [
-            Expanded(
-              child:
-                  Text(label, style: t.body, overflow: TextOverflow.ellipsis),
-            ),
-            const SizedBox(width: 10),
-            control,
-          ],
+        child: fxTwoColumnRow(
+          context: context,
+          // A source row is not a keyable property, so its name is plain text —
+          // there is no curve for the graph editor to aim at.
+          name: Text(label, style: t.body, overflow: TextOverflow.ellipsis),
+          control: control,
         ),
       );
 }
 
-/// Matches the Effect controls panel's own cell width, so the two cards' values
-/// line up down the panel.
+/// Matches the Effect controls panel's own cell width, so the two sections'
+/// values line up down the panel.
 const double _cellWidth = 78;
