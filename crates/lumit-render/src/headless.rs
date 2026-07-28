@@ -229,6 +229,22 @@ pub struct PreparedFrame {
     texture: wgpu::Texture,
 }
 
+impl PreparedFrame {
+    /// The frame's ACTUAL pixel dimensions — the comp size times the preview
+    /// scale the composite ran at, not the logical comp size. Every present
+    /// path sizes its shared surface off these, so a coarser tier shares a
+    /// genuinely smaller texture.
+    ///
+    /// Public and platform-independent on purpose: it is the one thing a
+    /// present path can ask a prepared frame without owning a transport, so
+    /// the field has a reader on macOS too, which has no transport yet
+    /// (K-033/K-183).
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        (self.texture.width(), self.texture.height())
+    }
+}
+
 impl HeadlessRenderer {
     /// Build a headless renderer, acquiring a GPU adapter and compiling the
     /// shader engines. `Err` when no adapter exists (the bridge turns this into
@@ -764,7 +780,7 @@ impl HeadlessRenderer {
         // composite ran at. The registration sizes off them, so a coarser tier
         // shares a genuinely smaller texture; Dart stretches it into the same
         // Viewer rect, which is what makes the tier cheaper at all.
-        let (aw, ah) = (shown.width(), shown.height());
+        let (aw, ah) = prepared.size();
         // Re-create the shared texture when it is missing or the size changed
         // (a comp resize or a tier change) — a new handle is reported then,
         // which the bridge relays so Dart re-registers.
@@ -824,7 +840,7 @@ impl HeadlessRenderer {
         let shown = &prepared.texture;
         // The texture's ACTUAL dims (comp size × preview scale) — see the
         // Windows sibling above.
-        let (aw, ah) = (shown.width(), shown.height());
+        let (aw, ah) = prepared.size();
         // Re-create the DMA-BUF texture when it is missing or the size changed
         // (a comp resize or a tier change) — a new fd is reported then, which
         // the bridge relays so Dart re-registers.
@@ -1588,6 +1604,55 @@ mod tests {
             r.decoded_frames(),
             after_first + 1,
             "moving the playhead must decode"
+        );
+    }
+
+    /// **A prepared frame reports its own size on every platform.** The dims a
+    /// present path sizes its shared surface off are the texture's actual ones
+    /// — the comp size times the preview scale — and reading them must not
+    /// depend on a transport existing. It did: the texture had no reader
+    /// outside the Windows and Linux present paths, so macOS builds failed the
+    /// `-D warnings` clippy gate on a dead field (K-033).
+    #[test]
+    fn a_prepared_frame_reports_the_scaled_size() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([0.0, 1.0, 0.0, 1.0]), 64, 32);
+        let doc = store.snapshot();
+        let half = crate::plan::Quality {
+            auto_res: true,
+            display_scale: 0.5,
+            ..crate::plan::Quality::default()
+        };
+
+        let full = r
+            .render_prepared(
+                &doc,
+                comp_id,
+                0,
+                crate::plan::Quality::default(),
+                false,
+                false,
+            )
+            .expect("full render");
+        assert_eq!(
+            full.size(),
+            (64, 32),
+            "full quality composites at comp size"
+        );
+
+        let coarse = r
+            .render_prepared(&doc, comp_id, 0, half, false, false)
+            .expect("half render");
+        assert_eq!(
+            coarse.size(),
+            (32, 16),
+            "a coarser tier shares a genuinely smaller texture"
         );
     }
 
