@@ -91,8 +91,11 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     preview scale** (K-186 records the split): correctness-safe because the
     fragment samples mattes by normalised comp UV, but it is the one composite
     the scale does not shrink — scale it too if it ever shows in a profile.
-- **The Linux DMA-BUF path has never run on a Linux machine** (K-033) — it is
-    compiled and default-on, so the first Linux run verifies it.
+- **The Linux DMA-BUF path has never run on a Linux machine with a GPU** (K-033) — it is
+    compiled and default-on. It has now run on the CI Linux runner, which has no adapter:
+    lavapipe refuses the exportable allocation, every frame is dropped at the publish step
+    and the engine says so without crashing. That proves the failure is calm; it proves
+    nothing about the path working. See the CI-coverage entry under Next.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** (measured 8.8 ms per
     1080p payload). Frames no longer cross as bytes, so this now only taxes the
     thumbnails and the 256×256 scope traces — small, but the per-byte loop is
@@ -178,15 +181,6 @@ the keymap).
 - **Column widths and the property selection are session-lived (K-192).** Both reset when
     the panel is rebuilt from scratch; fold them into the workspace when per-workspace
     column layouts land (docs/07 §4.2's reorder/hide-per-workspace item).
-- **No CI job proves a Viewer frame ever arrives.** The Linux job is the only one that
-    runs the Flutter suite, and it has no GPU: wgpu lands on Mesa's lavapipe, whose
-    `vkAllocateMemory` refuses the exportable allocation DMA-BUF needs, so every frame is
-    dropped at the publish step. Zero-copy is the only transport (K-183), so the six
-    Viewer tests that wait for a frame skip there on `LUMIT_NO_ZERO_COPY_VIEWER=1`. They
-    run on any machine with a real adapter, so the owner's box still catches a regression
-    — but between that and the DMA-BUF path below, frame delivery is proven by hand on
-    Windows and by nothing anywhere else. A Linux runner with a GPU, or a Windows job that
-    runs the Flutter suite, closes both at once.
 - **The Flutter suite has ~4 order-dependent tests.** `flutter test` occasionally fails a
     different one or two of the playback/cache-bar tests each run; every one of them passes
     alone, and the whole suite passes with `--concurrency=1` — which is what CI now runs,
@@ -271,6 +265,21 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
     nothing the user would trade). Each remaining page lands wired to the
     engine through the bridge, not as a Dart-side setting nothing reads
     (K-181/K-182).
+
+**CI coverage the Flutter port left thin (2026-07-28, from the merge of K-174 → K-198):**
+- **Nothing in CI proves a Viewer frame arrives.** The Linux job is the only one that
+    runs the Flutter suite, and it has no GPU: wgpu lands on Mesa's lavapipe, whose
+    `vkAllocateMemory` refuses the exportable allocation DMA-BUF needs, so every frame is
+    dropped at the publish step. Zero-copy is the only transport (K-183), so the six
+    Viewer tests that wait for a frame skip there on `LUMIT_NO_ZERO_COPY_VIEWER=1`
+    (set in `.github/workflows/ci.yml`, read in `test/frb/frb_test_support.dart`). They
+    still run — and still fail on a regression — on any machine with a real adapter, so
+    the owner's box is the gate for now. Either a Linux runner with a GPU or a Windows
+    job that runs `flutter test` would close this and verify the DMA-BUF path above at
+    the same time.
+- **The Flutter suite runs at `--concurrency=1` in CI**, which is the mitigation for the
+    order-dependent tests under Now, not the fix. It costs the Flutter job wall-clock and
+    it hides the contention rather than removing it; the per-file engine does the latter.
 
 **Threading / platform:**
 - **Move footage probing off-thread** - synchronous today; needs a probe worker
