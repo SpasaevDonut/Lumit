@@ -8,8 +8,8 @@
 //! it?" and chases the answer. That is why footage and sound can never drift
 //! apart — there is only one clock, and it is the audio card's.
 
-use cpal::Device;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::Device;
 use lumit_media::AudioBuffer;
 use parking_lot::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -61,7 +61,6 @@ pub struct AudioEngine {
 }
 
 impl AudioEngine {
-
     #[cfg(target_os = "linux")]
     pub fn get_device() -> Result<Device, AudioError> {
         let host = cpal::default_host();
@@ -92,8 +91,7 @@ impl AudioEngine {
     }
 
     pub fn new() -> Result<Self, AudioError> {
-
-        let device= Self::get_device()?;
+        let device = Self::get_device()?;
         let config = device
             .default_output_config()
             .map_err(|e| AudioError::Device(e.to_string()))?;
