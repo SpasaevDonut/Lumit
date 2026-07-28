@@ -15,6 +15,7 @@ enum Panel {
   effectControls,
   effectsAndPresets,
   scopes,
+  debug,
   hierarchy;
 
   String get title => switch (this) {
@@ -25,6 +26,7 @@ enum Panel {
         Panel.effectsAndPresets => 'Effects & presets',
         Panel.scopes => 'Scopes',
         Panel.hierarchy => 'Hierarchy',
+        Panel.debug => 'Debug View'
       };
 }
 
@@ -116,7 +118,10 @@ DockSplit defaultLayout() => DockSplit(
               DockPane(Panel.hierarchy),
             ]),
             DockPane(Panel.viewer),
-            DockPane(Panel.scopes),
+            DockTabs([
+              DockPane(Panel.debug),
+              DockPane(Panel.scopes),
+            ]),
           ],
           [0.22, 0.58, 0.20],
         ),
