@@ -546,8 +546,10 @@ class LumitUiState extends ChangeNotifier {
         .then((id) => _adoptTexture(id, f.frame.toInt()));
   }
 
-  /// Windows zero-copy: register the shared D3D12 texture by its NT handle.
-  /// Leaving `fd` null is what selects the DXGI argument set.
+  /// Windows and macOS zero-copy: register the surface by the one integer that
+  /// names it — an NT handle for the shared D3D12 texture there, an `IOSurfaceID`
+  /// here (K-195). One case for both, because the payload is the same shape.
+  /// Leaving `fd` null is what selects the handle argument set.
   void _showSharedTexture(BridgeSharedFrameInfo f) {
     controller
         .ensureRegistered(f.handle.toInt(), f.width, f.height)

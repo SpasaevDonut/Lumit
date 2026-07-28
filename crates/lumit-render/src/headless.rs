@@ -125,6 +125,12 @@ pub struct HeadlessRenderer {
     /// Present only in the opt-in shared-texture-linux build.
     #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
     shared_dmabuf: Option<lumit_gpu::shared_linux::SharedDmabuf>,
+    /// The macOS zero-copy Viewer target (K-195), the IOSurface sibling of
+    /// [`Self::shared`]. Held for the session and re-created only when the comp's
+    /// dimensions change. `None` until the first `render_to_shared` call.
+    /// Present only in the opt-in shared-texture-macos build.
+    #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+    shared_iosurface: Option<lumit_gpu::shared_metal::SharedIoSurface>,
 }
 
 /// One frame's decoded per-layer pixels, kept alongside the decode plan that
@@ -137,20 +143,30 @@ struct Retained {
     pixels: CompFrame,
 }
 
-/// A rendered frame that stayed on the GPU: the NT handle of the shared texture
-/// it lives in, plus its dimensions and format (K-177). Handed across the bridge
-/// so the Windows runner can register the texture with Flutter without any pixel
-/// copy. The handle stays valid across frames (the same texture is re-used) and
+/// A rendered frame that stayed on the GPU: the number naming the surface it
+/// lives in, plus its dimensions and format (K-177, K-195). Handed across the
+/// bridge so the runner can register the texture with Flutter without any pixel
+/// copy. The number stays valid across frames (the same texture is re-used) and
 /// only changes when the comp is resized.
-#[cfg(all(windows, feature = "shared-texture"))]
+///
+/// Windows and macOS share this shape because their payloads are genuinely the
+/// same: one opaque integer naming a piece of graphics memory, plus its size.
+/// Only what the integer *is* differs — an NT handle there, an `IOSurfaceID`
+/// here — and neither side does anything with it but pass it on. Linux needs
+/// more (stride, offset, DRM format) and has its own [`SharedFrameInfoLinux`].
+#[cfg(any(
+    all(windows, feature = "shared-texture"),
+    all(target_os = "macos", feature = "shared-texture-macos")
+))]
 pub struct SharedFrameInfo {
-    /// The NT `HANDLE` value of the shared texture (a
-    /// `kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle` surface).
+    /// The NT `HANDLE` value of the shared texture on Windows (a
+    /// `kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle` surface); the
+    /// `IOSurfaceID` on macOS, which the runner passes to `IOSurfaceLookup`.
     pub handle: u64,
     pub width: u32,
     pub height: u32,
-    /// Always RGBA8888 (`DXGI_FORMAT_R8G8B8A8_UNORM` holding sRGB-encoded bytes),
-    /// the identical pixels the read-back path produces.
+    /// Always RGBA8888 (sRGB-encoded bytes in a BGRA-ordered surface), the
+    /// identical pixels every other path produces.
     pub format: &'static str,
 }
 
@@ -273,6 +289,8 @@ impl HeadlessRenderer {
             shared: None,
             #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
             shared_dmabuf: None,
+            #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+            shared_iosurface: None,
         })
     }
 
@@ -867,6 +885,70 @@ impl HeadlessRenderer {
             offset: info.offset,
             drm_fourcc: info.drm_fourcc,
             modifier: info.modifier,
+        })
+    }
+
+    /// Render composition `comp_id` at integer `frame` into the macOS IOSurface
+    /// texture, returning the surface's id and dimensions ([`SharedFrameInfo`],
+    /// K-195) — the Metal sibling of the Windows [`Self::render_to_shared`]. The
+    /// frame never leaves the graphics card: it is composited and display-encoded
+    /// by the same interactive path (so it shares the drag fast path), then
+    /// copied into the IOSurface-backed texture instead of being read back.
+    ///
+    /// The surface is created on the first call and re-used across frames (a
+    /// stable id); a comp of different dimensions re-creates it and reports the
+    /// new id. `Err` on an unknown comp, when wgpu is not on the Metal backend,
+    /// or any IOSurface/Metal failure — the bridge turns that into "no shared
+    /// frame" and the frame is dropped.
+    #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+    pub fn render_to_shared(
+        &mut self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+        cacheable: bool,
+    ) -> Result<SharedFrameInfo, String> {
+        // BGRA, as on Windows: the consumer here is a `CVPixelBuffer` of type
+        // `kCVPixelFormatType_32BGRA`, the one format Flutter's macOS texture
+        // path accepts.
+        let prepared = self.render_prepared(doc, comp_id, frame, quality, true, cacheable)?;
+        self.present_prepared(&prepared)
+    }
+
+    /// Show an already-rendered frame via the IOSurface texture — the macOS
+    /// sibling of the Windows [`Self::present_prepared`], for the scheduler's
+    /// paced presents.
+    #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+    pub fn present_prepared(
+        &mut self,
+        prepared: &PreparedFrame,
+    ) -> Result<SharedFrameInfo, String> {
+        // The texture's ACTUAL dims (comp size × preview scale) — see the
+        // Windows sibling above.
+        let (aw, ah) = prepared.size();
+        // Re-create the surface when it is missing or the size changed (a comp
+        // resize or a tier change) — a new id is reported then, which the bridge
+        // relays so Dart re-registers.
+        let needs_new = match self.shared_iosurface.as_ref() {
+            Some(sh) => sh.width != aw || sh.height != ah,
+            None => true,
+        };
+        if needs_new {
+            self.shared_iosurface = Some(lumit_gpu::shared_metal::SharedIoSurface::new(
+                &self.gpu, aw, ah,
+            )?);
+        }
+        let target = self
+            .shared_iosurface
+            .as_ref()
+            .ok_or_else(|| "headless render: iosurface missing after create".to_string())?;
+        target.present(&self.gpu, &prepared.texture);
+        Ok(SharedFrameInfo {
+            handle: target.handle(),
+            width: aw,
+            height: ah,
+            format: "rgba8888",
         })
     }
 

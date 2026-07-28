@@ -13,7 +13,14 @@ use uuid::Uuid;
 
 // Each frame type is only constructed by its own platform's `publish_frame`, so
 // importing both unconditionally would warn on one of them in every build.
-#[cfg(all(windows, feature = "shared-texture"))]
+// Windows and macOS share the handle-shaped frame: an opaque integer naming a
+// surface (an NT handle there, an `IOSurfaceID` here) plus its size, which is
+// why they share this import, the `publish_zero_copy` body and the Dart
+// `RenderedSharedTexture` case (K-195).
+#[cfg(any(
+    all(windows, feature = "shared-texture"),
+    all(target_os = "macos", feature = "shared-texture-macos")
+))]
 use crate::api::state::BridgeSharedFrameInfo;
 #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
 use crate::api::state::BridgeSharedFrameInfoLinux;
@@ -149,7 +156,10 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         None => (0, frames - 1),
     };
     let quality = quality_for(scale);
-    let bgra = cfg!(all(windows, feature = "shared-texture"));
+    let bgra = cfg!(any(
+        all(windows, feature = "shared-texture"),
+        all(target_os = "macos", feature = "shared-texture-macos")
+    ));
     // Stop before the LRU starts churning: filling past the budget would
     // evict the frames just made to admit the next ones, for ever.
     let (used, budget, _) = state.renderer.frame_texture_stats();
@@ -681,7 +691,10 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             }
             // BGRA on the Windows shared-texture path (ANGLE only opens BGRA
             // surfaces); RGBA everywhere else.
-            let bgra = cfg!(all(windows, feature = "shared-texture"));
+            let bgra = cfg!(any(
+                all(windows, feature = "shared-texture"),
+                all(target_os = "macos", feature = "shared-texture-macos")
+            ));
             let started = std::time::Instant::now();
             let rendered = state.renderer.render_prepared(
                 &document,
@@ -750,7 +763,10 @@ fn present_ring_frame(
     prepared: &lumit_render::PreparedFrame,
     stream: &mut WorkerResponseStream,
 ) {
-    #[cfg(all(windows, feature = "shared-texture"))]
+    #[cfg(any(
+        all(windows, feature = "shared-texture"),
+        all(target_os = "macos", feature = "shared-texture-macos")
+    ))]
     match renderer.present_prepared(prepared) {
         Ok(shared) => {
             _ = stream.add(WorkerResponse::RenderedSharedTexture(
@@ -784,7 +800,8 @@ fn present_ring_frame(
 
     #[cfg(not(any(
         all(windows, feature = "shared-texture"),
-        all(target_os = "linux", feature = "shared-texture-linux")
+        all(target_os = "linux", feature = "shared-texture-linux"),
+        all(target_os = "macos", feature = "shared-texture-macos")
     )))]
     {
         let _ = (renderer, frame, prepared, stream);
@@ -1126,13 +1143,15 @@ fn trace_scope(
 /// points only *exist* under their own platform and feature:
 ///
 /// 1. Linux + `shared-texture-linux` → a DMA-BUF handle (K-177).
-/// 2. Windows + `shared-texture` → a shared D3D12 texture handle (K-177).
+/// 2. Windows + `shared-texture` → a shared D3D12 texture handle (K-177), and
+///    macOS + `shared-texture-macos` → an `IOSurfaceID` (K-195). One body: both
+///    report one opaque integer naming a surface, plus its size.
 ///
 /// The engine draws straight into a texture the runner displays and no pixels
 /// cross the boundary at all; the read-back transport that copied every pixel
 /// off the card and serialised it a byte at a time (~6 ms per 1.4 MB) is
-/// deleted. A failed render, or a platform with no zero-copy path (macOS,
-/// K-033), drops the frame and says so; it never takes the worker down.
+/// deleted. A failed render, or a build with no zero-copy path at all, drops the
+/// frame and says so; it never takes the worker down.
 #[allow(clippy::too_many_arguments)]
 fn publish_frame(
     state: &mut WorkerState,
@@ -1146,13 +1165,15 @@ fn publish_frame(
 ) {
     #[cfg(any(
         all(windows, feature = "shared-texture"),
-        all(target_os = "linux", feature = "shared-texture-linux")
+        all(target_os = "linux", feature = "shared-texture-linux"),
+        all(target_os = "macos", feature = "shared-texture-macos")
     ))]
     publish_zero_copy(state, comp, frame, scale, document, stream, mode, cacheable);
 
     #[cfg(not(any(
         all(windows, feature = "shared-texture"),
-        all(target_os = "linux", feature = "shared-texture-linux")
+        all(target_os = "linux", feature = "shared-texture-linux"),
+        all(target_os = "macos", feature = "shared-texture-macos")
     )))]
     {
         let _ = (state, comp, frame, scale, document, stream, mode, cacheable);
@@ -1207,7 +1228,10 @@ fn publish_zero_copy(
     }));
 }
 
-#[cfg(all(windows, feature = "shared-texture"))]
+#[cfg(any(
+    all(windows, feature = "shared-texture"),
+    all(target_os = "macos", feature = "shared-texture-macos")
+))]
 #[allow(clippy::too_many_arguments)]
 fn publish_zero_copy(
     state: &mut WorkerState,

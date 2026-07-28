@@ -313,9 +313,10 @@ list, not a re-statement of the roadmap.
 - **Design ([15-DESIGN.md](15-DESIGN.md)).** Bundle JetBrains Mono, Schibsted
     Grotesk and Source Serif 4 (only Inter is wired); add the 13/14/20 px type-scale
     steps to the theme; add 'ScopeColours' to the Flutter theme (Rust has it).
-- **Platform.** The macOS pass (native menu bar, Metal/VideoToolbox,
-    notarisation, K-033) — which since K-183 must include a Metal/IOSurface
-    zero-copy Viewer path, because macOS has no Viewer picture without one.
+- **Platform.** The macOS pass (native menu bar, VideoToolbox, ProRes,
+    notarisation, K-033). The Metal/IOSurface zero-copy Viewer path landed
+    2026-07-28 (K-195) and is unverified on real hardware — the checklist is in
+    GUIDE §9, next to the Linux one.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)). The Timeline audio waveforms landed 2026-07-28.

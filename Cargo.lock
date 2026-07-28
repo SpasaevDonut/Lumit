@@ -1488,10 +1488,13 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "bytemuck",
+ "core-foundation",
  "glam",
  "half",
  "lumit-core",
  "lumit-eval",
+ "metal",
+ "objc",
  "pollster",
  "thiserror 2.0.18",
  "uuid",

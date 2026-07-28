@@ -71,9 +71,19 @@ impl GpuContext {
             backends: wgpu::Backends::VULKAN,
             ..Default::default()
         });
+        // On macOS the IOSurface hand-off reaches through wgpu to its Metal
+        // device, so pin the Metal backend in the opt-in build (the analogue of
+        // pinning D3D12 on Windows). Metal is what wgpu would pick there anyway;
+        // pinning only makes the requirement explicit.
+        #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..Default::default()
+        });
         #[cfg(not(any(
             all(windows, feature = "shared-texture"),
-            all(target_os = "linux", feature = "shared-texture-linux")
+            all(target_os = "linux", feature = "shared-texture-linux"),
+            all(target_os = "macos", feature = "shared-texture-macos")
         )))]
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -543,6 +553,11 @@ pub mod shared;
 /// DMA-BUF interop at all, exactly as it had no Vulkan external memory before.
 #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
 pub mod shared_linux;
+/// The macOS-only zero-copy Viewer target via IOSurface (K-195). Present only in
+/// the opt-in `shared-texture-macos` build on macOS; every other build has no
+/// Metal interop at all.
+#[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+pub mod shared_metal;
 pub use composite::{
     camera_matrix, concat_place, place_matrix, scaled_size, Blend, CompositeLayer, Compositor,
     MatteInput, MbSample,

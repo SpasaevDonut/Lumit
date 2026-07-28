@@ -31,6 +31,8 @@ uuid = { version = "1", features = ["v7"] }
 shared-texture = ["lumit-gpu/shared-texture"]
 # The Linux DMA-BUF sibling (K-177).
 shared-texture-linux = ["lumit-gpu/shared-texture-linux"]
+# The macOS IOSurface sibling (K-195).
+shared-texture-macos = ["lumit-gpu/shared-texture-macos"]
 
 [dev-dependencies]
 lumit-media = { path = "../lumit-media", features = ["test-fixtures"] }

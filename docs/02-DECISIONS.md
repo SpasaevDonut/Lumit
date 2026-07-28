@@ -2690,3 +2690,30 @@ for a camera and for an audio-only clip — and never the layer they sit on. Bot
 lazy, so the probe happens when a menu opens and never while drawing a row (K-184).
 Regression tests: the settings/menu/effect tests in `shell_frb_test.dart`,
 `menu_bar_frb_test.dart` and `effect_controls_frb_test.dart`.
+
+**K-195 · DECIDED · macOS gets a Viewer picture: Metal/IOSurface is the third zero-copy
+transport.** K-183 deleted the CPU read-back path and left macOS with no way to show a
+frame at all — every render was composited and then dropped with "No zero-copy transport in
+this build", so the Viewer was blank for a whole session while every other panel worked.
+The macOS primitive for two parts of a program pointing at one piece of graphics memory is
+the **IOSurface**: `lumit-gpu`'s `shared_metal` creates one (`IOSurfaceCreate`), asks Metal
+for a texture backed by it (`newTextureWithDescriptor:iosurface:plane:`), and wraps that
+`MTLTexture` back up as a `wgpu::Texture` the ordinary render path copies the finished frame
+into. The runner (`macos/Runner/ViewerTextureBridge.swift`) looks the surface up by id,
+wraps it in a `CVPixelBuffer` — a wrapper, not a copy — and registers it as a Flutter
+external texture on the same `lumit/viewer_texture` channel with the same
+`register`/`frameReady`/`unregister` methods the Windows and Linux runners implement.
+**The payload is the Windows one, deliberately:** macOS reports `RenderedSharedTexture`,
+because both platforms hand across one opaque integer naming a surface plus its size (an NT
+handle there, an `IOSurfaceID` here) and neither side does anything with it but pass it on.
+So there is no third bridge variant, no codegen change and no Dart change — only Linux, which
+needs stride, offset and a DRM format, has its own. The surface is `'BGRA'`
+(`kCVPixelFormatType_32BGRA`, the one format Flutter's macOS texture path accepts), so the
+renderer is asked for BGRA display bytes there exactly as it is on Windows. Feature
+`shared-texture-macos`, default-on and inert off macOS, matching its two siblings.
+Regression test: `the_surface_yields_the_pixels_in_bgra_order` in `shared_metal.rs` writes
+through the wgpu texture and reads back off the locked IOSurface, which is the channel-order
+mistake that would otherwise cost a silent blank session (the Windows sibling's test exists
+for the same reason). Extends K-177; supersedes K-183's "macOS has no Viewer picture until
+it grows its own" — it has grown one. The rest of K-033's Mac release list (VideoToolbox,
+ProRes, notarisation, the native menu bar) is untouched and still outstanding.

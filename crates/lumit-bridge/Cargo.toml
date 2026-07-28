@@ -25,12 +25,17 @@ crate-type = ["cdylib", "staticlib"]
 # then does not probe and thumbnails are absent.
 [features]
 # Zero-copy is the ONLY Viewer transport (K-183): the read-back path that sent
-# every pixel across the FFI boundary is deleted, so both zero-copy features are
-# default-on. Each is inert off its own platform (the D3D interop is
-# `cfg(windows)`-gated, the Vulkan/DMA-BUF interop `cfg(target_os = "linux")`),
-# so one default set still builds everywhere; a platform with neither (macOS,
-# K-033) has no Viewer picture until its own path exists.
-default = ["media", "shared-texture", "shared-texture-linux"]
+# every pixel across the FFI boundary is deleted, so all three zero-copy features
+# are default-on. Each is inert off its own platform (the D3D interop is
+# `cfg(windows)`-gated, the Vulkan/DMA-BUF interop `cfg(target_os = "linux")`,
+# the Metal/IOSurface interop `cfg(target_os = "macos")`), so one default set
+# still builds everywhere.
+default = [
+    "media",
+    "shared-texture",
+    "shared-texture-linux",
+    "shared-texture-macos",
+]
 media = ["dep:lumit-media"]
 # The Windows zero-copy Viewer path (K-177): a shared D3D12 texture the Flutter
 # runner imports directly. Forwards to lumit-render's own feature, which pins
@@ -38,6 +43,9 @@ media = ["dep:lumit-media"]
 shared-texture = ["lumit-render/shared-texture"]
 # The Linux zero-copy Viewer path (K-177), the DMA-BUF sibling.
 shared-texture-linux = ["lumit-render/shared-texture-linux"]
+# The macOS zero-copy Viewer path (K-195), the Metal/IOSurface sibling: the
+# runner wraps the surface in a CVPixelBuffer and shows it.
+shared-texture-macos = ["lumit-render/shared-texture-macos"]
 
 [dependencies]
 lumit-core = { path = "../lumit-core" }

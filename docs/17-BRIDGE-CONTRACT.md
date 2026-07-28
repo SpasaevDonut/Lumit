@@ -179,12 +179,16 @@ path, documented beside the types in
     The engine renders into a shared texture and hands the frontend a handle,
     which the runner registers as a Flutter external texture — no pixels ever
     cross the boundary. Default-on cargo features (`shared-texture` for D3D12
-    on Windows, `shared-texture-linux` for Vulkan/DMA-BUF), each inert off its
-    platform. The CPU read-back transport that serialised every pixel (8.8 ms
-    per 1080p frame in the SSE codec alone) is deleted: a platform with no
-    zero-copy path (macOS, K-033) has no Viewer picture until it grows one.
-    Both publish variants are always *declared*, so the generated Dart is one
-    shape on every platform and the Viewer holds one `switch` over the pair.
+    on Windows, `shared-texture-linux` for Vulkan/DMA-BUF, `shared-texture-macos`
+    for Metal/IOSurface, K-195), each inert off its platform. The CPU read-back
+    transport that serialised every pixel (8.8 ms per 1080p frame in the SSE
+    codec alone) is deleted; a build with no zero-copy path at all drops every
+    frame. Both publish variants are always *declared*, so the generated Dart is
+    one shape on every platform and the Viewer holds one `switch` over the pair.
+    There are two variants, not three: macOS reports `RenderedSharedTexture`,
+    the same payload Windows does, because both are one opaque integer naming a
+    surface plus its size (an NT handle there, an `IOSurfaceID` here). Only
+    Linux needs more (fd, stride, offset, DRM format).
 - **Small stills still cross as pixels**, deliberately: footage thumbnails
     (`BridgeRenderedFrame`) and the 256×256 scope traces. Both are bounded and
     rare, which is what makes the per-byte codec tolerable there.
@@ -199,8 +203,9 @@ path, documented beside the types in
     [TODO.md](TODO.md).
 - **`render`** (default on) enables the composited-comp Viewer path and export
 through the headless seam.
-- **`shared-texture`** (default off) enables the zero-copy path above; the shipped
-Windows .dll is built with it.
+- **`shared-texture`**, **`shared-texture-linux`**, **`shared-texture-macos`**
+(all default on) enable the zero-copy path above, one per platform; each is inert
+off its own target, so one default set builds everywhere.
 
 ## Threading and long-running work
 

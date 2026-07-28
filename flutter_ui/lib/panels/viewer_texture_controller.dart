@@ -1,9 +1,11 @@
 // The Viewer's zero-copy texture lifecycle (K-177).
 //
-// In plain terms: on Windows the engine can draw the Viewer's picture straight
-// into a piece of GPU memory that Flutter shows without any copy. The engine
-// hands us an OS "handle" naming that memory; this object registers that handle
-// with the Windows runner (over a small platform channel the runner implements),
+// In plain terms: the engine can draw the Viewer's picture straight into a piece
+// of GPU memory that Flutter shows without any copy. The engine hands us an OS
+// "handle" naming that memory — a shared-texture handle on Windows, an
+// IOSurface id on macOS (K-195), a DMA-BUF descriptor on Linux; this object
+// registers it with the platform's runner (over a small platform channel each
+// runner implements),
 // gets back a `textureId` the `Texture` widget shows, and tells the runner each
 // time a new frame has been drawn. It re-registers when the handle or size
 // changes (a comp resize), and — crucially — degrades quietly: if the runner
@@ -21,8 +23,10 @@ import 'package:flutter/services.dart';
 /// Owns the `lumit/viewer_texture` platform-channel registration for one Viewer.
 /// A fake [MethodChannel] can be injected so tests drive it without the runner.
 class ViewerTextureController {
-  /// The channel the Windows runner listens on (see
-  /// `windows/runner/viewer_texture_bridge.cpp`).
+  /// The channel every runner listens on (see
+  /// `windows/runner/viewer_texture_bridge.cpp`,
+  /// `linux/runner/viewer_texture_bridge.cc`,
+  /// `macos/Runner/ViewerTextureBridge.swift`).
   static const String channelName = 'lumit/viewer_texture';
 
   final MethodChannel _channel;
@@ -51,7 +55,8 @@ class ViewerTextureController {
 
   /// Register (or re-register) the shared texture with the given [width]/[height],
   /// returning its `textureId`. The texture is named by [handle] on Windows (the
-  /// DXGI shared handle) or by the DMA-BUF fields on Linux — pass [fd] plus
+  /// DXGI shared handle) and macOS (the `IOSurfaceID`), or by the DMA-BUF fields
+  /// on Linux — pass [fd] plus
   /// [stride], [offset], [fourcc] and [modifier] to send the DMA-BUF `register`
   /// payload instead of the handle one (the "platform-conditional argument pack";
   /// the channel name and lifecycle are identical). A no-op returning the existing

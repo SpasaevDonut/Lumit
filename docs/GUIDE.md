@@ -2286,6 +2286,29 @@ format is reported to Flutter as the DRM code `DRM_FORMAT_ABGR8888` (which, in
 DRM's little-endian naming, means bytes in memory order red, green, blue, alpha —
 matching what Flutter samples) with a "linear" modifier.
 
+**macOS gets it too, via IOSurface (K-195).** The third platform, the third name
+for the same idea. Apple's primitive for "two parts of a program pointing at one
+piece of graphics memory" is an **IOSurface**, and it comes with something the
+other two do not: a plain number that names it, so nothing awkward has to cross
+the boundary at all. The engine (running on Metal, Apple's graphics interface)
+creates a surface, asks Metal for a texture backed by it, draws the finished
+frame into that, and sends Flutter the number. The Mac runner looks the number
+up, wraps the surface in a `CVPixelBuffer` — a wrapper, not a copy, the same
+memory seen through the type Apple's video machinery speaks — and hands it to
+Flutter as a texture. Same `Texture` widget, same no-copy result.
+
+Because that payload is one number plus a size, it is *exactly* the Windows one,
+so macOS reuses the Windows message, the Windows channel call and the Windows
+Dart code unchanged; only what the number means differs. Linux is the odd one
+out, needing the stride and format alongside its descriptor. The one wrinkle is
+colour order: Flutter's Mac texture path accepts a single pixel format, "BGRA"
+(blue, green, red, alpha), so the renderer is asked to write its display bytes in
+that order there — which it already knew how to do, because Windows wants the
+same thing for its own reason. As with Linux, the authoring machine cannot build
+or run the Mac half, so CI proves it compiles and one test checks the colour
+order end to end; whether the picture appears on a real Mac is the collaborator's
+check.
+
 **The Scopes are computed on the graphics card now (the GPU scope pass, K-096
 v1).** A scope reads the picture's brightness and colour — a waveform, a
 histogram, a vectorscope. Both frontends used to work those out on the ordinary
@@ -2933,6 +2956,27 @@ Windows path was proven):
    the Mesa/driver version, and whether the indicator read GPU or CPU — that is
    enough to tell a format mismatch from an extension-support gap.
 
+**Verifying the macOS zero-copy Viewer (the Mac collaborator's checklist,
+K-195).** CI proves the Rust Metal/IOSurface code and the Swift plugin
+*compile*, and one unit test (`the_surface_yields_the_pixels_in_bgra_order`)
+proves the bytes come back off a real surface in the right channel order on a
+unified-memory Mac. Whether the picture reaches the screen needs a Mac with a
+window:
+
+1. Build the bridge and run: `cargo build -p lumit-bridge`, then `flutter run -d
+   macos` from `flutter_ui/`. No flag — `shared-texture-macos` is default-on.
+2. Open a composition. A picture in the Viewer *is* the proof: there is no
+   fallback transport left, so a working picture can only have come through the
+   surface.
+3. A blank Viewer with everything else working is the failure this path is
+   watched for, and it reports itself: after a dozen announced frames with none
+   drawn, the Dart side gives up and says so. Capture any console line mentioning
+   `IOSurfaceCreate`, `newTextureWithDescriptor`, `IOSurface \d+` or "not running
+   on the Metal backend".
+4. Report the Mac's chip (Apple silicon or Intel, and on Intel whether it has a
+   discrete GPU — that decides the texture's storage mode, and the discrete case
+   is the one corner this path knowingly does not synchronise).
+
 **Running it on macOS.** The Flutter frontend now has a `macos/` platform
 folder too, scaffolded with `flutter create --platforms=macos .` (K-033 names
 Metal/macOS a supported future target; this is the first concrete step
@@ -2949,13 +2993,10 @@ library validation disabled in both entitlements files — a sandboxed,
 hardened-runtime process cannot `dlopen` an unsigned, locally-built dylib from
 an arbitrary Cargo target path, which is exactly what the bridge loader does
 (matching the unsigned, unsandboxed posture Windows and Linux dev builds
-already have; a signed macOS release is a later decision). Two things are
-deliberately out of scope for this pass: the Viewer's
-zero-copy shared-texture path is Windows/Linux only (`shared-texture` /
-`shared-texture-linux`) — and since K-183 deleted the CPU read-back transport,
-macOS has **no Viewer picture at all** until a Metal/IOSurface path of its own
-exists (the editor otherwise works);
-and the native macOS menu bar (muda) stays deferred with
+already have; a signed macOS release is a later decision). The Viewer's zero-copy
+path now exists here too (`shared-texture-macos`, Metal/IOSurface, K-195), so the
+picture appears; it is default-on and needs no flag. The native macOS menu bar
+(muda) stays deferred with
 the rest of the "macOS pass" named in `docs/archive/flutter-port/01-STRATEGY.md` — the
 in-window menu bar renders instead, same as it does today.
 
