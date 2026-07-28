@@ -2038,17 +2038,28 @@ class _OutlineRowState extends State<_OutlineRow> {
         ),
         // The name is also the stack handle: drag it up or down to reorder
         // the layer (docs/07 §4.7). A locked layer holds its place.
+        //
+        // A raw listener selects on the DOWN, outside the gesture arena: the
+        // rename's double-tap holds the arena open for its whole window, so
+        // selecting through the row's tap made a plain click on the name
+        // reach the Effect controls a third of a second late — the same lag
+        // the Project panel's rows cure the same way.
         Expanded(
-          child: info.switches.locked
-              ? _name(t, id, info)
-              : Draggable<int>(
-                  data: index,
-                  axis: Axis.vertical,
-                  feedback: _dragLabel(t, info.name),
-                  childWhenDragging:
-                      Opacity(opacity: 0.4, child: _name(t, id, info)),
-                  child: _name(t, id, info),
-                ),
+          child: Listener(
+            onPointerDown: (event) {
+              if (event.buttons == kPrimaryButton) widget.onSelect();
+            },
+            child: info.switches.locked
+                ? _name(t, id, info)
+                : Draggable<int>(
+                    data: index,
+                    axis: Axis.vertical,
+                    feedback: _dragLabel(t, info.name),
+                    childWhenDragging:
+                        Opacity(opacity: 0.4, child: _name(t, id, info)),
+                    child: _name(t, id, info),
+                  ),
+          ),
         ),
         const SizedBox(width: 4),
       ],
@@ -3213,82 +3224,90 @@ class _BarState extends State<_Bar> {
             width: width,
             top: 0,
             bottom: 0,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              // Armed razor: a click cuts the clip under the playhead rather
-              // than starting a drag. A layer with no clip there says so
-              // through the engine's calm error, which is nothing on screen —
-              // the cut simply does not happen.
-              onTap: widget.razor && !held
-                  ? () {
-                      try {
-                        widget.entry.layer
-                            .cutClipAt(frame: widget.playheadFrame());
-                      } catch (_) {
-                        return;
+            // Selection on the raw DOWN, outside the gesture arena: the
+            // bar's tap otherwise waits for the move/trim drag recognisers
+            // to concede before the Effect controls learn the layer.
+            child: Listener(
+              onPointerDown: (event) {
+                if (event.buttons == kPrimaryButton) widget.onSelect();
+              },
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                // Armed razor: a click cuts the clip under the playhead rather
+                // than starting a drag. A layer with no clip there says so
+                // through the engine's calm error, which is nothing on screen —
+                // the cut simply does not happen.
+                onTap: widget.razor && !held
+                    ? () {
+                        try {
+                          widget.entry.layer
+                              .cutClipAt(frame: widget.playheadFrame());
+                        } catch (_) {
+                          return;
+                        }
+                        widget.onChanged();
                       }
-                      widget.onChanged();
-                    }
-                  // Clicking anywhere on a layer selects it (docs/TODO) —
-                  // the bar is most of what "the layer" is on screen.
-                  : widget.onSelect,
-              onHorizontalDragDown: widget.razor || held
-                  ? null
-                  : (d) => _downDx = d.localPosition.dx,
-              onHorizontalDragStart: widget.razor || held
-                  ? null
-                  : (d) => setState(() {
-                        // Grabbing a bar selects its layer too: a drag is a
-                        // click that kept going.
-                        widget.onSelect();
-                        _delta = 0;
-                        _deltaPx = 0;
-                        _grab = _downDx < _trimGrab
-                            ? BarGrab.trimIn
-                            : _downDx > width - _trimGrab
-                                ? BarGrab.trimOut
-                                : BarGrab.move;
-                      }),
-              onHorizontalDragUpdate: widget.razor || held
-                  ? null
-                  : (d) => setState(() {
-                        _deltaPx += d.delta.dx;
-                        _delta = widget.axis.frameAt(_deltaPx);
-                        _publishPreview();
-                      }),
-              onHorizontalDragEnd: widget.razor || held
-                  ? null
-                  : (_) => _commit(inFrame, outFrame),
-              onHorizontalDragCancel: widget.razor || held
-                  ? null
-                  : () => setState(() {
-                        _delta = 0;
-                        _deltaPx = 0;
-                        _grab = null;
-                        widget.dragPreview.value = null;
-                      }),
-              child: Container(
-                key: ValueKey<String>(
-                    'tl-bar-fill-${widget.entry.layer.internallayerId}'),
-                decoration: BoxDecoration(
-                  // The layer's label colour (K-188): the same chip the
-                  // outline swatch shows, so recolouring a layer recolours
-                  // its bar — and each kind starts on its own colour.
-                  color: t.labelColour(info.label),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-                // A Sequence layer draws its clip splits, so the razor has
-                // something to aim at and a cut is visible once made.
-                child: Stack(
-                  children: [
-                    for (final clipFrame in info.clipFrames)
-                      Positioned(
-                        left: widget.axis.xOf(clipFrame.toInt()) - 0.5,
-                        top: 0,
-                        bottom: 0,
-                        child: Container(width: 1, color: t.surface0),
-                      ),
-                  ],
+                    // Selection already happened on the down; the tap has
+                    // nothing left to do, but registering it keeps the click
+                    // out of any parent recogniser's hands.
+                    : () {},
+                onHorizontalDragDown: widget.razor || held
+                    ? null
+                    : (d) => _downDx = d.localPosition.dx,
+                onHorizontalDragStart: widget.razor || held
+                    ? null
+                    // No select here: every drag begins with the down, and the
+                    // down already selected.
+                    : (d) => setState(() {
+                          _delta = 0;
+                          _deltaPx = 0;
+                          _grab = _downDx < _trimGrab
+                              ? BarGrab.trimIn
+                              : _downDx > width - _trimGrab
+                                  ? BarGrab.trimOut
+                                  : BarGrab.move;
+                        }),
+                onHorizontalDragUpdate: widget.razor || held
+                    ? null
+                    : (d) => setState(() {
+                          _deltaPx += d.delta.dx;
+                          _delta = widget.axis.frameAt(_deltaPx);
+                          _publishPreview();
+                        }),
+                onHorizontalDragEnd: widget.razor || held
+                    ? null
+                    : (_) => _commit(inFrame, outFrame),
+                onHorizontalDragCancel: widget.razor || held
+                    ? null
+                    : () => setState(() {
+                          _delta = 0;
+                          _deltaPx = 0;
+                          _grab = null;
+                          widget.dragPreview.value = null;
+                        }),
+                child: Container(
+                  key: ValueKey<String>(
+                      'tl-bar-fill-${widget.entry.layer.internallayerId}'),
+                  decoration: BoxDecoration(
+                    // The layer's label colour (K-188): the same chip the
+                    // outline swatch shows, so recolouring a layer recolours
+                    // its bar — and each kind starts on its own colour.
+                    color: t.labelColour(info.label),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                  // A Sequence layer draws its clip splits, so the razor has
+                  // something to aim at and a cut is visible once made.
+                  child: Stack(
+                    children: [
+                      for (final clipFrame in info.clipFrames)
+                        Positioned(
+                          left: widget.axis.xOf(clipFrame.toInt()) - 0.5,
+                          top: 0,
+                          bottom: 0,
+                          child: Container(width: 1, color: t.surface0),
+                        ),
+                    ],
+                  ),
                 ),
               ),
             ),

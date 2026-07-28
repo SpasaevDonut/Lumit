@@ -1375,6 +1375,33 @@ void main() {
           p.uiState.selectedLayer.value?.internallayerId, top.internallayerId);
     });
 
+    /// Selection happens on the pointer DOWN, not after the gesture arena
+    /// settles: the name's rename double-tap holds the arena open for its
+    /// whole ~300 ms window, so selecting through the row's tap made the
+    /// Effect controls follow a click on the name a third of a second late.
+    testWidgets('clicking a name selects before the double-tap window',
+        (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      final top = p.comp.addSolidLayer();
+      await mount(tester, p);
+      expect(p.uiState.selectedLayer.value, isNull);
+
+      final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(
+              ValueKey<String>('tl-name-${top.internallayerId}'))));
+      await tester.pump();
+
+      // Still mid-press: the button has not even come up yet.
+      expect(
+          p.uiState.selectedLayer.value?.internallayerId, top.internallayerId,
+          reason: 'selection lands on the down, before any arena resolves');
+
+      await gesture.up();
+      // Drain the rename recogniser's double-tap timer before teardown.
+      await tester.pump(kDoubleTapTimeout * 2);
+    });
+
     /// Touching a layer's fold-out highlights the layer a shade DIMMER than
     /// selection — "whose rows are these" answered at a glance, without the
     /// touch stealing the selection.
