@@ -116,6 +116,10 @@ class BridgeLayerInfo {
   /// with no bridge calls). Writes still go through `set_matte`.
   final BridgeMatte? matte;
 
+  /// The Retime property (K-197), or None when the layer is not retimed —
+  /// which is exactly what decides whether the fold-out shows a Retime row.
+  final BridgeScalar? retime;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -131,6 +135,7 @@ class BridgeLayerInfo {
     required this.effects,
     required this.label,
     this.matte,
+    this.retime,
   });
 
   @override
@@ -148,7 +153,8 @@ class BridgeLayerInfo {
       transform.hashCode ^
       effects.hashCode ^
       label.hashCode ^
-      matte.hashCode;
+      matte.hashCode ^
+      retime.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -168,7 +174,8 @@ class BridgeLayerInfo {
           transform == other.transform &&
           effects == other.effects &&
           label == other.label &&
-          matte == other.matte;
+          matte == other.matte &&
+          retime == other.retime;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
@@ -575,6 +582,14 @@ class LayerReference {
         that: this,
       );
 
+  /// This layer's Retime property — layer-local time → source time, in
+  /// seconds (K-197) — or `None` when the layer is not retimed, which is what
+  /// hides the row.
+  BridgeScalar? getRetimeProperty() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetRetimeProperty(
+        that: this,
+      );
+
   /// The project item this layer draws from, when it has one.
   ///
   /// `None` for the kinds that have no source of their own — a solid's
@@ -757,6 +772,14 @@ class LayerReference {
       BridgeLib.instance.api.crateApiLayerLayerReferenceSetRetimeInterpolation(
           that: this, interpolation: interpolation);
 
+  /// Replace the Retime property's whole animation, as one undoable step —
+  /// the same coarse-grained shape as a transform property, for the same
+  /// invertibility reason. Refused on a layer that is not retimed: the row
+  /// only exists once it is.
+  void setRetimeProperty({required BridgeScalar value}) => BridgeLib
+      .instance.api
+      .crateApiLayerLayerReferenceSetRetimeProperty(that: this, value: value);
+
   /// Open or close the reverse gate.
   void setRetimeReverse({required bool allow}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetRetimeReverse(that: this, allow: allow);
@@ -823,6 +846,18 @@ class LayerReference {
   /// a transform property, and for the same invertibility reason.
   void setVolumeDb({required BridgeScalar value}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetVolumeDb(that: this, value: value);
+
+  /// Turn Retime on or off (Alt+Shift+T), returning whether it is now on.
+  ///
+  /// On installs the identity map — source time running alongside local time
+  /// — so switching it on changes nothing visible and gives the row something
+  /// to key, exactly as AE's Time Remap does. Off removes the property
+  /// rather than flattening it: "not retimed" and "retimed to exactly 1×" are
+  /// different states in the file, and only the first skips the map.
+  bool toggleRetimeProperty() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceToggleRetimeProperty(
+        that: this,
+      );
 
   @override
   int get hashCode =>

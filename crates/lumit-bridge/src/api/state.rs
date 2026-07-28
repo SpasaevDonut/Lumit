@@ -238,7 +238,8 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         | Op::SetTransformProperty { comp, layer, .. }
         | Op::SetCameraZoom { comp, layer, .. }
         | Op::SetLayerVolume { comp, layer, .. }
-        | Op::SetLayerRetime { comp, layer, .. } => (Some(*comp), Some(*layer), false),
+        | Op::SetLayerRetime { comp, layer, .. }
+        | Op::SetRetimeProperty { comp, layer, .. } => (Some(*comp), Some(*layer), false),
 
         // A batch is as broad as its members: the item flag is the union, and
         // the reference scope widens to "no one subtree" rather than picking a

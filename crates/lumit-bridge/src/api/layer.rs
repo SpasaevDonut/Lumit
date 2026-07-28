@@ -129,6 +129,9 @@ pub struct BridgeLayerInfo {
     /// The layer's matte, for the outline's matte cell (K-184: the row draws
     /// with no bridge calls). Writes still go through `set_matte`.
     pub matte: Option<BridgeMatte>,
+    /// The Retime property (K-197), or None when the layer is not retimed —
+    /// which is exactly what decides whether the fold-out shows a Retime row.
+    pub retime: Option<BridgeScalar>,
 }
 
 /// Build one layer's [`BridgeLayerInfo`] from an already-fetched composition —
@@ -204,6 +207,7 @@ pub(crate) fn read_layer_info(
             luma: matches!(m.channel, lumit_core::model::MatteChannel::Luma),
             inverted: m.inverted,
         }),
+        retime: layer.retime.as_ref().map(BridgeScalar::read),
     }
 }
 
@@ -1118,6 +1122,57 @@ impl LayerReference {
             let _ = footage;
             Ok(false)
         }
+    }
+
+    /// This layer's Retime property — layer-local time → source time, in
+    /// seconds (K-197) — or `None` when the layer is not retimed, which is what
+    /// hides the row.
+    #[frb(sync)]
+    pub fn get_retime_property(&self) -> Result<Option<BridgeScalar>, BridgeError> {
+        Ok(self.item()?.retime.as_ref().map(BridgeScalar::read))
+    }
+
+    /// Turn Retime on or off (Alt+Shift+T), returning whether it is now on.
+    ///
+    /// On installs the identity map — source time running alongside local time
+    /// — so switching it on changes nothing visible and gives the row something
+    /// to key, exactly as AE's Time Remap does. Off removes the property
+    /// rather than flattening it: "not retimed" and "retimed to exactly 1×" are
+    /// different states in the file, and only the first skips the map.
+    #[frb(sync)]
+    pub fn toggle_retime_property(&self) -> Result<bool, BridgeError> {
+        let layer = self.item()?;
+        let on = layer.retime.is_none();
+        let retime = on.then(|| {
+            let duration = layer
+                .out_point
+                .0
+                .checked_sub(layer.in_point.0)
+                .unwrap_or(layer.out_point.0);
+            Layer::identity_retime(duration)
+        });
+        self.commit(lumit_core::Op::SetRetimeProperty {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            retime,
+        })?;
+        Ok(on)
+    }
+
+    /// Replace the Retime property's whole animation, as one undoable step —
+    /// the same coarse-grained shape as a transform property, for the same
+    /// invertibility reason. Refused on a layer that is not retimed: the row
+    /// only exists once it is.
+    #[frb(sync)]
+    pub fn set_retime_property(&self, value: BridgeScalar) -> Result<(), BridgeError> {
+        let animation = value.animation()?;
+        let mut retime = self.item()?.retime.clone().ok_or(BridgeError::NotRetimed)?;
+        retime.animation = animation;
+        self.commit(lumit_core::Op::SetRetimeProperty {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            retime: Some(retime),
+        })
     }
 
     /// This layer's Volume, in dB (docs/09 §6): 0 is unity.

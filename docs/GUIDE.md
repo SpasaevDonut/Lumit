@@ -915,6 +915,21 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   That solver quality is exactly what makes handles feel right in a graph editor at the
   extremes (AE's 100% influence "spike" case is a test here). Property tests fire
   thousands of random curves at it per CI run.
+- **Retime, restarted as an ordinary property (K-197).** There are now *two* answers to
+  "which moment of the source does this layer show?", and the new one is the simple one.
+  A layer carries a `retime` field that is just an animatable number — the same kind of
+  number Position and Opacity are — and its value *is* the source time, in seconds. Press
+  Alt+Shift+T on a layer and it gains one; press again and it loses it. While it has one, a
+  **Retime** row appears in the Timeline's twirl-down above Transform, with the same
+  stopwatch, the same diamonds and the same graph-editor lane as every other property,
+  because it genuinely *is* every other property — there is no Retime-specific code in any
+  of those places. Switching it on installs two keys running source time alongside layer
+  time, so the picture does not move; drag the second key later and the clip plays slower,
+  drag it earlier and it plays faster. That is deliberately *all* it does for now: no speed
+  ramps, no ease presets, no freeze command. `Layer::source_time_at` is the one function
+  that answers the question, so what the renderer decodes and what the frame cache files it
+  under can never drift apart. The older, much larger machinery below still answers for
+  documents that carry it.
 - `crates/lumit-core/src/retime.rs` — **the Retime maths.** One store per clip answers
   "when the clip's clock reads t, which moment of the source shows?". Speed ramps,
   freezes and slow motion are all segments of that one curve, and the editor's speed

@@ -268,7 +268,7 @@ fn feed_effect_stack(
                             h.update(&[1]);
                             h.update(src.id.as_bytes());
                             let slt = t - src.start_offset.0.to_f64();
-                            feed_source(h, doc, &src.kind, slt, quality, stamper, visited)?;
+                            feed_source(h, doc, src, slt, quality, stamper, visited)?;
                             let dtr = &src.transform;
                             for v in [
                                 dtr.position_x.value_at(slt),
@@ -387,7 +387,7 @@ fn feed_layer(
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
     h.update(b"layer/");
-    feed_source(h, doc, &layer.kind, lt, quality, stamper, visited)?;
+    feed_source(h, doc, layer, lt, quality, stamper, visited)?;
 
     // Evaluated transform at the layer's local time — never keyframe data.
     let tr = &layer.transform;
@@ -480,7 +480,7 @@ fn feed_layer(
     // render's neighbour decode; empty otherwise, so a plain layer's key is
     // untouched.
     if lumit_core::fx::stack_is_temporal(&layer.effects, layer.switches.fx) {
-        if let LayerKind::Footage { item, retime } = &layer.kind {
+        if let LayerKind::Footage { item, .. } = &layer.kind {
             let comp_dt = 1.0 / comp.frame_rate.fps().max(1.0);
             h.update(b"temporal/");
             for o in lumit_core::fx::stack_temporal_window(&layer.effects, layer.switches.fx)
@@ -488,7 +488,7 @@ fn feed_layer(
                 .filter(|&o| o != 0)
             {
                 let nlt = lt + f64::from(o) * comp_dt;
-                let nst = retime.as_ref().map(|r| r.evaluate(nlt)).unwrap_or(nlt);
+                let nst = layer.source_time_at(nlt);
                 if let Some((identity, frame)) = stamper.stamp(*item, nst) {
                     h.update(&o.to_le_bytes());
                     h.update(identity.as_bytes());
@@ -528,7 +528,7 @@ fn feed_layer(
                     mr.source.key_byte(),
                 ]);
                 let mlt = t - src.start_offset.0.to_f64();
-                feed_source(h, doc, &src.kind, mlt, quality, stamper, visited)?;
+                feed_source(h, doc, src, mlt, quality, stamper, visited)?;
                 let mtr = &src.transform;
                 for v in [
                     mtr.position_x.value_at(mlt),
@@ -617,17 +617,18 @@ fn blend_tag(b: lumit_core::model::BlendMode) -> u8 {
 fn feed_source(
     h: &mut blake3::Hasher,
     doc: &Document,
-    kind: &LayerKind,
+    layer: &lumit_core::model::Layer,
     lt: f64,
     quality: Quality,
     stamper: &dyn SourceStamper,
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
-    match kind {
+    match &layer.kind {
         LayerKind::Footage { item, retime } => {
             // The retime maps local time → source time; the cache key must key
             // the RETIMED source frame, so two different ramps never collide.
-            let source_time = retime.as_ref().map(|r| r.evaluate(lt)).unwrap_or(lt);
+            // The layer answers with whichever map it carries (K-197).
+            let source_time = layer.source_time_at(lt);
             let (identity, frame) = stamper.stamp(*item, source_time)?;
             h.update(b"footage/");
             h.update(identity.as_bytes());
@@ -832,6 +833,7 @@ mod tests {
             parent: None,
             label: 0,
             volume_db: lumit_core::anim::Property::zero(),
+            retime: None,
             blend: Default::default(),
             masks: Vec::new(),
             effects: Vec::new(),

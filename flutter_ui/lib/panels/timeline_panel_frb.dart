@@ -855,6 +855,15 @@ class _FoldRow extends StatelessWidget {
           onSeek: onSeek,
           onChanged: onChanged,
         ),
+      FoldRetimeRow(:final scalar) => _RetimeRow(
+          comp: comp,
+          layer: layer,
+          scalar: scalar,
+          valueColumn: valueColumn,
+          playheadFrame: playheadFrame,
+          onSeek: onSeek,
+          onChanged: onChanged,
+        ),
     };
   }
 }
@@ -1022,6 +1031,123 @@ class _VolumeRowState extends State<_VolumeRow> {
 
   void _commitAt(BridgeScalar scalar, num value, int frame) {
     widget.layer.setVolumeDb(
+      value: scalarWithValueAt(scalar, value.toDouble(), widget.comp, frame),
+    );
+    setState(() => _staged = null);
+    widget.onChanged();
+  }
+}
+
+/// The layer's Retime (K-197): which moment of the source, in seconds, the
+/// layer shows at this point on its own timeline.
+///
+/// An ordinary property row — the same stopwatch, the same navigator, the same
+/// lane diamonds and the same graph lanes as Position. It sits above Transform
+/// and only exists while the layer has been given a Retime (Alt+Shift+T), so
+/// unlike Volume its scalar arrives on the fold row rather than being read here
+/// (K-184: no bridge calls while drawing).
+class _RetimeRow extends StatefulWidget {
+  final CompositionReference comp;
+  final LayerReference layer;
+  final BridgeScalar scalar;
+  final ValueColumn valueColumn;
+  final int playheadFrame;
+  final ValueChanged<int> onSeek;
+  final VoidCallback onChanged;
+
+  const _RetimeRow({
+    required this.comp,
+    required this.layer,
+    required this.scalar,
+    required this.valueColumn,
+    required this.playheadFrame,
+    required this.onSeek,
+    required this.onChanged,
+  });
+
+  @override
+  State<_RetimeRow> createState() => _RetimeRowState();
+}
+
+class _RetimeRowState extends State<_RetimeRow> {
+  /// The value under the pointer during a drag, held so the whole gesture is
+  /// one undo step. No live preview: a retime drag changes which frame is
+  /// decoded, and there is no preview path for that yet — the release commits
+  /// and the viewer re-renders then.
+  double? _staged;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final scalar = widget.scalar;
+    final animated = scalar is BridgeScalar_Keyframed;
+    final playhead =
+        Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+
+    return ValueListenableBuilder<int>(
+      valueListenable: playhead,
+      builder: (context, frame, _) {
+        final value = _staged ??
+            (animated
+                ? sampleScalar(
+                    scalar: scalar, time: widget.comp.timeOfFrame(frame: frame))
+                : (scalar as BridgeScalar_Static).field0);
+        return Row(
+          children: [
+            KeyframeControlsFrb(
+              scalars: [scalar],
+              comp: widget.comp,
+              playheadFrame: frame,
+              onSeek: widget.onSeek,
+              rowKey: 'tl-retime',
+              onWrite: (next) {
+                widget.layer.setRetimeProperty(value: next.single);
+                widget.onChanged();
+              },
+            ),
+            const SizedBox(width: 4),
+            Expanded(child: Text('Retime', style: t.body)),
+            SizedBox(
+              width: widget.valueColumn.width,
+              child: animated
+                  ? KeyedValueField(
+                      fieldKey: const ValueKey('tl-retime-seconds'),
+                      value: value,
+                      // The same open range a transform axis gets: a source
+                      // time before zero or past the end simply holds the end
+                      // frame (docs/04 §7), so clamping the field would only
+                      // fight the drag.
+                      min: -100000,
+                      max: 100000,
+                      decimals: 3,
+                      suffix: ' s',
+                      speed: 0.02,
+                      onCommit: (v) => _commitAt(scalar, v, frame),
+                    )
+                  : DragValueField(
+                      key: const ValueKey('tl-retime-seconds'),
+                      value: value,
+                      min: -100000,
+                      max: 100000,
+                      decimals: 3,
+                      suffix: ' s',
+                      speed: 0.02,
+                      onChanged: (v) => _commitAt(scalar, v, frame),
+                      onChangeLive: (v) =>
+                          setState(() => _staged = v.toDouble()),
+                      onChangeEnd: (v) => _commitAt(scalar, v, frame),
+                      onDragCancel: () => setState(() => _staged = null),
+                    ),
+            ),
+            SizedBox(width: widget.valueColumn.rightInset),
+          ],
+        );
+      },
+    );
+  }
+
+  void _commitAt(BridgeScalar scalar, num value, int frame) {
+    widget.layer.setRetimeProperty(
       value: scalarWithValueAt(scalar, value.toDouble(), widget.comp, frame),
     );
     setState(() => _staged = null);

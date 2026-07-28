@@ -2494,6 +2494,57 @@ fn only_footage_layers_retime() {
     ));
 }
 
+/// The Retime *property* (K-197) is an ordinary keyframable scalar: absent
+/// until the layer is given one, present on any kind, and readable from the
+/// row's read model without a second crossing.
+#[test]
+fn the_retime_property_toggles_and_reads_back() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id);
+
+    assert!(layer.get_retime_property().expect("read").is_none());
+    assert!(layer.get_info().expect("info").retime.is_none());
+    // Not retimed yet: there is no curve to write into.
+    assert!(matches!(
+        layer.set_retime_property(BridgeScalar::Static(1.0)),
+        Err(BridgeError::NotRetimed)
+    ));
+
+    assert!(layer.toggle_retime_property().expect("on"));
+    // The identity map: two keys running source time alongside local time, so
+    // the picture does not move when the row appears.
+    let BridgeScalar::Keyframed(keys) = layer
+        .get_retime_property()
+        .expect("read")
+        .expect("now retimed")
+    else {
+        panic!("the identity retime is keyframed");
+    };
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].value, 0.0);
+    assert!(keys[1].value > 0.0);
+    // The Timeline draws its row from the read model, never a getter (K-184).
+    assert!(layer.get_info().expect("info").retime.is_some());
+    assert!(comp
+        .get_model()
+        .expect("model")
+        .layers
+        .iter()
+        .any(|l| l.info.retime.is_some()));
+
+    layer
+        .set_retime_property(BridgeScalar::Static(2.5))
+        .expect("write");
+    assert!(matches!(
+        layer.get_retime_property().expect("read"),
+        Some(BridgeScalar::Static(v)) if (v - 2.5).abs() < 1e-9
+    ));
+
+    // Off removes it entirely — "not retimed", not "retimed to 1×".
+    assert!(!layer.toggle_retime_property().expect("off"));
+    assert!(layer.get_retime_property().expect("read").is_none());
+}
+
 // --- Audio and beats ------------------------------------------------------
 
 /// The transport answers on a machine with no sound device — a CI runner, a

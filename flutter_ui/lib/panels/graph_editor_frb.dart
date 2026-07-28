@@ -73,6 +73,19 @@ List<GraphChannel> animatedChannelsOf(LayerReference layer) {
     ));
   }
 
+  // Retime first, as in the Timeline's fold-out: it is an ordinary channel
+  // here, with the same lane, the same handles and the same interp menu
+  // (K-197). Absent on a layer that has not been given one.
+  final retime = layer.getRetimeProperty();
+  if (retime is BridgeScalar_Keyframed) {
+    out.add(GraphChannel(
+      id: 'retime',
+      label: 'Retime',
+      scalar: retime,
+      write: (next) => layer.setRetimeProperty(value: next),
+    ));
+  }
+
   final tf = layer.getTransform();
   addTransform('Anchor x', BridgeTransformProp.anchorX, tf.anchorX);
   addTransform('Anchor y', BridgeTransformProp.anchorY, tf.anchorY);
