@@ -65,7 +65,10 @@ final class ViewerTextureBridge {
   /// Register the channel on `controller`'s engine. Held by the window for the
   /// engine's lifetime.
   init(controller: FlutterViewController) {
-    self.registry = controller.engine.textureRegistry
+    // FlutterEngine itself conforms to FlutterTextureRegistry on macOS — there
+    // is no separate registrar property to reach for, unlike the Windows and
+    // Linux embedders.
+    self.registry = controller.engine
     self.channel = FlutterMethodChannel(
       name: "lumit/viewer_texture",
       binaryMessenger: controller.engine.binaryMessenger)
