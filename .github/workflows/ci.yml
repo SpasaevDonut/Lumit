@@ -149,7 +149,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      # `cargo build -p lumit-bridge` (default features) pulls lumit-media
+      # `cargo build -p lumit_bridge` (default features) pulls lumit-media
       # (FFmpeg) and, through `render`, lumit-render (wgpu/GL). The Flutter Linux
       # runner additionally needs GTK 3 + clang/cmake/ninja. This is the
       # existing `linux` job's apt list PLUS the GTK + toolchain packages
@@ -205,15 +205,28 @@ jobs:
       - name: flutter analyze
         working-directory: flutter_ui
         run: flutter analyze
-      - name: flutter test
-        working-directory: flutter_ui
-        run: flutter test
       # Build the bridge cdylib on Linux: proves nothing Windows-only leaks
       # outside the shared-texture cfg gates. Default features (media + render)
       # are the shipped Linux build; the Windows-only D3D path lives behind
       # `--features shared-texture`, off here.
+      #
+      # This runs BEFORE `flutter test`, not after: frb binds by content hash, so
+      # the `test/frb/` suites load `target/debug/liblumit_bridge.so` and drive
+      # the real engine (K-179). With the build after them, every one of those
+      # suites failed on a library that had not been built yet.
+      #
+      # The package is `lumit_bridge` (underscore, so the cdylib is named for the
+      # Dart import); `-p lumit-bridge` matches nothing and errors.
       - name: Build the bridge (liblumit_bridge.so)
-        run: cargo build -p lumit-bridge
+        run: cargo build -p lumit_bridge
+      # One test process at a time. The frb suites share a single engine per
+      # process and Flutter's default fans test files out across cores, so a
+      # parallel run had them contending for it — a different one or two failing
+      # per run, each passing alone (docs/TODO.md). Serial is a few minutes
+      # slower and it is the difference between a gate and a coin toss.
+      - name: flutter test
+        working-directory: flutter_ui
+        run: flutter test --concurrency=1
       # Compile the Linux DMA-BUF zero-copy Viewer path (K-177): the Vulkan/ash
       # export code lives behind `shared-texture-linux` and cfg(target_os =
       # "linux"), so it is only ever type-checked here (the authoring box is
@@ -221,7 +234,7 @@ jobs:
       # shared-texture path builds; the runtime verification is the collaborator's
       # (docs/GUIDE §9).
       - name: Compile-check the Linux DMA-BUF path (shared-texture-linux)
-        run: cargo check -p lumit-bridge --features shared-texture-linux
+        run: cargo check -p lumit_bridge --features shared-texture-linux
       # The real gate: the Flutter Linux runner (linux/, GTK, the multi-window
       # plugin's Linux side) compiles and links.
       - name: flutter build linux --release

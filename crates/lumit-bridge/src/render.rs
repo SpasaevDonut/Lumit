@@ -91,10 +91,6 @@ fn with_ready<R>(f: impl FnOnce(&mut lumit_render::headless::HeadlessRenderer) -
     };
     Some(f(renderer))
 }
-/// The DMA-BUF metadata one Linux zero-copy frame carries (K-177): the exported
-/// fd, dimensions, stride, offset, DRM fourcc and modifier.
-#[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
-pub(crate) type DmabufFrame = (i32, u32, u32, u32, u32, u32, u64);
 /// Build the footage/audio inputs and a GPU export context for `comp` through
 /// the headless seam (K-175), so the export driver can hand them to the exact
 /// egui exporter (`lumit_render::export::start`). `None` when the machine has no GPU

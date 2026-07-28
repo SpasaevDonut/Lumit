@@ -180,10 +180,12 @@ the keymap).
     column layouts land (docs/07 §4.2's reorder/hide-per-workspace item).
 - **The Flutter suite has ~4 order-dependent tests.** `flutter test` occasionally fails a
     different one or two of the playback/cache-bar tests each run; every one of them passes
-    alone, and the whole suite passes with `--concurrency=1`. They contend for the shared
-    engine (the audio device and the render worker) across test *files*, which run in
-    parallel processes. Give those files a serial marker, or make the engine per-file,
-    before this masks a real failure.
+    alone, and the whole suite passes with `--concurrency=1` — which is what CI now runs,
+    so the gate is honest while the cause stands. They contend for the shared engine (the
+    audio device and the render worker) across test *files*, which run in parallel
+    processes. Give those files a serial marker, or make the engine per-file, before this
+    masks a real failure; the serial run is a mitigation, not the fix, and it costs the
+    Flutter job wall-clock.
 - **The magnet snaps keyframes to frames, and nothing else yet (K-190).** Docs/07 §4.5
     wants edit points, in/out points, markers, beat markers, the playhead and work-area
     edges as snap sources and targets, plus `Ctrl`-hold to suspend mid-drag.
