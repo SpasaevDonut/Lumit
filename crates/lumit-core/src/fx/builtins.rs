@@ -2048,7 +2048,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // the choppy stop-motion look. NOT a per-pixel op — it changes *what time*
     // the layers it covers render at, so it is detected and executed at the
     // frame-orchestration layer (the adjustment re-render seam in `draws`/`gpu`
-    // and export's `render_comp_linear`), never in `run_ops`; `resolve_stack`
+    // walk shared with export), never in `run_ops`; `resolve_stack`
     // deliberately has no arm for it, so it resolves to nothing. Category
     // Temporal, cheap (one render at the held time — often the SAME held time
     // across many frames). Scope chooses adjustment behaviour (Everything below,
@@ -2109,7 +2109,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // correct per sample (no blurred-depth artefact). NOT a per-pixel op: like
     // Posterize time it changes *what time the layers below it render at*, so it
     // is detected and executed at the frame-orchestration layer (the adjustment
-    // re-render seam in `draws`/`gpu` and export's `render_comp_linear`), never in
+    // re-render seam shared with export), never in
     // `run_ops`; `resolve_stack` deliberately has no arm for it, so it resolves to
     // nothing. An **adjustment** effect (docs/08 §1.5): it processes everything
     // below, so "apply to all layers" is just the effect on a full-frame

@@ -12,10 +12,8 @@ RFC-2119 keywords (MUST, SHOULD, MAY) are used with their usual force.
 
 ## 1. Relationship to the household system
 
-Lumit is a household app. It inherits the Aizome design language wholesale, with two recorded
-deviations (§1.2). Anyone who has used Michi, Mishka Hub, or Sukumo should recognise Lumit as
-a sibling within seconds — the same accent, the same type, the same restraint — even though it
-is a dense professional tool rather than a web app.
+Lumit inherits the Aizome design language wholesale, with two recorded deviations (§1.2) - even
+though it is a dense professional tool rather than a web app.
 
 ### 1.1 Inherited unchanged
 
@@ -27,7 +25,9 @@ is a dense professional tool rather than a web app.
   Source Serif 4 for rare accent lines (about box, empty states); Inter for body and panel
   copy; **JetBrains Mono for all numbers** — timecode, frame numbers, speed percentages,
   property values, layer indices, labels, attribution. No exceptions to the mono-for-numbers
-  rule anywhere in the UI.
+  rule anywhere in the UI. *(Embedding status: only Inter is wired today; Schibsted Grotesk,
+  Source Serif 4 and JetBrains Mono are not yet bundled, and the 13/14/20 px type-scale steps
+  are not in the theme struct - [TODO.md](TODO.md).)*
 - **Radii**: 4px (dense elements — clips, keyframe flags, thumbnails), 8px (buttons, inputs,
   chips), 16px (floating cards, dialogs), full (pills, playhead grab handle). No other radii.
 - **Hairline elevation.** Panels and cards are flat fills separated by 1px hairline borders.
@@ -63,11 +63,11 @@ is a dense professional tool rather than a web app.
 ### 1.3 What does not apply
 
 Lumit is a native desktop application, so the household web skeleton (React/Vite/Tailwind,
-`sync-theme.sh`, FastAPI monorepo, Mishka Hub auth proxy, mobile bottom tab bar, PWA icon
-rules) does not apply. The Aizome *values* still derive from the canonical `theme.css`; when
-that file is repainted, Lumit's theme struct SHOULD be re-derived in the same change wave.
-Person-identity colours (person 1 = `clay`, person 2 = `sky`) have no meaning in a single-user
-pro tool, but `sky` remains reserved fleet-wide and MUST NOT be repurposed as a second accent.
+`sync-theme. sh`, FastAPI monorepo, mobile bottom tab bar, PWA icon rules) does not apply.
+The Aizome *values* still derive from the canonical `theme.css`; when that file is repainted,
+Lumit's theme struct SHOULD be re-derived in the same change wave. Person-identity colours
+(person 1 = `clay`, person 2 = `sky`) have no meaning in a single-user pro tool, but `sky`
+remains reserved fleet-wide and MUST NOT be repurposed as a second accent.
 
 ## 2. The dark ramp
 
@@ -225,8 +225,8 @@ pub struct Theme {
 }
 ```
 
-**v1 status of this struct.** The struct above is the target shape. The shipped `Theme`
-(`lumit-ui/src/theme.rs`) carries the structural roles — the surfaces, text, hairlines,
+**v1 status of this struct.** The struct above is the target shape. The shipped `LumitTheme`
+(`flutter_ui/lib/theme/theme.dart`) carries the structural roles — the surfaces, text, hairlines,
 `accent`/`accent_hover`, `success`/`warning`/`error`, the `curve[4]` ramp, `layer`
 (`LayerColours`, §6.1) — plus two the code has split out that this listing does not yet name:
 `scope` (`ScopeColours`, the four scope-chrome accents) and `cache_disk` (the disk tier of the
@@ -311,8 +311,8 @@ full Timeline looks organised, not carnival. Selection (accent) must visibly bea
 of them.
 
 v1 ships an identity colour token for each of the six layer kinds that exist today. The
-`LayerColours` struct (`lumit-ui/src/theme.rs`) carries exactly these six; `panels.rs` maps
-each `LayerKind` to its token and glyph.
+`LayerColours` class (`flutter_ui/lib/theme/theme.dart`) carries exactly these six; the
+panels map each layer kind to its token and glyph.
 
 | Layer type | Token | Value | v1 |
 |---|---|---|---|
@@ -410,6 +410,7 @@ Lumit is a pro tool; the household 16px body default gives way to an 11–13px U
 
 | Size | Face | Use |
 |---|---|---|
+| 10px | Inter | Field captions only — the note under a control saying what format it takes. Never for anything the user has to act on |
 | 11px | JetBrains Mono, +0.08em, caps | Kickers, layer bar labels, axis numbers, attribution |
 | 12px | Inter | Panel body copy, property names, menus, buttons |
 | 13px | JetBrains Mono | Property values, timecode fields, frame numbers, speed percentages |

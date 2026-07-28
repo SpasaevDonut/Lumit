@@ -22,7 +22,7 @@ The crates that exist today (v1), then the ones the doc reserves for later:
 | Crate | Responsibility |
 |---|---|
 | `lumit-core` | The document model (project, comps, layers, clips, properties, keyframes, Retime segments, markers) **and the rational time types** (`SourceTime`/`ClipTime`/`LayerTime`/`CompTime`/`FrameRate`). Pure data + command application. No IO, no GPU, no threads. |
-| `lumit-eval` | Internal codename **Nova**. Content-hash frame keys, the evaluation-graph *compiler* (structure + identity folding + source dedup), cancellation epochs, and the pure playback-scheduler decision core. NB: the graph's **pixel pass is not here yet** — v1 renders through `lumit-ui` (see below). |
+| `lumit-eval` | Internal codename **Nova**. Content-hash frame keys, the evaluation-graph *compiler* (structure + identity folding + source dedup), cancellation epochs, and the pure playback-scheduler decision core. NB: the graph's **pixel pass is not here yet** — v1 renders through `lumit-render` (see below). |
 | `lumit-gpu` | The one wgpu device, WGSL effect kernels, the compositor, the colour engine, readback. |
 | `lumit-flow` | Optical flow (**DIS**, K-169) — a CPU oracle plus WGSL twin — for Retime flow interpolation and flow motion blur. |
 | `lumit-media` | rsmpeg demux/decode/encode and the frame index. |
@@ -30,8 +30,12 @@ The crates that exist today (v1), then the ones the doc reserves for later:
 | `lumit-cache` | **Nebula**: the frame cache — RAM + disk tiers, content-hash keys, byte-budget eviction. |
 | `lumit-text` | Text rasterisation (v1: single run, embedded Inter). |
 | `lumit-project` | Serialisation: `.lum` container read/write, the operation journal, autosave. Spec: [10-FILE-FORMAT.md](10-FILE-FORMAT.md). |
-| `lumit-ui` | The egui shell: a tiling dock (egui_tiles, K-074) with a bare Viewer, timeline/graph-editor/Viewer widgets, theming per [15-DESIGN.md](15-DESIGN.md) — **and, in v1, the render/present path** (the pixel pass the eval graph will eventually own). |
-| `lumit-app` | The binary: winit event loop, wiring, session lifecycle. |
+| `lumit-render` | **The pixel pass** the eval graph will eventually own (K-178): media probing abstraction, decode planning, the decode worker and its decoded-frame cache, draw-list building, the GPU compositor, effect dispatch, frame naming and the cache tiers, export, and the headless renderer both frontends drive frame by frame. An engine crate — it names no frontend. |
+| `lumit-bridge` | The Flutter/Rust seam (K-174): a cdylib whose `api` module is the whole surface the Flutter frontend calls through `flutter_rust_bridge`. A frontend leaf, not an engine crate; since K-178 it depends on `lumit-render` and on **no frontend**. Spec: [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md). |
+
+The original egui shell (`lumit-ui`, launched by `lumit-app`) and the unused
+`lumit-keymap` shortcut model were deleted in K-182; git history (pre-K-182) is
+the parity reference for anything the Flutter frontend has not rebuilt yet.
 
 Reserved for later (no crate exists yet):
 
@@ -47,10 +51,13 @@ Reserved for later (no crate exists yet):
 
 ### 1.1 Dependency direction rules
 
-- Dependencies point **downward only**: `lumit-app` → `lumit-ui` → engine crates →
+- Dependencies point **downward only**: `lumit-bridge` → engine crates →
   `lumit-core` (which holds the rational time types). No engine crate may depend on
-  `lumit-ui` or on egui, winit, or any UI crate. This is the K-012 escape hatch: the UI
-  layer MUST be replaceable (GPUI, Qt shell) without touching the engine.
+  the bridge or on any UI crate. This is the K-012 escape hatch: the UI
+  layer MUST be replaceable without touching the engine - which is exactly what K-174 did,
+  swapping the egui shell for a Flutter frontend (the egui crates themselves were deleted
+  in K-182). The frontend is a leaf: `lumit-bridge` depends on `lumit-render` and no
+  engine crate depends on it, so the engine never knows a UI exists.
 - `lumit-core` MUST have no dependency on wgpu, rsmpeg, cpal, or QuickJS. The document model
   (and the time types folded into it) is testable on any machine with no GPU and no codecs.
 - `lumit-eval` depends **only on `lumit-core`** (it reads compiled snapshots). Its seams are
@@ -58,11 +65,11 @@ Reserved for later (no crate exists yet):
   the pixel-pass sockets `FrameSource` / `KernelExecutor` / `CacheStore` (`lumit-eval::exec`),
   so the demand-pull executor unit-tests against fakes with no GPU, codecs or disk. The *real*
   implementations (GPU kernels, decode, the cache) are wired in app-side; until that wiring
-  lands, the shipped render/present path is still the draw-list renderer in `lumit-ui`.
+  lands, the shipped render/present path is the draw-list renderer in `lumit-render`.
 - Heavy FFI crates (`rsmpeg`, cudarc, QuickJS bindings) live only in their one owning crate.
-  **Known deviation:** `wgpu` is a direct dependency of both `lumit-gpu` and `lumit-flow`
-  (the flow WGSL twin needs its own device access); it also appears in `lumit-ui`/`lumit-app`
-  for surface configuration. This is the one `-sys`-adjacent crate that spans tables in v1.
+  **Known deviation:** `wgpu` is a direct dependency of `lumit-gpu`, `lumit-flow` (the flow
+  WGSL twin needs its own device access) and `lumit-render` (the compositor speaks it
+  directly). This is the one `-sys`-adjacent crate that spans tables in v1.
 - Circular dependencies are a build error by construction; if two crates want each other, the
   shared piece moves down into a new crate or into `lumit-core`.
 
@@ -182,9 +189,12 @@ sampled frames' hashes fold in. Full pipeline detail: [06-RENDER-PIPELINE.md](06
 
 ## 5. GPU architecture
 
-- **One wgpu device** for the whole application (K-011): DX12 backend on Windows, Metal on
-  macOS, Vulkan on Windows only when CUDA interop is enabled (see below). `lumit-gpu` owns
-  it; nothing else holds raw device handles.
+- **One wgpu device** for the whole application (K-011). By default `lumit-gpu` lets wgpu pick
+  the backend (DX12 on Windows, Metal on macOS). The zero-copy Viewer features pin a backend
+  for shared-texture interop: `shared-texture` pins **DX12** on Windows (K-177), and
+  `shared-texture-linux` pins **Vulkan** on Linux (DMA-BUF). CUDA interop (below) is an
+  optional per-node accelerator, not a backend selector. `lumit-gpu` owns the device; nothing
+  else holds raw device handles.
 - **All first-party effects are WGSL compute kernels.** The working format is **fp16
   scene-linear premultiplied RGBA** (fp32 per-comp opt-in, K-026). Unpremultiply happens only
   transiently inside colour ops that must not tint transparent regions.
@@ -215,6 +225,11 @@ sampled frames' hashes fold in. Full pipeline detail: [06-RENDER-PIPELINE.md](06
 
 `lumit-media` wraps rsmpeg behind a `MediaSource` trait (open → probe → indexed frame
 server) so the binding choice stays swappable.
+
+**v1 status:** today `lumit-render` does one-shot **CPU** decode plus the frame index below. 
+The persistent decoder pool, hardware decode, proxies, and image sequences described in the 
+rest of this section are the intended design but **not yet built** (they sit in §1's "reserved 
+for later" table; tracked in [TODO.md](TODO.md)).
 
 - **Frame index at import**: a background job builds, per footage item, the map of frame
   number ↔ PTS ↔ nearest preceding keyframe offset. Exact long-GOP seeking is then: seek to

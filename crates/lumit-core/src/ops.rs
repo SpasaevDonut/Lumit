@@ -27,6 +27,7 @@ pub enum OpError {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "op_type")]
 pub enum Op {
     /// Insert a project item at an index in the Project panel order.
     AddItem {
@@ -136,6 +137,13 @@ pub enum Op {
         layer: Uuid,
         motion_blur: bool,
     },
+    /// Toggle a layer's shy switch (docs/07 §4.2): hidden from the Timeline's
+    /// list while the comp's shy filter is on. Never changes what renders.
+    SetLayerShy {
+        comp: Uuid,
+        layer: Uuid,
+        shy: bool,
+    },
     /// Toggle a layer's lock (TL2): a locked layer's bar, trims and order are
     /// held still in the timeline.
     SetLayerLocked {
@@ -221,6 +229,16 @@ pub enum Op {
         comp: Uuid,
         layer: Uuid,
         animation: Animation,
+    },
+    /// Replace a layer's Retime property — local time → source time, in
+    /// seconds (K-197). `None` removes it, which is "not retimed" rather than
+    /// "retimed to exactly 1×": only the first skips the map. Same
+    /// coarse-grained shape as SetTransformProperty, for the same
+    /// invertibility reason.
+    SetRetimeProperty {
+        comp: Uuid,
+        layer: Uuid,
+        retime: Option<crate::anim::Property>,
     },
     /// Replace a Footage layer's Retime map (None = play at source rate).
     SetLayerRetime {
@@ -542,6 +560,20 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 solo: previous,
             })
         }
+        Op::SetLayerShy { comp, layer, shy } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let previous = std::mem::replace(&mut l.switches.shy, *shy);
+            Ok(Op::SetLayerShy {
+                comp: *comp,
+                layer: *layer,
+                shy: previous,
+            })
+        }
         Op::SetLayerLocked {
             comp,
             layer,
@@ -759,6 +791,24 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 comp: *comp,
                 layer: *layer,
                 animation: previous,
+            })
+        }
+        Op::SetRetimeProperty {
+            comp,
+            layer,
+            retime,
+        } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let previous = std::mem::replace(&mut l.retime, retime.clone());
+            Ok(Op::SetRetimeProperty {
+                comp: *comp,
+                layer: *layer,
+                retime: previous,
             })
         }
         Op::SetLayerRetime {

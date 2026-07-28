@@ -20,13 +20,21 @@ app's departments). They live in `crates/`:
 |---|---|---|
 | `lumit-core` | Time, the document, undo | The project file's brain: what a comp/layer *is*, and every edit that can happen to it |
 | `lumit-project` | `.lum` files, autosave, recovery | Saving and loading, and the "never lose work" machinery |
-| `lumit-ui` | Everything you see | Panels, menus, the theme — the shell around the engine |
-| `lumit-app` | The `main()` entry | Ten lines that open the window and start the UI |
-| `lumit-media` | (coming) decoding video | Turning an .mp4 into frames |
-| `lumit-gpu` | (coming) the GPU pipeline | Drawing and processing frames on the graphics card |
-| `lumit-audio` | (coming) sound | Playback and the clock everything syncs to |
-| `lumit-eval` | (coming) the render engine | Working out what each frame looks like |
-| `lumit-cache` | (coming) caching | Remembering rendered frames so they're never rendered twice |
+| `lumit-render` | Making the picture | The whole path from "here is the project" to "here are the pixels" — decoding, compositing, caching, export |
+| `lumit-media` | Decoding video | Turning an .mp4 into frames |
+| `lumit-gpu` | The GPU pipeline | Drawing and processing frames on the graphics card |
+| `lumit-audio` | Sound | Playback and the clock everything syncs to |
+| `lumit-eval` | The render engine | Working out what each frame looks like |
+| `lumit-cache` | Caching | Remembering rendered frames so they're never rendered twice |
+| `lumit-flow` | Optical flow | Motion vectors for smooth-retime and flow motion blur |
+| `lumit-text` | Text | Rasterising text layers |
+| `lumit-bridge` | The Flutter seam | How the Flutter frontend talks to the engine (see [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)) |
+
+Everything you actually *see* lives outside `crates/`, in `flutter_ui/` — the
+Flutter application (panels, menus, the theme). The original egui shell
+(`lumit-ui` + `lumit-app`) and the unused `lumit-keymap` shortcut model were
+deleted in K-182; if you ever need to look at how the old frontend did
+something, it is one `git log` away.
 
 Three of these have proper names you'll see in the app and docs (decision K-083),
 drawn from the same astral register as the app itself: **Nova** (a burst of new light) is
@@ -39,6 +47,12 @@ names stay plain `lumit-*` — the names are for people, the identifiers are for
 engine for things; the engine doesn't know the UI exists. That's why the UI could be
 replaced entirely without touching the engine — like swapping a car's dashboard without
 opening the engine bay.
+
+That rule is also why `lumit-render` exists. The picture-making code used to live inside
+`lumit-ui`, which meant the Flutter frontend had to reach *through* the egui frontend to
+render anything at all — a dashboard wired into another dashboard. Pulling it into its own
+crate (decision K-178) put it back where it belongs: both frontends now ask the same engine
+for frames, so a comp cannot look different in one than the other.
 
 ## 2. Rust in ten minutes, Lumit edition
 
@@ -862,7 +876,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   and it hands back a graded red/green/blue. The common `.cube` text format stores that as a
   cube of sample points — a 3D LUT is a grid (say 33×33×33) of "this colour in, that colour
   out", a 1D LUT is three separate curves, one per channel. This file reads such a file into
-  memory and answers the one question the coming LUT effect (docs/08 §3.11) will ask millions
+  memory and answers the one question the LUT effect (docs/08 §3.11) will ask millions
   of times a frame — "what does this LUT turn *this* pixel into?" — by **trilinear
   interpolation**: it finds the eight grid points around the input colour and blends them by
   how close the input sits to each, so colours between the baked samples come out smooth
@@ -901,6 +915,25 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   That solver quality is exactly what makes handles feel right in a graph editor at the
   extremes (AE's 100% influence "spike" case is a test here). Property tests fire
   thousands of random curves at it per CI run.
+- **Retime, restarted as an ordinary property (K-197).** There are now *two* answers to
+  "which moment of the source does this layer show?", and the new one is the simple one.
+  A layer carries a `retime` field that is just an animatable number — the same kind of
+  number Position and Opacity are — and its value *is* the source time, in seconds. Press
+  Alt+Shift+T on a layer and it gains one; press again and it loses it. (**Ctrl+Alt+T** does
+  the same, and on Windows it is the one to reach for: the system claims Alt+Shift for
+  switching keyboard layout, so on a machine with two languages installed it can swallow the
+  first chord before Lumit ever sees it. The command is in the Composition menu too, which
+  nothing can intercept.) While it has one, a
+  **Retime** row appears in the Timeline's twirl-down above Transform, with the same
+  stopwatch, the same diamonds and the same graph-editor lane as every other property,
+  because it genuinely *is* every other property — there is no Retime-specific code in any
+  of those places. Switching it on installs two keys running source time alongside layer
+  time, so the picture does not move; drag the second key later and the clip plays slower,
+  drag it earlier and it plays faster. That is deliberately *all* it does for now: no speed
+  ramps, no ease presets, no freeze command. `Layer::source_time_at` is the one function
+  that answers the question, so what the renderer decodes and what the frame cache files it
+  under can never drift apart. The older, much larger machinery below still answers for
+  documents that carry it.
 - `crates/lumit-core/src/retime.rs` — **the Retime maths.** One store per clip answers
   "when the clip's clock reads t, which moment of the source shows?". Speed ramps,
   freezes and slow motion are all segments of that one curve, and the editor's speed
@@ -1075,7 +1108,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   in the bottom bar ("Grid"): **beats** (the default — detected beats shine through every
   layer so cuts land on the music), **time** (a neutral second grid that subdivides as you
   zoom in, down to 10 ms), or **off**. The bright ruler ticks up top stay regardless.
-- `crates/lumit-ui/src/export.rs` — **writing video files.** Every frame of a comp is
+- `crates/lumit-render/src/export.rs` — **writing video files.** Every frame of a comp is
   rendered through the *exact same* colour engine and compositor the Viewer uses, then
   compressed to an .mp4. Using one shared path isn't laziness — it's the design's central
   promise (what you preview IS what you export), and it runs on its own worker so the app
@@ -1086,7 +1119,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   stray edit can't quietly change what "YouTube 1080p60" means. When the comp's shape
   differs from the preset's, Lumit fits the picture keeping its proportions and adds black
   bars (a wide comp gets bars top and bottom in a vertical export); the fitting maths
-  (`fit_contain` / `letterbox_resize` in `pixels.rs`) is unit-tested. **Sound comes too**:
+  (`fit_contain` / `letterbox_resize` in `lumit-core`'s `pixels.rs`) is unit-tested. **Sound comes too**:
   the comp's audio is mixed by the very same code that plays it back (one shared `mixdown`
   — playback, beat detection, and export literally cannot hear different things), then
   written as an AAC track fed to the file in step with the picture, a video frame's worth
@@ -1230,97 +1263,83 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   made them. It's built by `waveform_peaks` (in `lumit-audio::mix`), which buckets the mono
   mixdown into (min, max) pairs — a pure, tested down-sample — computed once when the comp's
   audio is mixed for playback.
-- The **graph editor** — a toggle in the Timeline's bottom-right corner, like After
-  Effects' graph button. Switching it on does not replace the timeline: the layer outline
-  on the left, the ruler, the scrollbars and the bottom bar all stay exactly where they
-  were, and only the lane area on the right (where the layer bars normally sit) swaps to
-  the selected property's live curve. Twirl a layer open and click a property's name to
-  choose what the curve shows (a retimed footage layer's "Speed %" row graphs its Retime
-  channel); on the curve you drag the keyframes (value and time together, one
-  undo per drag), double-click the background to add a key, right-click a key for a menu
-  (Easy ease / Linear / Hold, or Delete). Each key's shape tells you its interpolation at a
-  glance — a diamond is linear, a circle is eased (bezier), a square is a hold.
-  You can also edit **several keyframes at once**: drag a box over the curve's empty
-  background (a *marquee*) and every key inside it is selected, shown with a ring around it.
-  Dragging any selected key then moves the whole selection up or down by the same amount —
-  values only, times stay put — as one undo step; dragging a key outside the selection
-  drops the selection and moves just that key, as before. With two or more keys selected,
-  *typing* a number into that property's value field in the layer outline sets every
-  selected key to exactly that value (dragging the field keeps its usual one-value
-  behaviour). A plain click on the graph's background, or switching to another curve,
-  clears the selection. Under the bonnet the selection remembers each key by its position
-  *and* its time, so if anything else edits the curve underneath, the selection simply
-  clears rather than ever grabbing the wrong keys.
-  The curve you see is sampled from the same evaluator that renders the comp, so what the
-  graph shows is exactly what plays. There are two ways to look at any property: the **value**
-  view (the raw number over time) and the **speed** view (its rate of change — the
-  derivative). Both are editable, and they are the *same* data seen two ways (K-070): in the
-  speed view you drag a key up or down to set how fast the value is moving at that moment,
-  which is often the easier way to make motion feel right. Editing one view updates the other.
-  The speed curve is the *exact* derivative of the value curve (K-080), so any bezier shaping you
-  give a key in the value view carries straight across: an eased key that starts and ends slow
-  shows in the speed view as a smooth hump, a straight run shows as a flat line, a hold as zero.
-  You can shape a key from *either* view (K-081): click a key in the speed view to select it and
-  the same **gold tangent handles** appear, here drawn as horizontal ease bars — drag a handle up
-  or down to set that side's speed, and left or right to set its influence (how long the ease
-  holds). It edits the very same curve, so the value view updates in step.
-  The value/speed switch lives in the timeline's **bottom bar** (its own little group next to
-  the zoom buttons, shown only in graph mode) rather than in each curve's header, because it
-  is one setting shared by every curve. The plot also carries a small **y-axis**: a few faint
-  gridlines down the left edge labelled with the value at that height — degrees or per cent
-  for the transform properties, `HH:MM:SS:FF` timecode or per cent for a Retime channel, and
-  units-per-second in a property's speed view. And the graph **follows your edits**: adding
-  or changing a keyframe anywhere in the timeline — a stopwatch click, scrubbing a value in a
-  property row, dragging a key — selects that layer and points the graph at that channel, so
-  the curve you see is always the one you just touched.
-  **Panning and zooming the graph (K-079).** The graph now shares the timeline's time axis, so
-  **Alt + wheel** zooms and **Shift + wheel** (or a horizontal wheel) scrolls the curve left
-  and right in step with the layer bars. Up and down, the value view **auto-fits** by default —
-  and the fit covers the whole editable picture: a bezier that overshoots its keys stays fully
-  on screen, and so do the tips of every key's gold tangent handles, so a steep handle never
-  pokes out of view (and because the fit reads every key's handles, not just the selected
-  ones, selecting a key never makes the view jump). The **Fit** button in the bottom bar is a
-  toggle: while it is lit the graph keeps re-fitting as the curve changes; click it while lit
-  to freeze the view exactly where it is. A plain wheel over the graph scrolls it vertically
-  and **Ctrl + wheel** zooms the value range toward the cursor; either one switches the toggle
-  off and takes over, and clicking **Fit** back on drops that manual framing and resumes
-  fitting. While you hold a manual framing, resizing the timeline panel keeps the graph's
-  *scale* rather than its range: making the panel taller reveals **more** of the value range
-  about the same centre instead of stretching the curve (auto-fit simply re-fits to the new
-  height, as you'd expect). Because the graph fills the lane area and the layer
-  outline sits to its left, the two scroll **completely apart** in graph mode (UI-8): the layer
-  list gets its own vertical scrollbar tucked against the **right edge of the outline**, a wheel
-  over the graph pans the *curve* only, and a wheel over the outline (or a drag of that
-  scrollbar) moves the *layer list* only — neither ever nudges the other. This is the one place
-  they differ from the ordinary lane view, where the outline and the lanes ride a **single**
-  shared scroll so a row's controls and its bar always move together.
-  **Shaping a key (bezier handles).** New keys are **linear** — straight lines in, straight
-  lines out. Select a key (click it, or marquee several) and press **F9**, or the **Bezier**
-  button in the bottom bar, to *easy-ease* it — After Effects' smooth default. A bezier key
-  grows two short **gold handles** in the value view, one reaching back toward the previous
-  key and one forward toward the next. Drag a handle to shape the curve: how steeply it leaves
-  the handle sets the **speed** there, how far the handle reaches sets the **influence** (how
-  long that ease holds sway). By default the two handles are **unified** — they stay in a
-  straight line through the key, so the motion glides through smoothly. When they are unified,
-  moving one handle rotates the other to stay opposite it, but the *other* handle keeps the
-  length you last gave it — it only pivots, it never grows or shrinks as you swing the one you
-  are holding — and "length" here means what you see: the partner keeps its on-screen pixel
-  length whatever the axes' units or zoom, however steep the drag. The handle you are dragging
-  simply follows the cursor: no snapping to vertical, no sudden lengthening near the top or
-  bottom. While a handle is being dragged the graph's y-axis **holds still** — the view only
-  re-fits once you let go, so the curve isn't sliding under your cursor mid-shape. And however
-  wild the curve gets, it stays inside the graph: it never paints over the ruler, the layer
-  outline, or the bottom bar.
-  **Alt-drag** a handle to *break* it and shape the two sides independently (a corner). The
-  break is decided per drag and it *sticks*: once you've started moving with Alt held you can
-  let go of Alt and the handles stay broken. The same gesture reverses it — **Alt-drag a broken
-  handle** and the pair re-unifies, snapping collinear again. (Right-click → **Unify handles**
-  still works too.) The **Linear** button (bottom bar) straightens
-  the selected keys again, and its neighbour the **Hold** button *steps* them — the value
-  freezes at the key and jumps to the next one only when the playhead reaches it, never
-  blending in between (a square key; the discrete choice a File param uses). Right-clicking a
-  key still offers the same Easy ease / Linear / Hold / Delete. Whatever the handles, the
-  curve always passes exactly through the keys.
+- The **graph editor** — the curve view of the Timeline, like After Effects' graph button
+  (the Graph toggle in the Timeline toolbar, or `Shift+F3`). Switching it on keeps the layer
+  outline on the left and swaps the lane area for **one full-height pane of curves**, under
+  the same time ruler, zoom and horizontal scroll as the lanes — a frame sits at the same
+  x whichever view you are in, and the playhead line runs through both.
+  **Choosing what to graph.** Click a property's *name* in the outline (twirl the layer
+  open first) and its value-over-time appears as a line — even a property with no keyframes
+  shows as a flat line of its value. **Ctrl+click** more names to add them, **Shift+click**
+  to take a whole run of rows, across layers; each curve gets its own colour from the
+  theme's curve palette, and the property's name in the outline is tinted to match, so you
+  always know which line is which. A property with more than one axis shows every axis —
+  Position is an x curve and a y curve, like AE's red/green pair, with a coloured dot per
+  axis beside the label. Selection rides on the *name* on purpose: clicking a value field
+  or a stopwatch never re-aims the graph, but *editing* a value or adding a keyframe does
+  select that property, so the curve you see is the one you just touched.
+  **Reading the curve.** Each key's glyph tells you its interpolation at a glance — a
+  diamond is linear, a circle is eased (bezier), a square is a hold. The curve between keys
+  is drawn by a Dart copy of the *engine's own* evaluator (`graph_maths.dart`, pinned to
+  `anim.rs` by docs/impl/keyframe-eval.md and golden tests), so the shape on screen is
+  exactly the motion that renders — and drawing it costs no bridge calls at all.
+  **Editing keys.** Drag a key to move it in time *and* value at once — one undo step per
+  property, even when a drag moves a whole selection. Drag a box over empty pane (the
+  *marquee*) to select many keys; Shift or Ctrl adds to the selection; a plain click on
+  the background clears it; **Ctrl+click** on a curve plants a new key right on it;
+  Delete removes the selected keys (the last key of a curve leaves a static value holding
+  what it held). Keys may pass each other in a drag — the curve just re-sorts — but two
+  keys can never share a frame: a drag that would collide simply stops, nothing is lost.
+  The magnet in the bottom bar decides whether dragged keys land on whole frames.
+  **Shaping a key (bezier handles).** New keys are linear. Select some and press **F9**
+  (or the **Bezier** button in the bottom bar) to *easy-ease* them — AE's smooth default:
+  the curve arrives and leaves flat, and the key grows two **tangent handles**, one
+  reaching toward each neighbour. Drag a handle to shape the curve: its steepness is the
+  **speed** there (units per second) and its reach is the **influence** (how much of the
+  gap the ease covers). The two handles are **in sync** by default — they behave as one
+  straight line through the key, so dragging one swings the other round to stay opposite it
+  and motion glides *through* the key. The partner keeps the length it *looks* on screen
+  rather than its length in values, at every angle — so it never appears to shoot out as
+  the pair steepens, and swinging one handle out to near-upright and back brings the other
+  home exactly as long as it started. Two small things make that hold. A tangent can never
+  be made *perfectly* vertical, only a hair off it: an upright tangent spans no time at
+  all, and there is no speed that describes such a thing, so it is the one shape the editor
+  could not undo (the difference is well under a pixel — no ease you shape can tell). And
+  each handle's length is remembered as you leave it, rather than worked back out of the
+  ease, which at that extreme is where the arithmetic gets thin. (One thing worth knowing
+  about the see-saw: the partner moves when the line *rotates*. Dragging a handle straight
+  out from an already-steep tangent lengthens it without turning it much, so the other side
+  barely stirs — that is the geometry, not a stuck handle.) Hold **Alt** as you start a
+  drag to break the two apart and shape a corner; Alt-drag again re-joins them. `Shift+F9`
+  eases only the way *in*, `Ctrl+Shift+F9` only the way *out*, and the **Linear** and
+  **Hold** buttons put selected keys back to straight lines or steps.
+  **Value and speed.** The bottom bar's **Value / Speed** buttons switch what the pane
+  plots (docs/07 §5.1). The speed graph is the value curve's *exact derivative* (K-080) —
+  an eased key reads as a smooth dip to zero, a straight run as a flat line, a hold as
+  zero. Here each key is really **two dots** — the speed coming *in* and the speed going
+  *out* — that drag up and down independently, each with a single horizontal **influence
+  handle**; this is AE's speed graph, and both views edit the same store, so shaping one
+  always updates the other losslessly.
+  **Framing and the wheel.** Vertically the pane **auto-fits** by default: the curves,
+  every handle tip and any bezier overshoot stay in view, and the framing holds still
+  during a drag so the curve isn't sliding under your cursor. Toggle **Auto fit** off in
+  the bottom bar to take the vertical axis yourself: a plain wheel pans it, **Alt+wheel**
+  zooms it about the cursor, and **F** re-frames whenever you want. **Ctrl+wheel** zooms
+  time about the pointer and **Shift+wheel** scrolls sideways — the same bindings as the
+  lane view, because it is the same axis. A y-axis of faint gridlines down the left edge
+  labels the values.
+  **Copy and paste.** `Ctrl+C` copies the selected keys and `Ctrl+V` pastes them into the
+  selected properties, the earliest key landing on the playhead. It is not a graph-only
+  gesture: keys boxed up on a *lane* copy and paste exactly the same way. The in-app
+  clipboard keeps everything — times, values, both sides' easing. The *system* clipboard
+  gets the same keys as a **tab-separated table** headed `Lumit <version> Keyframe Data`:
+  the rate and source size, then a row per frame with a column per value — and, after
+  those, two more columns per value carrying that key's easing (`linear`, `hold`, or
+  `bezier(speed,influence)`). So a copied ramp can be read by a script, dropped into a
+  spreadsheet, or carried into another tool *with its shaping intact*, which is the part
+  a plain values table always loses. Reading is deliberately forgiving: a keyframe table
+  from another editor — same shape, no easing columns — pastes in as linear keys rather
+  than being refused.
   **A file parameter** (K-111) — some effects need a *file* rather than a number, a colour LUT
   being the first. Its row in Effect Controls shows the chosen file's name and a **Select…**
   button that opens the usual file picker, filtered to the kind the effect wants (a LUT shows
@@ -1439,41 +1458,61 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   and behave identically wherever you meet them.
 - **Getting around the Timeline** — the panel is split into the **layer outline** on the left
   (the stack of names, stopwatches and toggles) and the **lane area** on the right (the time
-  ruler with each layer's bar on its own *lane*). Each bar wears its layer's identity colour:
-  a 3px tab on its left edge plus a very faint tint across the fill, so a tall stack reads at
-  a glance — footage is steel, sequences indigo, precomps plum, solids neutral grey, text
-  parchment, cameras dry gold. The colours are deliberately muted siblings, so the clay
-  selection colour still beats all of them. Drag a layer's bar body to slide it earlier
-  or later in time (one undo per drag). Every drag in the lane area — moving a bar, trimming
-  an edge, scrubbing the ruler — follows the cursor one-for-one at any zoom, and the small
-  "magnetic" pull towards nearby markers stays the same ~6 px on screen however far in you
-  are (both used to speed up with zoom, which felt like the timeline slipping out from under
-  the mouse); a twirled-open layer's keyframe diamonds line up under its bar at any zoom
-  too. The twirl — the little triangle at the far left of each layer row that opens
-  its property rows — is drawn at a readable size and brightens under the cursor, so it is
-  findable rather than a four-pixel smudge. Zoom the time ruler with **Alt + wheel** — it zooms
-  toward the cursor so the frame under the pointer stays put — and scroll it with **Shift +
-  wheel** (or a trackpad's horizontal wheel); a plain wheel scrolls the rows up and down. Along
-  the bottom of the lanes sits a small contained bar: `−`, `+` and **Fit** with the current
-  zoom per cent on the left, a **Grid** picker and a **magnet** toggle (on by default) that
-  governs whether a dragged keyframe snaps its time to the nearest whole frame — the magnet
-  shows in both the Layers and Graph views — the Layers/Graph view toggle on the right, and a
-  draggable horizontal scrollbar just above it (the vertical scrollbar stops above the bar so
-  the two never fight). Layers/Graph is only a change of what the lanes *draw* — the outline stays
-  identical between the two, so twirling a layer open shows the same rows either way.
+  ruler with each layer's bar on its own *lane*). Each bar wears its layer's **label
+  colour** — the same chip its outline swatch shows (K-189) — so a tall stack reads at a
+  glance and picking a new label recolours the bar. Drag a layer's bar body to slide it
+  earlier or later in time (one undo per drag); drag its ends to trim. A layer twirled
+  open shows its **keyframes as diamonds on the lanes**: drag a diamond to move that
+  keyframe in time, or drag a box on empty lane space to select the diamonds inside it.
+  Dragging never scrolls the timeline — the wheel and the scrollbars do: a plain wheel
+  moves the rows, **Shift + wheel** scrolls sideways, and **Ctrl + wheel** zooms time
+  around wherever the pointer is. The two halves scroll vertically **as one table**, with
+  the shared scrollbar on the lane side's far right (in Graph view each side gets its
+  own, and the outline keeps that strip reserved either way so the columns never jump).
+  Along the bottom of the lanes sits a small bar: `−`, `+` and **Fit** with the current
+  zoom per cent, the **magnet**, and the horizontal scrollbar that moves the view once
+  you are zoomed in. The magnet — on by default — is what makes a dragged keyframe land
+  on a whole frame; switch it off and a keyframe can sit between two frames, which is
+  occasionally what a fast move needs.
+  The Lane/Graph view buttons live in the Timeline's toolbar; Graph is only a change of
+  what the right side *draws* — the outline stays identical between the two, so twirling
+  a layer open shows the same rows either way.
 - **Working the layer outline** — a few habits from other editors now work the way you
-  would expect. The outline's switches sit in After Effects' five familiar clusters
-  (K-168), left to right: first the **eye, speaker, solo dot and padlock**; then a small
-  **label-colour chip**, the layer's **stack number** and its **name**; then the
-  **flow-or-collapse glyph, an fx bypass switch, motion blur and 3D**; then the **Matte
-  and Blend** dropdowns; and at the far right a **Parent** dropdown (the same
-  parent-and-inherit link the Effect Controls tab offers — pick another layer and this one
-  rides its transform). The padlock freezes a layer's *timing*: while locked, its bar
-  will not slide, its ends will not trim and it will not reorder in the stack — though its
-  values stay editable, since the lock exists to stop stray drags, not work. The label
-  chip cycles through eight theme colours with a click, purely for telling layers apart
-  in a tall stack; it changes nothing about the picture. A row of tiny icons sits over
-  the outline columns, level with the time ruler, naming each cluster at a glance. The
+  would expect. The outline's columns sit in **four groups** (K-188), left to right:
+  first the **eye, speaker, solo star, padlock and shy** switches; then the **twirl, a
+  small label-colour chip, the layer's stack number and its name**; then the
+  **flow-or-collapse glyph, an fx bypass switch, motion blur and 3D**; then the **Matte,
+  Blend and Parent** dropdowns (Parent is the same parent-and-inherit link the Effect
+  Controls tab offers — pick another layer and this one rides its transform). The row of
+  tiny icons over the columns names each group — and it is also a handle: **drag a
+  group's header to move the whole group**, which is how you reorder the columns, and
+  **drag the little line after a group to make it wider or narrower**. Only that group
+  changes; the others keep the width you gave them, so the whole layer area grows or
+  shrinks to suit. Whatever lives in a group grows with it — widen the switches group and
+  the value boxes under it widen to match, so a long number always has room.
+  **Drag a layer by its name** to move it up or down the stack — drop it on another
+  row and it takes that row's place, in one undo step. (Dragging its *bar*, over in the
+  lane area, moves it in time instead.)
+  **Clicking a property** (a Position, an effect's Radius, a Volume) selects it, and
+  everything it belongs to — its effect, its layer — lights up faintly behind it, so you
+  can see at a glance whose property you are looking at. That is also what the graph view
+  will use to know which curve you meant. The eye
+  and speaker swap to a closed eye and a muted speaker when off, so a hidden or silent
+  layer reads at a glance. **Shy** is list housekeeping borrowed from After Effects: mark
+  the layers you are done fiddling with as shy, press the shy filter in the Timeline's
+  toolbar, and they vanish from the *list* — never from the picture — until you press it
+  again. The padlock freezes a layer: while locked, its bar will not slide, its ends will
+  not trim, it will not rename, reorder or delete. The label chip opens a small
+  eight-colour picker, and the colour you pick is also the colour of the layer's **bar in
+  the lane area** — each kind of layer starts on its own bright chip (footage azure,
+  solids amber, precomps violet, text mint, cameras teal, sequences indigo, adjustments
+  magenta), so a fresh stack is tellable apart before you name anything. It changes
+  nothing about the picture itself. The toolbar above the columns shows the playhead twice —
+  as `HH:MM:SS:FF` timecode and as a plain frame count like `f72` (both start at zero,
+  so frame 0 is 00:00:00:00) — plus the layer search, and a **master motion blur**
+  button: the comp-wide shutter switch that decides whether the layers whose own motion
+  blur switch is on actually blur. The master is per comp — a nested comp inside a
+  Precomp layer has its own master and follows that one, not the parent's. The
   thin line between the
   outline and the lanes is a handle — drag it to widen or narrow the outline; if you drag
   it hard against a limit and keep pushing, it now waits for the cursor to travel back to
@@ -1563,9 +1602,10 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   you sit paused), and the scope traces whichever one is on screen. If a frame hasn't been
   kept in memory yet — Lumit skips saving some frames during playback to stay fast — the scope
   simply holds the last frame it had rather than going blank, and snaps back to live the
-  instant the current frame is ready. The one honest limit that remains (from K-096): tracing
-  *every* frame no matter what, even on a brand-new composition nothing has warmed yet, needs
-  the graphics card to do the counting, which is still a later addition. The scope's
+  instant the current frame is ready. The counting itself now runs on the graphics card (the
+  GPU scope pass, K-096 v1 — `crates/lumit-gpu/src/scope.rs`), so tracing every frame costs
+  almost nothing; the CPU counting in `shell/scopes.rs` remains as the fallback for a machine
+  with no adapter. See GUIDE §9 for the plain-English tour of the GPU pass. The scope's
   own colours (the near-black background, the green trace, the red/green/blue channel
   colours) are fixed and the same in light or dark mode, for the same reason the Viewer's
   surround is a fixed neutral grey — you cannot judge an image against a background that
@@ -1594,9 +1634,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   whatever you select, so the tree beneath it no longer jumps around as you click between
   items; and when the selected item is footage it shows a small **thumbnail** of the frame on
   the left — reusing the very frame the Viewer already decoded rather than decoding a fresh
-  one, with a plain placeholder shown until a frame is to hand (UI-4, K-157). Drag footage
-  onto the Timeline or Viewer to make a layer; with no comp open yet, the composition dialogue
-  appears already filled in from that footage. Solids are proper assets now — one "White solid"
+  one, with a plain placeholder shown until a frame is to hand (UI-4, K-157). **Double-click
+  a composition to open it** in the Timeline; double-clicking anything else renames it where
+  it sits, and a comp is renamed from its right-click menu or its settings dialogue instead.
+  Drag footage onto the Timeline or Viewer to make a layer; with no comp open yet, dropping
+  it on the empty Timeline raises the composition dialogue already filled in from that
+  footage, and the clips land in the comp it makes. Solids are proper assets now — one "White solid"
   in the project can back fifty layers, and the first one you make creates a Solids
   folder that future solids follow even if you rename it or tuck it inside another
   folder (Lumit remembers the folder itself, not its name). Compositions do the same
@@ -1648,7 +1691,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   right — including that two layers blend in linear light and that a cache hit does zero
   GPU work. So the sockets are proven to fit the real machinery; what remains is teaching
   the adapters the full layer vocabulary (transforms, masks, retimes, effects) and then
-  switching preview and export over. Until then the shipped renderer in `lumit-ui` keeps
+  switching preview and export over. Until then the shipped renderer in `lumit-render` keeps
   drawing the picture.
 - **Two ways to play back (`lumit-eval::schedule::cached_step`, K-171)** — the important
   distinction between the two preview modes. In **Cached** mode (the default), Lumit shows you
@@ -1824,7 +1867,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   depth, AE-style, via a small button at the foot of the Project panel. Full float
   doubles every frame's memory and roughly halves compositing throughput, so 16-float
   stays the default; the heavy maths inside effects can run wider internally either way.
-- `crates/lumit-ui/src/theme.rs` — **the design tokens.** The only file allowed to contain
+- `flutter_ui/lib/theme/theme.dart` — **the design tokens.** The only file allowed to contain
   colour values. Change a colour here, it changes everywhere. As of K-084 the look follows
   the *structure* of rerun.io's viewer (a data-tools app whose interface the owner likes):
   the app's background is nearly black, panels sit just above it, and menus float a clear
@@ -1832,6 +1875,13 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   from pressed purely by how light their fill is; scrollbars are thin and solid; panel
   edges are single crisp 1px lines. The colours themselves (the clay accent, the cool grey
   family) are still Lumit's own — we borrowed the skeleton, not the skin.
+  *(A note on the Settings window paragraphs below: they record the full design as the
+  egui shell shipped it. The Flutter Settings window is now the same shape — a sidebar of
+  pages, grouped cards, a setting's name and a line about it on the left of each row and
+  its control on the right — but carries four pages rather than five: **General**,
+  **Appearance**, **Interface** and **Performance**. Export and Autosave have nothing
+  behind them on this frontend yet, and a page with no working controls would be a promise
+  the window cannot keep; they are tracked in [TODO.md](TODO.md).)*
   Five appearance controls live in the **Settings window** (K-098) — open it from
   **Window → Settings…** or **Ctrl/Cmd+comma**. That window is Lumit's application-settings
   surface, shaped like macOS's System Settings: a list of pages down the left (General,
@@ -1916,18 +1966,16 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   dropdown on the Settings window's Appearance page — the old separate light/dark and
   background-ramp rows folded into it. An older save that used the two-row picker migrates its
   choice into the new one automatically, so nobody's theme resets on upgrade.
-- `crates/lumit-ui/src/icons.rs` — **the icons: Iconoir, shipped as a font** (K-085).
+- `flutter_ui/lib/icons/icons.dart` — **the icons: Iconoir** (K-085).
   Little pictures like the play triangle or the padlock come from Iconoir, a free
-  professionally drawn icon family, baked into the program as a small font file — each icon
-  is a character in that font, so it stays crisp at any size and always takes the theme
-  colour (dimming on hover, turning accent when active) exactly like text does. Emoji are
-  still banned: a glyph is either from this set or deliberately drawn, never a character we
-  hope the user's fonts carry — that's how the invisible stopwatch/arrow bugs happened. To
-  add one, add a name to the `Icon` list and its Iconoir name in the lookup; a test fails
-  if the name doesn't exist in the set, so a typo can't ship.
-- `crates/lumit-ui/src/shell.rs` + `app_state.rs` — **the window**: panels, menus,
-  shortcuts, and the state glue (current project, dirty flag, autosave timer, recovery
-  prompt).
+  professionally drawn icon family, so every glyph stays crisp at any size and always
+  takes the theme colour (dimming on hover, turning accent when active) exactly like text
+  does. Emoji are banned: a glyph is either from this set or deliberately drawn, never a
+  character we hope the user's fonts carry — that's how the invisible stopwatch/arrow bugs
+  happened. To add one, add a name to the `LumitIcon` list and its Iconoir widget in the
+  lookup.
+- `flutter_ui/lib/main.dart` + `lib/shell/` — **the window**: panels, menus, shortcuts,
+  and the state glue (current project, selection, the render worker's reply stream).
 - **Layers can hang over the edges of the composition** (K-153, GEN-3). Think of a
   composition as a fixed-length window of time — say ten seconds. A layer used to be forced to
   live entirely inside that window: you could not slide it so it *started before* the comp's
@@ -1994,18 +2042,6 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   a set of **benchmarks** time the everyday operations on that project (open it, save it, make
   one edit, undo). They run when a developer asks (`cargo bench`), and they'll later become
   pass/fail speed budgets in the automated checks.
-- **Remappable keyboard shortcuts (`lumit-keymap`)** — the rules behind "every shortcut can be
-  changed" live in their own small, self-contained piece with no screen or window in sight, so
-  they can be proven correct on their own. A **chord** is a key plus its held modifiers
-  (`Shift+F3`, `Ctrl/Cmd+D`); a **context** is where you are (the whole app, the timeline, the
-  viewer…); a **binding** ties a chord in a context to an action. The interesting part is
-  spotting **clashes** — the same chord that would trigger two different things at once — with
-  the twist that an app-wide (Global) shortcut is live everywhere, so it clashes with a
-  same-chord shortcut in *any* panel, while two different panels may reuse a key harmlessly.
-  The default set (the whole documented table) and an "After Effects" preset both ship
-  clash-free, the map can be saved to a shareable file, and Ctrl/Cmd is stored as one
-  neutral "primary" key so a keymap works on both Windows and Mac. Still to come: wiring the
-  live key presses and the Settings → Keymap screen to this core.
 
 ## 5. Making a change safely (the recipe)
 
@@ -2107,8 +2143,8 @@ There are two moving parts, and it helps to know why each exists:
    FFmpeg folder and LLVM, points the build at them, and (`-Persist`) remembers the settings
    so every future terminal already knows. The leading dot is required — it means "apply
    these to my current shell", not "run and forget".
-4. Now the normal commands work: `cargo run -p lumit-app` to launch, `cargo test --workspace`
-   to run the whole test suite.
+4. Now the normal commands work: `cargo test --workspace` runs the engine's test suite,
+   and `flutter run` from `flutter_ui/` launches the app.
 
 ### On macOS
 
@@ -2123,8 +2159,27 @@ Linux finds FFmpeg the same way macOS does — by asking the system's package re
 *development* packages (the ones ending `-dev`, which carry the headers the binding
 generator reads), plus `pkg-config` and `clang`. On Debian 13 or Ubuntu 24.10 and newer
 that is one line: `sudo apt install pkg-config clang libavcodec-dev libavformat-dev
-libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev`. On Arch:
-`sudo pacman -S ffmpeg clang pkgconf`. Then `cargo run -p lumit-app` as usual.
+libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev`. On Arch
+or Artix: `sudo pacman -S ffmpeg pkgconf clang18 llvm18` — note the **18**: those
+distributions' plain `clang` package is a much newer LLVM, and as explained above a newer
+LLVM makes the translator produce nonsense, so the versioned packages are the ones to
+install.
+
+Two settings then have to be handed to the build, in the terminal you build from:
+
+```sh
+export LIBCLANG_PATH=/usr/lib/llvm18/lib          # Debian/Ubuntu: /usr/lib/llvm-18/lib
+export FFMPEG_PKG_CONFIG_PATH=/usr/lib/pkgconfig  # wherever libavcodec.pc lives
+```
+
+The first says "use the *18* translator, not whichever one is the default" — only needed
+where the default is newer than 18, which on Arch and Artix it always is. The second is an
+accident of the repo: `.cargo/config.toml` sets that variable to a macOS Homebrew folder
+for every platform, and Cargo gives no way to make it macOS-only, so on Linux it has to be
+overridden with the folder that actually holds FFmpeg's `.pc` description files (ask with
+`pkg-config --variable pc_path pkg-config` if `/usr/lib/pkgconfig` is not it). Put both
+lines in your shell profile and every future terminal has them. Then `cargo test
+--workspace`, and `flutter run` from `flutter_ui/` to launch the app.
 
 One honest caveat: the build needs FFmpeg **7**, and some distributions still ship
 FFmpeg 6 — Ubuntu 24.04 LTS is the big one. On those, `cargo build` will complain about
@@ -2132,33 +2187,9 @@ FFmpeg 6 — Ubuntu 24.04 LTS is the big one. On those, `cargo build` will compl
 newer distribution release, or building FFmpeg 7.1 from source and letting `pkg-config`
 find it.
 
-### Not building it at all: the Flatpak
-
-If you just want to *run* Lumit on Linux, there is now a **Flatpak** — the one artifact
-that sidesteps the whole FFmpeg-version problem. A Flatpak is an application packaged
-together with the exact libraries it was built against, run in a light sandbox. Because
-Lumit's bundle carries its own FFmpeg 7.1, it does not care what the distribution ships:
-the same file installs on Ubuntu, Fedora, Arch or anything else.
-
-Every CI run builds one and attaches it to the run as `lumit-x86_64.flatpak` (about 15 MB —
-the app plus its own FFmpeg). Download it, then:
-
-```
-flatpak install --user lumit-x86_64.flatpak
-flatpak run io.github.luminalmvm.Lumit
-```
-
-The recipe lives in `packaging/flatpak/`. Two parts of it are worth understanding, because
-they look strange otherwise. First, the manifest **builds FFmpeg 7.1 itself** rather than
-using the one in the Flatpak runtime — the runtime's is 6.x, the same version problem as
-above, just moved indoors. Second, a Flatpak build has **no network access** on purpose (so
-a build is reproducible and can't fetch surprises), which means every Rust crate Lumit
-depends on has to be listed in advance; CI generates that list mechanically from
-`Cargo.lock` before building, which is why you won't find it committed.
-
-The sandbox is granted the GPU (the whole compositor is GPU work), audio out, and access to
-your files — a video editor has to read footage from wherever you keep it, external drives
-included.
+(There used to be a **Flatpak** here — a ready-to-install Linux bundle. It packaged the
+old egui application and was retired with it in K-182; Linux packaging for the Flutter
+app is tracked in [TODO.md](TODO.md).)
 
 One Linux-only difference worth knowing, because it looks like a bug otherwise: on Windows
 and macOS Lumit *starts as* the little splash card — that small frameless window you see
@@ -2177,3 +2208,1802 @@ The platform recipes above are exactly what CI does, written out by hand in
 Mesa's *lavapipe*, a Vulkan driver that renders on the CPU, so the GPU tests actually run on
 a machine with no graphics card in it. And a sixth job builds the Flatpak, which is how we
 know the packaging works and not just the code.
+
+## 9. The Flutter frontend, in plain terms
+
+*(K-174. Flutter is now Lumit's frontend; the earlier egui code remains only as
+the parity reference. The front/back boundary is specified in full in
+[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md).)*
+
+**What Flutter and Dart are.** Flutter is Google's toolkit for building user
+interfaces; Dart is the programming language it uses, roughly as readable as
+TypeScript. Where egui redraws the whole window every frame from immediate
+drawing commands, Flutter keeps a *widget tree* — a description of the
+interface — and redraws only the parts whose description changed. That buys
+polished text rendering, smooth built-in animation and a huge widget ecosystem,
+at the cost of a second language in the repository and a *bridge* between the
+interface and the engine.
+
+**What moves and what stays.** Everything that opens files, decodes video,
+composites frames, caches, mixes audio and exports stays exactly where it is,
+in the Rust crates — the Flutter interface is a new front door on the same
+house. The Dart code lives in `flutter_ui/` and is a stand-alone application:
+you can build and run it without touching the Rust build, and vice versa.
+
+**How they talk.** Dart cannot call Rust directly, so a bridge crate
+(`lumit-bridge`) sits between them. Its shape is described further down (§9,
+"The generated bridge"): Dart holds small *handles* naming things in the
+engine — a project, a composition, a layer — and calls methods on them, rather
+than passing whole documents back and forth. The Viewer is special: video frames
+are too large to pass through function calls sixty times a second, so the engine
+draws each frame into a piece of GPU memory that Flutter displays directly — the
+picture never takes a detour through ordinary memory. The full contract is in
+[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md).
+
+**The picture now stays on the graphics card (K-177).** For a while the Viewer
+took exactly that detour: the engine drew the frame on the graphics card, copied
+it down into ordinary memory, passed the bytes across to Flutter, and Flutter
+copied them *back up* onto the card to show them — three copies of a full-size
+picture, every frame. That was the biggest thing making scrubbing feel heavier
+than the old egui app. On Windows this is now removed. The engine asks the
+graphics card for a special *shared* texture — a piece of GPU memory Windows can
+lend by name to another part of the program — draws straight into it, and hands
+Flutter only the name (a small number, an "NT handle"). Flutter opens that name
+and shows the texture directly with a `Texture` widget; no pixels are copied at
+all. It is switched on with a build flag (`--features shared-texture`) and is
+Windows-only, so it can be turned off without touching anything else. If the flag
+is off, the machine has no suitable graphics card, or the runner is an old build,
+everything quietly goes back to the copy-the-bytes way — nothing breaks, it is
+just a little slower. One detail: the Scopes (the waveform/vectorscope displays)
+still need the actual numbers, and the fast path deliberately keeps the picture
+*off* ordinary memory, so the engine also does a slow copy a few times a second
+just to feed the Scopes, while the fast texture drives the Viewer itself.
+
+**Linux gets the same fast path, via DMA-BUF (K-177).** Windows shares GPU memory
+by an "NT handle"; Linux's equivalent is a **DMA-BUF** — a file descriptor (a
+small number the operating system uses to name an open resource) that names a
+piece of graphics memory. The Linux build does exactly what the Windows one does,
+with that primitive instead: the engine (running on Vulkan rather than Direct3D)
+makes a special *exportable* image, draws the finished frame into it, and asks
+the graphics driver for a descriptor naming its memory. It hands Flutter that
+descriptor plus a few numbers describing the buffer's layout (its width, how many
+bytes each row takes — the "stride" — and a code naming the pixel format). The
+Linux runner imports that descriptor into an OpenGL texture (through a mechanism
+called EGLImage) and shows it with the same `Texture` widget — again, no pixels
+copied. It is switched on with its own build flag (`--features
+shared-texture-linux`) and, exactly like the Windows path, degrades to the
+copy-the-bytes way whenever it cannot be used: an old library, no capable
+graphics card, or the specific graphics-memory-sharing features not being
+available. The Settings kill-switch and the GPU/CPU transport indicator work
+unchanged — the same controls cover both platforms. One honest caveat: the
+authoring machine for this code runs Windows and *cannot build or run the Linux
+half at all*, so CI only proves it **compiles** (both the Rust Vulkan code and the
+GTK plugin). Whether the picture actually appears is the Linux collaborator's
+check — the verification recipe is in §9.
+
+**The DMA-BUF format we ship.** The exported image is 8-bit RGBA holding the
+already-display-encoded bytes (byte-for-byte the same pixels the Windows path and
+the slow copy path produce), laid out with plain "linear" tiling — no vendor-
+specific memory scrambling. That keeps the graphics-driver requirements minimal:
+we do not use the more advanced "format modifier" route the reference
+implementation took, only the widely-supported external-memory feature. The
+format is reported to Flutter as the DRM code `DRM_FORMAT_ABGR8888` (which, in
+DRM's little-endian naming, means bytes in memory order red, green, blue, alpha —
+matching what Flutter samples) with a "linear" modifier.
+
+**macOS gets it too, via IOSurface (K-195).** The third platform, the third name
+for the same idea. Apple's primitive for "two parts of a program pointing at one
+piece of graphics memory" is an **IOSurface**, and it comes with something the
+other two do not: a plain number that names it, so nothing awkward has to cross
+the boundary at all. The engine (running on Metal, Apple's graphics interface)
+creates a surface, asks Metal for a texture backed by it, draws the finished
+frame into that, and sends Flutter the number. The Mac runner looks the number
+up, wraps the surface in a `CVPixelBuffer` — a wrapper, not a copy, the same
+memory seen through the type Apple's video machinery speaks — and hands it to
+Flutter as a texture. Same `Texture` widget, same no-copy result.
+
+Because that payload is one number plus a size, it is *exactly* the Windows one,
+so macOS reuses the Windows message, the Windows channel call and the Windows
+Dart code unchanged; only what the number means differs. Linux is the odd one
+out, needing the stride and format alongside its descriptor. The one wrinkle is
+colour order: Flutter's Mac texture path accepts a single pixel format, "BGRA"
+(blue, green, red, alpha), so the renderer is asked to write its display bytes in
+that order there — which it already knew how to do, because Windows wants the
+same thing for its own reason. As with Linux, the authoring machine cannot build
+or run the Mac half, so CI proves it compiles and one test checks the colour
+order end to end; whether the picture appears on a real Mac is the collaborator's
+check.
+
+**The Scopes are computed on the graphics card now (the GPU scope pass, K-096
+v1).** A scope reads the picture's brightness and colour — a waveform, a
+histogram, a vectorscope. Both frontends used to work those out on the ordinary
+processor, walking a quarter-million pixels of the frame every time the scope
+redrew; with a scope open while scrubbing, that is what made it feel laggy (the
+owner's report). The engine now does that walk on the graphics card instead. It
+is three tiny GPU programs: one drops each sampled pixel into a counting bin
+(many threads counting into the same bin safely, an "atomic add"), one finds the
+tallest bin, and one paints the little 256×256 trace picture from the bins in the
+scope's fixed colours. Only that tiny trace picture — a quarter of a megabyte —
+comes back to ordinary memory; the frame it read stays on the card. We
+deliberately did *not* give the scope its own fast shared texture like the Viewer
+has: the trace is so small that the fast hand-off would save nothing, while
+costing a second registered texture and its memory — the honest win here is the
+counting, not the delivery. The scope traces the very same comp frame the Viewer
+shows (same composition, frame and preview size), served from the frame cache
+below, so the numbers and the picture never disagree, and the comp is not
+re-drawn just to scope it. When the loaded engine is an older build without this
+pass — or on a machine with no suitable graphics card — the Scopes quietly fall
+back to counting on the processor, exactly as before. This lives in the engine
+(`crates/lumit-gpu/src/scope.rs` + `scope.wgsl`), so both the Flutter and the
+egui frontend can use it.
+
+**Re-scrubbing a frame is now free (the frame cache, K-176).** Drawing one
+composited comp frame — every layer, transform, blend and effect — is the most
+expensive thing the Viewer does, and until now the Flutter app re-did it *every*
+time you passed over a frame, even one you had just seen. The old egui app never
+did that: it keeps a shelf of already-drawn frames in memory and, when you scrub
+back over one, just takes it off the shelf. The bridge now has the same shelf
+(`crates/lumit-bridge/src/framecache.rs`). Each finished frame is filed on the
+shelf under a label that says *which* comp, *which* frame, at *what* preview
+size, and *which version of the document* it belongs to — so scrubbing back and
+forth is a shelf lookup with no drawing at all. The "which version" part matters:
+the moment you edit anything, the document becomes a new version and every frame
+on the shelf is thrown away, because they now show the old picture — you can
+never be handed a stale frame. There is a size limit (a few hundred megabytes by
+default, adjustable in Settings → Performance); when the shelf is full the
+least-recently-seen frames are dropped to make room, and "Clear cache" empties it
+on demand. A companion tidy-up: when you scrub quickly, a frame you have already
+moved past no longer wastes a full draw finishing after you have gone — a newer
+request tells the engine "that one is stale, skip it" before it starts.
+
+**Seeing what is on the shelf (the cache bar).** A thin green strip now runs
+along the bottom of the timeline ruler, over the frames whose picture is already
+on that shelf — so at a glance you can see how much of the comp is ready to play
+back instantly, exactly as the old egui app shows it. The engine only tells the
+bridge *how many* frames are cached, not *which* ones, so the Flutter side keeps
+its own note of the frames it has driven onto the shelf and draws a band over
+each; editing anything (which throws the shelf away) or clearing the cache wipes
+the strip too. The strip is scoped to the current preview size — which matters,
+because the **resolution picker** (Full / Half / Third / Quarter in the transport)
+now genuinely renders a smaller picture rather than a full-size one relabelled:
+choosing Half asks the engine for half-resolution pixels, which are faster to
+draw and get their own place on the shelf.
+
+**Panels that keep their place.** A panel now remembers where it was scrolled to,
+which twirl-downs were open, and a drag you had half-begun — even as you click
+around between panels. This sounds obvious, but it took care to get right, and the
+reason is a quirk of how Flutter decides whether to keep a piece of the screen or
+throw it away and build it afresh. The clicked panel wears a thin accent outline so
+you can see which one the keyboard is talking to; the trouble was that Flutter was
+adding that outline by *changing the shape* of the panel's on-screen scaffolding —
+and whenever the scaffolding's shape changes, Flutter can no longer line the old
+version up against the new one, so it discards the whole panel and rebuilds it from
+scratch, losing everything it remembered. The very click that lit the outline was
+the click that wiped the panel's memory — which is why a scrolled list jumped back
+to the top when you clicked elsewhere, and why the *first* attempt to drag a slider
+in an unfocused panel did nothing (the click that focused it tore out the drag
+before it could take hold; only the second try worked). The fix is to give every
+panel that outline *all the time* and simply make it invisible (fully transparent)
+when the panel isn't the focused one — the shape never changes, so Flutter keeps
+the panel and its memory intact, and only the colour of the outline flickers
+between accent and clear. The same care now covers **tabs**: stack a few panels
+together and switch between their tabs, and the ones you flip away from stay exactly
+as you left them, rather than resetting each time — the hidden tabs are kept alive
+off to one side, doing no drawing and no per-frame work but holding their place,
+the way the old egui interface remembered them.
+
+**Where things are.** `docs/archive/flutter-port/` holds the historical port
+notes: `01` the strategy
+and phases, `02` an inventory of every surface the egui interface ships (the
+port's shopping list), `03` the bridge design, `04` a table mapping each egui
+mechanism to its Flutter counterpart, `05` the living checklist of what is
+ported. The first phase rebuilds the *chrome* — theme, settings, dock, menus,
+panels as placeholders — on a pretend engine, so the interface can be judged by
+eye before any bridge work is spent.
+
+**The bridge crate, and how F1 starts it.** The first real Rust↔Dart link is a
+new crate, `crates/lumit-bridge`. It builds into a single shared library (a
+`.dll` on Windows) that the Flutter app loads when it starts. The catch is that
+Dart cannot yet call Rust functions with rich types directly, so this first
+version — "bridge v0" — keeps the conversation deliberately plain: Dart calls a
+handful of C functions (`lumit_bridge_new_project`, `lumit_bridge_snapshot`,
+`lumit_bridge_new_composition`, `lumit_bridge_undo`, and so on), and each one
+answers with a piece of **text in JSON format** describing what happened —
+either `{"ok":true, …the document…}` or `{"ok":false,"error":"a calm sentence"}`.
+Dart reads that text, hands the memory straight back to Rust to free
+(`lumit_bridge_free_string`), and turns the JSON into ordinary Dart objects the
+Project panel can draw. Later, once the set of calls has settled, a code
+generator (`flutter_rust_bridge`) will write this glue for us; hand-writing it
+now keeps the build simple while the shape is still moving. Two promises hold
+whichever way the glue is written: a crash inside Rust can never tip over into
+Dart (every function catches its own panics and reports them as an ordinary
+error), and if the library is missing the app simply runs on its placeholders,
+exactly as it did before the bridge existed — nothing breaks, the Project panel
+just shows its "arrives with the engine bridge" hint again. `lumit-bridge`
+depends only on the engine crates, and nothing depends on it, so it stays a leaf
+that the rest of the project never has to know about.
+
+**The code generator that is now replacing that glue.** The "later" above has
+arrived: the generator is in the tree, and the two bridges run side by side while
+the work moves across. It is worth understanding what changed, because it changes
+how the panels are written.
+
+*What the generator does.* `flutter_rust_bridge` — "frb" for short — reads the
+Rust functions in `crates/lumit-bridge/src/api/` and writes, automatically, both
+halves of the plumbing: the Rust side that packs values up
+(`crates/lumit-bridge/src/frb_generated.rs`) and the Dart side that unpacks them
+(`flutter_ui/lib/src/rust/`). Those generated files are checked in but never
+edited by hand — the command `flutter_rust_bridge_codegen generate`, run from
+`flutter_ui/`, rewrites them from scratch, so any manual change is simply lost
+next time. If you add a Rust function and Dart cannot see it, that command is
+almost always what is missing. A second tool, **cargokit**, sits under
+`flutter_ui/rust_builder/` and does an unglamorous but useful job: it compiles
+the Rust library automatically as part of the normal `flutter run`, so there is
+no separate build step to forget.
+
+*Why this is a rewrite and not a translation.* Bridge v0 worked the way a website
+does: Dart asked one big question (`lumit_bridge_snapshot`), got the entire
+document back as text, and rebuilt its own copy of everything from it. To change
+one layer's name, Dart looked the layer up by its identifier, sent an edit, then
+asked for the whole document again to see the result. That is simple, but it
+means every small edit costs a full document read, and Dart has to keep its own
+mirror of the document faithfully in step.
+
+frb allows something better: Rust can hand Dart a **handle** — a small opaque
+token standing for one thing in the document. So Dart holds a `LayerReference`
+rather than a layer's identifier and a copy of its data, and renaming becomes
+`layer.rename(name: 'hero shot')` — a method on the layer itself. There is no
+snapshot to re-read, no mirror to keep in step, and no identifier to look up,
+because *the handle is the identity*. Alongside that, Rust pushes a small
+"something changed, and here is which layer it was" message down a **stream** (a
+tap Dart listens to), so only the part of the interface that actually changed is
+redrawn instead of all of it.
+
+That message is worked out in one place, `op_scope` in
+`crates/lumit-bridge/src/api/state.rs`: it looks at the edit that just happened
+and says which composition it touched, which layer inside it, and whether the
+project's *list of items* changed at all. Getting that last part wrong is
+expensive rather than merely untidy — the Project panel has to ask the operating
+system whether each footage file is still where it was, and that is slow enough
+that it caches the answers. Before the scope told it otherwise, it threw those
+answers away on every edit of any kind, so nudging a value in the Timeline sent
+it back to the disk to re-check every clip in the project. Now it only listens
+for edits that add, remove, rename, refile or relink an item.
+
+**How an effect edit avoids a hundred undo steps.** Dragging a blur's radius
+produces something like a hundred values a second, and each one is a real change
+to the document — so done naively you get a hundred undo entries and a hundred
+disk writes for what the user thinks of as one adjustment. The Effect controls
+panel avoids that by working on a *copy*: it asks the engine for the layer's
+effects, edits the copy as the pointer moves, and asks for a picture of "the
+document, but with this copy substituted" — which the engine renders without
+changing anything it keeps. Only when the pointer is released does it hand the
+copy over to be committed, once. If some other part of the interface changed the
+same stack while the drag was happening, the engine refuses the commit rather
+than overwriting that change, and the panel re-reads instead.
+
+One rule in that panel is worth knowing because it looks like a missing feature.
+A parameter that is *animated* — following a curve of keyframes rather than
+holding one value — shows the word "animated" instead of a number field. That is
+deliberate: the only way to write a value at the moment replaces the whole curve,
+so offering a field would let a small nudge silently delete every keyframe on it.
+The field comes back when the keyframe editing arrives with the graph editor.
+
+*Where to look for the pattern.* Every panel now works this way, and the whole
+older bridge has been deleted — there is one way to talk to the engine, not two.
+`flutter_ui/lib/panels/project_panel_frb.dart` reads a list through handles,
+`viewer_panel_frb.dart` is fed by the frame stream, `effect_controls_panel_frb.dart`
+shows the live-drag path that renders a preview without ever committing an edit,
+and `shell/menu_bar_frb.dart` simply calls actions. `docs/TODO.md` records what is
+still missing.
+
+*Why the app opens with a project already made.* Every document command — import,
+new composition, save — needs somewhere to put the result, so each is greyed out
+while no project is open. Starting the app with *nothing* open therefore greyed
+out the entire File and Composition menu, and left no way to make it live: the
+first thing anyone does needs something to do it to. The shell now makes an empty
+project as it boots, exactly as opening a word processor gives you a blank page.
+Opening a file from disk replaces it wholesale, so nothing is left over from the
+one that was made for you.
+
+*The workspace remembers itself again.* The panel arrangement, the colour
+scheme, the interface scale and the tooltip setting all live in one object
+(`Workspace`) that writes itself to a small settings file and reads it back at
+launch. During the port the shell briefly kept its own separate copies of the
+layout and the scheme, which is why a rearranged workspace did not survive a
+restart and why the scale slider moved nothing: the shell was reading one copy
+and the Settings window writing the other. There is one copy now. Two smaller
+things came back with it — the window's backdrop is the theme's own darkest
+surface rather than Flutter's stock Material grey, and the whole interface is
+drawn through the scale setting so text and hit-targets grow together.
+
+*Why playback froze on its first frame.* A rendered frame arrives from the
+engine as raw pixels, which Flutter turns into an image object that has to be
+explicitly thrown away — nothing collects it for you. The Viewer was throwing the
+*previous* frame away the instant the new one arrived, but the part of Flutter
+that actually draws had not caught up yet and was still holding the old one. It
+then tried to draw a picture that no longer existed, which fails, and once
+drawing fails the Viewer stops updating. Scrubbing by hand left enough time
+between frames to get away with it; playback did not, which is why pressing play
+showed one frame and then nothing. The old frame is now thrown away one frame
+later, when nothing can still be holding it.
+
+*The cache bar, and the bug finding it uncovered.* The stripe under the time
+ruler shows which frames have already been rendered and kept, so you can see at a
+glance what will play. Mint means the frame is held at the resolution you are
+watching — it plays now. A dimmed mint means it is held only at a coarser
+resolution: there is something, but it would be rendered again to show at this
+size. Nothing drawn means nothing kept. The design language reserves a blue for
+frames kept on disk; there is no disk cache in this engine yet, so that state
+cannot happen and is not drawn.
+
+Building it meant asking the engine a question it could not answer. The bridge
+reported only totals — how many megabytes, how many hits — never *which* frames,
+so the old frontend had guessed by watching what it had asked for. The engine now
+answers directly.
+
+Asking that question exposed something worse. Each kept frame was filed under
+*where* it was — which composition, which frame number, at what size — rather
+than what was in it. An edit does not change any of those, so after changing a
+layer the cache happily handed back the picture from before the edit, byte for
+byte. Confirmed by rendering a frame, setting the layer to five per cent opacity,
+scrubbing away and back, and getting an identical picture. A committed change now
+retires that composition's kept frames.
+
+That fix is blunter than it should be: renaming a layer cannot change a pixel, and
+it throws the frames away all the same. The better answer — already written down
+as the design — is to file each frame under a fingerprint of what is actually in
+it, so an edit simply produces different names for the frames it changed and
+everything else survives untouched. That needs machinery the bridge does not have
+yet, and is in the backlog. A cold cache is a nuisance; a cache that lies is a
+bug.
+
+One more thing that could not be right and was: a frame rendered *during* a drag,
+showing values not yet committed, was being filed as though it were the
+document's own. It is no longer kept at all.
+
+*One place decides what the picture shows.* The playhead is a number several
+things can move: the Timeline's ruler, an arrow key, the transport, playback
+itself. Rendering, though, was the transport's own private business — so dragging
+the Timeline's playhead moved the playhead and left the Viewer on the old frame,
+and the arrow keys had the same problem the moment they were added. The Viewer
+now watches the playhead and renders whenever it changes, whoever moved it. Adding
+a fourth way to move it needs no new rendering code at all.
+
+*Asking once, rather than sixty times a second.* Playback asked for a new frame
+on every tick — about sixty a second — while a frame takes far longer than that
+to render, so roughly ten requests piled up per finished frame and the worker
+threw all but the newest away. Each of those discarded requests still cost a lock,
+a copy of the document and a message across the boundary, on the very thread
+drawing the interface. The Viewer now keeps exactly one request outstanding and
+asks again only when that one is answered, for whichever frame the playhead has
+reached by then — the same pictures, a fraction of the work.
+
+There is one subtlety worth naming, because getting it wrong is silent and
+expensive: what is wanted has to be *cleared* once it arrives. An earlier version
+asked again whenever anything was wanted, which meant every delivered frame asked
+for itself, and the engine re-rendered the same picture forever at full speed.
+
+*The Timeline was redrawing itself sixty times a second for no reason.* Moving
+the playhead rebuilt every layer row and every bar — and rebuilding a row means
+asking the engine again for that layer's name, its span, its switches. During
+playback that happened for every frame, and the cost grew with the number of
+layers, so the more work you had in a composition the worse playback got. Only
+two things actually care where the playhead is: the line itself, and the razor,
+which reads it at the moment you click. Both now listen for themselves and the
+rows sit still. Measured on a playhead move: with five layers, 6.4 ms down to
+1.3 ms; with twenty, 1.8 ms where the old shape would have cost around 19.
+
+*Why the zero-copy Viewer showed nothing, and how it was found.* The fault could
+not be seen from inside the program: the engine made its texture, Flutter
+accepted it and asked for it every frame, and the panel stayed empty. It was
+found by driving the real application window from a test and photographing it —
+the first run showed the checkerboard, the last shows the rendered picture
+arriving through the shared texture.
+
+The cause was two mismatches with the component inside Flutter that opens the
+texture (ANGLE). First, the *kind of handle*: Windows has two ways of naming a
+shared texture — an older "share handle" and a newer "NT handle" — and ANGLE
+only accepts the older kind, while the engine was exporting the newer, because
+Direct3D 12 can only make the newer. The engine now crosses that gap itself: the
+picture is copied, still on the graphics card, into a texture made the older way
+by the older API, and that texture's handle is what Flutter gets. Second, the
+*channel order*: ANGLE only opens blue-green-red-alpha surfaces, and the engine
+shared red-green-blue-alpha. The proving colour in the test is orange on
+purpose — with the channels swapped it would show blue, where the earlier
+magenta (whose red and blue are equal) would have hidden the mistake.
+
+*Every-frame playback now keeps two frames in motion.* One frame used to be
+requested, rendered, delivered, shown — and only then the next requested, so the
+renderer sat idle while the interface caught up, and the interface sat idle
+while the renderer worked. In every-frame mode the Viewer now asks for the next
+frame while the current one is still crossing, which is safe there because that
+mode's requests are never discarded. Measured on the real window with 1080p60
+footage: 56 frames a second serial, 64 pipelined — which is what makes a 60 fps
+composition play in real time in the mode that renders and keeps every frame.
+
+*Catching a failure that reports nothing.* The zero-copy Viewer's failure had no
+symptom you could act on: the engine made its texture, Flutter accepted it
+without complaint, and then simply never drew it — an empty panel for the whole
+session while the playhead ran and every other panel updated. Nothing in that
+chain says "this is not working".
+
+So the runner now counts something it can only know by being asked: how many
+times Flutter has actually come back for the texture in order to draw it. A dozen
+frames announced and none drawn is proof the picture is not reaching the screen,
+whatever the reason, and the Viewer quietly goes back to copying pixels — with
+Settings saying why, rather than leaving you to guess whether it is the picture
+or the plumbing that is broken.
+
+*A fast path that fails silently is worse than no fast path.* Turning the
+zero-copy Viewer on in the shipped build had an ugly result: the Viewer drew
+nothing at all — just its checkerboard — while the playhead ran and the Scopes
+updated, which reads as the picture being broken rather than the *transport*
+being broken. Two things had to change. The engine now falls back to copying the
+pixels when it cannot make a shared texture, instead of dropping the frame: a
+frame by the slow road beats no frame. And the frontend now says, with each
+request, whether it can actually display a texture — asked rather than assumed,
+because if it cannot, it draws nothing and the engine has no way to find out.
+
+The path is therefore off by default and opted into from Settings → Playback →
+Frame transport, until it has been seen working on a real window. It had never
+run in a shipped build before, so there was no evidence it did. Which transport
+is in use shows in Settings and in the playback-mode tooltip, so it is never a
+guess.
+
+*The Scopes were secretly doubling the cost of playback.* The waveform and
+vectorscope displays read the numbers in a frame — how bright it is, what colours
+are in it. To get those numbers they were building the whole composition a second
+time, from scratch, for a frame the Viewer had just finished building. Several
+times a second, for as long as playback ran, whenever that panel was open. They
+now reuse the picture already in hand, at whatever resolution it happens to be:
+any size answers the question a waveform asks.
+
+*Why the Viewer froze while the Scopes kept moving.* One background worker
+serves both: the Viewer asks it for a picture, the Scopes panel asks it for a
+trace of the same frame. When it finishes a job it takes everything that piled up
+meanwhile and keeps only the newest, because a frame nobody will ever see is not
+worth rendering — that is what keeps dragging feel attached to the pointer.
+
+The flaw was that "newest" ignored what kind of job it was. During playback the
+Viewer asks about sixty times a second and the Scopes panel about eight, so a
+trace request regularly landed at the back of the queue and threw away every
+picture behind it. The scopes updated, the playhead moved, and the picture sat on
+its first frame. It now keeps the newest of *each* kind — a trace and a picture
+are different jobs, and neither is a replacement for the other.
+
+*The keyboard works again.* The shell that the port replaced had a key handler —
+space to play, the arrows to step, Ctrl+Z to undo — and the new one had none at
+all, so nothing on the keyboard did anything. It is back, with one correction and
+one addition. The correction: a field with focus has to keep its own keys, or
+typing a layer name would also run commands; the old check looked at the wrong
+widget and would not have caught it. The addition: focus now falls back to the
+shell when a field gives it up, without which every shortcut stopped working
+after the first rename.
+
+*Two small things that made the interface feel wrong.* A hint that stuck on
+screen, and controls that twitched when the pointer crossed them. Neither was
+cosmetic in origin.
+
+The hint waits half a second before appearing, so the interface is not covered in
+labels the moment the pointer moves. Nothing was cancelling that wait: move onto
+a control and straight off again, and the hint appeared *after* the pointer had
+already gone — and since it is dismissed by the pointer leaving, and the pointer
+had already left, it stayed there. Hovering the control would clear it and moving
+away would bring it back, which is the loop it was stuck in. The wait is now
+cancelled on leaving.
+
+The twitch was a border. In Flutter a border drawn as part of a box's decoration
+takes up room *inside* the box, so a border that only exists while hovered makes
+the control two pixels bigger in each direction the instant the pointer arrives —
+and everything beside it shifts to make room. The border is now always there and
+merely transparent when it should not be seen, so the space it occupies never
+changes.
+
+*Where the transport sits.* Under the picture, where a transport goes. In the
+rounded theme it is a detached bar floating over the bottom of the frame — the
+rounded language treats it as an object sitting on the picture — while the sharp
+theme keeps it welded to the panel edge, so the two read as two deliberate
+designs rather than one with a gap.
+
+*Dropping footage onto the Timeline.* Dragging a footage item out of the Project
+panel and letting go over the Timeline adds it as a layer. The drag was only ever
+half-built: the Project panel lifted the item and drew it under the cursor, but
+the Timeline had nothing that accepted a drop, so the item fell into nothing.
+What the drag carries is the footage *handle* itself, not a name or a number to
+look it up by — on this bridge the handle is the identity, so the drop hands the
+engine exactly what it was given.
+
+*Menus that are taller than the window.* A menu is drawn in a floating layer over
+everything else, and until now it was simply placed and allowed to be whatever
+height it liked — so a long menu on a short window ran off the bottom with its
+last few rows unreachable. Every floating popup is now capped at the room below
+its own top edge and scrolls inside that if it needs to, which fixes the dropdown
+lists at the same time and for the same reason.
+
+*Two ways to reach the same two commands.* Import and New composition sit on the
+menu bar and on a small footer strip along the bottom of the Project panel, and
+double-clicking the Project panel's blank space imports as well. That is not
+duplication worth removing: the Project panel is where you are looking when you
+want either of them, and the double-click is the gesture people reach for before
+they go hunting through a menu. All three routes call the same two methods on
+`LumitState` (`importFootagePaths` and `newComposition`), so there is one
+implementation and three doors onto it.
+
+The older bridge is worth one paragraph of history because its shape explains
+several decisions above. It passed whole documents as JSON text over a plain C
+interface, so every edit meant serialising the project, sending it across, and
+parsing it back — which is why so much of the design here is about *not* doing
+that: handles instead of copies, one scoped message instead of a fresh document,
+a whole value instead of a granular op. It was deleted once every panel had
+moved across, in one sweep, so the two never had to be kept in step with each
+other.
+
+**The safety net, and why every edit costs a disk write.** Two things stand
+between a session ending badly and losing work, and they are not the same thing.
+An **autosave** is a whole copy of the project written beside it on a timer —
+open one and you get everything up to that copy, and nothing after it. The
+**journal** is the list of edits themselves, appended one line at a time as you
+make them; replayed onto the last saved file it gets you back to the moment
+things stopped.
+
+The journal is why an ordinary edit waits for the disk. That is a real cost
+(measured at about 2.3 ms), and it is exactly why dragging a value does *not*
+commit on every tick — a hundred ticks a second would be a hundred disk waits
+for something the user thinks of as one adjustment. Dragging shows you a picture
+without recording anything, and records once when you let go.
+
+One detail worth knowing because it looks odd from the outside: saving *deletes*
+the journal. That is deliberate. The journal only ever describes work done since
+the last save, so once the file on disk contains that work, replaying it again
+would add it twice.
+
+**Staging versus committing, and why dragging used to lag.** This one is worth
+understanding, because it explains a whole class of sluggishness.
+
+Every ordinary edit is a **commit**: the engine copies the document, applies the
+change, files the old version so Undo can get back to it, appends a line to the
+crash journal **and waits for the disk to confirm it**, then serialises the entire
+document to text and hands it to the interface, which reads all of it back. That
+is the right amount of ceremony for "the user changed something" — it is what makes
+Undo and crash recovery trustworthy.
+
+It is entirely the wrong amount of ceremony for one tick of a mouse drag. Dragging
+a value produces something like a hundred ticks a second, and the disk wait alone
+was measured at 2.3 ms — so a second of dragging spent roughly a quarter of a
+second just waiting for the disk, and left a hundred separate entries in the undo
+history for what the user thinks of as one adjustment.
+
+So a drag **stages** instead. `preview_transform` and `preview_effect_param` put
+the provisional value in memory beside the document, touching neither the document,
+the undo history, nor the disk. The Viewer renders the document *with that value
+laid over the top* — and because the value does not change which frames of video
+have to be decoded, it re-composites from pictures the renderer is already holding
+rather than decoding anything again. When the mouse is released, the ordinary
+commit runs exactly once, so the whole drag is a single undo step. A drag that is
+abandoned rather than released — the gesture cancelled, or the pointer released
+without ever having moved far enough to change the value — discards the staged
+value instead, and the picture returns to where it was. (Cancelling with the
+Escape key is *not* wired up; the value fields have no key handling yet.)
+
+The tell that this has broken, if it ever does: dragging feels heavy and Undo has
+to be pressed many times to get back past one adjustment. Both symptoms have the
+same cause — something on the drag path is committing when it should be staging.
+That is now a test rather than a hope (`preview_effect_param_never_touches_undo_or_journal`).
+
+**Testing a panel that waits for the engine: one real turn, one fake flush.**
+Worth reading before writing a test for any panel that calls something slow.
+
+Flutter's widget tests run in a *pretend* clock, so a test can advance time
+instantly instead of waiting. That pretend clock is why they are fast — and it is
+also why anything genuinely asynchronous appears never to finish inside one: a
+reply arriving from Rust needs a real turn of the event loop, and the pretend
+clock does not provide any. `tester.runAsync` hands back a slice of real time for
+exactly this, but it is only half the answer, because the *reply* arrives in real
+time while the *code waiting for it* is parked in the pretend clock. Neither
+alone makes progress.
+
+The shape that works is to alternate: one slice of real time so the reply can
+arrive, then one flush of the pretend clock so the waiting code notices. Repeat
+until the screen shows what you were waiting for. The test helper
+`settleFrb` in `flutter_ui/test/frb/frb_test_support.dart` does precisely that,
+and its comment records the traps found the hard way:
+
+- **Never `await` an engine call *inside* `runAsync` unless you also started it
+  there.** It deadlocks outright rather than failing — the real-time slice cannot
+  end until the thing it is waiting for completes, and that thing is waiting for
+  the pretend clock, which cannot run until the slice ends.
+- The same trap applies to **anything else asynchronous, not just the engine.**
+  One test hung for eight minutes on an ordinary "create a temporary file" call.
+  Use the synchronous file operations in tests.
+- **Settling has to repeat.** The engine also pushes document-change messages, and
+  one of those arriving can discard the answer that just came in, so a single
+  round is not enough.
+
+The symptom of getting this wrong is a test that *hangs* rather than fails, which
+is worse than a failure: it stalls the whole file behind a long timeout and reads
+as "slow" rather than "broken".
+
+*One caution worth knowing.* The Rust functions in the frb layer are marked with
+a small annotation (`#[frb(...)]`) that tells the generator to include them. An
+unfortunate side effect is that the automatic checker which normally forbids
+crash-prone shortcuts in Rust cannot see inside those functions — so the usual
+safety net does not cover exactly the code the interface calls. A plain
+text-search check in CI (`no-panics-in-frb-api`) stands in for it: nothing in
+`src/api/` may take those shortcuts, and every call must report a problem as an
+ordinary error instead of crashing.
+
+**Reading and writing an effect's parameters.** An effect's controls are not all
+numbers. A blur has a radius, a fill has a colour, a tile has a centre point, a
+noise has a random seed, a dropdown has a chosen option, a displacement effect
+has a file to point at, and a depth blur points at another layer. Any of the
+number-shaped ones can also be *animated* — following a curve of keyframes rather
+than holding one value.
+
+The first version of this part of the new bridge could only say "a number", so
+seven of the eight kinds, and every animated value, came back blank: the panel had
+nothing to draw them with. There is now one type that can be any of them
+(`BridgeEffectValue`), with one variant per kind, and an animated value arrives as
+its actual keys — their times, values and easing — rather than as whatever number
+it happens to equal at the start.
+
+The rule the type is built around is that **reading and writing are exact
+opposites**: whatever comes out can go straight back in, and the document is left
+exactly as it was. That sounds obvious, but it is what makes the panel's ordinary
+way of working safe, which is "read the value, change one part of it, write the
+whole thing back". If reading an animated radius gave back only "12", writing it
+again would delete the animation, and a user would lose work by nudging a slider.
+Two smaller consequences of the same rule: keyframe times cross as exact
+fractions (a key at half a second is "1 over 2", never 0.5, so it lands back on
+the frame it was set on), and any field written by a *newer* version of Lumit that
+this one does not understand is carried through untouched rather than quietly
+dropped.
+
+Writing the **wrong kind** is refused rather than applied. What kind a parameter
+is belongs to the effect, not to the panel: a colour turned into a number would be
+an effect the engine can no longer draw, and the damage would be undoable but not
+obvious on screen.
+
+**Changing which effects a layer has.** Adding, removing, reordering and bypassing
+an effect are four calls on the layer, and each becomes exactly one entry in the
+undo history — pressing Undo once puts the whole stack back as it was. Dragging a
+parameter is the staged path described above: the panel holds its own copy of the
+stack, changes values on that copy, renders previews from it, and commits the copy
+once when the mouse is released. A copy that no longer matches the document — some
+other action removed an effect while the drag was in progress — is refused rather
+than committed, so releasing a slider cannot bring a deleted effect back.
+
+**File dialogues, and why importing doesn't watch the video yet.** Choosing a
+file to open, a place to save, or footage to import needs a real "open file"
+window from the operating system. Flutter doesn't draw those itself — it borrows
+the system's own dialogue through a small add-on called a *plugin*
+(`file_selector`), which bundles the Windows piece that pops the familiar file
+browser. The frontend asks the plugin for a path, then hands that path to the
+bridge: opening and saving reuse the existing calls, and importing footage uses
+a new one (`lumit_bridge_import_footage`). Importing only *records* that a media
+file belongs to the project — it stores the path and stops there. It does not
+open the file, read its size, count its frames, or make a thumbnail, because all
+of that needs the video-decoding library (FFmpeg), and wiring that into the
+Flutter build is a later phase (F2). So after an import the Project panel shows
+the file's name straight away, and the picture and details fill in once decoding
+is connected. One more practical note for the tests: a file dialogue can't pop
+open inside an automated test, so every dialogue call goes through a small
+swappable hook — the real app uses the plugin, the tests slot in a pretend path
+— which is why the whole import-and-save flow can be tested without a single
+real window appearing.
+
+**Running it.** Install the Flutter SDK (`git clone -b stable
+https://github.com/flutter/flutter`, put its `bin` on PATH — it fetches its own
+Dart on first run; the Windows build also wants the same VS 2022 C++ tools the
+Rust build uses). Then, from `flutter_ui/`: `flutter run -d windows` to launch,
+`flutter test` for the tests, `flutter analyze` for the lint pass. The bridge
+library builds separately with `cargo build -p lumit_bridge`, which drops
+`lumit_bridge.dll` in `target/debug/` where the Flutter app looks for it.
+
+**Running it on Linux (for the Linux collaborator).** The Flutter frontend now
+builds and runs on Linux, not only Windows. You need three things installed
+once: the FFmpeg 7.1 "shared" build the engine links (see §8's Linux notes — the
+BtbN `n7.1 ... linux64-gpl-shared` tarball, with `FFMPEG_PKG_CONFIG_PATH`,
+`LD_LIBRARY_PATH` and `LIBCLANG_PATH` pointed at it and LLVM 18); the Flutter
+desktop toolchain (`sudo apt-get install clang cmake ninja-build pkg-config
+libgtk-3-dev`); and the same X11/Wayland/ALSA/GL dev libraries the engine's own
+Linux build wants (the `libasound2-dev libgl-dev libegl-dev libxkbcommon-dev …`
+list in §8). Then, from `flutter_ui/`: build the engine bridge with `cargo build
+-p lumit_bridge` — on Linux this produces `liblumit_bridge.so` in `target/debug/`
+(the loader looks there, then `target/release/`, then beside the executable, then
+the system library path; the `lib` prefix and `.so` suffix are Cargo's Unix name
+for the same crate that becomes `lumit_bridge.dll` on Windows). Run the app with
+`flutter run -d linux`, the tests with `flutter test`, the lint pass with
+`flutter analyze`. If a run or test complains it cannot fetch packages offline,
+add `--no-pub` after a successful `flutter pub get` to reuse the resolved
+packages. Two things behave differently on Linux by design, both degrading
+cleanly rather than failing: the Viewer's zero-copy Viewer path uses **DMA-BUF**
+rather than the Windows DXGI shared handle (built behind
+`--features shared-texture-linux`, K-177 — see the DMA-BUF sections in §9 above);
+there is **no CPU fallback behind it**, because K-183 deleted the copy-the-bytes
+path outright — so on a machine whose driver cannot export the shared image (a
+software rasteriser such as Mesa's lavapipe, which is what CI has), every frame
+is dropped at the publish step and the Viewer simply stays empty. It says so on
+stderr and nothing crashes, but it does not draw. That is why the six Flutter
+tests that wait for a frame skip on CI (`LUMIT_NO_ZERO_COPY_VIEWER=1`, in
+docs/TODO.md); and **popping a panel out into its own OS window works** —
+the `desktop_multi_window` plugin ships a first-class Linux (GTK) implementation,
+so pop-out is *not* gated off Linux. Because this box cannot build
+Flutter-for-Linux, the Linux build is proven by the CI `flutter-linux` job, not
+locally — treat a green run of that job as the gate.
+
+**Verifying the Linux zero-copy Viewer (the collaborator's checklist, K-177).**
+CI proves the Rust Vulkan/DMA-BUF code and the GTK plugin *compile*; whether the
+picture actually reaches the screen can only be checked on a real Linux machine
+with a GPU. If you are that collaborator, here is the recipe (it mirrors how the
+Windows path was proven):
+
+1. **Build the engine with the flag.** From the repo root, build the bridge
+   library with the Linux zero-copy feature on:
+   `cargo build -p lumit_bridge --features shared-texture-linux --release`. This
+   is the `.so` the Flutter app loads. Then build and run the app:
+   `cd flutter_ui && flutter run -d linux --release` (the runner links EGL +
+   GLESv2 for the DMA-BUF import — the CI `flutter-linux` job installs
+   `libgles-dev`/`libegl-dev` for this).
+2. **Open a composition and scrub the Viewer.** The picture should look identical
+   to the CPU path — same colours, same framing. A washed-out, too-dark, or
+   swapped-channel picture means the DRM format is wrong (report it — see below).
+3. **Check the GPU/CPU transport indicator** (Settings, the same indicator the
+   Windows path added in round 3). On the zero-copy path it should read **GPU**.
+   If it reads **CPU**, the DMA-BUF path declined and fell back — that is safe but
+   means the fast path is not active; note what the console logged.
+4. **Toggle the Settings kill-switch off and on.** Off must drop the Viewer to the
+   CPU path (indicator reads CPU) with the picture unchanged; on must return it to
+   GPU. This proves the fallback is reachable without a rebuild.
+5. **What to report if the Viewer is blank or wrong.** A blank Viewer on the GPU
+   path most likely means the exported image did not import: capture any console
+   line mentioning `eglCreateImageKHR`, `dma-buf`, `vkGetMemoryFdKHR`, or
+   `device_from_raw`. The two most likely causes are (a) the GPU/driver did not
+   enable the external-memory Vulkan extensions (the engine then falls back to a
+   plain device and the indicator should read CPU, not blank), or (b) the DRM
+   format/stride does not match what the driver produced. Report the GPU model,
+   the Mesa/driver version, and whether the indicator read GPU or CPU — that is
+   enough to tell a format mismatch from an extension-support gap.
+
+**Verifying the macOS zero-copy Viewer (the Mac collaborator's checklist,
+K-195).** CI proves the Rust Metal/IOSurface code and the Swift plugin
+*compile*, and one unit test (`the_surface_yields_the_pixels_in_bgra_order`)
+proves the bytes come back off a real surface in the right channel order on a
+unified-memory Mac. Whether the picture reaches the screen needs a Mac with a
+window:
+
+1. Build the bridge and run: `cargo build -p lumit_bridge`, then `flutter run -d
+   macos` from `flutter_ui/`. No flag — `shared-texture-macos` is default-on.
+2. Open a composition. A picture in the Viewer *is* the proof: there is no
+   fallback transport left, so a working picture can only have come through the
+   surface.
+3. A blank Viewer with everything else working is the failure this path is
+   watched for, and it reports itself: after a dozen announced frames with none
+   drawn, the Dart side gives up and says so. Capture any console line mentioning
+   `IOSurfaceCreate`, `newTextureWithDescriptor`, `IOSurface \d+` or "not running
+   on the Metal backend".
+4. Report the Mac's chip (Apple silicon or Intel, and on Intel whether it has a
+   discrete GPU — that decides the texture's storage mode, and the discrete case
+   is the one corner this path knowingly does not synchronise).
+
+**Running it on macOS.** The Flutter frontend now has a `macos/` platform
+folder too, scaffolded with `flutter create --platforms=macos .` (K-033 names
+Metal/macOS a supported future target; this is the first concrete step
+towards it, not the full pass — see below for what is still deferred). You
+need Xcode installed (the full app, not just the Command Line Tools — `flutter
+doctor` will say so plainly if only the tools are present) and CocoaPods
+(`brew install cocoapods`). Build the bridge library the same way as the other
+two platforms: `cargo build -p lumit_bridge`, which drops
+`liblumit_bridge.dylib` in `target/debug/` (Cargo's Unix cdylib naming, same as
+Linux's `.so` but with the macOS suffix). Then, from `flutter_ui/`: `flutter
+run -d macos` to launch, `flutter test` for the tests, `flutter analyze` for
+the lint pass. The generated Xcode project's App Sandbox is switched off and
+library validation disabled in both entitlements files — a sandboxed,
+hardened-runtime process cannot `dlopen` an unsigned, locally-built dylib from
+an arbitrary Cargo target path, which is exactly what the bridge loader does
+(matching the unsigned, unsandboxed posture Windows and Linux dev builds
+already have; a signed macOS release is a later decision). The Viewer's zero-copy
+path now exists here too (`shared-texture-macos`, Metal/IOSurface, K-195), so the
+picture appears; it is default-on and needs no flag. The native macOS menu bar
+(muda) stays deferred with
+the rest of the "macOS pass" named in `docs/archive/flutter-port/01-STRATEGY.md` — the
+in-window menu bar renders instead, same as it does today.
+
+**What the bridge carries now (v0.2).** The first bridge only described the
+project as a tree of item names. It now also carries the *inside* of things, so
+the Viewer, Timeline and property editors have something to draw. Ask for the
+document and each composition comes back with its size, frame rate, total frame
+count, its stack of layers (each with a name, a kind, the frames it starts and
+ends on, and its row of switches — visible, locked, solo and the rest), and any
+markers on its timeline. Each piece of footage comes back with its resolution,
+rate and length once Lumit has *probed* the file (read its vital statistics),
+plus a plain status word — `ok`, `missing` (the file has moved), or `unprobed`
+(not looked at yet). The frontend can also make small edits — flip a switch,
+nudge a layer's start or end to the playhead, set a transform value, drop a
+marker — and each goes through the same undo machinery the egui app uses, so one
+press of undo takes it back. All of that is still ordinary text (JSON) crossing
+the bridge. The one exception is the actual picture: a single video frame is far
+too big to send as text, so when the Viewer asks to decode a frame the engine
+hands back a raw block of pixels instead. Dart *copies those pixels out
+immediately and then hands the block straight back to the engine to free* — the
+same "borrow it, copy it, give it back" manners the text replies already use, so
+neither side is left holding memory the other owns. Reading video needs FFmpeg,
+which is bundled behind an on-by-default switch (the `media` feature); turn it
+off and the app still builds and runs, footage just reads as "unprobed" and no
+frames decode.
+
+**What the bridge carries now (v0.3).** v0.2 could *set* a layer's position or
+opacity but never *read* it back, so the property editors could only show what
+you had changed this session. v0.3 fills that gap and adds the rest of the verbs
+a real editor needs. Now every layer also reports its whole transform — for each
+property, its current value, whether it is animated, and (when animated) its
+keyframes with their frames and easing — plus what it points at (the footage or
+comp it shows, or a solid's colour) and its stack of effects. Each composition
+reports its work area (the in/out span the transport loops). And the frontend
+can now *do* far more, every action going through the same undo machinery the
+egui app uses: add a layer of any kind (solid, text, camera, adjustment,
+sequence), delete or duplicate one, change a composition's settings in one
+undoable step, click the *stopwatch* to start or stop animating a property, add
+or remove or slide keyframes, move the work-area edges, and apply, remove or
+tune effects. The rule stays the same as before: every one of these mirrors
+exactly what the egui frontend does under the hood (the same defaults, the same
+op), so the two front doors can never drift apart, and every reply is still the
+whole document as text (JSON) so the panels just re-read it.
+
+**Placing footage and restacking layers.** You can now build a composition from
+the Flutter side: double-click a footage clip in the Project panel (or drag it
+onto the timeline) and it becomes a new layer at the top of the stack — sized and
+centred exactly as the egui app would place it — and you can drag a layer row's
+name up or down to restack it, just like moving a track in any editor.
+
+**The Viewer showing real frames, and the scopes reading them (F2).** The Viewer
+now shows actual pictures. It works out which footage the playhead is sitting
+over — the topmost visible footage layer whose span covers the current frame —
+asks the engine to decode that one frame to raw pixels, turns those pixels into
+an image Flutter can draw, and fits it onto the neutral grey pasteboard. A small
+shared helper (the *preview source*) does this work once and keeps the last
+eight decoded frames in memory, so scrubbing back and forth is cheap and it
+never decodes more than one frame per drawn frame. An important honesty: this is
+a **single-layer** preview. The real *compositor* — the part that stacks every
+layer, applies each one's position and effects, and blends them into the
+finished picture — still lives only in the Rust egui application; it has not been
+lifted out into a shared piece yet. So Flutter can show one footage frame
+straight, but not the composited comp; that (and the faster shared-GPU-texture
+path) waits on the compositor being extracted. When footage is *missing* the
+Viewer draws the same broadcast colour bars a comp shows — unmistakably "no
+signal here" rather than a black frame that hides the mistake — with the file's
+name written across the bottom; an unreadable file shows a dark "unreadable"
+card instead. Pressing play advances the playhead in time with the comp's frame
+rate and loops back to the start at the end, mirroring the egui transport. The
+**Scopes** panel — the colourist's instruments that plot brightness and colour
+instead of the picture (a waveform, an RGB waveform, a vectorscope and a
+histogram) — reads the very same decoded pixels from the shared preview source,
+so the trace always matches what is on screen. Each scope is drawn on a fixed
+near-black background rather than the interface theme, because a scope must be
+read against the same neutral whatever colours the chrome wears, and it holds the
+last trace for a beat rather than blinking to blank when a frame is momentarily
+unavailable.
+
+**The Viewer showing the REAL composited comp (K-175).** The single-layer
+preview above was the honest stop-gap; the Viewer now shows the *whole* comp —
+every layer stacked, each one's position and effects applied, blended into the
+finished picture — the same pixels the egui Viewer shows and the same pixels an
+export writes to a file. Here is the trick that made it possible without a big
+rebuild. The compositor lives in the Rust egui crate, but the part that draws a
+comp to an offscreen picture (the one the *exporter* already uses) never needed
+a window or the egui interface — it only needs a graphics device, the video
+decoders and the document. So that path is wrapped in a small reusable object, a
+**headless renderer**: "headless" just means "no window". It holds the graphics
+device (which is slow to set up, so it is created once and kept), the compiled
+drawing programs and the open video decoders, and each time the Viewer asks for
+a frame it composites the comp and hands back the finished pixels. Because it is
+the very same code the exporter runs, the Viewer, the egui preview and the
+exported file cannot disagree about what the comp looks like (K-031). The bridge
+holds one of these renderers for the session and offers a new call,
+`lumit_bridge_render_comp_frame`, that takes a comp and a frame and returns the
+composited pixels with the same borrow-copy-return manners as the single-frame
+decode. On the Dart side the Viewer prefers this whole-comp call whenever the
+engine offers it, and quietly falls back to the old single-layer decode when a
+render can't be produced — for instance on a machine with no suitable graphics
+card, where the renderer reports itself unavailable once and the Viewer simply
+stays on the single-layer path (never a crash). A missing layer inside the comp
+comes back already painted as colour bars *inside* the finished frame, so the
+Viewer needs no separate "missing" card on this path. (Both honesties this
+paragraph used to end on — the bridge depending on the egui crate, and a smaller
+scale shrinking the returned picture without reducing the work — are dealt with
+in "The picture-making crate" below.)
+
+**The picture-making crate, and why dragging a value used to stutter (K-178).**
+The paragraph above ended on a wrinkle: to draw anything, the Flutter frontend
+had to reach *through* the egui frontend, because that is where the picture-making
+code lived. That has now been pulled out into a crate of its own, `lumit-render`,
+which both frontends use. The engine no longer contains a dashboard.
+
+It is worth understanding what that code actually does, because the shape of it
+is what fixed a real performance problem. Making one frame is five steps:
+
+1. **Probe** — what is this video file: is it there, how fast does it run, how
+   many frames does it have?
+2. **Plan** — walk the composition at this moment and write down *which layer
+   needs which frame of which file, at what size*. This is quick: it opens no
+   files and does no drawing. It is just a list.
+3. **Decode** — actually read those frames out of the video files. This is the
+   slow step, by a wide margin.
+4. **Build** — turn the project plus those decoded frames into a **draw list**:
+   a plain description of every layer's picture, where it sits, how transparent
+   it is, which blend mode, and what its effects work out to as plain numbers.
+   Still no graphics card involved.
+5. **Realise** — hand the draw list to the graphics card and get the frame.
+
+Now the point. When you drag a blur radius, what changes? Only step 4. The video
+frames underneath are *exactly the same ones* — you have not moved the playhead.
+So the honest thing is to keep the decoded frames from last time and re-run only
+steps 4 and 5, which are fast.
+
+That is what the egui Viewer had always done. The Flutter Viewer did not: it went
+through the *exporter's* path, which sensibly decodes everything afresh every time
+(that is right for writing a file, where each frame is visited once). So every
+single tick of a drag re-read the whole composition off disk, and dragging
+stuttered. Sharing one crate is what made it possible to give the Flutter path the
+good behaviour rather than writing it a second time and hoping the two stayed in
+step.
+
+The mechanism is simple enough to state in a sentence: before decoding, compare
+the *plan* with the plan that produced the frames already in hand; if they ask for
+the same pixels, skip the decode entirely. The comparison deliberately ignores
+placement and effects — those are precisely what the drag is changing. One live
+edit is the exception and gets handled properly rather than glossed over: dragging
+a **Retime** "Time" value genuinely moves to a different frame of the source, so it
+is applied to the plan rather than after it.
+
+This is measured, not asserted. The decoder counts the frames it actually decodes,
+and a test drives ten drag ticks and requires the count not to move — then moves
+the playhead and requires that it *does*, so a broken version that simply never
+decodes cannot sneak through.
+
+Two other things came with it. Footage is now decoded at the size it will be
+*shown* rather than always at full size and thrown away — so the second honesty in
+the paragraph above is gone: a smaller scale now reduces real work, not just the
+size of the answer. And finished frames are now filed under a **name derived from
+their content** — a fingerprint of everything that went into them. Before, the
+Flutter frame cache threw away every frame in the project whenever the document
+changed at all: renaming a layer or nudging the work area, neither of which can
+change a single pixel, emptied it. Now those produce the same names, so nothing is
+discarded, and editing one layer retires only the frames that layer appears in.
+
+One piece of untidiness is left, deliberately and in writing rather than quietly:
+there are still **two** routes through a composition — the interactive one just
+described, and the exporter's older one — doing the same job by different paths,
+kept in agreement by hand and by tests. Merging them is the next job on the
+backlog, and it is gated on a set of tests proving the two produce identical
+pixels across precomps, mattes, adjustment layers and motion blur before the old
+one is deleted.
+
+**The editors starting to come alive (F4, first slice).** Three of the editing
+surfaces move off their placeholders. The **Hierarchy** panel draws the active
+composition as an indented outline: the comp at the top, then its layers, each
+with the little coloured symbol for its kind; a layer that is *itself* another
+composition (a "precomp") gets a fold-out triangle you can open to see the
+layers inside it, and so on down. Clicking a row picks that layer. (One honest
+limitation: the bridge does not yet tell us *which* composition a precomp layer
+points at, only that it is one, so we match it up by name for now — a later
+bridge version will carry the exact link.) The **Effect controls** panel can show
+the picked layer's **Transform** values — its anchor point, position, scale,
+rotation and opacity — as editable number boxes in the same card style as the
+Settings window; typing or dragging a box sends the change straight to the
+engine as one undoable step. That card is **off unless you ask for it**
+(Settings → Interface), along with the layer's Source and Retime rows: the
+Timeline already shows all three when you twirl a layer open, and repeating
+them here pushed the effects — what the panel is actually for — a screen
+further down. The **Add effect** button drops its menu underneath itself, one
+row per category, each opening onto the effects in it. Those boxes now read the **current** values back
+from the engine (the em-dash placeholder is gone), each row carries a stopwatch
+to start or stop animating that value and a ◄ ◆ ► navigator to step between or
+add and remove its keyframes, and below the transform sits the layer's stack of
+**effects** — one card each, with an on/off tick, a remove button, and editable
+rows for the numeric and colour settings (the other kinds are shown read-only
+until the engine gains a way to set them); a companion **Effects & presets**
+panel lets you search the built-in effects and apply one to the selected layer.
+Finally, the **Composition settings** and **New composition** windows
+are real dialogues now — name, size, frame rate and duration — opened from the
+Composition menu; every field reaches the engine, and the two windows have since
+become one piece of code with two buttons (see "the composition settings window"
+at the end of this section for what each field means and the frame-rate bug that
+reshaped two of them). Saving effect presets to a `.lumfx` file, and masks, are later waves.
+
+**The Timeline coming to life (F3).** The Timeline panel — the strip along the
+bottom that shows time running left-to-right and the stack of layers — is now
+live. Across the top sits a row of tabs, one per composition in the project;
+clicking one makes that comp the active one everywhere. Below the tabs is the
+*time ruler*: a tall band marked with seconds, thicker on the numbers and
+thinner in between, with little flags where you have dropped markers; clicking or
+dragging anywhere along it moves the playhead (the line that says "show me this
+moment"), which appears as a bright vertical line running down through all the
+layers. Each layer gets a row: on the left, a name and a cluster of little
+toggle switches (show/hide the picture, mute the sound, solo, lock, effects on,
+motion blur, 3D, and a fold-out for nested comps) — every switch flip is a real,
+undoable change sent to the engine. When the panel is made narrow, the switches
+don't pile up on top of each other the way the old interface's did; they drop
+away in a set order (the least-important first), so the name and the eye always
+stay readable — a deliberate improvement the owner asked for. On the right of
+each row is the layer's *clip bar*, tinted with the layer's colour, showing where
+in time it starts and ends; you can drag the middle of a bar to slide the whole
+layer earlier or later (its length preserved), or grab either end to trim just
+that edge, and with the magnet on, drags snap to whole seconds and to markers.
+The zoom, magnet and graph-editor buttons live along the bottom. A second wave now
+adds the fold-out twirl on each layer (revealing its transform property rows, each
+with a stopwatch, the ◄ ◆ ► keyframe navigator and a value you can drag — the
+keyframes themselves are drawn in the graph editor rather than as diamonds on the
+lane, which is still to come), the work-area band on the ruler with
+draggable edges, a right-click menu on each layer, a search box that filters the
+layers by name, and a scrollbar to slide left and right once you have zoomed in.
+The **graph editor** landed too: the bottom-bar toggle turns the lane into a curve
+editor, with the lens chosen in its header. The **value graph** draws a layer's
+chosen (or first animated) transform property as a smooth curve — sampled from the
+same bezier the engine evaluates, so it never fakes the shape with straight lines
+between keys — with the keyframes as shape-coded glyphs you drag in time and value,
+gold **bezier handles** on a selected key, a right-click menu (easy-ease / linear /
+hold / delete) and a double-click to add a key. A **retimed footage layer** adds two
+more lenses: the **speed** lens (the speed-over-time ramp, with its presets and
+→Rate) and the **Time** lens (where the source frame sits over comp time, whose
+boundary joins you drag in time). Drags snap to beats and whole frames with the
+magnet on. It shares the timeline's own zoom and scroll, so the curve stays lined up
+with the lanes underneath.
+
+**What the bridge carries now (v0.4): export, Retime and the last columns.** The
+biggest addition is **export** — writing the finished comp to an `.mp4`. Rather
+than teach the bridge to encode video from scratch, it borrows the egui
+application's exporter through the same headless seam the Viewer uses (K-175):
+the seam gathers the footage and audio the export needs and lends a graphics
+device, and the exporter does the rest on its **own thread**, exactly as the
+egui app does, so the interface never freezes while a file is written. The
+conversation is a simple loop: Dart calls "start" with the composition, an
+output path, and a small description of the settings; then it calls "poll" on a
+timer to learn how far along the encode is (which frame of how many, which
+encoder the machine settled on) until the reply says *done* (with the file's
+path) or *failed* (with a calm reason); a "cancel" call stops it cleanly. Only
+one export runs at a time — asking to start a second while one is running
+answers "an export is already running", and the interface queues it. Two pieces
+of the export dialogue are worked out on the Rust side so the two frontends
+cannot disagree: **stamping a preset** (choosing "YouTube 1080p60" fills in the
+codec, size and bitrate, keeping the preset's own peak bitrate while its numbers
+stand unedited and falling back to a 1.5× peak once you change them) and
+**naming the file** (a template with `{comp}`, `{preset}` and `{date}` slots,
+cleaned of characters Windows forbids, always ending in `.mp4` — and a blank
+template reproduces each preset's own suggested name exactly). Alongside export,
+v0.4 finishes the read-back and the editing verbs a real timeline needs. A
+keyframe now reports its **Bezier** handle on each side (the tangent's slope and
+reach) and the frontend can set a keyframe's interpolation (hold, linear or
+bezier). A footage layer now reports its **Retime** — the map from the clip's
+own clock to which moment of the source is on screen, told as a chain of
+segments (a constant-or-eased *speed* run, or a value curve) meeting at
+boundaries — and the frontend can set a constant speed, change a segment's ease
+preset, convert a curved segment to a plain speed one (the reply tells you how
+much the fit drifted), and drag a boundary. (The word is *Retime* and the
+quantity is *speed*, never "time remap" or "velocity" — the house glossary.)
+Finally the last timeline **columns** are wired: a layer's blend mode (with the
+full list to choose from), its matte (borrowing another layer's alpha or
+brightness to cut it out), its parent (so moving one layer moves another), the
+composition's motion-blur shutter, and dropping a starter mask shape (rectangle,
+ellipse or star) onto a layer. As always, each of these mirrors exactly what the
+egui frontend commits, one undoable step, and the reply is the whole document as
+text so the panels just re-read it. Nothing engine-side is needed to remember
+which comps are open or where the playhead sits — that is the frontend's own
+state — so restoring a session stays a Dart concern.
+
+**The Retime graph, in the timeline.** Turning on the graph lens swaps the
+timeline's lane area for a curve of the selected clip's *speed* over time: each
+straight or eased ramp is drawn from its start speed to its end speed, a bent
+(mapped) segment shows the speed its curve implies, and the join points between
+segments sit as vertical lines you can drag left or right; a small row up top
+lets you ease the ramp under the playhead (Lin/Slow/Fast/Smth/Shrp) or flatten a
+curved segment to a plain rate, and every number the curve needs to be drawn is
+worked out by a small, separately tested piece of plain maths so the picture is
+never guesswork.
+
+**Exporting a video (the dialogue and the queue).** Choosing File → Export opens
+a small settings window where you pick a delivery preset (which fills in the
+codec, size, bitrate and a suggested file name for you), adjust anything you
+like, choose where to save, and press Export; if one export is already running
+the new one simply lines up behind it and starts the moment the first finishes,
+one at a time, with the status line at the bottom showing the frame count as it
+goes and a × to cancel. The "share" shortcuts (Discord 50 MB / Small 10 MB) skip
+the dialogue and work the bitrate out from the size you are aiming for, using the
+same tested piece of plain maths the desktop app uses.
+
+**Reaching the last columns, and the app remembering where you were.** The
+right-click menu on a layer now does the real work for its blend mode, its matte
+and its parent, and for dropping a starter mask (rectangle, ellipse or star) —
+the desktop app packs these into narrow dropdowns across a wide row, but the
+Flutter panel's layer column is too slim for that, so they live in the menu
+instead, each opening a small picker; the composition's motion-blur master
+switch sits on the timeline's bottom bar for now. The Composition-settings and
+New-composition windows now apply for real (editing an existing comp fills the
+boxes from it and commits the whole set as one undoable change; creating one
+makes the comp and then applies its size, rate and duration). Two conveniences
+mirror the desktop app: the interface now **remembers each project's session** —
+which comps were open, where the playhead sat and which layer was picked, saved
+per project file and restored when you reopen it — and it **autosaves** a
+rotating copy beside the project every few minutes while you have unsaved
+changes, in an `autosaves` folder next to the file, never touching the file
+itself (three copies are kept, oldest dropped first).
+
+**Making the Viewer smooth: the render isolate (the perf pass).** The interface
+felt laggy because it did the heaviest job — asking the engine to composite the
+whole picture and copy it back — on the same thread that draws the interface, so
+the window froze for the length of every render. A *thread* in Dart is called an
+*isolate*, and the fix is a dedicated background one: a long-lived worker that
+opens its own handle to the same engine library and does nothing but render
+frames when asked. Because both handles are the same file loaded once into the
+same program, they see the very same engine (the engine guards itself with a
+lock, so the worker's render and the interface's edits take turns rather than
+collide). The interface now *asks* the worker for a frame and carries on drawing;
+when the picture comes back it is shown. Two manners keep it feeling live: only
+one render runs at a time, and if you scrub past several frames while one is
+still rendering, the worker is asked only for the newest one you landed on (the
+in-between frames are skipped, not queued up) — and the last real picture stays
+on screen the whole time, so the Viewer never flashes blank. If the worker
+cannot be started, or there is no engine library (as in every test), the old
+behaviour is kept as a fallback and the picture is simply rendered inline. Two
+smaller changes came with it: the playhead now has its own private
+change-signal, so moving it repaints just the picture, the time readouts and the
+playhead line rather than rebuilding every layer row and panel at the frame
+rate; and remembering the session (which project, playhead, selection) now waits
+for a half-second lull instead of writing to disk on every single frame of a
+scrub.
+
+A later testing round found the same freeze sneaking back in through side
+doors: a few smaller engine calls were still made on the interface thread, and
+each of them has to wait its turn behind the engine's render lock — so if the
+worker was mid-render on an uncached frame, the whole window stopped until that
+render finished. The worker now serves those too: the Scopes panel's trace
+(which reads the engine every time a new frame lands, so with the panel open
+every uncached frame used to freeze the window for the length of its render)
+and the Project panel's little footage thumbnails both rode the same background
+worker, ask-and-carry-on style with the same "only the newest request matters"
+manner. (The thumbnail half of that has since gone: the Project panel moved to
+the new bridge, where asking for a thumbnail is simply an ordinary background
+request, so the hand-built worker route for it was deleted rather than kept in
+two versions.) Beat detection — which listens through the whole composition's audio
+and can take seconds — now runs in its own short-lived background worker: a
+quiet "Detecting beats…" note shows while it listens, and the markers appear
+when it is done, with the window live the whole time. And the colour
+eyedropper, which used to render a whole full-size frame on the interface
+thread the moment you moved the pointer over the picture, now simply reads the
+pixels the Viewer has already copied back — sampling is free — only asking the
+worker for a frame in the rare case where none has arrived yet.
+
+**Filling in the edit commands (bridge v0.7).** By this point the bridge could
+show the whole document and do the common edits, but a scatter of menu items and
+editors still had nowhere to send their instruction — the engine simply had no
+"command" for them yet. This round adds the missing ones, each a thin, tested
+Rust function that routes through the engine's own undo-able operation (so the
+Flutter app and the old egui app can never disagree, and one press is one undo):
+the *razor* that cuts or deletes a clip under the playhead on a sequence layer;
+*beat detection* (listen to the composition's audio, drop a marker on every
+beat) and clearing those markers; the project-panel actions (delete, rename, drag
+back to the top level, and *relink* a moved-away video file to its new place on
+disk, siblings in the same folder coming along); the layer commands (rename,
+convert a footage layer into an editable sequence, trim a slowed-down clip to
+where its source runs out); the two remaining speed switches (play a clip in
+reverse; choose how in-between frames are made — nearest, blend or optical flow);
+editing what a text layer *says* and a solid's colour and size and a camera's
+zoom; the four remaining effect-knob kinds (dropdowns, checkboxes, random seeds
+and point pickers) plus reordering effects and moving a linked x/y keyframe pair
+as one undo step; and three housekeeping calls — a proper *autosave* that writes
+a spare copy beside your project **without** quietly making that copy the file
+you are editing (the old shortcut had that bug), a list of those spare copies and
+a "replay the crash journal" recovery, and an honest *boot log* the splash screen
+can show (the library's version and which features it was built with — no made-up
+lines). On the Dart side these all live on a new optional capability the real
+library offers (`EditOpsBridge`), kept separate so the test stand-ins need no
+changes; the interface calls them through plain pass-throughs that show any calm
+error in the status line. Two honest caveats are written down rather than
+hidden: beat detection runs in one go here (the old app did it on a background
+thread — fine for short clips, a later change if long songs feel slow), and the
+crash-journal recovery can replay a journal a previous session left but the
+Flutter side does not yet *write* one on every edit (a named follow-up).
+
+**Finishing the chrome: the splash log, the recovery prompt, and making the
+whole interface bigger (section E).** Three of the remaining chrome pieces are
+now wired up. The **splash** — the little card that appears while the app starts
+— used to list four made-up steps ("workspace store", "theme"…); it now shows
+the engine's *own* honest boot lines (its version, which features it was built
+with) when the real library is present, and falls back to the old canned list
+only when it is not. The **recovery prompt** answers a simple worry: if the app
+closed unexpectedly last time, did you lose work. When Lumit opens a project and
+notices its automatic spare copies (the *autosaves*) are newer than the file
+itself — the tell-tale of a session that ended without saving — it puts up a
+small window offering three choices: replay the interrupted changes, keep the
+last saved version, or open one of the spare copies. Two honesties are written
+into it: the engine can only replay the interrupted changes by actually applying
+them (there is no way to peek first and count them), so the window is triggered
+by the "spare copy is newer" signal rather than by counting changes; and opening
+a spare copy loads its contents while still remembering the real project as the
+one you are working on. Finally, the **UI scale** slider in Settings now does
+something: dragging it makes the entire interface draw larger or smaller. The way
+this works is worth a sentence, because the obvious approaches are traps —
+telling Flutter a fake "pixel density" changes nothing, and simply blowing the
+picture up leaves the buttons in the wrong places for the mouse. Instead the
+whole app is *scaled like a drawing* (a `Transform`), but first given a smaller
+imaginary canvas to lay itself out on, so that once it is scaled back up it fills
+the window exactly — and because Flutter applies that same scaling to where your
+mouse clicks land, the buttons stay clickable and the text stays sharp. (The one
+genuinely seamless way, matching what the old egui app does internally, needs an
+experimental Flutter feature the pinned version keeps switched off — so this is
+the best available, and it is a good one.) The last piece of section E —
+**popping a panel out into its own desktop window** — was first judged
+impossible, then reopened when half of that judgement turned out to be wrong.
+Half stands: the pinned Flutter version only offers built-in multi-window behind
+an experimental, switched-off flag our checks forbid using, so we do not touch
+it. The other half was a misread. The add-on package we use
+(`desktop_multi_window`) does give each extra window its *own* Flutter engine
+with its own private memory — but crucially those engines all live inside the
+*same running program*. And the one thing a popped-out panel actually needs is
+not the main window's memory but the **document**, which the engine keeps in one
+shared place for the whole program (the single `lumit_bridge.dll` loaded once).
+So a popped-out panel simply opens its own door to that same shared engine —
+exactly the trick the picture-drawing helper already uses — and edits land in the
+same undo history everyone sees. What travels to the new window is a short note
+saying which panel to show and which colours to wear; the panel then reads the
+shared document and pushes its edits straight back. A few panels are offered this
+way (Project, Hierarchy, Effect controls, Effects & presets, Scopes); the Viewer
+and Timeline stay put because they lean on machinery that only makes sense in the
+main window. The new window checks the document about twice a second so an edit
+made in the main window shows up; the reverse — the main window noticing an edit
+made in a popped-out one — waits until you next touch the main window, an honest
+rough edge written down rather than papered over. The parts that actually open a
+real window can only be *built* on the owner's Windows machine (the tool that
+compiles them does not run in the assistant's environment), so the checks for
+this feature are run there.
+
+**The "engine-surface close" wave (bridge v0.9), in plain terms.** A run of
+small gaps all came down to the same thing: the engine *knew* something the
+Flutter side could not yet *see* or *ask for*. This wave closed those.
+
+- The picture-description the Flutter side reads (the "snapshot") learned to
+  carry a few more facts it had been leaving out: the clips laid along a
+  sequence row; where each layer's own clock sits on the timeline (so the
+  Timeline can draw the little "held frame" hatch when a slowed clip runs out of
+  footage); which markers are the music beats the app found versus ones you
+  dropped by hand; the words, size and colour of a text layer, a solid's size,
+  a camera's zoom; and, for each effect, exactly which effect it is and whether
+  each of its dials is animated. All of this was *already* in the engine — the
+  snapshot just wasn't repeating it — so adding it is safe and an older reader
+  simply ignores the new fields.
+- Drawing a mask by dragging a box in the Viewer now sends the box's real size
+  and position to the engine, instead of dropping a fixed starter shape in the
+  middle and ignoring where you drew.
+- Effect dials got a stopwatch and keyframe navigator, just like the transform
+  rows already had — turn animation on, drop a key at the playhead, nudge or
+  remove one — by reusing the very same machinery the transform keyframes use.
+- "Save these effects as a preset" and "load a preset onto this layer" now work:
+  the engine hands the Flutter side a small text file (a `.lumfx`) that is
+  byte-for-byte the same as the one the egui app writes, so presets pass between
+  the two apps; the Flutter side only has to pop up the file picker.
+- A **crash journal** is now written on every edit. The journal is a running
+  list of the edits you have made since the last save, kept in a little file
+  beside the app's cache; if the app ever stops unexpectedly, reopening the
+  project replays that list so your unsaved work comes back. The egui app has
+  always done this; now the Flutter bridge does too.
+- The **realtime tier** got wired up. During playback, if the machine can't
+  keep up at full resolution, a small controller (built and tested long ago but
+  never plugged in) drops the preview to half, a third, or a quarter resolution
+  and earns it back when things calm down — quick to worsen, slow to improve, so
+  the picture doesn't flicker between qualities. The Viewer can now ask the
+  bridge "what resolution are we at?" to show a readout, and in *Auto* mode it
+  renders the next frame at whatever the controller chose. Picking a fixed
+  resolution by hand simply overrides it.
+
+**The "final UI wave", in plain terms.** The wave above taught the engine to
+*tell* the Flutter side more; this one is the Flutter side actually *drawing and
+using* those new facts, so the windows now look and behave like the older egui
+app in these places:
+
+- **Beat markers look different from your own markers.** The music beats the app
+  detects show up as faint ticks that fade with how sure the app is about each
+  one, sitting low on the ruler; the markers you drop by hand stay full-height
+  and solid. (Before, everything looked the same.)
+- **A sequence row shows its cut lines.** When one timeline row holds several
+  clips end-to-end, thin dividers now mark where one clip stops and the next
+  begins — the same lines the razor tool cuts on.
+- **The "held frame" hatch.** If you slow a clip down so much that it runs out of
+  its own footage before the row ends, the leftover stretch is washed and
+  striped in a calm amber with a small "HOLD" tag — a quiet warning that the clip
+  is repeating its last frame there, never a red alarm. Working out *where* that
+  stretch begins meant copying a piece of the engine's time-mapping maths into
+  the Flutter side (in `graph_maths.dart`), which is covered by its own tests.
+- **The Text, Solid and Camera editors now read the truth.** They fill their
+  boxes from what the engine actually holds (a text layer's words/size/colour, a
+  solid's dimensions, a camera's zoom) instead of only remembering what you typed
+  this session.
+- **The `.lumfx` preset buttons.** "Save preset" and "Load preset" now sit under
+  the effects list and open a normal file picker; the effect dials' stopwatches
+  (from the wave above) also make animating effects match animating a transform.
+- **"Auto" is now in the resolution menu.** Alongside Full/Half/Third/Quarter you
+  can pick Auto; a small readout beside the menu shows which resolution the
+  realtime controller has settled on while you play.
+
+One big piece is deliberately *not* in this wave: the **value graph editor** —
+the curve-with-handles view for animating an ordinary property, and the
+source-position ("Time") lens for retimed clips. The Flutter graph editor draws
+the *speed* curve for retimed clips today; the value curve is a large, separate
+build, and drawing it at low fidelity (straight lines where real curves belong)
+would look wrong, so it is left as an honest, named remainder rather than
+half-built (see `docs/archive/flutter-port/06-REMAINING-WORK.md` §C).
+
+**Audio playback in the Flutter frontend.** Until this change, pressing play in
+the Flutter window moved the picture but made no sound at all — the playhead
+was advanced by an ordinary interface timer. Now the same audio machinery the
+egui application uses is wired through the bridge, and it works the way all
+good playback works: **there is exactly one clock, and the sound card owns
+it.** The sound card asks for its next slice of samples on a strict schedule it
+controls; counting how many samples it has consumed *is* the playback time.
+Every screen refresh, the Viewer asks the engine "what time is it?" and shows
+the frame for that answer — the picture chases the sound, which is why the two
+can never drift apart.
+
+When you press play, the engine walks the composition for every audible layer
+that carries sound, decodes those files once (they are kept for the session),
+lays each one on a long strip at its own start time and volume — the *mix
+plan* — and hands the plan to the sound card's thread. All of that happens in
+the background: the play press returns instantly, and until the sound is ready
+the picture simply runs on the old interface timer, then hands over to the
+audio clock the moment it is loaded.
+
+Editing while playing is the nice part. Mute a layer, drag a clip, trim it,
+nudge a volume — the interface tells the engine "the comp changed", the engine
+compares a fingerprint of what the mix *should* be against what is loaded, and
+if they differ it builds a fresh plan and **swaps** it in without touching the
+clock or stopping the sound. You hear the edit on the next slice the sound card
+asks for, about a hundredth of a second later. If nothing that affects sound
+changed, the fingerprint matches and nothing happens at all.
+
+A machine with no speakers or sound device is handled calmly: the engine notes
+"no audio" once and playback simply runs silent on the interface timer, exactly
+as before — no errors, no retries. The same is true for a composition with no
+audio layers, and for the loop: when playback wraps around the work area, the
+audio is asked to jump back to the loop start and keep going. Two known
+remainders are named rather than built: output-latency compensation (the few
+milliseconds between the clock and the speaker cone — within the ±half-frame
+tolerance the performance rules allow) and the per-layer waveform lanes the
+egui timeline draws.
+
+**The transform-preview fast path (dragging a numeric field, ABI 11).**
+Dragging a Position/Scale/Rotation/Opacity field used to lag badly, and the
+render isolate above is not what was slow — the *engine call itself* was. Every
+tick of the drag ran the exact same path a single, deliberate edit does:
+push an undo entry (a full copy of the document), write a line to the
+crash-recovery journal on disk, and turn the whole document back into JSON
+text for Dart to read. That is the right amount of work for one edit; it is
+far too much for every pixel of mouse movement, and Dart then re-parsing that
+whole JSON string threw away the Viewer's entire warm picture cache on every
+single tick, so the picture went cold and had to redraw from scratch each
+time too.
+
+The fix keeps a drag's *live* value somewhere much cheaper than the document:
+a small note on the engine side saying "while you're drawing, treat this one
+property as this value" — no undo entry, no disk write, no text conversion.
+The Viewer asks for one picture under that note and shows it; nothing is
+banked into the picture cache, because a preview picture is only ever true
+for the instant of one drag tick and gets thrown away the moment the next one
+(or the real edit) arrives. Only when you *let go of the mouse* does the
+real, permanent edit happen — the same single undo-worthy edit dragging
+always should have been, exactly once, right at the end. Letting go of a
+linked Scale pair still commits both axes as two edits, undoing back one axis
+at a time, precisely as before this fix — only the felt smoothness of the
+drag changed, not what Undo does afterwards. A drag that is cancelled rather
+than released — the gesture interrupted, or the pointer let go without the
+value ever having moved — throws the live note away with nothing committed at
+all, so the picture and the number both snap back to wherever they were before
+you started dragging. (Cancelling with the Escape key is not wired up: the
+value fields have no key handling yet. This paragraph used to claim otherwise.)
+
+An older engine library that predates this simply does not offer the live
+note, and the interface notices and quietly falls back to the old,
+tick-by-tick full-edit behaviour — slower, but correct, and nothing breaks.
+
+**The composition settings window, and why changing the frame rate used to
+speed everything up.** This is one window doing two jobs: pressed from the
+Project panel's *New composition* button (or the Composition menu) it says
+"New composition" and its button reads *Create*; opened by right-clicking a
+composition it says "Composition settings" and reads *Save*. They ask the same
+four questions, so there is one piece of code and one appearance rather than
+two that drift apart.
+
+Two of those questions changed shape, and the second one was a real bug the
+owner reported.
+
+*The frame rate is now one number.* It used to be shown as two — a top and a
+bottom, 24000 over 1001 — because some broadcast rates genuinely are fractions
+(what everyone calls "23.976 fps" is exactly 24000/1001, and a number written
+out as 23.976 is a rounding that can never be turned back into the exact one).
+That is true, and the engine still stores and receives the exact pair; but it
+is *our* problem, not yours. So the field takes the number you would say out
+loud — `60`, `600`, `23.976` — and works the fraction out behind the window,
+with a **Presets** list beside it holding the awkward rates so nobody has to
+remember that 1001 exists.
+
+*The duration is now a length of time, not a count of frames — and that is the
+fix.* Think about what a comp actually is. Underneath, the project stores "this
+composition is thirty seconds long" and "this layer runs from second two to
+second twelve" — real time, the kind a clock measures. The frame rate is only
+how finely that time gets chopped up for display: at 30 fps thirty seconds is
+900 slices, at 60 fps it is 1800 slices of the same thirty seconds. Nothing
+about the *content* changes when you change it, any more than a film gets
+shorter when you count it in half-frames.
+
+The old window asked for the duration as a slice count. So it would open on a
+thirty-second comp at 60 fps, show you "1800", and if you changed the rate to
+30 and pressed Save, it dutifully wrote back "1800 frames" — which at 30 fps
+means **sixty seconds**. The comp quietly doubled in length while every layer
+inside it stayed exactly where it was, occupying the seconds it always had.
+On screen that reads as everything suddenly running at half speed, which is
+precisely what was reported. Changing the rate the other way looked like a
+speed-up for the same reason.
+
+Now the field reads `00:00:30.000` — hours, minutes, seconds, thousandths —
+which is the thing the project actually stores, so it passes through a rate
+change untouched. Change 60 to 30 and the comp is still thirty seconds long,
+every layer is still where you left it, and the only difference is that the
+timeline counts 900 frames instead of 1800. That promise has a test on each
+side of the boundary, so it cannot quietly come undone: one in Rust that
+checks the comp and its layers after a rate change, and one in Flutter that
+drives the real window and presses Save.
+
+The size row gained a padlock, on by default, that keeps the shape when you
+change one side, with the ratio spelled out beside it (`40 : 17`).
+
+**Picking more than one thing in the Project panel.** The panel used to allow
+exactly one selected row. It now behaves like every file list: plain click
+picks one, `Ctrl`-click adds or removes one, `Shift`-click takes the whole run
+between your last click and this one. Dragging any row that is part of a
+selection brings the whole selection with it — dragging an unselected row is
+about that row alone — so four clips can be dropped onto the Timeline in one
+go and each becomes a layer.
+
+The useful destination for that gesture is the **New composition** button
+itself, which now accepts drops. Dropping footage on it opens the settings
+window already filled in from the media: the size and rate of the first item
+that has a picture in it, and the length of the longest one (a comp shorter
+than what you dropped into it would cut off the very thing you asked for).
+Press Create and you get the comp *and* every dropped clip in it as a layer.
+Reading those numbers off a file means opening it with FFmpeg, which is slow
+enough that it must not happen on the interface's own thread, so it happens
+before the window appears rather than making the window rearrange itself a
+moment after you see it.
+
+**Twirling a layer open in the Timeline, and why the picture now keeps up.**
+Two things landed together here, and the second one is the reason the first
+looked broken.
+
+*The fold-out.* Every layer row in the Timeline has a little arrow beside its
+number. Click it and the layer opens to show its **Transform** properties —
+anchor point, position, scale, rotation, opacity — one row each, with the
+stopwatch and the ◄ ◆ ► keyframe navigator on the left and the numbers on the
+right. The numbers are *scrub-draggable*: press on one and move sideways and
+the value follows your pointer, or click it and type. Dragging is one undoable
+change for the whole gesture, not one per pixel: while you drag, the engine
+renders a *copy* of the composition with your in-progress value patched into
+it and never touches the real document, and only letting go writes the change.
+Clicking the arrow again folds it away.
+
+These are the same rows the Effect controls panel has always shown. Rather
+than write a second set that would slowly drift out of step with the first,
+the rows moved into their own file that both panels use — the Effect controls
+panel now just draws its section around them. So a fix to how a value behaves is
+a fix in both places, which is the whole point.
+
+The lane to the right of an open property row is deliberately empty for now:
+the keyframes themselves are edited in the graph editor. What matters is that
+the Timeline *leaves room* for those rows on both sides — if the names moved
+down and the bars did not, every layer below an open one would sit beside the
+wrong name. (While making that true, a two-pixel drift between the names and
+their bars turned up and was fixed: the outline was clearing the ruler but not
+the thin cache stripe under it.)
+
+*The picture keeping up.* The Viewer used to ask for a new frame only when the
+playhead moved. Nothing else. So if you changed a value with the playhead
+sitting still — typed an opacity, added an effect, anything another panel
+committed — the picture on screen stayed as it was, showing the composition as
+it used to be, until you nudged the playhead or pressed play. Playing was the
+accident that fixed it, which is exactly how it was reported: "the Viewer does
+not update until I play."
+
+Now the Viewer also listens to the engine's stream of document changes, and
+asks for the frame again whenever one arrives. There is one subtlety worth
+knowing, because it is the kind of thing that looks fixed and is not: the
+Viewer keeps exactly one render in flight, and it used to decide whether a
+delivered frame was still wanted by comparing frame *numbers*. An edit does
+not change the number — frame 40 is still frame 40 — so an edit that landed
+while frame 40 was being rendered was "answered" by the picture already on its
+way and never asked for again. So the Viewer now also carries a flag saying
+"the document changed since I asked", and re-asks when a frame arrives under
+it.
+
+Two smaller repairs came with it. Pressing play with the playhead already
+parked on the last frame used to do nothing whatsoever — the clock said "past
+the end" on its first tick and stopped again, and in every-frame mode there
+was no frame left to ask for — so it now rewinds to the start and plays, which
+is what every other editor does. And a frame that comes back with no pixels in
+it (a render that failed) now still counts as an answer: before, it left the
+Viewer waiting for a reply that was never coming, which stopped it updating
+for the rest of the session.
+
+**The fold-out grows sections, and effect values become draggable.** Three
+things that belong together.
+
+*Sections, not one long list.* Twirling a layer open in the Timeline now shows
+a short list of **headings** — Transform, Effects, Audio — each with its own
+little arrow, and nothing under them until you open one. That is deliberate:
+a layer has eleven transform properties before you have added a single effect,
+and opening a layer straight onto all of them turns a busy composition into a
+wall of numbers. **Effects** only appears once the layer has an effect on it,
+and opens onto one row per effect, each of which opens onto that effect's own
+settings. **Audio** only appears when the layer's source can actually be heard
+— we ask the file itself whether it has a sound track — and holds the layer's
+**Volume** in decibels. Every layer has a volume in the underlying model, but
+on a coloured rectangle or a title it can never do anything, and a control
+that cannot do anything is worse than no control.
+
+*Effect values can be dragged now, and the reason they could not is worth
+knowing.* You could type into an effect's number but not scrub it. The cause
+was a piece of book-keeping across the language boundary. When Dart holds a
+Rust object it holds a *handle* to it, and some of the engine calls take that
+object **by value** — meaning the handle is handed over for good and the Dart
+side of it is emptied. The panel was keeping a whole stack of effect handles
+for the length of a drag and passing it to the engine on every tick to draw
+the preview: the first tick gave the handles away, and every tick after it was
+using something that no longer existed, so the drag died on its second frame.
+Typing worked because a single edit is one call and never reuses anything.
+
+The fix is a rule rather than a patch: **never hold a handle you have already
+handed over.** What is kept during a drag is the *edit* — which effect, which
+setting, what number — and fresh handles are made for each call that consumes
+them. The same rule is now written down beside the code that has to follow it.
+
+*One set of rows, two panels.* The rows the Timeline shows under a layer are
+literally the same widgets the Effect controls panel shows, moved into their
+own files so both use them. Writing a second set would have been quicker today
+and wrong by next month, when a fix to one quietly failed to reach the other.
+
+**One texture, never pixels (K-183).** There used to be two ways a finished
+frame could reach the window: the fast way (the engine draws into a piece of
+graphics-card memory that Flutter shows directly — a "shared texture", nothing
+copied) and a slow fallback (copy every pixel off the card, hand them across
+one byte at a time, and have Flutter upload the same pixels straight back to
+the card — four trips for a picture that never needed to leave). The fallback
+is now deleted. Every frame arrives as a handle to graphics memory, on every
+build, and the one toggle that could turn it off is gone with it. What still
+crosses as actual pixels is only the small stuff: the little footage
+thumbnails in the Project panel and the 256×256 scope pictures — both tiny,
+neither per-frame. One honest consequence: a platform with no shared-texture
+code of its own (macOS today) shows no Viewer picture at all until it grows
+one, rather than quietly taking a slow road.
+
+**Ask once per change, not once per redraw (K-183, K-184).** Every question
+the interface asks the engine — "what is this layer called?", "which switches
+are on?" — crosses the Rust/Flutter boundary, and each crossing costs a
+little. The panels used to ask one question per fact per redraw: a single
+timeline row asked seven times, and its parent dropdown asked once per *other*
+layer, every time anything redrew. Two steps fixed it. First the engine
+learned to answer everything about a layer in one go (`get_info`). Then came
+the **read model** (`state/comp_model.dart`): ONE call returns the whole
+fronted comp as the panels draw it — every layer's name, switches, bar
+position, transform and effect values — and Dart simply keeps that copy.
+Panels draw from the copy for free; the copy is re-read only when the document
+actually changes. How they know it changed is one number: the engine counts
+every committed edit (and undo, and redo), and a rebuilding panel asks "what's
+the count?" — one cheap call — re-reading only when the number moved.
+
+Even that question is asked at most once per drawn frame. The copy is read
+through several getters — the layers, the length, the rate — and each of them
+used to ask for the count on its own behalf, so twirling one layer open still
+cost a dozen crossings for an answer that cannot change part-way through a
+frame being drawn. The model now remembers which frame it last asked in and
+answers the rest from that; anything editing the document calls `refresh()`
+directly, so nothing waits on the next frame to see its own change. Clicking a
+layer went from about 75 crossings to five, and twirling one open from eighteen
+to six — tests fail the build if either creeps back up.
+
+**One walk from project to pixels (K-185).** For a long time there were two
+separate pieces of code that could turn your project into a picture: one drew
+the Viewer, and a second, fourteen-hundred-line near-copy drew the exported
+file. They were kept identical by care and comments — every new feature had
+to be built twice, and any slip meant the file you rendered could differ from
+the preview you approved. Before touching it, a test matrix rendered ten
+different kinds of composition (blends, nested comps, mattes, motion blur,
+retimes, cameras…) down both paths and compared every byte: they agreed on
+all of them. Then the export was pointed at the Viewer's own path — running
+at full quality, on its own renderer so exporting never fights the Viewer for
+the graphics card — and the copy was deleted. "What you preview is what you
+export" is no longer a promise anyone keeps; it is true because there is
+nothing else the export could draw with. The matrix test stays behind as the
+tripwire.
+
+**The preview scale is real (K-186).** When playback falls behind, Lumit drops
+the preview to Half or Quarter resolution so it can keep the beat. For a while
+that was half a lie: the footage was *decoded* smaller, but the compositing —
+stacking the layers, running the effects — still happened on a full-size
+canvas, which was the dominant cost of every played frame. The fix rests on a
+neat property of how graphics cards draw. Layer positions are described in
+composition pixels ("this layer sits at x = 800"), but before anything is
+drawn, those numbers are converted into a card-native coordinate system that
+always runs from −1 to +1 across the target, whatever size the target is. So
+the engine keeps all the geometry maths in full-size comp pixels — nothing
+about the layout changes — and simply allocates a smaller canvas for the
+result; the −1..+1 step lands the same picture on the smaller canvas
+automatically. One rounding function decides what "half of 1920×1080" means
+everywhere, so no two parts of the pipeline can disagree about the size by a
+pixel. Export never uses a scale (it always renders full size), and the
+one-walk matrix above pins that path unchanged — which is exactly why shrinking
+the preview cannot quietly shrink your exported file.
+
+**Playback renders ahead and presents on time.** For a while playback was a
+strict lockstep: render a frame, show it, wait for the next one to be due,
+render again. That made every frame's deadline personal — one expensive frame
+(a heavy effect, an unlucky decode) blew its own budget and the picture
+stuttered, even if the thirty frames around it were cheap. Now the worker keeps
+a small queue — the ring — of frames it has already rendered but not yet shown.
+Rendering runs as far ahead as the ring allows; *showing* a frame (a single
+cheap GPU copy) happens only when that frame's moment arrives. The gain is
+slack: a stretch of cheap or cached frames fills the ring, and an expensive
+frame can then take several frames' worth of time without anyone noticing,
+because the ring keeps presenting on schedule while it works. How far ahead to
+render is not a guess — the worker measures what frames have recently cost and
+sizes the ring from the slow end of those measurements, so a struggling comp
+gets more slack and a cheap one is not hoarding graphics memory. The two
+playback modes keep their promises: every-frame still shows every frame in
+order at the comp's own rate (a full ring is not a licence to rush), and
+adaptive still keeps to the clock, now by showing the newest queued frame the
+clock has reached. Pressing stop, or seeking, simply throws the ring away —
+frames rendered ahead for a future that was cancelled are dropped unshown.
+
+**The graphics card decodes the video too.** Modern graphics cards carry a
+dedicated video unit — separate silicon whose only job is undoing H.264/HEVC
+compression — and on Windows Lumit now hands the compressed stream straight to
+it (the D3D11VA interface). The decoded picture is brought back to ordinary
+memory and joins the pipeline exactly where a software-decoded frame would, so
+nothing downstream can tell the difference. That indifference is enforced, not
+assumed: video decoding is defined so precisely that hardware and software must
+produce identical pixels, and a test decodes the same frames both ways and
+compares every byte. (Finding that test's tolerance needed one real fix: the
+converter library treats the hardware's pixel layout slightly differently at
+sharp colour edges, so the hardware frame is first repacked into the software
+layout — pure shuffling, no values change — and then converted identically.)
+Anything about the hardware path failing — an unsupported codec, no video
+unit, a driver quirk — quietly falls back to software decoding, which now also
+uses every processor core rather than the single core the library defaults to.
+
+**Finished frames stay on the graphics card (K-187).** Once a frame has been
+fully composited and colour-managed, throwing it away and redoing all that
+work the next time the playhead lands there is pure waste — so the renderer
+now keeps finished frames in the graphics card's own memory, up to a budget
+you set in Settings (default 512 MB). Revisit a frame — scrub back over it,
+replay a span — and it is shown without compositing anything at all. Two
+rules keep this honest. First, these frames are filed by *where* they are
+(composition, frame number, preview size), not by what is in them, so the
+moment you commit any edit the whole store is dropped — a stale picture is
+never worth a saved render. Second, the frames you see while *dragging* a
+value are provisional — the document hasn't committed them — so drag renders
+deliberately never read from or write into the store. The Timeline's cache
+bar now includes these card-held frames in its green, which is what makes the
+bar meaningful again on the zero-copy Viewer.
+
+**The editor fills the cache while you think.** When you stop interacting for
+a fifth of a second, the worker starts quietly rendering the frames around
+the playhead into that on-card store — two frames ahead for every one behind,
+because you are more likely to press play than to rewind, staying inside the
+work area when one is set. It renders exactly one frame per wake, so the
+instant you scrub, drag or press play, your request pre-empts the filling
+within a single render. It also knows when to stop: when everything nearby is
+held, or when the budget is full, it goes back to sleep entirely rather than
+burning the GPU on frames it would immediately have to evict. The effect is
+simple to feel: pause anywhere, wait a moment, and the stretch of timeline in
+front of you plays back instantly.
+
+**Decoding runs ahead on its own thread.** Even with the ring, one worker used
+to do everything for a frame in sequence: decode the source video, then
+composite it, then move to the next frame. But playback always knows which
+frames come next, so a separate decode thread now works on the NEXT few
+frames' source video while the worker composites the current one. Finished
+pixels are filed into the decoded-frame cache under exactly the name the
+worker's own decode would look up, so when the worker gets there the expensive
+half of its job is already done — a frame then costs whichever is larger of
+decode and composite, not the two added together. There is no shared state to
+fight over: the decode thread has its own decoders, and the hand-off is a
+one-way delivery of finished pixels. A stop or seek marks everything in flight
+as unwanted, and late deliveries are dropped on arrival.
+
+**The bottom strip tells you where you stand.** The thin bar under the panels
+now answers three quiet questions at a glance. On the left, whether your work
+is on disk: the document store stamps every committed change with a running
+revision number, a save records which revision it wrote, and "Unsaved changes"
+simply means the two no longer agree — which is why undoing back to how things
+looked still reads as unsaved: only a save proves the file matches. (A brand
+new, untouched project says "Not saved yet" instead, because there is nothing
+to lose.) Next to that sits the cache meter — how full the rendered-frame
+store is, with the exact megabytes beside it; clicking it empties the store.
+And after that comes the notice area: one line of feedback at a time ("Saved
+to…", or "Could not open…" in the warning tint for a genuine error), each with
+a × to dismiss it. Notices live in the frontend for now — the engine has no
+message stream of its own yet — so only things the interface itself does can
+post one.
+
+**One clock face for every length.** Durations and positions read as
+`HH:MM:SS:FF` timecode everywhere — the Viewer's readout, the Project panel's
+info header, the Composition settings duration box — from one tiny shared
+module (`state/timecode.dart`), so a length can never print two different ways
+in two panels. The `FF` part is "frames past the last whole second", counted
+at the rate rounded up (29.97 fps counts thirty to the second, as every
+editor does), and the field grows with the rate: a 600 fps comp counts to
+`:599`, so it gets three digits. Typing a timecode into the duration box is
+read at the rate typed above it and converted to exact seconds before it is
+stored — the document itself never stores a frame count (K-180).
+
+**Frames and times, remembered rather than re-asked.** Inside the document a
+keyframe sits at an exact *time* — a fraction of a second — not at a frame
+number (K-180), so the interface is forever converting between the two: "the
+playhead is on frame 30, what time is that?", "this key is at 1/2 second, which
+frame is that?" Both conversions belong to the engine, because frame-rate
+arithmetic done twice in two languages is frame-rate arithmetic done two
+slightly different ways. But asking is a crossing of the boundary, and every
+animated row was asking for itself: clicking a new spot on the timeline made
+sixty-seven crossings, sixty of which were the same handful of questions asked
+over and over by rows that all happen to be looking at the same playhead.
+
+The fix is a notebook (`state/comp_time.dart`). The engine still works out each
+answer; Dart writes it down and reads it back the next time the same question
+comes up. Only one thing can make an old answer wrong — changing the
+composition's frame rate — so the whole notebook is torn up whenever the engine
+reports a committed change to the document, which covers a settings edit and an
+undo of one alike. The same click now costs seven crossings, and the bridge-call
+budget test fails the build if it climbs back past twenty.
+**The Effect controls panel reads as one list.** For a while each effect on a
+layer sat in its own bordered box, and a layer with four effects on it looked
+like four unrelated cards stacked up. But a layer's effects *are* one list —
+they run in order, each feeding the next — and they are already drawn as one
+list in the Timeline when you twirl a layer open. So the panel draws them that
+way too, and the two surfaces now agree.
+
+Each part of the panel — Source, Transform, one per effect — is a **heading
+bar you can twirl**: click it and its rows fold away, click it again and they
+come back. Under the heading, every row sits on its own line with a hairline
+between it and the next, so a long list stays readable. A newly applied effect
+arrives open, because the moment after you apply one is exactly when you want
+its controls.
+
+Every row is **two columns**. The property's name is on the left, its control
+is on the right, and there is deliberately no line drawn between them: they
+read as columns because they *line up* down the whole panel — which is all a
+column really is. Making that true takes one small trick. The stopwatch that
+starts a property animating lives to the left of the name, but some
+settings — a dropdown, a filename — can never animate and so have no
+stopwatch. If those rows simply left it out, their names would start further
+left than everyone else's and the column would wobble. So a row with no
+stopwatch leaves an empty space exactly the stopwatch's width instead.
+
+The heading row follows the same two columns. On the left: the twirl, the
+effect's on/off tick, and its name. Then, at the top of the *value* column,
+**Reset** — placed there because that is what it acts on, the values below it.
+Reset puts every setting of that effect back to the value it shipped with,
+which also means any animation you put on it goes away; that is one single
+undo step, not one per setting. The buttons that move the effect up and down
+the stack, and the × that removes it, stay hard against the right-hand edge,
+away from Reset: removing an effect is not an adjustment to it, and the two
+should not sit side by side where a slip costs you your work.
+
+If you have the interface set to the **round** shape rather than the sharp
+one, the same rows come wrapped in the soft floating-card chrome. The two
+shapes differ in their chrome, never in their layout — the same names in the
+same column either way.
+
+One thing this layout knows it cannot cover: a handful of effects want a
+*picture* rather than a list of numbers. Levels wants a histogram with handles
+under it; Curves wants a spline you bend with the pointer. Neither is a stack
+of labelled rows, and squeezing them into one would be the wrong control for
+the job. So the panel asks a single question first — does this effect bring
+its own display? — and only draws rows when the answer is no. Nothing answers
+yes yet. The point of asking now is that when the first one arrives it says so
+in one place, rather than becoming a special case wedged into the middle of
+the layout.

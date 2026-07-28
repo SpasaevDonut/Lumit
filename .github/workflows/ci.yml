@@ -139,6 +139,118 @@ jobs:
       - name: Release-mode compile check
         run: cargo check --workspace --release
 
+  flutter-linux:
+    name: flutter frontend (Linux build + analyze + test)
+    runs-on: ubuntu-latest
+    env:
+      # The same BtbN "shared, GPL" n7.1 build the other jobs take, so the
+      # bridge .so links the identical FFmpeg lumit-media expects.
+      FFMPEG_ASSET: ffmpeg-n7.1-latest-linux64-gpl-shared-7.1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # `cargo build -p lumit_bridge` (default features) pulls lumit-media
+      # (FFmpeg) and, through `render`, lumit-render (wgpu/GL). The Flutter Linux
+      # runner additionally needs GTK 3 + clang/cmake/ninja. This is the
+      # existing `linux` job's apt list PLUS the GTK + toolchain packages
+      # `flutter build linux` requires.
+      - name: Install desktop + Flutter build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libgl-dev libegl-dev libgles-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxcb1-dev \
+            libwayland-dev mesa-vulkan-drivers libclang-18-dev \
+            clang cmake ninja-build libgtk-3-dev
+          # libgles-dev provides GLES2/gl2*.h + glesv2.pc; libegl-dev provides
+          # EGL/egl*.h + egl.pc. The Linux zero-copy Viewer plugin
+          # (linux/runner/viewer_texture_bridge.cc, K-177) imports engine DMA-BUF
+          # frames into GL external textures, so it links EGL + GLESv2.
+      # Same FFmpeg 7.1 install the `linux` job uses (its .pc prefix rewrite +
+      # env exports), so the bridge's `media` feature links here identically.
+      - name: Install FFmpeg 7.1 (BtbN shared build)
+        run: |
+          url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FFMPEG_ASSET}.tar.xz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/ffmpeg.tar.xz"
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP/ffmpeg" --strip-components=1
+          root="$RUNNER_TEMP/ffmpeg"
+          # The tarball's .pc files carry the build machine's prefix; point them
+          # at where we unpacked (mirrors the `linux` job).
+          sed -i "s|^prefix=.*|prefix=$root|" "$root"/lib/pkgconfig/*.pc
+          echo "FFMPEG_PKG_CONFIG_PATH=$root/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$root/lib" >> "$GITHUB_ENV"
+          echo "$root/bin" >> "$GITHUB_PATH"
+      - name: Point bindgen at libclang
+        run: echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      # Flutter stable pinned to the SAME version the desktop dev box runs
+      # (3.44.7), so CI and the owner's machine agree. `cache: true` caches the
+      # SDK; the pub cache is cached separately below.
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+          cache: true
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('flutter_ui/pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+      - name: flutter pub get
+        working-directory: flutter_ui
+        run: flutter pub get
+      - name: flutter analyze
+        working-directory: flutter_ui
+        run: flutter analyze
+      # Build the bridge cdylib on Linux: proves nothing Windows-only leaks
+      # outside the shared-texture cfg gates. Default features (media + render)
+      # are the shipped Linux build; the Windows-only D3D path lives behind
+      # `--features shared-texture`, off here.
+      #
+      # This runs BEFORE `flutter test`, not after: frb binds by content hash, so
+      # the `test/frb/` suites load `target/debug/liblumit_bridge.so` and drive
+      # the real engine (K-179). With the build after them, every one of those
+      # suites failed on a library that had not been built yet.
+      #
+      # The package is `lumit_bridge` (underscore, so the cdylib is named for the
+      # Dart import); `-p lumit-bridge` matches nothing and errors.
+      - name: Build the bridge (liblumit_bridge.so)
+        run: cargo build -p lumit_bridge
+      # One test process at a time. The frb suites share a single engine per
+      # process and Flutter's default fans test files out across cores, so a
+      # parallel run had them contending for it — a different one or two failing
+      # per run, each passing alone (docs/TODO.md). Serial is a few minutes
+      # slower and it is the difference between a gate and a coin toss.
+      #
+      # `LUMIT_NO_ZERO_COPY_VIEWER` declares this runner transportless. It has
+      # no GPU: wgpu lands on Mesa's lavapipe, whose `vkAllocateMemory` refuses
+      # the exportable allocation the DMA-BUF path needs, so every Viewer frame
+      # is dropped at the publish step and none reaches Dart. Zero-copy is the
+      # only transport (K-183), so the six tests that wait for a frame skip
+      # here — see `test/frb/frb_test_support.dart`, and docs/TODO.md for what
+      # that costs.
+      - name: flutter test
+        working-directory: flutter_ui
+        env:
+          LUMIT_NO_ZERO_COPY_VIEWER: "1"
+        run: flutter test --concurrency=1
+      # Compile the Linux DMA-BUF zero-copy Viewer path (K-177): the Vulkan/ash
+      # export code lives behind `shared-texture-linux` and cfg(target_os =
+      # "linux"), so it is only ever type-checked here (the authoring box is
+      # Windows). This is the CI gate that proves the Rust half of the Linux
+      # shared-texture path builds; the runtime verification is the collaborator's
+      # (docs/GUIDE §9).
+      - name: Compile-check the Linux DMA-BUF path (shared-texture-linux)
+        run: cargo check -p lumit_bridge --features shared-texture-linux
+      # The real gate: the Flutter Linux runner (linux/, GTK, the multi-window
+      # plugin's Linux side) compiles and links.
+      - name: flutter build linux --release
+        working-directory: flutter_ui
+        run: flutter build linux --release
+
   coverage:
     name: engine-crate coverage gate
     runs-on: macos-latest
@@ -158,53 +270,68 @@ jobs:
           key: ffmpeg-${{ steps.ffver.outputs.v }}
       # Engine crates must hold the line; the threshold may rise, never fall.
       # The FFmpeg-free engine crates are all gated (measured 87–99% locally).
-      # lumit-gpu is held out while its kernel tests skip on adapterless runners;
-      # UI crates join once the egui_kittest harness lands.
+      # lumit-gpu is held out while its kernel tests skip on adapterless runners.
       - run: >
           cargo llvm-cov
           -p lumit-core -p lumit-project -p lumit-eval
-          -p lumit-cache -p lumit-flow -p lumit-text -p lumit-keymap
+          -p lumit-cache -p lumit-flow -p lumit-text
           --fail-under-lines 80
-
-  flatpak:
-    name: flatpak bundle (installs on any distro)
-    runs-on: ubuntu-latest
-    container:
-      # Carries flatpak + flatpak-builder and the freedesktop 25.08 SDK the
-      # manifest builds against (24.08's Rust is 1.89; the tree needs 1.92).
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v5
-      # A Flatpak build runs offline, so every crate in the lockfile has to be
-      # declared as a source. Mechanical from Cargo.lock, so it is generated
-      # here rather than committed (see the manifest's header).
-      - name: Generate the offline cargo sources
-        env:
-          GENERATOR: https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
-        run: |
-          python3 -m pip install --user aiohttp toml ||
-            python3 -m pip install --break-system-packages aiohttp toml
-          curl -fsSL -o /tmp/generator.py "$GENERATOR"
-          python3 /tmp/generator.py Cargo.lock -o packaging/flatpak/cargo-sources.json
-      # Publishes the bundle as a run artifact: what a Linux tester installs
-      # with `flatpak install lumit.flatpak`, whatever distribution they run.
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          bundle: lumit.flatpak
-          manifest-path: packaging/flatpak/io.github.luminalmvm.Lumit.yml
-          cache-key: flatpak-builder-${{ github.sha }}
 
   no-hex-outside-theme:
     name: design-token lint (no hex literals outside the theme module)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # All colours live in the Flutter theme (flutter_ui/lib/theme/); no Rust
+      # crate may carry one.
       - run: |
-          hits=$(grep -rnE 'Color32::from_rgb|#[0-9a-fA-F]{6}' crates --include='*.rs' \
-            | grep -v 'crates/lumit-ui/src/theme.rs' || true)
+          hits=$(grep -rnE 'Color32::from_rgb|#[0-9a-fA-F]{6}' crates --include='*.rs' || true)
           if [ -n "$hits" ]; then
-            echo "Colour values outside lumit_ui::theme (docs/15-DESIGN.md):"
+            echo "Colour values outside the theme (docs/15-DESIGN.md):"
+            echo "$hits"
+            exit 1
+          fi
+
+  # clippy cannot enforce the no-panic rule (docs/14 §4) on the bridge's frb
+  # API. `#[frb(...)]` is a proc-macro attribute, and clippy's restriction lints
+  # (unwrap_used, expect_used, panic, todo, unimplemented) skip code that comes
+  # out of a macro expansion — so every function annotated with it is invisible
+  # to the crate's own `deny`. Verified by removing the attribute from one
+  # function: the lints fire immediately, and are silent again once it is back.
+  #
+  # That exempts exactly the wrong code. crates/lumit-bridge/src/api is the
+  # surface Dart calls, where an `unwrap` is an unguarded panic unwinding across
+  # the FFI boundary. This grep covers the blind spot until the lints see
+  # through the macro; every call there must return Result<_, BridgeError> or
+  # degrade deliberately.
+  no-panics-in-frb-api:
+    name: bridge lint (no panic paths in the frb API surface)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          # Only the *shipping* half of each file is linted: everything from a
+          # `#[cfg(test)]` onward is test code, which may legitimately `expect`
+          # and is on no path Dart calls. This used to exclude src/api/tests.rs
+          # by name, on the reasoning that excluding one known file beat
+          # teaching a grep where a test module begins — which held right up
+          # until a second file grew an inline one (worker_thread.rs), and the
+          # job started failing on code that was never on the API surface.
+          # src/api/tests.rs is still named here: it is test code end to end
+          # and carries no `#[cfg(test)]` of its own to stop at.
+          hits=$(
+            find crates/lumit-bridge/src/api crates/lumit-bridge/src/api.rs \
+              -name '*.rs' -type f \
+              ! -path 'crates/lumit-bridge/src/api/tests.rs' \
+            | while read -r file; do
+                awk -v f="$file" \
+                  '/^#\[cfg\(test\)\]/ { exit } { print f ":" NR ":" $0 }' "$file"
+              done \
+            | grep -E '\.unwrap\(\)|\.expect\(|\btodo!\(|\bunimplemented!\(|\bpanic!\(' \
+            || true)
+          if [ -n "$hits" ]; then
+            echo "Panic paths in the frb API surface, which clippy cannot see"
+            echo "(docs/14-ENGINEERING-RULES.md §4). Return Result<_, BridgeError>:"
             echo "$hits"
             exit 1
           fi

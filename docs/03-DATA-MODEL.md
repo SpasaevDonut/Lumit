@@ -23,13 +23,14 @@ Names are display strings only; renaming MUST never break a reference.
 Authoritative time is never floating point (see [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)).
 
 ```rust
-struct RationalTime { num: i64, den: u32 }   // seconds = num / den
+struct RationalTime { num: i64, den: i64 }   // seconds = num / den 
 struct FrameRate    { num: u32, den: u32 }   // e.g. 60000/1001
 ```
 
-The four timebases (source, clip, layer, comp — [01-GLOSSARY.md](01-GLOSSARY.md) §4) are
-distinct newtypes over `RationalTime`. Conversions between them are explicit functions, and
-the Retime map ([04-RETIMING.md](04-RETIMING.md)) is the only nontrivial conversion.
+The four timebases - `SourceTime`, `ClipTime`, `LayerTime`, `CompTime`
+([01-GLOSSARY.md](01-GLOSSARY.md) §4) - are distinct newtypes over `Rational`. Conversions
+between them are explicit functions, and the Retime map ([04-RETIMING.md](04-RETIMING.md)) is
+the only nontrivial conversion.
 
 ### 1.3 Non-destructive rule
 
@@ -138,6 +139,9 @@ struct Layer {
     masks: Vec<Mask>,                  // §7
     effects: Vec<EffectInstance>,      // §8, ordered top-to-bottom
     volume_db: Property,               // K-172: animatable Volume (docs/09 §6); 0 dB unity, −100 = −∞
+    retime: Option<Property>,          // K-197: Retime as an ordinary keyframable property —
+                                       // layer-local time → source time, in seconds. None = not
+                                       // retimed (no row, no map). Alt+Shift+T installs the identity.
     switches: Switches,
 }
 // Future (not in v1): `stretch` (uniform rate multiplier) and per-layer `markers`.

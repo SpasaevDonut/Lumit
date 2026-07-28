@@ -5,7 +5,7 @@
 //! All mutation goes through operations (ops.rs); this module is data + queries.
 
 use crate::anim::Property;
-use crate::time::{CompTime, Duration, FrameRate};
+use crate::time::{CompTime, Duration, FrameRate, Rational};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -687,6 +687,11 @@ pub struct Switches {
     /// samples averaged, smearing it along its own motion. Off by default.
     #[serde(default)]
     pub motion_blur: bool,
+    /// Shy (docs/07 §4.2): hidden from the Timeline's layer list while the
+    /// comp's shy filter is on. Pure list housekeeping — it never changes what
+    /// renders, which is why the evaluator does not read it.
+    #[serde(default)]
+    pub shy: bool,
 }
 
 /// Whether any layer in `comp` is soloed (K-105). When true, the compositor
@@ -707,6 +712,7 @@ impl Default for Switches {
             fx: true,
             solo: false,
             motion_blur: false,
+            shy: false,
         }
     }
 }
@@ -1005,6 +1011,19 @@ pub struct Layer {
     /// the frame cache key (sound, not pixels).
     #[serde(default = "Property::zero")]
     pub volume_db: Property,
+    /// Retime (K-197): layer-local time → source time, in seconds. An ordinary
+    /// keyframable [`Property`] like any other — the graph editor, the
+    /// stopwatch and the lane diamonds treat it exactly as they treat
+    /// Position. `None` means the layer is not retimed at all and plays at
+    /// source rate, which is why it is an `Option` rather than a property that
+    /// is always there: an un-retimed layer shows no Retime row (docs/07 §4.3)
+    /// and skips the map entirely.
+    ///
+    /// Enabled from the Timeline with Alt+Shift+T, which installs the identity
+    /// map ([`Layer::identity_retime`]) so switching it on changes nothing
+    /// visible and gives the row something to key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retime: Option<Property>,
     #[serde(default)]
     pub blend: BlendMode,
     /// Masks gate the layer's alpha before effects/transform
@@ -1020,6 +1039,50 @@ pub struct Layer {
     /// (docs/10-FILE-FORMAT.md §1.1 — mandatory forward compatibility).
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl Layer {
+    /// The identity Retime for a layer `duration` seconds long: two linear keys
+    /// running source time alongside local time, so the layer plays at source
+    /// rate. What Alt+Shift+T installs — the AE Time Remap starting state.
+    pub fn identity_retime(duration: Rational) -> Property {
+        let key = |time: Rational, value: f64| crate::anim::Keyframe {
+            time,
+            value,
+            interp_in: crate::anim::SideInterp::Linear,
+            interp_out: crate::anim::SideInterp::Linear,
+        };
+        Property {
+            animation: crate::anim::Animation::Keyframed(vec![
+                key(Rational::ZERO, 0.0),
+                key(duration, duration.to_f64()),
+            ]),
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// Which moment of the source this layer shows at layer-local time `lt`
+    /// (seconds). The Retime property when it has one, otherwise `lt` itself —
+    /// an un-retimed layer reads its source at its own clock.
+    ///
+    /// The one place the mapping is decided, so the render plan and the frame
+    /// cache key can never disagree about which source frame a layer shows.
+    pub fn source_time_at(&self, lt: f64) -> f64 {
+        // ponytail: the pre-K-197 segment store still answers for layers that
+        // carry one (the Source card's speed row writes it). Delete that arm —
+        // and `LayerKind::Footage::retime` with it — once the Retime property
+        // owns every case.
+        if let Some(retime) = &self.retime {
+            return retime.value_at(lt);
+        }
+        match &self.kind {
+            LayerKind::Footage {
+                retime: Some(retime),
+                ..
+            } => retime.evaluate(lt),
+            _ => lt,
+        }
+    }
 }
 
 /// The chain of parent layer ids above `layer` in `comp`, nearest first
@@ -1423,6 +1486,8 @@ mod tests {
         assert_eq!(comp.motion_blur, MotionBlur::default());
         // And a layer without the `motion_blur` switch defaults it off.
         assert!(!Switches::default().motion_blur);
+        // Same forward-compat rule for shy: absent means off.
+        assert!(!Switches::default().shy);
     }
 
     #[test]
@@ -1536,6 +1601,7 @@ mod tests {
             parent: None,
             label: 0,
             volume_db: crate::anim::Property::zero(),
+            retime: None,
             blend: BlendMode::Normal,
             masks: Vec::new(),
             effects: Vec::new(),

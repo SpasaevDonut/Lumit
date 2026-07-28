@@ -1,5 +1,10 @@
 # Phase 0 kickoff: the cold-start build order
 
+> **Historical note.** This plan built the original egui shell (`lumit-ui`/`lumit-app`),
+> which K-174 replaced with the Flutter frontend and K-182 deleted. The engine-crate
+> sequencing here still describes how the workspace was bootstrapped; the UI slices are
+> history.
+
 For the first implementation session. Everything here follows [16-ROADMAP.md](../16-ROADMAP.md)
 Phase 0 and [05-ARCHITECTURE.md](../05-ARCHITECTURE.md); this note just sequences the work
 into slices that each end runnable, so progress is visible from hour one and nothing is

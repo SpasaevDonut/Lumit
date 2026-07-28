@@ -11,6 +11,28 @@ redefined, here.
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are to be interpreted as described
 in RFC 2119.
 
+**Implementation status (2026-07-24).** The Retime **engine** (`lumit-core :: retime`) is fully
+built and tested - the segment model, both graph lenses' maths, the beat-sync covenant,
+razor/split, overrun detection, reverse gating, and Rate<->Map conversion. The Flutter graph
+editor exposes all three lenses. What is **not yet wired** is a set of UI affordances and
+keyboard commands: freeze-at-playhead, the Hold preset button, RATE/MAP type chips, kink
+badges, the graph overrun band, compensating Alt-drag, copy/paste of a retime, outward-trim
+extending the map, and the retime keyboard shortcuts in §12. Precomp layers do not carry a
+Retime (only Footage does). These gaps are tracked in [TODO.md](TODO.md); §12's command list
+is the intended surface, not the current one.
+
+**Restarted as a property (K-197, 2026-07-28).** The frontend's Retime is no longer this
+segment model at all. A layer carries `retime: Option<Property>` — an ordinary keyframable
+scalar whose value is the source time in seconds, the AE Time Remap shape — given to a layer
+with **Alt+Shift+T** (or **Ctrl+Alt+T**, or Composition ▸ Enable Retime — K-198) and shown
+as a single row above Transform in the Timeline's fold-out,
+with exactly the graph options every other property has and **nothing else**: no lenses, no
+ease presets, no freeze, no interpolation policy on that path. Everything specified below
+remains canonical for the segment engine, which still evaluates for documents that carry one
+(`Layer::source_time_at` prefers the property and falls back to it), and is where the richer
+affordances return when they are built on top of the property. Until then, read this
+document as the destination rather than the current frontend.
+
 ---
 
 ## 1. Purpose and design principles

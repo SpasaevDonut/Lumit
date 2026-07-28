@@ -5,6 +5,8 @@ the project owner) or **PROPOSED** (a strong default chosen during the July 2026
 editing the entry and noting why). Reversing a DECIDED entry requires a new entry that
 supersedes it — never edit history.
 
+**How to use this log:** it is a long reference, not a start-of-task read. Don't read it end to end - search it for the entries relevant to your task (by topic keyword, or by the `k-###` numbers the relevant spec cites) and read those. Where two entries conflict, the later one that says it supersedes the earlier wins.
+
 Format: ID · status · decision · rationale · consequences.
 
 ---
@@ -2221,3 +2223,600 @@ the previously built-but-unwired docs/10 §2 resolver now actually runs: relativ
 absolute → fingerprint search across the project tree; found files repoint the session path
 (this is what makes a moved project folder open intact — the tester's other half of the report),
 and missing ones are named in a notice, the relink dialogue remaining future work.
+
+**K-174 · DECIDED · A Flutter frontend alternative is built on its own branch, docs-first,
+one-for-one before any redesign.** The owner wants to evaluate replacing the egui frontend
+with Flutter (text rendering, motion, platform polish, widget ecosystem). The experiment
+lives on `flutter-frontend-alternative`: a Dart application in `flutter_ui/` over the
+unchanged Rust engine crates, specified by `docs/archive/flutter-port/` (strategy, full UI
+inventory, bridge architecture, widget map, living parity checklist). Ground rules: the
+first pass reproduces the shipped egui behaviour exactly — known rough edges are logged,
+not fixed — so there is a truthful baseline; the glossary, no-hex-outside-theme and
+tests-with-features rules bind the Dart tree as they bind Rust; engine crates never depend
+on either frontend; `main` keeps shipping the egui frontend until the Flutter one reaches
+parity and wins the side-by-side. The Viewer's frame path is the one piece of new systems
+work (wgpu → shared D3D11 texture → Flutter texture registrar, docs/archive/flutter-port/03).
+
+**K-175 · DECIDED · The bridge borrows lumit-ui's renderer through the headless seam until
+the pixel pass moves into an engine crate.** The composited comp frame the Flutter Viewer
+needs (every layer, transform, blend and effect — the pixels the egui Viewer and the
+exporter show, K-031) is produced by the compositor that currently lives in `lumit-ui`
+(`crate::export`'s window-free `Renderer`). To reach it without duplicating the compositor,
+`lumit-ui` gains a small `headless` module (`HeadlessRenderer`, the export path made
+reusable behind a GPU context it owns), and `lumit-bridge` gains a default-on `render`
+feature that depends on `lumit-ui` and drives that seam through
+`lumit_bridge_render_comp_frame`. This is a **deliberate, temporary** arrangement: the
+bridge (a leaf, not an engine crate) depends on the UI crate here and nowhere else. The
+docs/05 rule — *engine crates never depend on a frontend* — is unbroken; the bridge is not
+an engine crate. When the pixel pass is extracted into an engine crate (the shared-compositor
+work docs/archive/flutter-port/03 anticipates), the bridge will depend on that crate instead and the
+`lumit-ui` dependency is dropped. Recorded so the dependency edge is understood as scaffolding,
+not the destination.
+
+**K-177 · DECIDED · The Viewer's zero-copy path is a D3D12 shared NT handle Flutter samples
+directly, with the read-back path kept as the airtight fallback.** The recorded top
+performance gap (K-176) was the Viewer's per-frame round trip: render on the GPU → read the
+pixels down to the CPU → copy across FFI → upload back to the GPU. This closes it on Windows.
+wgpu runs over D3D12; behind an **opt-in `shared-texture` feature** (off by default, so every
+existing build and CI gate is byte-for-byte unchanged) the headless renderer reaches through
+wgpu to its D3D12 device (`Device::as_hal`), creates a texture in a **shared heap**
+(`D3D12_HEAP_FLAG_SHARED`, `DXGI_FORMAT_R8G8B8A8_UNORM`, `ALLOW_SIMULTANEOUS_ACCESS`), exports
+an **NT handle** (`ID3D12Device::CreateSharedHandle`), and wraps the same resource back as a
+`wgpu::Texture` (`create_texture_from_hal`). The finished, display-encoded frame is copied
+GPU-to-GPU into it (a valid srgb-differing `copy_texture_to_texture`, no re-encode) and the
+handle is handed across the bridge; the Windows runner registers it with Flutter as a
+`kFlutterDesktopGpuSurfaceTypeDxgiSharedHandle` external texture (the embedder opens the handle
+on its own ANGLE/D3D11 device), and the Viewer shows a `Texture` widget. The pixels never
+leave the graphics card. **Choice made — D3D12-direct, not a separate D3D11 device:** the
+direct route is self-contained (no second device, no D3D11-on-12) and was verified to work end
+to end on the dev machine (the `solid_comp_renders_to_a_stable_shared_handle` test creates the
+shared resource, exports a non-zero handle, and re-uses it across frames). Under the feature
+the headless renderer pins the **D3D12 backend** (the interop needs it); every non-feature
+build keeps the all-backends instance. **Synchronisation:** after the copy we `poll(Wait)` so
+Flutter never samples a half-written frame; a keyed-mutex / shared-fence handshake is the
+recorded follow-up, worth adding only if tearing shows in practice (D3D12 uses fences, not
+keyed mutexes, so a cross-API handshake is non-trivial — deferred until observed). **No new
+runtime dependency:** the plumbing pattern (descriptor shape, the DXGI-shared-handle surface
+type, the register / mark-frame-available dance) follows the MIT-licensed
+`flutter_wgpu_texture` package as a *reference* — pattern borrowed with a code-comment credit,
+not added as a dependency (it owns its own renderer/scene architecture and is very young). The
+`windows` crate is pinned to **0.58** so its D3D12 types unify with the ones wgpu-hal already
+uses. **Fallback is airtight and tested:** `lumit_bridge_shared_supported()` is false for an
+old `.dll`, a non-Windows build, or a feature-less build; `render_to_shared` returns false (Dart
+falls back for that frame) on no D3D12 adapter or any interop error; the platform channel
+missing (an unwired runner) latches the controller off for the session — every seam falls back
+to the read-back path, each covered by a fake in the Dart suite. **Scopes** still need CPU
+pixels (the texture path moves none): a throttled read-back render (~10 Hz) feeds them while
+the texture drives the Viewer. **Remaining after this:** the read-back path stays for scopes
+and for every fallback; engine-side render cancellation and a rendered-frame cache (K-176)
+are still open; the keyed-mutex handshake is the named follow-up.
+
+**K-178 · DECIDED · The pixel pass moves into `lumit-render`, an engine crate both
+frontends drive; the bridge's dependency on `lumit-ui` (K-175) is retired.** K-175 recorded,
+as deliberate scaffolding, that `lumit-bridge` would depend on `lumit-ui` to reach the
+compositor "until the pixel pass moves into an engine crate". This is that move. A new engine
+crate `lumit-render` holds the whole pass: probing abstraction (`source`), decode planning
+(`plan`), the decode worker and its decoded-frame cache (`decode`), draw-list building
+(`build`) and its types (`draw`), the GPU compositor (`realise`), effect dispatch (`fxops`),
+frame naming and the cache tiers (`cache`, `diskio`), export, and the headless seam. It
+depends on no frontend and names neither egui nor Flutter; `lumit-ui` and `lumit-bridge` both
+drive it. The docs/05 rule is not merely unbroken but strengthened — the bridge is no longer a
+leaf hanging off a frontend, and the shipped Flutter `.dll` no longer links egui, `egui_tiles`,
+`iconflow`, `rfd` or `muda`. Two pieces moved further down: `pixels` and `preset` are pure
+data/maths with no media or GPU dependency and must survive a `--no-default-features` build, so
+they live in `lumit-core`. **Why now, and what it bought:** the reason was performance, not
+tidiness. The Flutter Viewer drove `export::Renderer`, which decodes every frame afresh at full
+resolution and retains nothing, so *dragging a value re-decoded the whole composition on every
+tick* — while the egui Viewer had long re-composited from the frame's retained per-layer pixels
+and never re-decoded during a drag. Sharing one crate made it possible to give the Flutter path
+that behaviour instead of building it a second time: `HeadlessRenderer::render_preview` plans
+the decode, reuses the pixels it holds when the plan is unchanged (`plan::same_decode`), and
+decodes at the preview resolution. `DecodePool::comp_decodes` counts real decodes so the drag
+contract is a *test*, not a claim. The zero-copy shared-texture paths (K-177) were moved onto
+the same walk, so the shipped build gets the fast path and cannot disagree with the read-back
+path about a frame. **Frame naming:** the bridge's rendered-frame cache (K-176) keyed on
+`(comp, frame, scale)` plus the identity of the document snapshot, so *any* commit — a rename,
+a work-area nudge, a solo toggle — emptied it. It now keys on the content hash
+(`lumit_eval::comp_frame_key`, already an engine crate), so picture-free edits discard nothing
+and an edit to one layer retires only the frames that layer appears in. **Cost, recorded
+honestly:** two comp walks still exist — `build_comp_draws` (interactive) and
+`render_comp_linear` (export) — kept in step by hand and by tests, exactly as they were inside
+`lumit-ui`. Unifying them by having export decode into a pixels map and share the draw walk is
+the recorded next step (docs/TODO.md, Now), gated on a bit-identity matrix across precomps,
+mattes, adjustments, collapse and motion blur; a solid-comp identity test is in place already.
+This entry supersedes K-175's temporary arrangement; K-175 stays as the record of why the edge
+existed.
+
+**K-179 · DECIDED · flutter_rust_bridge is the only front/back seam; the hand-written
+`extern "C"` bridge is deleted.** The interim transport ("bridge v0" in
+[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)) passed whole documents as JSON text over 107
+hand-written `extern "C"` functions. It was always described as a deliberate interim choice
+with flutter_rust_bridge as the intended target once the command surface stabilised; this
+entry records that arriving. Everything the frontend does now goes through
+`crates/lumit-bridge/src/api/`, which hands Dart opaque reference handles
+(`ProjectReference`, `CompositionReference`, `LayerReference`, `ItemReference`) with methods on
+them, plus a scoped-change stream naming which reference an edit touched. **The reference types
+are the identity**: there is no snapshot to diff, no mirror class to keep in step, and no id
+lookup, which is what removes the whole-document JSON round trip per edit. Two shapes follow
+from that and are binding: an op takes a **whole value** rather than a granular delta (a
+keyframe drag that moves time *and* value is one write and therefore one undo step), and a
+*staged* edit — a drag — renders through a patched clone engine-side and commits once on
+release. The two bridges ran side by side while each panel moved across, then v0 was removed in
+one sweep so the two never had to be kept in step; the migration's running order and the
+capability gaps that remain are in [TODO.md](TODO.md). What survived the sweep is shared
+infrastructure, not transport: the layer and asset defaults both frontends build from
+(`edits.rs`), the scale-to-decode-size policy (`render::quality_for`), the rendered-frame cache,
+the realtime controller, media probing/decoding, and the exporter — whose entry point now takes
+the document as an argument rather than reading a process-wide bridge, which is what let one
+exporter serve both frontends. This supersedes 17-BRIDGE-CONTRACT.md's "JSON over a C ABI"
+transport section; the four binding rules in it (no panic crosses the boundary, no lock held
+across the boundary, rational time crosses as integers, the engine never depends on the
+frontend) are unchanged and still bind.
+
+**K-180 · DECIDED · A composition's duration is a length of time, and the frame rate is only a
+frame rate.** The Composition settings dialogue used to edit the duration as a *frame count* and
+the rate as a visible numerator over a denominator, and `BridgeCompSettings` carried the count
+across the bridge. That was a bug, not a presentation choice: a frame count means nothing
+without the rate it was counted at, so pressing Save after changing 60 fps to 30 wrote
+yesterday's 1800 frames back at the new rate and *doubled* the comp's real length, while every
+layer kept the seconds it already occupied. On screen that looked exactly like the layers
+speeding up or slowing down — reported by the owner, and the reason for this entry. **Binding
+now:** the duration crosses the bridge as exact rational **seconds** (`BridgeCompSettings
+.duration`), which is what the document has always stored, so changing the rate changes only how
+finely the comp is counted — never how long it is, never where a layer sits, never how fast
+anything plays. Frame counts are derived on demand from `CompositionReference::duration_frames`.
+**The dialogue's shape follows from that:** the rate is one number in one field (`600`,
+`23.976`) with the awkward rates on a Presets list, and the duration is `HH:MM:SS.mmm`. The
+exact `num`/`den` pair still crosses the boundary — docs/14 §2's rational-time rule is
+untouched, and 23.976 still reaches the engine as 24000/1001 — but the pair is worked out from
+what was typed rather than typed by hand, because a denominator is an implementation detail of
+NTSC and not a question to ask someone making a comp. **One dialogue, three doors:** the same
+window is New composition (with a Create button) and Composition settings (with Save), reached
+from the menu bar, the Project panel's footer button, and a right-click on a comp; creating is
+one call and therefore one undo step, never "create then apply". **Footage dropped on the New
+composition button** opens it prefilled from the media's own size, rate and length, and every
+dropped item lands in the finished comp as a layer, which is what docs/07 §3.1 has always asked
+for; that is also why the Project panel now multi-selects (`Ctrl` adds, `Shift` takes the run)
+and why a drag carries the whole selection.
+
+**K-181 · DECIDED · The frontend holds no logic — it displays values and forwards calls.**
+K-017 says the UI thread never *evaluates*; 17-BRIDGE-CONTRACT says the engine owns the
+document and the frontend never mutates it directly. Both were narrower than the rule actually
+wanted, and the gap let a whole scheduler grow in Dart without breaking either: the Viewer's
+playback loop mutated nothing and evaluated nothing, it merely *decided* — which frame to ask
+for next, how many renders to keep in flight, whether the picture was stale, what frame the
+audio clock implied. Reported by the owner as "we need to move the logic for handling playback
+to the Rust side". **Binding now:** the frontend may own *interaction state* — where the
+playhead is, the zoom, the selection, the pan — and must act on it immediately, without a round
+trip; what it may not own is *policy*. It states facts to the engine ("the playhead is at 40",
+"play from here", "the document changed") and paints what comes back. Anything that has to be
+decided — scheduling, timing, invalidation, degradation, when work is worth doing — is the
+engine's, because the engine is the half that holds the inputs to those decisions. **The test
+of the rule:** if a Dart change would need a clock, a queue, a retry, a staleness flag, or a
+count of work in flight, it is on the wrong side of the boundary. **First application:**
+playback moved into `lumit-bridge`'s render worker, which now paces itself and publishes each
+frame with its own frame number, so the frontend no longer has to track what it asked for. The
+`Ticker`, the every-frame pump, the in-flight counter and the stale flag are all deleted.
+The worker is not yet the full scheduler `docs/impl/playback-scheduler.md` §5 specifies — no
+epoch tokens, no ring, no adaptive lookahead — and that gap is recorded in docs/TODO.md rather
+than pretended away.
+
+**K-182 · DECIDED · The egui frontend is deleted; git history is the parity reference.**
+Supersedes the working stance (recorded in TODO.md after K-174) that the egui code stays in the
+tree as the parity reference. Reported by the owner: after egui → Flutter → frb, the project
+had "become bloated, over-engineered and far too complex", and a full over-engineering review
+confirmed the bloat was almost entirely migration corpses, not the live code. **Deleted in one
+sweep:** `crates/lumit-ui` (~30,600 lines) and `crates/lumit-app` — nothing else depended on
+them; `crates/lumit-keymap` — zero dependents, existed only for an unbuilt settings page;
+`packaging/flatpak` and its CI job — it shipped the egui binary; the never-wired pop-out
+subsystem (`flutter_ui/lib/popout/`, the `desktop_multi_window` plugin and the dock's pop-out
+chrome — `canPopOut` was hard-coded false, so all of it was unreachable); and the dead Dart the
+port left behind (`scope_maths.dart`, `AutosaveScheme`, the settings structs nothing read, the
+PowerShell RAM probe, the per-call bridge tracer). **Why deletion rather than keeping the
+reference:** a parity reference you can `git show` is exactly as available as one you compile,
+and the in-tree copy cost every CI run, every workspace build, and a standing invitation to
+"fix it in the old frontend too". **The rule going forward:** when a feature is parked (as
+pop-out is), it is *removed* and rebuilt from history when wanted — half-shipped code that
+ships its dependencies but not its entry point is the worst of both. K-174's decision itself
+is unchanged; this only deletes the superseded implementation.
+
+**K-183 · DECIDED · Frames cross the bridge as GPU handles only, and reads cross grouped.**
+Reported by the owner's collaborator: the Viewer should lose the ability to send pixel data
+back to Flutter entirely ("forced to use shared texture everywhere"), and the panels should
+stop paying a bridge call per field ("we don't have calls to things like .name() .id(),
+grouping things into .get_info() that can be called once per widget rebuild"). **Transport:**
+the CPU read-back frame path is deleted — `WorkerResponse::RenderedPixels`, the `zero_copy`
+opt-out flag, the Dart `viewerImage` fallback machinery and the `useSharedTexture` setting are
+gone, and `shared-texture` + `shared-texture-linux` are default cargo features (each inert off
+its platform), so every build and every test exercises the shipped path. A failed zero-copy
+render drops the frame rather than falling back; a platform with neither path (macOS, K-033)
+has no Viewer picture until it grows its own. Thumbnails and the 256×256 scope traces still
+cross as pixels, deliberately — bounded and rare. The rendered-frame cache is now filled only
+by the scope path. **Grouped reads:** `LayerReference::get_info` returns name, kind, switches,
+blend, the span already mapped to comp frames, clip split frames, and the parent id *and
+name* in one crossing; `BridgeEffectInstance::get_info` returns id, name, enabled and every
+parameter value. Panels read one info per widget rebuild, the parent picker builds its menu
+lazily on click (it was O(layers) calls per row, O(layers²) per outline), and the transform
+rows share one `get_transform`. Selecting a layer measured ~75 → 31 calls; the budget test
+caps it at 64. The per-field getters remain for one-shot call sites — grouping is for what
+rebuilds, not a ban.
+
+**K-184 · DECIDED · The panels draw from a Rust-built read model; a rebuild costs one call.**
+Follows K-183's grouping to its end, prompted by the owner: "why does selecting a layer take
+31 calls?? Surely one or two is all it needs?" The answer was that selection changed nothing
+in the document — the 31 were two panels repainting and re-asking for what they already knew.
+**Binding now:** `CompositionReference::get_model` returns the whole fronted comp as the
+panels draw it — every layer's handle plus name, kind, switches, blend, span as frames, clip
+frames, parent and its name, the full transform, and every effect's every value — in ONE
+crossing. Dart holds it in `CompModel` (state/comp_model.dart), and the panels (Timeline,
+Hierarchy, Effect controls, the parent picker, the comp tabs) draw from it with no bridge
+calls in build. **Freshness is a revision number, not faith:** `DocumentStore` counts every
+published snapshot (commit, undo, redo, recovery — regression-tested in lumit-core), and the
+model compares that one number per read, re-reading the world only when it moved. So any
+rebuild for any reason shows the current document — the exact contract the old
+read-everything-in-build code had — for one call instead of dozens, and the model needs no
+trust in the async change stream to be correct (the stream just triggers repaints; panels
+also nudge `refresh()` after their own ops so an edit is on screen without a round trip).
+The model is plain data, never handles: edits still go through the references, and effect
+ops fetch a fresh instance handle at click time (frb consumes handles passed by value).
+`LayerBuilder` is deleted — per-row change scoping existed because rebuilds were expensive,
+and rebuilds that cost one revision check need no scoping. Measured: selecting a layer is
+now 11 calls (was ~75 pre-K-183, 31 after it); the budget test caps it at 24.
+
+**K-185 · DECIDED · There is one comp walk; export drives the preview path.**
+K-031 ("preview == export") was held together by hand: `build_comp_draws` + `Realiser` drew the
+Viewer while `render_comp_linear` — a parallel ~1,400-line implementation of the same rules —
+drew the file, kept identical by discipline and comments. The TODO's gate ran first: a
+bit-identity matrix (blends/opacity, nested and collapsed precomps, all three matte source
+modes, adjustment stacks, per-layer motion blur, posterize time, camera over 3D, plain footage,
+Retime blend and Retime flow) proved the two walks byte-identical on every row **before**
+anything moved. Then the export encode loop and `render_rgba` switched onto the preview path —
+`HeadlessRenderer::render_preview` at full decode quality, the exporter on its own renderer and
+device so it never contends with the Viewer — and `render_comp_linear`, its `Renderer` and every
+private helper were deleted (export.rs: 2131 → 683 lines). K-031 is now true by construction:
+there is no second walk to disagree. The matrix stays as the determinism gate for the one walk.
+
+**K-186 · DECIDED · The composite runs at the preview scale; geometry stays logical.**
+The realtime tier and Auto resolution used to shrink only the decode: the composite itself
+always ran on a full comp-sized target (measured 59.7 ms/frame for a one-solid 1080p comp
+shown at 0.42), so a coarser tier barely made frames cheaper. **Binding now:** the one walk
+carries a render scale (`Realiser::render_scale`, a field so the nested/below/adjustment
+recursions inherit it with no signature ripple). The split is logical-steers,
+target-allocates: every placement matrix and the camera keep the LOGICAL comp dims —
+geometry is in comp pixels — while `composite_seeded` / `motion_blur_average` allocate their
+targets, dst snapshots and fp32 accumulators at the ACTUAL `lumit_gpu::scaled_size` dims and
+feed those to the fragment's `target_size` uniform (which normalises the frag position to
+comp UV for matte and snapshot sampling); NDC lands the same geometry on the smaller raster.
+`scaled_size` is the ONE rounding both the target and the preview's final blit use. The
+matte render-alone pass deliberately stays full-res (sampled by normalised comp UV, so any
+size is correct); the adjustment stack, coverage and `adjust_blend` run at the actual raster
+(texel-matched reads). The shared-texture registration sizes off the texture's actual dims,
+so a tier change re-registers a genuinely smaller texture. Export builds the walk with scale
+1.0 always, and the K-031 matrix pins that path bit-unchanged — the preview scale can never
+leak into the file. Regression tests: `a_render_scale_shrinks_the_target_but_not_the_geometry`
+(lumit-gpu) and `auto_resolution_composites_at_the_scaled_size` (lumit-render).
+
+**K-187 · DECIDED · The VRAM final-frame cache and the idle fill: revisited frames are free.**
+Docs/06 §5's top tier, built for the zero-copy transport that made the RAM frame cache
+irrelevant to the Viewer (K-183): the renderer keeps finished display textures on the card,
+keyed `(comp, frame, preview scale in thousandths, channel order)` under a byte-budgeted LRU
+(default 512 MiB, Settings → Performance sets it). Playback, scrubbing and the ring all pass
+through it — a warm span composites nothing. **Position keys carry two duties:** every
+committed edit drops the whole tier (the same generation signal that drops the RAM bytes,
+watched by the worker each loop turn), and a live drag's provisional renders pass
+`cacheable: false` — they must neither be served stale nor bank half-committed pixels.
+**Idle fill (§5.5, forward-biased):** after a 200 ms request lull the worker renders
+uncached frames outward from the last-shown frame — two ahead for every one behind, bounded
+by the work area and by the budget (it stops before the LRU would churn) — one frame per
+wake so any request pre-empts it within one render. **The cache bar merges the tier**: the
+worker publishes its holdings (packed exactly like `framecache`'s keys) and `cached_frames`
+reports card-held frames as green — the bar means something on the zero-copy transport
+again. The textures never leave the worker's thread; settings speak to it through three
+atomics and a published mirror, so no lock ever spans GPU work. The disk tier (§5.4) and
+content keying (K-178) remain open. Regression tests:
+`a_cacheable_frame_is_served_from_vram_and_a_drag_never_is` (lumit-render),
+`the_fill_order_is_forward_biased_and_complete` and `cached_tiers_merges_the_vram_mirror`
+(lumit-bridge).
+
+**K-188 · DECIDED · The Timeline header rework: four draggable column groups, open comp tabs, shy.**
+Supersedes K-168's shipped five-cluster arrangement. The outline's columns sit in FOUR
+groups, each draggable in the header to reorder as a unit — 1 visibility · audio · solo ·
+lock · shy; 2 twirl · label chip · layer number · name; 3 flow-or-collapse · fx · motion
+blur · 3D; 4 matte · blend · parent. The header icons are indicators only; the switches
+live on the rows, and visibility/audio swap glyph when off (closed eye, muted speaker)
+rather than only dimming. **Shy is a real engine switch** (`Switches::shy`, `SetLayerShy`):
+it hides the layer from the Timeline's list while the toolbar's shy filter is on and never
+changes what renders. **Comp tabs are open tabs now**, not the whole project: fronting a
+comp opens its tab, the tab's × closes only the tab, and closing the fronted tab fronts
+its nearest neighbour. **The toolbar lives inside the outline** (timecode `HH:MM:SS:FF`
+plus a zero-based frame readout, the layer search, a master motion-blur button writing
+`Composition::motion_blur.enabled` through the new `set_motion_blur_enabled`, the shy
+filter, Lane/Graph view buttons, and a ⋯ menu holding the layer/work-area/marker
+commands); the lane side gives that whole height to a taller labelled time ruler. The
+fold-out's value cells span exactly the render group's width, so values line up under it
+wherever the groups are dragged. The flow column is reserved: optical flow has no
+per-layer engine backing yet (docs/TODO.md), so a Precomp shows collapse there and other
+kinds leave the cell empty. Lock is enforced UI-side where the gestures live (bar
+move/trim, razor, rename, reorder/delete); property-row edits on a locked layer are a
+recorded gap. Master motion blur does NOT cascade into nested comps — each comp's own
+master gates its own layers (lumit-eval reads `comp.motion_blur.enabled` per comp).
+Regression tests: `timeline_panel_frb_test.dart` (group drag, switches, readouts, shy,
+lock, master toggle), `timeline_extras_frb_test.dart` (tab open/close), and
+`the_master_motion_blur_toggle_flips_only_the_enable` (lumit-bridge).
+
+**K-189 · DECIDED · Timeline round two: label colours drive the bars, animated values stay editable, drags never scroll.**
+Follows K-188 in the same rework. **Labels colour the lanes:** a layer's label chip and its
+bar in the lane area are the same colour, from a dedicated bright eight-chip palette in the
+theme (replacing TL2's role-colour chips, which were built to be quiet rather than tellable
+apart), and each layer kind starts on its own chip (`base_layer` assigns it; the user's
+pick simply overwrites). One palette for both themes. **Animated values stay editable
+everywhere they show:** an outline value field on a keyframed property shows the value
+under the playhead and an edit writes the key sitting there — or plants a linear one — via
+`scalarWithValueAt`; a static write over a curve is no longer possible from a value field.
+The keyframe controls read the *live* playhead (the ◆ diamond fills exactly while the
+playhead sits on a key). **Keyframes show in lane view:** keyed rows draw their diamonds
+on their lanes, and dragging empty lane space boxes them up with the shared `MarqueeSelect`
+(the same widget the graph editor's lanes use). **Dragging never scrolls the timeline** —
+the wheel and the scrollbars do: the outline and lanes share a linked vertical scroll (one
+thumb on the lane side; two independent ones in graph view), and the lane bottom bar holds
+− / + / Fit time zoom with a horizontal scrollbar. Lane painters decline hit-tests (a
+`CustomPaint` background painter otherwise absorbs the marquee's drag). The graph editor's
+command bar moved to the bottom and its lanes label their value axis. Regression tests:
+`timeline_panel_frb_test.dart` (key-at-playhead edits, live diamond, lane marquee, zoom,
+bar colour, tall-stack scroll), `effect_controls_frb_test.dart` (animated field edits the
+key), `theme_test.dart` (distinct chips).
+
+**K-190 · DECIDED · Timeline round three: row seams, key dragging, and the scroll gutters.**
+Continues K-188/K-189. **Column metrics:** every gap *inside* a group is now the same
+`cellGap` — the render switches pack left in ordinary switch cells (the rest of that
+group's span is the fold-out's value column, not spare icon room) and matte · blend ·
+parent sit a cell-gap apart. The compose group's header titles carry the dropdown's own
+`dropdownTextInset`, so each title sits over the text in the cell below it. The group seam
+is a hairline **in the header only** — the rows keep the same width as plain space,
+because a rule down every row of a tall stack is noise. **Row seams** run the full width of
+the lane area, drawn as ONE `IgnorePointer` overlay per lane column rather than as a border
+per row: `RenderDecoratedBox.hitTestSelf` delegates to the decoration, so a `Container`
+with a `decoration` **absorbs pointers** — a per-row border silently ate the keyframe
+marquee under it (the same trap as a `CustomPaint` background painter, which needs
+`hitTest => false`). Bars fill their whole row height and the seam draws over them.
+**Lane keyframes drag in time**: each diamond is a handle, the gesture is held in Dart and
+committed once (`moveLaneKey`), and a move onto a neighbour is refused rather than clamped.
+The **magnet** (lane bottom bar, on by default) decides whether a dragged key lands on a
+whole frame or between two; off, the time is quantised to a thousandth of a frame and built
+from the comp's exact rate, so it stays rational (docs/14 §2). **Scroll gutters:** the
+vertical thumb lives in a fixed-width gutter *outside* the horizontal scroller, pinned to
+the viewport's right edge — it used to ride the scrolled content and drift off screen. The
+outline reserves the same gutter, with a fixed undraggable block level with its toolbar and
+column header (After Effects' reserved corner), so the columns do not shift when graph view
+gives the outline its own thumb. **Wheel:** plain scrolls the rows (both halves, linked),
+`Shift` scrolls sideways, `Ctrl` zooms time about the pointer — handled by a `Listener`
+placed *inside* the scrollables so the pointer-signal resolver offers it the wheel first,
+and left alone otherwise so a plain wheel still reaches the scrollable. Effect parameter
+rows take the fold-out's zero row padding, matching the transform rows they sit beside;
+the card keeps its own. Regression tests: `timeline_panel_frb_test.dart` (key drag with
+magnet on and off, marquee, dividers via the passing marquee, zoom, bar colour).
+
+**K-191 · DECIDED · A composition double-clicks open; an empty Timeline takes a drop.**
+Two dead ends closed. **Double-clicking a comp row in the Project panel opens it in the
+Timeline** rather than renaming it — what a double-click means in every editor. The panel's
+click model is otherwise unchanged (a second click on the lone selected row still renames
+footage, solids and folders in place, resolved on the raw pointer-up so there is no arena
+delay); only compositions divert. Renaming a comp therefore moved to the row menu's new
+**Rename** entry, which is offered for every item kind so nothing lost a rename path, and
+its settings dialogue still carries the name field. **Dropping footage on a Timeline with
+no composition open** raises the New composition dialogue seeded from the media — the same
+gesture the Project panel's New composition button already took — and fronts the finished
+comp; dropping a comp there simply opens it. The panel used to show a placeholder with no
+drop target at all, so the drag lifted, showed its feedback and dropped into nothing.
+Regression tests: `double-clicking a composition opens it in the Timeline`
+(project_panel_frb_test.dart) and `footage dropped on an empty Timeline offers a new comp`
+(timeline_panel_frb_test.dart).
+
+**K-192 · DECIDED · Resizable column groups, property selection, and a keyframed drag as one undo step.**
+**The undo bug first, because it was a real one:** [`DragValueField`] falls back to
+`onChanged` on *every drag tick* when no `onChangeLive` is given, so a drag on a keyframed
+value (K-189's editable animated cells) committed one op per pixel — the undo stack filled
+with a step per tick and a single undo moved the value back by a hair instead of undoing the
+gesture; a drag that planted a new key planted one per tick. `KeyedValueField`
+(keyframe_controls_frb.dart) now stages the drag in Dart and commits exactly once on
+release, and the transform rows, effect parameter rows and the Volume row all use it.
+**Column groups resize:** each group carries its own width, the header seam between two
+groups is a drag handle for the one on its left, and every other group keeps its width — so
+the outline grows by exactly what the drag moved. The fold-out's value cells span the render
+group *as it currently is*, and the compose group's three pickers share theirs
+proportionally, so widening a group widens what sits in it. The identity group is a plain
+width now rather than flexing. **Properties select:** every fold row has a hierarchical
+path (`<layer>/effects/<fx>/<param>`, sharing its prefixes with the group paths), clicking a
+property row selects it, and every row *containing* it — the effect's heading, the layer's
+own row — marks itself a shade dimmer, which is what will tell the graph editor which curve
+is meant. Boxing keyframes on a lane selects their property too. **Two Flutter traps, both
+found the hard way and both now guarded:** `ScrollController.offset`/`.position` assert
+when a rebuild momentarily leaves two views attached (a drop target lighting up was
+enough) — read through `_positionOf`, which returns null unless exactly one is attached;
+and `RawScrollbar` learns where its scrollable is from `ScrollNotification`s rising through
+its *own* subtree, so one sat in a gutter beside the scroll view never repaints and its
+thumb is simply invisible — replaced by `_GutterScrollbar`, which listens to the controller
+and drags it directly. The outline's row seams are now one scroll-phased overlay across the
+columns *and* the gutter, so they meet the lane area's. Regression tests: `a drag on a
+keyframed value is one undo step`, `clicking a property selects it and marks its parents`,
+`boxing keyframes on a lane selects their property`, `dragging a header seam resizes just
+that group` (timeline_panel_frb_test.dart).
+
+**K-193 · DECIDED · Layers reorder by drag, the Transform card is a choice, and Settings has pages.**
+**Reordering:** a layer's name is its stack handle — drag it onto another row and it takes
+that row's place, one op and one undo step. Layers were otherwise stuck in the order they
+were added, movable only from the row menu one place at a time. A locked layer neither
+drags nor accepts a drop. **The Transform card in Effect controls is off by default**
+(Settings → Interface turns it on): the Timeline's fold-out already carries Transform, and
+repeating it pushed the effect stack — what the panel is *for* — a screen down on a 3D
+layer. It stays available because it is a habit After Effects users bring with them.
+**Settings is paged** (General · Appearance · Interface · Performance), each page a stack
+of named sections and each section a card of rows that read the same way: what it is, a
+line saying what it does, its control on the right. That is the egui shell's arrangement,
+restored; it replaces one scrolling column of five groups that had outgrown a window. The
+rebuild also surfaces settings that existed but were never exposed — UI scale, tooltips,
+the animation level, and the playback mode, all of which were being persisted while
+unreachable. `Workspace.settingsChanged()` is the one call that makes an in-place edit to
+`interface`/`performance` stick, since those are plain structs rather than a setter per
+field. **Pages with nothing behind them are not listed:** Export defaults, the keymap
+editor and colour management are unbuilt (docs/TODO.md), and an empty page is a promise
+the window cannot keep. Regression tests: `dragging a layer by its name reorders the
+stack` (timeline_panel_frb_test.dart) and `the pages divide the settings, and a choice
+persists` (shell_frb_test.dart).
+
+**K-194 · DECIDED · A test may not touch the real settings; budgets are typed; menus have submenus.**
+**The settings-reset bug first.** `Workspace.save()` wrote to
+`%APPDATA%\lumit\flutter-workspace.json` unconditionally, and every test that builds a
+`Workspace` and touches a setter calls it — so a `flutter test` run wrote *defaults* over
+the developer's own settings, every run. `Workspace.storeOverride` redirects the store, and
+the frb test harness points it at a temp file. Machine state is not something a test run may
+reach. **Cache budgets are typed numbers** (drag or type, in MB) rather than a pick from a
+fixed list, capped at what the machine actually has: `system_memory_bytes()` via
+`GlobalMemoryStatusEx` and `video_memory_bytes()` via the first DXGI adapter's dedicated
+memory (`crates/lumit-bridge/src/api/system.rs`; both answer 0 off Windows and the frontend
+falls back to a documented 16 GB ceiling rather than pretending). The old dropdown could not
+express "3 GB on a 32 GB machine" and its options were a guess at what hardware would turn
+up. The **Frame transport** row is deleted — it named an implementation detail the user
+cannot act on. **Menus nest** (`SubmenuRow`, widgets/controls.dart): Window → Workspaces
+holds the four presets and Reset, and Add effect → *category* → effect replaces one 380 px
+scrolling list. The submenu opens *over* its parent rather than replacing it: closing the
+parent first would take the row's `BuildContext` with it, and the overlay the submenu needs
+is reached through that context. The Add-effect menu now drops from the **button** (a
+`Builder` gives it its own context) instead of the panel's left edge. **Source and Retime
+join Transform** behind the Settings → Interface toggle: all three describe the *layer*, and
+this panel is about the effects on it. **Matte and layer-valued effect parameters offer only
+layers with a picture** — `LayerReference::has_picture()`, the mirror of `has_audio`, false
+for a camera and for an audio-only clip — and never the layer they sit on. Both pickers are
+lazy, so the probe happens when a menu opens and never while drawing a row (K-184).
+Regression tests: the settings/menu/effect tests in `shell_frb_test.dart`,
+`menu_bar_frb_test.dart` and `effect_controls_frb_test.dart`.
+
+**K-195 · DECIDED · macOS gets a Viewer picture: Metal/IOSurface is the third zero-copy
+transport.** K-183 deleted the CPU read-back path and left macOS with no way to show a
+frame at all — every render was composited and then dropped with "No zero-copy transport in
+this build", so the Viewer was blank for a whole session while every other panel worked.
+The macOS primitive for two parts of a program pointing at one piece of graphics memory is
+the **IOSurface**: `lumit-gpu`'s `shared_metal` creates one (`IOSurfaceCreate`), asks Metal
+for a texture backed by it (`newTextureWithDescriptor:iosurface:plane:`), and wraps that
+`MTLTexture` back up as a `wgpu::Texture` the ordinary render path copies the finished frame
+into. The runner (`macos/Runner/ViewerTextureBridge.swift`) looks the surface up by id,
+wraps it in a `CVPixelBuffer` — a wrapper, not a copy — and registers it as a Flutter
+external texture on the same `lumit/viewer_texture` channel with the same
+`register`/`frameReady`/`unregister` methods the Windows and Linux runners implement.
+**The payload is the Windows one, deliberately:** macOS reports `RenderedSharedTexture`,
+because both platforms hand across one opaque integer naming a surface plus its size (an NT
+handle there, an `IOSurfaceID` here) and neither side does anything with it but pass it on.
+So there is no third bridge variant, no codegen change and no Dart change — only Linux, which
+needs stride, offset and a DRM format, has its own. The surface is `'BGRA'`
+(`kCVPixelFormatType_32BGRA`, the one format Flutter's macOS texture path accepts), so the
+renderer is asked for BGRA display bytes there exactly as it is on Windows. Feature
+`shared-texture-macos`, default-on and inert off macOS, matching its two siblings.
+Regression test: `the_surface_yields_the_pixels_in_bgra_order` in `shared_metal.rs` writes
+through the wgpu texture and reads back off the locked IOSurface, which is the channel-order
+mistake that would otherwise cost a silent blank session (the Windows sibling's test exists
+for the same reason). Extends K-177; supersedes K-183's "macOS has no Viewer picture until
+it grows its own" — it has grown one. The rest of K-033's Mac release list (VideoToolbox,
+ProRes, notarisation, the native menu bar) is untouched and still outstanding.
+
+**K-196 · DECIDED · The graph editor is the AE graph, and the keyframe clipboard speaks
+AE's format.** From Mack (2026-07-28), replacing the per-channel mini-lanes the frb port
+shipped with the behaviour docs/07 §5 always specified. The graph is **one full-height
+pane** sharing the Timeline's ruler, zoom and horizontal scroll; the curves it draws are
+evaluated by a Dart port of the engine's own cubic (`flutter_ui/lib/panels/graph_maths.dart`,
+pinned to `crates/lumit-core/src/anim.rs` by docs/impl/keyframe-eval.md §1–2 and held
+together by golden tests), because a paint may not cross the bridge (K-184). Decisions
+folded in: **(a)** property selection rides on the property's *name* in the outline —
+`Ctrl` toggles, `Shift` ranges, across layers — and editing a value or keying a property
+selects it too; a click elsewhere on the row selects nothing. Every selected property is a
+coloured curve (the theme's `curve` palette, per axis — Position is AE's red/green pair)
+and the outline label takes its curve's colour. **(b)** Wheel bindings match the lane view:
+`Ctrl`+wheel zooms time about the pointer, `Shift`+wheel scrolls sideways; the value axis
+auto-fits until the Auto fit toggle is off, and then a plain wheel pans it and `Alt`+wheel
+zooms it. **(c)** Tangent handles are per side and joined by default: a drag swings the partner
+**live and in screen space**, keeping the pixel length it had when the gesture began, and
+`Alt` held at drag start flips broken/joined. Screen space, not value space, because the
+two axes carry different units at independent zooms — mirroring in value space bends the
+line the pair is supposed to draw and appears to stretch the partner as the tangent swings
+toward vertical, which is the exact complaint that killed this in the egui frontend. For
+the same reason the handles' hit targets never grow past their own reach: a handle sits a
+few pixels from its key on a long composition, and a fixed target made which one you
+grabbed a coin toss. The pixel length holds at *every* angle, with two supports rather
+than a compromise: a tangent may never stand exactly upright (its reach is floored at a
+thousandth of its span — sub-pixel at any sane zoom), because a vertical tangent covers no
+time and so has no speed that describes it, which is the one state the geometry cannot
+come back from; and each handle's drawn length is **remembered** per keyframe and side,
+against the scales it was measured under, so swinging a pair out to near-vertical and back
+returns both handles exactly as long as they went in. Reach in time is therefore allowed
+to become very small at the extreme — that is what a near-upright tangent *is* — without
+the length on screen following it down. One consequence is worth stating rather than
+patching around: a joined partner moves when the pair **rotates**, so dragging a handle
+straight out from an already-steep tangent lengthens it without turning it and the other
+side barely stirs. That is the see-saw behaving, not sticking.
+**(d)** The speed lens draws the exact derivative (K-080): each key is an independent
+in-speed and out-speed dot, dragged vertically for that side's speed and **sideways to move
+the keyframe in time**, with one influence handle each; editing either lens writes the same
+speed/influence store losslessly (K-025). **(e)** The keyframe clipboard: in-app it keeps
+full fidelity; the system clipboard simultaneously receives a tab-separated table headed
+**`Lumit <version> Keyframe Data`** (the rate, the source size, then a property group per
+copied property with a column per value) — extended with **two easing columns per value**,
+`linear` / `hold` / `bezier(speed,influence)`, so shaping survives the round trip instead
+of flattening. The easing columns come last, after every value, so a reader that does not
+know them stops at the values it does; a foreign keyframe table with no easing columns
+parses back as linear keys. Copy and paste are bound to the keyframe *selection*, not to
+the graph, so they work from the lane view too. **(f)** The F9 family
+(F9 / `Shift+F9` / `Ctrl+Shift+F9`) and the footer's Linear / Bezier / Hold act on the key
+selection in *either* view — the lane marquee's catch included. Retime stays an ordinary
+property here (per the standing TODO): no Retime channel, no §5.2 lenses yet; the
+acceleration lens (K-070), numeric entry, transform-box scaling, beat-marker snapping and
+waveform ghosting remain open in docs/07 §5.
+
+**K-197 · DECIDED · Retime starts again as an ordinary keyframable property.** The segment
+model (docs/04-RETIMING.md: Rate/Map segments, eases, boundaries with exact rational source
+positions) is a fine *destination* and a poor starting point — it has cost more than it has
+paid, and none of its editing affordances ever reached the frontend (docs/TODO.md lists a
+dozen). So Retime restarts as the simplest thing that is honestly a retime: a
+`lumit_core::anim::Property` on the **layer** (`Layer::retime`, `Option<Property>`) whose
+value is the source time, in seconds, the layer shows at its own local time — the After
+Effects Time Remap shape. It is a graph-editor channel like any other, which supersedes
+K-196's "no Retime channel" — that clause meant no *segment* channel and no lenses, and
+neither is what this is. Being an ordinary `Property` is the whole point: the stopwatch,
+the ◄ ◆ ► navigator, the lane diamonds, the graph editor's lane, its handles and its interp
+menu all work on it already, with no Retime-specific code anywhere. **No extras at all** —
+no speed lens, no ease presets, no ramp editing, no freeze, no overrun band, no
+interpolation policy on this path. Those return, if they return, on top of a property that
+already works. `Option` rather than an always-present property because "not retimed" and
+"retimed to exactly 1×" are different states in the file, and only the first skips the map:
+a layer with no Retime shows **no row**, and Alt+Shift+T installs the identity map (two
+linear keys, source running alongside local time) so switching it on changes nothing
+visible. The row sits **above** Transform, outside every group, because it decides which
+frame of the source the rest of the fold-out then transforms. `Layer::source_time_at` is the
+single place the mapping is decided, so the render plan (`plan.rs`) and the frame-cache key
+(`lumit-eval`) can never disagree about which source frame a layer shows; it prefers the
+property and falls back to the old `LayerKind::Footage::retime` store for documents that
+carry one. Supersedes K-194's "build the fold-out group and move the Source card's retime
+rows into it" — the rows being moved would have been the segment card's, and this is a
+different property with a different model; the Source card's speed/reverse/interpolation
+rows stay where they are until the new path replaces them outright. Regression tests:
+`retime_property_round_trips_and_maps_source_time` (lumit-core),
+`the_retime_property_toggles_and_reads_back` (lumit-bridge), `Retime shows above Transform
+only once the layer has one` (timeline_panel_frb_test.dart) and `Alt+Shift+T toggles the
+selected layer's Retime` (shortcuts_frb_test.dart). The shortcut is **Alt+Shift+T**, the
+owner's choice, replacing docs/07 §15's never-built `Ctrl+Alt+T`; that table is updated in
+the same commit.
+
+**K-198 · DECIDED · Retime keeps its chord and gains one the operating system cannot
+take.** From Mack (2026-07-28), extending K-197 rather than reversing it. K-197's
+**Alt+Shift+T** is unchanged and stays the shortcut the specs name. It also, on Windows,
+collides with the system's **input-language switch**: left Alt with Shift is how Windows
+cycles keyboard layouts, so on any machine with a second layout installed the OS consumes
+the chord and the application never receives the T — the command appears simply not to
+work, which is how this was found. Two additions, no removals: **Ctrl+Alt+T** does the same
+thing (After Effects' own Time Remap chord, and the one K-197 had replaced — nothing
+intercepts it), and **Composition ▸ Enable Retime / Disable Retime** carries the command in
+the menus, naming what it will do to the selected layer and greyed out when there is none.
+Both routes go through one `LumitState.toggleRetime`, so they cannot drift apart, and it
+swallows a failed call rather than letting a menu click take the interface down. Covered by
+`Ctrl+Alt+T toggles Retime as well` beside K-197's own shortcut test. The general lesson
+outlives this shortcut: a chord the OS claims is not a chord the application has, so a
+command whose only route is the keyboard has no route at all — every keyboard command
+wants a menu or palette entry beside it.

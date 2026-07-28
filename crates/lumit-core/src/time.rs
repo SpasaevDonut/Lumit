@@ -237,6 +237,22 @@ impl FrameRate {
         Ok(Self { num, den })
     }
 
+    /// The rate's exact numerator and denominator, e.g. `(30000, 1001)`.
+    ///
+    /// Needed because a frame rate must cross a boundary as the exact pair, never
+    /// as `fps()` — 29.97 is 30000/1001, and a round trip through a float does not
+    /// give it back (docs/14 §2, rational time). Before these existed the bridge
+    /// read the pair by serialising the whole struct to JSON, which worked only
+    /// because the field names happened to match.
+    pub fn num(self) -> u32 {
+        self.num
+    }
+
+    /// See [`FrameRate::num`].
+    pub fn den(self) -> u32 {
+        self.den
+    }
+
     pub fn fps(self) -> f64 {
         f64::from(self.num) / f64::from(self.den)
     }

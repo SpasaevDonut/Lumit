@@ -1,18 +1,27 @@
-//! Exact-frame video decoding (docs/impl/media-io.md §3).
+//! Exact-frame video decoding (docs/impl/media-io.md §3-§4).
 //!
 //! In plain terms: to show frame N, we jump to the nearest keyframe at or
 //! before N (from the frame index), then decode forward, discarding frames
 //! until the exact timestamp matches. "Close enough" comparisons are the
 //! classic off-by-one-frame scrubbing bug — we compare pts exactly against
 //! the index, which came from the same container.
+//!
+//! Decoding itself takes the fastest path the machine offers (§4's v1
+//! baseline): on Windows the bitstream is decoded by the graphics card's
+//! fixed-function video unit (D3D11VA) and the finished picture transferred
+//! back to ordinary memory, where the same conversion the software path uses
+//! turns it into RGBA. Anything about that failing — no hardware, an
+//! unsupported codec — falls back to software decoding with all cores,
+//! never an error.
 
 use crate::index::FrameIndex;
 use crate::MediaError;
-use rsmpeg::avcodec::AVCodecContext;
+use rsmpeg::avcodec::{AVCodec, AVCodecContext};
 use rsmpeg::avformat::AVFormatContextInput;
 use rsmpeg::avutil::AVFrame;
 use rsmpeg::ffi;
 use rsmpeg::swscale::SwsContext;
+use rsmpeg::UnsafeDerefMut;
 use std::path::Path;
 
 /// A decoded frame as straight (non-premultiplied) RGBA8, sRGB-encoded.
@@ -31,10 +40,86 @@ pub struct VideoDecoder {
     index: FrameIndex,
     /// Frame number the decoder will produce next if we keep reading forward.
     next_sequential: Option<usize>,
+    /// How many times this decoder has had to seek. Exposed by [`Self::seeks`]
+    /// because seeking is the difference between realtime playback and a
+    /// slideshow, and "did that need a seek?" is a far steadier thing to assert
+    /// than "was that fast?".
+    seeks: usize,
+    /// Whether frames are decoded by the graphics card's video unit
+    /// (docs/impl/media-io.md §4). Diagnostic — the pixels and the pts logic
+    /// are identical either way.
+    hardware: bool,
+}
+
+/// Build and open a codec context for `codec`/`par`, with the D3D11VA
+/// hardware device attached when `try_hw` asks for it and the codec supports
+/// it. Returns whether hardware is actually in use. A context that fails to
+/// open is unusable, which is why the caller retries with a fresh one in
+/// software rather than reusing this one.
+fn open_codec_ctx(
+    codec: &AVCodec,
+    par: &rsmpeg::avcodec::AVCodecParameters,
+    try_hw: bool,
+) -> Result<(AVCodecContext, bool), MediaError> {
+    let mut ctx = AVCodecContext::new(codec);
+    ctx.apply_codecpar(par)?;
+    // Library-default libav is SINGLE-threaded (unlike the ffmpeg CLI); 0 asks
+    // for automatic frame/slice threading across the machine's cores, which is
+    // the difference between one core grinding 4K H.264 and all of them.
+    // SAFETY: plain field write on the owned, not-yet-opened context — the
+    // same pattern rsmpeg's own setters use.
+    #[allow(unsafe_code)]
+    unsafe {
+        ctx.deref_mut().thread_count = 0;
+    }
+    let hardware = try_hw && attach_d3d11va(codec, &mut ctx);
+    ctx.open(None)?;
+    Ok((ctx, hardware))
+}
+
+/// Attach a D3D11VA hardware device to `ctx` when this codec supports
+/// device-context hardware decode (docs/impl/media-io.md §4, v1 baseline).
+/// libav's default format negotiation then selects the hardware path on its
+/// own. False — leaving the context untouched for software — when there is no
+/// support or no device; never an error.
+#[cfg(windows)]
+fn attach_d3d11va(codec: &AVCodec, ctx: &mut AVCodecContext) -> bool {
+    let supported = (0..).map_while(|i| codec.hw_config(i)).any(|c| {
+        c.device_type == ffi::AV_HWDEVICE_TYPE_D3D11VA
+            && (c.methods & ffi::AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX) != 0
+    });
+    if !supported {
+        return false;
+    }
+    match rsmpeg::avutil::AVHWDeviceContext::create(ffi::AV_HWDEVICE_TYPE_D3D11VA, None, None, 0) {
+        Ok(device) => {
+            ctx.set_hw_device_ctx(device);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// The macOS sibling is VideoToolbox and lands with the macOS pass (K-033);
+/// until then every other platform decodes in software, on all cores.
+#[cfg(not(windows))]
+fn attach_d3d11va(_codec: &AVCodec, _ctx: &mut AVCodecContext) -> bool {
+    false
 }
 
 impl VideoDecoder {
     pub fn open(path: &Path, index: FrameIndex) -> Result<Self, MediaError> {
+        Self::open_with(path, index, true)
+    }
+
+    /// As [`Self::open`], with hardware decode refusable — the knob the
+    /// decoder settings page will drive, and what the hw/sw agreement test
+    /// pins its ground truth with.
+    pub fn open_with(
+        path: &Path,
+        index: FrameIndex,
+        allow_hardware: bool,
+    ) -> Result<Self, MediaError> {
         let input = crate::probe::open_input(path)?;
         let (stream_index, par) = input
             .streams()
@@ -44,20 +129,34 @@ impl VideoDecoder {
             .ok_or(MediaError::NoStreams)?;
         let codec = rsmpeg::avcodec::AVCodec::find_decoder(par.codec_id)
             .ok_or_else(|| MediaError::Ffmpeg("no decoder for codec".into()))?;
-        let mut decoder = AVCodecContext::new(&codec);
-        decoder.apply_codecpar(&par)?;
-        decoder.open(None)?;
+        // Hardware first; a context that fails to open with the device attached
+        // is rebuilt fresh in software (fallback, not error — §4).
+        let (decoder, hardware) = open_codec_ctx(&codec, &par, allow_hardware)
+            .or_else(|_| open_codec_ctx(&codec, &par, false))?;
         Ok(Self {
             input,
             decoder,
             stream_index,
             index,
             next_sequential: Some(0),
+            seeks: 0,
+            hardware,
         })
     }
 
     pub fn frame_count(&self) -> usize {
         self.index.frame_count()
+    }
+
+    /// How many seeks this decoder has performed since it was opened.
+    pub fn seeks(&self) -> usize {
+        self.seeks
+    }
+
+    /// Whether this decoder runs on the graphics card's video unit
+    /// (docs/impl/media-io.md §4). Diagnostic only.
+    pub fn is_hardware(&self) -> bool {
+        self.hardware
     }
 
     /// Decode exactly frame `n`, optionally scaled to `target_width`
@@ -72,10 +171,35 @@ impl VideoDecoder {
             .pts_of_frame(n)
             .ok_or_else(|| MediaError::Ffmpeg(format!("frame {n} out of range")))?;
 
-        // Sequential fast path: already positioned to produce n next.
-        let need_seek = self.next_sequential != Some(n);
+        // Where a seek would land, and therefore whether one is worth doing.
+        let key = self.index.nearest_keyframe_at_or_before(n);
+
+        // **Seek only when it actually saves work.** The decoder is already
+        // positioned somewhere; a seek costs a backwards jump *and* a
+        // `flush_buffers`, after which the frames between the keyframe and `n`
+        // have to be decoded anyway. So it only pays when the keyframe is ahead
+        // of where we already are — otherwise decoding forward from here is
+        // strictly less work.
+        //
+        // **Why this matters far more than it looks.** Playing forward while
+        // dropping frames — which is exactly what adaptive playback does the
+        // moment it falls behind — asks for n, then n+2, then n+3, and the old
+        // condition (`next_sequential != Some(n)`) called every one of those a
+        // seek. Measured on 1080p60: 4.4 ms a frame decoding sequentially
+        // (227 fps), 92 ms a frame when every request seeks (11 fps) — twenty
+        // times slower. So the first dropped frame made decoding twenty times
+        // more expensive, which dropped more frames, which seeked further. The
+        // whole collapse followed from one frame arriving late.
+        let need_seek = match self.next_sequential {
+            // Already positioned to produce n next.
+            Some(m) if m == n => false,
+            // Ahead of us, with no keyframe in between worth jumping to: decode
+            // forward through the gap, discarding what is not wanted.
+            Some(m) if m <= n && key <= m => false,
+            // Behind us, or a keyframe closer to n than we are: seek.
+            _ => true,
+        };
         if need_seek {
-            let key = self.index.nearest_keyframe_at_or_before(n);
             let key_pts = self
                 .index
                 .pts_of_frame(key)
@@ -84,6 +208,7 @@ impl VideoDecoder {
                 .seek(self.stream_index, key_pts, ffi::AVSEEK_FLAG_BACKWARD as i32)?;
             self.decoder.flush_buffers();
             self.next_sequential = Some(key);
+            self.seeks += 1;
         }
 
         loop {
@@ -95,6 +220,30 @@ impl VideoDecoder {
             };
             if pts == want_pts {
                 self.next_sequential = Some(n + 1);
+                // A hardware frame's pixels live on the graphics card; bring
+                // them to system memory (NV12) so the same swscale conversion
+                // the software path uses runs on them (§4's v1 baseline —
+                // the one-copy interop is the recorded follow-up).
+                let frame = if frame.hw_frames_ctx.is_null() {
+                    frame
+                } else {
+                    let mut sw = AVFrame::new();
+                    sw.hwframe_transfer_data(&frame)
+                        .map_err(|e| MediaError::Ffmpeg(format!("hw frame transfer: {e}")))?;
+                    // Repack semi-planar NV12 as planar yuv420p — a pure
+                    // layout change, no resampling — because swscale's nv12
+                    // and yuv420p RGB conversions interpolate chroma
+                    // DIFFERENTLY (measured: 9% of bytes off, up to 161, on
+                    // a test pattern's edges). Preview == export (K-031) and
+                    // cross-machine determinism need one conversion, so the
+                    // hardware path is made to look exactly like software
+                    // before the shared RGBA step.
+                    if sw.format == ffi::AV_PIX_FMT_NV12 {
+                        deinterleave_to_yuv420p(&sw)?
+                    } else {
+                        sw
+                    }
+                };
                 return convert_rgba(&frame, target_width);
             }
             if pts > want_pts {
@@ -131,6 +280,34 @@ impl VideoDecoder {
             }
         }
     }
+}
+
+/// Repack a hardware-transferred NV12 frame as planar yuv420p. Same-size
+/// point "scale" through swscale is a lossless plane copy plus chroma
+/// deinterleave — no values change, only the memory layout, so the shared
+/// RGBA conversion behaves identically to the software decoder's output.
+fn deinterleave_to_yuv420p(src: &AVFrame) -> Result<AVFrame, MediaError> {
+    let mut sws = SwsContext::get_context(
+        src.width,
+        src.height,
+        src.format,
+        src.width,
+        src.height,
+        ffi::AV_PIX_FMT_YUV420P,
+        ffi::SWS_POINT,
+        None,
+        None,
+        None,
+    )
+    .ok_or_else(|| MediaError::Ffmpeg("nv12 repack context creation failed".into()))?;
+    let mut out = AVFrame::new();
+    out.set_width(src.width);
+    out.set_height(src.height);
+    out.set_format(ffi::AV_PIX_FMT_YUV420P);
+    out.alloc_buffer()
+        .map_err(|e| MediaError::Ffmpeg(e.to_string()))?;
+    sws.scale_frame(src, 0, src.height, &mut out)?;
+    Ok(out)
 }
 
 fn convert_rgba(frame: &AVFrame, target_width: Option<u32>) -> Result<DecodedFrame, MediaError> {
@@ -266,6 +443,99 @@ mod tests {
             assert_eq!(frame_hash(&f), truth[n], "frame {n} differs after seek");
             assert_eq!((f.width, f.height), (320, 240));
         }
+    }
+
+    /// Hardware decode is an implementation detail, never a look: the frames
+    /// the D3D11VA path produces must match the software decoder's. H.264
+    /// decoding is bit-exact by spec, so the two only differ if the transfer
+    /// or conversion path is wrong; a byte of slack per channel forgives a
+    /// driver's chroma rounding without letting a real defect through. Skips
+    /// where hardware decode is unavailable (non-Windows, CI, no fixture) —
+    /// on those machines the fallback IS the software path.
+    #[test]
+    fn hardware_and_software_decode_agree_on_the_pixels() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(file) = fixture(dir.path()) else {
+            eprintln!("skipping: no ffmpeg CLI available");
+            return;
+        };
+        let index = build_frame_index(&file).unwrap();
+        let mut hw = VideoDecoder::open(&file, index.clone()).unwrap();
+        if !hw.is_hardware() {
+            eprintln!("skipping: no hardware decoder on this machine");
+            return;
+        }
+        let mut sw = VideoDecoder::open_with(&file, index, false).unwrap();
+        assert!(!sw.is_hardware());
+        for n in [0usize, 7, 63, 119] {
+            let a = hw.frame_rgba(n, None).unwrap();
+            let b = sw.frame_rgba(n, None).unwrap();
+            assert_eq!((a.width, a.height), (b.width, b.height));
+            let worst = a
+                .rgba
+                .iter()
+                .zip(&b.rgba)
+                .map(|(x, y)| x.abs_diff(*y))
+                .max()
+                .unwrap_or(0);
+            assert!(worst <= 1, "frame {n}: hw and sw differ by {worst}");
+        }
+    }
+
+    /// **The playback-collapse regression.** Adaptive playback drops frames when
+    /// it falls behind, so it asks for n, then n+2, then n+3 — always forward,
+    /// never the same frame twice. Every one of those used to count as a seek
+    /// (`next_sequential != Some(n)`), and a seek means a backwards jump plus a
+    /// `flush_buffers`, throwing away the decoder state that made the *next*
+    /// frame cheap.
+    ///
+    /// Measured on 1080p60: 4.4 ms a frame sequentially (227 fps) against 92 ms
+    /// when every request seeks (11 fps). So one late frame made decoding twenty
+    /// times dearer, which dropped more frames, which seeked further — playback
+    /// collapsed from a single frame of jitter and never recovered.
+    ///
+    /// Counted rather than timed: "did that need a seek?" is the property, and
+    /// it answers the same on a loaded CI box as on a quiet desk.
+    #[test]
+    fn playing_forward_with_dropped_frames_never_seeks() {
+        let dir = tempfile::tempdir().unwrap();
+        let Some(file) = fixture(dir.path()) else {
+            eprintln!("skipping: no ffmpeg CLI available");
+            return;
+        };
+        let index = build_frame_index(&file).unwrap();
+        let mut dec = VideoDecoder::open(&file, index).unwrap();
+
+        dec.frame_rgba(0, None).unwrap();
+        let after_start = dec.seeks();
+
+        // Forward in threes, exactly as dropping two frames in three asks for
+        // them. The fixture is 120 frames with a keyframe every 30.
+        let wanted: Vec<usize> = (1..40).map(|k| k * 3).collect();
+        for &n in &wanted {
+            dec.frame_rgba(n, None).unwrap();
+        }
+
+        // Crossing into a later keyframe may still seek, and should: jumping to
+        // it decodes fewer frames than walking there. What must never happen is
+        // a seek *per request* — that is the collapse. So the bound is the
+        // number of keyframes in the range, not the number of frames asked for.
+        let seeks = dec.seeks() - after_start;
+        assert!(
+            seeks <= 3,
+            "at most one seek per keyframe crossed (3 here), not one per frame \
+             ({} requests); got {seeks}",
+            wanted.len()
+        );
+
+        // Going backwards still seeks: there is no way to un-decode, so this is
+        // the case the machinery exists for.
+        let before_back = dec.seeks();
+        dec.frame_rgba(1, None).unwrap();
+        assert!(
+            dec.seeks() > before_back,
+            "a backwards jump has to seek — that is what seeking is for"
+        );
     }
 
     #[test]

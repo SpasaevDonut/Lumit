@@ -1,0 +1,174 @@
+use std::{error::Error, fmt};
+
+use lumit_core::OpError;
+
+pub mod assets;
+pub mod audio;
+#[cfg(feature = "media")]
+pub mod beats;
+pub mod cache;
+pub mod composition;
+pub mod effect;
+pub mod export;
+pub mod folder;
+pub mod footage;
+pub mod layer;
+pub mod project;
+pub mod project_item;
+pub mod retime;
+pub mod shell;
+pub mod solid;
+pub mod state;
+pub mod system;
+
+mod worker_thread;
+
+#[cfg(test)]
+mod tests;
+
+#[derive(Debug)]
+pub enum BridgeError {
+    InvalidProject,
+    InvalidComp,
+    InvalidItem,
+    InvalidLayer,
+    /// A media path could not be resolved, or a relink found nothing to point at.
+    MediaPathUnresolved,
+    /// A frame rate of zero, or one whose frame count cannot be expressed.
+    InvalidFrameRate,
+    /// Save was asked to write a project that has never been saved, without being
+    /// told where. The caller has to pick a path.
+    NoProjectPath,
+    /// A rename was given a blank name. Refused rather than applied, so a row
+    /// cannot lose its label.
+    EmptyName,
+    /// No parameter of that id on the effect.
+    InvalidParam,
+    /// No effect of that id in the layer's stack — a reference that outlived the
+    /// effect it named.
+    InvalidEffect,
+    /// No built-in effect goes by that match name.
+    UnknownEffectName,
+    /// The value written to a parameter is of a different kind from the
+    /// parameter. A parameter's kind is the effect's schema to declare, not the
+    /// panel's to change, so this is refused rather than applied.
+    ParamKindMismatch,
+    /// A keyframed value whose keys are not a curve the engine can evaluate:
+    /// none at all, an invalid time, or times that do not strictly ascend.
+    InvalidKeyframes,
+    /// A time whose denominator is zero or negative — a span or marker built
+    /// wrongly by the caller. Refused rather than normalised: quietly fixing it
+    /// would put the thing somewhere nobody asked for.
+    InvalidTime,
+    /// `set_transforms` was given a different number of properties and values.
+    MismatchedTransforms,
+    /// A blend-mode index outside the list `list_blend_modes` hands out.
+    InvalidBlendMode,
+    /// A scope's colour list was not five `[r, g, b]` triples.
+    InvalidScopeColours,
+    /// The text handed to `load_preset` is not a `.lumfx` document.
+    InvalidPreset,
+    /// The export could not start — already running, no GPU, or a spec the
+    /// encoder will not take. Carries the engine's own words.
+    ExportFailed(String),
+    /// No audio pipeline on this machine (no adapter, or a build without one).
+    NoAudioPipeline,
+    /// The composition has no audible sources to analyse.
+    NoAudio,
+    /// The layer has no retiming to edit.
+    NotRetimed,
+    /// The retime curve is a ramp or an explicit map, so there is no single
+    /// speed to set — writing one would discard the shape.
+    RetimeVaries,
+    /// The edit named a text layer and the layer is not one.
+    NotText,
+    /// The edit named a camera layer and the layer is not one.
+    NotCamera,
+    /// The razor was pointed at a layer that is not a Sequence layer.
+    NotSequence,
+    /// Only a Footage layer converts to a Sequence layer.
+    NotFootage,
+    /// No clip sits under the playhead.
+    NoClipThere,
+    /// The clip under the playhead is an eased ramp that cannot be split
+    /// cleanly at this time — cutting it would silently change its speed curve.
+    UncuttableClip,
+    /// A staged effect stack no longer matches the document's — something else
+    /// added, removed or reordered an effect while it was being edited.
+    StaleEffectStack,
+    ReadFailed,
+    WriteFailed,
+    InvalidWorkerState,
+    OpError(OpError),
+}
+
+impl Error for BridgeError {}
+
+impl fmt::Display for BridgeError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let _ = match &self {
+            BridgeError::ReadFailed => write!(f, "Read Failed"),
+            BridgeError::InvalidProject => write!(f, "Invalid ProjectItem"),
+            BridgeError::InvalidComp => write!(f, "Invalid Comp"),
+            BridgeError::InvalidItem => write!(f, "Invalid Item"),
+            BridgeError::InvalidLayer => write!(f, "Invalid Layer"),
+            BridgeError::EmptyName => write!(f, "The name cannot be empty"),
+            BridgeError::InvalidFrameRate => write!(f, "Invalid frame rate"),
+            BridgeError::NoProjectPath => {
+                write!(
+                    f,
+                    "This project has never been saved, so a path is required"
+                )
+            }
+            BridgeError::MediaPathUnresolved => write!(f, "Nothing to relink at that path"),
+            BridgeError::InvalidParam => write!(f, "No such effect parameter"),
+            BridgeError::InvalidEffect => write!(f, "No such effect on this layer"),
+            BridgeError::UnknownEffectName => write!(f, "No built-in effect by that name"),
+            BridgeError::ParamKindMismatch => {
+                write!(f, "That value is the wrong kind for this effect parameter")
+            }
+            BridgeError::InvalidKeyframes => write!(
+                f,
+                "A keyframed value needs at least one key, in ascending time order"
+            ),
+            BridgeError::InvalidTime => write!(f, "That time is not a valid duration"),
+            BridgeError::MismatchedTransforms => {
+                write!(f, "One value is needed per transform property")
+            }
+            BridgeError::InvalidBlendMode => write!(f, "No blend mode at that index"),
+            BridgeError::InvalidScopeColours => {
+                write!(f, "A scope needs five red/green/blue triples")
+            }
+            BridgeError::InvalidPreset => write!(f, "That is not a valid effect preset"),
+            BridgeError::ExportFailed(why) => write!(f, "{why}"),
+            BridgeError::NoAudioPipeline => {
+                write!(f, "This machine has no audio pipeline")
+            }
+            BridgeError::NoAudio => {
+                write!(f, "There is no audio in this composition")
+            }
+            BridgeError::NotRetimed => write!(f, "That layer is not retimed"),
+            BridgeError::RetimeVaries => {
+                write!(f, "That layer's speed varies; edit it in the Retime graph")
+            }
+            BridgeError::NotText => write!(f, "That is not a text layer"),
+            BridgeError::NotCamera => write!(f, "That is not a camera layer"),
+            BridgeError::NotSequence => write!(f, "That is not a sequence layer"),
+            BridgeError::NotFootage => {
+                write!(f, "Only footage layers convert to sequenced")
+            }
+            BridgeError::NoClipThere => write!(f, "No clip under the playhead"),
+            BridgeError::UncuttableClip => {
+                write!(f, "That eased ramp cannot be cut here yet")
+            }
+            BridgeError::StaleEffectStack => {
+                write!(f, "The effect stack changed while it was being edited")
+            }
+            BridgeError::WriteFailed => write!(f, "Write Failed"),
+            BridgeError::InvalidWorkerState => write!(f, "Invalid worker state"),
+            BridgeError::OpError(op_error) => write!(f, "{}", op_error),
+        };
+
+        Ok(())
+    }
+}

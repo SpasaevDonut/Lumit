@@ -1,0 +1,578 @@
+// The graph editor against the real engine: the AE-style full-height pane
+// (docs/07 §5) — selected properties as curves, key drags, easing, the F9
+// family, the speed lens, and keyframe copy/paste.
+
+import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/graph_editor_frb.dart';
+import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
+
+import 'frb_test_support.dart';
+
+void main() {
+  setUpAll(initEngineForTests);
+
+  group('Graph editor (frb)', () {
+    ({
+      LumitState state,
+      LumitUiState uiState,
+      CompositionReference comp,
+      LayerReference layer,
+    }) withLayer() {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final layer = comp.addAdjustmentLayer();
+      p.uiState
+        ..setSelectedComp(comp)
+        ..selectedLayer.value = layer;
+      return (state: p.state, uiState: p.uiState, comp: comp, layer: layer);
+    }
+
+    /// A ramp on Opacity: `frames[i]` holds the value `frames[i]`.
+    void animateOpacity(
+      CompositionReference comp,
+      LayerReference layer, {
+      List<int> frames = const [0, 100],
+    }) {
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in frames)
+            BridgeKeyframe(
+              time: comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+    }
+
+    List<BridgeKeyframe> opacityKeys(LayerReference layer) =>
+        (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+
+    /// The opacity channel's key ids, as the pane names them.
+    String opacityKey(LayerReference layer, int index) =>
+        'graph-key-${layer.internallayerId}/transform/opacity@opacity#$index';
+
+    Future<void> mountGraph(WidgetTester tester, dynamic p,
+        {bool selectOpacity = true}) async {
+      // The outline alone is ~740 px of columns; the default 800×600 test
+      // surface would push the graph pane off screen.
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        child: const TimelinePanelFrb(),
+        state: p.state as LumitState,
+        uiState: p.uiState as LumitUiState,
+        size: const Size(1280, 600),
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('tl-graph')));
+      await tester.pump();
+      if (!selectOpacity) return;
+      // Selection lives in the outline: twirl the layer, open Transform,
+      // click the property's name (docs/07 §4.3).
+      final layer = (p as dynamic).layer as LayerReference;
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+      await tester.tap(find.text('Opacity'));
+      await tester.pump();
+    }
+
+    testWidgets('with nothing selected the pane says how to start',
+        (tester) async {
+      final p = withLayer();
+      await mountGraph(tester, p, selectOpacity: false);
+      expect(find.textContaining('Select a property'), findsOneWidget);
+    });
+
+    testWidgets(
+        'selecting a property shows its keys; a static one is still a line',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 40, 90]);
+      await mountGraph(tester, p);
+
+      for (var i = 0; i < 3; i++) {
+        expect(find.byKey(ValueKey<String>(opacityKey(p.layer, i))),
+            findsOneWidget);
+      }
+      expect(find.byKey(const ValueKey('graph-marquee')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tl-ruler')), findsOneWidget,
+          reason: 'the graph keeps the time ruler');
+
+      // A static property joins as a flat line: no keys, no complaints.
+      await tester.tap(find.text('Position'));
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    });
+
+    /// One gesture, one op: the key moves in time AND value, and one undo
+    /// puts both back.
+    testWidgets('dragging a key moves it in time and value as one undo step',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      await mountGraph(tester, p);
+
+      final before = opacityKeys(p.layer);
+      final beforeFrame = p.comp.frameAtTime(time: before[1].time);
+
+      await _drag(tester, find.byKey(ValueKey<String>(opacityKey(p.layer, 1))),
+          const Offset(60, 40));
+
+      final after = opacityKeys(p.layer);
+      expect(after, hasLength(2));
+      expect(p.comp.frameAtTime(time: after[1].time), greaterThan(beforeFrame),
+          reason: 'it moved later');
+      expect(after[1].value, lessThan(before[1].value),
+          reason: 'and dragging down lowered the value in the same gesture');
+
+      p.state.project!.undo();
+      final undone = opacityKeys(p.layer);
+      expect(p.comp.frameAtTime(time: undone[1].time), beforeFrame,
+          reason: 'one undo puts back both the time and the value');
+      expect(undone[1].value, before[1].value);
+    });
+
+    /// Two keys cannot share a frame: the channel refuses the landing and
+    /// keeps what it had.
+    testWidgets('a key dragged onto its neighbour does not land there',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 10]);
+      await mountGraph(tester, p);
+
+      await _drag(tester, find.byKey(ValueKey<String>(opacityKey(p.layer, 1))),
+          const Offset(-900, 0));
+
+      final keys = opacityKeys(p.layer);
+      expect(keys, hasLength(2), reason: 'neither key was lost');
+      final frames = keys.map((k) => p.comp.frameAtTime(time: k.time)).toList();
+      expect(frames[0], isNot(frames[1]), reason: 'they still differ in time');
+    });
+
+    testWidgets('the key menu eases and deletes; easing shows handles',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      await mountGraph(tester, p);
+
+      await tester.tapAt(
+        tester.getCenter(find.byKey(ValueKey<String>(opacityKey(p.layer, 0)))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Easy ease'));
+      await tester.pumpAndSettle();
+
+      expect(opacityKeys(p.layer)[0].interpOut, isA<BridgeSideInterp_Bezier>(),
+          reason: 'the AE easy-ease constant went to the document');
+
+      // Selecting the eased key shows its out-side tangent handle.
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 0))));
+      await tester.pump();
+      expect(
+          find.byKey(ValueKey<String>(
+              'graph-handle-${p.layer.internallayerId}/transform/opacity@opacity#0-out')),
+          findsOneWidget);
+
+      await tester.tapAt(
+        tester.getCenter(find.byKey(ValueKey<String>(opacityKey(p.layer, 0)))),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete key'));
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer), hasLength(1));
+    });
+
+    /// The bottom bar's easing buttons act on the selected keys — and F9 does
+    /// the same from the keyboard (docs/07 §5.3).
+    testWidgets('the bottom bar buttons and F9 set the selected keys\' easing',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      await mountGraph(tester, p);
+
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 0))));
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey('graph-interp-hold')));
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer)[0].interpOut, isA<BridgeSideInterp_Hold>());
+
+      await tester.tap(find.byKey(const ValueKey('graph-interp-bezier')));
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer)[0].interpOut, isA<BridgeSideInterp_Bezier>());
+
+      await tester.tap(find.byKey(const ValueKey('graph-interp-linear')));
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer)[0].interpOut, isA<BridgeSideInterp_Linear>());
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.f9);
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer)[0].interpIn, isA<BridgeSideInterp_Bezier>(),
+          reason: 'F9 easy-eases the selection');
+    });
+
+    /// A joined pair moves *together and live*: the partner must follow while
+    /// the pointer is down, not jump into place on release.
+    testWidgets('dragging one handle swings its partner live', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      // Easy-ease the middle key so both sides are joined beziers, then select
+      // it to bring its handles out.
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.f9);
+      await tester.pumpAndSettle();
+
+      final base =
+          'graph-handle-${p.layer.internallayerId}/transform/opacity@opacity#1';
+      final outHandle = find.byKey(ValueKey<String>('$base-out'));
+      final inHandle = find.byKey(ValueKey<String>('$base-in'));
+      expect(outHandle, findsOneWidget);
+      expect(inHandle, findsOneWidget);
+
+      final keyPoint = tester
+          .getCenter(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
+      final inBefore = tester.getCenter(inHandle);
+      final lengthBefore = (inBefore - keyPoint).distance;
+
+      // Drag the out handle upward, and look *mid-gesture*.
+      final gesture = await tester.startGesture(tester.getCenter(outHandle));
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(-2, -8));
+        await tester.pump();
+      }
+      final outMid = tester.getCenter(outHandle);
+      final inMid = tester.getCenter(inHandle);
+      expect(inMid.dy, greaterThan(inBefore.dy + 2),
+          reason: 'the partner swung the opposite way during the drag');
+
+      // Opposite through the key, at the length it started with: a handle
+      // keeps its *visual* length however far the pair swings.
+      final outDir = outMid - keyPoint;
+      final inDir = inMid - keyPoint;
+      final cross = outDir.dx * inDir.dy - outDir.dy * inDir.dx;
+      expect(cross.abs() / (outDir.distance * inDir.distance), lessThan(0.08),
+          reason: 'the two handles stayed in one straight line');
+      expect(inDir.distance, closeTo(lengthBefore, 1),
+          reason: 'the partner kept its on-screen length');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      final key = opacityKeys(p.layer)[1];
+      expect(key.interpIn, isA<BridgeSideInterp_Bezier>());
+      expect(key.interpOut, isA<BridgeSideInterp_Bezier>());
+    });
+
+    /// Over and over: the partner stays opposite and stays the same length on
+    /// screen, including out at the near-vertical extreme and back again. It
+    /// is the *length* that must hold, not the movement — a drag that only
+    /// lengthens an already-steep tangent barely turns the line, so the
+    /// partner rightly barely stirs.
+    testWidgets('the partner keeps its length over repeated drags',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.f9);
+      await tester.pumpAndSettle();
+
+      final base =
+          'graph-handle-${p.layer.internallayerId}/transform/opacity@opacity#1';
+      final outHandle = find.byKey(ValueKey<String>('$base-out'));
+      final inHandle = find.byKey(ValueKey<String>('$base-in'));
+
+      final keyPoint = tester
+          .getCenter(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
+      final length0 = (tester.getCenter(inHandle) - keyPoint).distance;
+
+      // Three drags out toward the vertical, then three back: the partner is
+      // the same length at every step, and still opposite at the end.
+      for (final step in const [-6.0, -6.0, -6.0, 6.0, 6.0, 6.0]) {
+        final gesture = await tester.startGesture(tester.getCenter(outHandle));
+        await tester.pump();
+        for (var i = 0; i < 5; i++) {
+          await gesture.moveBy(Offset(0, step));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect((tester.getCenter(inHandle) - keyPoint).distance,
+            closeTo(length0, 1),
+            reason: 'the partner is still the length it started at');
+      }
+
+      final outDir = tester.getCenter(outHandle) - keyPoint;
+      final inDir = tester.getCenter(inHandle) - keyPoint;
+      expect(
+          (outDir.dx * inDir.dy - outDir.dy * inDir.dx).abs() /
+              (outDir.distance * inDir.distance),
+          lessThan(0.1),
+          reason: 'and still in one straight line through the key');
+    });
+
+    /// Alt at the start of a drag breaks the pair; the partner then holds
+    /// still while the dragged side moves.
+    testWidgets('Alt-dragging a handle breaks the pair', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.f9);
+      await tester.pumpAndSettle();
+
+      final base =
+          'graph-handle-${p.layer.internallayerId}/transform/opacity@opacity#1';
+      final inBefore =
+          tester.getCenter(find.byKey(ValueKey<String>('$base-in')));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      final gesture = await tester.startGesture(
+          tester.getCenter(find.byKey(ValueKey<String>('$base-out'))));
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(-2, -8));
+        await tester.pump();
+      }
+      final inMid = tester.getCenter(find.byKey(ValueKey<String>('$base-in')));
+      expect((inMid - inBefore).distance, lessThan(2),
+          reason: 'the broken partner did not follow');
+      await gesture.up();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pumpAndSettle();
+    });
+
+    /// The speed lens: each key is an in dot and an out dot that move
+    /// independently (docs/07 §5.1).
+    testWidgets('the speed lens shows independent in and out dots',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      // The button strip scrolls sideways in a narrow panel; bring the lens
+      // switch into view first.
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.pump();
+
+      final base =
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1';
+      expect(find.byKey(ValueKey<String>('$base-in')), findsOneWidget);
+      expect(find.byKey(ValueKey<String>('$base-out')), findsOneWidget);
+
+      // Dragging the out dot down converts that side to a bezier with a
+      // negative-or-lower speed, leaving the in side alone.
+      await _drag(tester, find.byKey(ValueKey<String>('$base-out')),
+          const Offset(0, 60));
+      final key = opacityKeys(p.layer)[1];
+      expect(key.interpOut, isA<BridgeSideInterp_Bezier>(),
+          reason: 'the dragged side became a shaped ease');
+      expect(key.interpIn, isA<BridgeSideInterp_Linear>(),
+          reason: 'the other side did not move');
+    });
+
+    /// A speed dot drags sideways too: that is how a keyframe moves in time
+    /// without leaving the speed graph.
+    testWidgets('a speed dot drags the keyframe in time', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+      await tester
+          .ensureVisible(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('graph-lens-speed')));
+      await tester.pump();
+
+      final before = p.comp.frameAtTime(time: opacityKeys(p.layer)[1].time);
+      await _drag(
+          tester,
+          find.byKey(ValueKey<String>(
+              'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1-out')),
+          const Offset(70, 0));
+
+      final after = p.comp.frameAtTime(time: opacityKeys(p.layer)[1].time);
+      expect(after, greaterThan(before),
+          reason: 'the dot carried its keyframe later in time');
+      expect(opacityKeys(p.layer), hasLength(3), reason: 'nothing was lost');
+    });
+
+    /// Ctrl+C / Ctrl+V: the in-app clipboard carries full easing, and pasting
+    /// lands the earliest key on the playhead.
+    testWidgets('copy and paste land keys on the playhead', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 20]);
+      await mountGraph(tester, p);
+
+      await tester.tap(find.byKey(ValueKey<String>(opacityKey(p.layer, 1))));
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.pump();
+
+      p.uiState.playheadFrame.value = 75;
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      final frames = opacityKeys(p.layer)
+          .map((k) => p.comp.frameAtTime(time: k.time))
+          .toList();
+      expect(frames, contains(75),
+          reason: 'the earliest pasted key lands on the playhead');
+      expect(frames, hasLength(3));
+    });
+
+    /// Copy and paste belong to the keyframes, not to the graph: a selection
+    /// boxed up on a *lane* copies and pastes the same way (K-196).
+    testWidgets('copy and paste work from the lane view too', (tester) async {
+      final p = withLayer();
+      // Spread out, so a marquee can take one key and leave the other.
+      animateOpacity(p.comp, p.layer, frames: [600, 1500]);
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        child: const TimelinePanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1280, 600),
+      ));
+      await tester.pump();
+      // Lane view — no Graph toggle. Twirl open and box the second key.
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${p.layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      final lane = find.byKey(ValueKey<String>(
+          'tl-keys-${p.layer.internallayerId}/transform/opacity'));
+      final rect = tester.getRect(lane);
+      final start = Offset(rect.left + rect.width * 0.5, rect.top + 1);
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 100));
+      final end = rect.bottomRight - const Offset(1, 1);
+      for (var i = 1; i <= 8; i++) {
+        await gesture.moveTo(start + (end - start) * (i / 8));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.pump();
+      p.uiState.playheadFrame.value = 90;
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyV);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      final frames = opacityKeys(p.layer)
+          .map((k) => p.comp.frameAtTime(time: k.time))
+          .toList();
+      expect(frames, contains(90),
+          reason: 'the key boxed on the lane pasted onto the playhead');
+    });
+
+    /// Ctrl+click on a second property overlays it: Position contributes one
+    /// curve per axis, with its own keys.
+    testWidgets('Ctrl+click adds properties; Position graphs both axes',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      p.layer.setTransform(
+        prop: BridgeTransformProp.positionX,
+        value: BridgeScalar.keyframed([
+          for (final f in [0, 60])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      await mountGraph(tester, p);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.tap(find.text('Position'));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      final id = p.layer.internallayerId;
+      expect(
+          find.byKey(ValueKey<String>(opacityKey(p.layer, 0))), findsOneWidget,
+          reason: 'opacity stayed selected');
+      expect(
+          find.byKey(ValueKey<String>(
+              'graph-key-$id/transform/positionX@positionX#0')),
+          findsOneWidget,
+          reason: "position x's keys joined the graph");
+    });
+
+    /// The pure channel builder: a transform row fans out per axis, an effect
+    /// float parameter is one channel, and colours follow selection order.
+    testWidgets('graphChannels resolves selection into coloured channels',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer);
+      final id = p.layer.internallayerId.toString();
+      final ui = p.uiState;
+      ui.model.refresh();
+
+      final channels = graphChannels(
+        layers: ui.model.layers,
+        selected: ['$id/transform/positionX', '$id/transform/opacity'],
+      );
+      expect(channels.map((c) => c.id).toList(), [
+        '$id/transform/positionX@positionX',
+        '$id/transform/positionX@positionY',
+        '$id/transform/opacity@opacity',
+      ]);
+      expect(channels.map((c) => c.colourIndex).toList(), [0, 1, 2]);
+      expect(channels.last.keys, hasLength(2));
+    });
+  }, skip: !engineAvailable);
+}
+
+/// Drag from a widget's centre in steps, as a real pointer moves.
+Future<void> _drag(WidgetTester tester, Finder from, Offset by) async {
+  final gesture = await tester.startGesture(tester.getCenter(from));
+  await tester.pump();
+  const steps = 10;
+  for (var i = 0; i < steps; i++) {
+    await gesture.moveBy(by / steps.toDouble());
+    await tester.pump();
+  }
+  await gesture.up();
+  await tester.pumpAndSettle();
+}

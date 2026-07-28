@@ -42,9 +42,24 @@ struct Journal {
     redo: Vec<JournalEntry>,
 }
 
+/// What an observer is told after the store publishes a new snapshot: the op
+/// that actually moved the document. The Flutter bridge turns this into a
+/// scoped change so only the affected panels rebuild, rather than the whole UI.
+pub struct DocumentChange {
+    pub op: Op,
+}
+
+type ChangeCallback = Arc<dyn Fn(DocumentChange) + Send + Sync>;
+
 pub struct DocumentStore {
     current: ArcSwap<Document>,
     journal: Mutex<Journal>,
+    on_change: Option<ChangeCallback>,
+    /// Bumped once per published snapshot (commit, undo, redo, replace).
+    /// A reader that remembers the number it last saw can ask "has anything
+    /// changed?" for the cost of one atomic load — the frontend's read model
+    /// freshens on this (K-184) instead of re-reading the world per rebuild.
+    revision: std::sync::atomic::AtomicU64,
 }
 
 impl DocumentStore {
@@ -52,7 +67,58 @@ impl DocumentStore {
         Self {
             current: ArcSwap::from_pointee(doc),
             journal: Mutex::new(Journal::default()),
+            on_change: None,
+            revision: std::sync::atomic::AtomicU64::new(0),
         }
+    }
+
+    /// The number of snapshots published so far. Equal numbers mean the
+    /// document has not changed; unequal mean it has. Never decreases.
+    pub fn revision(&self) -> u64 {
+        self.revision.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// A snapshot is about to be published: move the number on.
+    fn bump_revision(&self) {
+        self.revision
+            .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Register the change observer. Optional by construction: the egui shell
+    /// never sets one and reads snapshots directly, so every commit/undo/redo
+    /// path must stay a no-op when it is absent.
+    pub fn set_callback(&mut self, callback: ChangeCallback) {
+        self.on_change = Some(callback);
+    }
+
+    /// Tell the observer, if there is one. Callers must drop the journal lock
+    /// first: the callback crosses into the frontend (the Flutter bridge pushes
+    /// it down a Dart stream over FFI), and docs/14 §3 forbids holding a lock
+    /// across FFI. Dropping it also lets the observer re-enter the store —
+    /// notifying under the lock would deadlock on its first `commit`.
+    fn notify(&self, op: Op) {
+        if let Some(callback) = &self.on_change {
+            callback(DocumentChange { op });
+        }
+    }
+
+    /// Replace the whole document, keeping the observer and clearing the
+    /// history.
+    ///
+    /// For the one case that is not an edit: crash recovery, which opens a file
+    /// and replays a journal over it. Going *through* the store rather than
+    /// building a new one is what keeps the change observer attached — a
+    /// recovered document installed into a fresh store would leave every panel
+    /// listening to a store nothing commits to any more.
+    ///
+    /// The history is cleared rather than kept, because an undo stack built
+    /// against the previous document cannot be applied to this one.
+    pub fn replace_document(&self, doc: Document) {
+        let mut journal = self.journal.lock();
+        journal.undo.clear();
+        journal.redo.clear();
+        self.current.store(Arc::new(doc));
+        self.bump_revision();
     }
 
     /// Lock-free snapshot for readers (render jobs capture this at schedule time).
@@ -65,6 +131,8 @@ impl DocumentStore {
         let mut journal = self.journal.lock();
         let mut doc = Document::clone(&self.snapshot());
         let inverse = apply(&mut doc, &op)?;
+
+        let observed = op.clone();
         journal.undo.push(JournalEntry { op, inverse });
         journal.redo.clear();
         // Compaction (docs/14 §5): keep the history bounded by dropping the
@@ -76,6 +144,10 @@ impl DocumentStore {
         }
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
+        self.bump_revision();
+        drop(journal);
+        self.notify(observed);
+
         Ok(arc)
     }
 
@@ -88,12 +160,19 @@ impl DocumentStore {
         let mut doc = Document::clone(&self.snapshot());
         // Applying the inverse yields the original op again — symmetry by construction.
         let op = apply(&mut doc, &entry.inverse)?;
+        let observed = entry.inverse.clone();
         journal.redo.push(JournalEntry {
             op,
             inverse: entry.inverse.clone(),
         });
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
+        self.bump_revision();
+        drop(journal);
+        // The observer sees the *inverse* — the op that actually moved the
+        // document — not the op being undone.
+        self.notify(observed);
+
         Ok(Some(arc))
     }
 
@@ -104,6 +183,7 @@ impl DocumentStore {
             return Ok(None);
         };
         let mut doc = Document::clone(&self.snapshot());
+        let observed = entry.op.clone();
         let inverse = apply(&mut doc, &entry.op)?;
         journal.undo.push(JournalEntry {
             op: entry.op,
@@ -111,6 +191,10 @@ impl DocumentStore {
         });
         let arc = Arc::new(doc);
         self.current.store(arc.clone());
+        self.bump_revision();
+        drop(journal);
+        self.notify(observed);
+
         Ok(Some(arc))
     }
 
@@ -179,6 +263,7 @@ mod tests {
             parent: None,
             label: 0,
             volume_db: crate::anim::Property::zero(),
+            retime: None,
             blend: Default::default(),
             masks: Vec::new(),
             effects: Vec::new(),
@@ -261,6 +346,91 @@ mod tests {
 
         while store.redo().unwrap().is_some() {}
         assert_eq!(json(&store.snapshot()), final_json, "redo-all == final");
+    }
+
+    /// The change observer is optional: the egui shell never sets one and reads
+    /// snapshots directly, so `commit`/`undo`/`redo` must all be no-ops on that
+    /// front. Fails without the fix — `undo` and `redo` each had a `todo!()`
+    /// where the "no observer" arm belongs, so the first undo of the session
+    /// panicked (and `todo` is denied workspace-wide, docs/14 §4).
+    #[test]
+    fn undo_and_redo_do_not_panic_without_a_change_observer() {
+        let store = DocumentStore::new(Document::new());
+        let (ops, _) = scripted_ops(&store.snapshot());
+        for op in ops {
+            store.commit(op).unwrap();
+        }
+
+        // Nothing registered a callback, so both directions must simply work.
+        assert!(store.undo().unwrap().is_some(), "undo with no observer");
+        assert!(store.redo().unwrap().is_some(), "redo with no observer");
+    }
+
+    /// The observer sees every op that moved the document, in order, and an
+    /// undo reports the *inverse* — the op actually applied — not the op being
+    /// undone. It is also called with the journal lock released, so a callback
+    /// that commits (the Flutter bridge reaches back into the store) cannot
+    /// deadlock: this test would hang rather than fail if `notify` ran under it.
+    #[test]
+    fn the_change_observer_sees_each_op_and_can_re_enter_the_store() {
+        let store = Arc::new(Mutex::new(Vec::<Op>::new()));
+        let seen = store.clone();
+
+        let mut doc_store = DocumentStore::new(Document::new());
+        doc_store.set_callback(Arc::new(move |change| {
+            seen.lock().push(change.op);
+        }));
+
+        let (ops, _) = scripted_ops(&doc_store.snapshot());
+        let committed = ops.len();
+        for op in ops {
+            doc_store.commit(op).unwrap();
+        }
+        assert_eq!(store.lock().len(), committed, "one notify per commit");
+
+        doc_store.undo().unwrap();
+        assert_eq!(
+            store.lock().len(),
+            committed + 1,
+            "undo notifies as well as commit"
+        );
+    }
+
+    /// An observer that reads back into the store must not deadlock.
+    ///
+    /// `journal_ops` takes the very mutex `commit` holds, and `parking_lot`'s
+    /// `Mutex` is not reentrant, so this hangs forever if `notify` is called
+    /// before the guard is dropped. Reaching the assertions at all is the
+    /// result. `Arc::new_cyclic` is what lets the callback hold a `Weak` back to
+    /// the store it is attached to.
+    #[test]
+    fn a_re_entrant_observer_does_not_deadlock() {
+        let observed = Arc::new(Mutex::new(0usize));
+        let count = observed.clone();
+
+        let store = Arc::new_cyclic(|weak: &std::sync::Weak<DocumentStore>| {
+            let mut store = DocumentStore::new(Document::new());
+            let weak = weak.clone();
+            store.set_callback(Arc::new(move |_| {
+                if let Some(store) = weak.upgrade() {
+                    // Re-entry: locks the journal that commit just released.
+                    *count.lock() = store.journal_ops().len();
+                }
+            }));
+            store
+        });
+
+        let (ops, _) = scripted_ops(&store.snapshot());
+        let committed = ops.len();
+        for op in ops {
+            store.commit(op).unwrap();
+        }
+
+        assert_eq!(
+            *observed.lock(),
+            committed,
+            "the observer read the journal back from inside the callback"
+        );
     }
 
     /// docs/14 §5: the undo history is compacted to [`MAX_UNDO_DEPTH`], and
@@ -516,6 +686,7 @@ mod tests {
                     parent: None,
                     label: 0,
                     volume_db: crate::anim::Property::zero(),
+                    retime: None,
                     blend: Default::default(),
                     masks: Vec::new(),
                     effects: Vec::new(),
@@ -610,6 +781,59 @@ mod tests {
         ));
     }
 
+    /// The Retime *property* (K-197) round-trips through undo, and it is what
+    /// `source_time_at` answers with — the mapping the render plan and the
+    /// cache key both read.
+    #[test]
+    fn retime_property_round_trips_and_maps_source_time() {
+        use crate::model::Layer;
+        use crate::time::Rational;
+        let store = DocumentStore::new(Document::new());
+        let (ops, comp_id) = scripted_ops(&store.snapshot());
+        let mut layer_id = None;
+        for op in &ops {
+            if let Op::AddLayer { layer, .. } = op {
+                layer_id = Some(layer.id);
+            }
+        }
+        for op in ops {
+            store.commit(op).unwrap();
+        }
+        let layer_id = layer_id.unwrap();
+        let layer_of = |doc: &Document| {
+            doc.comp(comp_id)
+                .unwrap()
+                .layers
+                .iter()
+                .find(|l| l.id == layer_id)
+                .unwrap()
+                .clone()
+        };
+
+        // No retime: the layer reads its source at its own clock.
+        assert!((layer_of(&store.snapshot()).source_time_at(4.0) - 4.0).abs() < 1e-9);
+
+        // Identity over ten seconds, then half of it: local 4 → source 2.
+        let ten = Rational::new(10, 1).unwrap();
+        let mut retime = Layer::identity_retime(ten);
+        if let crate::anim::Animation::Keyframed(keys) = &mut retime.animation {
+            keys[1].value = 5.0;
+        }
+        store
+            .commit(Op::SetRetimeProperty {
+                comp: comp_id,
+                layer: layer_id,
+                retime: Some(retime),
+            })
+            .unwrap();
+        assert!((layer_of(&store.snapshot()).source_time_at(4.0) - 2.0).abs() < 1e-9);
+
+        store.undo().unwrap();
+        let layer = layer_of(&store.snapshot());
+        assert!(layer.retime.is_none());
+        assert!((layer.source_time_at(4.0) - 4.0).abs() < 1e-9);
+    }
+
     #[test]
     fn camera_zoom_and_three_d_ops_round_trip_through_undo() {
         use crate::anim::Animation;
@@ -647,6 +871,7 @@ mod tests {
                     parent: None,
                     label: 0,
                     volume_db: crate::anim::Property::zero(),
+                    retime: None,
                     blend: Default::default(),
                     masks: Vec::new(),
                     effects: Vec::new(),
@@ -1133,5 +1358,38 @@ mod tests {
         assert!(store.commit(bogus).is_err());
         assert_eq!(json(&store.snapshot()), before);
         assert!(!store.can_undo());
+    }
+
+    /// The read model's freshness check (K-184): every published snapshot has
+    /// a new revision number, and a refused op leaves it alone. Fails without
+    /// the bump on any one of commit, undo or redo — the frontend would then
+    /// keep drawing a stale copy after exactly that kind of edit.
+    #[test]
+    fn every_published_snapshot_has_a_new_revision() {
+        let store = DocumentStore::new(Document::new());
+        let r0 = store.revision();
+
+        let comp = test_comp();
+        let id = comp.id;
+        store
+            .commit(Op::AddItem {
+                index: 0,
+                item: Box::new(ProjectItem::Composition(comp)),
+            })
+            .unwrap();
+        let r1 = store.revision();
+        assert_ne!(r0, r1, "a commit publishes a new revision");
+
+        store.undo().unwrap();
+        let r2 = store.revision();
+        assert_ne!(r1, r2, "an undo publishes a new revision");
+
+        store.redo().unwrap();
+        let r3 = store.revision();
+        assert_ne!(r2, r3, "a redo publishes a new revision");
+        assert!(store.snapshot().comp(id).is_some());
+
+        assert!(store.commit(Op::RemoveItem { id: Uuid::now_v7() }).is_err());
+        assert_eq!(store.revision(), r3, "a refused op moves nothing");
     }
 }

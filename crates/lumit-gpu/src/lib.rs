@@ -51,6 +51,40 @@ impl GpuContext {
 
     /// Headless context (tests, future CLI export).
     pub fn headless() -> Result<Self, GpuError> {
+        // When the zero-copy Viewer path is compiled in (K-177), pin the D3D12
+        // backend: the shared-texture hand-off reaches through wgpu to its D3D12
+        // device, so the renderer must actually be on D3D12 (not Vulkan). This
+        // only changes which Windows backend is chosen, not any pixel maths, and
+        // only in the opt-in shared-texture build; every other build is
+        // unchanged. Without the feature (or off Windows) this is the same
+        // all-backends instance as before.
+        #[cfg(all(windows, feature = "shared-texture"))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::DX12,
+            ..Default::default()
+        });
+        // On Linux the DMA-BUF hand-off reaches through wgpu to its Vulkan device,
+        // so pin the Vulkan backend in the opt-in build (the analogue of pinning
+        // D3D12 on Windows). Every other build is unchanged.
+        #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::VULKAN,
+            ..Default::default()
+        });
+        // On macOS the IOSurface hand-off reaches through wgpu to its Metal
+        // device, so pin the Metal backend in the opt-in build (the analogue of
+        // pinning D3D12 on Windows). Metal is what wgpu would pick there anyway;
+        // pinning only makes the requirement explicit.
+        #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::METAL,
+            ..Default::default()
+        });
+        #[cfg(not(any(
+            all(windows, feature = "shared-texture"),
+            all(target_os = "linux", feature = "shared-texture-linux"),
+            all(target_os = "macos", feature = "shared-texture-macos")
+        )))]
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -61,6 +95,20 @@ impl GpuContext {
             adapter.get_info().device_type,
             wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
         );
+        // The Linux DMA-BUF path needs the external-memory device extensions
+        // enabled at device-creation time, which wgpu's default Vulkan device does
+        // not do (K-177). Open the device ourselves with them appended; if the
+        // adapter cannot enable them, fall back to a plain device so the read-back
+        // path still works (the DMA-BUF path then reports unavailable).
+        #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+        let (device, queue) = match shared_linux::open_device(&adapter) {
+            Ok(dq) => dq,
+            Err(_) => {
+                pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
+                    .map_err(|e| GpuError::Device(e.to_string()))?
+            }
+        };
+        #[cfg(not(all(target_os = "linux", feature = "shared-texture-linux")))]
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
                 .map_err(|e| GpuError::Device(e.to_string()))?;
@@ -76,8 +124,14 @@ impl GpuContext {
 pub struct ColourEngine {
     linearise: wgpu::RenderPipeline,
     display: wgpu::RenderPipeline,
+    /// The display pass again, targeting BGRA — for the shared-texture Viewer,
+    /// whose consumer (ANGLE inside Flutter) matches share-handle surfaces
+    /// against its own B8G8R8A8 configs. Same shader, same hardware sRGB
+    /// encode; only the channel order of the render target differs.
+    display_bgra: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    linear_sampler: wgpu::Sampler,
 }
 
 /// The engine's working format (docs/06-RENDER-PIPELINE.md §3).
@@ -150,11 +204,22 @@ impl ColourEngine {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
+        // Only for [`Self::display_scaled`]. The 1:1 passes must stay Nearest —
+        // exact texel-for-texel sampling is what makes the colour round-trip
+        // golden meaningful — but a downscale sampled Nearest is just aliasing.
+        let linear_sampler = ctx.device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("colour-linear"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
         Self {
             linearise: make(WORKING_FORMAT, "linearise"),
             display: make(SRGB_FORMAT, "display"),
+            display_bgra: make(wgpu::TextureFormat::Bgra8UnormSrgb, "display-bgra"),
             layout,
             sampler,
+            linear_sampler,
         }
     }
 
@@ -206,7 +271,32 @@ impl ColourEngine {
         extra_usage: wgpu::TextureUsages,
         label: &str,
     ) -> wgpu::Texture {
-        let size = src.size();
+        self.pass_sized(ctx, pipeline, src, None, format, extra_usage, label)
+    }
+
+    /// [`Self::pass`] with an explicit destination size. A `size` smaller than
+    /// the source resamples through the linear sampler, which is how a preview
+    /// is reduced on the graphics card rather than after it.
+    #[allow(clippy::too_many_arguments)]
+    fn pass_sized(
+        &self,
+        ctx: &GpuContext,
+        pipeline: &wgpu::RenderPipeline,
+        src: &wgpu::Texture,
+        size: Option<(u32, u32)>,
+        format: wgpu::TextureFormat,
+        extra_usage: wgpu::TextureUsages,
+        label: &str,
+    ) -> wgpu::Texture {
+        let scaled = size.is_some();
+        let size = match size {
+            Some((width, height)) => wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            None => src.size(),
+        };
         let dst = ctx.device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size,
@@ -231,7 +321,11 @@ impl ColourEngine {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(if scaled {
+                        &self.linear_sampler
+                    } else {
+                        &self.sampler
+                    }),
                 },
             ],
         });
@@ -282,6 +376,48 @@ impl ColourEngine {
             SRGB_FORMAT,
             wgpu::TextureUsages::COPY_SRC,
             "display",
+        )
+    }
+
+    /// Linear working texture → sRGB-encoded BGRA display texture.
+    ///
+    /// For the zero-copy Viewer only (see the field's comment): pixels bound for
+    /// a DXGI share handle must be BGRA or ANGLE cannot open the surface, and
+    /// it declines silently. Encoded by the same hardware sRGB write as
+    /// [`Self::display`], so the values are bit-identical, reordered.
+    pub fn display_bgra(&self, ctx: &GpuContext, src: &wgpu::Texture) -> wgpu::Texture {
+        self.pass(
+            ctx,
+            &self.display_bgra,
+            src,
+            wgpu::TextureFormat::Bgra8UnormSrgb,
+            wgpu::TextureUsages::COPY_SRC,
+            "display-bgra",
+        )
+    }
+
+    /// Linear working texture → sRGB display texture at `width` x `height`.
+    ///
+    /// The point is what does *not* happen afterwards: a preview shown at a
+    /// third of comp resolution used to be composited full size, read back full
+    /// size — 8 MB off the graphics card for a 1080p comp — and only then
+    /// resized on the processor. Resizing here means the read-back is already
+    /// the size the Viewer wants.
+    pub fn display_scaled(
+        &self,
+        ctx: &GpuContext,
+        src: &wgpu::Texture,
+        width: u32,
+        height: u32,
+    ) -> wgpu::Texture {
+        self.pass_sized(
+            ctx,
+            &self.display,
+            src,
+            Some((width, height)),
+            SRGB_FORMAT,
+            wgpu::TextureUsages::COPY_SRC,
+            "display-scaled",
         )
     }
 
@@ -406,8 +542,24 @@ mod tests {
 pub mod composite;
 pub mod fx;
 pub mod oklab;
+pub mod scope;
+/// The Windows-only zero-copy Viewer target (K-177). Present only in the opt-in
+/// `shared-texture` build on Windows; every other build has no shared texture at
+/// all, exactly as it had no D3D interop before.
+#[cfg(all(windows, feature = "shared-texture"))]
+pub mod shared;
+/// The Linux-only zero-copy Viewer target via DMA-BUF (K-177). Present only in
+/// the opt-in `shared-texture-linux` build on Linux; every other build has no
+/// DMA-BUF interop at all, exactly as it had no Vulkan external memory before.
+#[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+pub mod shared_linux;
+/// The macOS-only zero-copy Viewer target via IOSurface (K-195). Present only in
+/// the opt-in `shared-texture-macos` build on macOS; every other build has no
+/// Metal interop at all.
+#[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+pub mod shared_metal;
 pub use composite::{
-    camera_matrix, concat_place, place_matrix, Blend, CompositeLayer, Compositor, MatteInput,
-    MbSample,
+    camera_matrix, concat_place, place_matrix, scaled_size, Blend, CompositeLayer, Compositor,
+    MatteInput, MbSample,
 };
 pub use glam::Mat4;
