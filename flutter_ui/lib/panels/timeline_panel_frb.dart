@@ -582,8 +582,9 @@ class _WaveformPainter extends CustomPainter {
       final compSec = x / axis.width * axis.frames / fps;
       final srcSec = compSec - startOffset;
       if (srcSec < 0 || srcSec >= held.durationSeconds) continue;
-      final bucket =
-          (srcSec / held.durationSeconds * buckets).floor().clamp(0, buckets - 1);
+      final bucket = (srcSec / held.durationSeconds * buckets)
+          .floor()
+          .clamp(0, buckets - 1);
       final lo = held.pairs[bucket * 2].clamp(-1.0, 1.0);
       final hi = held.pairs[bucket * 2 + 1].clamp(-1.0, 1.0);
       canvas.drawLine(
@@ -1317,9 +1318,9 @@ class _LayerArea extends StatelessWidget {
                     for (final row in layerFoldRows(
                       entry: entry,
                       open: open,
-                      hasAudio: hasAudio[
-                              entry.layer.internallayerId.toString()] ??
-                          false,
+                      hasAudio:
+                          hasAudio[entry.layer.internallayerId.toString()] ??
+                              false,
                     ))
                       SizedBox(
                         height: _rowHeight,
@@ -1329,9 +1330,8 @@ class _LayerArea extends StatelessWidget {
                                     'tl-wave-${entry.layer.internallayerId}'),
                                 size: Size(axis.width, _rowHeight),
                                 painter: _WaveformPainter(
-                                  peaks: peaks[entry
-                                      .layer.internallayerId
-                                      .toString()],
+                                  peaks: peaks[
+                                      entry.layer.internallayerId.toString()],
                                   info: entry.info,
                                   axis: axis,
                                   fps: fps,
@@ -1468,6 +1468,11 @@ class _BarState extends State<_Bar> {
   int _delta = 0;
   _Grab? _grab;
 
+  /// Where the pointer went DOWN, deciding edge-trim versus move. Down, not
+  /// drag-start: a drag's start position is where the slop was exceeded,
+  /// which read a fast edge grab as a grab of the middle.
+  double _downDx = 0;
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
@@ -1515,6 +1520,8 @@ class _BarState extends State<_Bar> {
                   // Clicking anywhere on a layer selects it (docs/TODO) —
                   // the bar is most of what "the layer" is on screen.
                   : widget.onSelect,
+              onHorizontalDragDown:
+                  widget.razor ? null : (d) => _downDx = d.localPosition.dx,
               onHorizontalDragStart: widget.razor
                   ? null
                   : (d) => setState(() {
@@ -1522,9 +1529,9 @@ class _BarState extends State<_Bar> {
                         // click that kept going.
                         widget.onSelect();
                         _delta = 0;
-                        _grab = d.localPosition.dx < _trimGrab
+                        _grab = _downDx < _trimGrab
                             ? _Grab.trimIn
-                            : d.localPosition.dx > width - _trimGrab
+                            : _downDx > width - _trimGrab
                                 ? _Grab.trimOut
                                 : _Grab.move;
                       }),

@@ -208,6 +208,69 @@ void main() {
       expect(p.comp.frameAtTime(time: layer.getSpan().inPoint), beforeIn);
     });
 
+    /// A layer can start BEFORE the comp (docs/TODO: "re-introduce"): drag a
+    /// bar left past frame zero and the span goes negative, carrying its
+    /// content with it — the comp shows the part that overlaps.
+    testWidgets('a bar dragged left of zero starts before the comp',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addAdjustmentLayer();
+      await mount(tester, p);
+
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
+      final rect = tester.getRect(bar);
+      // From the middle (a move, not a trim), left by more than the bar's
+      // distance to zero.
+      await tester.dragFrom(
+        Offset(rect.left + rect.width * 0.5, rect.center.dy),
+        const Offset(-160, 0),
+      );
+      await tester.pumpAndSettle();
+
+      final inFrame = p.comp.frameAtTime(time: layer.getSpan().inPoint);
+      expect(inFrame, lessThan(0),
+          reason: 'nothing pins a layer to the comp edge');
+      // The offset travelled with it: layer time zero moved by the same
+      // amount, so the content did not retime.
+      expect(p.comp.frameAtTime(time: layer.getSpan().startOffset), inFrame);
+    });
+
+    /// Trimming by the bar edges (docs/TODO: "drag start/end to adjust/crop"):
+    /// the in edge crops without moving the content, and the out edge crops
+    /// the tail.
+    testWidgets('the bar edges trim in and out', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addAdjustmentLayer();
+      await mount(tester, p);
+
+      final before = layer.getSpan();
+      final beforeIn = p.comp.frameAtTime(time: before.inPoint);
+      final beforeOut = p.comp.frameAtTime(time: before.outPoint);
+
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
+      var rect = tester.getRect(bar);
+      // Near the left edge: a trim of the in point, content unmoved.
+      await tester.dragFrom(
+          Offset(rect.left + 2, rect.center.dy), const Offset(60, 0));
+      await tester.pumpAndSettle();
+      final trimmedIn = p.comp.frameAtTime(time: layer.getSpan().inPoint);
+      expect(trimmedIn, greaterThan(beforeIn), reason: 'the head is cropped');
+      expect(p.comp.frameAtTime(time: layer.getSpan().startOffset),
+          p.comp.frameAtTime(time: before.startOffset),
+          reason: 'trimming never retimes the content');
+
+      // Near the right edge: a trim of the out point.
+      rect = tester.getRect(bar);
+      await tester.dragFrom(
+          Offset(rect.right - 2, rect.center.dy), const Offset(-60, 0));
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: layer.getSpan().outPoint),
+          lessThan(beforeOut),
+          reason: 'the tail is cropped');
+    });
+
     testWidgets('the work area and markers draw on the ruler', (tester) async {
       final p = withComp();
       p.comp.addAdjustmentLayer();
@@ -626,8 +689,8 @@ void main() {
       // its true length — the data the lane maps through in/out/offset.
       // `runAsync`, because a real decode completes on real async, which the
       // test's fake clock would otherwise wait on for ever.
-      final peaks = await tester
-          .runAsync(() => footageLayer.audioPeaks(buckets: 64));
+      final peaks =
+          await tester.runAsync(() => footageLayer.audioPeaks(buckets: 64));
       expect(peaks!.durationSeconds, greaterThan(0));
       expect(peaks.pairs, hasLength(128), reason: 'a (min, max) per bucket');
       expect(peaks.pairs.any((v) => v.abs() > 0.01), isTrue,

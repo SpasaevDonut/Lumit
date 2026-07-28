@@ -133,8 +133,6 @@ the keymap).
 
 **Timeline Panel**
 - **Graph editor / Lane Editor / keyframes ([04-RETIMING.md](04-RETIMING.md), archive/flutter-port/06 §C):**
-    - Re-introduce ability to move layer before comp start
-    - Re-introduce ability to drag start/end of layer to adjust/crop length
     - All Retime specific's are to be implemented later, currently it should behave and have exact parity
         as all other properties in graph view, same value/speed graph etc. Nothing extra
     - **Effect-param interpolation menu** on the fx keyframe lane.
