@@ -763,9 +763,11 @@ fn feed_source(
             // hashed at the layer level like any other layer's.
             h.update(b"adjust");
         }
-        LayerKind::NullObject => {
-            // No source of its own; Only its transform which the
-            // caller hashes at the layer level like every other layer's.
+        LayerKind::Null => {
+            // No source of its own and no pixels. Only its transform matters,
+            // and the caller hashes that at the layer level like every other
+            // layer's — which is what makes moving a Null retire the cached
+            // frames of the layers parented to it.
             h.update(b"null");
         }
     }
@@ -902,6 +904,29 @@ mod tests {
         );
         comp.layers[1].switches.solo = true;
         assert_eq!(both, key(&doc, &comp, 1.0));
+    }
+
+    /// A Null has no pixels, so it is tempting to treat it as invisible to the
+    /// cache — but its transform places every layer parented to it, so moving
+    /// one changes the picture and must retire the cached frames. Leaving it
+    /// out of the key would replay the rig's old position for ever.
+    #[test]
+    fn moving_a_null_retires_the_cached_frames() {
+        let doc = Document::new();
+        let mut null = text_layer("null", 0.0, 5.0, 0.0);
+        null.kind = LayerKind::Null;
+        null.name = "Null".into();
+        let mut child = text_layer("child", 0.0, 5.0, 0.0);
+        child.parent = Some(null.id);
+
+        let mut comp = comp_with(vec![child, null]);
+        let before = key(&doc, &comp, 1.0);
+        comp.layers[1].transform.position_x = Property::fixed(400.0);
+        assert_ne!(
+            before,
+            key(&doc, &comp, 1.0),
+            "moving a Null moves what is parented to it, so its frames must retire"
+        );
     }
 
     /// Timeline position is not content: sliding a static layer's span and

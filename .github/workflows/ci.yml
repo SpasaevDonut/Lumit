@@ -251,6 +251,70 @@ jobs:
         working-directory: flutter_ui
         run: flutter build linux --release
 
+  # The bridge's Dart and Rust glue is generated from crates/lumit-bridge/src/api
+  # (docs/17-BRIDGE-CONTRACT.md), and generated files are never edited by hand —
+  # so the only thing that keeps them honest is regenerating and checking nothing
+  # moved. Without this job a reworded doc comment, a renamed method or a new API
+  # function could sit in `api/**` with stale output checked in beside it, and the
+  # frontend would be reading a description of an engine that no longer exists.
+  # That is not hypothetical: it is how the K-206 Null layer arrived.
+  #
+  # Linux, no GPU and no FFmpeg: the generator parses the Rust source, it does not
+  # build the crate.
+  codegen-fresh:
+    name: bridge codegen is fresh (generate produces no diff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # The generator formats its Dart output, so it needs the SDK — pinned to
+      # the same version the other Flutter job takes.
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+          cache: true
+      - uses: Swatinem/rust-cache@v2
+      # The version is pinned once, on the runtime crate the generated glue links
+      # against (`flutter_rust_bridge = { version = "=2.12.0", … }`). Read it from
+      # there rather than restating it here: a generator that drifts from its
+      # runtime rewrites the whole tree, and this job would become the noisiest
+      # thing in CI while proving nothing.
+      - name: Read the pinned flutter_rust_bridge version
+        id: frb
+        run: |
+          v=$(sed -n 's/^flutter_rust_bridge = { version = "=\([0-9.]*\)".*/\1/p' \
+                crates/lumit-bridge/Cargo.toml)
+          test -n "$v" || { echo "no pinned version found in Cargo.toml"; exit 1; }
+          echo "pinned flutter_rust_bridge: $v"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+      - name: Install flutter_rust_bridge_codegen at the pinned version
+        run: cargo install flutter_rust_bridge_codegen --version "${{ steps.frb.outputs.v }}" --locked
+      - name: flutter pub get
+        working-directory: flutter_ui
+        run: flutter pub get
+      - name: Regenerate the bridge
+        working-directory: flutter_ui
+        run: flutter_rust_bridge_codegen generate
+      # If this fails, the fix is never to edit the generated file: run the same
+      # command from flutter_ui/ and commit what it writes.
+      #
+      # One known way to see a diff that is not a stale commit: part of the
+      # generated output quotes names from the Rust compiler's own derive
+      # expansion, so regenerating on a different `stable` than the one that last
+      # wrote the tree can shift a comment line. The cure is the same — regenerate
+      # on current stable and commit — but it is worth knowing before hunting for
+      # an API change that is not there.
+      - name: The checked-in generated tree must match
+        run: |
+          if ! git diff --exit-code; then
+            echo
+            echo "Generated bridge code is stale (docs/17-BRIDGE-CONTRACT.md)."
+            echo "Run 'flutter_rust_bridge_codegen generate' from flutter_ui/"
+            echo "and commit the result. Never edit generated files by hand."
+            exit 1
+          fi
+
   coverage:
     name: engine-crate coverage gate
     runs-on: macos-latest

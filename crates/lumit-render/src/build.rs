@@ -265,9 +265,10 @@ pub fn build_comp_draws_at(
     };
     let pixels_for = |layer: &lumit_core::model::Layer| -> Option<LayerPixels> {
         let raw = match &layer.kind {
-            // An adjustment layer has no pixels of its own; until its effect
-            // stack exists it is a pass-through and draws nothing.
-            LayerKind::Adjustment | LayerKind::NullObject => return None,
+            // Neither kind has pixels of its own. An Adjustment layer is a
+            // pass-through until its effect stack exists; a Null never draws at
+            // all — it exists so other layers can be parented to it.
+            LayerKind::Adjustment | LayerKind::Null => return None,
             // Footage and Sequence footage clips both arrive decoded, keyed by
             // the layer id (collect_comp_jobs pushes one job per layer/frame).
             LayerKind::Footage { .. } | LayerKind::Sequence { .. } => {
@@ -1139,6 +1140,21 @@ mod parent_placement_tests {
         let world = parent_world_placement(&c, &child, 0.0).unwrap();
         let expected = lumit_gpu::concat_place(place_of(&gp), place_of(&parent));
         assert_eq!(world, expected);
+    }
+
+    /// The point of a Null: it draws nothing, yet a layer parented to it is
+    /// placed by its transform exactly as it would be by any other parent's.
+    /// If the parent walk ever skipped the pixel-less kinds, a whole rig would
+    /// silently stop following its null.
+    #[test]
+    fn a_child_follows_a_null_parent() {
+        let mut null = layer(120.0, 40.0, None);
+        null.kind = LayerKind::Null;
+        null.name = "Null".into();
+        let child = layer(5.0, 5.0, Some(null.id));
+        let c = comp(vec![null.clone(), child.clone()]);
+        let world = parent_world_placement(&c, &child, 0.0).unwrap();
+        assert_eq!(world, place_of(&null));
     }
 }
 

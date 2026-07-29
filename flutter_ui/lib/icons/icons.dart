@@ -108,6 +108,11 @@ enum LumitIcon {
 
   /// A filled circle — the solo switch's on state; [ellipse] is its off.
   circleFilled,
+
+  /// A Null layer: an empty square crossed corner to corner, the mark After
+  /// Effects puts on a null. Drawn, not looked up (Iconoir has no crosshair),
+  /// and deliberately unlike [rectangle] and [solid], which are plain squares.
+  nullLayer,
 }
 
 /// Build `icon` at `size` in `color`. The motion-blur mark is drawn, not
@@ -118,6 +123,7 @@ Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
     LumitIcon.shy => ShyPainter(color, hidden: false),
     LumitIcon.shyHidden => ShyPainter(color, hidden: true),
     LumitIcon.circleFilled => CircleFillPainter(color),
+    LumitIcon.nullLayer => NullLayerPainter(color),
     _ => null,
   };
   if (painter != null) {
@@ -175,7 +181,8 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       // Painter-drawn, handled above.
       LumitIcon.shy ||
       LumitIcon.shyHidden ||
-      LumitIcon.circleFilled =>
+      LumitIcon.circleFilled ||
+      LumitIcon.nullLayer =>
         const SizedBox.shrink(),
     };
 
@@ -267,4 +274,30 @@ class CircleFillPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(CircleFillPainter old) => old.color != color;
+}
+
+/// The Null layer's mark, on the same 24×24 grid as the other drawn marks: an
+/// empty square crossed corner to corner. A Null has no pixels, so the square
+/// stands for the transform box and the cross says there is nothing in it.
+class NullLayerPainter extends CustomPainter {
+  final Color color;
+  const NullLayerPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide / 24.0;
+    Offset at(double x, double y) => Offset(x * s, y * s);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0 * s
+      ..strokeJoin = StrokeJoin.miter
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawRect(Rect.fromPoints(at(4, 4), at(20, 20)), paint);
+    canvas.drawLine(at(4, 4), at(20, 20), paint);
+    canvas.drawLine(at(20, 4), at(4, 20), paint);
+  }
+
+  @override
+  bool shouldRepaint(NullLayerPainter old) => old.color != color;
 }

@@ -108,13 +108,19 @@ void main() {
     expect(b(gruvLight.accent), 0x03);
   });
 
-  test('label colours cycle over eight distinct chips', () {
+  test('label colours cycle over one distinct chip per layer kind', () {
     final t = LumitTheme.dark();
     // A dedicated bright palette (K-189), not the theme's role colours: the
-    // chips colour the lane bars, so they must be tellable apart.
-    final chips = {for (var i = 0; i < 8; i++) t.labelColour(i)};
-    expect(chips, hasLength(8), reason: 'no two chips share a colour');
-    expect(t.labelColour(8), t.labelColour(0), reason: 'the palette cycles');
+    // chips colour the lane bars, so they must be tellable apart. Nine since
+    // K-206 gave the Null layer its own.
+    expect(LumitTheme.labelCount, 9);
+    final chips = {
+      for (var i = 0; i < LumitTheme.labelCount; i++) t.labelColour(i)
+    };
+    expect(chips, hasLength(LumitTheme.labelCount),
+        reason: 'no two chips share a colour');
+    expect(t.labelColour(LumitTheme.labelCount), t.labelColour(0),
+        reason: 'the palette cycles');
   });
 
   test('animation levels map to the documented durations', () {

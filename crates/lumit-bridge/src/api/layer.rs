@@ -80,7 +80,10 @@ pub enum BridgeLayerKind {
     Camera,
     Sequence,
     Adjustment,
-    NullObject,
+    /// A Null layer. Named `NullLayer` rather than `Null` only because the
+    /// generated Dart enum would otherwise carry a member called `null`, which
+    /// is a Dart reserved word (K-206); `lumit-core` keeps `LayerKind::Null`.
+    NullLayer,
 }
 
 /// One clip on a Sequence layer, as the Timeline needs to draw it: where it
@@ -125,7 +128,8 @@ pub struct BridgeLayerInfo {
     /// Every effect on the layer, with every parameter's value (K-184). Plain
     /// data for *drawing*; an edit reads fresh instance handles at commit time.
     pub effects: Vec<crate::api::effect::BridgeEffectInstanceInfo>,
-    /// The label colour index (0-7), drawn as the outline's swatch.
+    /// The label colour index into the theme's palette, drawn as the outline's
+    /// swatch. Out-of-range values wrap rather than fault.
     pub label: u8,
     /// The layer's matte, for the outline's matte cell (K-184: the row draws
     /// with no bridge calls). Writes still go through `set_matte`.
@@ -165,7 +169,7 @@ pub(crate) fn read_layer_info(
             K::Camera { .. } => BridgeLayerKind::Camera,
             K::Sequence { .. } => BridgeLayerKind::Sequence,
             K::Adjustment => BridgeLayerKind::Adjustment,
-            K::NullObject => BridgeLayerKind::NullObject,
+            K::Null => BridgeLayerKind::NullLayer,
         },
         switches: BridgeLayerSwitches {
             visible: s.visible,
@@ -691,8 +695,8 @@ impl LayerReference {
             LayerKind::Text { .. }
             | LayerKind::Camera { .. }
             | LayerKind::Sequence { .. }
-            | LayerKind::Adjustment => return Ok(None),
-            LayerKind::NullObject => return Ok(None),
+            | LayerKind::Adjustment
+            | LayerKind::Null => return Ok(None),
         };
 
         let proj = self.project()?;
@@ -715,7 +719,7 @@ impl LayerReference {
             K::Camera { .. } => BridgeLayerKind::Camera,
             K::Sequence { .. } => BridgeLayerKind::Sequence,
             K::Adjustment => BridgeLayerKind::Adjustment,
-            K::NullObject => BridgeLayerKind::NullObject,
+            K::Null => BridgeLayerKind::NullLayer,
         })
     }
 
@@ -1052,8 +1056,9 @@ impl LayerReference {
     /// [`Self::has_audio`], and what tells a matte or a layer-valued effect
     /// parameter which layers are worth offering (K-194).
     ///
-    /// Every synthetic kind draws; a Camera does not (it *is* a viewpoint);
-    /// footage draws only when its container carries a video stream, so an
+    /// Every synthetic kind draws except the two that carry no pixels at all: a
+    /// Camera (it *is* a viewpoint) and a Null (a transform and nothing else).
+    /// Footage draws only when its container carries a video stream, so an
     /// audio-only clip answers false. Probing costs an FFmpeg open, so callers
     /// ask when a menu opens, never while drawing a row.
     #[frb(sync)]
@@ -1061,7 +1066,7 @@ impl LayerReference {
         use lumit_core::model::LayerKind as K;
         let layer = self.item()?;
         let item = match layer.kind {
-            K::Camera { .. } => return Ok(false),
+            K::Camera { .. } | K::Null => return Ok(false),
             K::Footage { item, .. } => item,
             // Solids, text, precomps, sequences and adjustments all draw.
             _ => return Ok(true),

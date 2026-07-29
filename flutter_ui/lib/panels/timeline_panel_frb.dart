@@ -2415,7 +2415,7 @@ Future<void> _showLayerMenu(
     case 'Adjustment':
       comp.addAdjustmentLayer();
     case 'Null':
-      comp.addNullObjectLayer();
+      comp.addNullLayer();
     case 'Sequence':
       comp.addSequenceLayer();
     case _:
@@ -2932,7 +2932,7 @@ class _OutlineRowState extends State<_OutlineRow> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (var i = 0; i < 8; i++)
+                  for (var i = 0; i < LumitTheme.labelCount; i++)
                     GestureDetector(
                       key: ValueKey<String>('tl-label-chip-$i'),
                       onTap: () => close(i),

@@ -502,19 +502,18 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
-    /// Add a NullObject layer: a source-less layer carrying only a transform,
-    /// for parenting rigs. It has no size of its own, so only the position is
-    /// centred — the anchor stays at the origin, the way After Effects places
-    /// a null.
+    /// Add a Null layer: an invisible layer with no source of its own, carrying
+    /// only a transform, for parenting rigs. It has no size, so only its
+    /// position is centred and the anchor stays at the origin.
     #[frb(sync)]
-    pub fn add_null_object_layer(&self) -> Result<LayerReference, BridgeError> {
+    pub fn add_null_layer(&self) -> Result<LayerReference, BridgeError> {
         use lumit_core::anim::Property;
         use lumit_core::model::TransformGroup;
 
         let comp = self.composition()?;
         let layer = crate::edits::base_layer(
             "Null".into(),
-            lumit_core::model::LayerKind::NullObject,
+            lumit_core::model::LayerKind::Null,
             comp.duration.0,
             TransformGroup {
                 position_x: Property::fixed(f64::from(comp.width) * 0.5),

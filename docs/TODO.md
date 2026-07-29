@@ -75,6 +75,16 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     here. Note the cache bar's per-frame query (`cached_frames`) depends on being
     able to name a frame from its position — under content keying it would
     compute the same hash per frame instead, which works but needs the probes too.
+- **The frame key never hashes a layer's parent chain, and skips hidden layers.**
+    `comp_frame_key` (crates/lumit-eval/src/lib.rs) `continue`s past any layer with
+    `visible == false`, and no layer's key includes the transforms it inherits — so
+    hiding a *parent* and then moving it changes the picture (its children still
+    follow it) while the key stays put, and the children keep serving stale cached
+    frames. This pre-dates the Null layer for any hidden parent, but K-206 makes it
+    the common case: a Null is the layer a user will most naturally hide, having
+    nothing to look at. Fix is either to hash the parent chain into each child's
+    contribution, or to stop gating hidden layers out when something is parented
+    to them.
 - **No disk frame cache** (docs/06 §5.4): the VRAM tier landed 2026-07-27
     (K-187) and the RAM tier exists, but nothing persists across sessions and
     the design language's steel blue for "on disk only" still has nothing
@@ -213,6 +223,15 @@ the keymap).
     comp read model (K-184's deliberate exceptions), so its fold row shows controls but
     no diamonds, and selecting it puts nothing in the graph editor (`graphChannels`
     skips it); fold `volume` into `BridgeLayerInfo` if either matters.
+- **A Null layer cannot be selected in the Viewer (K-206).** After Effects draws a null
+    as a clickable 100×100 box; a Lumit Null has no size and no pixels, so there is
+    nothing to hit-test and it can only be moved from its Timeline property rows.
+    Acceptable for v1 and deliberately recorded — a drawn, selectable Viewer handle for
+    transform-only layers is the fix, and it would serve Camera layers too.
+- **Effects on a Null layer are accepted and never run (K-206).** `add_effect` works on a
+    Null, the effects appear in Effect Controls, and nothing ever evaluates them because
+    there are no pixels. Harmless in the same way as a Camera's, but undecided: either
+    refuse the drop, or say plainly in the interface that the stack is inert.
 
 ## Next - engine/bridge follow-ups
 

@@ -1814,6 +1814,43 @@ mod tests {
         );
     }
 
+    /// A Null layer draws nothing: the same comp with a Null sitting on top of
+    /// it renders byte for byte identically to the comp without one. A Null is
+    /// a transform to parent to, never a picture — and because it is invisible
+    /// there is no other way for a user to notice it started drawing.
+    #[test]
+    fn a_null_layer_draws_nothing() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (cw, ch) = (32u32, 16u32);
+        let colour = LinearColour([0.8, 0.1, 0.1, 1.0]);
+
+        let (plain, plain_comp, _) = matrix_base(cw, ch, colour);
+        let (without, w, h) = r.render_rgba(&plain, plain_comp, 0, 1.0).expect("render");
+
+        let (mut with_null, null_comp, _) = matrix_base(cw, ch, colour);
+        let mut null = matrix_layer("Null", LayerKind::Null, cw, ch);
+        // Off-centre, so a Null that did draw could not hide behind the base.
+        null.transform.position_x = Property::fixed(4.0);
+        null.transform.position_y = Property::fixed(4.0);
+        with_null
+            .comp_mut(null_comp)
+            .expect("comp")
+            .layers
+            .insert(0, null);
+        let (with, w2, h2) = r
+            .render_rgba(&with_null, null_comp, 0, 1.0)
+            .expect("render");
+
+        assert_eq!((w, h), (w2, h2));
+        assert_eq!(without, with, "a Null layer must contribute no pixels");
+    }
+
     /// One layer for the matrix scenarios: full-frame span, centred over its
     /// own natural size, everything else the model's defaults.
     fn matrix_layer(name: &str, kind: LayerKind, w: u32, h: u32) -> lumit_core::model::Layer {

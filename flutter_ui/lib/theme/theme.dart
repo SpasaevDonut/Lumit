@@ -263,24 +263,29 @@ class LumitTheme {
   /// The default accent as plain RGB, for seeding the picker.
   static const defaultAccent = Color(0xffe05a72);
 
-  /// The layer-label palette (TL2, K-188): eight bright, clearly distinct
-  /// chips. A layer's label colours both its swatch and its bar in the lane
-  /// area, and each layer kind defaults to a different one — so the set is a
-  /// dedicated palette, not the theme's role colours, which were built to be
-  /// quiet rather than tellable-apart. Index 0 is the neutral default.
-  Color labelColour(int i) {
-    const set = [
-      Color(0xff8b93a3), // slate — the quiet default
-      Color(0xff4aa3e0), // azure — footage
-      Color(0xffe0a33c), // amber — solids
-      Color(0xffa06ce0), // violet — precomps
-      Color(0xff46c98e), // mint — text
-      Color(0xff3cc9c0), // teal — cameras
-      Color(0xff6673e6), // indigo — sequences
-      Color(0xffd45cb8), // magenta — adjustments
-    ];
-    return set[i % set.length];
-  }
+  /// The layer-label palette (TL2, K-188): bright, clearly distinct chips. A
+  /// layer's label colours both its swatch and its bar in the lane area, and
+  /// each layer kind defaults to a different one — so the set is a dedicated
+  /// palette, not the theme's role colours, which were built to be quiet rather
+  /// than tellable-apart. Index 0 is the neutral default; the Null layer (K-206)
+  /// took the ninth chip, since every one below it was already a kind's own.
+  static const _labelSet = [
+    Color(0xff8b93a3), // slate — the quiet default
+    Color(0xff4aa3e0), // azure — footage
+    Color(0xffe0a33c), // amber — solids
+    Color(0xffa06ce0), // violet — precomps
+    Color(0xff46c98e), // mint — text
+    Color(0xff3cc9c0), // teal — cameras
+    Color(0xff6673e6), // indigo — sequences
+    Color(0xffd45cb8), // magenta — adjustments
+    Color(0xffe0704a), // coral — nulls
+  ];
+
+  /// How many chips the palette holds, so the picker draws exactly the set
+  /// rather than a number that has to be kept in step by hand.
+  static int get labelCount => _labelSet.length;
+
+  Color labelColour(int i) => _labelSet[i % _labelSet.length];
 
   /// This theme with a user-picked accent: hover brightens by 0x12 per
   /// channel on a dark surface, darkens by the same on a light one (K-092).

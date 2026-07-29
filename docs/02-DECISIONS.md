@@ -2992,3 +2992,46 @@ the theme's surface.
 
 **The Scopes toolbar drops its frame readout.** The playhead's position is the Timeline's
 and the Viewer's to state; a third copy above the trace only competed with it.
+
+---
+
+**K-206 · DECIDED · The Null layer ships, and the bridge enum spells it `NullLayer`.**
+From Mack (2026-07-29). The Null layer (01-GLOSSARY §2, reserved in 03-DATA-MODEL §5.2 since
+the model was written) is now a shipped kind: an invisible, source-less, size-less layer that
+carries only a transform, so layers parent to it and move as a rig.
+
+**The variant is `LayerKind::Null`.** `LayerKind` is serde-serialised by variant name, so the
+spelling is what lands in every `.lum` file on disk; it had to be the name the docs already
+reserve rather than a working name, because picking it later would mean a migration for
+nobody's benefit.
+
+**The bridge enum deviates, and only there.** `BridgeLayerKind` is code-generated into Dart,
+where enum members are lower-camel-cased — `Null` would become a member called `null`, which
+is a Dart reserved word and will not compile. The bridge enum therefore names the variant
+`NullLayer` (Dart: `BridgeLayerKind.nullLayer`). This is a spelling forced by the target
+language at the outermost edge of the system: `lumit-core` and every engine crate keep
+`Null`, nothing serialised changes, and no user-facing string is affected. In the interface
+the kind is named the way an Adjustment layer is named — **Null** in the Timeline's add-layer
+menu, **Add null layer** in the Composition menu.
+
+**The label palette grows to nine chips.** K-189 gave each layer kind its own starting label
+colour from an eight-chip palette, and the eight were exactly taken by the seven earlier
+kinds plus the neutral default at index 0. Rather than give the Null a chip that already
+means something else — index 0 would have made every new Null read as "no colour chosen" —
+the palette gains a ninth (coral). The chip picker now draws `LumitTheme.labelCount` chips
+rather than a hand-kept literal, so the next kind costs one line in the theme.
+
+**What a Null deliberately does not do.** It emits no node in the evaluation graph and draws
+no pixels, and `has_picture` answers false for it, so it is not offered as a matte source or
+as a layer-valued effect parameter — before this the catch-all arm handed it a picture it
+does not have, and picking it silently produced nothing. Its transform still feeds the frame
+key, so moving a Null retires the cached frames of the rig hanging off it. Two gaps are
+recorded rather than closed (docs/TODO.md): a Null cannot be selected in the Viewer, because
+unlike AE's 100×100 box it has no size to click; and effects added to a Null are accepted and
+never run, harmless as on a Camera but neither refused nor labelled.
+
+**CI re-runs codegen and diffs.** The checked-in Dart for this feature was stale on arrival —
+the generated doc comment described wording the Rust source no longer had — because nothing
+in CI ran `flutter_rust_bridge_codegen generate` and checked the tree came back unchanged. It
+does now, on Linux, at the version the workspace pins. A generated file is an output, and an
+output is checked by CI, not by a reviewer's eye.
