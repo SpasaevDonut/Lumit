@@ -29,11 +29,11 @@ private final class LumitSurfaceTexture: NSObject, FlutterTexture {
     // IOSurfaceLookup gives us a +1 reference to the same surface the engine
     // created in this process; the CVPixelBuffer then retains it.
     guard let surface = IOSurfaceLookup(surfaceID) else { return nil }
-    var buffer: CVPixelBuffer?
+    var unmanaged: Unmanaged<CVPixelBuffer>?
     let status = CVPixelBufferCreateWithIOSurface(
-      kCFAllocatorDefault, surface, nil, &buffer)
-    guard status == kCVReturnSuccess, let buffer else { return nil }
-    self.pixelBuffer = buffer
+      kCFAllocatorDefault, surface, nil, &unmanaged)
+    guard status == kCVReturnSuccess, let unmanaged else { return nil }
+    self.pixelBuffer = unmanaged.takeRetainedValue()
     super.init()
   }
 

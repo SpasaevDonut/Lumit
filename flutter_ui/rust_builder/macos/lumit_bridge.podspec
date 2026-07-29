@@ -3,7 +3,7 @@
 # Run `pod lib lint rust_lib_lumit_flutter.podspec` to validate before publishing.
 #
 Pod::Spec.new do |s|
-  s.name             = 'rust_lib_lumit_flutter'
+  s.name             = 'lumit_bridge'
   s.version          = '0.0.1'
   s.summary          = 'A new Flutter FFI plugin project.'
   s.description      = <<-DESC
@@ -43,6 +43,12 @@ A new Flutter FFI plugin project.
     'DEFINES_MODULE' => 'YES',
     # Flutter.framework does not contain a i386 slice.
     'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386',
-    'OTHER_LDFLAGS' => '-force_load ${BUILT_PRODUCTS_DIR}/liblumit_bridge.a',
+    'OTHER_LDFLAGS' => '-force_load ${BUILT_PRODUCTS_DIR}/liblumit_bridge.a ' \
+      '-L/opt/homebrew/opt/ffmpeg@7/lib ' \
+      '-lavcodec -lavdevice -lavfilter -lavformat -lavutil -lswresample -lswscale ' \
+      '-framework AudioUnit -framework CoreAudio -framework CoreFoundation ' \
+      '-framework IOSurface -framework Foundation -framework QuartzCore ' \
+      '-framework Metal -framework CoreGraphics ' \
+      '-lobjc -liconv',
   }
 end
