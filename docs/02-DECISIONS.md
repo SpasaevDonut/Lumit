@@ -3041,3 +3041,28 @@ safe direction for a cache-budget ceiling, which is the same reasoning K-194 alr
 applied to reporting the first adapter's video memory. Regression test:
 `system_memory_bytes_reports_non_zero_on_supported_platforms` in
 `crates/lumit-bridge/src/api/tests.rs`.
+
+**K-205 · DECIDED · The renderer's backend is pinned on every platform, in every build.**
+From Mack (2026-07-29), out of the Linux hybrid-GPU report. K-177 pinned the D3D12 backend
+only under the opt-in `shared-texture` feature and said in as many words that "every
+non-feature build keeps the all-backends instance"; the Linux and macOS siblings copied that
+shape. This supersedes K-177 on that point. `GpuContext::headless` now selects **DX12 on
+Windows, Vulkan on Linux and Metal on macOS unconditionally**, whatever the shared-texture
+features are set to.
+
+The reason is that the alternative no longer has a user. Zero-copy requires a pinned backend
+— the hand-off reaches through wgpu to *that* backend's device — and K-183 deleted the CPU
+read-back transport, so no build is left that shows frames without it. A mixed-backend
+instance therefore buys nothing, and it costs something real: letting wgpu enumerate GL
+alongside Vulkan on a hybrid iGPU+dGPU machine makes `PowerPreference::HighPerformance`
+choose unreliably, and the reported case picked the integrated part driving the display and
+then exhausted its memory during submission. Pinning is also simply honest about the
+requirement, rather than leaving it implied by a feature flag that gates something else.
+
+The pin is **not overridable from the environment**. The instance descriptor is built from
+`from_env_or_default`, so `WGPU_*` still tunes the flags, the DX12 shader compiler and the
+GLES version, but `backends` is set explicitly afterwards and wins: an environment variable
+must not be able to put the Viewer on a backend the texture hand-off cannot use.
+
+The three `shared-texture*` features keep their old scope — they gate the interop code, and
+nothing else.

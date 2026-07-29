@@ -41,8 +41,12 @@
 //! the task sanctions, and it needs only the external-memory extensions, not the
 //! modifier extension. The DRM fourcc reported is therefore `DRM_FORMAT_ABGR8888`
 //! (memory order R,G,B,A — matching `R8G8B8A8_UNORM` and Flutter's RGBA8888) with
-//! modifier `DRM_FORMAT_MOD_LINEAR` (0). The EGL import side omits the modifier
-//! attributes when the modifier is 0, exactly as the reference does.
+//! modifier `DRM_FORMAT_MOD_LINEAR` (0). The EGL import side states that modifier
+//! explicitly whenever the driver advertises
+//! `EGL_EXT_image_dma_buf_import_modifiers`, and omits the attributes only when it
+//! does not (they are illegal without that extension). Stating them matters:
+//! Nvidia's driver guesses without an explicit modifier and the import then yields
+//! a black texture.
 //!
 //! # Device extensions (the runtime prerequisite)
 //!
@@ -97,10 +101,11 @@ const SHARED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 pub struct SharedDmabuf {
     /// The copy destination the render path writes the finished frame into.
     pub texture: wgpu::Texture,
-    /// The exported DMA-BUF file descriptor. Ownership passes to the Flutter
-    /// runner on registration, which closes it on unregister; a fd exported but
-    /// never registered (the fallback path) lives until process exit — a single,
-    /// negligible descriptor for the session.
+    /// The exported DMA-BUF file descriptor. **This struct owns it** and closes
+    /// it in `Drop`, so an exported-but-never-registered fd is not leaked. The
+    /// descriptor sent across the bridge is only a number to look at: the Flutter
+    /// runner `dup()`s it on registration and closes its own copy on unregister.
+    /// Exactly one owner per side, so neither can double-close the other's.
     fd: i32,
     stride: u32,
     offset: u32,
@@ -173,7 +178,7 @@ impl SharedDmabuf {
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: SHARED_FORMAT,
-                        usage: wgpu::TextureUsages::COPY_DST,
+                        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                         view_formats: &[],
                     },
                 )
@@ -231,6 +236,18 @@ impl SharedDmabuf {
     }
 }
 
+impl Drop for SharedDmabuf {
+    fn drop(&mut self) {
+        if self.fd >= 0 {
+            use std::os::fd::FromRawFd;
+            unsafe {
+                let _ = std::os::fd::OwnedFd::from_raw_fd(self.fd);
+            }
+            self.fd = -1;
+        }
+    }
+}
+
 /// What [`create_exportable_image`] hands back out of the `as_hal` closure.
 struct Created {
     hal_texture: wgpu::hal::vulkan::Texture,
@@ -269,7 +286,7 @@ unsafe fn create_exportable_image(
         .array_layers(1)
         .samples(vk::SampleCountFlags::TYPE_1)
         .tiling(vk::ImageTiling::LINEAR)
-        .usage(vk::ImageUsageFlags::TRANSFER_DST)
+        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .push_next(&mut external_image);
@@ -343,7 +360,7 @@ unsafe fn create_exportable_image(
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: SHARED_FORMAT,
-            usage: wgpu::hal::TextureUses::COPY_DST,
+            usage: wgpu::hal::TextureUses::COPY_DST | wgpu::hal::TextureUses::RESOURCE,
             memory_flags: wgpu::hal::MemoryFlags::empty(),
             view_formats: vec![],
         };

@@ -6,7 +6,10 @@
 #include <GLES2/gl2ext.h>
 #include <unistd.h>
 
+#include <atomic>
+#include <cerrno>
 #include <cstdint>
+#include <cstring>
 
 // ---------------------------------------------------------------------------
 // The DMA-BUF-backed FlTextureGL subclass.
@@ -21,10 +24,17 @@
 G_DECLARE_FINAL_TYPE(LumitDmabufTexture, lumit_dmabuf_texture, LUMIT,
                      DMABUF_TEXTURE, FlTextureGL)
 
+#ifndef GL_TEXTURE_EXTERNAL_OES
+#define GL_TEXTURE_EXTERNAL_OES 0x8D65
+#endif
+
 struct _LumitDmabufTexture {
   FlTextureGL parent_instance;
 
-  // The DMA-BUF the engine exported (owned here until the texture is disposed).
+  // Our own duplicate of the DMA-BUF the engine exported. The engine's Rust side
+  // owns the descriptor it sent and closes it itself, so we `dup()` on
+  // registration and close only our copy — exactly one owner per side, no double
+  // close.
   int fd;
   uint32_t width;
   uint32_t height;
@@ -37,7 +47,11 @@ struct _LumitDmabufTexture {
   gboolean created;
   gboolean failed;
   GLuint gl_texture;
+  GLenum target;
   EGLImageKHR egl_image;
+  // Bumped on the raster thread in `populate`, read on the platform thread in
+  // `frameReady`, so it must be atomic (the Windows sibling does the same).
+  std::atomic<uint64_t> presented;
 };
 
 G_DEFINE_TYPE(LumitDmabufTexture, lumit_dmabuf_texture, fl_texture_gl_get_type())
@@ -67,9 +81,25 @@ static gboolean lumit_dmabuf_texture_create(LumitDmabufTexture* self,
     return FALSE;
   }
 
-  // The EGL_LINUX_DMA_BUF_EXT attribute list (mirrors the reference plugin). The
-  // modifier attributes are appended only for a non-linear buffer; the engine's
-  // linear-tiling path reports modifier 0, so they are usually omitted.
+  // The EGL_LINUX_DMA_BUF_EXT attribute list (mirrors the reference plugin).
+  //
+  // The modifier attributes are stated whenever the driver understands them.
+  // Nvidia's driver needs them even for a linear buffer — without an explicit
+  // modifier it guesses, and the import silently produces a black texture. But
+  // the attributes are *only legal* with EGL_EXT_image_dma_buf_import_modifiers;
+  // a driver without that extension rejects the whole import with
+  // EGL_BAD_PARAMETER. So we ask the display which it is, once, and build the
+  // list accordingly.
+#ifndef EGL_IMAGE_PRESERVED_KHR
+#define EGL_IMAGE_PRESERVED_KHR 0x30D2
+#endif
+
+  const char* extensions = eglQueryString(display, EGL_EXTENSIONS);
+  const gboolean has_modifiers =
+      extensions != nullptr &&
+      std::strstr(extensions, "EGL_EXT_image_dma_buf_import_modifiers") !=
+          nullptr;
+
   EGLint attribs[30];
   int i = 0;
   attribs[i++] = EGL_LINUX_DRM_FOURCC_EXT;
@@ -84,31 +114,51 @@ static gboolean lumit_dmabuf_texture_create(LumitDmabufTexture* self,
   attribs[i++] = static_cast<EGLint>(self->offset);
   attribs[i++] = EGL_DMA_BUF_PLANE0_PITCH_EXT;
   attribs[i++] = static_cast<EGLint>(self->stride);
-  if (self->modifier != 0) {
+  if (has_modifiers) {
     attribs[i++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
     attribs[i++] = static_cast<EGLint>(self->modifier & 0xFFFFFFFF);
     attribs[i++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
     attribs[i++] = static_cast<EGLint>(self->modifier >> 32);
   }
+  attribs[i++] = EGL_IMAGE_PRESERVED_KHR;
+  attribs[i++] = EGL_TRUE;
   attribs[i++] = EGL_NONE;
 
   EGLImageKHR image = create_image(display, EGL_NO_CONTEXT,
                                    EGL_LINUX_DMA_BUF_EXT, nullptr, attribs);
   if (image == EGL_NO_IMAGE_KHR) {
+    EGLint err = eglGetError();
     g_set_error(error, g_quark_from_static_string("lumit"), 0,
-                "eglCreateImageKHR failed for the dma-buf");
+                "eglCreateImageKHR failed for the dma-buf (err=0x%x)", err);
     return FALSE;
   }
 
+  // Clear any existing GL errors before calling image_target_texture
+  while (glGetError() != GL_NO_ERROR) {}
+
   GLuint texture = 0;
   glGenTextures(1, &texture);
+  GLenum target = GL_TEXTURE_2D;
+
   glBindTexture(GL_TEXTURE_2D, texture);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   image_target_texture(GL_TEXTURE_2D, image);
+  if (glGetError() != GL_NO_ERROR) {
+    while (glGetError() != GL_NO_ERROR) {}
+    target = GL_TEXTURE_EXTERNAL_OES;
+    glBindTexture(target, texture);
+    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    image_target_texture(target, image);
+  }
+  glBindTexture(target, 0);
 
+  self->target = target;
   self->egl_image = image;
   self->gl_texture = texture;
   return TRUE;
@@ -131,7 +181,8 @@ static gboolean lumit_dmabuf_texture_populate(FlTextureGL* texture,
     }
     self->created = TRUE;
   }
-  *target = GL_TEXTURE_2D;
+  self->presented.fetch_add(1, std::memory_order_relaxed);
+  *target = self->target;
   *name = self->gl_texture;
   *width = self->width;
   *height = self->height;
@@ -140,9 +191,20 @@ static gboolean lumit_dmabuf_texture_populate(FlTextureGL* texture,
 
 static void lumit_dmabuf_texture_dispose(GObject* object) {
   LumitDmabufTexture* self = LUMIT_DMABUF_TEXTURE(object);
-  // Best-effort teardown. The EGLImage/GL texture are freed when the GL context
-  // is torn down; we cannot delete them here without a current context. Closing
-  // the fd is always safe and releases the DMA-BUF's descriptor.
+  if (self->egl_image != nullptr) {
+    static PFNEGLDESTROYIMAGEKHRPROC destroy_image =
+        reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(
+            eglGetProcAddress("eglDestroyImageKHR"));
+    EGLDisplay display = eglGetCurrentDisplay();
+    if (destroy_image != nullptr && display != EGL_NO_DISPLAY) {
+      destroy_image(display, self->egl_image);
+    }
+    self->egl_image = nullptr;
+  }
+  if (self->gl_texture != 0) {
+    glDeleteTextures(1, &self->gl_texture);
+    self->gl_texture = 0;
+  }
   if (self->fd >= 0) {
     close(self->fd);
     self->fd = -1;
@@ -159,6 +221,7 @@ static void lumit_dmabuf_texture_init(LumitDmabufTexture* self) {
   self->fd = -1;
   self->created = FALSE;
   self->failed = FALSE;
+  self->presented.store(0, std::memory_order_relaxed);
 }
 
 static LumitDmabufTexture* lumit_dmabuf_texture_new(int fd, uint32_t width,
@@ -169,7 +232,18 @@ static LumitDmabufTexture* lumit_dmabuf_texture_new(int fd, uint32_t width,
                                                     uint64_t modifier) {
   LumitDmabufTexture* self = LUMIT_DMABUF_TEXTURE(
       g_object_new(lumit_dmabuf_texture_get_type(), nullptr));
-  self->fd = fd;
+  // Our own copy of the descriptor; see the `fd` field's comment. A failed
+  // `dup` (descriptor table full, or the engine's fd already gone) must not be
+  // ignored: the texture would be silently dead for the whole session.
+  self->fd = dup(fd);
+  if (self->fd < 0) {
+    g_warning(
+        "lumit: dup() of the dma-buf descriptor failed (%s); the zero-copy "
+        "Viewer texture cannot be registered",
+        g_strerror(errno));
+    g_object_unref(self);
+    return nullptr;
+  }
   self->width = width;
   self->height = height;
   self->stride = stride;
@@ -221,6 +295,12 @@ static void handle_register(ViewerTextureBridge* bridge, FlValue* args,
 
   LumitDmabufTexture* texture = lumit_dmabuf_texture_new(
       fd, width, height, stride, offset, fourcc, modifier);
+  if (texture == nullptr) {
+    fl_method_call_respond_error(call, "dup_failed",
+                                 "could not duplicate the dma-buf descriptor",
+                                 nullptr, nullptr);
+    return;
+  }
   fl_texture_registrar_register_texture(bridge->registrar,
                                         FL_TEXTURE(texture));
   int64_t id = fl_texture_get_id(FL_TEXTURE(texture));
@@ -238,12 +318,16 @@ static void handle_frame_ready(ViewerTextureBridge* bridge, FlValue* args,
                                FlMethodCall* call) {
   int64_t id = GetInt(args, "textureId", 0);
   gpointer texture = g_hash_table_lookup(bridge->textures, GINT_TO_POINTER(id));
+  int64_t presented = 0;
   if (texture != nullptr) {
     fl_texture_registrar_mark_texture_frame_available(
         bridge->registrar, FL_TEXTURE(texture));
+    presented = static_cast<int64_t>(
+        LUMIT_DMABUF_TEXTURE(texture)->presented.load(
+            std::memory_order_relaxed));
   }
   g_autoptr(FlMethodResponse) response =
-      FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_null()));
+      FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_int(presented)));
   fl_method_call_respond(call, response, nullptr);
 }
 
