@@ -106,12 +106,23 @@ fn preset_default_file_name(name: &str) -> &'static str {
 /// `ExportSpec` the exporter runs with.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct ResolvedSpec {
+    /// `h264` / `hevc` for mp4, `png` / `tiff` for an image sequence (K-201).
     pub codec: String,
     pub target: (u32, u32),
     pub bit_rate: Option<i64>,
     pub max_rate: Option<i64>,
+    /// Output frame rate; None = the comp's own.
+    pub fps: Option<f64>,
+    /// Export range in comp frames, end exclusive; None = work area / whole comp.
+    pub range: Option<(usize, usize)>,
     pub include_audio: bool,
     pub audio_bit_rate: i64,
+}
+
+/// Whether a codec name writes stills rather than a video container — the one
+/// question several rules below hang off (no audio, no bitrates).
+pub(crate) fn is_image_codec(codec: &str) -> bool {
+    matches!(codec, "png" | "tiff")
 }
 
 /// The dialogue-shaped inputs a `start_export` spec_json carries — the final
@@ -122,6 +133,10 @@ struct SpecInputs {
     codec: String,
     size: Option<(u32, u32)>,
     bitrate_mbps: String,
+    /// Output rate; zero or absent = the comp's own.
+    fps: f64,
+    /// `[start, end)` comp frames; absent/null = work area / whole comp.
+    range: Option<(u64, u64)>,
     include_audio: bool,
     audio_bit_rate: i64,
 }
@@ -160,6 +175,16 @@ fn parse_inputs(spec_json: &str) -> Result<SpecInputs, String> {
         Some(Value::Number(n)) => n.to_string(),
         _ => String::new(),
     };
+    let fps = m.get("fps").and_then(|f| f.as_f64()).unwrap_or(0.0);
+    // `range`: an explicit [start, end) in comp frames, or null/absent for the
+    // work-area default.
+    let range = match m.get("range") {
+        Some(Value::Array(a)) if a.len() == 2 => match (a[0].as_u64(), a[1].as_u64()) {
+            (Some(s), Some(e)) if e > s => Some((s, e)),
+            _ => None,
+        },
+        _ => None,
+    };
     let include_audio = m
         .get("include_audio")
         .and_then(|a| a.as_bool())
@@ -173,6 +198,8 @@ fn parse_inputs(spec_json: &str) -> Result<SpecInputs, String> {
         codec,
         size,
         bitrate_mbps,
+        fps,
+        range,
         include_audio,
         audio_bit_rate,
     })
@@ -198,12 +225,18 @@ fn resolve_spec(inputs: &SpecInputs, comp_w: u32, comp_h: u32) -> ResolvedSpec {
         (_, Some(b)) => Some(b.saturating_mul(3) / 2),
         (_, None) => None,
     };
+    let images = is_image_codec(&inputs.codec);
     ResolvedSpec {
         codec: inputs.codec.clone(),
         target,
-        bit_rate,
-        max_rate,
-        include_audio: inputs.include_audio,
+        // Stills are lossless; a bitrate against them is a field the dialogue
+        // should not have sent, dropped here so the exporter never sees one.
+        bit_rate: if images { None } else { bit_rate },
+        max_rate: if images { None } else { max_rate },
+        fps: (inputs.fps > 0.0).then_some(inputs.fps),
+        range: inputs.range.map(|(s, e)| (s as usize, e as usize)),
+        // A folder of stills has nowhere for sound to go (K-201).
+        include_audio: inputs.include_audio && !images,
         audio_bit_rate: inputs.audio_bit_rate,
     }
 }
@@ -403,17 +436,22 @@ mod driving {
 
     #[cfg(feature = "media")]
     fn to_export_spec(r: &ResolvedSpec) -> Result<ExportSpec, String> {
-        use lumit_media::encode::VideoCodec;
-        let codec = match r.codec.as_str() {
-            "h264" => VideoCodec::H264,
-            "hevc" => VideoCodec::Hevc,
-            other => return Err(format!("export: unknown codec '{other}'")),
+        use lumit_media::encode::{ImageFormat, VideoCodec};
+        use lumit_render::export::ExportFormat;
+        let format = match r.codec.as_str() {
+            "h264" => ExportFormat::Video(VideoCodec::H264),
+            "hevc" => ExportFormat::Video(VideoCodec::Hevc),
+            "png" => ExportFormat::Images(ImageFormat::Png),
+            "tiff" => ExportFormat::Images(ImageFormat::Tiff),
+            other => return Err(format!("export: unknown format '{other}'")),
         };
         Ok(ExportSpec {
-            codec,
+            format,
             target: r.target,
             bit_rate: r.bit_rate,
             max_rate: r.max_rate,
+            fps: r.fps,
+            range: r.range,
             include_audio: r.include_audio,
             audio_bit_rate: r.audio_bit_rate,
         })
@@ -549,5 +587,54 @@ mod driving {
             run.state = state;
             run.handle = None;
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::{parse_inputs, resolve_spec};
+
+    /// The dialogue's new fields parse with honest defaults: no fps override,
+    /// no explicit range, and a nonsense range (end before start) is ignored
+    /// rather than clamped into something nobody asked for (K-201).
+    #[test]
+    fn fps_and_range_parse_with_absent_meaning_default() {
+        let inputs = parse_inputs(r#"{"codec":"h264"}"#).unwrap();
+        assert_eq!(inputs.fps, 0.0);
+        assert_eq!(inputs.range, None);
+
+        let inputs = parse_inputs(r#"{"codec":"h264","fps":29.97,"range":[12,48]}"#).unwrap();
+        assert_eq!(inputs.fps, 29.97);
+        assert_eq!(inputs.range, Some((12, 48)));
+
+        let inputs = parse_inputs(r#"{"codec":"h264","range":[48,12]}"#).unwrap();
+        assert_eq!(inputs.range, None, "a backwards range is no range");
+
+        let resolved = resolve_spec(
+            &parse_inputs(r#"{"codec":"h264","fps":0}"#).unwrap(),
+            64,
+            36,
+        );
+        assert_eq!(resolved.fps, None, "zero means the comp's own rate");
+    }
+
+    /// An image sequence is stills: no audio track and no bitrates, whatever
+    /// the dialogue sent — resolution enforces it so the exporter never has to.
+    #[test]
+    fn image_codecs_shed_audio_and_bitrates_at_resolution() {
+        let inputs =
+            parse_inputs(r#"{"codec":"png","include_audio":true,"bitrate_mbps":"16"}"#).unwrap();
+        let resolved = resolve_spec(&inputs, 64, 36);
+        assert!(!resolved.include_audio, "stills carry no sound");
+        assert_eq!(resolved.bit_rate, None, "stills are lossless");
+        assert_eq!(resolved.max_rate, None);
+
+        // And the same dialogue state as h264 keeps all three.
+        let inputs =
+            parse_inputs(r#"{"codec":"h264","include_audio":true,"bitrate_mbps":"16"}"#).unwrap();
+        let resolved = resolve_spec(&inputs, 64, 36);
+        assert!(resolved.include_audio);
+        assert_eq!(resolved.bit_rate, Some(16_000_000));
     }
 }

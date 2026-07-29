@@ -2881,3 +2881,21 @@ per-user preference no longer needs to ship as a default. What K-198 *keeps*: th
 route (Composition ▸ Enable/Disable Retime) and its general lesson, that every keyboard
 command wants a menu or palette entry beside it. The bridge simplifies with the decision:
 a keymap row carries one chord, not a list whose only customer was this pair.
+
+**K-201 · DECIDED · The export dialogue grows the fields an export actually has, and image
+sequences join the formats.** From Mack (2026-07-29). File ▸ Export… (the glossary bans
+"render" for user-facing output, so the name was never a choice) now carries: a **format**
+box — H.264/HEVC into `.mp4`, or a **PNG/TIFF image sequence**, one lossless RGBA still per
+frame written through the same ffmpeg seam and the same frame walk as video, named
+`shot.00001.png` beside the chosen path; a **frame rate** defaulting to the comp's own,
+where a different rate resamples by nearest comp frame over the same wall-clock span and is
+stamped exactly (`fps_rational` — 29.97 stays 2997/100, fixing the old path that rounded
+every comp rate to a whole number); a **range** in comp frames defaulting to the work area
+(K-037's rule stands as the default; the dialogue's explicit range wins over it, and always
+sends what it shows so setting the range to the whole comp over a work area means the whole
+comp); and the **AAC bitrate** when audio joins. Sequences carry no audio and no bitrate —
+resolution strips both so the exporter never sees a contradiction — and a cancelled or
+failed sequence deletes the frames it wrote. The dialogue's preset and codec lists now offer
+only what the engine ships (the old list named `prores` and two presets that stamped
+nothing). The preview-equals-export identity (K-031) is untouched: the range and rate choose
+*which* comp frames render and how the file is stamped, never how a frame renders.

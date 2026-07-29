@@ -5544,16 +5544,19 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeExportSpec dco_decode_bridge_export_spec(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 7)
-      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
+    if (arr.length != 10)
+      throw Exception('unexpected arr length: expect 10 but see ${arr.length}');
     return BridgeExportSpec(
       preset: dco_decode_String(arr[0]),
       codec: dco_decode_String(arr[1]),
       width: dco_decode_u_32(arr[2]),
       height: dco_decode_u_32(arr[3]),
       bitrateMbps: dco_decode_u_32(arr[4]),
-      includeAudio: dco_decode_bool(arr[5]),
-      audioBitRate: dco_decode_i_64(arr[6]),
+      fps: dco_decode_f_64(arr[5]),
+      rangeStartFrame: dco_decode_i_64(arr[6]),
+      rangeEndFrame: dco_decode_i_64(arr[7]),
+      includeAudio: dco_decode_bool(arr[8]),
+      audioBitRate: dco_decode_i_64(arr[9]),
     );
   }
 
@@ -7131,6 +7134,9 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_width = sse_decode_u_32(deserializer);
     var var_height = sse_decode_u_32(deserializer);
     var var_bitrateMbps = sse_decode_u_32(deserializer);
+    var var_fps = sse_decode_f_64(deserializer);
+    var var_rangeStartFrame = sse_decode_i_64(deserializer);
+    var var_rangeEndFrame = sse_decode_i_64(deserializer);
     var var_includeAudio = sse_decode_bool(deserializer);
     var var_audioBitRate = sse_decode_i_64(deserializer);
     return BridgeExportSpec(
@@ -7139,6 +7145,9 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         width: var_width,
         height: var_height,
         bitrateMbps: var_bitrateMbps,
+        fps: var_fps,
+        rangeStartFrame: var_rangeStartFrame,
+        rangeEndFrame: var_rangeEndFrame,
         includeAudio: var_includeAudio,
         audioBitRate: var_audioBitRate);
   }
@@ -8888,6 +8897,9 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_u_32(self.width, serializer);
     sse_encode_u_32(self.height, serializer);
     sse_encode_u_32(self.bitrateMbps, serializer);
+    sse_encode_f_64(self.fps, serializer);
+    sse_encode_i_64(self.rangeStartFrame, serializer);
+    sse_encode_i_64(self.rangeEndFrame, serializer);
     sse_encode_bool(self.includeAudio, serializer);
     sse_encode_i_64(self.audioBitRate, serializer);
   }

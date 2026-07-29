@@ -9,7 +9,7 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 part 'export.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `reply_error`, `reply_ok`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 
 /// What a delivery preset stamps into the dialogue, and what to call the file.
 ///
@@ -85,11 +85,23 @@ class BridgeExportSpec {
   /// A delivery preset name, or empty for a custom export.
   final String preset;
 
-  /// The video codec key, e.g. `h264`.
+  /// The output format key: `h264` / `hevc` for an `.mp4`, `png` / `tiff`
+  /// for a numbered image sequence (K-201).
   final String codec;
   final int width;
   final int height;
   final int bitrateMbps;
+
+  /// Output frame rate; zero means the composition's own. A different rate
+  /// resamples by nearest comp frame over the same wall-clock span.
+  final double fps;
+
+  /// Export range start, in comp frames. Negative means the default — the
+  /// work area when one is set, else the whole comp.
+  final PlatformInt64 rangeStartFrame;
+
+  /// Export range end (exclusive), in comp frames. Negative = the default.
+  final PlatformInt64 rangeEndFrame;
   final bool includeAudio;
 
   /// Audio bits per second; zero takes the preset's own rate.
@@ -101,6 +113,9 @@ class BridgeExportSpec {
     required this.width,
     required this.height,
     required this.bitrateMbps,
+    required this.fps,
+    required this.rangeStartFrame,
+    required this.rangeEndFrame,
     required this.includeAudio,
     required this.audioBitRate,
   });
@@ -112,6 +127,9 @@ class BridgeExportSpec {
       width.hashCode ^
       height.hashCode ^
       bitrateMbps.hashCode ^
+      fps.hashCode ^
+      rangeStartFrame.hashCode ^
+      rangeEndFrame.hashCode ^
       includeAudio.hashCode ^
       audioBitRate.hashCode;
 
@@ -125,6 +143,9 @@ class BridgeExportSpec {
           width == other.width &&
           height == other.height &&
           bitrateMbps == other.bitrateMbps &&
+          fps == other.fps &&
+          rangeStartFrame == other.rangeStartFrame &&
+          rangeEndFrame == other.rangeEndFrame &&
           includeAudio == other.includeAudio &&
           audioBitRate == other.audioBitRate;
 }

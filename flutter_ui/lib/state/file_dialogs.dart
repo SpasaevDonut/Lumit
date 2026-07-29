@@ -51,18 +51,21 @@ Future<List<String>> pickFootage() async {
   return [for (final f in files) f.path];
 }
 
-/// The MP4 delivery type group for the export Save dialogue, mirroring the
-/// egui exporter's `.add_filter("MP4 video", &["mp4"])`.
-XTypeGroup _mp4Group() =>
-    const XTypeGroup(label: 'MP4 video', extensions: ['mp4']);
-
 /// Choose where to save an exported video, defaulting the name to the
 /// resolver's [suggestedName] (the egui exporter's `set_file_name`), or null
 /// when cancelled. The generic save seam the export dialogue and the share
-/// exports both drive.
-Future<String?> pickExportSaveLocation(String suggestedName) async {
+/// exports both drive. `extension`/`label` follow the chosen format (K-201):
+/// `.mp4` for video, the image extension for a sequence — where the picked
+/// name is the sequence's stem, and the frames land numbered beside it.
+Future<String?> pickExportSaveLocation(
+  String suggestedName, {
+  String extension = 'mp4',
+  String label = 'MP4 video',
+}) async {
   final location = await getSaveLocation(
-    acceptedTypeGroups: [_mp4Group()],
+    acceptedTypeGroups: [
+      XTypeGroup(label: label, extensions: [extension])
+    ],
     suggestedName: suggestedName,
   );
   return location?.path;

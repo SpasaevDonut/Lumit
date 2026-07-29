@@ -3302,15 +3302,24 @@ curved segment to a plain rate, and every number the curve needs to be drawn is
 worked out by a small, separately tested piece of plain maths so the picture is
 never guesswork.
 
-**Exporting a video (the dialogue and the queue).** Choosing File → Export opens
-a small settings window where you pick a delivery preset (which fills in the
-codec, size, bitrate and a suggested file name for you), adjust anything you
-like, choose where to save, and press Export; if one export is already running
-the new one simply lines up behind it and starts the moment the first finishes,
-one at a time, with the status line at the bottom showing the frame count as it
-goes and a × to cancel. The "share" shortcuts (Discord 50 MB / Small 10 MB) skip
-the dialogue and work the bitrate out from the size you are aiming for, using the
-same tested piece of plain maths the desktop app uses.
+**Exporting (the dialogue and the queue, K-201).** Choosing File → Export opens
+a small settings window. The first box is the **format**: an H.264 or HEVC
+video file, or a **PNG or TIFF image sequence** — one lossless still per frame,
+so choosing `shot.png` writes `shot.00001.png`, `shot.00002.png`, … beside it
+(handy for taking frames into other tools; a sequence has no sound and no
+bitrate, because a folder of stills has neither). For video you can pick a
+delivery preset (which fills in the codec and bitrate for you) and an audio
+quality. Every export also carries a **frame rate** — already filled in with
+the composition's own, and changeable, so a 60 fps comp can go out at 30 or at
+29.97 without the file quietly claiming a different rate — and a **range**,
+already filled in with the work area you set in the Timeline (or the whole comp
+when you set none), as "from frame / to frame" boxes you can change. Choose
+where to save, press Export, and the same window shows the frame count as it
+goes, with Cancel beside it; a cancelled image sequence tidies away the frames
+it had written rather than leaving what looks like a finished folder. The
+"share" shortcuts (Discord 50 MB / Small 10 MB) skip the dialogue and work the
+bitrate out from the size you are aiming for, using the same tested piece of
+plain maths the desktop app uses.
 
 **Reaching the last columns, and the app remembering where you were.** The
 right-click menu on a layer now does the real work for its blend mode, its matte

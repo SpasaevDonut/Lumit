@@ -298,6 +298,11 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
 **Linux packaging** - the flatpak shipped the egui `lumit-app` binary and was
     retired with it (K-182); the Flutter Linux build needs its own packaging
     when a Linux release matters.
+**Export options still to build (K-201 landed format/fps/range/audio-rate; docs/06 §7).**
+The one-click vertical variants (centre-crop reframe), user presets serialised beside the
+built-ins, export priority and encoder preference order, and the 48 kHz-only audio rate
+becoming a choice. The size fields also stay preset-driven — the dialogue has no free
+width/height boxes yet.
 **Export status still speaks v0's idiom** - `export.rs` replies in JSON strings
     (`err_json`) that the export dialog polls on a timer; the worker shows the
     typed-stream way, and export should follow it.

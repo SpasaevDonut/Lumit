@@ -2049,6 +2049,9 @@ fn the_export_surface_refuses_calmly_and_never_panics() {
         width: 0,
         height: 0,
         bitrate_mbps: 0,
+        fps: 0.0,
+        range_start_frame: -1,
+        range_end_frame: -1,
         include_audio: true,
         audio_bit_rate: 0,
     };

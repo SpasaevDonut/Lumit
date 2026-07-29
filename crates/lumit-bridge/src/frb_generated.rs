@@ -5897,6 +5897,9 @@ impl SseDecode for crate::api::export::BridgeExportSpec {
         let mut var_width = <u32>::sse_decode(deserializer);
         let mut var_height = <u32>::sse_decode(deserializer);
         let mut var_bitrateMbps = <u32>::sse_decode(deserializer);
+        let mut var_fps = <f64>::sse_decode(deserializer);
+        let mut var_rangeStartFrame = <i64>::sse_decode(deserializer);
+        let mut var_rangeEndFrame = <i64>::sse_decode(deserializer);
         let mut var_includeAudio = <bool>::sse_decode(deserializer);
         let mut var_audioBitRate = <i64>::sse_decode(deserializer);
         return crate::api::export::BridgeExportSpec {
@@ -5905,6 +5908,9 @@ impl SseDecode for crate::api::export::BridgeExportSpec {
             width: var_width,
             height: var_height,
             bitrate_mbps: var_bitrateMbps,
+            fps: var_fps,
+            range_start_frame: var_rangeStartFrame,
+            range_end_frame: var_rangeEndFrame,
             include_audio: var_includeAudio,
             audio_bit_rate: var_audioBitRate,
         };
@@ -8073,6 +8079,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::export::BridgeExportSpec {
             self.width.into_into_dart().into_dart(),
             self.height.into_into_dart().into_dart(),
             self.bitrate_mbps.into_into_dart().into_dart(),
+            self.fps.into_into_dart().into_dart(),
+            self.range_start_frame.into_into_dart().into_dart(),
+            self.range_end_frame.into_into_dart().into_dart(),
             self.include_audio.into_into_dart().into_dart(),
             self.audio_bit_rate.into_into_dart().into_dart(),
         ]
@@ -9695,6 +9704,9 @@ impl SseEncode for crate::api::export::BridgeExportSpec {
         <u32>::sse_encode(self.width, serializer);
         <u32>::sse_encode(self.height, serializer);
         <u32>::sse_encode(self.bitrate_mbps, serializer);
+        <f64>::sse_encode(self.fps, serializer);
+        <i64>::sse_encode(self.range_start_frame, serializer);
+        <i64>::sse_encode(self.range_end_frame, serializer);
         <bool>::sse_encode(self.include_audio, serializer);
         <i64>::sse_encode(self.audio_bit_rate, serializer);
     }
