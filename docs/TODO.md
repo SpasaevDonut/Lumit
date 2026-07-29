@@ -175,9 +175,6 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     whatever the panel size, so a large Scopes panel shows it visibly soft; the
     graticule is drawn over it in Dart and stays crisp, but the trace itself
     wants a size that follows the panel.
-- **The RGB parade does not need its R G B captions.** Each channel already spans
-    its own third of the panel width, so the letters along the top say what the
-    picture says. Drop them there; the other scopes' labelling is right as it is.
 - **The matte render-alone pass stays at full comp resolution whatever the
     preview scale** (K-186 records the split): correctness-safe because the
     fragment samples mattes by normalised comp UV, but it is the one composite
@@ -282,14 +279,10 @@ the keymap).
     still editable. Either guard the rows or enforce in the engine ops — decide which
     before wiring.
 - **The lane keyframe selection selects and eases, nothing more (K-189, K-196).** The
-    marquee gathers diamonds, a single diamond drags in time (K-190), and the F9 family
-    and the bottom bar's easing buttons act on the catch — but moving or deleting a
-    *whole lane selection* is still not built (the graph view has both). Nor are
+    marquee gathers diamonds, a click selects one and a diamond drags in time (K-190),
+    and the F9 family and the bottom bar's easing buttons act on the catch — but moving
+    or deleting a *whole lane selection* is still not built (the graph view has both). Nor are
     `=`/`-`/`\` or edge-follow during playback (the wheel bindings landed with K-190).
-- **F9 does not make a bezier in lane mode.** Easing a keyframe from the lanes (F9 and
-    its family) does not take, so a curve can only be shaped from the graph view — check
-    whether the catch is empty, the binding unreached in that context, or the write
-    refused, and make the lanes ease as the graph does.
 - **Column widths and the property selection are session-lived (K-192).** Both reset when
     the panel is rebuilt from scratch; fold them into the workspace when per-workspace
     column layouts land (docs/07 §4.2's reorder/hide-per-workspace item).

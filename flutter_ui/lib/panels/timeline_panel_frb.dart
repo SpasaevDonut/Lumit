@@ -584,11 +584,20 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     // nothing here compares keys except the copy/paste pair below, which §15
     // does not name and so has no action to look up.
     final ui = Provider.of<LumitUiState>(context, listen: false);
+    // This panel is one surface with two views, so a chord bound in either
+    // context works in both — the view's own context first, the other as the
+    // fallback. It used to fall back one way only (graph → timeline), which is
+    // why the F9 family did nothing in lane view: easing is bound in the graph
+    // context (docs/07 §15) while keyframes are selectable in both, so F9 over
+    // the lanes looked up no action at all.
     final action = ui.keymap.actionFor(
           _graph ? BridgeKeyContext.graph : BridgeKeyContext.timeline,
           event,
         ) ??
-        (_graph ? ui.keymap.actionFor(BridgeKeyContext.timeline, event) : null);
+        ui.keymap.actionFor(
+          _graph ? BridgeKeyContext.timeline : BridgeKeyContext.graph,
+          event,
+        );
 
     if (action == 'graph.toggle') {
       setState(() => _graph = !_graph);
@@ -3717,6 +3726,20 @@ class _LayerArea extends StatelessWidget {
       fpsDen: fpsDen,
       magnet: magnet,
       selectedKeys: selectedKeys,
+      onSelectKey: (index, additive) {
+        final id = '$rowId#$index';
+        // A copy, never the live set: `onKeysSelected` clears it before it
+        // reads what it was handed.
+        final next = <String>{...selectedKeys};
+        if (additive) {
+          if (!next.remove(id)) next.add(id);
+        } else {
+          next
+            ..clear()
+            ..add(id);
+        }
+        onKeysSelected(next);
+      },
       onChanged: onChanged,
     );
   }
@@ -3741,6 +3764,11 @@ class _KeyLane extends StatefulWidget {
   final int fpsDen;
   final bool magnet;
   final Set<String> selectedKeys;
+
+  /// Click a diamond to select it — the second way into the key selection the
+  /// F9 family and the easing buttons act on, beside the marquee. Additive
+  /// (Shift, Ctrl) toggles one in or out of the catch.
+  final void Function(int index, bool additive) onSelectKey;
   final VoidCallback onChanged;
 
   const _KeyLane({
@@ -3755,6 +3783,7 @@ class _KeyLane extends StatefulWidget {
     required this.fpsDen,
     required this.magnet,
     required this.selectedKeys,
+    required this.onSelectKey,
     required this.onChanged,
   });
 
@@ -3825,20 +3854,39 @@ class _KeyLaneState extends State<_KeyLane> {
             height: _rowHeight,
             child: MouseRegion(
               cursor: SystemMouseCursors.resizeLeftRight,
-              child: GestureDetector(
-                key: ValueKey<String>('tl-key-${widget.rowId}#$i'),
-                behavior: HitTestBehavior.opaque,
-                onHorizontalDragStart: (_) => setState(() {
-                  _dragging = i;
-                  _deltaPx = 0;
-                }),
-                onHorizontalDragUpdate: (d) =>
-                    setState(() => _deltaPx += d.delta.dx),
-                onHorizontalDragEnd: (_) => _commit(i),
-                onHorizontalDragCancel: () => setState(() {
-                  _dragging = null;
-                  _deltaPx = 0;
-                }),
+              // Selecting the diamond happens on the pointer DOWN, outside the
+              // gesture arena — the same trick the layer name row uses, because
+              // a tap recognizer here competes with the drag below it and
+              // swallowed the key drag outright. Without any per-key selection
+              // only the marquee could fill the lane catch, so easing a single
+              // key from the lanes (F9, the bottom bar's buttons) had nothing
+              // to act on and looked like it did nothing.
+              child: Listener(
+                onPointerDown: (event) {
+                  if (event.buttons != kPrimaryButton) return;
+                  final keyboard = HardwareKeyboard.instance;
+                  widget.onSelectKey(
+                    i,
+                    keyboard.isShiftPressed ||
+                        keyboard.isControlPressed ||
+                        keyboard.isMetaPressed,
+                  );
+                },
+                child: GestureDetector(
+                  key: ValueKey<String>('tl-key-${widget.rowId}#$i'),
+                  behavior: HitTestBehavior.opaque,
+                  onHorizontalDragStart: (_) => setState(() {
+                    _dragging = i;
+                    _deltaPx = 0;
+                  }),
+                  onHorizontalDragUpdate: (d) =>
+                      setState(() => _deltaPx += d.delta.dx),
+                  onHorizontalDragEnd: (_) => _commit(i),
+                  onHorizontalDragCancel: () => setState(() {
+                    _dragging = null;
+                    _deltaPx = 0;
+                  }),
+                ),
               ),
             ),
           ),

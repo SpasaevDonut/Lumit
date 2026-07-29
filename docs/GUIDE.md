@@ -1395,8 +1395,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   diamond to select it — it wears a ring — and **drag it left or right to change its time**;
   while the **magnet** (the bottom-bar toggle, on by default) is lit it snaps to the nearest
   whole frame, exactly like a key drag in the graph editor. On the lane only the *time* moves
-  (a key's value and easing are shaped in the graph editor). Select several at once and they
-  slide together as one undo step: **Shift-click** adds a key to the selection, **Ctrl-click**
+  by dragging — a key's *value* is shaped in the graph editor — but its **easing is not graph
+  work**: **F9** and its family (and the bottom bar's Linear / Bezier / Hold buttons) act on
+  whatever keys are selected here, so easing a key never means opening the graph. The easing
+  chords are bound in the graph context in docs/07 §15; the Timeline honours them because the
+  two views are one panel with one key selection between them. **Shift-click** adds a key to
+  the selection, **Ctrl-click**
   toggles one, and dragging over empty timeline space draws a **marquee** box that selects
   every key it covers — *across different property rows*, so you can grab, say, a Position key
   and a Rotation key together and nudge them in step. Hold **Shift** while you drag the

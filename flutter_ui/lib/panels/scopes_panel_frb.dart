@@ -286,15 +286,13 @@ class _GraticulePainter extends CustomPainter {
           _text(canvas, '$ire', Offset(2, y + 1), size);
         }
         // The parade's three cells, so it reads as R, G and B rather than one
-        // wide trace.
+        // wide trace. No captions over them: each channel fills its own third
+        // of the width and is drawn in its own colour, so an R above the left
+        // cell tells you what the cell already says.
         if (kind == ScopeKind.parade) {
           for (var i = 1; i < 3; i++) {
             final x = size.width * i / 3;
             canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-          }
-          for (final (i, name) in const [(0, 'R'), (1, 'G'), (2, 'B')]) {
-            _text(canvas, name,
-                Offset(size.width * (i + 0.5) / 3 - 4, 2), size);
           }
         }
 

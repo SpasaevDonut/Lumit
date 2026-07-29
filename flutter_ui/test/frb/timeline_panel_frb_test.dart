@@ -518,6 +518,51 @@ void main() {
           reason: 'the marquee gathered the keys it enclosed');
     });
 
+    /// **Easing a key from the lanes.** Two things stopped F9 working in lane
+    /// view: nothing selected a single diamond (only the marquee filled the
+    /// catch), and the F9 family is bound in the *graph* context while the
+    /// lookup only fell back the other way, so over the lanes the chord matched
+    /// no action at all. Clicking a diamond and pressing F9 must ease that key.
+    testWidgets('F9 eases a keyframe selected on the lane', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [600, 2400])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+
+      List<BridgeKeyframe> keys() =>
+          (layer.getTransform().opacity as BridgeScalar_Keyframed).field0;
+      expect(keys().first.interpOut, isA<BridgeSideInterp_Linear>(),
+          reason: 'the keys start linear');
+
+      await tester.tap(find.byKey(ValueKey<String>(
+          'tl-key-${layer.internallayerId}/transform/opacity#0')));
+      await tester.pump();
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.f9);
+      await tester.pumpAndSettle();
+
+      expect(keys().first.interpOut, isA<BridgeSideInterp_Bezier>(),
+          reason: 'F9 eased the key the lane click selected');
+      expect(keys().last.interpOut, isA<BridgeSideInterp_Linear>(),
+          reason: 'and only that one');
+    });
+
     /// Dragging a lane diamond moves the keyframe in time — one op — and the
     /// magnet decides whether it lands on a whole frame or between two
     /// (docs/07 §4.5).
