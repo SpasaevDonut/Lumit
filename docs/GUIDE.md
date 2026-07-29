@@ -4394,3 +4394,63 @@ pixels, it already covers whole pixels and moving it is what would blur it.
 None of this helps at display scalings like 150%, where a stroke comes to 1.5
 screen pixels and there is no whole number to land on. That is the nature of the
 thing, not something left undone.
+
+### Why a drag lagged the pointer, and how the preview keeps up
+
+Three separate things made the Viewer feel a step behind while you dragged a
+value, and they are worth understanding as a set because they are the three
+kinds of place this can go wrong: the asking, the showing, and the remembering.
+
+**The asking.** A mouse drag gives you a new value far more often than the
+engine can draw a frame — hundreds of times a second against maybe fifty. So
+the frontend has to choose which positions to ask for. It used to do the obvious
+thing: ignore any tick that arrived less than 20 ms after the last one. The
+trouble is *which* tick that throws away. You drag, you slow down, you stop, you
+let go — and the last few positions all arrive within a few milliseconds of each
+other, so they are all ignored. The picture stays wherever the pointer was
+20 ms before you stopped, until the release commits and a fresh frame is asked
+for. Every drag ended with a visible catch-up.
+
+`lib/state/preview_throttle.dart` is the fix, and it is a small idea: send the
+first tick straight away, and while the interval is running *hold* the newest
+tick rather than dropping it, sending it when the interval is up. Nothing is
+ever discarded without its replacement already in hand, and the rate is still
+bounded. The engine does the same thing on its side — the worker takes
+everything queued and keeps only the newest picture request (`drain_to_newest`)
+— so at most one superseded render is ever in flight. A release cancels any
+held tick, because the commit that follows is a truer statement of the same
+value and will ask for its own frame.
+
+**The showing.** On a zero-copy path the engine draws into a piece of GPU memory
+and tells Flutter "here is the name of that memory". When the size changes (a
+comp resize, or the adaptive tier deciding to render smaller) the engine makes a
+*new* piece of memory with a new name, and the frontend has to register the new
+one with the platform runner. The old code unregistered the current texture
+first and then registered the replacement — leaving the Viewer with nothing to
+draw for the length of a round trip to the runner and back. That is a blank
+flash. Registering the replacement *before* letting go of the old one means the
+last good frame is on screen until there is a newer one to put there, which is
+the rule the whole preview should follow: never show less than you were showing
+a moment ago. The same object now also refuses to start a second registration
+for a texture it is already registering, which used to happen once per frame
+that arrived during the round trip.
+
+**The remembering.** The engine keeps rendered frames so returning to a moment
+is free, and those frames are filed by *position* — composition, frame number,
+preview scale — not by what is in them. So when you commit an edit, nothing about
+any frame's name changes and every held frame has to be thrown away, or the
+Viewer would be served the picture from before your edit. The worker did throw
+them away, but it checked for that at the top of its loop turn, and an idle
+editor's turn is a 200 ms wait on its request channel. Click the eye icon to hide
+a layer and the sequence is: the edit commits and retires the frames; the
+frontend asks for a new frame; the worker wakes with that request and serves
+it — from the caches it has not yet noticed are stale. You get the old picture,
+and because nothing asks again, you keep it until you move the playhead.
+
+The fix is to check immediately before serving anything rather than only at the
+top of the turn. The lesson is the general one about invalidation by polling: if
+a cache is dropped on a schedule but read on demand, there is a window, and the
+window is exactly as long as the schedule. The engine now counts any serve that
+happens with retired caches still in place (`stale_serves`, visible in the cache
+readout), which is how the regression test catches it — a counter that must stay
+at zero is a much easier thing to test than a picture that is sometimes stale.

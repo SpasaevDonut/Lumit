@@ -82,14 +82,49 @@ class ViewerTextureController {
         _height == height) {
       return _textureId;
     }
+    // A registration for this same identity already in flight: wait on it
+    // rather than starting a second one. Frames arrive faster than a platform
+    // channel round trip, so without this a resize registers the new texture
+    // once per frame that arrives while the first call is still out — every one
+    // but the last leaked, and the Viewer flickered between them.
+    final wanted = (handle, fd, width, height);
+    if (_registering != null && _wanted == wanted) return _registering;
+    final pending =
+        _register(handle, width, height, fd, stride, offset, fourcc, modifier);
+    _wanted = wanted;
+    _registering = pending;
     try {
-      // A changed identity/size means a new shared texture: drop the old id (the
-      // Linux runner closes the old fd on unregister) before registering anew.
-      if (_textureId != null) {
-        await _channel
-            .invokeMethod<void>('unregister', {'textureId': _textureId});
-        _textureId = null;
+      return await pending;
+    } finally {
+      if (identical(_registering, pending)) {
+        _registering = null;
+        _wanted = null;
       }
+    }
+  }
+
+  /// The registration in flight and the identity it is for — see
+  /// [ensureRegistered].
+  Future<int?>? _registering;
+  (int, int?, int, int)? _wanted;
+
+  Future<int?> _register(
+    int handle,
+    int width,
+    int height,
+    int? fd,
+    int? stride,
+    int? offset,
+    int? fourcc,
+    int? modifier,
+  ) async {
+    // The texture on screen right now. It stays registered — and so keeps
+    // drawing the last good frame — until its replacement is ready: unregister
+    // first and the Viewer has nothing to draw for the length of a platform
+    // round trip, which is the blank flash a resize or a tier change used to
+    // show.
+    final previous = _textureId;
+    try {
       final args = fd != null
           ? <String, Object?>{
               'fd': fd,
@@ -113,6 +148,16 @@ class ViewerTextureController {
       _fd = fd;
       _width = width;
       _height = height;
+      // Now that the replacement is registered, let the old one go (the Linux
+      // runner closes its fd here).
+      if (previous != null && previous != id) {
+        try {
+          await _channel
+              .invokeMethod<void>('unregister', {'textureId': previous});
+        } catch (_) {
+          // The old texture is already gone as far as we are concerned.
+        }
+      }
       return id;
     } on MissingPluginException {
       _available = false;

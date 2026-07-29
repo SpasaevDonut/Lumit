@@ -5389,8 +5389,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeCacheStats dco_decode_bridge_cache_stats(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 6)
-      throw Exception('unexpected arr length: expect 6 but see ${arr.length}');
+    if (arr.length != 7)
+      throw Exception('unexpected arr length: expect 7 but see ${arr.length}');
     return BridgeCacheStats(
       usedBytes: dco_decode_u_64(arr[0]),
       budgetBytes: dco_decode_u_64(arr[1]),
@@ -5398,6 +5398,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       hits: dco_decode_u_64(arr[3]),
       misses: dco_decode_u_64(arr[4]),
       compDecodes: dco_decode_u_64(arr[5]),
+      staleServes: dco_decode_u_64(arr[6]),
     );
   }
 
@@ -6991,13 +6992,15 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_hits = sse_decode_u_64(deserializer);
     var var_misses = sse_decode_u_64(deserializer);
     var var_compDecodes = sse_decode_u_64(deserializer);
+    var var_staleServes = sse_decode_u_64(deserializer);
     return BridgeCacheStats(
         usedBytes: var_usedBytes,
         budgetBytes: var_budgetBytes,
         entries: var_entries,
         hits: var_hits,
         misses: var_misses,
-        compDecodes: var_compDecodes);
+        compDecodes: var_compDecodes,
+        staleServes: var_staleServes);
   }
 
   @protected
@@ -8794,6 +8797,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_u_64(self.hits, serializer);
     sse_encode_u_64(self.misses, serializer);
     sse_encode_u_64(self.compDecodes, serializer);
+    sse_encode_u_64(self.staleServes, serializer);
   }
 
   @protected

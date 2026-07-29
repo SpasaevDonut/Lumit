@@ -70,6 +70,11 @@ class BridgeCacheStats {
   /// rather than merely slow.
   final BigInt compDecodes;
 
+  /// Renders served from caches a committed edit had already retired. Always
+  /// zero; a non-zero value is the "the Viewer shows the picture from before
+  /// my edit" bug ([`crate::framecache::stale_serves`]).
+  final BigInt staleServes;
+
   const BridgeCacheStats({
     required this.usedBytes,
     required this.budgetBytes,
@@ -77,6 +82,7 @@ class BridgeCacheStats {
     required this.hits,
     required this.misses,
     required this.compDecodes,
+    required this.staleServes,
   });
 
   @override
@@ -86,7 +92,8 @@ class BridgeCacheStats {
       entries.hashCode ^
       hits.hashCode ^
       misses.hashCode ^
-      compDecodes.hashCode;
+      compDecodes.hashCode ^
+      staleServes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -98,7 +105,8 @@ class BridgeCacheStats {
           entries == other.entries &&
           hits == other.hits &&
           misses == other.misses &&
-          compDecodes == other.compDecodes;
+          compDecodes == other.compDecodes &&
+          staleServes == other.staleServes;
 }
 
 /// Which route a rendered frame takes from the engine to the Viewer.

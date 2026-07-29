@@ -25,6 +25,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../state/comp_time.dart';
+import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
@@ -542,12 +543,12 @@ String _basename(String path) {
 /// that edit written into it.
 class EffectStackEditor {
   ({UuidValue effect, String param, BridgeEffectValue value})? _staged;
-  final Stopwatch _since = Stopwatch()..start();
-  Duration _lastPreview = Duration.zero;
 
   /// Roughly one preview render per 20 ms, so a fast drag cannot outrun the
-  /// renderer and queue up work it will only throw away.
-  static const Duration previewInterval = Duration(milliseconds: 20);
+  /// renderer and queue up work it will only throw away — but the tick that
+  /// lands inside the interval is *held*, not dropped, so the pointer's last
+  /// position always reaches the picture ([PreviewThrottle]).
+  final PreviewThrottle _throttle = PreviewThrottle();
 
   /// The value a row should *show*, which during a drag is the staged one.
   BridgeEffectValue? stagedValue(UuidValue effect, String param) {
@@ -584,14 +585,14 @@ class EffectStackEditor {
     required double scale,
   }) {
     _staged = (effect: effect, param: param, value: value);
-    if (_since.elapsed - _lastPreview < previewInterval) return;
-    _lastPreview = _since.elapsed;
-    comp.renderFrameWithPreview(
-      frame: BigInt.from(frame),
-      scale: scale,
-      layer: layer,
-      effects: stackWith(layer),
-    );
+    // The stack is read *inside* the closure: a held tick must send the newest
+    // staged value, not the one that was current when it was held.
+    _throttle.request(() => comp.renderFrameWithPreview(
+          frame: BigInt.from(frame),
+          scale: scale,
+          layer: layer,
+          effects: stackWith(layer),
+        ));
   }
 
   /// A release, or a typed value: the whole stack as one op.
@@ -605,6 +606,9 @@ class EffectStackEditor {
     String param,
     BridgeEffectValue value,
   ) {
+    // A release ends the drag: a held preview tick would render provisional
+    // values *after* the commit, putting the pre-commit picture back on screen.
+    _throttle.cancel();
     _staged = (effect: effect, param: param, value: value);
     try {
       layer.setEffects(effects: stackWith(layer));
@@ -615,5 +619,8 @@ class EffectStackEditor {
   }
 
   /// Forget any drag in progress — a cancelled gesture.
-  void clear() => _staged = null;
+  void clear() {
+    _throttle.cancel();
+    _staged = null;
+  }
 }

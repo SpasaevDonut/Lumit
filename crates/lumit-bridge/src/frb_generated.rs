@@ -5716,6 +5716,7 @@ impl SseDecode for crate::api::cache::BridgeCacheStats {
         let mut var_hits = <u64>::sse_decode(deserializer);
         let mut var_misses = <u64>::sse_decode(deserializer);
         let mut var_compDecodes = <u64>::sse_decode(deserializer);
+        let mut var_staleServes = <u64>::sse_decode(deserializer);
         return crate::api::cache::BridgeCacheStats {
             used_bytes: var_usedBytes,
             budget_bytes: var_budgetBytes,
@@ -5723,6 +5724,7 @@ impl SseDecode for crate::api::cache::BridgeCacheStats {
             hits: var_hits,
             misses: var_misses,
             comp_decodes: var_compDecodes,
+            stale_serves: var_staleServes,
         };
     }
 }
@@ -7838,6 +7840,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::cache::BridgeCacheStats {
             self.hits.into_into_dart().into_dart(),
             self.misses.into_into_dart().into_dart(),
             self.comp_decodes.into_into_dart().into_dart(),
+            self.stale_serves.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -9593,6 +9596,7 @@ impl SseEncode for crate::api::cache::BridgeCacheStats {
         <u64>::sse_encode(self.hits, serializer);
         <u64>::sse_encode(self.misses, serializer);
         <u64>::sse_encode(self.comp_decodes, serializer);
+        <u64>::sse_encode(self.stale_serves, serializer);
     }
 }
 

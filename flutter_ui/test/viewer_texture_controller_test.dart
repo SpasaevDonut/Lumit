@@ -68,6 +68,54 @@ void main() {
     expect(controller.available, isTrue);
   });
 
+  /// **The blank flash on a resize.** A new shared texture means a new id, and
+  /// the old one used to be unregistered *first* — so for the length of a
+  /// platform round trip the Viewer had nothing to draw. The replacement is
+  /// registered before the old one is let go, so the last good frame stays on
+  /// screen until there is a newer one to put there.
+  test('a replacement is registered before the old texture is let go',
+      () async {
+    final order = <String>[];
+    var next = 7;
+    final channel = const MethodChannel(ViewerTextureController.channelName);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      order.add(call.method);
+      return call.method == 'register' ? next++ : null;
+    });
+    final controller = ViewerTextureController(channel: channel);
+
+    expect(await controller.ensureRegistered(0, 640, 360, fd: 3), 7);
+    expect(order, ['register']);
+    // A comp resize: same fd, new size.
+    expect(await controller.ensureRegistered(0, 1280, 720, fd: 4), 8);
+    expect(order, ['register', 'register', 'unregister'],
+        reason: 'the new texture is up before the old one goes');
+  });
+
+  /// Frames arrive faster than a platform round trip, so a resize used to start
+  /// one registration per frame that landed while the first was still out —
+  /// every one but the last leaked, and the Viewer flickered between them.
+  test('registrations for the same texture are not started twice', () async {
+    var registers = 0;
+    final channel = const MethodChannel(ViewerTextureController.channelName);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'register') registers++;
+      return call.method == 'register' ? 7 : null;
+    });
+    final controller = ViewerTextureController(channel: channel);
+
+    final ids = await Future.wait([
+      controller.ensureRegistered(0, 640, 360, fd: 3),
+      controller.ensureRegistered(0, 640, 360, fd: 3),
+      controller.ensureRegistered(0, 640, 360, fd: 3),
+    ]);
+
+    expect(ids, [7, 7, 7]);
+    expect(registers, 1, reason: 'one texture, one registration');
+  });
+
   test('a missing handler latches the path off at once', () async {
     final controller = ViewerTextureController(
         channel: const MethodChannel('lumit/viewer_texture_absent'));

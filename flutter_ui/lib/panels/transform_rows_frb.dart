@@ -28,6 +28,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
 import '../state/comp_time.dart';
+import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../widgets/controls.dart';
 import 'fx_section.dart';
@@ -36,10 +37,6 @@ import 'keyframe_controls_frb.dart';
 /// How wide one value cell is. Fixed rather than flexible so the columns line
 /// up down the card, which is what makes a stack of numbers readable.
 const double transformCellWidth = 74;
-
-/// How often a drag is allowed to ask for a preview frame. Faster than the
-/// renderer can answer is wasted work; slower and the picture lags the pointer.
-const Duration _previewInterval = Duration(milliseconds: 40);
 
 /// One axis of a transform row: which property it edits, and the display hints
 /// that make its drag feel right.
@@ -240,8 +237,15 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
   /// preview renders the other ten properties as the document has them.
   BridgeTransform? _staged;
 
-  final Stopwatch _since = Stopwatch()..start();
-  Duration _lastPreview = Duration.zero;
+  /// Bounded preview rate, holding rather than dropping the ticks in between,
+  /// so the pointer's last position always reaches the picture.
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -432,19 +436,20 @@ class _TransformRowFrbState extends State<TransformRowFrb> {
     final staged = write(_staged ?? widget.transform, prop, value);
     setState(() => _staged = staged);
 
-    if (_since.elapsed - _lastPreview < _previewInterval) return;
-    _lastPreview = _since.elapsed;
     final ui = Provider.of<LumitUiState>(context, listen: false);
-    widget.comp.renderFrameWithTransformPreview(
-      frame: BigInt.from(ui.playheadFrame.value),
-      scale: ui.viewerScale,
-      layer: widget.layer,
-      transform: staged,
-    );
+    _throttle.request(() => widget.comp.renderFrameWithTransformPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          transform: _staged ?? staged,
+        ));
   }
 
   /// Release, or a typed value: one op for the one property that changed.
   void _commit(BridgeTransformProp prop, double value) {
+    // The commit is the last word on this gesture: a held preview tick after it
+    // would put the provisional picture back.
+    _throttle.cancel();
     widget.layer.setTransform(prop: prop, value: BridgeScalar.static_(value));
     setState(() => _staged = null);
     widget.onChanged();

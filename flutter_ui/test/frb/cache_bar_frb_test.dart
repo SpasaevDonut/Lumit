@@ -16,8 +16,31 @@ import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/project.dart';
 
 import 'frb_test_support.dart';
+
+/// A postage-stamp composition with one solid in it: small enough that every
+/// render in these tests is trivial even on a software rasteriser, which is
+/// what the CI runner has.
+CompositionReference _stampComp(ProjectReference project, String name,
+    {BridgeRational? duration}) {
+  final comp = project.newComposition(name: name);
+  final was = comp.getSettings();
+  comp.setSettings(
+    settings: BridgeCompSettings(
+      name: was.name,
+      width: 160,
+      height: 90,
+      fpsNum: was.fpsNum,
+      fpsDen: was.fpsDen,
+      duration: duration ?? was.duration,
+    ),
+  );
+  comp.addSolidLayer();
+  return comp;
+}
 
 void main() {
   group('Cache bar runs', () {
@@ -277,6 +300,88 @@ void main() {
       expect(tester.getSize(find.byType(TimelineCacheBar)).height,
           TimelineCacheBar.height,
           reason: 'a thin stripe, per the design language');
+    });
+
+    /// **Fronting a composition asks for its picture.** Nothing else does: the
+    /// playhead has not moved and no edit has landed, so before this the Viewer
+    /// kept the previous comp's frame and the engine's idle fill — anchored on
+    /// the frame last *shown* — banked nothing for the new comp until some edit
+    /// happened to ask for a frame. Asserted through the fill, because the fill
+    /// is the visible consequence and needs no GPU export to observe.
+    testWidgets('fronting a composition warms it without an edit',
+        (tester) async {
+      final p = freshProject();
+      final first = _stampComp(p.state.project!, 'First');
+      final second = _stampComp(p.state.project!, 'Second');
+      p.uiState.setSelectedComp(first);
+
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      // Front the other one, exactly as the Timeline's tab bar does — no edit,
+      // no playhead move.
+      p.uiState.setSelectedComp(second);
+      await tester.pump();
+
+      await tester.runAsync(() async {
+        for (var i = 0; i < 150; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          final tiers = second.cachedFrames(frames: BigInt.from(8), scale: 1.0);
+          if (tiers[0] == 2) return;
+        }
+        fail('fronting the composition never asked for a frame of it');
+      });
+    });
+
+    /// **A commit that lands while the worker is parked must not be served from
+    /// the caches it retired.** The worker's caches are position-keyed, so a
+    /// commit drops them; it used to do that at the top of its loop turn, which
+    /// for an idle worker is *before* the request the commit provoked. The
+    /// render was then answered from the pre-edit cache and left there —
+    /// toggling a layer's visibility showed the old picture until the playhead
+    /// moved. The engine counts such a serve; the count must not move.
+    testWidgets('an edit is never served from the caches it retired',
+        (tester) async {
+      final p = freshProject();
+      // A third of a second of comp, so the idle fill runs out of frames to
+      // bank quickly. That matters: with frames left to fill the worker comes
+      // back round its loop every couple of milliseconds and syncs its caches
+      // on the way, which hides the race. An idle editor with a warm playhead —
+      // the state a user is in when they click the eye — parks for 200 ms at a
+      // time, and every commit inside one of those parks used to be served
+      // stale.
+      final comp = _stampComp(p.state.project!, 'Scene',
+          duration: const BridgeRational(num: 1, den: 3));
+      final layer = comp.addSolidLayer();
+      p.uiState.setSelectedComp(comp);
+
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+      // Let the first frame render, the fill finish the handful of frames this
+      // comp has, and the worker settle into its long park — the state the race
+      // needs.
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 2500)));
+
+      final before = cacheStats().staleServes;
+      // Hide the layer: a commit, then the frame request it provokes.
+      layer.setSwitch(switch_: BridgeLayerSwitch.visible, on_: false);
+      p.uiState.requestFrame();
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 600)));
+
+      expect(cacheStats().staleServes, before,
+          reason: 'the worker served a frame from caches the edit had retired');
     });
 
     /// The idle fill (K-187): show a frame, leave the engine alone for a

@@ -18,19 +18,6 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
-- **Dragging a property value flickers the preview.** Scrubbing a value updates,
-    but the picture stutters rather than following the mouse. Suspected: a frame
-    in flight is discarded when the next drag delta arrives, so the Viewer shows
-    a gap instead of the last good frame. Wanted: a drag never shows less than it
-    showed a moment ago — supersede the in-flight request, keep the last frame on
-    screen until its replacement is ready. Fix this **first**; it is the smallest
-    of the three and the most constantly felt.
-- **Hidden and adjustment layers do not update the preview until the frame
-    changes.** Toggling visibility, or editing anything on an Adjustment layer,
-    leaves the Viewer showing the old picture until you move to another frame and
-    back. The invalidation misses these edits: they change the composite without
-    changing the frame key. Related to the frame-key hole recorded under Next
-    (a layer's parent chain and visibility are not hashed).
 - **The disk tier is written but dark.** `crates/lumit-cache/src/disk.rs` and
     `crates/lumit-render/src/diskio.rs` are complete — open, park, load back,
     budget, the cache bar's blue tier, and a cache-root override honouring
@@ -41,6 +28,13 @@ These sit above everything else: they are what the editor feels like in the hand
     Settings window gets its budget row and root-folder picker back beside the RAM
     and VRAM rows, and the cache bar shows the blue tier. Pairs naturally with the
     multi-frame work below — read-ahead is what makes a disk tier worth having.
+    Land the **disk bar** with it: the cache meter gains a third bar beside the RAM
+    and VRAM ones (below) at the point the tier actually runs.
+- **The cache meter reads one tier, and says "nothing held".** With a large VRAM
+    budget set it reports no usage, which may be honest for the RAM tier and is
+    certainly not the whole picture. Wanted: a bar per tier — RAM and VRAM now,
+    disk when the tier above lands — so "what is cached" is answerable per tier
+    rather than as one merged number.
 - **Multi-frame rendering: render ahead, queue, and buffer for smooth playback.**
     Playback currently renders one frame at a time on demand. Wanted: frames
     rendered in advance of the playhead into a queue, so playback runs at rate
@@ -170,6 +164,9 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     whatever the panel size, so a large Scopes panel shows it visibly soft; the
     graticule is drawn over it in Dart and stays crisp, but the trace itself
     wants a size that follows the panel.
+- **The RGB parade does not need its R G B captions.** Each channel already spans
+    its own third of the panel width, so the letters along the top say what the
+    picture says. Drop them there; the other scopes' labelling is right as it is.
 - **The matte render-alone pass stays at full comp resolution whatever the
     preview scale** (K-186 records the split): correctness-safe because the
     fragment samples mattes by normalised comp UV, but it is the one composite
@@ -278,6 +275,10 @@ the keymap).
     and the bottom bar's easing buttons act on the catch — but moving or deleting a
     *whole lane selection* is still not built (the graph view has both). Nor are
     `=`/`-`/`\` or edge-follow during playback (the wheel bindings landed with K-190).
+- **F9 does not make a bezier in lane mode.** Easing a keyframe from the lanes (F9 and
+    its family) does not take, so a curve can only be shaped from the graph view — check
+    whether the catch is empty, the binding unreached in that context, or the write
+    refused, and make the lanes ease as the graph does.
 - **Column widths and the property selection are session-lived (K-192).** Both reset when
     the panel is rebuilt from scratch; fold them into the workspace when per-workspace
     column layouts land (docs/07 §4.2's reorder/hide-per-workspace item).

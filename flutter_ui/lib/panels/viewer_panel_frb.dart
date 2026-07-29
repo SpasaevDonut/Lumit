@@ -41,8 +41,10 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../state/preview_throttle.dart';
 import '../state/settings.dart';
 import '../state/timecode.dart';
 import '../theme/theme.dart';
@@ -69,6 +71,10 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
   ViewerChannel _channel = ViewerChannel.rgb;
   bool _grid = true;
   Offset _pan = Offset.zero;
+
+  /// The composition this Viewer has already asked for a frame of — so
+  /// fronting another one asks once, not on every rebuild.
+  UuidValue? _askedFor;
 
   /// Edits made anywhere in the document, which are the other reason the
   /// picture has to be asked for again.
@@ -126,6 +132,17 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
         title: 'Viewer',
         hint: 'Select a composition in the Project panel.',
       );
+    }
+    // A newly fronted composition is a new picture to ask for. Nothing else
+    // asks: the playhead has not moved and no edit has landed, so without this
+    // the Viewer sat on the last comp's frame and — because the engine's idle
+    // fill is anchored on the frame last *shown* — the new comp banked nothing
+    // ahead of the playhead until the first edit happened to ask for a frame.
+    if (_askedFor != comp.internalid) {
+      _askedFor = comp.internalid;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onPlayheadChanged();
+      });
     }
 
     final settings = comp.getSettings();
@@ -536,6 +553,16 @@ class _SelectionOverlay extends StatefulWidget {
 class _SelectionOverlayState extends State<_SelectionOverlay> {
   Offset _drag = Offset.zero;
 
+  /// Bounded preview rate for the move handle, holding the newest tick rather
+  /// than dropping it, so the picture ends the drag where the pointer did.
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
@@ -580,7 +607,10 @@ class _SelectionOverlayState extends State<_SelectionOverlay> {
               _preview(layer, map);
             },
             onPanEnd: (_) => _commit(layer, map),
-            onPanCancel: () => setState(() => _drag = Offset.zero),
+            onPanCancel: () {
+              _throttle.cancel();
+              setState(() => _drag = Offset.zero);
+            },
             child: SizedBox(
               width: 14,
               height: 14,
@@ -621,7 +651,10 @@ class _SelectionOverlayState extends State<_SelectionOverlay> {
         map.py + _drag.dy / map.viewScale,
       );
 
-  void _preview(LayerReference layer, ViewerLayerMap map) {
+  void _preview(LayerReference layer, ViewerLayerMap map) =>
+      _throttle.request(() => _sendPreview(layer, map));
+
+  void _sendPreview(LayerReference layer, ViewerLayerMap map) {
     final (x, y) = _moved(map);
     final tf = layer.getTransform();
     widget.comp.renderFrameWithTransformPreview(
@@ -650,6 +683,9 @@ class _SelectionOverlayState extends State<_SelectionOverlay> {
   void _commit(LayerReference layer, ViewerLayerMap map) {
     final (x, y) = _moved(map);
     final moved = _drag != Offset.zero;
+    // The commit is the last word: a held preview tick would land after it and
+    // put the provisional picture back.
+    _throttle.cancel();
     setState(() => _drag = Offset.zero);
     if (!moved) return;
 

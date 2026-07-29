@@ -568,6 +568,14 @@ fn worker_loop(
 
         if let Some(request) = request {
             state.last_request = std::time::Instant::now();
+            // Again, before serving it. The sync at the top of the turn ran
+            // BEFORE this request existed: a commit that landed while the
+            // worker was parked in `recv` bumped the invalidation generation
+            // and then asked for a frame, so serving without re-syncing
+            // answers from the very caches that edit retired — the Viewer keeps
+            // the picture from before it until something else moves the
+            // playhead. Cheap when nothing changed (three atomic loads).
+            sync_caches(&mut state);
             handle_requests(request, &receiver, &mut state, &mut stream);
         }
 
@@ -878,6 +886,12 @@ fn handle_requests(
         // asks every 120 ms while the Viewer asks every tick, so the picture
         // froze on its first frame while the scopes kept updating. A trace and
         // a frame are different jobs; neither is the other's replacement.
+        // The caches must be the ones this document deserves *before* a single
+        // frame goes out — see the sync in the loop above. Counted rather than
+        // merely commented so a regression is a failing test.
+        if crate::framecache::generation() != state.seen_generation {
+            crate::framecache::note_stale_serve();
+        }
         let (pictures, scope, superseded) = drain_to_newest(request, receiver, classify_request);
         // Deliberately not logged. Superseding is the normal, healthy case —
         // it is how a drag stays attached to the pointer — and a line per

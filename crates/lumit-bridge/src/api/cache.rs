@@ -30,6 +30,10 @@ pub struct BridgeCacheStats {
     /// move it, so a decode that should not have happened is visible here
     /// rather than merely slow.
     pub comp_decodes: u64,
+    /// Renders served from caches a committed edit had already retired. Always
+    /// zero; a non-zero value is the "the Viewer shows the picture from before
+    /// my edit" bug ([`crate::framecache::stale_serves`]).
+    pub stale_serves: u64,
 }
 
 #[frb(ignore)]
@@ -42,6 +46,7 @@ fn read() -> BridgeCacheStats {
         hits,
         misses,
         comp_decodes: crate::framecache::comp_decodes(),
+        stale_serves: crate::framecache::stale_serves(),
     }
 }
 

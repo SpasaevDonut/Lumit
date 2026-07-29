@@ -354,6 +354,26 @@ pub(crate) fn generation() -> u64 {
     with_cache(|c| c.generation)
 }
 
+/// How many renders the worker has served while the invalidation generation had
+/// already moved past the one it last acted on — that is, from caches a
+/// committed edit had retired.
+///
+/// **It must stay at zero.** A serve like that shows the picture from before the
+/// edit and then leaves it there, because nothing asks for the frame again: the
+/// Viewer looked stale until the playhead moved. The worker syncs its caches
+/// immediately before serving anything precisely so this cannot happen; the
+/// counter is how a regression says so out loud instead of being a bug report
+/// about a "sometimes stale" preview.
+static STALE_SERVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+pub(crate) fn note_stale_serve() {
+    STALE_SERVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn stale_serves() -> u64 {
+    STALE_SERVES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// The VRAM final-frame cache's controls and mirror. The textures themselves
 /// live inside the worker's renderer (they are GPU objects only that thread
 /// touches); what crosses threads is three atomics the settings ops write and
