@@ -5,5 +5,3 @@
 # cfg(not(windows))), so this line is inert there and no per-machine path is committed.
 # Windows points the build at FFmpeg via FFMPEG_LIBS_DIR / FFMPEG_INCLUDE_DIR set outside
 # this file — see scripts/win-dev-env.ps1 and docs/GUIDE.md §8.
-[env]
-FFMPEG_PKG_CONFIG_PATH = "/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig"
