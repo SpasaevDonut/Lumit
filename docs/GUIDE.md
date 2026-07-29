@@ -921,11 +921,10 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   "which moment of the source does this layer show?", and the new one is the simple one.
   A layer carries a `retime` field that is just an animatable number — the same kind of
   number Position and Opacity are — and its value *is* the source time, in seconds. Press
-  Alt+Shift+T on a layer and it gains one; press again and it loses it. (**Ctrl+Alt+T** does
-  the same, and on Windows it is the one to reach for: the system claims Alt+Shift for
-  switching keyboard layout, so on a machine with two languages installed it can swallow the
-  first chord before Lumit ever sees it. The command is in the Composition menu too, which
-  nothing can intercept.) While it has one, a
+  Ctrl+Alt+T on a layer and it gains one; press again and it loses it (K-200 — it briefly
+  had a second chord, Alt+Shift+T, which turned out to be a misremembering and which
+  Windows steals for its keyboard-layout switch anyway; the command is in the Composition
+  menu too, which nothing can intercept). While it has one, a
   **Retime** row appears in the Timeline's twirl-down above Transform, with the same
   stopwatch, the same diamonds and the same graph-editor lane as every other property,
   because it genuinely *is* every other property — there is no Retime-specific code in any
@@ -4016,10 +4015,10 @@ the layout.
 everybody arrives with different muscle memory — and because sometimes the
 operating system steals a key from under you (that really happened to us: on
 Windows, left Alt with Shift is how the system switches keyboard layouts, so
-`Alt+Shift+T` never reached Lumit at all, which is why Retime has a second
-chord). So Lumit has a **keymap**: a list saying "this key combination, in this
-place, runs this command", and a page in Settings where you can change any of
-it.
+the chord Retime briefly shipped on never reached Lumit at all — K-198 tells
+that story, and K-200 finished it by moving Retime to Ctrl+Alt+T outright). So
+Lumit has a **keymap**: a list saying "this key combination, in this place,
+runs this command", and a page in Settings where you can change any of it.
 
 **Three words.** A **chord** is a key with its modifiers — `Space`, `Ctrl+D`,
 `Shift+F3`. A **context** is *where you are*: the whole app, or one focused
@@ -4060,9 +4059,8 @@ live, with the name on the left and the keys on the right. Click the keys and
 press what you want. A few behaviours are worth knowing because they are
 deliberate rather than accidental:
 
-- **A row can show two chords**, and does — Retime has two on purpose. Showing
-  only one would mean a key that works with nothing on screen to say so, which
-  is exactly what a shortcuts page is for.
+- **One row, one key** (K-200). No shipped command has two chords; if you want
+  a second spelling of one, bind it yourself — that is what the page is for.
 - **Taking a key another command already has is allowed.** It has to be: if it
   were refused, you could never *swap* two commands' keys, because a swap needs
   a moment where one key is claimed twice. What happens next depends on whether

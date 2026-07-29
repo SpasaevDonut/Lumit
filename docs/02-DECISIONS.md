@@ -2868,3 +2868,16 @@ about why.
 **What this does not do.** The Tools, Project, Panels and Effects contexts have bindings in
 the table and no dispatch behind them yet — those commands do not exist on this frontend, so
 the rows are honest about the keymap and silent in use. `docs/TODO.md` carries that.
+
+**K-200 · DECIDED · Retime has one chord, like everything else.** From Mack (2026-07-29),
+superseding the two-chord half of K-198. The owner's recollection behind K-197's
+**Alt+Shift+T** was simply wrong — the After Effects chord being reached for was
+**Ctrl+Alt+T** all along — so the collision K-198 worked around (Windows takes Alt+Shift
+for its input-language switch) was a collision with a chord nobody should have shipped.
+The remedy is now the removal: **Ctrl+Alt+T** (`Mod+Alt+T`) is Retime's one binding,
+Alt+Shift+T is unbound, and no shipped action carries two chords. Retime is not special,
+and with K-199's Settings → Keymap in, anyone who wants a second chord can bind one — a
+per-user preference no longer needs to ship as a default. What K-198 *keeps*: the menu
+route (Composition ▸ Enable/Disable Retime) and its general lesson, that every keyboard
+command wants a menu or palette entry beside it. The bridge simplifies with the decision:
+a keymap row carries one chord, not a list whose only customer was this pair.

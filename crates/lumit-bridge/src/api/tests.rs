@@ -2803,7 +2803,7 @@ fn the_keymap_table_arrives_grouped_headed_and_described() {
                 "{} reached the table as a raw id",
                 row.action
             );
-            assert!(!row.chords.is_empty(), "{} has no chord", row.action);
+            assert!(!row.chord.is_empty(), "{} has no chord", row.action);
         }
     }
     let anywhere = groups
@@ -2814,7 +2814,7 @@ fn the_keymap_table_arrives_grouped_headed_and_described() {
     assert!(anywhere
         .bindings
         .iter()
-        .any(|b| b.action == "playback.toggle" && b.chords == ["Space"]));
+        .any(|b| b.action == "playback.toggle" && b.chord == "Space"));
 }
 
 /// Rebinding is what a row's chord cell does, and the answer it returns is the
@@ -2835,7 +2835,7 @@ fn rebinding_a_row_answers_with_the_table_it_produced() {
         .flat_map(|g| &g.bindings)
         .find(|b| b.action == "layer.duplicate")
         .expect("the row is still there");
-    assert_eq!(row.chords, ["Mod+Alt+D"]);
+    assert_eq!(row.chord, "Mod+Alt+D");
 
     // And the dispatch path agrees immediately — one keymap, not two.
     assert_eq!(
@@ -2925,11 +2925,7 @@ fn resetting_one_row_leaves_the_others_where_the_user_put_them() {
     keymap_rebind(BridgeKeyContext::Global, "file.save".into(), "F5".into()).expect("rebound");
     keymap_rebind(BridgeKeyContext::Global, "edit.undo".into(), "F6".into()).expect("rebound");
 
-    keymap_reset_binding(
-        BridgeKeyContext::Global,
-        "file.save".into(),
-        BridgeKeymapPreset::Lumit,
-    );
+    keymap_reset_binding(BridgeKeyContext::Global, "file.save".into());
     assert_eq!(
         keymap_lookup(BridgeKeyContext::Global, "Mod+S".into()).as_deref(),
         Some("file.save"),
@@ -2959,7 +2955,7 @@ fn an_unbound_action_keeps_its_row_and_loses_its_chord() {
     assert!(after
         .iter()
         .flat_map(|g| &g.bindings)
-        .any(|b| b.action == "edit.undo" && b.chords == ["Mod+Z"]));
+        .any(|b| b.action == "edit.undo" && b.chord == "Mod+Z"));
 }
 
 // ---------------------------------------------------------------------------

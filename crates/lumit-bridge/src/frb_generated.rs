@@ -2651,15 +2651,12 @@ fn wire__crate__api__keymap__keymap_reset_binding_impl(
                 flutter_rust_bridge::for_generated::SseDeserializer::new(message);
             let api_context = <crate::api::keymap::BridgeKeyContext>::sse_decode(&mut deserializer);
             let api_action = <String>::sse_decode(&mut deserializer);
-            let api_preset =
-                <crate::api::keymap::BridgeKeymapPreset>::sse_decode(&mut deserializer);
             deserializer.end();
             move |context| {
                 transform_result_sse::<_, ()>((move || {
                     let output_ok = Result::<_, ()>::Ok(crate::api::keymap::keymap_reset_binding(
                         api_context,
                         api_action,
-                        api_preset,
                     ))?;
                     Ok(output_ok)
                 })())
@@ -5977,12 +5974,12 @@ impl SseDecode for crate::api::keymap::BridgeKeyBinding {
         let mut var_context = <crate::api::keymap::BridgeKeyContext>::sse_decode(deserializer);
         let mut var_action = <String>::sse_decode(deserializer);
         let mut var_description = <String>::sse_decode(deserializer);
-        let mut var_chords = <Vec<String>>::sse_decode(deserializer);
+        let mut var_chord = <String>::sse_decode(deserializer);
         return crate::api::keymap::BridgeKeyBinding {
             context: var_context,
             action: var_action,
             description: var_description,
-            chords: var_chords,
+            chord: var_chord,
         };
     }
 }
@@ -8181,7 +8178,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::keymap::BridgeKeyBinding {
             self.context.into_into_dart().into_dart(),
             self.action.into_into_dart().into_dart(),
             self.description.into_into_dart().into_dart(),
-            self.chords.into_into_dart().into_dart(),
+            self.chord.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -9757,7 +9754,7 @@ impl SseEncode for crate::api::keymap::BridgeKeyBinding {
         <crate::api::keymap::BridgeKeyContext>::sse_encode(self.context, serializer);
         <String>::sse_encode(self.action, serializer);
         <String>::sse_encode(self.description, serializer);
-        <Vec<String>>::sse_encode(self.chords, serializer);
+        <String>::sse_encode(self.chord, serializer);
     }
 }
 

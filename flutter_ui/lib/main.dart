@@ -537,7 +537,6 @@ class LumitUiState extends ChangeNotifier {
     // every keypress goes through it and the settings page edits it, so it
     // wants the same lifetime as the rest of the session's UI state.
     keymap = KeymapState(workspace: this.workspace);
-    activeKeymap = keymap;
     // The read model re-reads on every committed change — one bridge call —
     // and every panel that draws layers repaints from it (K-184).
     _changes = state.onChange.listen((_) {
@@ -814,18 +813,11 @@ class _LumitAppViewState extends State<LumitAppView> {
         final last = (comp?.durationFrames() ?? 1) - 1;
         ui.playheadFrame.value = last < 0 ? 0 : last;
       case 'layer.retime.enable':
-      // Give the selected layer a Retime, or take it away again (docs/04 §12).
-      // On installs the identity map, so the picture does not move — it just
-      // gains a row above Transform to key.
-      //
-      // Two chords on purpose. Alt+Shift+T is the one the spec names, but on
-      // Windows **left Alt with Shift is the input-language switch**: with a
-      // second keyboard layout installed the system takes the chord and the
-      // application never sees the T, so the command silently does nothing on
-      // exactly the machines most likely to have two layouts. Ctrl+Alt+T is
-      // After Effects' own Time Remap chord and nothing intercepts it, so it
-      // is here as the one that always lands. The Composition menu carries the
-      // command too, for when neither is convenient.
+        // Give the selected layer a Retime, or take it away again (docs/04
+        // §12). On installs the identity map, so the picture does not move —
+        // it just gains a row above Transform to key. Ctrl+Alt+T by default
+        // (K-200): AE's own Time Remap chord, and one Windows cannot steal.
+        // The Composition menu carries the command too (K-198's lesson).
         final layer = ui.selectedLayer.value;
         if (layer == null) {
           handled = false;

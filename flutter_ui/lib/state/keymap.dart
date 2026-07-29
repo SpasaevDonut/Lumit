@@ -15,8 +15,6 @@
 // those live — [KeymapState] stores the engine's JSON verbatim and never looks
 // inside it.
 
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
@@ -223,11 +221,7 @@ class KeymapState extends ChangeNotifier {
 
   /// Put one row back to what the shipped keymap gives it.
   Future<void> resetBinding(BridgeKeyContext context, String action) async {
-    _adopt(await keymapResetBinding(
-      context: context,
-      action: action,
-      preset: BridgeKeymapPreset.lumit,
-    ));
+    _adopt(await keymapResetBinding(context: context, action: action));
   }
 
   /// Replace the whole keymap with a shipped preset.
@@ -270,28 +264,3 @@ class KeymapState extends ChangeNotifier {
     workspace.setKeymapJson(keymapToJson());
   }
 }
-
-/// The keymap the app is running, for the widgets that need to draw a chord
-/// beside a menu item. Set once at start-up by the shell.
-KeymapState? activeKeymap;
-
-/// The chord bound to [action] anywhere in the keymap, ready to show beside a
-/// menu item — or an empty string when nothing is bound or no keymap is up yet.
-String menuChordFor(String action) {
-  final km = activeKeymap;
-  if (km == null) return '';
-  for (final group in km.groups) {
-    for (final binding in group.bindings) {
-      if (binding.action == action && binding.chords.isNotEmpty) {
-        return chordLabel(binding.chords.first);
-      }
-    }
-  }
-  return '';
-}
-
-/// Read a keymap file's text, tolerating the trailing newline an editor adds.
-String normaliseKeymapFile(String text) => const LineSplitter()
-    .convert(text)
-    .join('\n')
-    .trim();

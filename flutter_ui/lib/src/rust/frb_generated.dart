@@ -339,9 +339,7 @@ abstract class BridgeLibApi extends BaseApi {
       required String chord});
 
   Future<List<BridgeKeymapGroup>> crateApiKeymapKeymapResetBinding(
-      {required BridgeKeyContext context,
-      required String action,
-      required BridgeKeymapPreset preset});
+      {required BridgeKeyContext context, required String action});
 
   List<BridgeKeyBinding> crateApiKeymapKeymapSearch({required String query});
 
@@ -2662,15 +2660,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
 
   @override
   Future<List<BridgeKeymapGroup>> crateApiKeymapKeymapResetBinding(
-      {required BridgeKeyContext context,
-      required String action,
-      required BridgeKeymapPreset preset}) {
+      {required BridgeKeyContext context, required String action}) {
     return handler.executeNormal(NormalTask(
       callFfi: (port_) {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_bridge_key_context(context, serializer);
         sse_encode_String(action, serializer);
-        sse_encode_bridge_keymap_preset(preset, serializer);
         pdeCallFfi(generalizedFrbRustBinding, serializer,
             funcId: 76, port: port_);
       },
@@ -2679,7 +2674,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         decodeErrorData: null,
       ),
       constMeta: kCrateApiKeymapKeymapResetBindingConstMeta,
-      argValues: [context, action, preset],
+      argValues: [context, action],
       apiImpl: this,
     ));
   }
@@ -2687,7 +2682,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   TaskConstMeta get kCrateApiKeymapKeymapResetBindingConstMeta =>
       const TaskConstMeta(
         debugName: "keymap_reset_binding",
-        argNames: ["context", "action", "preset"],
+        argNames: ["context", "action"],
       );
 
   @override
@@ -5621,7 +5616,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       context: dco_decode_bridge_key_context(arr[0]),
       action: dco_decode_String(arr[1]),
       description: dco_decode_String(arr[2]),
-      chords: dco_decode_list_String(arr[3]),
+      chord: dco_decode_String(arr[3]),
     );
   }
 
@@ -7196,12 +7191,12 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_context = sse_decode_bridge_key_context(deserializer);
     var var_action = sse_decode_String(deserializer);
     var var_description = sse_decode_String(deserializer);
-    var var_chords = sse_decode_list_String(deserializer);
+    var var_chord = sse_decode_String(deserializer);
     return BridgeKeyBinding(
         context: var_context,
         action: var_action,
         description: var_description,
-        chords: var_chords);
+        chord: var_chord);
   }
 
   @protected
@@ -8944,7 +8939,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_bridge_key_context(self.context, serializer);
     sse_encode_String(self.action, serializer);
     sse_encode_String(self.description, serializer);
-    sse_encode_list_String(self.chords, serializer);
+    sse_encode_String(self.chord, serializer);
   }
 
   @protected

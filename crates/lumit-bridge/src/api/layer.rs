@@ -1132,7 +1132,7 @@ impl LayerReference {
         Ok(self.item()?.retime.as_ref().map(BridgeScalar::read))
     }
 
-    /// Turn Retime on or off (Alt+Shift+T), returning whether it is now on.
+    /// Turn Retime on or off (Ctrl+Alt+T), returning whether it is now on.
     ///
     /// On installs the identity map — source time running alongside local time
     /// — so switching it on changes nothing visible and gives the row something

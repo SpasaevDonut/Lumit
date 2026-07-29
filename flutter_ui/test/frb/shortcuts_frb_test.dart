@@ -139,45 +139,35 @@ void main() {
           reason: 'the selection cannot outlive the layer');
     });
 
-    /// Alt+Shift+T gives the selected layer a Retime — and takes it away again
-    /// (K-197). Off is the property gone, not a 100% curve left behind.
-    testWidgets('Alt+Shift+T toggles the selected layer\'s Retime',
+    /// Alt+Shift+T does nothing now (K-200): it was a misremembering of AE's
+    /// chord, and on Windows the OS steals it for the input-language switch
+    /// anyway. It is unbound rather than kept as a second chord — Retime is
+    /// not special — and anyone who wants it can bind it in Settings → Keymap.
+    testWidgets('Alt+Shift+T is unbound and leaves the layer alone',
         (tester) async {
       final p = await mount(tester);
       final comp = p.uiState.selectedComp!;
       comp.addSolidLayer();
       final layer = comp.getLayers().single;
-
-      Future<void> press() async {
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-        await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
-        await tester.pump();
-      }
-
-      // Nothing selected: inert, like every other layer command.
-      await press();
-      expect(layer.getRetimeProperty(), isNull);
-
       p.uiState.selectedLayer.value = layer;
-      await press();
-      expect(layer.getRetimeProperty(), isNotNull,
-          reason: 'the layer now has a Retime to key');
 
-      await press();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pump();
+
       expect(layer.getRetimeProperty(), isNull,
-          reason: 'off removes it rather than flattening it');
+          reason: 'no binding, no Retime — the chord means nothing');
     });
 
-    /// **Ctrl+Alt+T does the same, and on Windows it is the one that lands.**
-    /// Left Alt with Shift is the system's input-language switch there: with a
-    /// second keyboard layout installed the OS takes the chord and the
-    /// application never sees the T, so the spec's own shortcut silently does
-    /// nothing on the machines most likely to have two layouts. This is After
-    /// Effects' own Time Remap chord, and nothing intercepts it.
-    testWidgets('Ctrl+Alt+T toggles Retime as well', (tester) async {
+    /// **Ctrl+Alt+T is the Retime chord** (K-197, narrowed to one by K-200):
+    /// After Effects' own Time Remap chord, and one Windows cannot steal. On
+    /// gives the layer a Retime; off removes the property rather than leaving
+    /// a flattened curve behind.
+    testWidgets('Ctrl+Alt+T toggles the selected layer\'s Retime',
+        (tester) async {
       final p = await mount(tester);
       final comp = p.uiState.selectedComp!;
       comp.addSolidLayer();

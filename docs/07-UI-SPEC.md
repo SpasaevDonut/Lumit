@@ -394,8 +394,8 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
   with its own caret, and nothing under them until one is opened — the tidy-list behaviour
   above. Three groups exist, plus the Retime row above them:
 
-  - **Retime**, only on a layer that has been given one with **Alt+Shift+T**, **Ctrl+Alt+T**
-    or Composition ▸ Enable Retime (K-197, K-198): a single
+  - **Retime**, only on a layer that has been given one with **Ctrl+Alt+T** or
+    Composition ▸ Enable Retime (K-197, K-198, K-200): a single
     row, not a group, sitting *above* Transform and outside every group — it decides which
     moment of the source the rest of the fold-out then transforms. Its value is that source
     time in seconds, and it is an ordinary keyframable property: the same stopwatch, the same
@@ -998,9 +998,9 @@ shipped chord back. Above it: a search box that matches what the table *shows* a
 the ids underneath, the two presets, and Import / Export for the shareable file. A chord
 another action already holds is taken rather than refused (refusing would make swapping two
 actions' keys impossible) — within one context the previous owner's row simply goes blank,
-and across overlapping contexts a banner names the clash. A row shows *every* chord bound to
-its action, because an action can hold two (K-198's Retime does) and a working key with
-nothing on screen to say so is the failure this page exists to prevent.
+and across overlapping contexts a banner names the clash. One row, one chord (K-200): no
+shipped action carries two, and a user who wants a second spelling of a command binds it
+themselves.
 
 The model is `lumit-keymap` and the seam is `crates/lumit-bridge/src/api/keymap.rs`: the
 engine decides what a chord means and the frontend only spells the keypress and draws the
@@ -1049,7 +1049,7 @@ them away the day dispatch started going through the keymap.
 | Timeline | `Ctrl+Shift+D` | Split layer / cut clip at playhead |
 | Timeline | `Ctrl+D` | Duplicate selection |
 | Timeline | `Ctrl+Shift+C` | Precompose |
-| Timeline | `Alt+Shift+T` *or* `Ctrl+Alt+T` | Give the selected layer a Retime, or take it away (K-197; the second chord and the Composition-menu item are K-198, because Windows takes `Alt+Shift` for its input-language switch) |
+| Global | `Ctrl+Alt+T` | Give the selected layer a Retime, or take it away (K-197, narrowed to this one chord by K-200 — AE's own, and one Windows cannot steal; the Composition-menu route is K-198) |
 | Timeline | `=` / `-` | Zoom time in / out (`Ctrl+wheel` at pointer) |
 | Timeline | `\` | Toggle full-comp zoom / previous zoom |
 | Timeline | `Enter` | Rename selected layer |

@@ -95,15 +95,21 @@ void main() {
       expect(find.text('Duplicate the layer'), findsOneWidget);
     });
 
-    /// K-198 gives Retime two chords deliberately. Both have to be on the row:
-    /// a key that works with nothing on screen to say so is exactly what this
-    /// page exists to prevent.
-    testWidgets('a row with two chords shows both', (tester) async {
+    /// Retime has one chord like everything else (K-200): Ctrl+Alt+T, AE's
+    /// own, and one Windows cannot steal. The misremembered Alt+Shift+T is
+    /// gone rather than kept as a second — anyone who wants it back can bind
+    /// it, which is the whole point of the page.
+    testWidgets('Retime has the one chord, not the misremembered pair',
+        (tester) async {
       await openKeymapPage(tester);
       await reveal(tester, find.text('Give the layer a Retime'));
-      // One cell, both chords, joined for reading.
       expect(find.textContaining('Ctrl+Alt+T'), findsOneWidget);
-      expect(find.textContaining('Alt+Shift+T'), findsOneWidget);
+      expect(find.textContaining('Alt+Shift+T'), findsNothing);
+      expect(
+        keymapLookup(context: BridgeKeyContext.global, chord: 'Alt+Shift+T'),
+        isNull,
+        reason: 'the old chord is unbound, not hidden',
+      );
     });
 
     /// The load-bearing one: clicking a chord and pressing keys changes what
@@ -143,7 +149,7 @@ void main() {
         tester,
         until: () => p.uiState.keymap.groups
             .expand((g) => g.bindings)
-            .any((b) => b.action == 'file.save' && b.chords.contains('F5')),
+            .any((b) => b.action == 'file.save' && b.chord == 'F5'),
       );
       await reveal(tester, cell);
       expect(
@@ -153,11 +159,9 @@ void main() {
       );
     });
 
-    /// Reset is per row, and it has to restore *every* chord the shipped
-    /// keymap gives the action — halving a two-chord row would be a quiet loss.
-    testWidgets('reset puts a row back, both its chords included',
-        (tester) async {
-      await openKeymapPage(tester);
+    /// Reset is per row: the shipped chord comes back and nothing else moves.
+    testWidgets('reset puts a row back to the shipped chord', (tester) async {
+      final p = await openKeymapPage(tester);
       final cell = find.byKey(const ValueKey(
           'keymap-chord-global-layer.retime.enable'));
       await reveal(tester, cell);
@@ -165,11 +169,15 @@ void main() {
       await tester.pumpAndSettle();
       await tester.sendKeyDownEvent(LogicalKeyboardKey.f6);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.f6);
-      await tester.pumpAndSettle();
+      await settleFrb(
+        tester,
+        until: () =>
+            keymapLookup(context: BridgeKeyContext.global, chord: 'F6') != null,
+      );
       expect(
-        keymapLookup(context: BridgeKeyContext.global, chord: 'Alt+Shift+T'),
+        keymapLookup(context: BridgeKeyContext.global, chord: 'Mod+Alt+T'),
         isNull,
-        reason: 'the rebind replaced both',
+        reason: 'the rebind replaced the shipped chord',
       );
 
       await reveal(tester, cell);
@@ -177,15 +185,24 @@ void main() {
         of: cell,
         matching: find.text('Reset'),
       ));
-      await tester.pumpAndSettle();
+      await settleFrb(
+        tester,
+        until: () => p.uiState.keymap.groups
+            .expand((g) => g.bindings)
+            .any((b) =>
+                b.action == 'layer.retime.enable' && b.chord == 'Mod+Alt+T'),
+      );
 
-      for (final chord in ['Alt+Shift+T', 'Mod+Alt+T']) {
-        expect(
-          keymapLookup(context: BridgeKeyContext.global, chord: chord),
-          'layer.retime.enable',
-          reason: '$chord came back',
-        );
-      }
+      expect(
+        keymapLookup(context: BridgeKeyContext.global, chord: 'Mod+Alt+T'),
+        'layer.retime.enable',
+        reason: 'the shipped chord came back',
+      );
+      expect(
+        keymapLookup(context: BridgeKeyContext.global, chord: 'F6'),
+        isNull,
+        reason: 'and the stand-in went',
+      );
     });
 
     /// A clash is not refused — it is reported, because refusing would make

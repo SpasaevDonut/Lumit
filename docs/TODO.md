@@ -117,7 +117,7 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 
 **Retime is a property row now, and the segment card is the leftover (K-197).** A layer
 carries `retime: Option<Property>` — source time in seconds, keyframable like any other
-property, given with Alt+Shift+T and drawn above Transform in the fold-out. Deliberately
+property, given with Ctrl+Alt+T and drawn above Transform in the fold-out. Deliberately
 bare: no lenses, no ease presets, no freeze, no interpolation policy. What is left over is
 the **old segment path**, still in the model (`LayerKind::Footage::retime`), still evaluated
 as the fallback in `Layer::source_time_at`, and still edited by the Source card's

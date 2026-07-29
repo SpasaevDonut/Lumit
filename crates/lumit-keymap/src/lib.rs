@@ -410,28 +410,16 @@ impl Keymap {
         self.bindings.len() != before
     }
 
-    /// The chord currently bound to `action` in `context`, if any — the first
-    /// where an action has more than one.
+    /// The chord currently bound to `action` in `context`, if any. The table in
+    /// Settings → Keymap is one row per (context, action), so this is what fills
+    /// its right-hand column — one action, one chord, like everything else
+    /// (K-200 settled that Retime is no exception).
     #[must_use]
     pub fn binding_for(&self, context: KeyContext, action: &ActionId) -> Option<&Chord> {
-        self.chords_for(context, action).into_iter().next()
-    }
-
-    /// *Every* chord bound to `action` in `context`, in map order.
-    ///
-    /// An action really can have two, and one of them is load-bearing: K-198
-    /// gives Retime both `Alt+Shift+T` (the chord the specs name) and
-    /// `Mod+Alt+T` (the one Windows cannot swallow), deliberately and with
-    /// neither removable. So the settings table shows a row's chords as a list
-    /// rather than picking one — a binding that works but is not on screen is
-    /// the exact failure this whole page exists to prevent.
-    #[must_use]
-    pub fn chords_for(&self, context: KeyContext, action: &ActionId) -> Vec<&Chord> {
         self.bindings
             .iter()
-            .filter(|b| b.context == context && &b.action == action)
+            .find(|b| b.context == context && &b.action == action)
             .map(|b| &b.chord)
-            .collect()
     }
 
     /// Point `action` at `chord` in `context` — what clicking a row's chord and
@@ -543,14 +531,12 @@ pub fn default_keymap() -> Keymap {
         row(Global, "Shift+F3", "graph.toggle"),
         // Retime is app-wide, not Timeline-scoped: the shell runs it whatever
         // panel is fronted, and Composition ▸ Enable Retime carries the same
-        // command. Two chords, both DECIDED (K-198) — Alt+Shift+T is the one
-        // the specs name, and Windows eats it whenever a second keyboard
-        // layout is installed (left Alt with Shift is the system's language
-        // switch), so Ctrl+Alt+T (After Effects' own Time Remap chord) is
-        // there as the one that always lands. Neither is removable, and the
-        // settings table shows both on the row rather than picking a favourite.
+        // command. Mod+Alt+T is After Effects' own Time Remap chord, and it is
+        // also one Windows cannot steal — the briefly-shipped Alt+Shift+T was
+        // a misremembering (K-200, superseding that half of K-198), and it
+        // collided with the Windows input-language switch anyway. One chord,
+        // like every other action; anyone who wants a second can bind it.
         row(Global, "Mod+Alt+T", "layer.retime.enable"),
-        row(Global, "Alt+Shift+T", "layer.retime.enable"),
         // --- Tools ---
         row(Tools, "V", "tool.select"),
         row(Tools, "H", "tool.hand"),

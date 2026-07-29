@@ -60,15 +60,15 @@ Future<List<BridgeKeymapGroup>> keymapUnbind(
     BridgeLib.instance.api
         .crateApiKeymapKeymapUnbind(context: context, action: action);
 
-/// Put one action back to the chord the chosen preset gives it, and hand back
-/// the table. Nothing else in the map is touched — this is the per-row reset,
-/// not [`keymap_load_preset`].
+/// Put one action back to the chord the shipped default gives it, and hand
+/// back the table. Nothing else in the map is touched — this is the per-row
+/// reset, not [`keymap_load_preset`]. Always the Lumit default: "reset" on a
+/// settings row means "what the app ships with", whichever preset was loaded
+/// since.
 Future<List<BridgeKeymapGroup>> keymapResetBinding(
-        {required BridgeKeyContext context,
-        required String action,
-        required BridgeKeymapPreset preset}) =>
-    BridgeLib.instance.api.crateApiKeymapKeymapResetBinding(
-        context: context, action: action, preset: preset);
+        {required BridgeKeyContext context, required String action}) =>
+    BridgeLib.instance.api
+        .crateApiKeymapKeymapResetBinding(context: context, action: action);
 
 /// Replace the whole keymap with a shipped preset, and hand back the table.
 Future<List<BridgeKeymapGroup>> keymapLoadPreset(
@@ -99,21 +99,18 @@ class BridgeKeyBinding {
   /// What the table shows in its left-hand column, e.g. "Play or pause".
   final String description;
 
-  /// Every chord that runs this action here, in canonical text form, e.g.
-  /// `["Mod+Alt+T", "Alt+Shift+T"]`. Usually one; empty when the action is
-  /// unbound, which is a state the table shows rather than hides.
-  ///
-  /// A list rather than a single chord because an action really can have two
-  /// and both must be visible — K-198 gives Retime a second chord precisely
-  /// because Windows swallows the first, and a table that showed only one of
-  /// them would be lying about the keyboard.
-  final List<String> chords;
+  /// The chord in its canonical text form, e.g. `"Mod+Shift+P"`. Empty when
+  /// the action is currently unbound, which is a state the table shows
+  /// rather than hides. One chord per row — K-200 settled that no shipped
+  /// action carries two, so a list here would be structure with nothing to
+  /// hold.
+  final String chord;
 
   const BridgeKeyBinding({
     required this.context,
     required this.action,
     required this.description,
-    required this.chords,
+    required this.chord,
   });
 
   @override
@@ -121,7 +118,7 @@ class BridgeKeyBinding {
       context.hashCode ^
       action.hashCode ^
       description.hashCode ^
-      chords.hashCode;
+      chord.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -131,7 +128,7 @@ class BridgeKeyBinding {
           context == other.context &&
           action == other.action &&
           description == other.description &&
-          chords == other.chords;
+          chord == other.chord;
 }
 
 /// One chord that could fire more than one action where both are live — what

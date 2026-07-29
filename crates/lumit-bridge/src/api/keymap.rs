@@ -84,15 +84,12 @@ pub struct BridgeKeyBinding {
     pub action: String,
     /// What the table shows in its left-hand column, e.g. "Play or pause".
     pub description: String,
-    /// Every chord that runs this action here, in canonical text form, e.g.
-    /// `["Mod+Alt+T", "Alt+Shift+T"]`. Usually one; empty when the action is
-    /// unbound, which is a state the table shows rather than hides.
-    ///
-    /// A list rather than a single chord because an action really can have two
-    /// and both must be visible — K-198 gives Retime a second chord precisely
-    /// because Windows swallows the first, and a table that showed only one of
-    /// them would be lying about the keyboard.
-    pub chords: Vec<String>,
+    /// The chord in its canonical text form, e.g. `"Mod+Shift+P"`. Empty when
+    /// the action is currently unbound, which is a state the table shows
+    /// rather than hides. One chord per row — K-200 settled that no shipped
+    /// action carries two, so a list here would be structure with nothing to
+    /// hold.
+    pub chord: String,
 }
 
 /// One context's worth of rows, with the heading to put above them — the shape
@@ -148,11 +145,10 @@ fn row(km: &Keymap, context: KeyContext, action: &ActionId) -> BridgeKeyBinding 
         context: context.into(),
         action: action.0.clone(),
         description: action.description(),
-        chords: km
-            .chords_for(context, action)
-            .into_iter()
+        chord: km
+            .binding_for(context, action)
             .map(ToString::to_string)
-            .collect(),
+            .unwrap_or_default(),
     }
 }
 
@@ -200,7 +196,7 @@ pub fn keymap_search(query: String) -> Vec<BridgeKeyBinding> {
                 context: b.context.into(),
                 action: b.action.0.clone(),
                 description: b.action.description(),
-                chords: vec![b.chord.to_string()],
+                chord: b.chord.to_string(),
             })
             .collect()
     })
@@ -267,36 +263,22 @@ pub fn keymap_unbind(context: BridgeKeyContext, action: String) -> Vec<BridgeKey
     keymap_groups()
 }
 
-/// Put one action back to the chord the chosen preset gives it, and hand back
-/// the table. Nothing else in the map is touched — this is the per-row reset,
-/// not [`keymap_load_preset`].
-pub fn keymap_reset_binding(
-    context: BridgeKeyContext,
-    action: String,
-    preset: BridgeKeymapPreset,
-) -> Vec<BridgeKeymapGroup> {
+/// Put one action back to the chord the shipped default gives it, and hand
+/// back the table. Nothing else in the map is touched — this is the per-row
+/// reset, not [`keymap_load_preset`]. Always the Lumit default: "reset" on a
+/// settings row means "what the app ships with", whichever preset was loaded
+/// since.
+pub fn keymap_reset_binding(context: BridgeKeyContext, action: String) -> Vec<BridgeKeymapGroup> {
     let action = ActionId(action);
     let ctx: KeyContext = context.into();
-    let shipped = preset_map(preset);
-    // Every chord the preset gives it, not just the first: an action the
-    // preset binds twice (K-198's Retime) must come back with both, or a reset
-    // would quietly halve it.
-    let chords: Vec<Chord> = shipped
-        .chords_for(ctx, &action)
-        .into_iter()
+    match lumit_keymap::default_keymap()
+        .binding_for(ctx, &action)
         .cloned()
-        .collect();
-    if chords.is_empty() {
-        // The preset does not bind it, so "reset" means unbound.
-        return keymap_unbind(context, action.0);
+    {
+        Some(chord) => with_keymap(|km| km.rebind_action(ctx, &action, chord)),
+        // The default does not bind it, so "reset" means unbound.
+        None => return keymap_unbind(context, action.0),
     }
-    with_keymap(|km| {
-        km.bindings
-            .retain(|b| !(b.context == ctx && b.action == action));
-        for chord in chords {
-            km.bind(ctx, chord, action.clone());
-        }
-    });
     keymap_groups()
 }
 

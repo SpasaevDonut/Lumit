@@ -1504,7 +1504,7 @@ class _VolumeRowState extends State<_VolumeRow> {
 ///
 /// An ordinary property row — the same stopwatch, the same navigator, the same
 /// lane diamonds and the same graph lanes as Position. It sits above Transform
-/// and only exists while the layer has been given a Retime (Alt+Shift+T), so
+/// and only exists while the layer has been given a Retime (Ctrl+Alt+T), so
 /// unlike Volume its scalar arrives on the fold row rather than being read here
 /// (K-184: no bridge calls while drawing).
 class _RetimeRow extends StatefulWidget {

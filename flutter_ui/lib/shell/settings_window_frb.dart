@@ -455,7 +455,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
       if (mounted) setState(() => _keymapMessage = 'That file could not be read.');
       return;
     }
-    final refusal = await km.fromJson(normaliseKeymapFile(text));
+    final refusal = await km.fromJson(text);
     if (!mounted) return;
     setState(() => _keymapMessage = refusal ?? 'Keymap imported.');
   }
@@ -474,9 +474,16 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     }
   }
 
-  /// One controller for the search box, kept across rebuilds so typing does not
-  /// reset the cursor.
+  /// One controller for the search box, kept across rebuilds so typing does
+  /// not reset the cursor, and released with the window.
   TextEditingController? _search;
+
+  @override
+  void dispose() {
+    _search?.dispose();
+    super.dispose();
+  }
+
   TextEditingController _searchController(KeymapState km) {
     final existing = _search;
     if (existing != null) return existing;
@@ -835,12 +842,12 @@ class _ChordCellState extends State<_ChordCell> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final chords = widget.binding.chords;
+    final chord = widget.binding.chord;
     final label = _listening
         ? 'Press a shortcut…'
-        : chords.isEmpty
+        : chord.isEmpty
             ? 'Not set'
-            : chords.map(chordLabel).join('  or  ');
+            : chordLabel(chord);
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -862,7 +869,7 @@ class _ChordCellState extends State<_ChordCell> {
             child: Text(
               label,
               textAlign: TextAlign.center,
-              style: chords.isEmpty && !_listening
+              style: chord.isEmpty && !_listening
                   ? t.small.copyWith(color: t.textMuted)
                   : t.small,
             ),
