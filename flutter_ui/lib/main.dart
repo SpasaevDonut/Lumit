@@ -23,6 +23,8 @@ import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
 import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/dock.dart';
+import 'package:lumit_flutter/state/keymap.dart';
+import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
@@ -356,6 +358,9 @@ class LumitUiState extends ChangeNotifier {
   /// surviving a restart and the Settings window's scale slider moved nothing.
   final Workspace workspace;
 
+  /// The keyboard map every shortcut is looked up in (docs/07 §15, K-199).
+  late final KeymapState keymap;
+
   DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
 
@@ -527,6 +532,12 @@ class LumitUiState extends ChangeNotifier {
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
+    // The keymap: restored from the workspace if the user has changed one,
+    // otherwise the engine's shipped defaults (K-199). Held here because
+    // every keypress goes through it and the settings page edits it, so it
+    // wants the same lifetime as the rest of the session's UI state.
+    keymap = KeymapState(workspace: this.workspace);
+    activeKeymap = keymap;
     // The read model re-reads on every committed change — one bridge call —
     // and every panel that draws layers repaints from it (K-184).
     _changes = state.onChange.listen((_) {
@@ -737,6 +748,17 @@ class _LumitAppViewState extends State<LumitAppView> {
     );
   }
 
+  /// Which keymap context the focused panel is. Panels with no bindings of
+  /// their own resolve to `Global`, which is also the fallback for every other
+  /// context, so nothing is lost by the mapping being partial.
+  BridgeKeyContext _contextOf(Panel? panel) => switch (panel) {
+        Panel.project => BridgeKeyContext.project,
+        Panel.viewer => BridgeKeyContext.viewer,
+        Panel.timeline => BridgeKeyContext.timeline,
+        Panel.effectControls => BridgeKeyContext.effects,
+        _ => BridgeKeyContext.global,
+      };
+
   /// The keyboard shortcuts, restored from the shell the port replaced.
   ///
   /// Only the ones whose engine calls exist on this bridge; the rest are on the
@@ -757,35 +779,41 @@ class _LumitAppViewState extends State<LumitAppView> {
       return KeyEventResult.ignored;
     }
 
-    final keyboard = HardwareKeyboard.instance;
-    final ctrl = keyboard.isControlPressed || keyboard.isMetaPressed;
-    final shift = keyboard.isShiftPressed;
-    final alt = keyboard.isAltPressed;
-    final key = event.logicalKey;
     final project = state.project;
     final comp = ui.selectedComp;
 
+    // Which action this chord means is the engine's answer, not a ladder of key
+    // comparisons here (K-199). Asked in the *focused panel's* context, because
+    // a binding scoped to one panel has to beat the app-wide one while that
+    // panel is active — the engine falls back to Global itself, so one call
+    // answers both. (This handler runs wherever focus is; the active panel is
+    // what the dock last fronted, which is what a user would call "where I am".)
+    final action = ui.keymap.actionFor(_contextOf(ui.activePanel.value), event);
+    if (action == null) return KeyEventResult.ignored;
+
     var handled = true;
-    if (ctrl && shift && key == LogicalKeyboardKey.keyZ) {
-      project?.redo();
-      state.notifyDocumentChanged();
-    } else if (ctrl && key == LogicalKeyboardKey.keyZ) {
-      project?.undo();
-      state.notifyDocumentChanged();
-    } else if (key == LogicalKeyboardKey.space) {
-      ui.requestTogglePlay();
-    } else if (key == LogicalKeyboardKey.arrowLeft ||
-        key == LogicalKeyboardKey.keyJ) {
-      ui.stepFrame(-1);
-    } else if (key == LogicalKeyboardKey.arrowRight) {
-      ui.stepFrame(1);
-    } else if (key == LogicalKeyboardKey.home) {
-      ui.playheadFrame.value = 0;
-    } else if (key == LogicalKeyboardKey.end) {
-      final last = (comp?.durationFrames() ?? 1) - 1;
-      ui.playheadFrame.value = last < 0 ? 0 : last;
-    } else if (key == LogicalKeyboardKey.keyT &&
-        ((alt && shift) || (alt && ctrl))) {
+    switch (action) {
+      case 'edit.redo':
+        project?.redo();
+        state.notifyDocumentChanged();
+      case 'edit.undo':
+        project?.undo();
+        state.notifyDocumentChanged();
+      case 'playback.toggle':
+        ui.requestTogglePlay();
+      // Shuttle is not built, and J/L have always stepped a frame here. Mapping
+      // them onto the step keeps today's keyboard exactly as it is rather than
+      // taking two keys away until a shuttle exists to give them back.
+      case 'playback.frame.prev' || 'playback.shuttle.reverse':
+        ui.stepFrame(-1);
+      case 'playback.frame.next' || 'playback.shuttle.forward':
+        ui.stepFrame(1);
+      case 'playback.comp.start':
+        ui.playheadFrame.value = 0;
+      case 'playback.comp.end':
+        final last = (comp?.durationFrames() ?? 1) - 1;
+        ui.playheadFrame.value = last < 0 ? 0 : last;
+      case 'layer.retime.enable':
       // Give the selected layer a Retime, or take it away again (docs/04 §12).
       // On installs the identity map, so the picture does not move — it just
       // gains a row above Transform to key.
@@ -798,32 +826,34 @@ class _LumitAppViewState extends State<LumitAppView> {
       // After Effects' own Time Remap chord and nothing intercepts it, so it
       // is here as the one that always lands. The Composition menu carries the
       // command too, for when neither is convenient.
-      final layer = ui.selectedLayer.value;
-      if (layer == null) {
+        final layer = ui.selectedLayer.value;
+        if (layer == null) {
+          handled = false;
+        } else {
+          state.toggleRetime(layer);
+        }
+      case 'layer.duplicate':
+        final layer = ui.selectedLayer.value;
+        if (layer == null) {
+          handled = false;
+        } else {
+          layer.duplicate();
+          state.notifyDocumentChanged();
+        }
+      case 'edit.delete.selection':
+        final layer = ui.selectedLayer.value;
+        if (layer == null) {
+          handled = false;
+        } else {
+          layer.delete();
+          ui.selectedLayer.value = null;
+          state.notifyDocumentChanged();
+        }
+      // A bound action this shell has no call for yet — the menus carry those.
+      // Ignored rather than swallowed, so the key still reaches whatever else
+      // wants it.
+      default:
         handled = false;
-      } else {
-        state.toggleRetime(layer);
-      }
-    } else if (ctrl && key == LogicalKeyboardKey.keyD) {
-      final layer = ui.selectedLayer.value;
-      if (layer == null) {
-        handled = false;
-      } else {
-        layer.duplicate();
-        state.notifyDocumentChanged();
-      }
-    } else if (key == LogicalKeyboardKey.delete ||
-        key == LogicalKeyboardKey.backspace) {
-      final layer = ui.selectedLayer.value;
-      if (layer == null) {
-        handled = false;
-      } else {
-        layer.delete();
-        ui.selectedLayer.value = null;
-        state.notifyDocumentChanged();
-      }
-    } else {
-      handled = false;
     }
     return handled ? KeyEventResult.handled : KeyEventResult.ignored;
   }

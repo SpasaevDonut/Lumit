@@ -133,8 +133,17 @@ macOS/Linux want `sysctl hw.memsize` and `/proc/meminfo` when those targets land
 Appearance, Interface, Performance — but the egui build's **Export** page (default preset,
 filename template) and **Autosave** group (interval, copies kept) have nothing behind them
 on this frontend, so they are not listed rather than shown dead. Build the settings first,
-then the page. Same for the Keymap editor, colour management, CUDA and the plugins page
-(listed under *Settings pages not built* below).
+then the page. Same for colour management, CUDA and the plugins page (listed under
+*Settings pages not built* below). The **Keymap** page landed with K-199.
+
+**Bound keys with nothing behind them (K-199).** The keymap ships the whole docs/07 §15
+table, and this frontend dispatches the Global and Timeline/Graph parts of it. The
+**Tools**, **Project**, **Panels** and **Effects** contexts have real bindings and no
+commands — no tool palette, no panel-focus cycling, no panel search focus — so those rows
+are honest about the keymap and silent in use. They are listed in Settings → Keymap rather
+than hidden, because a shortcuts page that quietly omits bindings is worse than one that
+shows a key you have not built yet. Either build the commands or drop the bindings; do not
+leave the two disagreeing for long.
 
 **Shell and onboarding:**
 - **The boot splash is not in the frb shell.** The bottom status line landed
@@ -253,10 +262,8 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
     timeline razor/clip editing and overrun hatching surface here too.
 
 **Settings pages not built ([07-UI-SPEC.md](07-UI-SPEC.md) §15):**
-- Keymap editor (the `lumit-keymap` model was deleted unused in K-182; restore
-    it from git history when the editor is actually built); colour-management
-    settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
-    plugins/decoder page.
+- Colour-management settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
+    plugins/decoder page. (The **Keymap** editor landed with K-199.)
 - The egui shell's fuller Performance/General/Export pages are not rebuilt in
     Flutter yet: the disk cache budget and root folder (the tier itself is
     unbuilt), autosave interval/keep, and the export defaults (preset +

@@ -28,13 +28,15 @@ app's departments). They live in `crates/`:
 | `lumit-cache` | Caching | Remembering rendered frames so they're never rendered twice |
 | `lumit-flow` | Optical flow | Motion vectors for smooth-retime and flow motion blur |
 | `lumit-text` | Text | Rasterising text layers |
+| `lumit-keymap` | Keyboard shortcuts | What each key combination means, and what clashes with what |
 | `lumit-bridge` | The Flutter seam | How the Flutter frontend talks to the engine (see [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)) |
 
 Everything you actually *see* lives outside `crates/`, in `flutter_ui/` — the
 Flutter application (panels, menus, the theme). The original egui shell
-(`lumit-ui` + `lumit-app`) and the unused `lumit-keymap` shortcut model were
-deleted in K-182; if you ever need to look at how the old frontend did
-something, it is one `git log` away.
+(`lumit-ui` + `lumit-app`) was deleted in K-182; if you ever need to look at how
+the old frontend did something, it is one `git log` away. (`lumit-keymap` went
+with it, as unused at the time, and came back unchanged in K-199 when the
+shortcut editor was actually built.)
 
 Three of these have proper names you'll see in the app and docs (decision K-083),
 drawn from the same astral register as the app itself: **Nova** (a burst of new light) is
@@ -4007,3 +4009,81 @@ its own display? — and only draws rows when the answer is no. Nothing answers
 yes yet. The point of asking now is that when the first one arrives it says so
 in one place, rather than becoming a special case wedged into the middle of
 the layout.
+
+### The keyboard, and why the engine owns it (K-199)
+
+**The problem it solves.** Every editor lets you change its shortcuts, because
+everybody arrives with different muscle memory — and because sometimes the
+operating system steals a key from under you (that really happened to us: on
+Windows, left Alt with Shift is how the system switches keyboard layouts, so
+`Alt+Shift+T` never reached Lumit at all, which is why Retime has a second
+chord). So Lumit has a **keymap**: a list saying "this key combination, in this
+place, runs this command", and a page in Settings where you can change any of
+it.
+
+**Three words.** A **chord** is a key with its modifiers — `Space`, `Ctrl+D`,
+`Shift+F3`. A **context** is *where you are*: the whole app, or one focused
+panel. An **action** is a command, named by a short stable string like
+`playback.toggle`. A **binding** ties a chord in a context to an action. When
+you press keys, something has to answer "what does that mean, here?" — and
+that something is the engine.
+
+**Why the engine and not the frontend.** This is the same rule as everywhere
+else in the port: the frontend shows and forwards, the engine decides. Working
+out that the Timeline's own `D` beats the app-wide `D` while the Timeline is
+focused, or that two bindings now clash, or that this JSON is a keymap and that
+one is not — those are *rules*, and rules that live in the frontend are rules
+nobody can test without a window. `crates/lumit-keymap` is the rulebook (about
+600 lines, thirteen tests, no windowing code at all) and
+`crates/lumit-bridge/src/api/keymap.rs` is the window onto it.
+
+The frontend keeps exactly two jobs, and both are genuinely its own:
+
+1. **Spelling the keypress.** Flutter tells it a key was pressed; it writes that
+   down as text the engine can read — `Mod+Alt+Shift+T`, where `Mod` means Cmd
+   on a Mac and Ctrl everywhere else. That translation is why a keymap written
+   on a Mac still reads on Windows.
+2. **Recognising a gesture.** Pressing `U` three times quickly is three
+   different commands, and telling "three quick taps" from "three presses over
+   a minute" is the same kind of judgement as spotting a double-click. That
+   belongs with the mouse and the keyboard, not with the document.
+
+**Where your keymap is kept.** In the engine while Lumit is running; in your
+workspace settings file between runs. The frontend stores it as an opaque lump
+of text it never reads — the engine hands it out with one call and takes it back
+with another. The nice consequence is that "the keymap that survives a restart"
+and "the keymap file you email to a friend" are the same format, so Export and
+Import are the same code as save and restore.
+
+**The table in Settings → Keymap.** One row per command, grouped by where it is
+live, with the name on the left and the keys on the right. Click the keys and
+press what you want. A few behaviours are worth knowing because they are
+deliberate rather than accidental:
+
+- **A row can show two chords**, and does — Retime has two on purpose. Showing
+  only one would mean a key that works with nothing on screen to say so, which
+  is exactly what a shortcuts page is for.
+- **Taking a key another command already has is allowed.** It has to be: if it
+  were refused, you could never *swap* two commands' keys, because a swap needs
+  a moment where one key is claimed twice. What happens next depends on whether
+  both could fire at the same time. If they could, you get a warning naming the
+  clash and you sort it out. If they could not (same context), the old command
+  simply loses the key and its row goes blank, where you can see it.
+- **Reset is per row**, and puts back *every* chord the shipped keymap gives
+  that command.
+
+**`U`, `UU`, `UUU`.** In the Timeline, `U` opens the properties you have
+animated on the selected layer; pressing it again straight away opens everything
+you have *changed*, animated or not; a third press shuts the layer. This is
+After Effects' behaviour and the reason it is worth having is that a layer with
+forty properties usually has three you care about. The panel counts the taps;
+the engine answers which groups qualify, because "has a keyframe" and "differs
+from a fresh layer" are questions about the document — and the second one needs
+to know what a fresh layer's Position would have been, which is a rule the
+engine owns.
+
+**One honest gap.** Some rows in the table — the Tools, Project, Panels and
+Effect controls groups — are bindings for commands this frontend has not built
+yet. The keys are really bound; pressing them does nothing, because there is
+nothing on the other end. They are listed rather than hidden so the table
+describes the keymap truthfully, and `docs/TODO.md` carries the gap.

@@ -2820,3 +2820,51 @@ swallows a failed call rather than letting a menu click take the interface down.
 outlives this shortcut: a chord the OS claims is not a chord the application has, so a
 command whose only route is the keyboard has no route at all — every keyboard command
 wants a menu or palette entry beside it.
+
+**K-199 · DECIDED · The keymap is the engine's, the keyboard is the frontend's, and the
+reveal cycle is three commands on one key.** From Mack (2026-07-29), restoring what K-182
+removed and finishing what docs/07 §15 has promised since it was written. `lumit-keymap`
+came back from git history unchanged — chords, contexts, conflict detection, the shipped
+default and the After Effects preset, with its eight tests — because it was deleted as
+unused rather than as wrong, and rewriting it would have been retyping.
+
+**The split, and why it falls here.** Everything that has to be *decided* about a keyboard
+lives in Rust: what a chord means, whether the focused panel outranks the app-wide binding,
+whether two bindings clash, what the shareable file says. The frontend turns a real
+`KeyEvent` into chord text (`Mod+Alt+Shift+Key`, with `Mod` resolving to Cmd on macOS and
+Ctrl elsewhere), draws the table, and forwards the edits — it holds no opinion about any of
+it, per K-181. The one thing it *does* decide is what counts as a gesture: the 500 ms
+multi-tap window for `U` is a gesture like a double-click, and gestures are the platform's.
+
+**Where the keymap is kept.** In the engine for the session, behind its own lock. The file
+is the frontend's: `keymap_to_json`/`keymap_from_json` hand the whole map across as text and
+the workspace file stores that blob verbatim, never looking inside it. One format serves
+both the restore-on-launch path and the "Export keymap…" a user mails to a friend, so a
+keymap that survives a restart is the same keymap that travels.
+
+**A row shows every chord, not the first one.** An action can hold two — K-198 gives Retime
+both `Alt+Shift+T` and `Ctrl+Alt+T` deliberately, and neither is removable — so
+`BridgeKeyBinding` carries a list. A table that showed one of them would be lying about the
+keyboard, which is the exact failure the page exists to prevent. Rebinding a row replaces
+all of its chords with the one pressed; resetting restores all of them.
+
+**Taking a chord someone else holds is never refused**, because refusing makes swapping two
+actions' keys impossible — the swap needs a moment where one chord is claimed twice. Inside
+one context the previous owner simply loses it and its row goes blank, which is visible;
+across overlapping contexts both survive and the clash is reported for the user to resolve.
+
+**Retime's chords moved from the Timeline context to Global**, with no change to the chords
+themselves. The shell runs that command wherever focus is and the Composition menu carries
+it too, so scoping it to one panel described something that was not true.
+
+**`U` / `UU` / `UUU`** (docs/07 §4.3, and the third tap is After Effects' own behaviour
+rather than a Lumit invention): animated properties, then everything modified, then shut.
+Which groups qualify is answered by `LayerReference::reveal_groups` rather than worked out
+in the panel — "does this hold a keyframe" and "is this changed from a fresh layer" are
+facts about the document, and the second needs the layer-seeding rule that decides what
+unchanged *means* for Position. The panel is told which groups to open and decides nothing
+about why.
+
+**What this does not do.** The Tools, Project, Panels and Effects contexts have bindings in
+the table and no dispatch behind them yet — those commands do not exist on this frontend, so
+the rows are honest about the keymap and silent in use. `docs/TODO.md` carries that.

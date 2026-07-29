@@ -49,6 +49,7 @@ shared-texture-macos = ["lumit-render/shared-texture-macos"]
 
 [dependencies]
 lumit-core = { path = "../lumit-core" }
+lumit-keymap = { path = "../lumit-keymap" }
 lumit-project = { path = "../lumit-project" }
 # The realtime preview-tier controller (K-030/K-171) lives here as a pure,
 # tested decision core; the bridge feeds it measured render costs and reads the

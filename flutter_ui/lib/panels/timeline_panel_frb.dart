@@ -26,6 +26,7 @@ import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:provider/provider.dart';
 
@@ -343,17 +344,37 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
     final keyboard = HardwareKeyboard.instance;
     final ctrl = keyboard.isControlPressed || keyboard.isMetaPressed;
-    final shift = keyboard.isShiftPressed;
     final key = event.logicalKey;
 
-    if (key == LogicalKeyboardKey.f3 && shift) {
+    // What this chord means in the Timeline — or in the graph editor while it
+    // is open, which has bindings of its own (K-199). The engine answers;
+    // nothing here compares keys except the copy/paste pair below, which §15
+    // does not name and so has no action to look up.
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final action = ui.keymap.actionFor(
+          _graph ? BridgeKeyContext.graph : BridgeKeyContext.timeline,
+          event,
+        ) ??
+        (_graph
+            ? ui.keymap.actionFor(BridgeKeyContext.timeline, event)
+            : null);
+
+    if (action == 'graph.toggle') {
       setState(() => _graph = !_graph);
       return true;
     }
-    if (key == LogicalKeyboardKey.f9) {
-      // F9 easy-eases both sides; Shift+F9 the way in; Ctrl+Shift+F9 the way
-      // out (docs/07 §5.3).
-      _applyInterp(easyEase, inSide: !(ctrl && shift), outSide: !shift || ctrl);
+    if (action == 'reveal.animated') {
+      return _revealTap();
+    }
+    if (action == 'graph.ease' ||
+        action == 'graph.ease.in' ||
+        action == 'graph.ease.out') {
+      // Both sides, the way in, or the way out (docs/07 §5.3).
+      _applyInterp(
+        easyEase,
+        inSide: action != 'graph.ease.out',
+        outSide: action != 'graph.ease.in',
+      );
       return true;
     }
     // Copy and paste work wherever keyframes are selected — the lane view's
@@ -392,17 +413,76 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
 
     if (!_graph) return false;
 
-    if (key == LogicalKeyboardKey.keyF && !ctrl && !shift) {
+    if (action == 'graph.fit') {
       _graphPane.currentState?.fitNow();
       return true;
     }
-    if ((key == LogicalKeyboardKey.delete ||
-            key == LogicalKeyboardKey.backspace) &&
-        _graphKeySelection.isNotEmpty) {
+    if (action == 'edit.delete.selection' && _graphKeySelection.isNotEmpty) {
       _graphPane.currentState?.deleteSelectedKeys();
       return true;
     }
     return false;
+  }
+
+  /// When the last `U` was pressed, and how many times in a row — the AE reveal
+  /// cycle (docs/07 §4.3). Three taps inside the window are three different
+  /// commands, so the count is what tells them apart.
+  DateTime? _lastReveal;
+  int _revealTaps = 0;
+
+  /// How long a second `U` still counts as the same gesture. AE's own window;
+  /// long enough to type deliberately, short enough that a `U` a moment later
+  /// starts again rather than collapsing what you just opened.
+  static const Duration _revealWindow = Duration(milliseconds: 500);
+
+  /// One press of the reveal key: `U` opens what is animated, `UU` what has
+  /// been modified, `UUU` shuts the layer again.
+  ///
+  /// The *counting* is ours, because a multi-tap is a gesture like a
+  /// double-click and gestures are the frontend's. Which groups qualify is the
+  /// engine's, and it is asked afresh on each tap — the answer depends on the
+  /// document, and the document may have changed between taps.
+  bool _revealTap() {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    final layer = ui.selectedLayer.value;
+    if (layer == null) return false;
+
+    final now = DateTime.now();
+    final last = _lastReveal;
+    _revealTaps =
+        (last != null && now.difference(last) <= _revealWindow) ? _revealTaps + 1 : 1;
+    _lastReveal = now;
+
+    final id = layer.internallayerId.toString();
+    // Every tap starts from the layer closed, so a reveal shows exactly what it
+    // says rather than adding to whatever was already open.
+    setState(() {
+      _open.removeWhere((path) => path == id || isUnderPath(id, path));
+      if (_revealTaps >= 3) {
+        // UUU: shut, and the next U starts the cycle over.
+        _revealTaps = 0;
+        _lastReveal = null;
+        return;
+      }
+      final groups = layer.revealGroups(
+        kind: _revealTaps == 1
+            ? BridgeRevealKind.animated
+            : BridgeRevealKind.modified,
+      );
+      // Nothing qualifies: leave the layer shut rather than opening it onto a
+      // list of headings the reveal just said were empty.
+      if (!groups.any) return;
+      _open.add(id);
+      if (groups.transform) _open.add(transformPath(id));
+      if (groups.effects.isNotEmpty) {
+        _open.add(effectsPath(id));
+        for (final fx in groups.effects) {
+          _open.add(effectPath(id, fx));
+        }
+      }
+      if (groups.audio) _open.add(audioPath(id));
+    });
+    return true;
   }
 
   /// Mirror one side's scroll onto the other, guarded against the echo.

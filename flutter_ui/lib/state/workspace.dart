@@ -81,6 +81,22 @@ class Workspace extends ChangeNotifier {
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
 
+  /// The keymap as the engine last serialised it, stored verbatim and never
+  /// read here (docs/07 §15, K-199). A keymap is machine-local settings and
+  /// this is the machine-local settings file; the *rules* stay in Rust, so what
+  /// sits in this field is an opaque blob the frontend only ferries. Null until
+  /// the user changes a binding, which is what makes the shipped defaults the
+  /// default rather than a copy of them written out at first launch.
+  String? keymapJson;
+
+  /// Store the engine's keymap text and write the file. Called after every
+  /// binding change, which is rare and cheap — the file is a few kilobytes and
+  /// a keymap edit is a deliberate act, not something that happens per frame.
+  void setKeymapJson(String json) {
+    keymapJson = json;
+    save();
+  }
+
   /// The project last opened or saved with a path, restored on the next launch
   /// (the egui frontend reopens the last project the same way). Null until a
   /// project has been opened or saved to a file. This is only the *file*;
@@ -222,6 +238,7 @@ class Workspace extends ChangeNotifier {
         'animation_level': animationLevel.name,
         'performance': performance.toJson(),
         'interface': interface.toJson(),
+        'keymap': keymapJson,
         'last_project_path': lastProjectPath,
         'sessions': {
           for (final e in sessions.entries) e.key: e.value.toJson(),
@@ -250,6 +267,7 @@ class Workspace extends ChangeNotifier {
     if (j['interface'] is Map<String, dynamic>) {
       interface = InterfaceSettings.fromJson(j['interface']);
     }
+    keymapJson = j['keymap'] is String ? j['keymap'] as String : null;
     lastProjectPath = j['last_project_path'] is String
         ? j['last_project_path'] as String
         : null;

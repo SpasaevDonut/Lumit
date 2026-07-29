@@ -381,7 +381,14 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
 - Keyframe interaction on lanes: click to select, box-select, drag to move in time,
   `Alt+drag` a selection's end to scale the group's timing, `Ctrl+click` a lane to add a
   keyframe at that time, right-click for interpolation and *Ease* commands.
-- `U` reveals animated properties of selected layers; `UU` reveals all modified properties.
+- `U` reveals animated properties of selected layers; `UU` reveals all modified properties;
+  a third `U` within half a second shuts the layer again (After Effects' own cycle).
+  **Shipped (K-199).** The taps are counted in the panel — a multi-tap is a gesture, like a
+  double-click — and *which* groups qualify is asked of the engine each time
+  (`LayerReference::reveal_groups`), because "holds a keyframe" and "changed from a fresh
+  layer" are facts about the document. A reveal starts from the layer shut, so it shows
+  exactly what it says rather than adding to what was already open, and a layer with
+  nothing to show stays shut rather than opening onto empty headings.
 
   **Shipped (partial):** the caret on each layer row opens onto the **section headings**, each
   with its own caret, and nothing under them until one is opened — the tidy-list behaviour
@@ -983,6 +990,28 @@ display); the keymap serialises to a shareable file. An "After Effects" alternat
 ships for muscle-memory cases where Lumit's default deviates. Notable deviations from AE:
 `J/K/L` are shuttle transport (the audience's NLE habit, per the layout brief), so keyframe
 navigation moves to `,`/`.`; Viewer zoom therefore lives on `Ctrl+=`/`Ctrl+-` and the wheel.
+
+**Shipped (K-199).** Settings → Keymap is a table, grouped by the context a binding is live
+in, with the action's name on the left and its chords on the right — click a chord cell and
+press the keys you want, `Escape` to leave it, `Backspace` to clear it, `Reset` to put the
+shipped chord back. Above it: a search box that matches what the table *shows* as well as
+the ids underneath, the two presets, and Import / Export for the shareable file. A chord
+another action already holds is taken rather than refused (refusing would make swapping two
+actions' keys impossible) — within one context the previous owner's row simply goes blank,
+and across overlapping contexts a banner names the clash. A row shows *every* chord bound to
+its action, because an action can hold two (K-198's Retime does) and a working key with
+nothing on screen to say so is the failure this page exists to prevent.
+
+The model is `lumit-keymap` and the seam is `crates/lumit-bridge/src/api/keymap.rs`: the
+engine decides what a chord means and the frontend only spells the keypress and draws the
+answer (K-199). The keymap is stored in the workspace file as the engine's own JSON, so it
+survives a restart in the same format it exports in.
+
+Two honest gaps. The **Tools**, **Project**, **Panels** and **Effects** contexts have rows
+in the table and nothing behind them — those commands are not built on this frontend, so the
+bindings are real and pressing them does nothing. And the arrows step a frame alongside
+`Page Down`/`Page Up`; the table below did not name them, which would have quietly taken
+them away the day dispatch started going through the keymap.
 
 | Context | Key | Action |
 |---|---|---|
