@@ -130,7 +130,11 @@ enum LumitIcon {
 const double iconSize = 16;
 const double iconSizeTransport = 20;
 
-/// How wide an Iconoir stroke is, in the glyph's own 24-unit grid.
+/// The Iconoir grid every glyph is drawn on, and how wide its stroke is in
+/// those units. Paired: the stroke's width on screen is
+/// `size / _iconGridUnits * _iconStrokeUnits`, which is the whole of why the
+/// sizes above are what they are.
+const double _iconGridUnits = 24;
 const double _iconStrokeUnits = 1.5;
 
 /// Build `icon` at `size` in `color`. The motion-blur mark is drawn, not
@@ -177,7 +181,7 @@ class _CrispGlyph extends StatelessWidget {
   Widget build(BuildContext context) {
     final ratio = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0;
     final strokeDevicePixels =
-        (size / 24.0 * _iconStrokeUnits * ratio).round();
+        (size / _iconGridUnits * _iconStrokeUnits * ratio).round();
     final nudge = strokeDevicePixels.isOdd ? 0.5 / ratio : 0.0;
     return SizedBox(
       width: size,
@@ -252,7 +256,7 @@ class MotionBlurPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / 24.0;
+    final s = size.shortestSide / _iconGridUnits;
     final origin = Offset(
       size.width / 2 - 12.0 * s,
       size.height / 2 - 12.0 * s,
@@ -294,7 +298,7 @@ class ShyPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / 24.0;
+    final s = size.shortestSide / _iconGridUnits;
     Offset at(double x, double y) => Offset(x * s, y * s);
     final paint = Paint()
       ..color = color
@@ -342,7 +346,7 @@ class NullLayerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final s = size.shortestSide / 24.0;
+    final s = size.shortestSide / _iconGridUnits;
     Offset at(double x, double y) => Offset(x * s, y * s);
     final paint = Paint()
       ..color = color

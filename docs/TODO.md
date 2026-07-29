@@ -141,10 +141,11 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     nothing to look at. Fix is either to hash the parent chain into each child's
     contribution, or to stop gating hidden layers out when something is parented
     to them.
-- **No disk frame cache** (docs/06 §5.4): the VRAM tier landed 2026-07-27
-    (K-187) and the RAM tier exists, but nothing persists across sessions and
-    the design language's steel blue for "on disk only" still has nothing
-    behind it ([15-DESIGN.md](15-DESIGN.md) §6.3).
+- **The disk frame cache is built but never constructed** — see "The disk tier
+    is written but dark" under *Now*, which carries the detail. The VRAM tier
+    landed 2026-07-27 (K-187), the RAM tier exists, and the design language's
+    steel blue for "on disk only" ([15-DESIGN.md](15-DESIGN.md) §6.3) waits on
+    the same wiring.
 - **The shared-texture chain has no keyed mutex** (a torn frame is possible in
     principle — see the fence entry under Threading), and the D3D12 → D3D11
     legacy-handle hop the Windows path rides is knowledge docs/06 does not yet
@@ -152,7 +153,10 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 - **The Scopes' trace still crosses the bridge as pixels**, serialised a byte at
     a time like any other `Vec<u8>`, and is decoded into an image Dart-side. Small
     next to a full frame, but it is on the same per-frame path and could take the
-    shared-texture route the Viewer now takes.
+    shared-texture route the Viewer now takes. The trace is also a fixed 256×256
+    whatever the panel size, so a large Scopes panel shows it visibly soft; the
+    graticule is drawn over it in Dart and stays crisp, but the trace itself
+    wants a size that follows the panel.
 - **The matte render-alone pass stays at full comp resolution whatever the
     preview scale** (K-186 records the split): correctness-safe because the
     fragment samples mattes by normalised comp UV, but it is the one composite
@@ -375,11 +379,12 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
 - Colour-management settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
     plugins/decoder page. (The **Keymap** editor landed with K-199.)
 - The egui shell's fuller Performance/General/Export pages are not rebuilt in
-    Flutter yet: the disk cache budget and root folder (the tier itself is
-    unbuilt), autosave interval/keep, and the export defaults (preset +
-    filename template). The RAM and VRAM cache budgets landed in the Settings
-    window (K-187); idle background fill landed with no setting (it costs
-    nothing the user would trade). Each remaining page lands wired to the
+    Flutter yet: the disk cache budget and root folder (the tier is built but
+    never constructed — see *Now*), autosave interval/keep, and the export
+    defaults (preset + filename template). The RAM and VRAM cache budgets
+    landed in the Settings window (K-187) and now survive a restart; idle
+    background fill landed with no setting (it costs nothing the user would
+    trade). Each remaining page lands wired to the
     engine through the bridge, not as a Dart-side setting nothing reads
     (K-181/K-182).
 
