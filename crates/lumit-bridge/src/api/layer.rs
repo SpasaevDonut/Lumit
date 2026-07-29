@@ -1132,7 +1132,7 @@ impl LayerReference {
         Ok(self.item()?.retime.as_ref().map(BridgeScalar::read))
     }
 
-    /// Turn Retime on or off (Alt+Shift+T), returning whether it is now on.
+    /// Turn Retime on or off (Ctrl+Alt+T), returning whether it is now on.
     ///
     /// On installs the identity map — source time running alongside local time
     /// — so switching it on changes nothing visible and gives the row something
@@ -1431,4 +1431,125 @@ impl LayerReference {
             Ok(())
         })
     }
+
+    /// Which of this layer's property groups the reveal shortcuts should open
+    /// (docs/07 §4.3's `U` / `UU`, K-199).
+    ///
+    /// The *question* is the engine's, which is why it is answered here rather
+    /// than in the Timeline: "does this group hold anything animated" and "is
+    /// any of it changed from what a fresh layer would have" are facts about
+    /// the document, and the second needs the seeding rule
+    /// ([`crate::edits::centred_transform`]) that decides what "unchanged"
+    /// means for Position. The panel is told which groups to open; it decides
+    /// nothing about why.
+    #[frb(sync)]
+    pub fn reveal_groups(&self, kind: BridgeRevealKind) -> Result<BridgeRevealGroups, BridgeError> {
+        let layer = self.item()?;
+        let comp = self.composition()?;
+        let animated = |p: &lumit_core::anim::Property| {
+            matches!(p.animation, lumit_core::anim::Animation::Keyframed(_))
+        };
+
+        // What this layer's transform would be had nobody touched it. Natural
+        // size is not known here (it is the source's), and it only seeds the
+        // anchor, so the anchor is compared loosely: an anchor that is not the
+        // model default counts as modified only when it is also not a plain
+        // half-size, which is the shape the seeding gives it.
+        let fresh = crate::edits::centred_transform(0.0, 0.0, comp.width, comp.height);
+        let t = &layer.transform;
+        let default_t = lumit_core::model::TransformGroup::default();
+        let transform_props: [(&lumit_core::anim::Property, &lumit_core::anim::Property); 11] = [
+            (&t.anchor_x, &default_t.anchor_x),
+            (&t.anchor_y, &default_t.anchor_y),
+            (&t.position_x, &fresh.position_x),
+            (&t.position_y, &fresh.position_y),
+            (&t.scale_x, &default_t.scale_x),
+            (&t.scale_y, &default_t.scale_y),
+            (&t.rotation, &default_t.rotation),
+            (&t.position_z, &default_t.position_z),
+            (&t.rotation_x, &default_t.rotation_x),
+            (&t.rotation_y, &default_t.rotation_y),
+            (&t.opacity, &default_t.opacity),
+        ];
+        let transform = match kind {
+            BridgeRevealKind::Animated => transform_props.iter().any(|(p, _)| animated(p)),
+            BridgeRevealKind::Modified => transform_props
+                .iter()
+                // The anchor is exempt from the "differs from default" half:
+                // its seeded value depends on the source's natural size, which
+                // is not the document's to know here, so a footage layer would
+                // otherwise always read as modified.
+                .enumerate()
+                .any(|(i, (p, d))| animated(p) || (i > 1 && p.animation != d.animation)),
+        };
+
+        // An effect qualifies when a parameter of it is keyframed; for
+        // Modified, its mere presence qualifies it — a layer with an effect on
+        // it has been modified, whatever the parameters say.
+        let effects: Vec<String> = layer
+            .effects
+            .iter()
+            .filter(|fx| match kind {
+                BridgeRevealKind::Modified => true,
+                BridgeRevealKind::Animated => fx.params.iter().any(|p| match &p.value {
+                    lumit_core::model::EffectValue::Float(prop) => animated(prop),
+                    lumit_core::model::EffectValue::Point(x, y) => animated(x) || animated(y),
+                    lumit_core::model::EffectValue::Colour(ch) => ch.iter().any(animated),
+                    _ => false,
+                }),
+            })
+            .map(|fx| fx.id.to_string())
+            .collect();
+
+        let volume_default = lumit_core::anim::Property::fixed(0.0);
+        let audio = match kind {
+            BridgeRevealKind::Animated => animated(&layer.volume_db),
+            BridgeRevealKind::Modified => {
+                animated(&layer.volume_db) || layer.volume_db.animation != volume_default.animation
+            }
+        };
+
+        // Retime is a row, not a group, and it is only ever there because
+        // somebody switched it on — so its presence is a modification, and its
+        // keys make it animated.
+        let retime = match (&layer.retime, kind) {
+            (None, _) => false,
+            (Some(_), BridgeRevealKind::Modified) => true,
+            (Some(p), BridgeRevealKind::Animated) => animated(p),
+        };
+
+        Ok(BridgeRevealGroups {
+            transform,
+            audio,
+            retime,
+            any: transform || audio || retime || !effects.is_empty(),
+            effects,
+        })
+    }
+}
+
+/// Which reveal the Timeline is asking for (docs/07 §4.3).
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgeRevealKind {
+    /// `U`: groups holding a keyframed property.
+    Animated,
+    /// `UU`: groups holding anything changed from a fresh layer's state.
+    Modified,
+}
+
+/// The groups a reveal should open on one layer. Effects are named
+/// individually, because the Effects group opens onto one row per effect and
+/// only the qualifying ones should unfold.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeRevealGroups {
+    pub transform: bool,
+    pub audio: bool,
+    pub retime: bool,
+    /// The qualifying effects' ids, as text — the same form the fold paths use.
+    pub effects: Vec<String>,
+    /// Whether anything qualified at all. The panel leaves the layer's own
+    /// twirl shut when nothing did, rather than opening onto an empty list.
+    pub any: bool,
 }

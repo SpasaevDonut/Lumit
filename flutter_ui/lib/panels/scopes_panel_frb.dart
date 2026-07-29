@@ -133,11 +133,9 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
                         }),
                       ),
                     ),
-                    // A gap, not a Spacer: a horizontal scroller has no finite
-                    // width for a Spacer to fill.
-                    const SizedBox(width: 16),
-                    Text('frame $frame',
-                        style: t.small.copyWith(color: t.textMuted)),
+                    // No frame readout here: the playhead's position is the
+                    // Timeline's and the Viewer's to state, and repeating it in
+                    // the scope's own toolbar only competes with the trace.
                   ],
                 ),
               ),
@@ -188,7 +186,7 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
       frame: BigInt.from(frame),
       scale: state.viewerScale,
       kind: _kind.index,
-      colours: scopeColoursFor(t),
+      colours: scopeColoursFor(t, themed: state.workspace.themedScopes),
     );
   }
 
@@ -201,14 +199,28 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
 }
 
 /// Background, trace, then the R, G and B tints — the five triples the engine
-/// takes, from the theme rather than from constants, so a scope drawn in the
-/// light scheme is legible in it.
-List<Uint8List> scopeColoursFor(LumitTheme t) {
+/// takes.
+///
+/// **Standard by default** (K-202). A waveform or vectorscope is a measuring
+/// instrument, and it is read on a near-black graticule with a bright trace
+/// whatever the chrome around it is doing — the same grading-accuracy
+/// reasoning that keeps the Viewer's surround neutral (docs/15-DESIGN §8,
+/// §2.1). `ScopeColours.standard` is that fixed set, and it has been in this
+/// file all along; the panel simply never asked for it.
+///
+/// With [themed] on, the scope takes the theme's own colours instead —
+/// off-spec, opt-in, and squarely a matter of taste rather than of reading a
+/// signal accurately.
+List<Uint8List> scopeColoursFor(LumitTheme t, {bool themed = false}) {
   Uint8List rgb(Color c) => Uint8List.fromList([
         (c.r * 255).round(),
         (c.g * 255).round(),
         (c.b * 255).round(),
       ]);
+  if (!themed) {
+    const s = ScopeColours.standard;
+    return [rgb(s.bg), rgb(s.trace), rgb(s.red), rgb(s.green), rgb(s.blue)];
+  }
   return [
     rgb(t.surface0),
     rgb(t.textPrimary),

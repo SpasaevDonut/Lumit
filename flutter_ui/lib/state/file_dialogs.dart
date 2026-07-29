@@ -51,18 +51,21 @@ Future<List<String>> pickFootage() async {
   return [for (final f in files) f.path];
 }
 
-/// The MP4 delivery type group for the export Save dialogue, mirroring the
-/// egui exporter's `.add_filter("MP4 video", &["mp4"])`.
-XTypeGroup _mp4Group() =>
-    const XTypeGroup(label: 'MP4 video', extensions: ['mp4']);
-
 /// Choose where to save an exported video, defaulting the name to the
 /// resolver's [suggestedName] (the egui exporter's `set_file_name`), or null
 /// when cancelled. The generic save seam the export dialogue and the share
-/// exports both drive.
-Future<String?> pickExportSaveLocation(String suggestedName) async {
+/// exports both drive. `extension`/`label` follow the chosen format (K-201):
+/// `.mp4` for video, the image extension for a sequence — where the picked
+/// name is the sequence's stem, and the frames land numbered beside it.
+Future<String?> pickExportSaveLocation(
+  String suggestedName, {
+  String extension = 'mp4',
+  String label = 'MP4 video',
+}) async {
   final location = await getSaveLocation(
-    acceptedTypeGroups: [_mp4Group()],
+    acceptedTypeGroups: [
+      XTypeGroup(label: label, extensions: [extension])
+    ],
     suggestedName: suggestedName,
   );
   return location?.path;
@@ -88,6 +91,26 @@ Future<String?> pickPresetSaveLocation(String suggestedName,
     acceptedTypeGroups: [_presetGroup()],
     suggestedName: suggestedName,
     initialDirectory: initialDirectory,
+  );
+  return location?.path;
+}
+
+/// The keymap type group (docs/07 §15's shareable file, K-199). Plain JSON, so
+/// a `.json` a user has renamed still opens.
+XTypeGroup _keymapGroup() =>
+    const XTypeGroup(label: 'Lumit keymap', extensions: ['json']);
+
+/// Pick a keymap file to import, or null when the dialogue was cancelled.
+Future<String?> pickKeymapToOpen() async {
+  final file = await openFile(acceptedTypeGroups: [_keymapGroup()]);
+  return file?.path;
+}
+
+/// Choose where to write a keymap, or null when cancelled.
+Future<String?> pickKeymapSaveLocation() async {
+  final location = await getSaveLocation(
+    acceptedTypeGroups: [_keymapGroup()],
+    suggestedName: 'lumit-keymap.json',
   );
   return location?.path;
 }

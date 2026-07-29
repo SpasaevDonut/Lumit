@@ -186,7 +186,27 @@ class LumitTheme {
   final List<Color> curve;
   final LayerColours layer;
 
-  const LumitTheme({
+  /// The Timeline's ground *outside* the work area (K-202). The lane, layer
+  /// and graph areas are read as one long strip, and until this existed there
+  /// was nothing to tell "the part you are delivering" from the rest — so the
+  /// whole strip sat at one value and a selected row had only `surface2` to
+  /// stand out against. Inside the work area the strip keeps `surface1`; this
+  /// is the wash either side of it.
+  final Color timelineOutOfRange;
+
+  /// The fill under a selected row, and at reduced strength under a
+  /// highlighted one (K-202). Its own token rather than `surface2` reused: a
+  /// selection has to out-contrast the ground it sits on, and on a light
+  /// scheme that means going *darker* where the surfaces go lighter — a rule
+  /// the surface ramp cannot express because it is a ramp.
+  final Color selectionFill;
+
+  /// The two Timeline tokens default from the mode rather than being spelled
+  /// out by every scheme: they are a *relationship* to the surface ramp (a
+  /// shade beyond `surface1`, a fill that out-contrasts it), and seven schemes
+  /// restating that relationship would be seven chances to get it wrong. A
+  /// custom theme, or any scheme that wants its own, passes them explicitly.
+  LumitTheme({
     required this.mode,
     this.shape = ThemeShape.sharp,
     this.tokens = ShapeTokens.sharp,
@@ -210,7 +230,35 @@ class LumitTheme {
     required this.cacheDisk,
     required this.curve,
     required this.layer,
-  });
+    Color? timelineOutOfRange,
+    Color? selectionFill,
+  })  : timelineOutOfRange =
+            timelineOutOfRange ?? defaultOutOfRange(mode, surface1),
+        selectionFill = selectionFill ?? defaultSelectionFill(mode, surface2);
+
+  /// The ground outside the work area: a step *away* from the surface ramp's
+  /// direction — darker under a dark scheme, and darker again under a light
+  /// one, because on white the only direction with anywhere to go is down
+  /// (K-202). Deliberately gentle: this marks a region, it is not a border.
+  static Color defaultOutOfRange(ThemeMode2 mode, Color surface1) {
+    final by = mode == ThemeMode2.dark ? -0x08 : -0x0e;
+    return _shift(surface1, by);
+  }
+
+  /// The selected-row fill. Under a dark scheme it lifts, under a light one it
+  /// drops — either way it lands clear of both grounds, which reusing a
+  /// surface could not promise once the Timeline gained a second ground.
+  static Color defaultSelectionFill(ThemeMode2 mode, Color surface2) {
+    final by = mode == ThemeMode2.dark ? 0x0e : -0x1c;
+    return _shift(surface2, by);
+  }
+
+  /// Shift every channel by [by], clamped — the one place the theme nudges a
+  /// colour, so "a shade darker" means the same thing wherever it is said.
+  static Color _shift(Color c, int by) {
+    int ch(double v) => ((v * 255).round() + by).clamp(0, 255);
+    return Color.fromARGB(0xff, ch(c.r), ch(c.g), ch(c.b));
+  }
 
   /// The default accent as plain RGB, for seeding the picker.
   static const defaultAccent = Color(0xffe05a72);
@@ -279,6 +327,8 @@ class LumitTheme {
         cacheDisk: cacheDisk,
         curve: curve,
         layer: layer,
+        timelineOutOfRange: timelineOutOfRange,
+        selectionFill: selectionFill,
       );
 
   /// The full composition a scheme + shape (+ accent override) resolves to —

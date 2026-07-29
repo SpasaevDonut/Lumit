@@ -2820,3 +2820,175 @@ swallows a failed call rather than letting a menu click take the interface down.
 outlives this shortcut: a chord the OS claims is not a chord the application has, so a
 command whose only route is the keyboard has no route at all — every keyboard command
 wants a menu or palette entry beside it.
+
+**K-199 · DECIDED · The keymap is the engine's, the keyboard is the frontend's, and the
+reveal cycle is three commands on one key.** From Mack (2026-07-29), restoring what K-182
+removed and finishing what docs/07 §15 has promised since it was written. `lumit-keymap`
+came back from git history unchanged — chords, contexts, conflict detection, the shipped
+default and the After Effects preset, with its eight tests — because it was deleted as
+unused rather than as wrong, and rewriting it would have been retyping.
+
+**The split, and why it falls here.** Everything that has to be *decided* about a keyboard
+lives in Rust: what a chord means, whether the focused panel outranks the app-wide binding,
+whether two bindings clash, what the shareable file says. The frontend turns a real
+`KeyEvent` into chord text (`Mod+Alt+Shift+Key`, with `Mod` resolving to Cmd on macOS and
+Ctrl elsewhere), draws the table, and forwards the edits — it holds no opinion about any of
+it, per K-181. The one thing it *does* decide is what counts as a gesture: the 500 ms
+multi-tap window for `U` is a gesture like a double-click, and gestures are the platform's.
+
+**Where the keymap is kept.** In the engine for the session, behind its own lock. The file
+is the frontend's: `keymap_to_json`/`keymap_from_json` hand the whole map across as text and
+the workspace file stores that blob verbatim, never looking inside it. One format serves
+both the restore-on-launch path and the "Export keymap…" a user mails to a friend, so a
+keymap that survives a restart is the same keymap that travels.
+
+**A row shows every chord, not the first one.** An action can hold two — K-198 gives Retime
+both `Alt+Shift+T` and `Ctrl+Alt+T` deliberately, and neither is removable — so
+`BridgeKeyBinding` carries a list. A table that showed one of them would be lying about the
+keyboard, which is the exact failure the page exists to prevent. Rebinding a row replaces
+all of its chords with the one pressed; resetting restores all of them.
+
+**Taking a chord someone else holds is never refused**, because refusing makes swapping two
+actions' keys impossible — the swap needs a moment where one chord is claimed twice. Inside
+one context the previous owner simply loses it and its row goes blank, which is visible;
+across overlapping contexts both survive and the clash is reported for the user to resolve.
+
+**Retime's chords moved from the Timeline context to Global**, with no change to the chords
+themselves. The shell runs that command wherever focus is and the Composition menu carries
+it too, so scoping it to one panel described something that was not true.
+
+**`U` / `UU` / `UUU`** (docs/07 §4.3, and the third tap is After Effects' own behaviour
+rather than a Lumit invention): animated properties, then everything modified, then shut.
+Which groups qualify is answered by `LayerReference::reveal_groups` rather than worked out
+in the panel — "does this hold a keyframe" and "is this changed from a fresh layer" are
+facts about the document, and the second needs the layer-seeding rule that decides what
+unchanged *means* for Position. The panel is told which groups to open and decides nothing
+about why.
+
+**What this does not do.** The Tools, Project, Panels and Effects contexts have bindings in
+the table and no dispatch behind them yet — those commands do not exist on this frontend, so
+the rows are honest about the keymap and silent in use. `docs/TODO.md` carries that.
+
+**K-200 · DECIDED · Retime has one chord, like everything else.** From Mack (2026-07-29),
+superseding the two-chord half of K-198. The owner's recollection behind K-197's
+**Alt+Shift+T** was simply wrong — the After Effects chord being reached for was
+**Ctrl+Alt+T** all along — so the collision K-198 worked around (Windows takes Alt+Shift
+for its input-language switch) was a collision with a chord nobody should have shipped.
+The remedy is now the removal: **Ctrl+Alt+T** (`Mod+Alt+T`) is Retime's one binding,
+Alt+Shift+T is unbound, and no shipped action carries two chords. Retime is not special,
+and with K-199's Settings → Keymap in, anyone who wants a second chord can bind one — a
+per-user preference no longer needs to ship as a default. What K-198 *keeps*: the menu
+route (Composition ▸ Enable/Disable Retime) and its general lesson, that every keyboard
+command wants a menu or palette entry beside it. The bridge simplifies with the decision:
+a keymap row carries one chord, not a list whose only customer was this pair.
+
+**K-201 · DECIDED · The export dialogue grows the fields an export actually has, and image
+sequences join the formats.** From Mack (2026-07-29). File ▸ Export… (the glossary bans
+"render" for user-facing output, so the name was never a choice) now carries: a **format**
+box — H.264/HEVC into `.mp4`, or a **PNG/TIFF image sequence**, one lossless RGBA still per
+frame written through the same ffmpeg seam and the same frame walk as video, named
+`shot.00001.png` beside the chosen path; a **frame rate** defaulting to the comp's own,
+where a different rate resamples by nearest comp frame over the same wall-clock span and is
+stamped exactly (`fps_rational` — 29.97 stays 2997/100, fixing the old path that rounded
+every comp rate to a whole number); a **range** in comp frames defaulting to the work area
+(K-037's rule stands as the default; the dialogue's explicit range wins over it, and always
+sends what it shows so setting the range to the whole comp over a work area means the whole
+comp); and the **AAC bitrate** when audio joins. Sequences carry no audio and no bitrate —
+resolution strips both so the exporter never sees a contradiction — and a cancelled or
+failed sequence deletes the frames it wrote. The dialogue's preset and codec lists now offer
+only what the engine ships (the old list named `prores` and two presets that stamped
+nothing). The preview-equals-export identity (K-031) is untouched: the range and rate choose
+*which* comp frames render and how the file is stamped, never how a frame renders.
+
+**K-202 · DECIDED · Themes are yours to make, and the Timeline gets a second ground.**
+From Mack (2026-07-29). Four Appearance changes, one of which is a spec correction.
+
+**Custom themes.** Settings → Appearance → **Customise…** opens every colour the theme
+carries, one row each — name and a line saying what it does on the left, a swatch that
+opens the picker on the right — seeded from the theme currently in use, previewing live as
+you change it, because a colour you cannot see against the rest of the interface is a
+colour you cannot judge. **Save** names it the first time and updates it in place after;
+closing with unsaved edits asks rather than assuming, and discarding puts back exactly what
+was there. A custom theme is stored as **a name, a light-or-dark base, and a bag of
+colours** — not a copy of the struct — so a theme saved today still opens when Lumit grows
+a token tomorrow, taking the new one from its base. Colours are written to the workspace
+file as readable `#rrggbb`, so a theme can be hand-edited or pasted between machines.
+
+The colours are declared once in `theme_tokens.dart`, each with the reader and writer that
+reach its field; the editor and the stored theme both walk that list, and a test counts the
+struct's colours against it so a token added and not listed fails rather than going
+missing. **One colour is deliberately not offered**: the Viewer's surround, which is
+strictly neutral by spec (15-DESIGN §2.1/§11) because a grade cannot be judged against a
+tinted surround.
+
+**The picker is grouped** — Dark, Light, then Custom. Seven built-ins plus a growing list of
+user themes is a long flat menu, and light-or-dark is the first thing anyone chooses by.
+
+**Scopes stop taking the theme's colours by default**, which is what 15-DESIGN §8 and §551
+have said all along: a waveform is a measuring instrument, read on a near-black graticule
+with a bright trace whatever the chrome, the same reasoning that keeps the Viewer surround
+neutral. `ScopeColours.standard` was already in the Dart theme, correct and unused — the
+panel simply never asked for it. Themed scopes remain available as an Appearance toggle,
+off by default: off-spec, opt-in, and squarely a matter of taste.
+
+**The Timeline gets two grounds, and selection its own colour.** The lane, layer and graph
+areas were one long strip at a single value, which left a selected row almost nothing to
+stand out against and left the span being delivered invisible below the ruler. Now the work
+area keeps `surface1` and everything outside it is washed a step darker
+(`timeline_out_of_range`), with a bigger step on light schemes because the same difference
+reads as less on a bright ground. Selection moves off `surface2` onto its own
+`selection_fill`, which lifts on a dark scheme and *drops* on a light one — a rule the
+surface ramp cannot express, because it is a ramp. Both default from the mode rather than
+being restated by seven schemes, and both are editable like any other token. The work
+area's edges are **draggable on the ruler** for the first time on this frontend: it was
+settable only from the menu, and a span you can see is one you expect to take hold of.
+
+**K-203 · DECIDED · Selection you can get out of, a work area that exists, and a surround
+that is grey.** From Mack (2026-07-29). Six defects reported against the K-199…K-202 work,
+fixed together because four of them are one theme: the interface holding state the user
+could no longer see or reach.
+
+**Selection lets go.** A selected property survived its layer being twirled shut — invisible
+but still the selection, so it came back lit when the layer reopened and went on colouring
+that layer's row while the user worked on a different layer entirely. Closing a fold now
+drops the selection inside it; clicking a layer clears the property selection, because "this
+layer" means this layer and not also whatever was picked on the last one. And there is a way
+out: **a click on empty ground in either half of the table deselects everything** — no
+layer, no properties, no keyframes. Until now the only way to change the selection was to
+pick something else, which left every command that reads it (Delete, the Retime chord, `U`)
+stuck with whatever was picked last.
+
+**`U` with nothing selected is the whole composition's.** "Show me what is animated" is a
+question about the comp at least as often as about one layer; refusing to answer it unless
+something was selected made the commonest use of the key the one it did not serve. The
+`U`/`UU`/`UUU` cycle is unchanged — it simply runs over every layer instead of one.
+
+**The work area is the whole comp until it is narrowed.** The engine stores "not narrowed"
+as null, which is right. The *interface* has no such state: a comp that has not been
+narrowed has a work area of the whole thing, which is what every editor shows and what
+leaves the ends there to grab. Without it the K-202 drag handles had nothing to hang on,
+the wash had nothing to shade, and `B`/`N` — bound since K-199 and dispatched by nobody —
+did nothing at all, so the whole feature read as unimplemented. The two-shade ground now
+runs the full height of the lane view **and the graph view**, and the ruler's ends are
+draggable from the first frame. Clearing the work area no longer removes it; it widens it
+back to the comp.
+
+The read is in **frames, once per panel build**, handed down to the ruler, the lanes and the
+curves rather than asked again in each — the first cut of this cost eighteen extra bridge
+calls per twirl and broke the call-budget gate (docs/13).
+
+**Ctrl+S saves.** `file.save` was in the keymap from the day the keymap came back and had no
+case in the shell's dispatch, so the chord resolved to an action nobody ran and the status
+line went on saying "Unsaved changes". The menu's save is now a free function both call, so
+there is one path to disk rather than two to keep honest.
+
+**The Viewer's surround is neutral again.** It was painting `surface0` — the theme's own
+panel surface — where the theme has carried a neutral `viewer_surround` all along, for the
+reason 15-DESIGN §2.1/§11 gives: a grade cannot be judged against a tinted surround. Neutral
+is the default; taking the theme is an Appearance toggle, off by default, the same shape of
+answer K-202 gave the scopes. This does not reopen K-202's decision to keep the surround out
+of the theme editor: it is still not a token, it is a switch between the theme's neutral and
+the theme's surface.
+
+**The Scopes toolbar drops its frame readout.** The playhead's position is the Timeline's
+and the Viewer's to state; a third copy above the trace only competed with it.

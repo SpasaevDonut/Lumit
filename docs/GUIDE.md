@@ -28,13 +28,15 @@ app's departments). They live in `crates/`:
 | `lumit-cache` | Caching | Remembering rendered frames so they're never rendered twice |
 | `lumit-flow` | Optical flow | Motion vectors for smooth-retime and flow motion blur |
 | `lumit-text` | Text | Rasterising text layers |
+| `lumit-keymap` | Keyboard shortcuts | What each key combination means, and what clashes with what |
 | `lumit-bridge` | The Flutter seam | How the Flutter frontend talks to the engine (see [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)) |
 
 Everything you actually *see* lives outside `crates/`, in `flutter_ui/` — the
 Flutter application (panels, menus, the theme). The original egui shell
-(`lumit-ui` + `lumit-app`) and the unused `lumit-keymap` shortcut model were
-deleted in K-182; if you ever need to look at how the old frontend did
-something, it is one `git log` away.
+(`lumit-ui` + `lumit-app`) was deleted in K-182; if you ever need to look at how
+the old frontend did something, it is one `git log` away. (`lumit-keymap` went
+with it, as unused at the time, and came back unchanged in K-199 when the
+shortcut editor was actually built.)
 
 Three of these have proper names you'll see in the app and docs (decision K-083),
 drawn from the same astral register as the app itself: **Nova** (a burst of new light) is
@@ -919,11 +921,10 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   "which moment of the source does this layer show?", and the new one is the simple one.
   A layer carries a `retime` field that is just an animatable number — the same kind of
   number Position and Opacity are — and its value *is* the source time, in seconds. Press
-  Alt+Shift+T on a layer and it gains one; press again and it loses it. (**Ctrl+Alt+T** does
-  the same, and on Windows it is the one to reach for: the system claims Alt+Shift for
-  switching keyboard layout, so on a machine with two languages installed it can swallow the
-  first chord before Lumit ever sees it. The command is in the Composition menu too, which
-  nothing can intercept.) While it has one, a
+  Ctrl+Alt+T on a layer and it gains one; press again and it loses it (K-200 — it briefly
+  had a second chord, Alt+Shift+T, which turned out to be a misremembering and which
+  Windows steals for its keyboard-layout switch anyway; the command is in the Composition
+  menu too, which nothing can intercept). While it has one, a
   **Retime** row appears in the Timeline's twirl-down above Transform, with the same
   stopwatch, the same diamonds and the same graph-editor lane as every other property,
   because it genuinely *is* every other property — there is no Retime-specific code in any
@@ -3301,15 +3302,24 @@ curved segment to a plain rate, and every number the curve needs to be drawn is
 worked out by a small, separately tested piece of plain maths so the picture is
 never guesswork.
 
-**Exporting a video (the dialogue and the queue).** Choosing File → Export opens
-a small settings window where you pick a delivery preset (which fills in the
-codec, size, bitrate and a suggested file name for you), adjust anything you
-like, choose where to save, and press Export; if one export is already running
-the new one simply lines up behind it and starts the moment the first finishes,
-one at a time, with the status line at the bottom showing the frame count as it
-goes and a × to cancel. The "share" shortcuts (Discord 50 MB / Small 10 MB) skip
-the dialogue and work the bitrate out from the size you are aiming for, using the
-same tested piece of plain maths the desktop app uses.
+**Exporting (the dialogue and the queue, K-201).** Choosing File → Export opens
+a small settings window. The first box is the **format**: an H.264 or HEVC
+video file, or a **PNG or TIFF image sequence** — one lossless still per frame,
+so choosing `shot.png` writes `shot.00001.png`, `shot.00002.png`, … beside it
+(handy for taking frames into other tools; a sequence has no sound and no
+bitrate, because a folder of stills has neither). For video you can pick a
+delivery preset (which fills in the codec and bitrate for you) and an audio
+quality. Every export also carries a **frame rate** — already filled in with
+the composition's own, and changeable, so a 60 fps comp can go out at 30 or at
+29.97 without the file quietly claiming a different rate — and a **range**,
+already filled in with the work area you set in the Timeline (or the whole comp
+when you set none), as "from frame / to frame" boxes you can change. Choose
+where to save, press Export, and the same window shows the frame count as it
+goes, with Cancel beside it; a cancelled image sequence tidies away the frames
+it had written rather than leaving what looks like a finished folder. The
+"share" shortcuts (Discord 50 MB / Small 10 MB) skip the dialogue and work the
+bitrate out from the size you are aiming for, using the same tested piece of
+plain maths the desktop app uses.
 
 **Reaching the last columns, and the app remembering where you were.** The
 right-click menu on a layer now does the real work for its blend mode, its matte
@@ -4007,3 +4017,200 @@ its own display? — and only draws rows when the answer is no. Nothing answers
 yes yet. The point of asking now is that when the first one arrives it says so
 in one place, rather than becoming a special case wedged into the middle of
 the layout.
+
+### Making your own theme, and the Timeline's two grounds (K-202)
+
+**Themes you can edit.** Settings → Appearance has a **Customise…** button under
+the colour scheme. It opens a window listing every colour the interface uses —
+what it is called, a line saying where it shows up, and a swatch you click to
+pick a new one. It opens on the colours you are *currently* using, and every
+change shows in the app straight away, because a colour you cannot see against
+everything else is a colour you cannot judge.
+
+**Save** asks for a name the first time and makes it a theme of your own, which
+then appears in the scheme list. Select it later, press Customise… again, and
+Save updates that theme rather than making another. Closing with unsaved
+changes asks whether to keep them; discarding puts back exactly what was there.
+
+What gets saved is deliberately *not* a copy of the whole theme — it is a name,
+whether it is a light or a dark theme, and the colours you set. That matters
+because Lumit gains colours over time: a theme you saved last year still opens,
+and anything new simply comes from the light or dark base underneath. The
+colours are written into your settings file as ordinary `#rrggbb` text, so you
+can read them, paste one in by hand, or send a theme to somebody.
+
+One colour is not offered: the **Viewer's surround**, the neutral grey around
+the picture. It stays a fixed neutral on purpose — you cannot judge a colour
+grade against a tinted background, so this is the one place the interface's
+taste has to give way to being able to see straight.
+
+**The scheme list is grouped** into Dark, Light and Custom, because light or
+dark is the first thing anyone picks by.
+
+**Scopes.** A waveform or vectorscope is a *measuring instrument*: it is read on
+a near-black background with a bright trace, whatever colour the rest of the app
+is. That is what the design docs have always said, and the panel now does it.
+If you like the look of scopes matching your theme — and it does look good —
+there is a switch for it in Settings → Appearance, off by default.
+
+**Why the Timeline has two background shades now.** The lane and layer areas
+used to be one flat colour end to end. Two things suffered: a selected row had
+almost nothing to stand out against, and the **work area** — the span you are
+actually going to export — was invisible unless you looked at the thin band on
+the ruler. So the part inside the work area keeps the normal panel colour and
+everything outside it is washed slightly darker, which tells you at a glance
+what you are delivering. On a light theme the wash is a bigger step, because the
+same small difference reads as less on a bright background.
+
+Selected rows got their own colour at the same time, rather than borrowing one
+from the general set of greys. It brightens on a dark theme and *darkens* on a
+light one — a selection has to stand out from whichever background it lands on,
+and that is not something a simple light-to-dark ramp can express. Both of these
+are ordinary colours in the customise window, so you can set them yourself.
+
+And the work area's two edges can now be **dragged on the ruler**. Until now you
+could only set them from the Timeline menu, which was precise but roundabout —
+a span you can see is one you expect to be able to grab.
+
+### The keyboard, and why the engine owns it (K-199)
+
+**The problem it solves.** Every editor lets you change its shortcuts, because
+everybody arrives with different muscle memory — and because sometimes the
+operating system steals a key from under you (that really happened to us: on
+Windows, left Alt with Shift is how the system switches keyboard layouts, so
+the chord Retime briefly shipped on never reached Lumit at all — K-198 tells
+that story, and K-200 finished it by moving Retime to Ctrl+Alt+T outright). So
+Lumit has a **keymap**: a list saying "this key combination, in this place,
+runs this command", and a page in Settings where you can change any of it.
+
+**Three words.** A **chord** is a key with its modifiers — `Space`, `Ctrl+D`,
+`Shift+F3`. A **context** is *where you are*: the whole app, or one focused
+panel. An **action** is a command, named by a short stable string like
+`playback.toggle`. A **binding** ties a chord in a context to an action. When
+you press keys, something has to answer "what does that mean, here?" — and
+that something is the engine.
+
+**Why the engine and not the frontend.** This is the same rule as everywhere
+else in the port: the frontend shows and forwards, the engine decides. Working
+out that the Timeline's own `D` beats the app-wide `D` while the Timeline is
+focused, or that two bindings now clash, or that this JSON is a keymap and that
+one is not — those are *rules*, and rules that live in the frontend are rules
+nobody can test without a window. `crates/lumit-keymap` is the rulebook (about
+600 lines, thirteen tests, no windowing code at all) and
+`crates/lumit-bridge/src/api/keymap.rs` is the window onto it.
+
+The frontend keeps exactly two jobs, and both are genuinely its own:
+
+1. **Spelling the keypress.** Flutter tells it a key was pressed; it writes that
+   down as text the engine can read — `Mod+Alt+Shift+T`, where `Mod` means Cmd
+   on a Mac and Ctrl everywhere else. That translation is why a keymap written
+   on a Mac still reads on Windows.
+2. **Recognising a gesture.** Pressing `U` three times quickly is three
+   different commands, and telling "three quick taps" from "three presses over
+   a minute" is the same kind of judgement as spotting a double-click. That
+   belongs with the mouse and the keyboard, not with the document.
+
+**Where your keymap is kept.** In the engine while Lumit is running; in your
+workspace settings file between runs. The frontend stores it as an opaque lump
+of text it never reads — the engine hands it out with one call and takes it back
+with another. The nice consequence is that "the keymap that survives a restart"
+and "the keymap file you email to a friend" are the same format, so Export and
+Import are the same code as save and restore.
+
+**The table in Settings → Keymap.** One row per command, grouped by where it is
+live, with the name on the left and the keys on the right. Click the keys and
+press what you want. A few behaviours are worth knowing because they are
+deliberate rather than accidental:
+
+- **One row, one key** (K-200). No shipped command has two chords; if you want
+  a second spelling of one, bind it yourself — that is what the page is for.
+- **Taking a key another command already has is allowed.** It has to be: if it
+  were refused, you could never *swap* two commands' keys, because a swap needs
+  a moment where one key is claimed twice. What happens next depends on whether
+  both could fire at the same time. If they could, you get a warning naming the
+  clash and you sort it out. If they could not (same context), the old command
+  simply loses the key and its row goes blank, where you can see it.
+- **Reset is per row**, and puts back *every* chord the shipped keymap gives
+  that command.
+
+**`U`, `UU`, `UUU`.** In the Timeline, `U` opens the properties you have
+animated on the selected layer; pressing it again straight away opens everything
+you have *changed*, animated or not; a third press shuts the layer. This is
+After Effects' behaviour and the reason it is worth having is that a layer with
+forty properties usually has three you care about. The panel counts the taps;
+the engine answers which groups qualify, because "has a keyframe" and "differs
+from a fresh layer" are questions about the document — and the second one needs
+to know what a fresh layer's Position would have been, which is a rule the
+engine owns.
+
+**One honest gap.** Some rows in the table — the Tools, Project, Panels and
+Effect controls groups — are bindings for commands this frontend has not built
+yet. The keys are really bound; pressing them does nothing, because there is
+nothing on the other end. They are listed rather than hidden so the table
+describes the keymap truthfully, and `docs/TODO.md` carries the gap.
+
+### Letting go of a selection, and a work area that is really there (K-203)
+
+Six small things reported after the Appearance work landed. Four of them turn
+out to be the same mistake in different clothes: the interface was holding on to
+state you could no longer see or reach.
+
+**A selection you can get out of.** Click a property's name and it lights up.
+Twirl the layer shut and — until now — it *stayed* selected: invisible, but
+still the selection, so it came back lit the moment you reopened the layer, and
+it went on tinting that layer's row while you were working on a different layer
+entirely. Now closing a fold forgets what was selected inside it, and clicking a
+layer's name clears the property selection, because "select this layer" ought to
+mean this layer and not also whatever you picked on the last one.
+
+More basic than either: there was **no way to select nothing**. The only way to
+change the selection was to pick something else. Every command that reads the
+selection — Delete, the Retime chord, `U` — was stuck with whatever was picked
+last. Clicking empty ground in either half of the Timeline now deselects
+everything: no layer, no properties, no keyframes. Empty ground means exactly
+that — a name, a switch, a property row, a bar or a keyframe still takes its own
+click.
+
+**`U` with nothing selected asks about the whole composition.** "Show me what is
+animated" is a question about the comp at least as often as about one layer, and
+before this the key simply did nothing unless a layer was selected. The
+`U`/`UU`/`UUU` cycle is otherwise the same; it just runs over every layer.
+
+**The work area exists from the start.** The engine stores "this comp has not
+been narrowed" as *nothing at all*, which is honest — but the interface has no
+such state. A comp nobody has narrowed has a work area of the whole comp, which
+is what every editor shows you and what leaves the two ends there to take hold
+of. Because the frontend was showing the engine's "nothing" literally, there was
+no bar to see, no handles to drag, nothing for the darker out-of-range wash to
+shade, and `B` and `N` — which have been in the keymap since the keymap came
+back — had never been wired to anything, so pressing them did nothing. All of
+that is fixed: the bar spans the comp until you narrow it, its ends drag on the
+ruler, `B` and `N` set them from the playhead, and the two-shade ground runs the
+full height of the lane view *and* the graph view. "Clear work area" now widens
+it back to the whole comp rather than making it vanish.
+
+One implementation note worth recording, because it is the kind of thing that
+bites twice. The first version of this worked the work area out *inside each
+widget that drew it*, and each answer cost several calls across the
+Rust/Flutter boundary. On a panel that rebuilds as often as the Timeline does
+that added eighteen extra calls to opening a single twirl, and the standing
+call-budget test caught it. It is now read once per panel build, in frames, and
+handed down.
+
+**Ctrl+S saves.** It was bound and it resolved to the right command; nothing in
+the shell was listening for that command, so the chord ran off the end and the
+status line kept saying "Unsaved changes". The File menu's Save is now an
+ordinary function that both the menu and the keyboard call, so there is one path
+to disk instead of two that have to agree.
+
+**The Viewer's surround is grey again.** The area around the picture had been
+taking the theme's panel colour. It should not: you cannot judge a grade against
+a tinted surround, which is why the theme has carried a deliberately neutral
+surround colour all along — the Viewer simply was not asking for it. Neutral is
+the default now, and Settings → Appearance → Viewer has a switch to take the
+theme's colour instead if you prefer the look. Same shape of answer as the
+scopes switch: off-spec, opt-in, and squarely a matter of taste.
+
+**The Scopes toolbar no longer prints the frame number.** The Timeline and the
+Viewer both say where the playhead is; a third copy sitting directly above the
+trace was only competing with it.

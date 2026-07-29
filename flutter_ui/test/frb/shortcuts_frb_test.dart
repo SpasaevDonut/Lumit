@@ -5,6 +5,8 @@
 // drive `LumitAppView` itself rather than a panel, because the handler is the
 // shell's and a panel-level test would not prove it is reachable.
 
+import 'dart:io';
+
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -139,45 +141,35 @@ void main() {
           reason: 'the selection cannot outlive the layer');
     });
 
-    /// Alt+Shift+T gives the selected layer a Retime — and takes it away again
-    /// (K-197). Off is the property gone, not a 100% curve left behind.
-    testWidgets('Alt+Shift+T toggles the selected layer\'s Retime',
+    /// Alt+Shift+T does nothing now (K-200): it was a misremembering of AE's
+    /// chord, and on Windows the OS steals it for the input-language switch
+    /// anyway. It is unbound rather than kept as a second chord — Retime is
+    /// not special — and anyone who wants it can bind it in Settings → Keymap.
+    testWidgets('Alt+Shift+T is unbound and leaves the layer alone',
         (tester) async {
       final p = await mount(tester);
       final comp = p.uiState.selectedComp!;
       comp.addSolidLayer();
       final layer = comp.getLayers().single;
-
-      Future<void> press() async {
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
-        await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
-        await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
-        await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
-        await tester.pump();
-      }
-
-      // Nothing selected: inert, like every other layer command.
-      await press();
-      expect(layer.getRetimeProperty(), isNull);
-
       p.uiState.selectedLayer.value = layer;
-      await press();
-      expect(layer.getRetimeProperty(), isNotNull,
-          reason: 'the layer now has a Retime to key');
 
-      await press();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyT);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pump();
+
       expect(layer.getRetimeProperty(), isNull,
-          reason: 'off removes it rather than flattening it');
+          reason: 'no binding, no Retime — the chord means nothing');
     });
 
-    /// **Ctrl+Alt+T does the same, and on Windows it is the one that lands.**
-    /// Left Alt with Shift is the system's input-language switch there: with a
-    /// second keyboard layout installed the OS takes the chord and the
-    /// application never sees the T, so the spec's own shortcut silently does
-    /// nothing on the machines most likely to have two layouts. This is After
-    /// Effects' own Time Remap chord, and nothing intercepts it.
-    testWidgets('Ctrl+Alt+T toggles Retime as well', (tester) async {
+    /// **Ctrl+Alt+T is the Retime chord** (K-197, narrowed to one by K-200):
+    /// After Effects' own Time Remap chord, and one Windows cannot steal. On
+    /// gives the layer a Retime; off removes the property rather than leaving
+    /// a flattened curve behind.
+    testWidgets('Ctrl+Alt+T toggles the selected layer\'s Retime',
+        (tester) async {
       final p = await mount(tester);
       final comp = p.uiState.selectedComp!;
       comp.addSolidLayer();
@@ -263,6 +255,58 @@ void main() {
       await tester.pump();
       expect(asked, 1,
           reason: 'the shell has the keyboard back once the dialogue is gone');
+    });
+
+    /// **Ctrl+S did nothing.** `file.save` was in the keymap from the day the
+    /// keymap came back, but the shell's dispatch had no case for it — so the
+    /// chord resolved to an action nobody ran and the status line went on
+    /// saying "Unsaved changes" (K-203). Saved to a path already, so no picker
+    /// is involved: this is about the dispatch, not the dialogue.
+    testWidgets('Ctrl+S saves the project', (tester) async {
+      final p = await mount(tester);
+      final dir = Directory.systemTemp.createTempSync('lumit-save');
+      addTearDown(() => dir.deleteSync(recursive: true));
+      // Off the fake clock: a bridge Future only completes on the real event
+      // loop (which is also why the chord below is settled, not pumped).
+      await tester.runAsync(
+          () => p.state.project!.save(path: '${dir.path}/scene.lumit'));
+
+      p.uiState.selectedComp!.addSolidLayer();
+      p.state.notifyDocumentChanged();
+      await tester.pump();
+      expect(p.state.project!.isDirty(), isTrue, reason: 'there is work to lose');
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await settleFrb(tester, until: () => !p.state.project!.isDirty());
+
+      expect(p.state.project!.isDirty(), isFalse,
+          reason: 'the chord reached the same save the File menu runs');
+    });
+
+    /// B and N set the work area's ends from the playhead (docs/07 §15). Bound
+    /// since K-199 and dispatched by nobody until K-203, which is why the work
+    /// area read as unimplemented.
+    testWidgets('B and N set the work area from the playhead', (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      expect(comp.getWorkArea(), isNull, reason: 'a new comp has none set');
+
+      p.uiState.playheadFrame.value = 12;
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await tester.pump();
+      expect(comp.frameAtTime(time: comp.getWorkArea()!.inPoint), 12);
+
+      p.uiState.playheadFrame.value = 30;
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyN);
+      await tester.pump();
+      final work = comp.getWorkArea()!;
+      expect(comp.frameAtTime(time: work.inPoint), 12,
+          reason: 'setting the end leaves the start alone');
+      expect(comp.frameAtTime(time: work.outPoint), 30);
     });
   }, skip: !engineAvailable);
 }

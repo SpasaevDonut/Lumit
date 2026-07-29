@@ -314,6 +314,17 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
   }
 }
 
+/// What is painted around the picture (K-203).
+///
+/// Neutral by default, and deliberately so: a grade cannot be judged against a
+/// tinted surround, which is why the theme carries `viewerSurround` as a grey
+/// no scheme colours (docs/15-DESIGN §2.1/§11). The Appearance toggle exists
+/// because a neutral rectangle in the middle of a themed shell is something
+/// people reasonably want to switch off — the same shape of answer the scopes
+/// toggle gives.
+Color viewerSurroundFor(LumitTheme t, {bool themed = false}) =>
+    themed ? t.surface0 : t.viewerSurround;
+
 /// The picture, its checkerboard, and the selection overlay.
 class _Stage extends StatelessWidget {
   final CompositionReference comp;
@@ -348,7 +359,10 @@ class _Stage extends StatelessWidget {
       // gesture first when it is hit, so this only fires on empty space.
       onPanUpdate: (d) => onPan(d.delta),
       child: Container(
-        color: t.surface0,
+        color: viewerSurroundFor(
+          t,
+          themed: uiState.workspace.themedViewerSurround,
+        ),
         child: Stack(
           children: [
             if (grid)

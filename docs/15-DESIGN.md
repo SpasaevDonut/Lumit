@@ -105,7 +105,12 @@ Rules:
 - **The surround of the Viewer image area MUST be `viewer_surround` — strictly neutral grey,
   never tinted.** This includes the pasteboard around the rendered frame, the transparency
   grid's two greys, and letterbox bars. A user MAY darken it (towards `#101010`) or lighten it
-  in Viewer settings; every option on that slider is neutral.
+  in Viewer settings; every option on that slider is neutral. **One opt-in leaves neutral
+  (K-203):** Settings → Appearance → Viewer offers a switch that paints the surround in the
+  theme's own panel surface, **off by default**, on the owner's request and for the same
+  reason the scopes toggle exists — off-spec, deliberate, and a matter of taste. The default
+  and every shipped scheme stay neutral, and the surround remains the one colour the theme
+  editor does not offer.
 - All other surfaces are *near*-neutral: a residual cool cast (blue channel a point or two
   above red) keeps kinship with the fleet, but chroma MUST stay low enough that no panel reads
   as "blue" next to the Viewer.
@@ -224,6 +229,17 @@ pub struct Theme {
     pub shadow_float: Shadow,
 }
 ```
+
+**Custom themes (K-202).** Every colour listed here is editable by the user in Settings →
+Appearance → Customise…, and a saved custom theme is *a name, a light-or-dark base, and the
+colours over it* — so a theme keeps working when a token is added, taking the new one from
+its base. `flutter_ui/lib/theme/theme_tokens.dart` is the single declaration of what is
+editable (a test counts it against the struct); `viewer_surround` is deliberately absent for
+the §2.1 reason. Two tokens were added with it, both defaulting from the mode rather than
+being restated per scheme: `timeline_out_of_range` (the Timeline's ground outside the work
+area) and `selection_fill` (under a selected row, half-strength under a highlighted one —
+its own colour because a selection has to out-contrast whichever ground it lands on, which
+on a light scheme means going *darker* while the surfaces go lighter).
 
 **v1 status of this struct.** The struct above is the target shape. The shipped `LumitTheme`
 (`flutter_ui/lib/theme/theme.dart`) carries the structural roles — the surfaces, text, hairlines,
@@ -548,7 +564,7 @@ no new tokens, no widget-code changes:
 | `surface_0..4` | The palette's own background ramp (`bg0..bg4` dark; the light ramp mirrors §11's "elevation is a darker wash" structure) | `crust`/`base`/`surface0..2` dark; `mantle`/`base`/`crust` mirrored the same way light |
 | `text_primary..disabled` | `fg0..fg3` | `text`/`subtext1`/`overlay1`/`overlay0` |
 | `accent` | Orange (`#fe8019` dark, `#af3a03` light) | Mauve (`#cba6f7` Mocha, `#8839ef` Latte) |
-| `viewer_surround` / scopes | Unchanged: strictly neutral and `ScopeColours::STANDARD`, exactly as every other scheme (§2.1, §11) — a named scheme changes chrome, never the grading-neutral surfaces |
+| `viewer_surround` / scopes | Unchanged: strictly neutral and `ScopeColours::STANDARD`, exactly as every other scheme (§2.1, §11) — a named scheme changes chrome, never the grading-neutral surfaces. **A user may opt scopes into the theme's colours** (Settings → Appearance, off by default, K-202) and, separately, the Viewer surround into the theme's panel surface (off by default, K-203); both default to neutral, and the surround remains the one colour the theme editor does not offer |
 
 The two dark schemes' `error` role takes each palette's calmer red where the palette offers a
 choice (Gruvbox's *neutral* red rather than its "bright" one) — a curation call in the same

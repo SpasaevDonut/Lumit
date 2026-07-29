@@ -23,15 +23,24 @@ use crate::api::{composition::CompositionReference, BridgeError};
 /// encoder's own default — a quality nobody chose is better than a number this
 /// layer invented.
 #[frb(non_opaque)]
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct BridgeExportSpec {
     /// A delivery preset name, or empty for a custom export.
     pub preset: String,
-    /// The video codec key, e.g. `h264`.
+    /// The output format key: `h264` / `hevc` for an `.mp4`, `png` / `tiff`
+    /// for a numbered image sequence (K-201).
     pub codec: String,
     pub width: u32,
     pub height: u32,
     pub bitrate_mbps: u32,
+    /// Output frame rate; zero means the composition's own. A different rate
+    /// resamples by nearest comp frame over the same wall-clock span.
+    pub fps: f64,
+    /// Export range start, in comp frames. Negative means the default — the
+    /// work area when one is set, else the whole comp.
+    pub range_start_frame: i64,
+    /// Export range end (exclusive), in comp frames. Negative = the default.
+    pub range_end_frame: i64,
     pub include_audio: bool,
     /// Audio bits per second; zero takes the preset's own rate.
     pub audio_bit_rate: i64,
@@ -105,6 +114,14 @@ impl CompositionReference {
                 String::new()
             } else {
                 spec.bitrate_mbps.to_string()
+            },
+            "fps": spec.fps,
+            "range": if spec.range_start_frame < 0
+                || spec.range_end_frame <= spec.range_start_frame
+            {
+                Value::Null
+            } else {
+                serde_json::json!([spec.range_start_frame, spec.range_end_frame])
             },
             "include_audio": spec.include_audio,
             "audio_bit_rate": spec.audio_bit_rate,
