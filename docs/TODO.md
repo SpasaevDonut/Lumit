@@ -235,6 +235,20 @@ the keymap).
 
 ## Next - engine/bridge follow-ups
 
+**The stale-fd race on a Linux Viewer resize** (`crates/lumit-render/src/headless.rs`
+around the `shared_dmabuf = Some(...)` re-create, with
+`crates/lumit-gpu/src/shared_linux.rs`'s `Drop`). The exported DMA-BUF descriptor
+is owned by `SharedDmabuf` and closed when it drops, but the descriptor *number*
+travels to Dart asynchronously inside `WorkerResponse::RenderedDMABuf`. A resize
+replaces the `SharedDmabuf` immediately, closing the old fd, so two resizes in
+quick succession can have Dart register a descriptor that is already closed — or,
+worse, one the operating system has since handed to something else. Two candidate
+fixes: hold the previous `SharedDmabuf` for one generation so its fd outlives the
+message, or `dup()` on the Rust side at export so the number in flight is its own
+owned descriptor. Not urgent today only because the Linux runner now checks its
+`dup()` and reports a register failure instead of dying quietly (a bad fd fails
+loudly rather than showing a black Viewer for the session).
+
 **Retime UI wiring** (the engine is fully built; these are UI/command affordances -
 [04-RETIMING.md](04-RETIMING.md)):
 - Freeze-at-playhead (`insert_freeze' built, no caller); Hold preset button;

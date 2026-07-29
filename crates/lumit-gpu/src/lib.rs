@@ -51,41 +51,39 @@ impl GpuContext {
 
     /// Headless context (tests, future CLI export).
     pub fn headless() -> Result<Self, GpuError> {
-        // When the zero-copy Viewer path is compiled in (K-177), pin the D3D12
-        // backend: the shared-texture hand-off reaches through wgpu to its D3D12
-        // device, so the renderer must actually be on D3D12 (not Vulkan). This
-        // only changes which Windows backend is chosen, not any pixel maths, and
-        // only in the opt-in shared-texture build; every other build is
-        // unchanged. Without the feature (or off Windows) this is the same
-        // all-backends instance as before.
-        #[cfg(all(windows, feature = "shared-texture"))]
+        // The backend is pinned on all three platforms, in every build (K-205,
+        // superseding K-177 on this point). Two reasons: the zero-copy Viewer
+        // hand-off reaches through wgpu to a *specific* backend's device, and
+        // since K-183 deleted the CPU read-back transport there is no build left
+        // that wants a mixed-backend instance. Pinning also fixes the hybrid
+        // iGPU+dGPU case described below.
+        //
+        // `from_env_or_default` supplies the rest of the descriptor (flags, the
+        // DX12 shader compiler, the GLES minor version) from `WGPU_*`, so those
+        // stay tunable — but `backends` is set explicitly *after* it, so the pin
+        // wins and `WGPU_BACKEND` cannot move it. That is intended: an
+        // environment variable must not be able to break the Viewer.
+        #[cfg(windows)]
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::DX12,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::from_env_or_default()
         });
-        // On Linux the DMA-BUF hand-off reaches through wgpu to its Vulkan device,
-        // so pin the Vulkan backend in the opt-in build (the analogue of pinning
-        // D3D12 on Windows). Every other build is unchanged.
-        #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+        // On a hybrid iGPU+dGPU box (e.g. AMD + Nvidia) mixing GL and Vulkan into one
+        // enumeration makes PowerPreference::HighPerformance pick unreliably (commonly
+        // picking the AMD iGPU driving the display), which can cause VRAM exhaustion
+        // during command submission. Pinning Vulkan prevents that.
+        #[cfg(target_os = "linux")]
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::from_env_or_default()
         });
-        // On macOS the IOSurface hand-off reaches through wgpu to its Metal
-        // device, so pin the Metal backend in the opt-in build (the analogue of
-        // pinning D3D12 on Windows). Metal is what wgpu would pick there anyway;
-        // pinning only makes the requirement explicit.
-        #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+        #[cfg(target_os = "macos")]
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::from_env_or_default()
         });
-        #[cfg(not(any(
-            all(windows, feature = "shared-texture"),
-            all(target_os = "linux", feature = "shared-texture-linux"),
-            all(target_os = "macos", feature = "shared-texture-macos")
-        )))]
-        let instance = wgpu::Instance::default();
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::from_env_or_default());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
@@ -112,6 +110,34 @@ impl GpuContext {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
                 .map_err(|e| GpuError::Device(e.to_string()))?;
+
+        // Which adapter was picked is the first thing anyone asks when the
+        // Viewer is black or a hybrid-GPU machine chose the wrong card — but it
+        // is noise on every test and every shipped run, so it is opt-in. The
+        // crate has no logging framework (the workspace prints diagnostics with
+        // `eprintln!`), so the gate is an environment variable: set
+        // `LUMIT_GPU_DEBUG` to anything to get the line.
+        if std::env::var_os("LUMIT_GPU_DEBUG").is_some() {
+            let info = adapter.get_info();
+            eprintln!(
+                "lumit-gpu: adapter selected: {} ({:?}, backend {:?}, driver {})",
+                info.name, info.device_type, info.backend, info.driver_info,
+            );
+        }
+        // wgpu's defaults for both of these panic. An engine crate may not panic
+        // (docs/14-ENGINEERING-RULES.md), and neither condition is recoverable
+        // *here*: a validation error means a frame is wrong, a lost device means
+        // every later frame fails and the surrounding code already treats a
+        // failed render as a dropped frame. So the deliberate behaviour is to
+        // report and carry on, in the same shape as the rest of the workspace's
+        // diagnostics, rather than to take the process down mid-edit.
+        device.on_uncaptured_error(Box::new(|e| {
+            eprintln!("lumit-gpu: uncaptured wgpu error: {e}");
+        }));
+        device.set_device_lost_callback(|reason, msg| {
+            eprintln!("lumit-gpu: device lost ({reason:?}): {msg}");
+        });
+
         Ok(Self {
             device,
             queue,

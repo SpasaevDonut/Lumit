@@ -57,21 +57,21 @@ bindings, so 18 is pinned on every platform). Development is Windows-first.
 - **Windows**: unzip a [BtbN FFmpeg 7.1 shared/GPL build](https://github.com/BtbN/FFmpeg-Builds/releases)
 under `%USERPROFILE%\ffmpeg\` , run `winget install LLVM. LLVM -- version 18.1.8`,
 then `. .\scripts\win-dev-env.ps1 -Persist` to wire it up.
-**macOS**: `brew install ffmpeg@7`, then `cargo test -- workspace`. The repo's
-`.cargo/config.toml` points the build at the keg.
+**macOS**: `brew install ffmpeg@7`, then, because that formula is keg-only,
+`export FFMPEG_PKG_CONFIG_PATH="$(brew --prefix ffmpeg@7)/lib/pkgconfig"` in the
+shell you build from (K-204). Then `cargo test --workspace`.
 **Linux** (K-082): install the FFmpeg 7 development packages plus `pkg-config`
 and `clang`. Debian 13 / Ubuntu 24.10 or newer:
 `sudo apt install pkg-config clang libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev libavfilter-dev libavdevice-dev`
 Arch / Artix: `sudo pacman -S ffmpeg pkgconf clang18 llvm18` (the unversioned
 `clang` package is LLVM 19+ and produces broken bindings).
-Two environment variables are needed on Linux, in the shell you build from:
+FFmpeg needs no environment variable on Linux — the development packages put
+their `.pc` files on `pkg-config`'s default search path, which is where the
+build looks. One variable may still be needed, in the shell you build from:
 ```sh
 export LIBCLANG_PATH=/usr/lib/llvm18/lib          # Debian/Ubuntu: /usr/lib/llvm-18/lib
-export FFMPEG_PKG_CONFIG_PATH=/usr/lib/pkgconfig  # wherever libavcodec.pc lives
 ```
-`LIBCLANG_PATH` is only required where the default `clang` is newer than 18;
-`FFMPEG_PKG_CONFIG_PATH` overrides the macOS Homebrew path that
-`.cargo/config.toml` sets for everyone. FFmpeg **7.x** is required;
+It is only required where the default `clang` is newer than 18. FFmpeg **7.x** is required;
 distributions still shipping FFmpeg 6 (Ubuntu 24.04 LTS included) need a newer
 release or a self-built FFmpeg first.
 

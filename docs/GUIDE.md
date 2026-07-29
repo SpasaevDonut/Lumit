@@ -2167,9 +2167,25 @@ There are two moving parts, and it helps to know why each exists:
 
 ### On macOS
 
-FFmpeg comes from Homebrew: `brew install ffmpeg@7`. The repo's `.cargo/config.toml` already
-points the build at it, and macOS ships the translator (libclang) as part of its developer
-tools, so there's nothing else to set up — `cargo test --workspace` just works.
+FFmpeg comes from Homebrew: `brew install ffmpeg@7`. That formula is *keg-only* — Homebrew
+deliberately does not put it where the system looks by default, because it is an older
+version than the plain `ffmpeg` formula and linking it would shadow that. So the build has
+to be told where it went, once, in the terminal you build from:
+
+```sh
+export FFMPEG_PKG_CONFIG_PATH="$(brew --prefix ffmpeg@7)/lib/pkgconfig"
+```
+
+Put that in your shell profile and every future terminal has it. macOS ships the translator
+(libclang) as part of its developer tools, so there is nothing else to set up — then
+`cargo test --workspace` works.
+
+This line used to live in the repo's `.cargo/config.toml` instead, so nobody had to type
+it. It was removed (K-204) because Cargo offers no way to make such a setting apply to one
+platform only: the macOS folder was being handed to Linux builds as well, where it does not
+exist, and the FFmpeg binding generator stops with an error rather than falling back. One
+platform's convenience was the other's broken build, and macOS is the one with the unusual
+requirement, so macOS is the one that says it out loud.
 
 ### On Linux (K-082)
 
@@ -2184,21 +2200,23 @@ distributions' plain `clang` package is a much newer LLVM, and as explained abov
 LLVM makes the translator produce nonsense, so the versioned packages are the ones to
 install.
 
-Two settings then have to be handed to the build, in the terminal you build from:
+Nothing about FFmpeg then has to be handed to the build: the packages put their `.pc`
+description files where `pkg-config` already looks, which is where the build asks. One
+setting may still be needed, and only on the distributions whose default translator is
+newer than 18:
 
 ```sh
 export LIBCLANG_PATH=/usr/lib/llvm18/lib          # Debian/Ubuntu: /usr/lib/llvm-18/lib
-export FFMPEG_PKG_CONFIG_PATH=/usr/lib/pkgconfig  # wherever libavcodec.pc lives
 ```
 
-The first says "use the *18* translator, not whichever one is the default" — only needed
-where the default is newer than 18, which on Arch and Artix it always is. The second is an
-accident of the repo: `.cargo/config.toml` sets that variable to a macOS Homebrew folder
-for every platform, and Cargo gives no way to make it macOS-only, so on Linux it has to be
-overridden with the folder that actually holds FFmpeg's `.pc` description files (ask with
-`pkg-config --variable pc_path pkg-config` if `/usr/lib/pkgconfig` is not it). Put both
-lines in your shell profile and every future terminal has them. Then `cargo test
---workspace`, and `flutter run` from `flutter_ui/` to launch the app.
+That says "use the *18* translator, not whichever one is the default" — on Arch and Artix
+the default always is newer. Put it in your shell profile and every future terminal has it.
+Then `cargo test --workspace`, and `flutter run` from `flutter_ui/` to launch the app.
+
+Linux used to need a second export here, to undo a macOS folder the repo's
+`.cargo/config.toml` handed to every platform. That setting is gone (K-204) and Linux is
+plain again; if you are looking at an older checkout, deleting the `[env]` block from
+`.cargo/config.toml` is what the fix amounted to.
 
 One honest caveat: the build needs FFmpeg **7**, and some distributions still ship
 FFmpeg 6 — Ubuntu 24.04 LTS is the big one. On those, `cargo build` will complain about
@@ -2227,6 +2245,43 @@ The platform recipes above are exactly what CI does, written out by hand in
 Mesa's *lavapipe*, a Vulkan driver that renders on the CPU, so the GPU tests actually run on
 a machine with no graphics card in it. And a sixth job builds the Flatpak, which is how we
 know the packaging works and not just the code.
+
+A rule the FFmpeg episode above taught, worth stating on its own: **a CI job that sets up
+something a contributor would not have set up is not testing the contributor's build.** The
+Linux jobs used to hand the build an explicit FFmpeg location before compiling, which meant
+they never took the route a person with FFmpeg installed normally takes — and so they
+stayed green for weeks while nobody could actually clone the repository on Linux and build
+it. The jobs now leave that route alone and let the build find FFmpeg the ordinary way. If
+a step exists purely to make CI work, ask who else has to run it.
+
+### How Lumit knows how much memory your machine has (K-194, K-204)
+
+Settings → Performance lets you type a cache size in megabytes, which means the engine
+needs a real ceiling to check it against — offering to cache 64 GB on a 16 GB machine is
+just a way to make everything swap to disk and crawl. So the bridge has two small
+questions it can ask the operating system: how much RAM is installed, and how much memory
+the graphics card has.
+
+There is no one way to ask, because each operating system answers differently. Windows has
+a single call for it. macOS has a general-purpose "ask the kernel a named question"
+mechanism, and the question is called `hw.memsize`. Linux does not have a call at all: it
+exposes a plain text file, `/proc/meminfo`, whose first line reads something like
+`MemTotal: 16264532 kB`, and you read the number out of it. Three implementations, one
+answer, and — this is the important habit — **every one of them returns 0 rather than
+guessing** if the answer does not come back. The interface treats 0 as "not known here" and
+falls back to a documented ceiling of its own, which is honest, where a made-up number
+would quietly be wrong.
+
+One oddity you will notice: on a 16 GB Linux machine the number comes back as roughly
+15.5 GB, not 16. That is not a bug and it is not worth correcting. Linux reports the memory
+*the kernel can actually use*, and some was already taken before the kernel started — by
+the firmware, and by an integrated graphics chip carving out its share. The 16 GB is what
+you bought; the 15.5 GB is what is there to spend. For deciding how big a cache may be, the
+smaller of the two is the one you want, so reporting slightly low errs in the safe
+direction. The video-memory answer leans the same way for the same reason: on a machine
+with both an integrated and a discrete graphics chip it reports whichever the system lists
+first, which may be the smaller one — again, a ceiling that is too low costs you some
+speed, while one that is too high costs you the session.
 
 ## 9. The Flutter frontend, in plain terms
 
@@ -2309,6 +2364,31 @@ implementation took, only the widely-supported external-memory feature. The
 format is reported to Flutter as the DRM code `DRM_FORMAT_ABGR8888` (which, in
 DRM's little-endian naming, means bytes in memory order red, green, blue, alpha —
 matching what Flutter samples) with a "linear" modifier.
+
+**Who owns the descriptor: the one rule the DMA-BUF path lives by.** A file
+descriptor is just a small number — an index into a table the operating system
+keeps for the program, saying "slot 7 is this piece of graphics memory". Closing a
+descriptor means giving that slot back. The catch is that the number itself
+carries no ownership: two parts of the program can hold the same number, and if
+both close it, the second close frees a slot that has *already* been handed out
+again — after which whoever now owns slot 7 finds someone else reading and writing
+it. That class of bug is miserable to find, because nothing fails at the moment of
+the mistake.
+
+Lumit's rule is therefore: **each side of the boundary owns its own descriptor.**
+The engine's Rust side owns the one it exported, and closes it when the shared
+image is thrown away. What crosses to Flutter is only the *number*, to look at.
+The Linux runner, when it registers the texture, immediately calls `dup()` — the
+operating system call that means "give me my own second descriptor pointing at the
+same thing" — and from then on it owns and closes only that copy. Neither side can
+close the other's, and neither has to know when the other is finished. It costs one
+table slot.
+
+The corollary is that a failed `dup()` is not something to shrug at. If it fails
+and the runner carries on with an invalid descriptor, the import quietly produces
+nothing and the Viewer is black for the whole session with no error anywhere. So
+the runner checks it and refuses the registration, which the Dart side reads as
+"this path is not available" — a visible fallback instead of an invisible failure.
 
 **macOS gets it too, via IOSurface (K-195).** The third platform, the third name
 for the same idea. Apple's primitive for "two parts of a program pointing at one

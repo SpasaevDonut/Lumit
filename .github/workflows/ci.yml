@@ -18,8 +18,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Install FFmpeg (keg-only, matches .cargo/config.toml)
-        run: brew install ffmpeg@7
+      # ffmpeg@7 is keg-only, so pkg-config cannot find it on its default search
+      # path; the build is pointed at the keg explicitly. This lives here, not in
+      # .cargo/config.toml, because Cargo's [env] has no per-target form and the
+      # macOS path injected on Linux made rusty_ffmpeg's build script panic (K-204).
+      - name: Install FFmpeg (keg-only) and point pkg-config at it
+        run: |
+          brew install ffmpeg@7
+          echo "FFMPEG_PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig" >> "$GITHUB_ENV"
       - name: FFmpeg version for the cache key (Cellar paths are versioned;
               a cached rusty_ffmpeg build script must not outlive its keg)
         id: ffver
@@ -121,7 +127,16 @@ jobs:
           # pkg-config would emit -L/-I paths that do not exist here. Point
           # them at where we actually unpacked.
           sed -i "s|^prefix=.*|prefix=$root|" "$root"/lib/pkgconfig/*.pc
-          echo "FFMPEG_PKG_CONFIG_PATH=$root/lib/pkgconfig" >> "$GITHUB_ENV"
+          # PKG_CONFIG_PATH, *not* FFMPEG_PKG_CONFIG_PATH (K-204). Setting the
+          # latter takes rusty_ffmpeg's explicit-override branch, which is the one
+          # macOS and Windows need and which no Linux contributor uses: a distro
+          # install puts the .pc files on pkg-config's ordinary search path and
+          # leaves the variable unset. Exporting the override here was masking
+          # exactly that — it is how a broken .cargo/config.toml passed CI while
+          # every fresh Linux clone failed. Adding to PKG_CONFIG_PATH exercises
+          # the contributor's code path with a pinned FFmpeg 7.1 (the runner's
+          # own distro still ships FFmpeg 6, so the tarball stays).
+          echo "PKG_CONFIG_PATH=$root/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$root/lib" >> "$GITHUB_ENV"
           echo "$root/bin" >> "$GITHUB_PATH"
       # bindgen wants LLVM 18 exactly (newer libclang makes it emit opaque FFI
@@ -179,7 +194,9 @@ jobs:
           # The tarball's .pc files carry the build machine's prefix; point them
           # at where we unpacked (mirrors the `linux` job).
           sed -i "s|^prefix=.*|prefix=$root|" "$root"/lib/pkgconfig/*.pc
-          echo "FFMPEG_PKG_CONFIG_PATH=$root/lib/pkgconfig" >> "$GITHUB_ENV"
+          # PKG_CONFIG_PATH, not FFMPEG_PKG_CONFIG_PATH — the contributor's path
+          # (K-204); see the `linux` job for why.
+          echo "PKG_CONFIG_PATH=$root/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$root/lib" >> "$GITHUB_ENV"
           echo "$root/bin" >> "$GITHUB_PATH"
       - name: Point bindgen at libclang
@@ -237,16 +254,30 @@ jobs:
         env:
           LUMIT_NO_ZERO_COPY_VIEWER: "1"
         run: flutter test --concurrency=1
-      # Compile the Linux DMA-BUF zero-copy Viewer path (K-177): the Vulkan/ash
-      # export code lives behind `shared-texture-linux` and cfg(target_os =
-      # "linux"), so it is only ever type-checked here (the authoring box is
-      # Windows). This is the CI gate that proves the Rust half of the Linux
-      # shared-texture path builds; the runtime verification is the collaborator's
-      # (docs/GUIDE §9).
-      - name: Compile-check the Linux DMA-BUF path (shared-texture-linux)
-        run: cargo check -p lumit_bridge --features shared-texture-linux
+      # Lint the Linux DMA-BUF zero-copy Viewer path (K-177): the Vulkan/ash
+      # export code in `lumit-gpu/src/shared_linux.rs` lives behind
+      # `shared-texture-linux` and cfg(target_os = "linux"), so it is only ever
+      # compiled here (the authoring box is Windows).
+      #
+      # It is named explicitly, with the feature spelled out, on purpose. The
+      # `linux` job's `cargo clippy --workspace` does reach this file today —
+      # the bridge has `shared-texture-linux` on by default and resolver 3
+      # unifies that down to lumit-gpu — but that is coverage by side effect: a
+      # future default-feature change or a `--no-default-features` run would drop
+      # it silently and nobody would notice until a Linux user did. This step
+      # says what it covers, so it cannot stop covering it by accident.
+      #
+      # `-D warnings` matches the rest of CI. The runtime verification (does a
+      # picture actually appear) is not CI-testable on a GPU-less runner and
+      # stays the collaborator's (docs/GUIDE §9).
+      - name: Lint the Linux DMA-BUF path (shared-texture-linux)
+        run: cargo clippy -p lumit-gpu --all-targets --features shared-texture-linux -- -D warnings
       # The real gate: the Flutter Linux runner (linux/, GTK, the multi-window
-      # plugin's Linux side) compiles and links.
+      # plugin's Linux side) compiles and links. That includes
+      # `linux/runner/viewer_texture_bridge.cc` — it is listed unconditionally in
+      # `linux/runner/CMakeLists.txt` and is not behind any feature or define, so
+      # this step is the compile gate for the C++ half of the zero-copy Viewer,
+      # the same way the clippy step above is for the Rust half.
       - name: flutter build linux --release
         working-directory: flutter_ui
         run: flutter build linux --release
@@ -324,8 +355,12 @@ jobs:
         with:
           components: llvm-tools-preview
       - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Install FFmpeg (keg-only, matches .cargo/config.toml)
-        run: brew install ffmpeg@7
+      # Keg-only, as in the `check` job above: point pkg-config at the keg here
+      # rather than in .cargo/config.toml (K-204).
+      - name: Install FFmpeg (keg-only) and point pkg-config at it
+        run: |
+          brew install ffmpeg@7
+          echo "FFMPEG_PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig" >> "$GITHUB_ENV"
       - name: FFmpeg version for the cache key
         id: ffver
         run: echo "v=$(brew list --versions ffmpeg@7 | awk '{print $2}')" >> "$GITHUB_OUTPUT"

@@ -8,9 +8,17 @@
 //! pretending, so a platform without an implementation is honest rather than
 //! wrong.
 //!
-//! Windows is the shipped target (K-033) and is the only one implemented:
-//! `GlobalMemoryStatusEx` for installed RAM, and the first DXGI adapter's
-//! dedicated video memory for VRAM.
+//! Windows is the shipped target (K-033), but installed RAM is answerable on
+//! every supported desktop target (K-082), so all three answer it (K-204):
+//! `GlobalMemoryStatusEx` on Windows, `MemTotal:` from `/proc/meminfo` on
+//! Linux, and the `hw.memsize` sysctl on macOS. Windows and macOS report the
+//! installed total; Linux's `MemTotal` is *usable* RAM, which excludes what
+//! firmware and an integrated GPU reserved before the kernel booted (about
+//! 15.5 GB on a 16 GB host). That errs low, which is the safe direction for a
+//! budget ceiling — the same choice `video_memory_bytes` makes below.
+//!
+//! Video memory stays Windows-only: the first DXGI adapter's dedicated video
+//! memory, with 0 elsewhere.
 
 use flutter_rust_bridge::frb;
 
@@ -31,7 +39,57 @@ pub fn system_memory_bytes() -> u64 {
         }
         0
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(meminfo) = std::fs::read_to_string("/proc/meminfo") {
+            for line in meminfo.lines() {
+                if line.starts_with("MemTotal:") {
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    if parts.len() >= 2 {
+                        if let Ok(kb) = parts[1].parse::<u64>() {
+                            return kb * 1024;
+                        }
+                    }
+                }
+            }
+        }
+        0
+    }
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn sysctlbyname(
+                name: *const std::os::raw::c_char,
+                oldp: *mut std::os::raw::c_void,
+                oldlenp: *mut usize,
+                newp: *mut std::os::raw::c_void,
+                newlen: usize,
+            ) -> std::os::raw::c_int;
+        }
+
+        let mut memsize: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        let name = c"hw.memsize";
+        // SAFETY: `name` is a NUL-terminated literal that outlives the call;
+        // `memsize` is a zeroed u64 and `len` its size, which matches
+        // `hw.memsize`'s uint64_t, so sysctl has room for exactly what it
+        // writes; `newp`/`newlen` are the documented null/0 for a read. The
+        // return code is checked before `memsize` is trusted.
+        let ret = unsafe {
+            sysctlbyname(
+                name.as_ptr(),
+                &mut memsize as *mut _ as *mut _,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if ret == 0 && memsize > 0 {
+            return memsize;
+        }
+        0
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         0
     }
