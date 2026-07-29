@@ -2764,6 +2764,10 @@ fn rename_label_and_matte_each_undo_in_one_step() {
         "one undo step removes the matte"
     );
 }
+<<<<<<< HEAD
+=======
+}
+>>>>>>> d05ba1a (feat(bridge): implement system_memory_bytes for Linux via /proc/meminfo)
 
 // ---------------------------------------------------------------------------
 // The keymap (docs/07 §15, K-199)
@@ -3083,4 +3087,13 @@ fn an_effect_is_modified_on_arrival_and_animated_only_once_keyed() {
             .is_empty(),
         "nothing on it is keyframed yet"
     );
+}
+
+#[test]
+fn system_memory_bytes_reports_non_zero_on_supported_platforms() {
+    #[cfg(any(windows, target_os = "linux"))]
+    {
+        let mem = crate::api::system::system_memory_bytes();
+        assert!(mem > 0, "system memory should be positive on Linux/Windows");
+    }
 }
