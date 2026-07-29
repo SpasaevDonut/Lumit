@@ -173,7 +173,7 @@ impl SharedDmabuf {
                         sample_count: 1,
                         dimension: wgpu::TextureDimension::D2,
                         format: SHARED_FORMAT,
-                        usage: wgpu::TextureUsages::COPY_DST,
+                        usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
                         view_formats: &[],
                     },
                 )
@@ -231,6 +231,18 @@ impl SharedDmabuf {
     }
 }
 
+impl Drop for SharedDmabuf {
+    fn drop(&mut self) {
+        if self.fd >= 0 {
+            use std::os::fd::FromRawFd;
+            unsafe {
+                let _ = std::os::fd::OwnedFd::from_raw_fd(self.fd);
+            }
+            self.fd = -1;
+        }
+    }
+}
+
 /// What [`create_exportable_image`] hands back out of the `as_hal` closure.
 struct Created {
     hal_texture: wgpu::hal::vulkan::Texture,
@@ -269,7 +281,7 @@ unsafe fn create_exportable_image(
         .array_layers(1)
         .samples(vk::SampleCountFlags::TYPE_1)
         .tiling(vk::ImageTiling::LINEAR)
-        .usage(vk::ImageUsageFlags::TRANSFER_DST)
+        .usage(vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED)
         .sharing_mode(vk::SharingMode::EXCLUSIVE)
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .push_next(&mut external_image);
@@ -343,7 +355,7 @@ unsafe fn create_exportable_image(
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: SHARED_FORMAT,
-            usage: wgpu::hal::TextureUses::COPY_DST,
+            usage: wgpu::hal::TextureUses::COPY_DST | wgpu::hal::TextureUses::RESOURCE,
             memory_flags: wgpu::hal::MemoryFlags::empty(),
             view_formats: vec![],
         };

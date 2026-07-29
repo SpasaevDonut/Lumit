@@ -21,6 +21,10 @@
 G_DECLARE_FINAL_TYPE(LumitDmabufTexture, lumit_dmabuf_texture, LUMIT,
                      DMABUF_TEXTURE, FlTextureGL)
 
+#ifndef GL_TEXTURE_EXTERNAL_OES
+#define GL_TEXTURE_EXTERNAL_OES 0x8D65
+#endif
+
 struct _LumitDmabufTexture {
   FlTextureGL parent_instance;
 
@@ -37,7 +41,9 @@ struct _LumitDmabufTexture {
   gboolean created;
   gboolean failed;
   GLuint gl_texture;
+  GLenum target;
   EGLImageKHR egl_image;
+  uint64_t presented;
 };
 
 G_DEFINE_TYPE(LumitDmabufTexture, lumit_dmabuf_texture, fl_texture_gl_get_type())
@@ -70,6 +76,10 @@ static gboolean lumit_dmabuf_texture_create(LumitDmabufTexture* self,
   // The EGL_LINUX_DMA_BUF_EXT attribute list (mirrors the reference plugin). The
   // modifier attributes are appended only for a non-linear buffer; the engine's
   // linear-tiling path reports modifier 0, so they are usually omitted.
+#ifndef EGL_IMAGE_PRESERVED_KHR
+#define EGL_IMAGE_PRESERVED_KHR 0x30D2
+#endif
+
   EGLint attribs[30];
   int i = 0;
   attribs[i++] = EGL_LINUX_DRM_FOURCC_EXT;
@@ -84,31 +94,49 @@ static gboolean lumit_dmabuf_texture_create(LumitDmabufTexture* self,
   attribs[i++] = static_cast<EGLint>(self->offset);
   attribs[i++] = EGL_DMA_BUF_PLANE0_PITCH_EXT;
   attribs[i++] = static_cast<EGLint>(self->stride);
-  if (self->modifier != 0) {
-    attribs[i++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
-    attribs[i++] = static_cast<EGLint>(self->modifier & 0xFFFFFFFF);
-    attribs[i++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
-    attribs[i++] = static_cast<EGLint>(self->modifier >> 32);
-  }
+  attribs[i++] = EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT;
+  attribs[i++] = static_cast<EGLint>(self->modifier & 0xFFFFFFFF);
+  attribs[i++] = EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT;
+  attribs[i++] = static_cast<EGLint>(self->modifier >> 32);
+  attribs[i++] = EGL_IMAGE_PRESERVED_KHR;
+  attribs[i++] = EGL_TRUE;
   attribs[i++] = EGL_NONE;
 
   EGLImageKHR image = create_image(display, EGL_NO_CONTEXT,
                                    EGL_LINUX_DMA_BUF_EXT, nullptr, attribs);
   if (image == EGL_NO_IMAGE_KHR) {
+    EGLint err = eglGetError();
     g_set_error(error, g_quark_from_static_string("lumit"), 0,
-                "eglCreateImageKHR failed for the dma-buf");
+                "eglCreateImageKHR failed for the dma-buf (err=0x%x)", err);
     return FALSE;
   }
 
+  // Clear any existing GL errors before calling image_target_texture
+  while (glGetError() != GL_NO_ERROR) {}
+
   GLuint texture = 0;
   glGenTextures(1, &texture);
+  GLenum target = GL_TEXTURE_2D;
+
   glBindTexture(GL_TEXTURE_2D, texture);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
   image_target_texture(GL_TEXTURE_2D, image);
+  if (glGetError() != GL_NO_ERROR) {
+    while (glGetError() != GL_NO_ERROR) {}
+    target = GL_TEXTURE_EXTERNAL_OES;
+    glBindTexture(target, texture);
+    glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    image_target_texture(target, image);
+  }
+  glBindTexture(target, 0);
 
+  self->target = target;
   self->egl_image = image;
   self->gl_texture = texture;
   return TRUE;
@@ -131,7 +159,8 @@ static gboolean lumit_dmabuf_texture_populate(FlTextureGL* texture,
     }
     self->created = TRUE;
   }
-  *target = GL_TEXTURE_2D;
+  self->presented++;
+  *target = self->target;
   *name = self->gl_texture;
   *width = self->width;
   *height = self->height;
@@ -140,9 +169,20 @@ static gboolean lumit_dmabuf_texture_populate(FlTextureGL* texture,
 
 static void lumit_dmabuf_texture_dispose(GObject* object) {
   LumitDmabufTexture* self = LUMIT_DMABUF_TEXTURE(object);
-  // Best-effort teardown. The EGLImage/GL texture are freed when the GL context
-  // is torn down; we cannot delete them here without a current context. Closing
-  // the fd is always safe and releases the DMA-BUF's descriptor.
+  if (self->egl_image != nullptr) {
+    static PFNEGLDESTROYIMAGEKHRPROC destroy_image =
+        reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(
+            eglGetProcAddress("eglDestroyImageKHR"));
+    EGLDisplay display = eglGetCurrentDisplay();
+    if (destroy_image != nullptr && display != EGL_NO_DISPLAY) {
+      destroy_image(display, self->egl_image);
+    }
+    self->egl_image = nullptr;
+  }
+  if (self->gl_texture != 0) {
+    glDeleteTextures(1, &self->gl_texture);
+    self->gl_texture = 0;
+  }
   if (self->fd >= 0) {
     close(self->fd);
     self->fd = -1;
@@ -159,6 +199,7 @@ static void lumit_dmabuf_texture_init(LumitDmabufTexture* self) {
   self->fd = -1;
   self->created = FALSE;
   self->failed = FALSE;
+  self->presented = 0;
 }
 
 static LumitDmabufTexture* lumit_dmabuf_texture_new(int fd, uint32_t width,
@@ -169,7 +210,7 @@ static LumitDmabufTexture* lumit_dmabuf_texture_new(int fd, uint32_t width,
                                                     uint64_t modifier) {
   LumitDmabufTexture* self = LUMIT_DMABUF_TEXTURE(
       g_object_new(lumit_dmabuf_texture_get_type(), nullptr));
-  self->fd = fd;
+  self->fd = dup(fd);
   self->width = width;
   self->height = height;
   self->stride = stride;
@@ -238,12 +279,14 @@ static void handle_frame_ready(ViewerTextureBridge* bridge, FlValue* args,
                                FlMethodCall* call) {
   int64_t id = GetInt(args, "textureId", 0);
   gpointer texture = g_hash_table_lookup(bridge->textures, GINT_TO_POINTER(id));
+  int64_t presented = 0;
   if (texture != nullptr) {
     fl_texture_registrar_mark_texture_frame_available(
         bridge->registrar, FL_TEXTURE(texture));
+    presented = static_cast<int64_t>(LUMIT_DMABUF_TEXTURE(texture)->presented);
   }
   g_autoptr(FlMethodResponse) response =
-      FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_null()));
+      FL_METHOD_RESPONSE(fl_method_success_response_new(fl_value_new_int(presented)));
   fl_method_call_respond(call, response, nullptr);
 }
 

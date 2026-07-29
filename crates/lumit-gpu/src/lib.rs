@@ -51,41 +51,28 @@ impl GpuContext {
 
     /// Headless context (tests, future CLI export).
     pub fn headless() -> Result<Self, GpuError> {
-        // When the zero-copy Viewer path is compiled in (K-177), pin the D3D12
-        // backend: the shared-texture hand-off reaches through wgpu to its D3D12
-        // device, so the renderer must actually be on D3D12 (not Vulkan). This
-        // only changes which Windows backend is chosen, not any pixel maths, and
-        // only in the opt-in shared-texture build; every other build is
-        // unchanged. Without the feature (or off Windows) this is the same
-        // all-backends instance as before.
-        #[cfg(all(windows, feature = "shared-texture"))]
+        #[cfg(windows)]
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::DX12,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::from_env_or_default()
         });
-        // On Linux the DMA-BUF hand-off reaches through wgpu to its Vulkan device,
-        // so pin the Vulkan backend in the opt-in build (the analogue of pinning
-        // D3D12 on Windows). Every other build is unchanged.
-        #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
+        // On Linux pin Vulkan explicitly. On a hybrid iGPU+dGPU box (e.g. AMD + Nvidia)
+        // mixing GL and Vulkan into one enumeration makes PowerPreference::HighPerformance
+        // pick unreliably (commonly picking the AMD iGPU driving the display), which can
+        // cause VRAM exhaustion during command submission. Pinning Vulkan here prevents that,
+        // matching the DX12 pinning on Windows.
+        #[cfg(target_os = "linux")]
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::from_env_or_default()
         });
-        // On macOS the IOSurface hand-off reaches through wgpu to its Metal
-        // device, so pin the Metal backend in the opt-in build (the analogue of
-        // pinning D3D12 on Windows). Metal is what wgpu would pick there anyway;
-        // pinning only makes the requirement explicit.
-        #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
+        #[cfg(target_os = "macos")]
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::METAL,
-            ..Default::default()
+            ..wgpu::InstanceDescriptor::from_env_or_default()
         });
-        #[cfg(not(any(
-            all(windows, feature = "shared-texture"),
-            all(target_os = "linux", feature = "shared-texture-linux"),
-            all(target_os = "macos", feature = "shared-texture-macos")
-        )))]
-        let instance = wgpu::Instance::default();
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::from_env_or_default());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
@@ -112,6 +99,21 @@ impl GpuContext {
         let (device, queue) =
             pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
                 .map_err(|e| GpuError::Device(e.to_string()))?;
+
+        {
+            let info = adapter.get_info();
+            eprintln!(
+                "lumit-gpu: adapter selected: {} ({:?}, backend {:?}, driver {})",
+                info.name, info.device_type, info.backend, info.driver_info,
+            );
+        }
+        device.on_uncaptured_error(Box::new(|e| {
+            eprintln!("lumit-gpu: uncaptured wgpu error: {e}");
+        }));
+        device.set_device_lost_callback(|reason, msg| {
+            eprintln!("lumit-gpu: device lost ({reason:?}): {msg}");
+        });
+
         Ok(Self {
             device,
             queue,
