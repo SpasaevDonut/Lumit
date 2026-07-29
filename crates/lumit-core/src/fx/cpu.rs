@@ -91,6 +91,80 @@ pub fn apply(rgba: &mut [f32], w: u32, h: u32, fx: &Resolved) {
             gain_b,
             mix,
         } => temperature(rgba, *gain_r, *gain_b, *mix),
+        // CC Image Wipe needs the gradient texture — a CPU-only `apply`
+        // has no access to it, so this is a no-op (identical to how
+        // `Resolved::Dof` is a no-op in the CPU oracle). The §1.6 oracle
+        // lives in the GPU test where both source and gradient are available.
+        Resolved::CcImageWipe { .. } => {}
+        Resolved::BbDumbassSweep {
+            completion,
+            dir_cos,
+            dir_sin,
+            line_cos,
+            line_sin,
+            line_count,
+            fragment_count,
+            flip,
+            mix,
+        } => cc_line_sweep_seq(
+            rgba, w, h,
+            *completion, *dir_cos, *dir_sin,
+            *line_cos, *line_sin,
+            *line_count, *fragment_count, *flip, *mix,
+        ),
+        Resolved::CcLineSweep {
+            completion,
+            dir_cos,
+            dir_sin,
+            line_cos,
+            line_sin,
+            line_count,
+            fragment_count,
+            line_delay,
+            flip,
+            mix,
+        } => cc_line_sweep_cascade(
+            rgba, w, h,
+            *completion, *dir_cos, *dir_sin,
+            *line_cos, *line_sin,
+            *line_count, *fragment_count, *line_delay,
+            *flip, *mix,
+        ),
+        Resolved::VenetianBlinds {
+            completion,
+            dir_cos,
+            dir_sin,
+            line_count,
+            stagger,
+            flip,
+            mix,
+        } => venetian_blinds(
+            rgba, w, h,
+            *completion, *dir_cos, *dir_sin,
+            *line_count, *stagger, *flip, *mix,
+        ),
+        Resolved::Levels {
+            channel,
+            in_black,
+            in_white,
+            gamma,
+            out_black,
+            out_white,
+            clip_black,
+            clip_white,
+            mix,
+        } => levels(
+            rgba,
+            *channel,
+            *in_black,
+            *in_white,
+            *gamma,
+            *out_black,
+            *out_white,
+            *clip_black,
+            *clip_white,
+            *mix,
+        ),
         Resolved::Invert { mix } => invert(rgba, *mix),
         Resolved::Tint { black, white, mix } => tint(rgba, *black, *white, *mix),
         Resolved::Transform {
@@ -679,6 +753,107 @@ pub fn gamma(rgba: &mut [f32], gamma: f32, mix: f32) {
             let curved = u[c].max(0.0).powf(inv);
             let graded = curved * a;
             px[c] = px[c] * (1.0 - mix) + graded * mix;
+        }
+    }
+}
+
+/// Levels (AE-style transfer function): remaps [in_black, in_white] ⇒ [0, 1],
+/// clamps to [0, 1], applies gamma (pow(p, 1/gamma)), then remaps to
+/// [out_black, out_white] with optional clip-to-output checkboxes. Operates on
+/// unpremultiplied colour per RGB channel (the same §2.2 reason Contrast and
+/// Gamma use), re-premultiplied on the way out. Defaults
+/// (in_black=0, in_white=1, gamma=1, out_black=0, out_white=1, clips off)
+/// produce the bit-exact identity — the short-circuit checks that first.
+/// `in_white != out_white` is the common non-identity case. Clips are clamped
+/// per channel after re-premultiply, so a pixel below out_black hits exactly
+/// out_black·a on output.
+#[allow(clippy::too_many_arguments)]
+pub fn levels(
+    rgba: &mut [f32],
+    channel: u32,
+    in_black: f32,
+    in_white: f32,
+    gamma: f32,
+    out_black: f32,
+    out_white: f32,
+    clip_black: bool,
+    clip_white: bool,
+    mix: f32,
+) {
+    // Neutral short-circuit: at defaults the transform is the identity.
+    if in_black == 0.0
+        && in_white == 1.0
+        && gamma == 1.0
+        && out_black == 0.0
+        && out_white == 1.0
+        && !clip_black
+        && !clip_white
+    {
+        return; // bit-exact identity
+    }
+    let inv = 1.0 / gamma;
+    let in_range = in_white - in_black;
+    let out_range = out_white - out_black;
+    // Per-pixel levels transform on one channel. `u` is the unpremultiplied
+    // colour (used for R/G/B channels). For alpha mode, the transform is
+    // applied directly to the premultiplied alpha.
+    let level = |v: f32| -> f32 {
+        let mut r = if in_range != 0.0 {
+            (v - in_black) / in_range
+        } else {
+            0.0
+        };
+        r = r.clamp(0.0, 1.0);
+        if gamma != 1.0 {
+            r = r.max(0.0).powf(inv);
+        }
+        r = r * out_range + out_black;
+        if clip_black {
+            r = r.max(out_black);
+        }
+        if clip_white {
+            r = r.min(out_white);
+        }
+        r
+    };
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3];
+        match channel {
+            1 => {
+                // Red only
+                let u = unpremult(px);
+                let v = level(u[0]);
+                let graded = v * a;
+                px[0] = px[0] * (1.0 - mix) + graded * mix;
+            }
+            2 => {
+                // Green only
+                let u = unpremult(px);
+                let v = level(u[1]);
+                let graded = v * a;
+                px[1] = px[1] * (1.0 - mix) + graded * mix;
+            }
+            3 => {
+                // Blue only
+                let u = unpremult(px);
+                let v = level(u[2]);
+                let graded = v * a;
+                px[2] = px[2] * (1.0 - mix) + graded * mix;
+            }
+            4 => {
+                // Alpha only (no unpremultiply needed)
+                let v = level(a);
+                px[3] = a * (1.0 - mix) + v * mix;
+            }
+            _ => {
+                // RGB (default)
+                let u = unpremult(px);
+                for c in 0..3 {
+                    let v = level(u[c]);
+                    let graded = v * a;
+                    px[c] = px[c] * (1.0 - mix) + graded * mix;
+                }
+            }
         }
     }
 }
@@ -1886,5 +2061,250 @@ pub fn scanlines(
                 rgba[i + ch] = original[i + ch] * (1.0 - mix) + c[ch] * mix;
             }
         }
+    }
+}
+
+/// CC Line Sweep (AE-style strip cascade): each stripe does a fragment-by-
+/// fragment horizontal sweep. Stripes start from the `direction` edge and
+/// progress across the frame. Line Delay staggers successive stripes by
+/// a configurable number of fragment-widths, creating a ladder cascade.
+#[allow(clippy::too_many_arguments)]
+pub fn cc_line_sweep_cascade(
+    rgba: &mut [f32],
+    w: u32, h: u32,
+    completion: f32,
+    dir_cos: f32, dir_sin: f32,
+    line_cos: f32, line_sin: f32,
+    line_count: i32,
+    fragment_count: i32,
+    line_delay: i32,
+    flip: bool,
+    mix: f32,
+) {
+    if completion <= 0.0 { return; }
+    if completion >= 1.0 && mix >= 1.0 { rgba.fill(0.0); return; }
+    let n = (w * h) as usize;
+    if rgba.len() < n * 4 { return; }
+    let nf = line_count.max(1) as f32;
+    let frag_n = fragment_count.max(1) as f32;
+    let delay = line_delay.max(0) as f32;
+    let total_steps = ((line_count.max(1) - 1) as f32) * (frag_n + delay) + frag_n;
+    for i in 0..n {
+        let off = i * 4;
+        let u = ((i as u32 % w) as f32 + 0.5) / w as f32;
+        let v = ((i as u32 / w) as f32 + 0.5) / h as f32;
+        let p_stripe = (u * dir_cos + v * dir_sin).clamp(0.0, 1.0);
+        let p_line = (u * line_cos + v * line_sin).clamp(0.0, 1.0);
+        let stripe_id = (p_stripe * nf).floor().max(0.0).min(nf - 1.0) as i32;
+        let frag_id = (p_line * frag_n).floor().max(0.0).min(frag_n - 1.0);
+        // Cascade: flip=true reverses stripe ordering (near edge first instead
+        // of far edge first) rather than flipping alpha, so both endpoints
+        // stay correct: 0% = fully visible, 100% = fully transparent.
+        let start_first = if flip {
+            stripe_id as f32
+        } else {
+            (nf - 1.0) - stripe_id as f32
+        };
+        let step = start_first * (frag_n + delay) + frag_id;
+        let frag_limit = step / total_steps;
+        let alpha: f32 = if completion >= frag_limit { 0.0 } else { 1.0 };
+        let reveal = alpha;
+        let weight = reveal * mix + (1.0 - mix);
+        rgba[off] *= weight;
+        rgba[off + 1] *= weight;
+        rgba[off + 2] *= weight;
+        rgba[off + 3] *= weight;
+    }
+}
+
+/// CC Line Sweep (original sequential wave wipe, shared with BB Dumbass
+/// Sweep): stripes disappear one by one as a sweep front moves across the
+/// screen. Fragment Count sub-divides each stripe into rectangular cells.
+#[allow(clippy::too_many_arguments)]
+pub fn cc_line_sweep_seq(
+    rgba: &mut [f32],
+    w: u32,
+    h: u32,
+    completion: f32,
+    dir_cos: f32,
+    dir_sin: f32,
+    line_cos: f32,
+    line_sin: f32,
+    line_count: i32,
+    fragment_count: i32,
+    flip: bool,
+    mix: f32,
+) {
+    if completion <= 0.0 { return; }        // identity — wipe hasn't started
+    if completion >= 1.0 && mix >= 1.0 { rgba.fill(0.0); return; } // fully transparent
+    let n = (w * h) as usize;
+    if rgba.len() < n * 4 { return; }
+    let nf = line_count as f32;
+    let frag_n = fragment_count as f32;
+    for i in 0..n {
+        let off = i * 4;
+        let u = ((i as u32 % w) as f32 + 0.5) / w as f32;
+        let v = ((i as u32 / w) as f32 + 0.5) / h as f32;
+        let p_stripe = (u * dir_cos + v * dir_sin).clamp(0.0, 1.0);
+        let p_line = (u * line_cos + v * line_sin).clamp(0.0, 1.0);
+        let s = p_stripe * nf;
+        let stripe_id = s.floor().max(0.0) as i32;
+        let line_phase = (p_line * nf) - (p_line * nf).floor();
+        let stripe_start = stripe_id as f32 / nf;
+        let stripe_duration = 1.0 / nf;
+        // Wipe mode: stripes start visible, become transparent as sweep passes.
+        // Fragment cascade: each fragment occupies its own completion sub-range
+        // within the stripe's time window, so they disappear one after another.
+        let alpha: f32 = if completion <= stripe_start {
+            1.0
+        } else {
+            let frag_id = (line_phase * frag_n).floor().min(frag_n - 1.0);
+            let frag_duration = stripe_duration / (frag_n.max(1.0));
+            let frag_end = stripe_start + (frag_id + 1.0) * frag_duration;
+            if completion >= frag_end { 0.0 } else { 1.0 }
+        };
+        let reveal = if flip { 1.0 - alpha } else { alpha };
+        let weight = reveal * mix + (1.0 - mix);
+        rgba[off] *= weight;
+        rgba[off + 1] *= weight;
+        rgba[off + 2] *= weight;
+        rgba[off + 3] *= weight;
+    }
+}
+
+/// Venetian Blinds (AE-style staggered-line wipe): reveals the layer stripe by
+/// stripe along a sweep angle. Each stripe gets a deterministic hash-based
+/// timing offset, producing a hard-edge line-by-line reveal. The step function
+/// is binary (no smoothstep), so thickness=0 behaviour is the default.
+#[allow(clippy::too_many_arguments)]
+pub fn venetian_blinds(
+    rgba: &mut [f32],
+    w: u32,
+    h: u32,
+    completion: f32,
+    dir_cos: f32,
+    dir_sin: f32,
+    line_count: i32,
+    stagger: f32,
+    flip: bool,
+    mix: f32,
+) {
+    // At completion 0 the wipe has not started — identity passthrough.
+    if completion <= 0.0 {
+        return;
+    }
+    // At completion 1 the wipe is complete — fully transparent.
+    if completion >= 1.0 && mix >= 1.0 {
+        rgba.fill(0.0);
+        return;
+    }
+    let n = (w * h) as usize;
+    if rgba.len() < n * 4 {
+        return;
+    }
+    let nf = line_count as f32;
+    for i in 0..n {
+        let off = i * 4;
+        let u = ((i as u32 % w) as f32 + 0.5) / w as f32;
+        let v = ((i as u32 / w) as f32 + 0.5) / h as f32;
+        // Project UV onto sweep direction.
+        let p = (u * dir_cos + v * dir_sin).clamp(0.0, 1.0);
+        // Discrete stripe indexing.
+        let s = p * nf;
+        let stripe_id = s.floor().max(0.0) as i32;
+        let phase = s - stripe_id as f32;
+        // Per-stripe offset via splitmix32 (same as Block glitch).
+        let hash = stripe_splitmix32(stripe_id as u32);
+        let offset = (hash as f64 / u32::MAX as f64) as f32 * stagger;
+        // Hard-edge cutoff: the stripe reveals at its unique completion point.
+        let cutoff = completion * (1.0 + stagger) - offset;
+        let alpha = if phase >= cutoff { 1.0 } else { 0.0 };
+        let reveal = if flip { 1.0 - alpha } else { alpha };
+        let weight = reveal * mix + (1.0 - mix);
+        rgba[off] *= weight;
+        rgba[off + 1] *= weight;
+        rgba[off + 2] *= weight;
+        rgba[off + 3] *= weight;
+    }
+}
+
+/// Deterministic 32-bit hash (identical to the WGSL splitmix32 in
+/// fx_venetian_blinds.wgsl and the shared Block glitch maths.rs splitmix32).
+/// Maps any stripe index to a uniformly distributed u32 value.
+fn stripe_splitmix32(mut x: u32) -> u32 {
+    x = x.wrapping_add(0x9e37_79b9);
+    x ^= x >> 16;
+    x = x.wrapping_mul(0x21f0_aaad);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x735a_2d97);
+    x ^= x >> 15;
+    x
+}
+
+/// CC Image Wipe reference (AE-style gradient-driven transition):
+/// the oracle for the §1.6 GPU test. Takes both source and gradient RGBA
+/// buffers at the same size; for each pixel a smoothstep (driven by the
+/// gradient's property channel vs completion) determines the wipe alpha,
+/// which is multiplied into the source pixel. Unlike most CPU references
+/// this is NOT called from `apply` — it is called directly from the GPU
+/// oracle test, because the gradient is a whole texture that `apply`
+/// cannot receive (same pattern as `dof_reference`).
+#[allow(clippy::too_many_arguments)]
+pub fn cc_image_wipe_reference(
+    rgba: &mut [f32],
+    grad: &[f32],
+    w: u32,
+    h: u32,
+    completion: f32,
+    softness: f32,
+    auto_soft: bool,
+    property: u32,
+    inverse: bool,
+    mix: f32,
+) {
+    // At completion 0 the wipe has not started — identity passthrough.
+    if completion <= 0.0 {
+        return;
+    }
+    // At completion 1 the wipe is complete — fully transparent regardless of
+    // inverse direction. The gradient-flip inverse only affects which
+    // luminance values wipe first at intermediate completions.
+    if completion >= 1.0 && mix >= 1.0 {
+        rgba.fill(0.0);
+        return;
+    }
+    let n = (w * h) as usize;
+    if rgba.len() < n * 4 || grad.len() < n * 4 {
+        return;
+    }
+    let eff_soft = if auto_soft {
+        (completion * (1.0 - completion) * 2.0).clamp(0.0, 1.0)
+    } else {
+        softness
+    };
+    let lo = (completion - eff_soft / 2.0).clamp(0.0, 1.0);
+    let hi = (completion + eff_soft / 2.0).clamp(0.0, 1.0);
+    for i in 0..n {
+        let off = i * 4;
+        let g = &grad[off..off + 4];
+        let grad_val = match property {
+            1 => g[0],
+            2 => g[1],
+            3 => g[2],
+            4 => g[3],
+            _ => g[0] * 0.299 + g[1] * 0.587 + g[2] * 0.114,
+        };
+        // Inverse: flip the gradient value so dark ↔ bright swap roles,
+        // rather than flipping alpha after smoothstep (which would swap
+        // the completion direction too).
+        let gv = if inverse { 1.0 - grad_val } else { grad_val };
+        let raw = (gv - lo) / (hi - lo);
+        let t = raw.clamp(0.0, 1.0);
+        let alpha = t * t * (3.0 - 2.0 * t);
+        let weight = alpha * mix + (1.0 - mix);
+        rgba[off] *= weight;
+        rgba[off + 1] *= weight;
+        rgba[off + 2] *= weight;
+        rgba[off + 3] *= weight; // premultiplied alpha — fade to transparent, not black
     }
 }

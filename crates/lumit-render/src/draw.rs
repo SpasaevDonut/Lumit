@@ -49,14 +49,15 @@ pub struct MatteDraw {
     pub lut_files: Vec<Option<String>>,
 }
 
-/// A depth-of-field depth input packaged for the compositor (docs/impl/
-/// layer-input.md §2): the referenced layer's **source** pixels, ready for
-/// [`crate::fxops::render_layer_input`] to resample into the consuming layer's
-/// working raster. The referenced layer is rendered source-only (its own
-/// effect stack is not applied), exactly as a matte source is — so a depth
-/// reference can never recurse into another effect, and the preview and export
-/// threads produce the same depth pass (K-031).
-pub struct DofInputDraw {
+/// A layer-input effect's referenced layer, packaged for the compositor
+/// (docs/impl/layer-input.md §2): the referenced layer's **source** pixels,
+/// ready for [`crate::fxops::render_layer_input`] to resample into the
+/// consuming layer's working raster. Used by DoF (depth layer), CC Image Wipe
+/// (gradient layer), and any future layer-input effect. The referenced layer
+/// is rendered source-only (its own effect stack is not applied), exactly as a
+/// matte source is — so a layer reference can never recurse, and preview and
+/// export produce the same input (K-031).
+pub struct LayerInputDraw {
     pub rgba: Vec<u8>,
     pub tex_w: u32,
     pub tex_h: u32,
@@ -169,15 +170,14 @@ pub struct CompLayerDraw {
     /// ops — the caller loads each path and passes the parallel `luts` to
     /// `run_ops`. No GPU work happens here; these are just the strings.
     pub lut_files: Vec<Option<String>>,
-    /// The depth inputs of the layer's enabled built-in `dof` effects (docs/08
-    /// §3.22, docs/impl/layer-input.md; None = unset/dangling). Because
-    /// `resolve_stack` keeps the same filter and order and a `dof` effect
-    /// always resolves to exactly one `Resolved::Dof`, this list is 1:1 and in
-    /// order with the stack's `Dof` ops — the caller renders each one alone at
-    /// comp size and passes the parallel `layer_inputs` to `run_ops`. Each
-    /// carries the referenced layer's source pixels; the GPU render happens in
-    /// `realise_segment`.
-    pub dof_inputs: Vec<Option<DofInputDraw>>,
+    /// The layer inputs of any effect that references another layer (DoF depth,
+    /// CC Image Wipe gradient, etc. — docs/08 §3.22, docs/impl/layer-input.md).
+    /// Because `resolve_stack` keeps the same filter and order, this list is 1:1
+    /// and in order with the stack's layer-input ops — the caller renders each
+    /// referenced layer alone at the consuming layer's raster size and passes
+    /// the parallel `layer_inputs` to `run_ops`. Each carries the referenced
+    /// layer's source pixels; the GPU render happens in `realise_segment`.
+    pub layer_inputs: Vec<Option<LayerInputDraw>>,
     /// Per-layer motion-blur sub-frame placements (docs/06 §4, K-120): the
     /// layer's own transform re-evaluated across the open shutter. Empty unless
     /// the comp master and the layer switch are both on (and samples ≥ 2), in

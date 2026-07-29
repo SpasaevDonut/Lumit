@@ -2048,7 +2048,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // the choppy stop-motion look. NOT a per-pixel op — it changes *what time*
     // the layers it covers render at, so it is detected and executed at the
     // frame-orchestration layer (the adjustment re-render seam in `draws`/`gpu`
-    // walk shared with export), never in `run_ops`; `resolve_stack`
+    // and export's `render_comp_linear`), never in `run_ops`; `resolve_stack`
     // deliberately has no arm for it, so it resolves to nothing. Category
     // Temporal, cheap (one render at the held time — often the SAME held time
     // across many frames). Scope chooses adjustment behaviour (Everything below,
@@ -2109,7 +2109,7 @@ pub const BUILTINS: &[EffectSchema] = &[
     // correct per sample (no blurred-depth artefact). NOT a per-pixel op: like
     // Posterize time it changes *what time the layers below it render at*, so it
     // is detected and executed at the frame-orchestration layer (the adjustment
-    // re-render seam shared with export), never in
+    // re-render seam in `draws`/`gpu` and export's `render_comp_linear`), never in
     // `run_ops`; `resolve_stack` deliberately has no arm for it, so it resolves to
     // nothing. An **adjustment** effect (docs/08 §1.5): it processes everything
     // below, so "apply to all layers" is just the effect on a full-frame
@@ -2454,6 +2454,400 @@ pub const BUILTINS: &[EffectSchema] = &[
                     default: [0.5, 0.5, 0.5, 1.0],
                     range: (0.0, 4.0),
                 },
+            },
+            MIX_PARAM,
+        ],
+    },
+    // Levels (AE-style transfer function, Tier 2 per docs/08 §4): remaps
+    // [in_black, in_white] to [0, 1], clamps to [0, 1], applies gamma
+    // (pow(p, 1/gamma)), then remaps to [out_black, out_white] with optional
+    // clip-to-output checkboxes and a Channel picker (RGB / Red / Green / Blue /
+    // Alpha). RGB mode operates on unpremultiplied colour per RGB channel: the
+    // input clamp + affine remap + non-linear power curve do not commute with
+    // premultiplied alpha, so premultiplied: false — the host wraps
+    // unpremultiply → level → re-premultiply, fused into the kernel, exactly
+    // like Contrast and Gamma. Single-colour modes (Red/Green/Blue) also
+    // unpremultiply/re-premultiply but only touch the selected channel. Alpha
+    // mode modifies alpha directly with no colour unwrap. Category Colour,
+    // beside its grade siblings.
+    EffectSchema {
+        groups: &[],
+        match_name: "levels",
+        label: "Levels",
+        version: 1,
+        category: FxCategory::Colour,
+        traits: EffectTraits {
+            cost: CostClass::Cheap,
+            roi: Roi::Exact,
+            temporal: &[0],
+            premultiplied: false, // §2.2: affine remap + power curve shifts matte edges
+            seeded: false,
+            beat_input: false,
+        },
+        params: &[
+            ParamSchema {
+                id: "channel",
+                label: "Channel",
+                // AE-style channel picker: default RGB, per-channel or alpha.
+                // Codes: 0 RGB, 1 Red, 2 Green, 3 Blue, 4 Alpha.
+                kind: ParamKind::Choice {
+                    options: &["RGB", "Red", "Green", "Blue", "Alpha"],
+                    default: 0,
+                    dividers_after: CHOICE_UNGROUPED,
+                },
+            },
+            ParamSchema {
+                id: "in_black",
+                label: "Input Black",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (-1.0, 1.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "in_white",
+                label: "Input White",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "gamma",
+                label: "Gamma",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.1, 4.0),
+                    hard: (Some(0.01), None),
+                },
+            },
+            ParamSchema {
+                id: "out_black",
+                label: "Output Black",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (-1.0, 1.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "out_white",
+                label: "Output White",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 4.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "clip_black",
+                label: "Clip to Output Black",
+                kind: ParamKind::Bool { default: false },
+            },
+            ParamSchema {
+                id: "clip_white",
+                label: "Clip to Output White",
+                kind: ParamKind::Bool { default: false },
+            },
+            MIX_PARAM,
+        ],
+    },
+    // CC Line Sweep (AE-style sequential wave wipe): reveals stripes one by
+    // one as a sweep front moves across the screen. Unlike Venetian Blinds
+    // where all stripes reveal simultaneously, CC Line Sweep completes each
+    // stripe's reveal BEFORE the next stripe starts — a wave motion. Line
+    // Count controls stripe density, Flip Direction inverts. No layer reference.
+    // Category Utility, beside Venetian Blinds and CC Image Wipe.
+    EffectSchema {
+        groups: &[],
+        match_name: "cclinesweep",
+        label: "CC Line Sweep",
+        version: 1,
+        category: FxCategory::Utility,
+        traits: EffectTraits {
+            cost: CostClass::Cheap,
+            roi: Roi::Exact,
+            temporal: &[0],
+            premultiplied: true,
+            seeded: false,
+            beat_input: false,
+        },
+        params: &[
+            ParamSchema {
+                id: "completion",
+                label: "Completion",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "direction",
+                label: "Direction",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 360.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "thickness",
+                label: "Line Count",
+                kind: ParamKind::Float {
+                    default: 10.0,
+                    slider: (1.0, 100.0),
+                    hard: (Some(1.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "fragment_count",
+                label: "Fragment Count",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (1.0, 100.0),
+                    hard: (Some(1.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "line_delay",
+                label: "Line Delay",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "line_angle",
+                label: "Line Angle",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 360.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "flip",
+                label: "Flip Direction",
+                kind: ParamKind::Bool { default: false },
+            },
+            MIX_PARAM,
+        ],
+    },
+    // BB Dumbass Sweep (AE-style sequential wave wipe copy): identical params
+    // to CC Line Sweep (wipe direction, line angle, fragment count, etc.).
+    EffectSchema {
+        groups: &[],
+        match_name: "bb_dumbass_sweep",
+        label: "BB Dumbass Sweep",
+        version: 1,
+        category: FxCategory::Utility,
+        traits: EffectTraits {
+            cost: CostClass::Cheap,
+            roi: Roi::Exact,
+            temporal: &[0],
+            premultiplied: true,
+            seeded: false,
+            beat_input: false,
+        },
+        params: &[
+            ParamSchema {
+                id: "completion",
+                label: "Completion",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "direction",
+                label: "Direction",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 360.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "thickness",
+                label: "Line Count",
+                kind: ParamKind::Float {
+                    default: 10.0,
+                    slider: (1.0, 100.0),
+                    hard: (Some(1.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "fragment_count",
+                label: "Fragment Count",
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (1.0, 100.0),
+                    hard: (Some(1.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "line_angle",
+                label: "Line Angle",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 360.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "flip",
+                label: "Flip Direction",
+                kind: ParamKind::Bool { default: false },
+            },
+            MIX_PARAM,
+        ],
+    },
+    // Venetian Blinds (AE-style staggered-line wipe): reveals the layer stripe
+    // by stripe along a sweep angle. Each stripe has its own timing offset
+    // (Stagger) driven by a deterministic hash, so lines finish at different
+    // times. Line Count controls stripe density, Flip Direction inverts.
+    EffectSchema {
+        groups: &[],
+        match_name: "venetian_blinds",
+        label: "Venetian Blinds",
+        version: 1,
+        category: FxCategory::Utility,
+        traits: EffectTraits {
+            cost: CostClass::Cheap,
+            roi: Roi::Exact,
+            temporal: &[0],
+            premultiplied: true,
+            seeded: false,
+            beat_input: false,
+        },
+        params: &[
+            ParamSchema {
+                id: "completion",
+                label: "Completion",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "direction",
+                label: "Direction",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 360.0),
+                    hard: (None, None),
+                },
+            },
+            ParamSchema {
+                id: "thickness",
+                label: "Line Count",
+                kind: ParamKind::Float {
+                    default: 10.0,
+                    slider: (1.0, 100.0),
+                    hard: (Some(1.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "slant",
+                label: "Stagger",
+                kind: ParamKind::Float {
+                    default: 50.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "flip",
+                label: "Flip Direction",
+                kind: ParamKind::Bool { default: false },
+            },
+            MIX_PARAM,
+        ],
+    },
+    // CC Image Wipe (AE-style gradient-driven transition): reads another layer
+    // as a gradient mask and, per pixel, compares the gradient's value (by
+    // Property: Luminance / R / G / B / Alpha) against the Completion slider.
+    // Where gradient ≤ completion the source pixel becomes transparent (alpha
+    // 0), where ≥ completion it stays opaque, with a smoothstep transition
+    // controlled by Border Softness (optionally overridden by Auto Softness).
+    // An optional Blur pre-processes the gradient. The wiped pixel fades toward
+    // transparent, revealing layers below — the standard transition pattern.
+    // A `Layer` parameter references the gradient layer; the source combobox
+    // (None / Masks / Effects and masks) follows the same pattern as DoF's
+    // depth layer (K-142). Category Utility, beside Transform and Matte key.
+    EffectSchema {
+        groups: &[],
+        match_name: "ccimagewipe",
+        label: "CC Image Wipe",
+        version: 1,
+        category: FxCategory::Utility,
+        traits: EffectTraits {
+            cost: CostClass::Cheap,
+            roi: Roi::Exact,
+            temporal: &[0],
+            premultiplied: true,
+            seeded: false,
+            beat_input: false,
+        },
+        params: &[
+            ParamSchema {
+                id: "gradient",
+                label: "Gradient Layer",
+                kind: ParamKind::Layer {},
+            },
+            ParamSchema {
+                id: "completion",
+                label: "Completion",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "softness",
+                label: "Border Softness",
+                kind: ParamKind::Float {
+                    default: 10.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), Some(100.0)),
+                },
+            },
+            ParamSchema {
+                id: "auto_soft",
+                label: "Auto Softness",
+                kind: ParamKind::Bool { default: false },
+            },
+            ParamSchema {
+                id: "property",
+                label: "Property",
+                // Which channel of the gradient layer to sample: 0 Luminance,
+                // 1 Red, 2 Green, 3 Blue, 4 Alpha.
+                kind: ParamKind::Choice {
+                    options: &["Luminance", "Red", "Green", "Blue", "Alpha"],
+                    default: 0,
+                    dividers_after: CHOICE_UNGROUPED,
+                },
+            },
+            ParamSchema {
+                id: "blur",
+                label: "Blur",
+                kind: ParamKind::Float {
+                    default: 0.0,
+                    slider: (0.0, 100.0),
+                    hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "inverse",
+                label: "Inverse Gradient",
+                kind: ParamKind::Bool { default: false },
             },
             MIX_PARAM,
         ],

@@ -20,7 +20,7 @@
 
 use crate::decode::CompLayerPixels;
 use crate::draw::{
-    AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
+    AccumulationBelow, CompLayerDraw, LayerInputDraw, DrawSource, MatteDraw, TemporalBelow,
 };
 use crate::export::mask_rgba;
 use crate::realise::Realiser;
@@ -323,38 +323,55 @@ pub fn build_comp_draws_at(
         })
     };
 
-    // The depth inputs of a stack's enabled built-in `dof` effects (docs/08
-    // §3.22, docs/impl/layer-input.md), 1:1 and in order with the stack's
-    // Resolved::Dof ops — the same `enabled && Builtin && match_name` filter
-    // resolve_stack applies, and a `dof` effect always resolves to exactly one
-    // op. Each slot carries the referenced layer's SOURCE pixels (via the same
-    // `pixels_for` a matte uses, so effects are not applied and a depth
+    // Layer-input effects (docs/08 §3.22, docs/impl/layer-input.md): any
+    // effect that references another layer as an auxiliary input (DoF's depth
+    // layer, CC Image Wipe's gradient layer) carries that layer's source pixels
+    // here, one slot per enabled built-in effect that declares a
+    // `ParamKind::Layer` parameter. Because `resolve_stack` keeps the same
+    // filter and order, this list is 1:1 and in order with the stack's eventual
+    // layer-input ops — it becomes the same-sized `layer_inputs` that
+    // `run_ops` receives. Each slot carries the referenced layer's SOURCE pixels
+    // (via the same `pixels_for` a matte uses, so effects are not applied and a
     // reference can never recurse); an unset or dangling reference is None (a
-    // passthrough). The depth layer does NOT need to be visible — a depth map
-    // is usually hidden so it doesn't render — only in-span; the decode
-    // planner (app_state::collect_comp_jobs) decodes layer-input references
-    // exactly like matte sources, and export applies the same in-span-only
-    // gate (K-031).
-    let dof_inputs_for =
-        |effects: &[lumit_core::model::EffectInstance]| -> Vec<Option<DofInputDraw>> {
+    // passthrough). The referenced layer does NOT need to be visible — only
+    // in-span; the decode planner decodes layer-input references exactly like
+    // matte sources (K-031).
+    let layer_inputs_for =
+        |self_layer_id: uuid::Uuid,
+         effects: &[lumit_core::model::EffectInstance]|
+         -> Vec<Option<LayerInputDraw>> {
+            use lumit_core::fx::ParamKind;
             use lumit_core::model::EffectNamespace;
             effects
                 .iter()
                 .filter(|e| {
                     e.enabled
                         && e.effect.namespace == EffectNamespace::Builtin
-                        && e.effect.match_name == "dof"
+                        && lumit_core::fx::schema(&e.effect.match_name)
+                            .map(|s| s.params.iter().any(|p| matches!(p.kind, ParamKind::Layer {})))
+                            .unwrap_or(false)
                 })
                 .map(|e| {
-                    let id = e.layer_ref("depth")?;
+                    let schema = lumit_core::fx::schema(&e.effect.match_name).unwrap();
+                    let param_name = schema
+                        .params
+                        .iter()
+                        .find(|p| matches!(p.kind, ParamKind::Layer {}))
+                        .map(|p| p.id)
+                        .unwrap_or("depth");
+                    let id = e.layer_ref(param_name)?;
                     let src = comp.layers.iter().find(|l| l.id == id)?;
                     if !in_span(src) {
                         return None;
                     }
-                    let mode = e.layer_source("depth");
-                    // Depth source (K-142). None samples the depth layer's raw
-                    // pixels — clear its masks so `pixels_for` skips them; Masks
-                    // and Effects and masks keep them.
+                    // Self-referencing: force source mode to None (raw pixels
+                    // only) to prevent EffectsAndMasks from recursing into the
+                    // same effect stack.
+                    let mode = if src.id == self_layer_id {
+                        lumit_core::model::LayerInputSource::None
+                    } else {
+                        e.layer_source(param_name)
+                    };
                     let (rgba, tex_w, tex_h, natural) = if mode.applies_masks() {
                         pixels_for(src)?
                     } else {
@@ -362,11 +379,6 @@ pub fn build_comp_draws_at(
                         bare.masks.clear();
                         pixels_for(&bare)?
                     };
-                    // Effects and masks (K-142): resolve the depth layer's own
-                    // stack at its layer time so render_dof_inputs runs it on the
-                    // depth texture before resampling. Uses the depth layer's
-                    // decode scale (its px@comp radii stay honest), the same
-                    // resolve export uses (K-031). Empty otherwise.
                     let (fx, lut_files) = if mode.folds_effects() && src.switches.fx {
                         let slt = t_comp - src.start_offset.0.to_f64();
                         let comp_diag =
@@ -386,7 +398,7 @@ pub fn build_comp_draws_at(
                     } else {
                         (Vec::new(), Vec::new())
                     };
-                    Some(DofInputDraw {
+                    Some(LayerInputDraw {
                         rgba,
                         tex_w,
                         tex_h,
@@ -622,9 +634,9 @@ pub fn build_comp_draws_at(
                     // 1:1 with the stack's Resolved::Lut ops (docs/08 §3.11);
                     // the same `lt` resolve_stack used above.
                     lut_files: lut_files(&layer.effects, lt),
-                    // Depth inputs of the enabled built-in `dof` effects, 1:1
-                    // with the stack's Resolved::Dof ops (docs/08 §3.22).
-                    dof_inputs: dof_inputs_for(&layer.effects),
+                    // Layer inputs (DoF depth, CC Image Wipe gradient, etc.),
+                    // 1:1 with the layer-input ops in the resolved stack.
+                    layer_inputs: layer_inputs_for(layer.id, &layer.effects),
                     // An adjustment layer is a staging point, not a picture —
                     // motion blur has no image of its own to smear (docs/06 §4).
                     mb: Vec::new(),
@@ -813,10 +825,9 @@ pub fn build_comp_draws_at(
             // with the stack's Resolved::Lut ops (docs/08 §3.11); the same `lt`
             // resolve_stack used for `fx`.
             lut_files: lut_files(&layer.effects, lt),
-            // Depth inputs of the enabled built-in `dof` effects, 1:1 with the
-            // stack's Resolved::Dof ops (docs/08 §3.22); built the same way
-            // export does, so the two blur identically (K-031).
-            dof_inputs: dof_inputs_for(&layer.effects),
+            // Layer inputs (DoF depth, CC Image Wipe gradient, etc.), built
+            // the same way export does (K-031).
+            layer_inputs: layer_inputs_for(layer.id, &layer.effects),
             // Per-layer motion blur (docs/06 §4, K-120): the layer's own
             // transform sampled across the open shutter, empty unless it blurs.
             // Built the same way export does, so the two smear identically.

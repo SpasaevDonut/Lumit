@@ -404,6 +404,95 @@ pub enum Resolved {
         /// 0..1.
         mix: f32,
     },
+    /// BB Dumbass Sweep (copy of CC Line Sweep's sequential wave wipe):
+    /// stripes disappear one by one as a sweep front moves across the screen.
+    BbDumbassSweep {
+        completion: f32,
+        dir_cos: f32,
+        dir_sin: f32,
+        line_cos: f32,
+        line_sin: f32,
+        line_count: i32,
+        fragment_count: i32,
+        flip: bool,
+        mix: f32,
+    },
+    /// CC Line Sweep (AE-style strip cascade): each stripe does a fragment-by-
+    /// fragment horizontal sweep with configurable stagger (Line Delay).
+    CcLineSweep {
+        completion: f32,
+        dir_cos: f32,
+        dir_sin: f32,
+        line_cos: f32,
+        line_sin: f32,
+        line_count: i32,
+        fragment_count: i32,
+        /// Fragment-counts worth of stagger between successive stripes.
+        line_delay: i32,
+        flip: bool,
+        mix: f32,
+    },
+    /// Venetian Blinds (AE-style staggered-line wipe): reveals the layer stripe
+    /// by stripe along a sweep angle. Each stripe has a deterministic hash-based
+    /// timing offset, producing a staggered, line-by-line reveal.
+    VenetianBlinds {
+        /// 0..1 — the global wipe progress.
+        completion: f32,
+        /// Pre-computed cos(direction_deg * π/180), sweep axis x component.
+        dir_cos: f32,
+        /// Pre-computed sin(direction_deg * π/180), sweep axis y component.
+        dir_sin: f32,
+        /// Number of discrete stripes across the sweep span.
+        line_count: i32,
+        /// 0..1 — per-stripe timing variance. 0 = all stripes simultaneous.
+        stagger: f32,
+        /// When true, inverts the reveal direction.
+        flip: bool,
+        /// 0..1.
+        mix: f32,
+    },
+    /// CC Image Wipe (AE-style gradient-driven transition): compares each pixel's
+    /// gradient value against Completion, applying a smoothstep wipe with optional
+    /// Border Softness. The gradient is the referenced layer; the effect passes
+    /// through unchanged when the gradient slot is None (a labelled no-op). Only
+    /// the scalar params are `Copy`; the gradient texture travels beside the op
+    /// (like DoF's depth).
+    CcImageWipe {
+        /// 0..1, the wipe progress.
+        completion: f32,
+        /// 0..1, the smoothstep half-width around completion.
+        softness: f32,
+        /// When true, overrides softness with `completion * (1 - completion) * 2`.
+        auto_soft: bool,
+        /// 0 = Luminance, 1 = Red, 2 = Green, 3 = Blue, 4 = Alpha.
+        property: u32,
+        /// Pre-blur radius on the gradient layer, in pixels.
+        blur_px: f32,
+        /// When true, inverts the gradient comparison.
+        inverse: bool,
+        /// 0..1.
+        mix: f32,
+    },
+    /// Levels (AE-style transfer function): remaps [in_black, in_white] ⇒ [0, 1],
+    /// clamps to [0, 1], applies gamma (pow(p, 1/gamma)), remaps to
+    /// [out_black, out_white] with optional clip-to-output checkboxes. Operates on
+    /// unpremultiplied colour per RGB channel (the same Contrast/Gamma §2.2
+    /// reason), or per single channel/alpha when the Channel picker is not Rgb.
+    /// Defaults (in_black=0, in_white=1, gamma=1, out_black=0, out_white=1,
+    /// clips off) produce the bit-exact identity.
+    Levels {
+        /// 0 = Rgb, 1 = Red, 2 = Green, 3 = Blue, 4 = Alpha.
+        channel: u32,
+        in_black: f32,
+        in_white: f32,
+        gamma: f32,
+        out_black: f32,
+        out_white: f32,
+        clip_black: bool,
+        clip_white: bool,
+        /// 0..1.
+        mix: f32,
+    },
     /// Invert (docs/08 §3.23): the colour inverse `out.rgb = 1 − in.rgb` per RGB
     /// channel on unpremultiplied colour, alpha untouched. No neutral value —
     /// invert always inverts — so only Mix 0 is the identity.
@@ -1066,6 +1155,130 @@ fn resolve_one(
             Some(Resolved::Temperature {
                 gain_r,
                 gain_b,
+                mix,
+            })
+        }
+        "bb_dumbass_sweep" => {
+            // Same resolve logic as cclinesweep (identical params).
+            let completion =
+                (e.float_at("completion", lt).unwrap_or(0.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let dir_deg = e.float_at("direction", lt).unwrap_or(0.0) as f32;
+            let rad = dir_deg * std::f32::consts::PI / 180.0;
+            let dir_cos = rad.cos();
+            let dir_sin = rad.sin();
+            let line_deg = e.float_at("line_angle", lt).unwrap_or(0.0) as f32;
+            let lrad = line_deg * std::f32::consts::PI / 180.0;
+            let line_cos = lrad.cos();
+            let line_sin = lrad.sin();
+            let flip = matches!(e.param("flip"), Some(EffectValue::Bool(true)));
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let line_count =
+                ((e.float_at("thickness", lt).unwrap_or(10.0) as f32).round().max(1.0)) as i32;
+            let fragment_count =
+                ((e.float_at("fragment_count", lt).unwrap_or(1.0) as f32).round().max(1.0)) as i32;
+            Some(Resolved::BbDumbassSweep {
+                completion, dir_cos, dir_sin,
+                line_cos, line_sin,
+                line_count, fragment_count,
+                flip, mix,
+            })
+        }
+        "cclinesweep" => {
+            let completion =
+                (e.float_at("completion", lt).unwrap_or(0.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let dir_deg = e.float_at("direction", lt).unwrap_or(0.0) as f32;
+            let rad = dir_deg * std::f32::consts::PI / 180.0;
+            let dir_cos = rad.cos();
+            let dir_sin = rad.sin();
+            let line_deg = e.float_at("line_angle", lt).unwrap_or(0.0) as f32;
+            let lrad = line_deg * std::f32::consts::PI / 180.0;
+            let line_cos = lrad.cos();
+            let line_sin = lrad.sin();
+            let flip = matches!(e.param("flip"), Some(EffectValue::Bool(true)));
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let line_count =
+                ((e.float_at("thickness", lt).unwrap_or(10.0) as f32).round().max(1.0)) as i32;
+            let fragment_count =
+                ((e.float_at("fragment_count", lt).unwrap_or(1.0) as f32).round().max(1.0)) as i32;
+            let line_delay =
+                ((e.float_at("line_delay", lt).unwrap_or(0.0) as f32).round().max(0.0)) as i32;
+            Some(Resolved::CcLineSweep {
+                completion, dir_cos, dir_sin,
+                line_cos, line_sin,
+                line_count, fragment_count, line_delay,
+                flip, mix,
+            })
+        }
+        "venetian_blinds" => {
+            let completion =
+                (e.float_at("completion", lt).unwrap_or(0.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let dir_deg = e.float_at("direction", lt).unwrap_or(0.0) as f32;
+            let rad = dir_deg * std::f32::consts::PI / 180.0;
+            let dir_cos = rad.cos();
+            let dir_sin = rad.sin();
+            let flip = matches!(e.param("flip"), Some(EffectValue::Bool(true)));
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            // Line Count: the thickness slider (1–100) maps to integer stripes.
+            let line_count = ((e.float_at("thickness", lt).unwrap_or(10.0) as f32).round().max(1.0)) as i32;
+            // Stagger: the slant slider (0–100) maps to 0..1 timing variance.
+            let stagger = (e.float_at("slant", lt).unwrap_or(50.0) as f32 / 100.0).clamp(0.0, 1.0);
+            Some(Resolved::VenetianBlinds {
+                completion,
+                dir_cos,
+                dir_sin,
+                line_count,
+                stagger,
+                flip,
+                mix,
+            })
+        }
+        "ccimagewipe" => {
+            // Scalars only; the gradient texture travels beside the resolved op
+            // (like DoF's depth), rendered by the caller. An unset/dangling
+            // gradient reference produces a None layer-input slot, and
+            // `run_ops` passes it through unchanged (a labelled no-op).
+            let completion = (e.float_at("completion", lt).unwrap_or(0.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let softness = (e.float_at("softness", lt).unwrap_or(10.0) as f32 / 100.0).clamp(0.0, 1.0);
+            let auto_soft = matches!(e.param("auto_soft"), Some(EffectValue::Bool(true)));
+            let property = match e.param("property") {
+                Some(EffectValue::Choice(i)) => (*i).min(4),
+                _ => 0,
+            };
+            let blur_px = (e.float_at("blur", lt).unwrap_or(0.0) as f32).max(0.0);
+            let inverse = matches!(e.param("inverse"), Some(EffectValue::Bool(true)));
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            Some(Resolved::CcImageWipe {
+                completion,
+                softness,
+                auto_soft,
+                property,
+                blur_px,
+                inverse,
+                mix,
+            })
+        }
+        "levels" => {
+            let channel = match e.param("channel") {
+                Some(EffectValue::Choice(i)) => *i,
+                _ => 0,
+            };
+            let in_black = e.float_at("in_black", lt).unwrap_or(0.0) as f32;
+            let in_white = e.float_at("in_white", lt).unwrap_or(1.0) as f32;
+            let gamma = (e.float_at("gamma", lt).unwrap_or(1.0) as f32).max(0.01);
+            let out_black = e.float_at("out_black", lt).unwrap_or(0.0) as f32;
+            let out_white = e.float_at("out_white", lt).unwrap_or(1.0) as f32;
+            let clip_black = matches!(e.param("clip_black"), Some(EffectValue::Bool(true)));
+            let clip_white = matches!(e.param("clip_white"), Some(EffectValue::Bool(true)));
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            Some(Resolved::Levels {
+                channel,
+                in_black,
+                in_white,
+                gamma,
+                out_black,
+                out_white,
+                clip_black,
+                clip_white,
                 mix,
             })
         }

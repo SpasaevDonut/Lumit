@@ -118,7 +118,7 @@ pub fn run_ops(
     // k-th Resolved::Dof op consumes the k-th `layer_inputs` slot the same way
     // (its depth-layer render).
     let mut lut_i = 0usize;
-    let mut dof_i = 0usize;
+    let mut li = 0usize;
     for op in ops {
         match op {
             Resolved::Blur {
@@ -738,8 +738,8 @@ pub fn run_ops(
                 // (the labelled no-op rule; never a fault). The depth is a
                 // whole texture, so it travels beside the op, exactly as the
                 // LUT cube does, since it is not Copy in `Resolved`.
-                let depth = layer_inputs.get(dof_i).and_then(|o| o.as_ref());
-                dof_i += 1;
+                let depth = layer_inputs.get(li).and_then(|o| o.as_ref());
+                li += 1;
                 if let Some(depth) = depth {
                     tex = fx.dof(
                         ctx,
@@ -756,6 +756,135 @@ pub fn run_ops(
                         *mix,
                     );
                 }
+            }
+            Resolved::Levels {
+                channel,
+                in_black,
+                in_white,
+                gamma,
+                out_black,
+                out_white,
+                clip_black,
+                clip_white,
+                mix,
+            } => {
+                let clip_flags = if *clip_black { 1u32 } else { 0u32 }
+                    | if *clip_white { 2u32 } else { 0u32 };
+                tex = fx.levels(
+                    ctx, &tex, w, h,
+                    &lumit_gpu::fx::LevelsOp {
+                        channel: *channel,
+                        in_black: *in_black,
+                        in_white: *in_white,
+                        gamma: *gamma,
+                        out_black: *out_black,
+                        out_white: *out_white,
+                        clip_flags,
+                        mix: *mix,
+                    },
+                );
+            }
+            Resolved::CcImageWipe {
+                completion,
+                softness,
+                auto_soft,
+                property,
+                blur_px,
+                inverse,
+                mix,
+            } => {
+                let gradient = layer_inputs.get(li).and_then(|o| o.as_ref());
+                li += 1;
+                if let Some(gradient) = gradient {
+                    tex = fx.cc_image_wipe(
+                        ctx, &tex, gradient, w, h,
+                        &lumit_gpu::fx::CcImageWipeOp {
+                            completion: *completion,
+                            softness: *softness,
+                            auto_soft: *auto_soft,
+                            property: *property,
+                            blur_px: *blur_px,
+                            inverse: *inverse,
+                            mix: *mix,
+                        },
+                    );
+                }
+            }
+            Resolved::CcLineSweep {
+                completion,
+                dir_cos,
+                dir_sin,
+                line_cos,
+                line_sin,
+                line_count,
+                fragment_count,
+                line_delay,
+                flip,
+                mix,
+            } => {
+                tex = fx.cc_line_sweep(
+                    ctx, &tex, w, h,
+                    &lumit_gpu::fx::CcLineSweepOp {
+                        completion: *completion,
+                        dir_cos: *dir_cos,
+                        dir_sin: *dir_sin,
+                        line_cos: *line_cos,
+                        line_sin: *line_sin,
+                        line_count: *line_count,
+                        fragment_count: *fragment_count,
+                        line_delay: *line_delay,
+                        flip: *flip,
+                        mix: *mix,
+                    },
+                );
+            }
+            Resolved::BbDumbassSweep {
+                completion,
+                dir_cos,
+                dir_sin,
+                line_cos,
+                line_sin,
+                line_count,
+                fragment_count,
+                flip,
+                mix,
+            } => {
+                tex = fx.bb_dumbass_sweep(
+                    ctx, &tex, w, h,
+                    &lumit_gpu::fx::BbDumbassSweepOp {
+                        completion: *completion,
+                        dir_cos: *dir_cos,
+                        dir_sin: *dir_sin,
+                        line_cos: *line_cos,
+                        line_sin: *line_sin,
+                        line_count: *line_count,
+                        fragment_count: *fragment_count,
+                        flip: *flip,
+                        mix: *mix,
+                    },
+                );
+            }
+            Resolved::VenetianBlinds {
+                completion,
+                dir_cos,
+                dir_sin,
+                line_count,
+                stagger,
+                flip,
+                mix,
+            } => {
+                tex = fx.venetian_blinds(
+                    ctx, &tex, w, h,
+                    &lumit_gpu::fx::VenetianBlindsOp {
+                        completion: *completion,
+                        dir_cos: *dir_cos,
+                        dir_sin: *dir_sin,
+                        line_count: *line_count,
+                        stagger: *stagger,
+                        flip: *flip,
+                        mix: *mix,
+                    },
+                );
             }
         }
     }

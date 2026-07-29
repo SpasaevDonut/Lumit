@@ -11,6 +11,10 @@
 use crate::{GpuContext, WORKING_FORMAT};
 
 mod blur;
+mod bbdumbasssweep;
+mod ccimagewipe;
+mod cclinesweep;
+mod venetian_blinds;
 mod colour;
 mod common;
 mod dof;
@@ -20,6 +24,10 @@ mod stylise;
 mod temporal;
 
 pub use blur::*;
+pub use bbdumbasssweep::*;
+pub use ccimagewipe::*;
+pub use cclinesweep::*;
+pub use venetian_blinds::*;
 pub use colour::*;
 pub use common::*;
 pub use split::*;
@@ -58,6 +66,7 @@ pub struct FxEngine {
     hue_shift: wgpu::ComputePipeline,
     contrast: wgpu::ComputePipeline,
     gamma: wgpu::ComputePipeline,
+    levels: wgpu::ComputePipeline,
     transform: wgpu::ComputePipeline,
     /// The shake's own motion blur (docs/08 §3.4, T18/K-165): averages the
     /// shake resampled at its motion-blur sub-frames. Its own kernel rather
@@ -66,6 +75,10 @@ pub struct FxEngine {
     shake_mb: wgpu::ComputePipeline,
     glow_bright: wgpu::ComputePipeline,
     glow_combine: wgpu::ComputePipeline,
+    bb_dumbass_sweep: wgpu::ComputePipeline,
+    cc_image_wipe: wgpu::ComputePipeline,
+    cc_line_sweep: wgpu::ComputePipeline,
+    venetian_blinds: wgpu::ComputePipeline,
     block_glitch: wgpu::ComputePipeline,
     scanlines: wgpu::ComputePipeline,
     echo_accumulate: wgpu::ComputePipeline,

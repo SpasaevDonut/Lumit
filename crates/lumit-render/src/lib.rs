@@ -64,7 +64,7 @@ pub use build::{
 pub use cache::{CacheTier, CachedCompFrame};
 pub use decode::{CompFrame, CompJob, CompLayerPixels, PreviewEngine, PreviewResult};
 pub use draw::{
-    AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
+    AccumulationBelow, CompLayerDraw, LayerInputDraw, DrawSource, MatteDraw, TemporalBelow,
 };
 pub use headless::{HeadlessRenderer, PrefetchWant, PreparedFrame, DEFAULT_VRAM_CACHE_BYTES};
 pub use plan::{plan_comp_frame, Quality, RetimeOverride};

@@ -1323,6 +1323,172 @@ fn wgsl_gamma_matches_the_cpu_oracle() {
     }
 }
 
+/// The §1.6 oracle for levels: a cheap pointwise transfer function, so CPU and
+/// GPU must agree to ≤ 2 fp16 ULP, the GPU is bit-stable, and the identity
+/// defaults or Mix 0 is the bit-exact identity on both paths. Like Contrast and
+/// Gamma, the corpus is seeded with partial-alpha pixels (straight colour ×
+/// alpha), since the transfer function runs on unpremultiplied colour and the
+/// premultiply round trip is load-bearing.
+#[test]
+fn wgsl_levels_matches_the_cpu_oracle() {
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping WGSL parity test");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    let (w, h) = (32u32, 24u32);
+    let mut img = corpus(w, h);
+    let q = |v: f32| f16_to_f32(f16_bits(v));
+    let partials = [
+        ([0.7_f32, 0.3, 0.5], 0.5_f32),
+        ([0.2, 0.8, 0.6], 0.25),
+        ([0.9, 0.1, 0.4], 0.75),
+        ([2.0, 1.0, 0.5], 0.5),
+    ];
+    for (n, (rgb, a)) in partials.iter().enumerate() {
+        let i = n * 4;
+        img[i] = q(rgb[0] * a);
+        img[i + 1] = q(rgb[1] * a);
+        img[i + 2] = q(rgb[2] * a);
+        img[i + 3] = q(*a);
+    }
+    for (name, op) in [
+        (
+            "neutral",
+            LevelsOp {
+                channel: 0,
+                in_black: 0.0,
+                in_white: 1.0,
+                gamma: 1.0,
+                out_black: 0.0,
+                out_white: 1.0,
+                clip_flags: 0,
+                mix: 1.0,
+            },
+        ),
+        (
+            "input-remap",
+            LevelsOp {
+                channel: 0,
+                in_black: 0.0,
+                in_white: 0.5,
+                gamma: 1.0,
+                out_black: 0.0,
+                out_white: 1.0,
+                clip_flags: 0,
+                mix: 1.0,
+            },
+        ),
+        (
+            "gamma-darken",
+            LevelsOp {
+                channel: 0,
+                in_black: 0.0,
+                in_white: 1.0,
+                gamma: 2.0,
+                out_black: 0.0,
+                out_white: 1.0,
+                clip_flags: 0,
+                mix: 1.0,
+            },
+        ),
+        (
+            "output-remap",
+            LevelsOp {
+                channel: 0,
+                in_black: 0.0,
+                in_white: 1.0,
+                gamma: 1.0,
+                out_black: 0.25,
+                out_white: 0.75,
+                clip_flags: 0,
+                mix: 1.0,
+            },
+        ),
+        (
+            "clip-black",
+            LevelsOp {
+                channel: 0,
+                in_black: 0.0,
+                in_white: 1.0,
+                gamma: 1.0,
+                out_black: 0.3,
+                out_white: 1.0,
+                clip_flags: 1,
+                mix: 1.0,
+            },
+        ),
+        (
+            "clip-white",
+            LevelsOp {
+                channel: 0,
+                in_black: 0.0,
+                in_white: 1.0,
+                gamma: 1.0,
+                out_black: 0.0,
+                out_white: 0.7,
+                clip_flags: 2,
+                mix: 1.0,
+            },
+        ),
+        (
+            "mixed",
+            LevelsOp {
+                channel: 0,
+                in_black: 0.1,
+                in_white: 0.9,
+                gamma: 1.5,
+                out_black: 0.1,
+                out_white: 0.95,
+                clip_flags: 1,
+                mix: 0.6,
+            },
+        ),
+        (
+            "mix-zero",
+            LevelsOp {
+                channel: 0,
+                in_black: 0.0,
+                in_white: 0.5,
+                gamma: 2.2,
+                out_black: 0.0,
+                out_white: 1.0,
+                clip_flags: 0,
+                mix: 0.0,
+            },
+        ),
+    ] {
+        let mut cpu = img.clone();
+        lumit_core::fx::cpu::levels(
+            &mut cpu,
+            op.channel,
+            op.in_black,
+            op.in_white,
+            op.gamma,
+            op.out_black,
+            op.out_white,
+            (op.clip_flags & 1) != 0,
+            (op.clip_flags & 2) != 0,
+            op.mix,
+        );
+
+        let tex = upload_linear_f32(&ctx, &img, w, h);
+        let out = fx.levels(&ctx, &tex, w, h, &op);
+        let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+        let worst = worst_f16_ulp(&cpu, &gpu);
+        eprintln!("levels {name}: worst {worst} ulp");
+        assert!(worst <= 2, "{name}: worst {worst} fp16 ULP");
+        if name == "neutral" || name == "mix-zero" {
+            assert_eq!(gpu, img, "{name}: must be the bit-exact identity");
+        }
+
+        let out2 = fx.levels(&ctx, &tex, w, h, &op);
+        let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
+        assert_eq!(gpu, gpu2, "GPU levels must be bit-stable");
+    }
+}
+
 /// The §1.6 oracle for hue shift: a cheap pointwise colour-matrix product,
 /// so CPU and GPU must agree to ≤ 2 fp16 ULP, the GPU is bit-stable, and
 /// 0° (the identity matrix) or Mix 0 is the bit-exact identity on both.
@@ -2908,3 +3074,250 @@ fn wgsl_dof_matches_the_cpu_oracle() {
         "an in-band depth must be a bit-exact passthrough"
     );
 }
+
+/// The §1.6 oracle for CC Image Wipe: a cheap pointwise smoothstep per pixel,
+/// so CPU and GPU must agree to ≤ 2 fp16 ULP, the GPU is bit-stable, and
+/// completion 0 with inverse off, or Mix 0, is the bit-exact identity.
+/// The gradient is a synthetic horizontal ramp (dark → bright left → right),
+/// so the wipe sweeps the frame from edge to edge as completion changes.
+#[test]
+fn wgsl_ccimagewipe_matches_the_cpu_oracle() {
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping WGSL parity test");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    let (w, h) = (32u32, 24u32);
+    let img = corpus(w, h);
+    let src = upload_linear_f32(&ctx, &img, w, h);
+    let n = (w * h) as usize;
+
+    // A horizontal ramp for the gradient: 0 at left, 1 at right. Quantised
+    // to fp16 so both paths start from identical gradient values (matching
+    // the `upload_linear_f32` the GPU receives, like every other oracle).
+    let q = |v: f32| f16_to_f32(f16_bits(v));
+    let mut grad = vec![0f32; n * 4];
+    for y in 0..h {
+        for x in 0..w {
+            let i = (y * w + x) as usize * 4;
+            let v = x as f32 / (w - 1).max(1) as f32;
+            grad[i] = q(v);
+            grad[i + 1] = q(v * 0.5);
+            grad[i + 2] = q(1.0 - v);
+            grad[i + 3] = q(0.8);
+        }
+    }
+    let grad_t = upload_linear_f32(&ctx, &grad, w, h);
+
+    for (name, completion, softness, auto_soft, property, inverse, mix) in [
+        ("neutral",       0.0,  0.1, false, 0u32, false, 1.0),
+        ("partial-wipe",  0.5,  0.1, false, 0,    false, 1.0),
+        ("full-wipe",     1.0,  0.0, false, 0,    false, 1.0),
+        ("soft-edge",     0.5,  0.3, false, 0,    false, 1.0),
+        ("inverse",       0.5,  0.1, false, 0,    true,  1.0),
+        ("auto-soft",     0.5,  0.0, true,  0,    false, 1.0),
+        ("red-prop",      0.5,  0.1, false, 1u32, false, 1.0),
+        ("luma-prop",     0.5,  0.1, false, 0,    false, 0.5),
+        ("mix-zero",      0.5,  0.1, false, 0,    false, 0.0),
+        ("blur",          0.5,  0.1, false, 0,    false, 1.0),
+    ] {
+        let mut cpu = img.clone();
+        lumit_core::fx::cpu::cc_image_wipe_reference(
+            &mut cpu, &grad, w, h,
+            completion, softness, auto_soft, property, inverse, mix,
+        );
+
+        let out = fx.cc_image_wipe(
+            &ctx, &src, &grad_t, w, h,
+            &CcImageWipeOp {
+                completion,
+                softness,
+                auto_soft,
+                property,
+                inverse,
+                blur_px: 0.0,
+                mix,
+            },
+        );
+        let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+        let worst = worst_f16_ulp(&cpu, &gpu);
+        eprintln!("ccimagewipe {name}: worst {worst} ulp");
+        assert!(worst <= 2, "{name}: worst {worst} fp16 ULP");
+        if name == "neutral" || name == "mix-zero" {
+            assert_eq!(gpu, img, "{name}: must be the bit-exact identity");
+        }
+
+        // GPU bit-stability
+        let out2 = fx.cc_image_wipe(
+            &ctx, &src, &grad_t, w, h,
+            &CcImageWipeOp {
+                completion,
+                softness,
+                auto_soft,
+                property,
+                inverse,
+                blur_px: 0.0,
+                mix,
+            },
+        );
+        assert_eq!(
+            gpu,
+            readback_linear_f32(&ctx, &out2, w, h).unwrap(),
+            "GPU ccimagewipe must be bit-stable"
+        );
+    }
+
+    // Blur pre-pass: verify it doesn't crash and the GPU result is
+    // bit-stable (repeatable).
+    let out_blur = fx.cc_image_wipe(
+        &ctx, &src, &grad_t, w, h,
+        &CcImageWipeOp {
+            completion: 0.5,
+            softness: 0.1,
+            auto_soft: false,
+            property: 0,
+            inverse: false,
+            blur_px: 4.0,
+            mix: 1.0,
+        },
+    );
+    let gpu_blur = readback_linear_f32(&ctx, &out_blur, w, h).unwrap();
+    let out_blur2 = fx.cc_image_wipe(
+        &ctx, &src, &grad_t, w, h,
+        &CcImageWipeOp {
+            completion: 0.5,
+            softness: 0.1,
+            auto_soft: false,
+            property: 0,
+            inverse: false,
+            blur_px: 4.0,
+            mix: 1.0,
+        },
+    );
+    assert_eq!(
+        gpu_blur,
+        readback_linear_f32(&ctx, &out_blur2, w, h).unwrap(),
+        "GPU ccimagewipe with blur must be bit-stable"
+    );
+}
+
+/// The §1.6 oracle for CC Line Sweep: binary step per stripe, so CPU and GPU
+/// must agree to ≤ 2 fp16 ULP (the step is exact 0/1, but the hash-based
+/// stripe offset and the condition compare may involve fp16-quantised values
+/// depending on the gradient texture path). Completion 0 or Mix 0 is the
+/// bit-exact identity.
+#[test]
+fn wgsl_venetian_blinds_matches_the_cpu_oracle() {
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping WGSL parity test");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    let (w, h) = (32u32, 24u32);
+    let img = corpus(w, h);
+    let src = upload_linear_f32(&ctx, &img, w, h);
+
+    for (name, compl, dir_deg, lc, stg, flip, mix) in [
+        ("neutral",     0.0, 0.0, 10, 0.0, false, 1.0),
+        ("no-stagger",  0.5, 0.0, 10, 0.0, false, 1.0),
+        ("full-stagger",0.5, 0.0, 10, 1.0, false, 1.0),
+        ("half-stagger",0.5, 0.0, 10, 0.5, false, 1.0),
+        ("full-sweep",  1.0, 0.0, 10, 0.5, false, 1.0),
+        ("few-lines",   0.5, 0.0,  4, 0.5, false, 1.0),
+        ("many-lines",  0.5, 0.0, 50, 0.5, false, 1.0),
+        ("upward",      0.5, 90.0, 10, 0.5, false, 1.0),
+        ("diagonal",    0.5, 45.0, 10, 0.5, false, 1.0),
+        ("flipped",     0.5, 0.0, 10, 0.5, true,  1.0),
+        ("partial-mix", 0.5, 0.0, 10, 0.5, false, 0.5),
+        ("mix-zero",    0.5, 0.0, 10, 0.5, false, 0.0),
+    ] {
+        let rad = dir_deg * std::f32::consts::PI / 180.0;
+        let (dc, ds) = (rad.cos(), rad.sin());
+        let mut cpu = img.clone();
+        lumit_core::fx::cpu::venetian_blinds(&mut cpu, w, h, compl, dc, ds, lc, stg, flip, mix);
+
+        let out = fx.venetian_blinds(&ctx, &src, w, h, &VenetianBlindsOp {
+            completion: compl,
+            dir_cos: dc,
+            dir_sin: ds,
+            line_count: lc,
+            stagger: stg,
+            flip,
+            mix,
+        });
+        let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+        let worst = worst_f16_ulp(&cpu, &gpu);
+        eprintln!("venetian_blinds {name}: worst {worst} ulp");
+        assert!(worst <= 2, "{name}: worst {worst} fp16 ULP");
+        if name == "neutral" || name == "mix-zero" {
+            assert_eq!(gpu, img, "{name}: must be the bit-exact identity");
+        }
+        // Bit-stability
+        let out2 = fx.venetian_blinds(&ctx, &src, w, h, &VenetianBlindsOp {
+            completion: compl,
+            dir_cos: dc,
+            dir_sin: ds,
+            line_count: lc,
+            stagger: stg,
+            flip,
+            mix,
+        });
+        assert_eq!(gpu, readback_linear_f32(&ctx, &out2, w, h).unwrap(), "GPU venetian_blinds must be bit-stable");
+    }
+}
+
+/// The §1.6 oracle for CC Line Sweep (sequential wave): CPU and GPU must
+/// agree to ≤ 2 fp16 ULP (the step is exact 0/1). Completion 0 or Mix 0 is
+/// the bit-exact identity.
+#[test]
+fn wgsl_cclinesweep_matches_the_cpu_oracle() {
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping WGSL parity test");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    let (w, h) = (32u32, 24u32);
+    let img = corpus(w, h);
+    let src = upload_linear_f32(&ctx, &img, w, h);
+
+    for (name, compl, dir_deg, lc, flip, mix) in [
+        ("neutral",      0.0, 0.0, 10, false, 1.0),
+        ("half-wipe",    0.5, 0.0, 10, false, 1.0),
+        ("full-wipe",    1.0, 0.0, 10, false, 1.0),
+        ("upward",       0.5, 90.0, 10, false, 1.0),
+        ("diagonal",     0.5, 45.0, 10, false, 1.0),
+        ("few-lines",    0.5, 0.0,  4, false, 1.0),
+        ("many-lines",   0.5, 0.0, 50, false, 1.0),
+        ("flipped",      0.5, 0.0, 10, true,  1.0),
+        ("partial-mix",  0.5, 0.0, 10, false, 0.5),
+        ("mix-zero",     0.5, 0.0, 10, false, 0.0),
+    ] {
+        let rad = dir_deg * std::f32::consts::PI / 180.0;
+        let (dc, ds) = (rad.cos(), rad.sin());
+        // Line angle matches direction by default (perpendicular stripes).
+        let (lcx, lsy) = (dc, ds);
+        let mut cpu = img.clone();
+        lumit_core::fx::cpu::cc_line_sweep_cascade(&mut cpu, w, h, compl, dc, ds, lcx, lsy, lc, 1, 0, flip, mix);
+
+        let out = fx.cc_line_sweep(&ctx, &src, w, h, &CcLineSweepOp {
+            completion: compl, dir_cos: dc, dir_sin: ds,
+            line_cos: lcx, line_sin: lsy,
+            line_count: lc, fragment_count: 1, line_delay: 0, flip, mix,
+        });
+        let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+        let worst = worst_f16_ulp(&cpu, &gpu);
+        eprintln!("cclinesweep {name}: worst {worst} ulp");
+        assert!(worst <= 2, "{name}: worst {worst} fp16 ULP");
+        if name == "neutral" || name == "mix-zero" {
+            assert_eq!(gpu, img, "{name}: must be the bit-exact identity");
+        }
+        let out2 = fx.cc_line_sweep(&ctx, &src, w, h, &CcLineSweepOp {
+            completion: compl, dir_cos: dc, dir_sin: ds,
+            line_cos: lcx, line_sin: lsy,
+            line_count: lc, fragment_count: 1, line_delay: 0, flip, mix,
+        });
+        assert_eq!(gpu, readback_linear_f32(&ctx, &out2, w, h).unwrap(), "GPU cclinesweep must be bit-stable");
+    }
+}
+

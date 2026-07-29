@@ -179,6 +179,39 @@ struct TintParams {
     _pad2: f32,
 }
 
+/// One resolved levels (AE-style transfer function): remaps [in_black, in_white]
+/// ⇒ [0, 1], clamps to [0, 1], applies gamma (pow(p, 1/gamma)), then remaps to
+/// [out_black, out_white] with optional clip-to-output checkboxes. Operates on
+/// unpremultiplied colour per RGB channel (the same §2.2 reason Contrast/Gamma
+/// use), alpha untouched. Defaults produce the bit-exact identity.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LevelsOp {
+    /// 0 = Rgb, 1 = Red, 2 = Green, 3 = Blue, 4 = Alpha.
+    pub channel: u32,
+    pub in_black: f32,
+    pub in_white: f32,
+    pub gamma: f32,
+    pub out_black: f32,
+    pub out_white: f32,
+    /// Bit 0 = clip to output black, bit 1 = clip to output white.
+    pub clip_flags: u32,
+    /// 0..1, blended against the unprocessed input.
+    pub mix: f32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct LevelsParams {
+    in_black: f32,
+    in_white: f32,
+    gamma: f32,
+    out_black: f32,
+    out_white: f32,
+    clip_flags: u32,
+    mix_amt: f32,
+    channel: u32,
+}
+
 /// One resolved contrast (docs/08 §3.18): the affine grade
 /// `(u − 0.5) × k + 0.5` per RGB channel about a fixed mid-grey pivot, on
 /// unpremultiplied colour (an affine grade does not commute with premultiplied
@@ -553,6 +586,41 @@ impl FxEngine {
                 mix_amt: op.mix,
                 _pad0: 0.0,
                 _pad1: 0.0,
+            }),
+        );
+        out
+    }
+
+    /// Apply one levels (AE-style transfer function) to a linear working texture,
+    /// returning a new texture of the same size. One pointwise pass:
+    /// the §2.2 unpremultiply wrap fused into the kernel; at defaults the
+    /// kernel short-circuits to the bit-exact identity.
+    pub fn levels(
+        &self,
+        ctx: &GpuContext,
+        src: &wgpu::Texture,
+        w: u32,
+        h: u32,
+        op: &LevelsOp,
+    ) -> wgpu::Texture {
+        let out = work_texture(ctx, w, h, "fx-levels-out");
+        self.dispatch(
+            ctx,
+            &self.levels,
+            src,
+            src,
+            &out,
+            w,
+            h,
+            bytemuck::bytes_of(&LevelsParams {
+                in_black: op.in_black,
+                in_white: op.in_white,
+                gamma: op.gamma,
+                out_black: op.out_black,
+                out_white: op.out_white,
+                clip_flags: op.clip_flags,
+                mix_amt: op.mix,
+                channel: op.channel,
             }),
         );
         out

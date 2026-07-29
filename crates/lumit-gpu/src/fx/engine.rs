@@ -219,10 +219,15 @@ impl FxEngine {
         let hue_mod = module(include_str!("../fx_hue.wgsl"), "fx-hue");
         let contrast_mod = module(include_str!("../fx_contrast.wgsl"), "fx-contrast");
         let gamma_mod = module(include_str!("../fx_gamma.wgsl"), "fx-gamma");
+        let levels_mod = module(include_str!("../fx_levels.wgsl"), "fx-levels");
         let transform_mod = module(include_str!("../fx_transform.wgsl"), "fx-transform");
         let shake_mb_mod = module(include_str!("../fx_shake_mb.wgsl"), "fx-shake-mb");
         let glow_mod = module(include_str!("../fx_glow.wgsl"), "fx-glow");
         let block_glitch_mod = module(include_str!("../fx_block_glitch.wgsl"), "fx-block-glitch");
+        let ccimagewipe_mod = module(include_str!("../fx_ccimagewipe.wgsl"), "fx-ccimagewipe");
+        let venetian_blinds_mod = module(include_str!("../fx_venetian_blinds.wgsl"), "fx-venetian_blinds");
+        let bbdumbasssweep_mod = module(include_str!("../fx_bbdumbasssweep.wgsl"), "fx-bbdumbasssweep");
+        let cclinesweep_mod = module(include_str!("../fx_cclinesweep.wgsl"), "fx-cclinesweep");
         let scanlines_mod = module(include_str!("../fx_scanlines.wgsl"), "fx-scanlines");
         let echo_mod = module(include_str!("../fx_echo.wgsl"), "fx-echo");
         let motion_blur_mod = module(include_str!("../fx_motionblur.wgsl"), "fx-motion-blur");
@@ -256,11 +261,25 @@ impl FxEngine {
         let hue_shift = pipeline(&hue_mod, "fx-hue", "hue_shift");
         let contrast = pipeline(&contrast_mod, "fx-contrast", "contrast");
         let gamma = pipeline(&gamma_mod, "fx-gamma", "gamma");
+        let levels = pipeline(&levels_mod, "fx-levels", "levels_fx");
         let transform = pipeline(&transform_mod, "fx-transform", "transform");
         let shake_mb = pipeline(&shake_mb_mod, "fx-shake-mb", "shake_mb");
         let glow_bright = pipeline(&glow_mod, "fx-glow-bright", "glow_bright");
         let glow_combine = pipeline(&glow_mod, "fx-glow", "glow_combine");
         let block_glitch = pipeline(&block_glitch_mod, "fx-block-glitch", "block_glitch");
+        let cc_image_wipe = ctx
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("fx-ccimagewipe"),
+                layout: Some(&mb_pl),
+                module: &ccimagewipe_mod,
+                entry_point: Some("cc_image_wipe"),
+                compilation_options: Default::default(),
+                cache: None,
+            });
+        let venetian_blinds = pipeline(&venetian_blinds_mod, "fx-venetian_blinds", "venetian_blinds");
+        let bb_dumbass_sweep = pipeline(&bbdumbasssweep_mod, "fx-bbdumbasssweep", "bb_dumbass_sweep");
+        let cc_line_sweep = pipeline(&cclinesweep_mod, "fx-cclinesweep", "cc_line_sweep");
         let scanlines = pipeline(&scanlines_mod, "fx-scanlines", "scanlines");
         let echo_accumulate = pipeline(&echo_mod, "fx-echo-accumulate", "echo_accumulate");
         let echo_mix = pipeline(&echo_mod, "fx-echo-mix", "echo_mix");
@@ -337,10 +356,15 @@ impl FxEngine {
             hue_shift,
             contrast,
             gamma,
+            levels,
             transform,
             shake_mb,
             glow_bright,
             glow_combine,
+            bb_dumbass_sweep,
+            cc_image_wipe,
+            cc_line_sweep,
+            venetian_blinds,
             block_glitch,
             scanlines,
             echo_accumulate,
