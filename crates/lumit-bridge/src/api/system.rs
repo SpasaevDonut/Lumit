@@ -47,7 +47,36 @@ pub fn system_memory_bytes() -> u64 {
         }
         0
     }
-    #[cfg(not(any(windows, target_os = "linux")))]
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn sysctlbyname(
+                name: *const std::os::raw::c_char,
+                oldp: *mut std::os::raw::c_void,
+                oldlenp: *mut usize,
+                newp: *mut std::os::raw::c_void,
+                newlen: usize,
+            ) -> std::os::raw::c_int;
+        }
+
+        let mut memsize: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        let name = c"hw.memsize";
+        let ret = unsafe {
+            sysctlbyname(
+                name.as_ptr(),
+                &mut memsize as *mut _ as *mut _,
+                &mut len,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if ret == 0 && memsize > 0 {
+            return memsize;
+        }
+        0
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
     {
         0
     }
