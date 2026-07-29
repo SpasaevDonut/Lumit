@@ -107,6 +107,13 @@ class Workspace extends ChangeNotifier {
   /// (docs/15-DESIGN §8, §2.1). On, because it does look good.
   bool themedScopes = false;
 
+  /// Whether the Viewer's surround takes the theme's own surface rather than
+  /// the neutral grey (K-203). Off by default, and for the same reason the
+  /// scopes toggle is: a grade cannot be judged against a tinted surround
+  /// (docs/15-DESIGN §2.1/§11). Offered anyway, because a neutral rectangle in
+  /// the middle of a themed shell is a thing people want to turn off.
+  bool themedViewerSurround = false;
+
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
 
@@ -251,6 +258,12 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  void setThemedViewerSurround(bool on) {
+    themedViewerSurround = on;
+    notifyListeners();
+    save();
+  }
+
   void setScheme(LumitColorScheme s) {
     colorScheme = s;
     recompose();
@@ -368,6 +381,7 @@ class Workspace extends ChangeNotifier {
         'custom_themes': [for (final t in customThemes) t.toJson()],
         'custom_theme': customThemeName,
         'themed_scopes': themedScopes,
+        'themed_viewer_surround': themedViewerSurround,
         'last_project_path': lastProjectPath,
         'sessions': {
           for (final e in sessions.entries) e.key: e.value.toJson(),
@@ -410,6 +424,7 @@ class Workspace extends ChangeNotifier {
     customThemeName =
         j['custom_theme'] is String ? j['custom_theme'] as String : null;
     themedScopes = j['themed_scopes'] == true;
+    themedViewerSurround = j['themed_viewer_surround'] == true;
     lastProjectPath = j['last_project_path'] is String
         ? j['last_project_path'] as String
         : null;
@@ -448,7 +463,6 @@ class Workspace extends ChangeNotifier {
     }
   }
 }
-
 
 /// A choice in the theme picker: one of the built-in schemes, or one of the
 /// user's own themes by name (K-202).

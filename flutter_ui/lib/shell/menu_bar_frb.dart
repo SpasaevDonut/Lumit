@@ -234,32 +234,8 @@ class LumitMenuBarFrb extends StatelessWidget {
     app.openProject(path);
   }
 
-  /// Save, asking for a location only when there is not one already — or always,
-  /// for Save as.
-  ///
-  /// The engine refuses an empty path on a project that has never been saved, so
-  /// the decision of whether to prompt is made here from `path()` rather than by
-  /// trying and handling the failure.
-  Future<void> _save(BuildContext context, {bool forcePicker = false}) async {
-    final project = app.project;
-    if (project == null) return;
-
-    var target = '';
-    if (forcePicker || project.path() == null) {
-      final picked = await (savePicker ?? pickProjectSaveLocation)();
-      if (picked == null) return;
-      target = picked;
-    }
-    try {
-      final written = await project.save(path: target);
-      app.postNotice('Saved to $written');
-    } catch (_) {
-      // The work is still in the document and the journal; say so calmly and
-      // let the user pick somewhere writable.
-      app.postNotice('Could not save the project', error: true);
-    }
-    app.notifyDocumentChanged();
-  }
+  Future<void> _save(BuildContext context, {bool forcePicker = false}) =>
+      saveProjectFrb(app, forcePicker: forcePicker, picker: savePicker);
 
   Future<void> _import(BuildContext context) async {
     await app.importFootagePaths(await (footagePicker ?? pickFootage)());
@@ -512,4 +488,41 @@ class _MenuList extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Save the project, asking for a location only when there is not one already
+/// — or always, for Save as.
+///
+/// A free function rather than a method on the menu, because Ctrl+S is a
+/// keymap action dispatched from the shell (K-199) and a shortcut that took a
+/// different path to disk than the menu item would be two saves to keep
+/// honest. The engine refuses an empty path on a project that has never been
+/// saved, so whether to prompt is decided here from `path()` rather than by
+/// trying and handling the failure.
+///
+/// [picker] is the injectable seam a widget test needs: no plugin channel can
+/// open a real dialogue in one.
+Future<void> saveProjectFrb(
+  LumitState app, {
+  bool forcePicker = false,
+  Future<String?> Function()? picker,
+}) async {
+  final project = app.project;
+  if (project == null) return;
+
+  var target = '';
+  if (forcePicker || project.path() == null) {
+    final picked = await (picker ?? pickProjectSaveLocation)();
+    if (picked == null) return;
+    target = picked;
+  }
+  try {
+    final written = await project.save(path: target);
+    app.postNotice('Saved to $written');
+  } catch (_) {
+    // The work is still in the document and the journal; say so calmly and let
+    // the user pick somewhere writable.
+    app.postNotice('Could not save the project', error: true);
+  }
+  app.notifyDocumentChanged();
 }

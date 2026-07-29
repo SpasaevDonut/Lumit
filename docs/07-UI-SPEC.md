@@ -304,6 +304,9 @@ layer lanes.
   markers render on the layer's own row.
 - **Work area**: `B` and `N` set start/end at the playhead; drag the ends; double-click the
   bar to reset to the full comp. Work area is the preview range and default export range.
+  A comp that has never had one set **reads as the whole comp** (K-203) — the engine's
+  "not narrowed" is null, but the interface has no such state, and a bar with no ends is
+  a bar nobody can take hold of. Clearing the work area widens it back to the comp.
 - **Cache bar**: a thin stripe showing cached frames per tier — VRAM, RAM, and disk caches
   as three distinguishable states (visual treatment in [15-DESIGN.md](15-DESIGN.md)).
   The bar MUST update live as background rendering fills the cache (K-016).
@@ -434,9 +437,13 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
   selecting keyframes on a lane selects their properties the same way. **Keyed rows draw
   their keyframes as diamonds on their lanes**, and dragging empty lane space boxes them up
   for selection (the shared marquee the graph editor also uses); the F9 family and the
-  bottom bar's easing buttons act on that selection in either view. Still to build here:
-  moving/deleting a whole *lane* selection, the Masks group, the expression
-  toggle, and `U`/`UU`.
+  bottom bar's easing buttons act on that selection in either view. **Selection lets go**
+  (K-203): closing a fold drops the selection inside it, selecting a layer clears the
+  property selection, and a click on empty ground in either half of the table selects
+  nothing at all — no layer, no properties, no keys. `U`/`UU`/`UUU` reveal what is
+  animated / what has been modified / nothing, on the selected layer or — with nothing
+  selected — on every layer in the comp. Still to build here: moving/deleting a whole
+  *lane* selection, the Masks group, and the expression toggle.
 
 ### 4.4 Sequence layers
 
