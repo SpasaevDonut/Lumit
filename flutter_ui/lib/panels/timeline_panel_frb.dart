@@ -304,6 +304,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
         if (ui.selectedLayer.value?.internallayerId != layer?.internallayerId) {
           _selectedProperties.clear();
           _graphKeySelection.clear();
+          // The highlight belongs to the property selection just cleared, so
+          // it goes with it. Left behind, the previous layer's row stayed lit
+          // after a click on a different layer — two layers appearing chosen
+          // at once, which is the ambiguity K-203 set out to remove.
+          _highlighted = null;
         }
         ui.selectedLayer.value = layer;
       });

@@ -133,6 +133,22 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  /// Remember the rendered-frame cache budget the user just set, so the next
+  /// launch asks the engine for the same one. The engine holds the live budget
+  /// but has no store behind it, so without this the number resets on restart
+  /// while every other setting survives. Written straight away for the same
+  /// reason the keymap is: it is a deliberate act, not a per-frame event.
+  void setCacheBudgetBytes(int bytes) {
+    performance.cacheBudgetBytes = bytes;
+    save();
+  }
+
+  /// As [setCacheBudgetBytes], for the graphics card's preview cache.
+  void setVramBudgetBytes(int bytes) {
+    performance.vramBudgetBytes = bytes;
+    save();
+  }
+
   /// The project last opened or saved with a path, restored on the next launch
   /// (the egui frontend reopens the last project the same way). Null until a
   /// project has been opened or saved to a file. This is only the *file*;

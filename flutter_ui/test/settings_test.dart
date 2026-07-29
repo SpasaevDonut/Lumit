@@ -25,6 +25,34 @@ void main() {
     expect(p.playback, PlaybackMode.adaptive);
   });
 
+  // The bug: the budgets were live engine state with nothing behind them, so
+  // they reset on every launch while every other setting survived.
+  test('cache budgets survive a settings round-trip', () {
+    final p = PerformanceSettings()
+      ..cacheBudgetBytes = 3 * 1024 * 1024 * 1024
+      ..vramBudgetBytes = 2 * 1024 * 1024 * 1024;
+    final back = PerformanceSettings.fromJson(p.toJson());
+    expect(back.cacheBudgetBytes, 3 * 1024 * 1024 * 1024);
+    expect(back.vramBudgetBytes, 2 * 1024 * 1024 * 1024);
+  });
+
+  test('untouched budgets stay absent rather than freezing a default', () {
+    final json = PerformanceSettings().toJson();
+    expect(json.containsKey('cache_budget_bytes'), isFalse);
+    expect(json.containsKey('vram_budget_bytes'), isFalse);
+    expect(PerformanceSettings.fromJson(json).cacheBudgetBytes, isNull);
+  });
+
+  test('a nonsense budget in the file loads as absent', () {
+    final p = PerformanceSettings.fromJson(const {
+      'playback': 'adaptive',
+      'cache_budget_bytes': 'lots',
+      'vram_budget_bytes': -1,
+    });
+    expect(p.cacheBudgetBytes, isNull);
+    expect(p.vramBudgetBytes, isNull);
+  });
+
   test('workspace JSON round-trips appearance and settings', () {
     final ws = Workspace();
     ws.colorScheme = LumitColorScheme.gruvboxDark;

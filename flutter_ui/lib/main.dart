@@ -14,6 +14,7 @@ import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
+import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -566,6 +567,16 @@ class LumitUiState extends ChangeNotifier {
     // every keypress goes through it and the settings page edits it, so it
     // wants the same lifetime as the rest of the session's UI state.
     keymap = KeymapState(workspace: this.workspace);
+    // The cache budgets: live engine state with no store behind it, so the
+    // settings file carries the user's choice and hands it back here (K-194's
+    // sizing only picks the *default*). Null means untouched — leave the
+    // engine on its own default rather than writing today's default into the
+    // file forever.
+    final perf = this.workspace.performance;
+    final ramBudget = perf.cacheBudgetBytes;
+    if (ramBudget != null) setCacheBudget(bytes: BigInt.from(ramBudget));
+    final vramBudget = perf.vramBudgetBytes;
+    if (vramBudget != null) setVramCacheBudget(bytes: BigInt.from(vramBudget));
     // The read model re-reads on every committed change — one bridge call —
     // and every panel that draws layers repaints from it (K-184).
     _changes = state.onChange.listen((_) {

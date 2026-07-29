@@ -622,7 +622,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               '${_gib(_systemMib)} this machine has.',
           bytes: stats.budgetBytes.toInt(),
           ceilingMib: _systemMib,
-          onSet: (bytes) => setState(() => setCacheBudget(bytes: bytes)),
+          onSet: (bytes) => setState(() {
+            setCacheBudget(bytes: bytes);
+            ui.workspace.setCacheBudgetBytes(bytes.toInt());
+          }),
         ),
         _row(
           t,
@@ -656,7 +659,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
               'the ${_gib(_vramMib)} on the card.',
           bytes: vram.budgetBytes.toInt(),
           ceilingMib: _vramMib,
-          onSet: (bytes) => setState(() => setVramCacheBudget(bytes: bytes)),
+          onSet: (bytes) => setState(() {
+            setVramCacheBudget(bytes: bytes);
+            ui.workspace.setVramBudgetBytes(bytes.toInt());
+          }),
         ),
         _row(
           t,

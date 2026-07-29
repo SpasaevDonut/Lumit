@@ -805,13 +805,19 @@ class _TimelineRulerState extends State<TimelineRuler> {
             // roundabout, and a span you can see is one you expect to be able
             // to take hold of. Each edge stops one frame short of the other,
             // so a drag can never invert the span.
+            //
+            // Only in the lower half, where the band is drawn. A handle over
+            // the full height sat on top of the ticks and stole the drag from
+            // the playhead whenever the two were near each other, which made
+            // the playhead unscrubbable next to a work-area edge. The rule is
+            // the one the band already reads as: clock above, bar below.
             if (widget.onWorkArea != null)
               for (final isStart in const [true, false])
                 Positioned(
                   left: axis.xOf(isStart ? work.start : work.end) -
                       _workHandleWidth / 2,
                   width: _workHandleWidth,
-                  top: 0,
+                  top: widget.height / 2,
                   bottom: 0,
                   child: MouseRegion(
                     cursor: SystemMouseCursors.resizeLeftRight,

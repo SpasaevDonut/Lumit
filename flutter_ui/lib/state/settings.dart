@@ -1,7 +1,10 @@
-// Application-wide settings the Flutter frontend actually reads. Everything
-// that drives the engine (cache budget, autosave rotation, export presets)
-// lives engine-side and is reached through the bridge; only working
-// preferences of the interface itself are held and persisted here.
+// Application-wide settings the Flutter frontend actually reads. What a setting
+// *means* is the engine's business and is reached through the bridge; this file
+// holds the working preferences of the interface itself, plus the handful of
+// machine-local numbers the engine has nowhere to keep — the cache budgets are
+// live engine state with no store behind them, so without a copy here they
+// reset to the default on every launch. The keymap blob in `Workspace` is the
+// same arrangement: the settings file ferries it, Rust decides what it does.
 
 /// Which of the two playback behaviours the Viewer uses (docs/13 §B5).
 ///
@@ -24,9 +27,30 @@ class PerformanceSettings {
   /// preference, not a per-session toggle.
   PlaybackMode playback;
 
-  PerformanceSettings({this.playback = PlaybackMode.adaptive});
+  /// The rendered-frame cache budget in bytes, as the user last set it.
+  ///
+  /// Null means "whatever the engine defaults to" — the shipped default is the
+  /// engine's business, and writing a copy of it out at first launch would
+  /// freeze today's default into every settings file. Only a deliberate change
+  /// puts a number here. The frontend never interprets it; it hands it back to
+  /// the engine on the next launch exactly as it received it.
+  int? cacheBudgetBytes;
 
-  Map<String, dynamic> toJson() => {'playback': playback.name};
+  /// The graphics-card preview cache budget in bytes. Null as for
+  /// [cacheBudgetBytes].
+  int? vramBudgetBytes;
+
+  PerformanceSettings({
+    this.playback = PlaybackMode.adaptive,
+    this.cacheBudgetBytes,
+    this.vramBudgetBytes,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'playback': playback.name,
+        if (cacheBudgetBytes != null) 'cache_budget_bytes': cacheBudgetBytes,
+        if (vramBudgetBytes != null) 'vram_budget_bytes': vramBudgetBytes,
+      };
 
   factory PerformanceSettings.fromJson(Map<String, dynamic> j) =>
       PerformanceSettings(
@@ -36,8 +60,15 @@ class PerformanceSettings {
           (m) => m.name == j['playback'],
           orElse: () => PlaybackMode.adaptive,
         ),
+        // A value written by a build that stored something else entirely, or a
+        // hand-edited file, must not stop the settings loading: anything that
+        // is not a positive whole number is treated as absent.
+        cacheBudgetBytes: _positiveInt(j['cache_budget_bytes']),
+        vramBudgetBytes: _positiveInt(j['vram_budget_bytes']),
       );
 }
+
+int? _positiveInt(Object? v) => v is int && v > 0 ? v : null;
 
 /// Interface (Settings → Interface): UI scale and tooltips (K-117).
 class InterfaceSettings {

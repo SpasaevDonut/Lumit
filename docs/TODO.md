@@ -14,6 +14,43 @@ this file is the concrete backlog underneath it.
 
 ---
 
+## Now - the preview must keep up
+
+These sit above everything else: they are what the editor feels like in the hand.
+
+- **Dragging a property value flickers the preview.** Scrubbing a value updates,
+    but the picture stutters rather than following the mouse. Suspected: a frame
+    in flight is discarded when the next drag delta arrives, so the Viewer shows
+    a gap instead of the last good frame. Wanted: a drag never shows less than it
+    showed a moment ago — supersede the in-flight request, keep the last frame on
+    screen until its replacement is ready. Fix this **first**; it is the smallest
+    of the three and the most constantly felt.
+- **Hidden and adjustment layers do not update the preview until the frame
+    changes.** Toggling visibility, or editing anything on an Adjustment layer,
+    leaves the Viewer showing the old picture until you move to another frame and
+    back. The invalidation misses these edits: they change the composite without
+    changing the frame key. Related to the frame-key hole recorded under Next
+    (a layer's parent chain and visibility are not hashed).
+- **The disk tier is written but dark.** `crates/lumit-cache/src/disk.rs` and
+    `crates/lumit-render/src/diskio.rs` are complete — open, park, load back,
+    budget, the cache bar's blue tier, and a cache-root override honouring
+    "Settings → Performance → Cache" ([07-UI-SPEC.md](07-UI-SPEC.md) §15). Nothing
+    outside `diskio.rs` ever constructs it: `grep -rn 'diskio::' crates/` returns
+    nothing, so the third tier of the three-tier cache never runs and the Settings
+    control it was written for does not exist. Wanted: the worker spawns it, the
+    Settings window gets its budget row and root-folder picker back beside the RAM
+    and VRAM rows, and the cache bar shows the blue tier. Pairs naturally with the
+    multi-frame work below — read-ahead is what makes a disk tier worth having.
+- **Multi-frame rendering: render ahead, queue, and buffer for smooth playback.**
+    Playback currently renders one frame at a time on demand. Wanted: frames
+    rendered in advance of the playhead into a queue, so playback runs at rate
+    wherever the machine can manage it, and degrades honestly where it cannot.
+    This is a **whole session's work** — it touches the scheduler, the three-tier
+    cache and the eval graph's cancellation — so plan it as one, not as a patch
+    on the side of something else.
+
+---
+
 ## Now - Flutter frontend parity and regressions
 
 The frontend moved from egui to Flutter (K-174). Flutter is the only frontend:
@@ -253,6 +290,19 @@ the keymap).
     refuse the drop, or say plainly in the interface that the stack is inert.
 
 ## Next - engine/bridge follow-ups
+
+**Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
+text can visibly stair-step, most noticeably on a slow rotation where the jaggies
+crawl. The renderer has no anti-aliasing option at all today. Two questions to
+settle before writing any of it, because they decide where the setting lives:
+whether the sample count is a **project** property (it changes what a comp looks
+like, so it belongs in the file and must match on another machine and in export)
+or a **preference** (it trades quality for speed on *this* machine, like the cache
+budgets), and whether preview and export share one value or preview is allowed to
+run cheaper. The likely answer is both: a project-level quality that export always
+honours, and a preview override in settings — the same shape as the existing
+adaptive/every-frame playback pair. Sample counts must be checked against the
+adapter rather than assumed (`wgpu` reports supported counts per format).
 
 **The stale-fd race on a Linux Viewer resize** (`crates/lumit-render/src/headless.rs`
 around the `shared_dmabuf = Some(...)` re-create, with
