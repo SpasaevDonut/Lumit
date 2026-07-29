@@ -307,6 +307,48 @@ fn relink_does_not_deadlock_against_its_own_read() {
 
 /// Importing then reading back is the panel's whole read path, and `new_composition`
 /// must file its comp so the tree has something to nest.
+/// **A work area cannot leave the composition.** Dragging its start before frame
+/// zero used to store a negative in point, and the cache fill's frame numbers —
+/// unsigned — turned that into a first frame of eighteen quintillion, which
+/// killed the render worker on a `min > max` and left every later frame request
+/// failing with a send error. The op clamps, so no caller can store one: the
+/// handle simply stops at the edge.
+#[test]
+fn a_work_area_is_clamped_to_the_composition() {
+    use crate::api::layer::BridgeSpan;
+    let project = LumitBridgeState::new_project(None).expect("project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+
+    let frames = comp.duration_frames().expect("frames");
+    let zero = BridgeRational { num: 0, den: 1 };
+    let span = |a: i64, b: i64| BridgeSpan {
+        in_point: comp.time_of_frame(a).expect("time"),
+        out_point: comp.time_of_frame(b).expect("time"),
+        start_offset: zero,
+    };
+
+    // Before the start, and past the end: both ends come back inside.
+    comp.set_work_area(Some(span(-40, frames + 40)))
+        .expect("set");
+    let held = comp.get_work_area().expect("read").expect("a span");
+    assert_eq!(
+        comp.frame_at_time(held.in_point).expect("frame"),
+        0,
+        "the in point is clamped to the first frame"
+    );
+    assert_eq!(
+        comp.frame_at_time(held.out_point).expect("frame"),
+        frames,
+        "and the out point to the end of the comp"
+    );
+
+    // A span entirely outside has nothing left after clamping, so it is refused
+    // rather than stored as an empty one — and the previous span stands.
+    assert!(comp.set_work_area(Some(span(-80, -40))).is_err());
+    let still = comp.get_work_area().expect("read").expect("a span");
+    assert_eq!(comp.frame_at_time(still.in_point).expect("frame"), 0);
+}
+
 #[test]
 fn import_and_new_composition_land_in_the_item_tree() {
     let project = LumitBridgeState::new_project(None).expect("project");

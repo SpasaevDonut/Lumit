@@ -2264,7 +2264,7 @@ class _Toolbar extends StatelessWidget {
           span: workAreaWith(
             comp: comp,
             current: comp.getWorkArea(),
-            frame: playheadNow,
+            wanted: playheadNow,
             isStart: picked == 'work-in',
           ),
         );

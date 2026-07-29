@@ -7,6 +7,7 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -200,6 +201,45 @@ void main() {
       final start = p.comp.frameAtTime(time: area.inPoint);
       final end = p.comp.frameAtTime(time: area.outPoint);
       expect(end, greaterThan(start), reason: 'it always has length');
+    });
+
+    /// **Dragging an edge cannot leave the comp.** A pointer past either end
+    /// gave a frame outside it, and a negative in point took the render worker
+    /// down: cast unsigned for the cache fill it became a first frame of
+    /// eighteen quintillion, `clamp` panicked on the crossed bounds, and every
+    /// later frame request came back a send error. The helper the drag commits
+    /// through clamps, so the handle stops at the edge.
+    testWidgets('a work-area edge dragged past the comp stops at its end',
+        (tester) async {
+      final p = withComp();
+      await mount(tester, p);
+      final frames = p.comp.durationFrames();
+
+      // Well past the end, then well before the start.
+      p.comp.setWorkArea(
+        span: workAreaWith(
+          comp: p.comp,
+          current: null,
+          wanted: frames + 500,
+          isStart: false,
+        ),
+      );
+      expect(p.comp.frameAtTime(time: p.comp.getWorkArea()!.outPoint), frames,
+          reason: 'the out point stops at the end of the comp');
+
+      p.comp.setWorkArea(
+        span: workAreaWith(
+          comp: p.comp,
+          current: p.comp.getWorkArea(),
+          wanted: -500,
+          isStart: true,
+        ),
+      );
+      final area = p.comp.getWorkArea()!;
+      expect(p.comp.frameAtTime(time: area.inPoint), 0,
+          reason: 'and the in point at frame zero');
+      expect(p.comp.frameAtTime(time: area.outPoint),
+          greaterThan(p.comp.frameAtTime(time: area.inPoint)));
     });
 
     testWidgets('the marker editor adds at the playhead and removes',

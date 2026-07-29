@@ -86,6 +86,21 @@ pub(crate) fn lookahead_frames(p95_cost: Option<f64>, fps: f64) -> usize {
 /// nearest first per direction; when one direction runs out the other simply
 /// continues.
 pub(crate) fn fill_order(anchor: u64, first: u64, last: u64) -> impl Iterator<Item = u64> {
+    // An empty or inverted range yields nothing rather than panicking. `clamp`
+    // panics when its bounds cross, and they crossed for real: a work area
+    // dragged before frame zero gave a negative first frame, which cast
+    // unsigned became astronomically large, and the render worker died on
+    // `min > max` — taking every later frame request with it. The op that
+    // stores a work area now clamps it (lumit-core), so this is the second
+    // line: a document from disk, or any future caller, cannot reach that
+    // panic through here either (docs/14: no panics in engine crates).
+    // A range of one frame yields nothing below, which is what an impossible
+    // range should yield.
+    let (first, last) = if first > last {
+        (anchor, anchor)
+    } else {
+        (first, last)
+    };
     let anchor = anchor.clamp(first, last);
     let mut ahead = anchor;
     let mut behind = anchor;
@@ -169,6 +184,12 @@ mod tests {
         assert_eq!(backwards, vec![4, 3, 2, 1, 0]);
         // Anchor clamped into range, single-frame comp yields nothing.
         assert_eq!(fill_order(99, 0, 0).count(), 0);
+        // An impossible range yields nothing rather than panicking. This is the
+        // shape a work area outside the comp used to take — a negative first
+        // frame cast unsigned — and `clamp` panics when its bounds cross, which
+        // killed the render worker outright.
+        assert_eq!(fill_order(7, u64::MAX - 100, 363).count(), 0);
+        assert_eq!(fill_order(0, 9, 4).count(), 0);
     }
 
     /// The impl note's clamp, pinned: never fewer than 8 frames of lookahead

@@ -890,7 +890,7 @@ class _LumitAppViewState extends State<LumitAppView> {
             span: workAreaWith(
               comp: comp,
               current: comp.getWorkArea(),
-              frame: ui.playheadFrame.value,
+              wanted: ui.playheadFrame.value,
               isStart: action == 'workarea.set.start',
             ),
           );

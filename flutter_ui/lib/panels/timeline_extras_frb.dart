@@ -558,11 +558,18 @@ class _MarkerEditorState extends State<_MarkerEditor> {
 BridgeSpan workAreaWith({
   required CompositionReference comp,
   required BridgeSpan? current,
-  required int frame,
+  required int wanted,
   required bool isStart,
 }) {
   final duration = comp.durationFrames();
   final zero = comp.timeOfFrame(frame: 0);
+  // Clamped to the composition. There are no frames outside it to work on, and
+  // a span that reaches past either end is refused by the engine — which used
+  // to mean a drag that went past frame zero threw, after taking the render
+  // worker down with it (a negative frame number cast unsigned). The engine
+  // clamps too (lumit-core's `SetWorkArea`); this is what makes the handle stop
+  // at the edge under the pointer rather than snap back after the fact.
+  final frame = wanted.clamp(0, duration);
   final existingIn =
       current == null ? 0 : comp.frameAtTime(time: current.inPoint);
   final existingOut =
@@ -835,12 +842,20 @@ class _TimelineRulerState extends State<TimelineRuler> {
                         // costs a document write and a panel rebuild while a
                         // pointer emits many moves per frame of travel.
                         setState(() => _dragFrame = frame);
-                        widget.onWorkArea!(workAreaWith(
-                          comp: comp,
-                          current: comp.getWorkArea(),
-                          frame: frame,
-                          isStart: isStart,
-                        ));
+                        // A refusal is not an exception for a drag to carry: a
+                        // degenerate comp (no frames to work on) has no valid
+                        // span, and the document simply keeps the one it has.
+                        try {
+                          widget.onWorkArea!(workAreaWith(
+                            comp: comp,
+                            current: comp.getWorkArea(),
+                            wanted: frame,
+                            isStart: isStart,
+                          ));
+                        } catch (_) {
+                          // Nothing to recover: the span on screen is the
+                          // document's, and the next move asks again.
+                        }
                       },
                       onHorizontalDragEnd: (_) =>
                           setState(() => _dragFrame = null),

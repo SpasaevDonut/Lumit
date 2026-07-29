@@ -155,10 +155,13 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         .frame_at(lumit_core::time::CompTime(comp.duration.0))
         .max(1) as u64;
     // The work area bounds the fill when one is set (§5.5); else the comp.
+    // Both ends are taken through `max(0)` before they are cast: a work area
+    // from an older project file may sit outside the comp, and a negative frame
+    // number cast unsigned is not a small number, it is an enormous one.
     let (first, last) = match comp.work_area {
         Some((a, b)) => (
-            comp.frame_rate.frame_at(a) as u64,
-            (comp.frame_rate.frame_at(b) as u64).min(frames - 1),
+            comp.frame_rate.frame_at(a).max(0) as u64,
+            (comp.frame_rate.frame_at(b).max(0) as u64).min(frames - 1),
         ),
         None => (0, frames - 1),
     };

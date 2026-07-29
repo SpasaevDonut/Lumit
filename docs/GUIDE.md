@@ -4537,3 +4537,35 @@ reads as "the fill has stopped" and sent us looking for a bug in the fill. The
 cache now carries a version that every insert bumps, and the mirror watches that
 too. If you mirror a collection, mirror something that changes when its
 *contents* do, not only when its size does.
+
+### The work area could leave the composition, and it took the worker with it
+
+Dragging the work area's start before frame zero killed the render worker. Worth
+following the whole chain, because every link is a habit worth having.
+
+The work area is stored as two times, and nothing checked they were inside the
+comp. Frame numbers derived from them are signed, but the cache fill's are
+*unsigned* — a frame is never negative — so casting a negative in point gave a
+first frame of about eighteen quintillion. The fill then asked for a walk from
+that to frame 363, and Rust's `clamp` panics when its bounds cross: `min > max`.
+That panic is on the worker thread, so the worker died, and every later frame
+request came back "send error" — which is why the Viewer went quiet and pressing
+play threw. One bad drag, and the engine was gone for the session.
+
+Three fixes, at three depths, and all three belong:
+
+**The document refuses to hold it.** The op that stores a work area clamps both
+ends into the comp and refuses a span with nothing left after clamping. That is
+the real fix, because it bounds every caller at once — the drag, the keyboard
+nudge, a project file from an older build — and it is why the handle now simply
+stops at the edge: the panel draws what the document says.
+
+**The frontend does not ask for it.** The helper the drag commits through clamps
+the pointer's frame too. Strictly redundant, and still right: it means a drag
+along the edge is not a stream of refusals being swallowed.
+
+**The engine cannot be killed by it anyway.** `fill_order` treats an impossible
+range as an empty one. A guard against something the layer above now prevents
+sounds like belt and braces, but the rule in docs/14 is not "validate at the
+edges", it is *no panics in engine crates* — and a document from disk is not
+something the ops layer has vetted.

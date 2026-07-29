@@ -660,7 +660,29 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 }
             }
             let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
-            let previous = std::mem::replace(&mut c.work_area, *work_area);
+            // **Clamped to the composition, here rather than at the caller.** A
+            // work area outside the comp is not a thing the document can mean:
+            // there are no frames there to work on, and the frame numbers it
+            // implies go negative — which, cast unsigned for the cache fill,
+            // became an enormous first frame and took the render worker down
+            // with a `min > max`. Clamping in the op bounds every caller at once
+            // (a drag, a keyboard nudge, an imported project) and makes the drag
+            // simply stop at the edge, since the panel draws what the document
+            // says. A span that survives the clamp with nothing left is refused
+            // rather than stored empty.
+            let end = crate::time::CompTime(c.duration.0);
+            let work_area = match work_area {
+                None => None,
+                Some((a, b)) => {
+                    let a = (*a).clamp(crate::time::CompTime::ZERO, end);
+                    let b = (*b).clamp(crate::time::CompTime::ZERO, end);
+                    if b <= a {
+                        return Err(OpError::InvalidSpan);
+                    }
+                    Some((a, b))
+                }
+            };
+            let previous = std::mem::replace(&mut c.work_area, work_area);
             Ok(Op::SetWorkArea {
                 comp: *comp,
                 work_area: previous,
