@@ -26,22 +26,33 @@ These sit above everything else: they are what the editor feels like in the hand
     nothing, so the third tier of the three-tier cache never runs and the Settings
     control it was written for does not exist. Wanted: the worker spawns it, the
     Settings window gets its budget row and root-folder picker back beside the RAM
-    and VRAM rows, and the cache bar shows the blue tier. Pairs naturally with the
-    multi-frame work below — read-ahead is what makes a disk tier worth having.
-    Land the **disk bar** with it: the cache meter gains a third bar beside the RAM
-    and VRAM ones (below) at the point the tier actually runs.
-- **The cache meter reads one tier, and says "nothing held".** With a large VRAM
-    budget set it reports no usage, which may be honest for the RAM tier and is
-    certainly not the whole picture. Wanted: a bar per tier — RAM and VRAM now,
-    disk when the tier above lands — so "what is cached" is answerable per tier
-    rather than as one merged number.
-- **Multi-frame rendering: render ahead, queue, and buffer for smooth playback.**
-    Playback currently renders one frame at a time on demand. Wanted: frames
-    rendered in advance of the playhead into a queue, so playback runs at rate
-    wherever the machine can manage it, and degrades honestly where it cannot.
-    This is a **whole session's work** — it touches the scheduler, the three-tier
-    cache and the eval graph's cancellation — so plan it as one, not as a patch
-    on the side of something else.
+    and VRAM rows, and the cache bar shows the blue tier. Land the **disk bar** with
+    it: the status line's cache meter gains a third bar beside the RAM and VRAM ones
+    it grew on 2026-07-29.
+    **Blocked, and on what.** The tier cannot be wired honestly while frames are
+    filed by *position*. A disk tier exists to outlive an edit and a restart, and a
+    positional name does not identify pixels: the RAM and VRAM tiers are emptied on
+    every commit precisely because of that, and a disk copy that survived one would
+    serve the picture from before the edit — or, after reopening a project, from
+    another day's document. So **content keying comes first** (the entry under *Next*:
+    file frames under a content hash). The pieces for it are closer than that entry
+    says: `lumit_render::cache::frame_key` already computes the hash, and the
+    renderer holds the probe cache it needs (`ProbeView`), so a hash is computable on
+    the worker thread without any new bridge view — what needs designing is how the
+    cache bar names a frame from its position once the keys are hashes (the worker
+    can publish held *positions* alongside the hashes, which is what the VRAM mirror
+    already does). Two further pieces the disk tier needs on top: a way back INTO the
+    VRAM tier from bytes (nothing uploads a frame to a texture today), and a decision
+    about when to pay the read-back that parking a frame costs at all — the zero-copy
+    path (K-183) keeps no bytes, so the idle fill is the honest place to spend it.
+- **Multi-frame rendering is built; the worker pool is what is left.** Renders run
+    ahead of the clock into a bounded ring sized by measured p95 cost, presents pace
+    against the clock, decode runs on its own thread, and the sound waits out a
+    pre-roll so a press of play no longer begins with a jump. What remains is under
+    *Next* ("Playback scheduler — what remains"): composites are still serial on the
+    one worker thread, so cancellation latency is one frame's render rather than the
+    impl note's 15 ms, and §6's real-window benches (A/V drift, the underrun ladder)
+    have not been run.
 
 ---
 
@@ -379,9 +390,11 @@ into the renderer's decoded-frame cache under the decode's own key, so decode
 runs alongside compositing (§5's decode ∥ evaluate). Still not built from the
 note: the worker pool and in-render epoch tokens (composites are serial on the
 one worker thread, so cancellation latency is one frame's render, not §1's
-15 ms — the tokens only mean something once renders leave that thread); pre-roll
-before the audio stream starts (§5); and §6's real-window benches (A/V drift
-over 10 minutes, the underrun ladder). Re-run
+15 ms — the tokens only mean something once renders leave that thread); and §6's
+real-window benches (A/V drift over 10 minutes, the underrun ladder). The
+**pre-roll landed 2026-07-29**: the sound starts when the ring holds three frames
+or 150 ms have passed, whichever is first, and the clock's baseline is taken then
+rather than when the request arrived. Re-run
 `integration_test/playback_bench_test.dart` to price the stack: the serial loop
 measured 58.7 fps on 1080p60 footage just before the ring landed.
 

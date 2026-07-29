@@ -280,11 +280,17 @@ void main() {
       await tester.pump();
 
       expect(find.byKey(const ValueKey('cache-meter')), findsOneWidget);
-      expect(find.textContaining('MB'), findsOneWidget,
-          reason: 'the exact megabytes read out beside the bar');
-      // Clicking empties it; the readout is live, so this must not throw with
-      // no project rendered yet.
-      await tester.tap(find.byKey(const ValueKey('cache-meter')));
+      // One bar per tier, each with its own megabytes: a merged number cannot
+      // answer "what is cached" for either of them.
+      expect(find.text('RAM'), findsOneWidget);
+      expect(find.text('VRAM'), findsOneWidget);
+      expect(find.textContaining('MB'), findsNWidgets(2),
+          reason: 'the megabytes held read out beside each bar');
+      // Clicking a tier empties that tier; the readout is live, so this must
+      // not throw with no project rendered yet.
+      await tester.tap(find.byKey(const ValueKey('cache-meter-ram')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('cache-meter-vram')));
       await tester.pump();
       expect(find.byKey(const ValueKey('cache-meter')), findsOneWidget);
     });

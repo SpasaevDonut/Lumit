@@ -4454,3 +4454,41 @@ window is exactly as long as the schedule. The engine now counts any serve that
 happens with retired caches still in place (`stale_serves`, visible in the cache
 readout), which is how the regression test catches it — a counter that must stay
 at zero is a much easier thing to test than a picture that is sometimes stale.
+
+### Why the sound waits a moment before it starts (the pre-roll)
+
+Press play and two things have to begin: the picture and the sound. The sound is
+easy to start — hand the mix to the operating system and it plays on its own. The
+picture is not: the first frame has to be composited, which takes as long as it
+takes.
+
+Starting them at the same instant therefore starts them at different *times*.
+The sound is already thirty or eighty milliseconds in by the time the first frame
+appears, and because the sound is the clock everything follows, adaptive playback
+then does exactly what it is told: it skips forward to the frame the clock has
+reached. So every press of play began with a small jump, and the busier the comp
+the bigger the jump.
+
+The fix is the one the scheduler note asks for and it is called a pre-roll: bank
+a few frames first, then start the sound. The worker now holds the mix aside when
+playback begins, renders ahead into its ring as usual, and starts the sound the
+moment either three frames are banked or 150 ms have passed — whichever comes
+first, because a comp too heavy to bank three frames quickly must not sit in
+silence waiting for them. The clock's zero point is taken at that moment rather
+than when the request arrived, so the milliseconds spent pre-rolling are not
+mistaken for playback time the picture has to catch up on.
+
+### Why the cache meter has one bar per tier
+
+There are three places a finished frame can live: ordinary memory, the graphics
+card, and (eventually) the disk. They hold different things at different rates,
+and since frames stopped travelling as pixels (K-183) the memory tier is only
+used by the scopes — so a Viewer busily banking frames on the card reported
+"nothing held" on the status line and looked broken.
+
+One number cannot answer "what is cached" for either tier, so the meter no longer
+tries: it draws a small bar per tier with the megabytes held beside it, and
+clicking a bar empties that tier alone. The budget for each is in the tooltip and
+in Settings → Performance, because the status line is one line shared with the
+notices and the export progress. A third bar joins them when the disk tier
+actually runs.

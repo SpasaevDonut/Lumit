@@ -221,6 +221,11 @@ pub struct PlayRequest {
     pub from: u64,
     pub mode: BridgePlaybackMode,
     pub scale: f32,
+    /// The document the mix is to be built from, snapshotted where play was
+    /// asked for rather than read on this thread — the mix must be of the comp
+    /// as it was when the button was pressed. The sound itself is started here,
+    /// after the pre-roll ([`Playback::pre_roll_done`]).
+    pub audio: std::sync::Arc<lumit_core::Document>,
 }
 
 /// Playback in progress: what is being played, and where it has got to.
@@ -237,6 +242,11 @@ pub struct PlayRequest {
 // latency is bounded by one frame's render, not the impl note's 15 ms. Epoch
 // tokens inside the render walk (and the worker pool they exist for) are the
 // upgrade, docs/impl/playback-scheduler.md §1-2.
+/// How many banked frames count as a full pre-roll, and how long the sound is
+/// ever made to wait for them (docs/impl/playback-scheduler.md §5).
+const PRE_ROLL_FRAMES: usize = 3;
+const PRE_ROLL_BUDGET: std::time::Duration = std::time::Duration::from_millis(150);
+
 #[frb(ignore)]
 struct Playback {
     comp: CompositionReference,
@@ -264,6 +274,11 @@ struct Playback {
     /// only move forward, so "post everything from here to there once" is the
     /// whole bookkeeping.
     prefetched_to: Option<u64>,
+    /// The mix waiting for the sound to be started, once the picture has
+    /// banked enough to start with it (the pre-roll,
+    /// [`Self::pre_roll_done`]). `None` once the sound has been started, or
+    /// when this run never had any.
+    pending_audio: Option<std::sync::Arc<lumit_core::Document>>,
     /// How many frames the last [`Self::advance`] had to jump over to catch the
     /// clock. Zero while playback is keeping up.
     ///
@@ -295,6 +310,24 @@ impl Playback {
     /// formula, [`crate::playback::lookahead_frames`]).
     fn capacity(&self) -> usize {
         crate::playback::lookahead_frames(self.costs.p95(), self.fps)
+    }
+
+    /// Whether the sound may start: the ring holds a few frames, or the
+    /// pre-roll budget is spent.
+    ///
+    /// **Why the sound waits at all.** Starting the audio stream at the moment
+    /// play is pressed means it runs while the first frame is still being
+    /// composited — the sound is already a few tens of milliseconds in before
+    /// there is anything to see, and in adaptive mode the picture then *skips*
+    /// to catch the clock up, so a press of play began with a jump. Filling the
+    /// ring first (docs/impl/playback-scheduler.md §5) starts the two together.
+    ///
+    /// The budget is the other half: a comp too heavy to bank three frames
+    /// quickly must not sit in silence waiting: at 150 ms the sound starts
+    /// regardless and the picture does what it can.
+    fn pre_roll_done(&self, queued: usize) -> bool {
+        queued >= PRE_ROLL_FRAMES.min(self.capacity()).max(1)
+            || self.started.elapsed() >= PRE_ROLL_BUDGET
     }
 
     /// Which queued frame to present now — an index into `queued` (the ring's
@@ -409,6 +442,19 @@ impl Playback {
             (self.skipped + 1) as f64 * budget
         }
     }
+}
+
+/// Start the sound for `comp` at `start` seconds, from the snapshot playback
+/// captured. A build with no media support has nothing to start.
+#[frb(ignore)]
+fn start_audio(comp: Uuid, start: f64, document: Option<std::sync::Arc<lumit_core::Document>>) {
+    let Some(document) = document else {
+        return;
+    };
+    #[cfg(feature = "media")]
+    crate::audio::play(comp, start, document);
+    #[cfg(not(feature = "media"))]
+    let _ = (comp, start, document);
 }
 
 /// Where the sound has got to, in seconds, or `None` when there is no mix to
@@ -606,6 +652,21 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             done.height,
             done.rgba,
         );
+    }
+
+    // The pre-roll: the sound starts once the picture has something banked to
+    // start alongside it (or the budget is spent), not at the press of play.
+    if let Some(playback) = &mut state.playback {
+        if playback.pending_audio.is_some() && playback.pre_roll_done(playback.ring.len()) {
+            let document = playback.pending_audio.take();
+            let start = playback.from as f64 / playback.fps;
+            // The clock's baseline is now, not when the request arrived: the
+            // pre-roll's own milliseconds are not playback time, and counting
+            // them would have adaptive skip straight over the frames just
+            // banked.
+            playback.started = std::time::Instant::now();
+            start_audio(playback.comp.id, start, document);
+        }
     }
 
     // Present first: at a frame boundary the due picture goes out BEFORE the
@@ -842,6 +903,7 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
     let from = if req.from >= last { 0 } else { req.from };
     state.playback = Some(Playback {
         comp: req.comp,
+        pending_audio: Some(req.audio),
         next: from,
         last,
         mode: req.mode,
@@ -1314,8 +1376,30 @@ mod tests {
             ring: std::collections::VecDeque::new(),
             costs: crate::playback::CostWindow::default(),
             prefetched_to: None,
+            pending_audio: None,
             skipped: 0,
         }
+    }
+
+    /// **The pre-roll.** The sound waits for the picture to bank a frame or two
+    /// — otherwise it starts while the first composite is still running and, in
+    /// adaptive mode, the picture skips to catch the clock up, so every press of
+    /// play begins with a jump. The wait is bounded: a comp too heavy to bank
+    /// three frames inside the budget starts anyway rather than sitting silent.
+    #[test]
+    fn the_sound_waits_for_the_first_frames_but_not_for_long() {
+        let play = playback(BridgePlaybackMode::Adaptive, 100);
+        assert!(!play.pre_roll_done(0), "nothing banked yet");
+        assert!(!play.pre_roll_done(2), "still short of the pre-roll");
+        assert!(play.pre_roll_done(3), "three frames is a pre-roll");
+
+        // Budget spent: the sound starts on whatever there is.
+        let mut slow = playback(BridgePlaybackMode::Adaptive, 100);
+        slow.started = std::time::Instant::now() - std::time::Duration::from_millis(200);
+        assert!(
+            slow.pre_roll_done(0),
+            "a heavy comp must not play in silence waiting for a ring"
+        );
     }
 
     /// **The pacing regression, on the present side.** Renders are free to run

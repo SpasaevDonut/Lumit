@@ -838,8 +838,18 @@ impl CompositionReference {
     /// workspace file the frontend owns — stating it is not deciding anything.
     #[frb(sync)]
     pub fn play(&self, from: u64, scale: f32, mode: BridgePlaybackMode) -> Result<(), BridgeError> {
-        let fps = self.fps();
-        self.audio_play(from as f64 / fps)?;
+        // The mix's document is snapshotted HERE — it must be the comp as it
+        // was when play was pressed — but the sound is started by the worker,
+        // once it has banked a frame or two to start alongside it (the
+        // pre-roll, docs/impl/playback-scheduler.md §5). Starting it here meant
+        // the sound ran while the first frame was still being composited, and
+        // adaptive playback then skipped to catch up: every press of play began
+        // with a jump.
+        let audio = {
+            let state = self.project()?;
+            let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
+            state.store.snapshot()
+        };
 
         self.dispatch(WorkerRequest::Play(
             crate::api::worker_thread::PlayRequest {
@@ -847,6 +857,7 @@ impl CompositionReference {
                 from,
                 mode,
                 scale,
+                audio,
             },
         ))
     }

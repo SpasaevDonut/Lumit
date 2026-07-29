@@ -205,8 +205,14 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
       };
 }
 
-/// How full the rendered-frame cache is, and how often it saved a render —
-/// with the exact megabytes on the right. Clicking it clears the cache.
+/// How full each tier of the frame cache is — one bar per tier, with the
+/// megabytes beside it. Clicking a tier's bar empties that tier.
+///
+/// **Why one bar each.** The tiers hold different things and fill at different
+/// rates: since the zero-copy transport (K-183) the RAM tier is only the scope
+/// path's, so a Viewer that is busily banking frames on the card reported
+/// "nothing held" here and looked broken. A merged number cannot answer "what is
+/// cached" for either tier, so it does not try to.
 ///
 /// Lives on the status line rather than under the Timeline: it measures the
 /// whole store, not one comp's frames. Redrawn on the line's own half-second
@@ -223,28 +229,81 @@ class CacheMeterFrb extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final stats = cacheStats();
-    final budget = stats.budgetBytes.toInt();
-    final used = stats.usedBytes.toInt();
-    final fraction = budget <= 0 ? 0.0 : (used / budget).clamp(0.0, 1.0);
-    final requests = stats.hits.toInt() + stats.misses.toInt();
+    final ram = cacheStats();
+    final vram = vramCacheStats();
+    final requests = ram.hits.toInt() + ram.misses.toInt();
 
-    return LumitTooltip(
-      message: requests == 0
-          ? 'Nothing rendered yet — click to clear the cache'
-          : '${stats.hits} served from the cache, ${stats.misses} rendered '
+    return Row(
+      key: const ValueKey('cache-meter'),
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('Cache', style: t.small.copyWith(color: t.textMuted)),
+        const SizedBox(width: 6),
+        _TierMeter(
+          keyName: 'cache-meter-ram',
+          label: 'RAM',
+          used: ram.usedBytes.toInt(),
+          budget: ram.budgetBytes.toInt(),
+          tip: requests == 0
+              ? 'Frames held in memory, of ${_mibText(ram.budgetBytes.toInt())} '
+                  'MB — nothing rendered yet. Click to clear'
+              : '${ram.hits} served from memory, ${ram.misses} rendered, of '
+                  '${_mibText(ram.budgetBytes.toInt())} MB — click to clear',
+          onClear: clearCache,
+        ),
+        const SizedBox(width: 10),
+        _TierMeter(
+          keyName: 'cache-meter-vram',
+          label: 'VRAM',
+          used: vram.usedBytes.toInt(),
+          budget: vram.budgetBytes.toInt(),
+          tip: 'Frames held on the graphics card, ready to show without '
+              'compositing, of ${_mibText(vram.budgetBytes.toInt())} MB '
               '— click to clear',
+          onClear: clearVramCache,
+        ),
+      ],
+    );
+  }
+}
+
+/// One tier: its name, how full it is, and the megabytes. Its own widget so a
+/// third tier (disk, when that tier actually runs — docs/TODO.md) is one more
+/// entry rather than a third copy of this layout.
+class _TierMeter extends StatelessWidget {
+  final String keyName;
+  final String label;
+  final int used;
+  final int budget;
+  final String tip;
+  final VoidCallback onClear;
+
+  const _TierMeter({
+    required this.keyName,
+    required this.label,
+    required this.used,
+    required this.budget,
+    required this.tip,
+    required this.onClear,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final fraction = budget <= 0 ? 0.0 : (used / budget).clamp(0.0, 1.0);
+    return LumitTooltip(
+      message: tip,
       child: GestureDetector(
-        key: const ValueKey('cache-meter'),
+        key: ValueKey<String>(keyName),
         behavior: HitTestBehavior.opaque,
-        onTap: () => clearCache(),
+        onTap: onClear,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Cache', style: t.small.copyWith(color: t.textMuted)),
-            const SizedBox(width: 6),
+            Text(label, style: t.small.copyWith(color: t.textMuted)),
+            const SizedBox(width: 4),
             SizedBox(
-              width: 64,
+              width: 40,
               child: Stack(children: [
                 Container(height: 4, color: t.surface3),
                 FractionallySizedBox(
@@ -253,8 +312,10 @@ class CacheMeterFrb extends StatelessWidget {
                 ),
               ]),
             ),
-            const SizedBox(width: 6),
-            Text('${_mib(used)} / ${_mib(budget)} MB',
+            const SizedBox(width: 4),
+            // Used only: the budget is in the tooltip and in Settings, and the
+            // status line is one line shared with the notices and export.
+            Text('${_mibText(used)} MB',
                 style: t.small.copyWith(color: t.textMuted)),
           ],
         ),
@@ -262,5 +323,7 @@ class CacheMeterFrb extends StatelessWidget {
     );
   }
 
-  static String _mib(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
 }
+
+/// Bytes as whole megabytes, for the meter's readouts and its tooltips.
+String _mibText(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
