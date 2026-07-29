@@ -315,8 +315,20 @@ jobs:
       # analyze and test are not repeated: the Linux job already runs both, and
       # neither is platform-specific. This job exists for the parts only a mac
       # can compile.
+      # Host architecture only. A release build otherwise goes universal
+      # (x86_64 + arm64), and on an arm64 runner the x86_64 slice counts as
+      # cross-compilation, which pkg-config-rs refuses outright ("has not been
+      # configured to support cross-compilation"). Forcing it with
+      # PKG_CONFIG_ALLOW_CROSS would be the wrong answer: Homebrew's ffmpeg@7 keg
+      # holds one architecture, so it would hand arm64 link flags to an x86_64
+      # link. A universal build needs both kegs present and is out of scope for
+      # this gate, which exists to compile the Swift runner and resolve the
+      # podspec — both of which the host slice does.
       - name: flutter build macos --release
         working-directory: flutter_ui
+        env:
+          FLUTTER_XCODE_ARCHS: arm64
+          FLUTTER_XCODE_ONLY_ACTIVE_ARCH: "YES"
         run: flutter build macos --release
 
   coverage:

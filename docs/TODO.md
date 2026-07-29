@@ -69,6 +69,13 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     absolute Homebrew path, so the bundle runs only where that keg is installed.
     Distribution needs the dylibs vendored in and their install names rewritten;
     this belongs to the K-033 notarisation pass, and the podspec says so.
+- **The macOS build is single-architecture.** A release build wants to go
+    universal, but `pkg-config-rs` refuses to cross-compile and a Homebrew keg
+    holds one architecture, so the x86_64 slice cannot link against an arm64
+    keg's FFmpeg. The `flutter-macos` job therefore pins `ARCHS` to the runner's
+    own architecture. A universal bundle needs both `ffmpeg@7` kegs installed and
+    the podspec's `-L` flags selected per slice — part of the K-033 distribution
+    pass, along with whether Intel macs are a supported target at all.
 - **The iOS podspec is still misnamed** —
     [ios/rust_lib_lumit_flutter.podspec:6](../flutter_ui/rust_builder/ios/rust_lib_lumit_flutter.podspec)
     declares `s.name = 'rust_lib_lumit_flutter'` while the plugin's pubspec name
