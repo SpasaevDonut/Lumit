@@ -1506,6 +1506,65 @@ void main() {
       expect(stack(), ['Top', 'Middle', 'Bottom']);
     });
 
+    /// Mid-drag, **both halves of the table move** (K-208): the name in the
+    /// outline and the bar in the lanes belong to one layer, and the lanes
+    /// used to sit still while the names slid, because only the outline knew
+    /// a drag was happening.
+    testWidgets('a layer drag slides the outline and the lanes together',
+        (tester) async {
+      final p = withComp();
+      for (final name in ['Bottom', 'Top']) {
+        p.comp.addSolidLayer().rename(name: name);
+      }
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final top = p.comp.getLayers().first.internallayerId;
+      final bottom = p.comp.getLayers().last.internallayerId;
+      Rect rowOf(Object id) =>
+          tester.getRect(find.byKey(ValueKey<String>('tl-rowbody-$id')));
+      Rect barOf(Object id) =>
+          tester.getRect(find.byKey(ValueKey<String>('tl-bar-$id')));
+
+      final rowBefore = rowOf(top);
+      final barBefore = barOf(top);
+      final passedBefore = rowOf(bottom);
+      // The two halves are level to begin with — the outline's headers and the
+      // lane side's ruler come to the same height (docs/07 §4.1).
+      expect(barBefore.top, closeTo(rowBefore.top, 0.5));
+
+      // Lift the top layer's name and hold it over the bottom row — no drop.
+      final from =
+          find.byKey(ValueKey<String>('tl-name-$top'));
+      final onto = find.byKey(ValueKey<String>('tl-row-$bottom'));
+      final start = tester.getCenter(from);
+      final end = tester.getCenter(onto);
+      final gesture = await tester.startGesture(start);
+      await tester.pump(const Duration(milliseconds: 200));
+      for (var i = 1; i <= 4; i++) {
+        await gesture.moveTo(start + (end - start) * (i / 4));
+        await tester.pump();
+      }
+      // Past the slide's 120ms, so the rows have arrived rather than being
+      // caught part-way.
+      await tester.pump(const Duration(milliseconds: 200));
+
+      final rowShift = rowOf(top).top - rowBefore.top;
+      final barShift = barOf(top).top - barBefore.top;
+      expect(rowShift, greaterThan(1),
+          reason: 'the dragged layer is on its way down the outline');
+      expect(barShift, closeTo(rowShift, 0.5),
+          reason: 'its bar went exactly as far, at the same time');
+
+      // And the layer it is passing moved the other way, in both halves,
+      // still level with each other.
+      expect(rowOf(bottom).top - passedBefore.top, lessThan(-1));
+      expect(barOf(bottom).top, closeTo(rowOf(bottom).top, 0.5));
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+    });
+
     /// Lock (docs/07 §4.2): a locked layer's bar refuses the drag and its
     /// name refuses the rename, until it is unlocked.
     testWidgets('a locked layer cannot be dragged or renamed', (tester) async {

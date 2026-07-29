@@ -4317,3 +4317,45 @@ scopes switch: off-spec, opt-in, and squarely a matter of taste.
 **The Scopes toolbar no longer prints the frame number.** The Timeline and the
 Viewer both say where the playhead is; a third copy sitting directly above the
 trace was only competing with it.
+
+### Why a layer drag moves both halves of the Timeline (K-208)
+
+The Timeline is a table in two halves: the outline on the left (names, switches,
+columns) and the lane area on the right (bars, keyframes, waveforms). They are
+built as two separate columns of rows, side by side, with their vertical scrolls
+tied together — which is what lets each half scroll horizontally on its own and
+keeps the whole thing straightforward to reason about.
+
+The cost of that arrangement showed up the first time somebody tried to animate
+a layer being dragged up or down the stack. The drag gesture lives in the
+outline, because the name is the handle you grab. So the outline knew a drag was
+happening and the lane area did not — the names could slide out of the way while
+the bars beside them sat perfectly still, which reads as the table coming apart.
+
+The fix is not to merge the two halves into one. It is to stop the *knowledge*
+of the drag from belonging to one of them. Two values now live on the panel
+itself and are handed to both halves:
+
+- **the drag in flight** — which row was lifted, and which row it would land on;
+- **the row heights** — how tall each layer's block is, counting the fold-out
+  rows it has open.
+
+Each half then wraps every layer's block in the same small widget, which asks
+one shared function "how far does block number *n* move right now?" and slides
+it by that much. Both halves ask the same question of the same numbers, so they
+answer identically and move as one row. That function is ordinary arithmetic
+with no widgets in it, so it is tested directly.
+
+Two details worth knowing. The blocks are moved with a **transform**, not by
+changing the layout: the rows keep their real positions, so nothing reflows
+underneath a gesture in progress and the drop lands where the document says it
+should. And the movement runs at the duration from Settings → Interface →
+Animation level, including zero — an animation the user cannot turn off is a
+bug, not a flourish.
+
+The same two values also settled an older annoyance: the two halves each used to
+draw their own row seams, and the outline's were drawn twice — once per row and
+once by the overlay that runs the full height of the panel. The two disagreed by
+whatever fraction of a pixel the scroll offset happened to sit at, so the
+outline's rows looked a hair taller than the lanes. The per-row line is gone; one
+overlay draws the seams for each half.

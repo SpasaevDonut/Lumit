@@ -19,6 +19,8 @@
 // its offset in Dart and commits one `set_span` on release: one op, one undo
 // step, even when the gesture moved the in point and the start offset together.
 
+import 'dart:math';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -74,6 +76,130 @@ const double _rulerHeight =
 /// How near the end of a bar counts as grabbing its edge to trim rather than its
 /// middle to move.
 const double _trimGrab = 6;
+
+/// A layer drag in flight: the index lifted, and the index it would land on.
+///
+/// **Held by the panel and read by both halves of the table**, which is the
+/// point (K-208). The outline owns the gesture — the name is the stack handle
+/// — so when only it knew about the drag, only it could move: the lanes sat
+/// still while their layers were being reordered beside them. One value, read
+/// by the outline rows and the lane blocks alike, and the two halves slide as
+/// one row because they are working from the same number.
+class LayerDrag {
+  final int from;
+  final int to;
+  const LayerDrag(this.from, this.to);
+
+  @override
+  bool operator ==(Object other) =>
+      other is LayerDrag && other.from == from && other.to == to;
+
+  @override
+  int get hashCode => Object.hash(from, to);
+}
+
+/// Every layer's block height: its own row plus whatever fold rows it shows.
+///
+/// Worked out **once per panel build and handed to both halves**, rather than
+/// each half measuring its own rows. Two measurements that must agree are two
+/// chances to disagree — and a half-pixel of disagreement is a table whose
+/// lanes drift out of line with their names as it scrolls.
+List<double> layerBlockHeights({
+  required List<BridgeLayerEntry> layers,
+  required Set<String> open,
+  required Map<String, bool> hasAudio,
+}) =>
+    [
+      for (final entry in layers)
+        _rowHeight *
+            (1 +
+                (open.contains(entry.layer.internallayerId.toString())
+                    ? layerFoldRows(
+                        entry: entry,
+                        open: open,
+                        hasAudio: hasAudio[
+                                entry.layer.internallayerId.toString()] ??
+                            false,
+                      ).length
+                    : 0)),
+    ];
+
+/// How far the block at [index] slides while a drag is in flight, in pixels;
+/// positive is down.
+///
+/// The lifted block travels the whole way to the slot it would take, and every
+/// block it passes moves one lift's height the other way — so the stack reads
+/// as already reordered before the drop, which is what makes a drop feel
+/// decided rather than guessed at. Pure, so the maths both halves depend on is
+/// tested without building a Timeline.
+double layerDragShift(List<double> heights, LayerDrag? drag, int index) {
+  if (drag == null || drag.from == drag.to) return 0;
+  if (index < 0 || index >= heights.length) return 0;
+  if (drag.from < 0 || drag.from >= heights.length) return 0;
+  if (drag.to < 0 || drag.to >= heights.length) return 0;
+  if (index == drag.from) {
+    var travel = 0.0;
+    if (drag.to > drag.from) {
+      for (var i = drag.from + 1; i <= drag.to; i++) {
+        travel += heights[i];
+      }
+      return travel;
+    }
+    for (var i = drag.to; i < drag.from; i++) {
+      travel -= heights[i];
+    }
+    return travel;
+  }
+  final lifted = heights[drag.from];
+  if (drag.to > drag.from) {
+    return index > drag.from && index <= drag.to ? -lifted : 0;
+  }
+  return index >= drag.to && index < drag.from ? lifted : 0;
+}
+
+/// One layer's block, slid out of a dragged layer's way.
+///
+/// A transform, not a layout change: the rows keep their places, so a drag
+/// never reflows the table under itself — and the same widget wraps the block
+/// in the outline and the block in the lanes, which is what keeps them
+/// together to the pixel.
+class LayerDragSlide extends StatelessWidget {
+  final ValueListenable<LayerDrag?> drag;
+  final List<double> heights;
+  final int index;
+  final Widget child;
+
+  const LayerDragSlide({
+    super.key,
+    required this.drag,
+    required this.heights,
+    required this.index,
+    required this.child,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // The user's animation level, not a constant: at *None* the rows must
+    // arrive without travelling at all (15-DESIGN §8), and a hard-coded
+    // duration here would be one animation the setting could not reach.
+    final duration = animationDuration(ThemeScope.of(context).animationLevel);
+    return ValueListenableBuilder<LayerDrag?>(
+      valueListenable: drag,
+      child: child,
+      builder: (context, value, child) {
+        final height = index < heights.length ? heights[index] : 0.0;
+        return AnimatedSlide(
+          offset: height <= 0
+              ? Offset.zero
+              : Offset(0, layerDragShift(heights, value, index) / height),
+          duration: duration,
+          curve: Curves.easeOut,
+          child: child,
+        );
+      },
+    );
+  }
+}
 
 class TimelinePanelFrb extends StatefulWidget {
   const TimelinePanelFrb({super.key});
@@ -306,6 +432,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// The lane view's selected keyframes, as `rowId#index` (docs/07 §4.3) —
   /// what the marquee gathered. Session state, like the twirl set.
   final Set<String> _laneKeySelection = {};
+
+  /// The layer drag in flight (K-208), read by both halves of the table. A
+  /// notifier rather than panel state: a drag slides rows, and rebuilding the
+  /// whole panel per pointer move to do it would cost the table its bridge
+  /// budget (docs/13).
+  final ValueNotifier<LayerDrag?> _layerDrag = ValueNotifier(null);
 
   /// The outline's and the lanes' vertical scrolls, linked both ways so the
   /// two halves of the table stay one table; the lanes' side owns the visible
@@ -566,6 +698,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
     _barDrag.dispose();
+    _layerDrag.dispose();
     _vOutline.dispose();
     _vLane.dispose();
     _hLane.dispose();
@@ -587,13 +720,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       final frame = perFrame <= 0 ? 0.0 : contentX / perFrame;
       final grew = next / _zoom;
       setState(() => _zoom = next);
-      // The axis is only that wide after this frame lays out, so the offset
-      // that holds the frame still is restored once it has.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted || !_hLane.hasClients) return;
-        _hLane.jumpTo((frame * perFrame * grew - viewportX)
-            .clamp(0.0, _hLane.position.maxScrollExtent));
-      });
+      // Jumped in the SAME turn as the zoom, not from a post-frame callback:
+      // deferring it painted one whole frame at the new width with the old
+      // offset, which is the sideways slide a zoom visibly made before it
+      // settled. `jumpTo` does not clamp — the viewport clamps at layout, and
+      // layout this frame already has the wider content — so the only bound
+      // needed here is the lower one.
+      if (_hLane.hasClients) {
+        _hLane.jumpTo(max(0.0, frame * perFrame * grew - viewportX));
+      }
       return;
     }
     if (keys.isShiftPressed && _hLane.hasClients) {
@@ -682,6 +817,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     // ruler draws it, the lanes and the curves are washed by it, and the two
     // are one span.
     final work = workAreaFrames(comp);
+    // One walk of the row stack for the whole panel: both halves slide their
+    // blocks by these heights during a drag, so neither can measure the table
+    // differently from the other (K-208).
+    final blockHeights = layerBlockHeights(
+        layers: layers, open: _open, hasAudio: _hasAudio);
     final graphColours = <String, List<Color>>{};
     for (final channel in channels) {
       (graphColours[channel.path] ??= [])
@@ -851,6 +991,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   child: _Outline(
                                                     comp: comp,
                                                     layers: layers,
+                                                    layerDrag: _layerDrag,
+                                                    blockHeights: blockHeights,
                                                     groupOrder: _groupOrder,
                                                     widths: _groupWidths,
                                                     selected:
@@ -1135,6 +1277,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                 child: _LayerArea(
                                                   comp: comp,
                                                   layers: layers,
+                                                  layerDrag: _layerDrag,
+                                                  blockHeights: blockHeights,
                                                   open: _open,
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
@@ -2453,6 +2597,11 @@ class _Outline extends StatelessWidget {
   final ValueChanged<String> onHighlight;
   final VoidCallback onChanged;
 
+  /// The drag in flight and the block heights it slides by — the panel's, so
+  /// the lanes are working from the same two values (K-208).
+  final ValueNotifier<LayerDrag?> layerDrag;
+  final List<double> blockHeights;
+
   const _Outline({
     required this.comp,
     required this.layers,
@@ -2472,6 +2621,8 @@ class _Outline extends StatelessWidget {
     required this.onSelect,
     required this.onHighlight,
     required this.onChanged,
+    required this.layerDrag,
+    required this.blockHeights,
   });
 
   @override
@@ -2480,8 +2631,15 @@ class _Outline extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < layers.length; i++) ...[
-          _OutlineRow(
+        for (var i = 0; i < layers.length; i++)
+          LayerDragSlide(
+            drag: layerDrag,
+            heights: blockHeights,
+            index: i,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _OutlineRow(
             key: ValueKey<String>('tl-row-${layers[i].layer.internallayerId}'),
             comp: comp,
             entry: layers[i],
@@ -2504,6 +2662,7 @@ class _Outline extends StatelessWidget {
                 onToggle(layers[i].layer.internallayerId.toString()),
             onSelect: () => onSelect(layers[i].layer),
             onChanged: onChanged,
+            layerDrag: layerDrag,
           ),
           // The fold-out, from the same list the lanes leave room for.
           if (open.contains(layers[i].layer.internallayerId.toString()))
@@ -2537,7 +2696,9 @@ class _Outline extends StatelessWidget {
                   onChanged: onChanged,
                 ),
               ),
-        ],
+              ],
+            ),
+          ),
       ],
     );
   }
@@ -2567,6 +2728,11 @@ class _OutlineRow extends StatefulWidget {
   final VoidCallback onSelect;
   final VoidCallback onChanged;
 
+  /// The panel's drag state: this row is where the gesture is made — the name
+  /// is the stack handle — and setting it here is what lets the lanes beside
+  /// the outline move with it (K-208).
+  final ValueNotifier<LayerDrag?> layerDrag;
+
   const _OutlineRow({
     super.key,
     required this.comp,
@@ -2582,6 +2748,7 @@ class _OutlineRow extends StatefulWidget {
     required this.onToggleOpen,
     required this.onSelect,
     required this.onChanged,
+    required this.layerDrag,
   });
 
   @override
@@ -2624,7 +2791,18 @@ class _OutlineRowState extends State<_OutlineRow> {
       // A layer dragged by its name lands here: dropping on this row puts it
       // at this row's place in the stack (docs/07 §4.7).
       onWillAcceptWithDetails: (d) => d.data != index && !info.switches.locked,
+      // Where the drop would land, told to the panel rather than kept here:
+      // both halves of the table slide their blocks from it, so the lanes
+      // move with the names instead of waiting for the drop (K-208).
+      onMove: (d) => widget.layerDrag.value = LayerDrag(d.data, index),
+      // Only if this row is still the one being aimed at: leaving row A can
+      // arrive after entering row B, and clearing then would drop the state
+      // the rows are mid-slide on.
+      onLeave: (_) {
+        if (widget.layerDrag.value?.to == index) widget.layerDrag.value = null;
+      },
       onAcceptWithDetails: (d) {
+        widget.layerDrag.value = null;
         widget.layers[d.data].layer.reorder(newIndex: BigInt.from(index));
         widget.onChanged();
       },
@@ -2659,10 +2837,12 @@ class _OutlineRowState extends State<_OutlineRow> {
               : widget.highlighted
                   ? t.selectionFill.withValues(alpha: 0.45)
                   : null,
-          // One hairline under every row, both halves of the table (K-190),
-          // drawn inside the box so the row height — and the lane beside it
-          // — is unchanged.
-          border: Border(bottom: BorderSide(color: t.hairline)),
+          // No seam of its own: K-192's overlay draws the seams for the whole
+          // outline, and a border here drew a *second* line a fraction of a
+          // pixel from it — the overlay is phased by the scroll offset, which
+          // a trackpad leaves fractional, so the two lines pulled apart as the
+          // table scrolled and the outline's rows read a hair taller than the
+          // lanes beside them.
         ),
         padding: const EdgeInsets.symmetric(horizontal: 4),
         child: Row(
@@ -2786,6 +2966,15 @@ class _OutlineRowState extends State<_OutlineRow> {
                     feedback: _dragLabel(t, info.name),
                     childWhenDragging:
                         Opacity(opacity: 0.4, child: _name(t, id, info)),
+                    // The lift and the let-go, both told to the panel: from
+                    // here to the drop the rows on both sides of the table
+                    // slide out of the way, and a cancelled drag has to put
+                    // them back (K-208).
+                    onDragStarted: () =>
+                        widget.layerDrag.value = LayerDrag(index, index),
+                    onDragEnd: (_) => widget.layerDrag.value = null,
+                    onDraggableCanceled: (_, __) =>
+                        widget.layerDrag.value = null,
                     child: _name(t, id, info),
                   ),
           ),
@@ -3141,6 +3330,12 @@ class _LayerArea extends StatelessWidget {
   /// The work area in frames, read once by the panel (K-203).
   final ({int start, int end, bool whole}) work;
 
+  /// The layer drag in flight, and the block heights it slides by — the
+  /// outline makes the gesture, and these are what let this side move with it
+  /// rather than sit still while its layers are reordered (K-208).
+  final ValueNotifier<LayerDrag?> layerDrag;
+  final List<double> blockHeights;
+
   /// The comp's exact rate, for the times a key drag commits.
   final int fpsNum;
   final int fpsDen;
@@ -3173,6 +3368,8 @@ class _LayerArea extends StatelessWidget {
     required this.onKeysSelected,
     required this.onDeselectAll,
     required this.work,
+    required this.layerDrag,
+    required this.blockHeights,
     required this.fpsNum,
     required this.fpsDen,
     required this.magnet,
@@ -3315,37 +3512,57 @@ class _LayerArea extends StatelessWidget {
                                 Column(
                                   crossAxisAlignment: CrossAxisAlignment.stretch,
                                   children: [
-                                    for (final entry in layers) ...[
-                                      _Bar(
-                                        key: ValueKey<String>(
-                                            'tl-bar-${entry.layer.internallayerId}'),
-                                        comp: comp,
-                                        entry: entry,
-                                        axis: axis,
-                                        razor: razor,
-                                        playheadFrame: () => playhead.value,
-                                        onSelect: () => onSelect(entry.layer),
-                                        onChanged: onChanged,
-                                        dragPreview: dragPreview,
-                                      ),
-                                      // One lane per fold-out row the outline shows,
-                                      // from the same list it builds: keyframe rows
-                                      // draw their diamonds, the waveform row its
-                                      // peaks (K-172), the rest leave their room.
-                                      if (open.contains(
-                                          entry.layer.internallayerId.toString()))
-                                        Column(
-                                          key: ValueKey<String>(
-                                              'tl-lanes-${entry.layer.internallayerId}'),
+                                    for (var i = 0; i < layers.length; i++)
+                                      // The block slides by the same rule and
+                                      // the same heights the outline's does, so
+                                      // a layer dragged up the stack takes its
+                                      // bar and its lanes with it (K-208).
+                                      LayerDragSlide(
+                                        drag: layerDrag,
+                                        heights: blockHeights,
+                                        index: i,
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.stretch,
                                           children: [
-                                            for (final row in _rowsOf(entry))
-                                              SizedBox(
-                                                height: _rowHeight,
-                                                child: _lane(t, entry, row),
+                                            _Bar(
+                                              key: ValueKey<String>(
+                                                  'tl-bar-${layers[i].layer.internallayerId}'),
+                                              comp: comp,
+                                              entry: layers[i],
+                                              axis: axis,
+                                              razor: razor,
+                                              playheadFrame: () =>
+                                                  playhead.value,
+                                              onSelect: () =>
+                                                  onSelect(layers[i].layer),
+                                              onChanged: onChanged,
+                                              dragPreview: dragPreview,
+                                            ),
+                                            // One lane per fold-out row the outline shows,
+                                            // from the same list it builds: keyframe rows
+                                            // draw their diamonds, the waveform row its
+                                            // peaks (K-172), the rest leave their room.
+                                            if (open.contains(layers[i]
+                                                .layer
+                                                .internallayerId
+                                                .toString()))
+                                              Column(
+                                                key: ValueKey<String>(
+                                                    'tl-lanes-${layers[i].layer.internallayerId}'),
+                                                children: [
+                                                  for (final row
+                                                      in _rowsOf(layers[i]))
+                                                    SizedBox(
+                                                      height: _rowHeight,
+                                                      child: _lane(
+                                                          t, layers[i], row),
+                                                    ),
+                                                ],
                                               ),
                                           ],
                                         ),
-                                    ],
+                                      ),
                                   ],
                                 ),
                                 // The same wash again, over the bars this time: under

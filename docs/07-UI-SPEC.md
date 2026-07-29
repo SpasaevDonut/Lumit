@@ -514,6 +514,14 @@ keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   **Shipped (K-193):** dragging a layer's **bar** moves it in time, and dragging a layer's
   **name** in the outline moves it up or down the stack — drop it on a row and it takes
   that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
+
+  **Both halves move (K-208).** While the drag is in flight the stack shows where the drop
+  would land: the lifted layer slides towards its slot and the layers it passes slide the
+  other way — in the outline **and** in the lane area at once, from one drag state and one
+  set of row heights, so a layer's bar never parts company with its name. In graph view,
+  where there are no lanes to move, the outline alone animates. Micro-motion per
+  [15-DESIGN.md](15-DESIGN.md) §8: transform only, ≤150ms, and it obeys the animation-level
+  setting (at *None* the rows arrive without travelling).
 - There is **no ripple mode anywhere** (K-022): nothing moves unless the user moves it.
 - Multi-selection supports all of the above; relative offsets are preserved.
 - Every destructive-feeling action (razor, delete, retime reset) is a single undo step.

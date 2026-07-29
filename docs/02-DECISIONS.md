@@ -3144,3 +3144,42 @@ before.
 **The playhead has a head** (15-DESIGN §6.5): an 11×8px accent triangle at the top of the
 ruler with the line carried into it as a notch in `surface_0` — black on a dark scheme,
 white on a light one. A 1px line alone reads as a row seam at a glance.
+
+**K-208 · DECIDED · A layer drag moves both halves of the Timeline, and the two halves
+measure the table once.** From Mack, reporting Airizz (2026-07-29). The Timeline's outline
+and lane area are built as two columns of rows side by side, which is what makes their
+horizontal scrolls independent and their layout easy to follow. Two things came out of that
+which needed answering: an animation that cannot cross the seam, and a table that can be
+misaligned by getting one height wrong.
+
+**The drag state belongs to the panel, not to the outline.** The gesture is made in the
+outline — the name is the stack handle — so only the outline knew a drag was in flight, and
+only the outline could move: the names slid out of the way while the bars beside them sat
+still. The lifted index and the index it would land on now live on the panel and are read by
+both halves, which slide their blocks by one shared, tested function. In graph view there
+are no lanes to move, so the outline animates alone. Transform only, ≤150ms, at the user's
+animation level including zero (15-DESIGN §8).
+
+**The row heights are worked out once per panel build and handed to both halves.** Two
+measurements that must agree are two chances to disagree, which is exactly the failure
+Airizz warned about: get one height wrong and the two sides of the table stop lining up.
+The same walk now feeds the outline, the lanes and the drag maths.
+
+**The outline's per-row seam is gone.** It drew a second hairline a fraction of a pixel from
+the one K-192's overlay already draws, and the overlay is phased by the scroll offset — which
+a trackpad leaves fractional — so the two lines pulled apart as the table scrolled and the
+outline's rows read taller than the lanes.
+
+**Zoom no longer slides before it settles.** Ctrl+wheel held the frame under the cursor by
+correcting the scroll offset in a post-frame callback, which painted one whole frame at the
+new width with the old offset. The jump is made in the same turn as the zoom: `jumpTo` does
+not clamp, and the layout that follows already has the wider content, so the viewport clamps
+it correctly on the way through.
+
+**Not done: merging the two halves into one row widget.** Airizz's suggestion — one row
+spanning outline and lanes — would make misalignment structurally impossible and any future
+animation free. It also means the lane side's horizontal scrolling stops being a scroll view
+and becomes an offset the rows apply themselves, taking the ruler, the cache bar, the
+playhead, the work-area ground, the marquee and the graph view's scroll plumbing with it.
+The requirement attached to this round was that both views behave exactly as they do now, so
+the seam stays for the moment; this entry does not close the door on it.
