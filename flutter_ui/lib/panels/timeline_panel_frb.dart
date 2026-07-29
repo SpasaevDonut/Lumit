@@ -1213,6 +1213,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                               GraphEditorFrb(
                                                                 key: _graphPane,
                                                                 comp: comp,
+                                                                hScroll: _hLane,
                                                                 channels:
                                                                     channels,
                                                                 axis: axis,

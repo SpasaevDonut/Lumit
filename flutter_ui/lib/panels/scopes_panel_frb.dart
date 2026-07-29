@@ -12,6 +12,7 @@
 // nothing happens at all while the panel is not on screen.
 
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
@@ -148,11 +149,29 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
                       ? Text('Waiting for a trace', style: t.small)
                       : AspectRatio(
                           aspectRatio: 1,
-                          child: RawImage(
-                            key: const ValueKey('scope-trace'),
-                            image: _trace,
-                            fit: BoxFit.contain,
-                            filterQuality: FilterQuality.none,
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              RawImage(
+                                key: const ValueKey('scope-trace'),
+                                image: _trace,
+                                fit: BoxFit.contain,
+                                filterQuality: FilterQuality.none,
+                              ),
+                              // The graticule: what the trace is measured
+                              // against. Drawn here rather than baked into the
+                              // engine's picture so it stays crisp at any panel
+                              // size — the trace is a fixed 256x256 and would
+                              // carry its labels up scaled and soft.
+                              CustomPaint(
+                                key: const ValueKey('scope-graticule'),
+                                painter: _GraticulePainter(
+                                  kind: _kind,
+                                  line: t.hairlineStrong,
+                                  label: t.small.copyWith(color: t.textMuted),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                 ),
@@ -228,4 +247,131 @@ List<Uint8List> scopeColoursFor(LumitTheme t, {bool themed = false}) {
     rgb(t.layer.solid),
     rgb(t.accent),
   ];
+}
+
+/// The scale a trace is read against: IRE for the waveform and parade, the
+/// colour targets and skin-tone line for the vectorscope, and the code range
+/// for the histogram.
+///
+/// In plain terms: the engine sends a picture of the measurement, and this
+/// draws the ruler over it. Without one a waveform is a shape with no idea
+/// what counts as black or white, and a vectorscope is a blob with no idea
+/// which way is red — which is what made the scopes pretty rather than useful.
+class _GraticulePainter extends CustomPainter {
+  final ScopeKind kind;
+  final Color line;
+  final TextStyle label;
+
+  const _GraticulePainter({
+    required this.kind,
+    required this.line,
+    required this.label,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = line
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke;
+    switch (kind) {
+      // Both read as levels up the side, so both take the same IRE scale.
+      // 0 and 100 are the ones that matter — black and white — and they are
+      // the two the trace is clipped against.
+      case ScopeKind.waveform:
+      case ScopeKind.parade:
+        for (final ire in const [0, 25, 50, 75, 100]) {
+          final y = size.height * (1 - ire / 100);
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+          _text(canvas, '$ire', Offset(2, y + 1), size);
+        }
+        // The parade's three cells, so it reads as R, G and B rather than one
+        // wide trace.
+        if (kind == ScopeKind.parade) {
+          for (var i = 1; i < 3; i++) {
+            final x = size.width * i / 3;
+            canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+          }
+          for (final (i, name) in const [(0, 'R'), (1, 'G'), (2, 'B')]) {
+            _text(canvas, name,
+                Offset(size.width * (i + 0.5) / 3 - 4, 2), size);
+          }
+        }
+
+      // Hue round, saturation out from the middle: the circle is the frame of
+      // reference, and without it the trace has no centre and no scale.
+      case ScopeKind.vectorscope:
+        final centre = Offset(size.width / 2, size.height / 2);
+        final radius = size.shortestSide / 2;
+        for (final r in const [0.25, 0.5, 0.75, 1.0]) {
+          canvas.drawCircle(centre, radius * r, paint);
+        }
+        canvas.drawLine(Offset(centre.dx, 0),
+            Offset(centre.dx, size.height), paint);
+        canvas.drawLine(Offset(0, centre.dy),
+            Offset(size.width, centre.dy), paint);
+        // The six primary and secondary targets at their standard angles,
+        // measured anticlockwise from the +x axis, and the skin-tone line at
+        // 123 degrees — the one every colourist actually looks for.
+        for (final (deg, name) in const [
+          (103.0, 'R'),
+          (241.0, 'G'),
+          (347.0, 'B'),
+          (61.0, 'Mg'),
+          (167.0, 'Yl'),
+          (283.0, 'Cy'),
+        ]) {
+          final a = deg * math.pi / 180;
+          final p = centre +
+              Offset(radius * 0.75 * math.cos(a), -radius * 0.75 * math.sin(a));
+          canvas.drawCircle(p, 3, paint);
+          _text(canvas, name, p + const Offset(4, -6), size);
+        }
+        final skin = 123.0 * math.pi / 180;
+        canvas.drawLine(
+          centre,
+          centre + Offset(radius * math.cos(skin), -radius * math.sin(skin)),
+          paint,
+        );
+
+      // Code value across, count up: only the horizontal axis carries meaning,
+      // because the vertical is scaled to whatever the tallest bin happens to
+      // be and a number on it would be a number about nothing.
+      case ScopeKind.histogram:
+        for (final (frac, name) in const [
+          (0.0, '0'),
+          (0.25, '64'),
+          (0.5, '128'),
+          (0.75, '192'),
+          (1.0, '255'),
+        ]) {
+          final x = size.width * frac;
+          canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+          _text(canvas, name,
+              Offset(x + 2, size.height - 12).translate(0, 0), size);
+        }
+    }
+  }
+
+  void _text(Canvas canvas, String s, Offset at, Size size) {
+    final p = TextPainter(
+      text: TextSpan(text: s, style: label),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    p.paint(
+      canvas,
+      Offset(
+        at.dx.clamp(0, (size.width - p.width).clamp(0, double.infinity)),
+        at.dy.clamp(0, (size.height - p.height).clamp(0, double.infinity)),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_GraticulePainter old) =>
+      old.kind != kind || old.line != line;
+
+  /// A scale, not a control: clicks fall through to whatever is beneath.
+  @override
+  bool? hitTest(Offset position) => false;
 }

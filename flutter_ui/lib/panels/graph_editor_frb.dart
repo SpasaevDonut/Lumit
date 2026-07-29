@@ -540,6 +540,11 @@ class GraphEditorFrb extends StatefulWidget {
   final CompositionReference comp;
   final List<GraphChannel> channels;
   final TimelineAxis axis;
+
+  /// The Timeline's horizontal scroll controller, so the value axis can be
+  /// pinned to the viewport rather than to the start of time. Optional: a test
+  /// that builds the pane alone has no scroll view around it.
+  final ScrollController? hScroll;
   final int frames;
   final double fps;
   final int fpsNum;
@@ -566,6 +571,7 @@ class GraphEditorFrb extends StatefulWidget {
     required this.comp,
     required this.channels,
     required this.axis,
+    this.hScroll,
     required this.frames,
     required this.fps,
     required this.fpsNum,
@@ -752,6 +758,13 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
           ],
         )
       : fitSpeedRange(_channelKeys);
+
+  /// The Timeline's horizontal scroll offset, or zero before the view has been
+  /// laid out (and in tests, which build the pane on its own).
+  double get _viewportLeft {
+    final c = widget.hScroll;
+    return c != null && c.hasClients ? c.offset : 0;
+  }
 
   (double, double) _range() {
     final frozen = _frozen;
@@ -1424,18 +1437,29 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
           child: Stack(
             clipBehavior: Clip.hardEdge,
             children: [
+              // Repainted as the Timeline scrolls, not merely as it rebuilds:
+              // scrolling moves this pane without rebuilding it, and the value
+              // labels are pinned to the viewport, so they have to be redrawn
+              // at the new edge. The listener is the scroll controller the
+              // Timeline already owns.
               Positioned.fill(
-                child: CustomPaint(
-                  painter: _GraphPainter(
-                    channels: widget.channels,
-                    shownKeys: [for (final c in widget.channels) _shownKeys(c)],
-                    lens: widget.lens,
-                    axis: widget.axis,
-                    fps: widget.fps,
-                    range: range,
-                    palette: t.curve,
-                    grid: t.hairline,
-                    label: t.small.copyWith(color: t.textMuted),
+                child: AnimatedBuilder(
+                  animation: widget.hScroll ?? const AlwaysStoppedAnimation(0),
+                  builder: (context, _) => CustomPaint(
+                    painter: _GraphPainter(
+                      channels: widget.channels,
+                      shownKeys: [
+                        for (final c in widget.channels) _shownKeys(c)
+                      ],
+                      lens: widget.lens,
+                      axis: widget.axis,
+                      fps: widget.fps,
+                      range: range,
+                      palette: t.curve,
+                      grid: t.hairline,
+                      label: t.small.copyWith(color: t.textMuted),
+                      viewportLeft: _viewportLeft,
+                    ),
                   ),
                 ),
               ),
@@ -1712,6 +1736,16 @@ class _GraphPainter extends CustomPainter {
   final Color grid;
   final TextStyle label;
 
+  /// Where the viewport's left edge sits in the canvas's own coordinates.
+  ///
+  /// The pane is as wide as the whole comp and lives inside the Timeline's
+  /// horizontal scroll view, so canvas x 0 is the *start of time*, not the
+  /// left of the window. The value labels were painted there and scrolled out
+  /// of sight the moment the Timeline moved, leaving the grid lines with
+  /// nothing naming them. Painting at the viewport's edge keeps the axis
+  /// readable wherever the view is and at whatever zoom.
+  final double viewportLeft;
+
   const _GraphPainter({
     required this.channels,
     required this.shownKeys,
@@ -1722,6 +1756,7 @@ class _GraphPainter extends CustomPainter {
     required this.palette,
     required this.grid,
     required this.label,
+    required this.viewportLeft,
   });
 
   double _yOf(double v, Size size) {
@@ -1820,7 +1855,9 @@ class _GraphPainter extends CustomPainter {
         textDirection: TextDirection.ltr,
       )..layout();
       text.paint(
-          canvas, Offset(2, (y - text.height - 1).clamp(0, size.height - 12)));
+          canvas,
+          Offset(viewportLeft + 2,
+              (y - text.height - 1).clamp(0, size.height - 12)));
     }
   }
 
