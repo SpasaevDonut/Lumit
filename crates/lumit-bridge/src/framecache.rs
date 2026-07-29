@@ -398,6 +398,21 @@ pub(crate) mod vram {
     /// describe frames that no longer exist. (The budget is deliberately not
     /// mirrored — the atomic above is the one authority on it.)
     static MIRROR: Mutex<(u64, u64, u64, Vec<u128>)> = Mutex::new((0, 0, 0, Vec::new()));
+    /// The budget the worker's cache is ACTUALLY holding to, as it last
+    /// reported. [`budget`] above is the wish the settings wrote; this is what
+    /// arrived, and they differ for one loop turn after a change — or for good,
+    /// if the applying ever breaks. The meter shows this one, because a meter
+    /// that draws a wish it cannot see being honoured is how "the cache stops
+    /// at 512 MB while Settings says 8 GB" goes unnoticed.
+    static APPLIED: AtomicUsize = AtomicUsize::new(lumit_render::DEFAULT_VRAM_CACHE_BYTES);
+
+    pub(crate) fn publish_applied(bytes: usize) {
+        APPLIED.store(bytes, Ordering::Relaxed);
+    }
+
+    pub(crate) fn applied() -> usize {
+        APPLIED.load(Ordering::Relaxed)
+    }
 
     pub(crate) fn set_budget(bytes: usize) {
         BUDGET.store(bytes, Ordering::Relaxed);

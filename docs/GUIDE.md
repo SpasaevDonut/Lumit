@@ -4500,3 +4500,40 @@ clicking a bar empties that tier alone. The budget for each is in the tooltip an
 in Settings → Performance, because the status line is one line shared with the
 notices and the export progress. A third bar joins them when the disk tier
 actually runs.
+
+### Three ways a cache can lie about itself
+
+The VRAM frame cache stopped at 512 MB however large a budget Settings was
+showing, and once it was full, moving the playhead banked nothing new. Those look
+like one bug and were three, each worth knowing as a shape.
+
+**A budget that was recorded as applied without being applied.** The worker keeps
+"what I have already told the cache" so it can spot a change; it seeded that from
+the *wish* — the value the settings had written into a shared slot. A fresh
+renderer's cache holds the built-in default, and the settings' value is usually
+already in that slot by the time a worker starts (restored at launch, or left
+there by the previous project). So the two disagreed from the first turn and the
+worker never noticed: the cache sat at its 512 MiB default all session. The fix
+is to start from "nothing applied yet" so the first turn always applies. The
+general lesson: never seed "what I have done" from "what was asked" — seed it
+from a value that cannot be mistaken for done.
+
+**A fill that gave up instead of choosing.** The background fill refused to render
+once the cache was within one frame of full, on the reasoning that filling past
+the budget would evict what it had just made. True in the limit, but it made the
+cache stick to wherever it first filled: move the playhead and the frames it
+wanted were new, while the frames in the way were far away and stale. What it does
+now is keep a *window* around the playhead, as many frames as the budget holds,
+and let the LRU decide what leaves — which it is good at, because staleness and
+distance from the playhead amount to the same thing here. Giving up is not a
+policy; it is the absence of one.
+
+**A readout that could not see a swap.** The worker mirrors the cache's contents
+for the cache bar and only republishes when the numbers change — bytes used and
+entries held. A cache sitting exactly at its budget trades one frame for another
+of the same size, so both numbers stay put while every frame in it changes. The
+bar went on drawing the old holdings for as long as the cache stayed full, which
+reads as "the fill has stopped" and sent us looking for a bug in the fill. The
+cache now carries a version that every insert bumps, and the mirror watches that
+too. If you mirror a collection, mirror something that changes when its
+*contents* do, not only when its size does.

@@ -120,7 +120,10 @@ pub fn vram_cache_stats() -> BridgeVramCacheStats {
     let (used, entries) = crate::framecache::vram::stats();
     BridgeVramCacheStats {
         used_bytes: used,
-        budget_bytes: crate::framecache::vram::budget() as u64,
+        // The applied budget, not the asked-for one: they agree a loop turn
+        // after a change, and a lasting disagreement is a bug the meter should
+        // show rather than hide.
+        budget_bytes: crate::framecache::vram::applied() as u64,
         entries,
     }
 }

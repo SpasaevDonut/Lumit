@@ -384,6 +384,102 @@ void main() {
           reason: 'the worker served a frame from caches the edit had retired');
     });
 
+    /// **A budget set before the worker existed still reaches the cache.** The
+    /// worker seeded "what I have applied" from the wish itself, and a fresh
+    /// renderer's cache holds the built-in default — so a budget restored at
+    /// launch (or left behind by the previous project) was recorded as applied
+    /// without ever being applied, and the cache stayed at 512 MiB all session
+    /// while Settings read whatever the user chose. The meter reports the
+    /// budget the cache actually holds to, which is what makes this askable.
+    testWidgets('the VRAM budget reaches the cache, whenever it was set',
+        (tester) async {
+      // Set before anything renders, exactly as the settings restore does.
+      const wanted = 1 << 30; // 1 GiB, and not the default
+      setVramCacheBudget(bytes: BigInt.from(wanted));
+
+      final p = freshProject();
+      final comp = _stampComp(p.state.project!, 'Scene');
+      p.uiState.setSelectedComp(comp);
+
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      await tester.runAsync(() async {
+        for (var i = 0; i < 60; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          if (vramCacheStats().budgetBytes.toInt() == wanted) return;
+        }
+        fail('the cache is holding to ${vramCacheStats().budgetBytes} bytes, '
+            'not the $wanted asked for');
+      });
+    });
+
+    /// **A full cache follows the playhead.** The fill used to stop for good
+    /// the moment the cache was within one frame of its budget, so on a full
+    /// cache moving the playhead banked nothing: the frames it wanted were new,
+    /// and the ones in the way were far off and stale. What it keeps now is a
+    /// window around the playhead — so the frames near where you *are* end up
+    /// held and the ones near where you *were* are the ones evicted for them.
+    testWidgets('the fill follows the playhead even when the cache is full',
+        (tester) async {
+      final p = freshProject();
+      final comp = _stampComp(p.state.project!, 'Scene');
+      p.uiState.setSelectedComp(comp);
+
+      // Room for four of this comp's frames and no more (160×90×4 bytes each,
+      // plus a little bookkeeping), so the cache is full long before the comp
+      // is and the window has to displace something to move.
+      const room = (160 * 90 * 4 + 64) * 4;
+      setVramCacheBudget(bytes: BigInt.from(room));
+      // Back to the engine's own default afterwards: the budget is process-wide
+      // and the tests after this one want room to work in.
+      addTearDown(() => setVramCacheBudget(bytes: BigInt.from(512 << 20)));
+
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      // Fill it around frame 0 first — the cache has to be genuinely full for
+      // this to be a test of anything.
+      List<int> tiers() =>
+          comp.cachedFrames(frames: BigInt.from(1000), scale: 1.0);
+      await tester.runAsync(() async {
+        for (var i = 0; i < 60; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          if (tiers()[1] == 2 && tiers()[2] == 2) return;
+        }
+        fail('the fill never warmed the frames around frame 0');
+      });
+
+      // Now go somewhere else entirely and leave the engine idle again.
+      p.uiState.playheadFrame.value = 900;
+      await tester.pump();
+      await tester.runAsync(() async {
+        for (var i = 0; i < 60; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          // A neighbour of the new position, not the frame itself: showing one
+          // caches it, so only a neighbour proves the *fill* ran.
+          if (tiers()[901] == 2) return;
+        }
+        fail('a full cache banked nothing around the new playhead');
+      });
+
+      // And what made room is the far side: the old neighbourhood is gone,
+      // which is the whole point of a window that follows.
+      final held = tiers();
+      expect(held[1], 0, reason: 'the frames by the old position were evicted');
+      expect(held[2], 0);
+    });
+
     /// The idle fill (K-187): show a frame, leave the engine alone for a
     /// moment, and it banks the frames around the playhead on its own —
     /// forward-biased, so the ones ahead come first. Real wall-clock waits,

@@ -64,9 +64,11 @@ pub struct WorkerState {
     /// [`crate::framecache::vram`]).
     applied_vram_budget: usize,
     seen_vram_clears: u64,
-    /// `(used, entries)` last published to the cache-bar mirror, so an
-    /// unchanged cache publishes nothing.
-    published_vram: (u64, u64),
+    /// `(used, entries, version)` last published to the cache-bar mirror, so an
+    /// unchanged cache publishes nothing. The version is what catches a *swap*:
+    /// a cache at its budget trades one frame for another of the same size, so
+    /// the first two numbers stay put while the holdings change completely.
+    published_vram: (u64, u64, u64),
     /// True when the idle fill has nothing left to do (everything near the
     /// playhead is held, or the budget is full). Cleared whenever the anchor,
     /// the document or the budget moves.
@@ -95,6 +97,10 @@ fn sync_caches(state: &mut WorkerState) {
         state.renderer.set_frame_texture_budget(budget);
         state.fill_exhausted = false;
     }
+    // What the cache is holding to, read back from the cache itself rather than
+    // from the wish above — so the meter cannot claim a budget the renderer
+    // never took.
+    crate::framecache::vram::publish_applied(state.renderer.frame_texture_stats().1);
     let clears = crate::framecache::vram::clears();
     if clears != state.seen_vram_clears {
         state.seen_vram_clears = clears;
@@ -103,8 +109,9 @@ fn sync_caches(state: &mut WorkerState) {
     }
     crate::framecache::publish_comp_decodes(state.renderer.decoded_frames());
     let (used, _, entries) = state.renderer.frame_texture_stats();
-    if (used as u64, entries as u64) != state.published_vram {
-        state.published_vram = (used as u64, entries as u64);
+    let version = state.renderer.frame_texture_version();
+    if (used as u64, entries as u64, version) != state.published_vram {
+        state.published_vram = (used as u64, entries as u64, version);
         let keys = state
             .renderer
             .frame_texture_keys()
@@ -160,17 +167,27 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         all(windows, feature = "shared-texture"),
         all(target_os = "macos", feature = "shared-texture-macos")
     ));
-    // Stop before the LRU starts churning: filling past the budget would
-    // evict the frames just made to admit the next ones, for ever.
-    let (used, budget, _) = state.renderer.frame_texture_stats();
+    let (_, budget, _) = state.renderer.frame_texture_stats();
     let (cw, ch) = (comp.width, comp.height);
     let s = scale.clamp(0.05, 1.0);
     let frame_bytes = ((cw as f32 * s) as usize).max(1) * ((ch as f32 * s) as usize).max(1) * 4;
-    if used + frame_bytes > budget {
+    // A budget that cannot hold one frame is a budget the fill cannot use: the
+    // frame would evict itself the moment it landed.
+    if budget < frame_bytes {
         state.fill_exhausted = true;
         return;
     }
-    for frame in crate::playback::fill_order(anchor, first, last) {
+    // **What the fill keeps is a WINDOW around the playhead**, as many frames as
+    // the budget holds, in `fill_order`'s forward-biased shape. It used to stop
+    // outright as soon as the cache was within one frame of full — which meant
+    // that once the cache filled, moving the playhead banked nothing ever again:
+    // the frames it wanted were new, and the ones in the way were far off and
+    // stale. Letting it render inside the window puts the eviction decision
+    // where it belongs, with the LRU, which drops the stalest and largest first
+    // — the far side of where you now are. It still terminates: the walk is
+    // bounded, and every frame in the window ends up held.
+    let window = (budget / frame_bytes).max(1);
+    for frame in crate::playback::fill_order(anchor, first, last).take(window) {
         if state
             .renderer
             .has_frame_texture(comp_ref.id, frame, quality, bgra)
@@ -562,9 +579,17 @@ fn worker_loop(
         prefetcher: crate::prefetch::Prefetcher::default(),
         last_shown: None,
         seen_generation: crate::framecache::generation(),
-        applied_vram_budget: crate::framecache::vram::budget(),
+        // NOT the wish's current value. A fresh renderer's cache holds the
+        // built-in default, and the settings' value is usually already in that
+        // atomic by the time a worker starts — restored at launch, or left there
+        // by the previous project. Seeding this from it therefore claimed the
+        // budget was applied when it never had been, and the cache stayed at
+        // its 512 MiB default for the whole session while Settings read 8 GB.
+        // Zero means "nothing applied yet", so the first sync applies whatever
+        // the wish is.
+        applied_vram_budget: 0,
         seen_vram_clears: crate::framecache::vram::clears(),
-        published_vram: (0, 0),
+        published_vram: (0, 0, 0),
         fill_exhausted: true,
         last_request: std::time::Instant::now(),
     };

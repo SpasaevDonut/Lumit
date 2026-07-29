@@ -29,6 +29,13 @@ These sit above everything else: they are what the editor feels like in the hand
     and VRAM rows, and the cache bar shows the blue tier. Land the **disk bar** with
     it: the status line's cache meter gains a third bar beside the RAM and VRAM ones
     it grew on 2026-07-29.
+    **The demotion ladder is also unbuilt.** docs/06 §5 wants a frame evicted from
+    VRAM to fall to RAM, and one evicted from RAM to fall to disk; today an eviction
+    simply drops the frame. VRAM→RAM needs a read-back at eviction time and — to be
+    worth anything — a way back up, since nothing can currently turn held bytes into
+    a texture the Viewer shows, so a demoted frame would be re-rendered anyway. That
+    upload path is the same piece the disk tier needs, so the two want doing together:
+    read-back on evict, upload on hit, then disk underneath both.
     **Blocked, and on what.** The tier cannot be wired honestly while frames are
     filed by *position*. A disk tier exists to outlive an edit and a restart, and a
     positional name does not identify pixels: the RAM and VRAM tiers are emptied on

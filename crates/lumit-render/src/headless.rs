@@ -114,6 +114,8 @@ pub struct HeadlessRenderer {
     frame_textures: lumit_cache::ByteLru<(Uuid, u64, u16, bool), FrameTexture>,
     /// How many `render_prepared` calls were served from [`Self::frame_textures`].
     frame_texture_hits: u64,
+    /// Bumped whenever the held set changes — see [`Self::frame_texture_version`].
+    frame_texture_version: u64,
     /// The Windows zero-copy Viewer target (K-177), held for the session and
     /// re-created only when the comp's dimensions change. `None` until the first
     /// `render_to_shared` call. Present only in the opt-in shared-texture build.
@@ -284,6 +286,7 @@ impl HeadlessRenderer {
             pool: DecodePool::new(),
             retained: None,
             frame_textures: lumit_cache::ByteLru::new(DEFAULT_VRAM_CACHE_BYTES),
+            frame_texture_version: 0,
             frame_texture_hits: 0,
             #[cfg(all(windows, feature = "shared-texture"))]
             shared: None,
@@ -702,20 +705,36 @@ impl HeadlessRenderer {
                     texture: texture.clone(),
                 },
             );
+            self.frame_texture_version += 1;
         }
         Ok(PreparedFrame { texture })
+    }
+
+    /// How many times the held set has changed — bumped by every insert, every
+    /// clear and every resize.
+    ///
+    /// For mirrors of the contents (the cache bar). `(used, entries)` is not
+    /// enough to notice a change: a cache sitting AT its budget swaps one frame
+    /// for another of the same size, so both numbers stay put while every frame
+    /// in it is different. The bar then draws yesterday's holdings for as long
+    /// as the cache stays full, which reads as "the fill has stopped".
+    #[must_use]
+    pub fn frame_texture_version(&self) -> u64 {
+        self.frame_texture_version
     }
 
     /// Resize the VRAM final-frame cache (Settings → Performance), evicting
     /// down to the new budget immediately.
     pub fn set_frame_texture_budget(&mut self, bytes: usize) {
         self.frame_textures.set_budget(bytes);
+        self.frame_texture_version += 1;
     }
 
     /// Drop every cached frame texture — a committed edit changed the document
     /// and these are keyed by position, or the user asked (Clear cache).
     pub fn clear_frame_textures(&mut self) {
         self.frame_textures.clear();
+        self.frame_texture_version += 1;
     }
 
     /// `(used_bytes, budget_bytes, entries)` of the VRAM final-frame cache.
