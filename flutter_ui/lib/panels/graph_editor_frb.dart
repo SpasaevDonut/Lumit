@@ -1392,17 +1392,14 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    if (widget.channels.isEmpty) {
-      return Center(
-        child: Text(
-          'Select a property to see its curve — click its name in the '
-          'outline; Ctrl/Shift-click adds more',
-          style: t.small,
-          textAlign: TextAlign.center,
-        ),
-      );
-    }
 
+    // An empty graph is still a graph. It used to be replaced outright by a
+    // line of text, which took the wheel handler, the grid, the value axis and
+    // the horizontal scrollbar with it: with nothing selected you could not
+    // Ctrl-scroll to zoom, could not pan, and had no axis to read — the pane
+    // only became a pane once it had something in it. The empty range is a
+    // real range (`fitValueRange` answers 0..1 for no data), so everything
+    // below works with no channels; the message is drawn over the top instead.
     return LayoutBuilder(
       builder: (context, constraints) {
         final height = constraints.maxHeight;
@@ -1481,6 +1478,21 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                 ..._tangentHandles(t, range, height),
                 ..._keyHandles(t, range, height),
               ],
+              // Over the live pane rather than instead of it, so the grid and
+              // the axis stay readable behind the invitation to fill them.
+              if (widget.channels.isEmpty)
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: Center(
+                      child: Text(
+                        'Select a property to see its curve — click its name '
+                        'in the outline; Ctrl/Shift-click adds more',
+                        style: t.small,
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
         );

@@ -157,6 +157,46 @@ double layerDragShift(List<double> heights, LayerDrag? drag, int index) {
   return index >= drag.to && index < drag.from ? lifted : 0;
 }
 
+/// Which slot a drag is aiming at, from how far it has travelled.
+///
+/// [from] is the block lifted, [travel] how far the pointer has moved down the
+/// stack since the lift in pixels (negative is up). Returns the index the block
+/// would take if dropped now.
+///
+/// **Measured against the stack as it was when the drag began**, which is the
+/// whole point. The rows on screen are slid out of the way while a drag is in
+/// flight, so asking "which row is the pointer over?" asks about geometry the
+/// drag itself is moving: each answer slides the rows, which changes the next
+/// answer, and the block oscillates between two slots without the pointer
+/// moving at all. Travel against the original heights cannot do that — it is
+/// a function of the pointer alone.
+///
+/// The threshold is the midpoint of the block being passed, not its edge: an
+/// edge means the slot flips the instant a single pixel of overlap appears,
+/// which is the other half of the same jitter. Travelling back to where the
+/// drag started therefore returns [from] exactly, so a cancelled-by-hand drag
+/// leaves the stack alone.
+int layerDragTarget(List<double> heights, int from, double travel) {
+  if (from < 0 || from >= heights.length) return from;
+  var to = from;
+  if (travel > 0) {
+    var passed = 0.0;
+    for (var i = from + 1; i < heights.length; i++) {
+      if (travel < passed + heights[i] / 2) break;
+      passed += heights[i];
+      to = i;
+    }
+  } else if (travel < 0) {
+    var passed = 0.0;
+    for (var i = from - 1; i >= 0; i--) {
+      if (-travel < passed + heights[i] / 2) break;
+      passed += heights[i];
+      to = i;
+    }
+  }
+  return to;
+}
+
 /// One layer's block, slid out of a dragged layer's way.
 ///
 /// A transform, not a layout change: the rows keep their places, so a drag
@@ -2668,6 +2708,7 @@ class _Outline extends StatelessWidget {
             onSelect: () => onSelect(layers[i].layer),
             onChanged: onChanged,
             layerDrag: layerDrag,
+            blockHeights: blockHeights,
           ),
           // The fold-out, from the same list the lanes leave room for.
           if (open.contains(layers[i].layer.internallayerId.toString()))
@@ -2738,6 +2779,11 @@ class _OutlineRow extends StatefulWidget {
   /// the outline move with it (K-208).
   final ValueNotifier<LayerDrag?> layerDrag;
 
+  /// Every block's height, as the stack stood when the panel last built —
+  /// what a drag's travel is measured against, so the answer does not depend
+  /// on rows the drag is itself moving.
+  final List<double> blockHeights;
+
   const _OutlineRow({
     super.key,
     required this.comp,
@@ -2754,6 +2800,7 @@ class _OutlineRow extends StatefulWidget {
     required this.onSelect,
     required this.onChanged,
     required this.layerDrag,
+    required this.blockHeights,
   });
 
   @override
@@ -2763,6 +2810,27 @@ class _OutlineRow extends StatefulWidget {
 class _OutlineRowState extends State<_OutlineRow> {
   /// The inline rename, entered by double-clicking the name.
   TextEditingController? _rename;
+
+  /// How far this row has been dragged since the lift, in pixels down.
+  ///
+  /// Accumulated from the gesture's own deltas rather than read back off the
+  /// widget's position, because the widget is being slid by the drag: its
+  /// position is an output of this number, so reading it back would be the
+  /// loop the travel measure exists to break.
+  double _dragTravel = 0;
+
+  /// Put the layer where the drag says, and let the rows go.
+  ///
+  /// A drop that lands where it started is not a reorder — it is the user
+  /// changing their mind, and it must cost nothing. Committing it anyway
+  /// wrote an undo step for a stack that had not moved.
+  void _commitDrag() {
+    final drag = widget.layerDrag.value;
+    widget.layerDrag.value = null;
+    if (drag == null || drag.from == drag.to) return;
+    widget.layers[drag.from].layer.reorder(newIndex: BigInt.from(drag.to));
+    widget.onChanged();
+  }
 
   LayerReference get layer => widget.entry.layer;
   int get index => widget.index;
@@ -2792,37 +2860,14 @@ class _OutlineRowState extends State<_OutlineRow> {
     // (K-184).
     final info = widget.entry.info;
 
-    return DragTarget<int>(
-      // A layer dragged by its name lands here: dropping on this row puts it
-      // at this row's place in the stack (docs/07 §4.7).
-      onWillAcceptWithDetails: (d) => d.data != index && !info.switches.locked,
-      // Where the drop would land, told to the panel rather than kept here:
-      // both halves of the table slide their blocks from it, so the lanes
-      // move with the names instead of waiting for the drop (K-208).
-      onMove: (d) => widget.layerDrag.value = LayerDrag(d.data, index),
-      // Only if this row is still the one being aimed at: leaving row A can
-      // arrive after entering row B, and clearing then would drop the state
-      // the rows are mid-slide on.
-      onLeave: (_) {
-        if (widget.layerDrag.value?.to == index) widget.layerDrag.value = null;
-      },
-      onAcceptWithDetails: (d) {
-        widget.layerDrag.value = null;
-        widget.layers[d.data].layer.reorder(newIndex: BigInt.from(index));
-        widget.onChanged();
-      },
-      builder: (context, candidate, _) => GestureDetector(
+    return Builder(
+      builder: (context) => GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: widget.onSelect,
         onSecondaryTapDown: (d) => _showRowMenu(context, d.globalPosition),
         child: Container(
-          // A line where the dragged layer would land, so the drop is
-          // visibly going somewhere rather than being taken on faith.
-          foregroundDecoration: candidate.isEmpty
-              ? null
-              : BoxDecoration(
-                  border: Border(top: BorderSide(color: t.accent, width: 2)),
-                ),
+          // No drop line: the rows themselves move to where they would land,
+          // so a line marking the same slot said it twice.
           child: _rowBody(context, t, info),
         ),
       ),
@@ -2963,22 +3008,33 @@ class _OutlineRowState extends State<_OutlineRow> {
             onPointerDown: (event) {
               if (event.buttons == kPrimaryButton) widget.onSelect();
             },
+            // The drag itself: a plain vertical gesture, not a `Draggable`.
+            //
+            // A `Draggable` carries a floating copy of the thing being moved,
+            // which is why this used to show a little name label under the
+            // pointer while the real row stayed behind. Both halves of the
+            // table already slide (K-208), so the stack shows the move
+            // truthfully on its own — the label was a second, worse answer to
+            // a question already answered, and the row it named did not move.
+            // The row travels; nothing floats.
             child: info.switches.locked
                 ? _name(t, id, info)
-                : Draggable<int>(
-                    data: index,
-                    axis: Axis.vertical,
-                    feedback: _dragLabel(t, info.name),
-                    childWhenDragging:
-                        Opacity(opacity: 0.4, child: _name(t, id, info)),
-                    // The lift and the let-go, both told to the panel: from
-                    // here to the drop the rows on both sides of the table
-                    // slide out of the way, and a cancelled drag has to put
-                    // them back (K-208).
-                    onDragStarted: () =>
-                        widget.layerDrag.value = LayerDrag(index, index),
-                    onDragEnd: (_) => widget.layerDrag.value = null,
-                    onDraggableCanceled: (_, __) =>
+                : GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragStart: (_) {
+                      _dragTravel = 0;
+                      widget.layerDrag.value = LayerDrag(index, index);
+                    },
+                    onVerticalDragUpdate: (d) {
+                      _dragTravel += d.delta.dy;
+                      final to = layerDragTarget(
+                          widget.blockHeights, index, _dragTravel);
+                      final drag = widget.layerDrag.value;
+                      if (drag?.to == to && drag?.from == index) return;
+                      widget.layerDrag.value = LayerDrag(index, to);
+                    },
+                    onVerticalDragEnd: (_) => _commitDrag(),
+                    onVerticalDragCancel: () =>
                         widget.layerDrag.value = null,
                     child: _name(t, id, info),
                   ),
@@ -3063,18 +3119,6 @@ class _OutlineRowState extends State<_OutlineRow> {
       ],
     );
   }
-
-  /// What rides under the pointer while a layer is being dragged up or down
-  /// the stack.
-  Widget _dragLabel(LumitTheme t, String name) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: t.surface3,
-          borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-          border: Border.all(color: t.accent),
-        ),
-        child: Text(name, style: t.body),
-      );
 
   /// The name, or the rename editor a double-click turns it into. Submitting
   /// commits; clicking anywhere else commits too (the field loses the row).

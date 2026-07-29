@@ -46,4 +46,45 @@ void main() {
     expect(layerDragShift(heights, const LayerDrag(9, 0), 0), 0);
     expect(layerDragShift(heights, const LayerDrag(0, 2), 7), 0);
   });
+
+  // The drag targeting: travel against the *original* heights. The old scheme
+  // asked which row the pointer was over, but the rows are slid by the drag
+  // itself, so each answer moved the rows and changed the next one.
+  group('drag targeting', () {
+    test('no travel is no move, so a drag put back where it began is a no-op',
+        () {
+      expect(layerDragTarget(heights, 1, 0), 1);
+      expect(layerDragTarget(heights, 1, 4), 1);
+      expect(layerDragTarget(heights, 1, -4), 1);
+    });
+
+    test('a slot is taken at the midpoint of the block being passed', () {
+      // Below layer 1 (66 high) sits layer 2 (22): half of it is 11.
+      expect(layerDragTarget(heights, 1, 10), 1);
+      expect(layerDragTarget(heights, 1, 12), 2);
+      // Above layer 1 sits layer 0 (22): half is 11.
+      expect(layerDragTarget(heights, 1, -10), 1);
+      expect(layerDragTarget(heights, 1, -12), 0);
+    });
+
+    test('the target is monotone in travel, so it cannot ping-pong', () {
+      var last = 0;
+      for (var travel = 0.0; travel <= 200; travel += 1) {
+        final to = layerDragTarget(heights, 0, travel);
+        expect(to, greaterThanOrEqualTo(last),
+            reason: 'target went backwards at travel $travel');
+        last = to;
+      }
+    });
+
+    test('travel past the ends stops at the ends', () {
+      expect(layerDragTarget(heights, 0, 10000), heights.length - 1);
+      expect(layerDragTarget(heights, 2, -10000), 0);
+    });
+
+    test('a from-index that has gone away is left alone', () {
+      expect(layerDragTarget(heights, 9, 100), 9);
+      expect(layerDragTarget(heights, -1, 100), -1);
+    });
+  });
 }
