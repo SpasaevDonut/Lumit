@@ -199,12 +199,19 @@ class BareDropdown<T> extends StatelessWidget {
   final String Function(T) label;
   final ValueChanged<T> onChanged;
 
+  /// The heading an option sits under, or null for none. Options keep their
+  /// given order; a heading is drawn each time the answer changes, so a list
+  /// that is already grouped needs nothing else, and one that is not gets no
+  /// headings rather than a scrambled list.
+  final String? Function(T)? group;
+
   const BareDropdown({
     super.key,
     required this.value,
     required this.options,
     required this.label,
     required this.onChanged,
+    this.group,
   });
 
   @override
@@ -226,12 +233,23 @@ class BareDropdown<T> extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  for (final o in options)
+                  for (var i = 0; i < options.length; i++) ...[
+                    if (group != null &&
+                        group!(options[i]) != null &&
+                        (i == 0 || group!(options[i - 1]) != group!(options[i])))
+                      Padding(
+                        padding: EdgeInsets.fromLTRB(10, i == 0 ? 6 : 10, 10, 2),
+                        child: Text(
+                          group!(options[i])!,
+                          style: t.small.copyWith(color: t.textMuted),
+                        ),
+                      ),
                     MenuRow(
-                      selected: o == value,
-                      onPressed: () => close(o),
-                      child: Text(label(o)),
+                      selected: options[i] == value,
+                      onPressed: () => close(options[i]),
+                      child: Text(label(options[i])),
                     ),
+                  ],
                 ],
               ),
             ),

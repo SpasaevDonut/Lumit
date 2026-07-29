@@ -2899,3 +2899,46 @@ failed sequence deletes the frames it wrote. The dialogue's preset and codec lis
 only what the engine ships (the old list named `prores` and two presets that stamped
 nothing). The preview-equals-export identity (K-031) is untouched: the range and rate choose
 *which* comp frames render and how the file is stamped, never how a frame renders.
+
+**K-202 · DECIDED · Themes are yours to make, and the Timeline gets a second ground.**
+From Mack (2026-07-29). Four Appearance changes, one of which is a spec correction.
+
+**Custom themes.** Settings → Appearance → **Customise…** opens every colour the theme
+carries, one row each — name and a line saying what it does on the left, a swatch that
+opens the picker on the right — seeded from the theme currently in use, previewing live as
+you change it, because a colour you cannot see against the rest of the interface is a
+colour you cannot judge. **Save** names it the first time and updates it in place after;
+closing with unsaved edits asks rather than assuming, and discarding puts back exactly what
+was there. A custom theme is stored as **a name, a light-or-dark base, and a bag of
+colours** — not a copy of the struct — so a theme saved today still opens when Lumit grows
+a token tomorrow, taking the new one from its base. Colours are written to the workspace
+file as readable `#rrggbb`, so a theme can be hand-edited or pasted between machines.
+
+The colours are declared once in `theme_tokens.dart`, each with the reader and writer that
+reach its field; the editor and the stored theme both walk that list, and a test counts the
+struct's colours against it so a token added and not listed fails rather than going
+missing. **One colour is deliberately not offered**: the Viewer's surround, which is
+strictly neutral by spec (15-DESIGN §2.1/§11) because a grade cannot be judged against a
+tinted surround.
+
+**The picker is grouped** — Dark, Light, then Custom. Seven built-ins plus a growing list of
+user themes is a long flat menu, and light-or-dark is the first thing anyone chooses by.
+
+**Scopes stop taking the theme's colours by default**, which is what 15-DESIGN §8 and §551
+have said all along: a waveform is a measuring instrument, read on a near-black graticule
+with a bright trace whatever the chrome, the same reasoning that keeps the Viewer surround
+neutral. `ScopeColours.standard` was already in the Dart theme, correct and unused — the
+panel simply never asked for it. Themed scopes remain available as an Appearance toggle,
+off by default: off-spec, opt-in, and squarely a matter of taste.
+
+**The Timeline gets two grounds, and selection its own colour.** The lane, layer and graph
+areas were one long strip at a single value, which left a selected row almost nothing to
+stand out against and left the span being delivered invisible below the ruler. Now the work
+area keeps `surface1` and everything outside it is washed a step darker
+(`timeline_out_of_range`), with a bigger step on light schemes because the same difference
+reads as less on a bright ground. Selection moves off `surface2` onto its own
+`selection_fill`, which lifts on a dark scheme and *drops* on a light one — a rule the
+surface ramp cannot express, because it is a ramp. Both default from the mode rather than
+being restated by seven schemes, and both are editable like any other token. The work
+area's edges are **draggable on the ruler** for the first time on this frontend: it was
+settable only from the menu, and a span you can see is one you expect to take hold of.

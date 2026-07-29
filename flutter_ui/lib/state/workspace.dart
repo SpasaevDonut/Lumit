@@ -9,6 +9,7 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 
+import '../theme/custom_theme.dart';
 import '../theme/theme.dart';
 import 'dock.dart';
 import 'settings.dart';
@@ -78,6 +79,34 @@ class Workspace extends ChangeNotifier {
   Color? accentOverride;
   AnimationLevel animationLevel = AnimationLevel.all;
 
+  /// The themes the user has made (K-202), in the order they were saved.
+  List<CustomTheme> customThemes = [];
+
+  /// The custom theme in use, by name, or null for the built-in
+  /// [colorScheme]. Two fields rather than one because a built-in scheme is
+  /// still what a custom theme is *built over*, and because a name that no
+  /// longer matches a saved theme has to fall back to something — which it
+  /// does, silently, to the built-in that is always there.
+  String? customThemeName;
+
+  /// The custom theme in use, or null when a built-in scheme is selected or
+  /// the named one has been deleted.
+  CustomTheme? get activeCustomTheme {
+    final name = customThemeName;
+    if (name == null) return null;
+    for (final theme in customThemes) {
+      if (theme.name == name) return theme;
+    }
+    return null;
+  }
+
+  /// Whether the Scopes panel draws in the theme's colours rather than the
+  /// standard broadcast set (K-202). Off by default: a scope is read on a
+  /// near-black graticule whatever the chrome, which is the same
+  /// grading-accuracy reasoning that keeps the Viewer surround neutral
+  /// (docs/15-DESIGN §8, §2.1). On, because it does look good.
+  bool themedScopes = false;
+
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
 
@@ -116,13 +145,110 @@ class Workspace extends ChangeNotifier {
 
   /// Rebuild the theme from the current appearance fields — the single funnel
   /// every Appearance control uses (`Shell::recompose`).
-  void recompose() {
-    _theme = LumitTheme.forScheme(
-      colorScheme,
-      themeShape,
-      accentOverride: accentOverride,
-    );
+  /// A theme shown but not saved — the customise window's live preview
+  /// (K-202). It overrides everything while set, and clearing it recomposes
+  /// from the stored selection, so a discarded edit leaves nothing behind.
+  LumitTheme? _preview;
+
+  void previewTheme(LumitTheme theme) {
+    _preview = theme;
+    _theme = theme;
     notifyListeners();
+  }
+
+  void clearPreview() {
+    _preview = null;
+    recompose();
+  }
+
+  void recompose() {
+    if (_preview != null) {
+      _theme = _preview!;
+      notifyListeners();
+      return;
+    }
+    final custom = activeCustomTheme;
+    if (custom != null) {
+      // A custom theme carries its own accent among its colours, so the
+      // accent override does not apply on top — it would silently overwrite
+      // a choice the user made in the editor.
+      _theme = custom.build(themeShape);
+    } else {
+      _theme = LumitTheme.forScheme(
+        colorScheme,
+        themeShape,
+        accentOverride: accentOverride,
+      );
+    }
+    notifyListeners();
+  }
+
+  /// One entry in the theme picker: a built-in scheme, or one of the user's.
+  List<ThemeChoice> get themeChoices => [
+        for (final s in LumitColorScheme.values)
+          if (s.mode == ThemeMode2.dark) ThemeChoice.builtIn(s),
+        for (final s in LumitColorScheme.values)
+          if (s.mode == ThemeMode2.light) ThemeChoice.builtIn(s),
+        for (final t in customThemes) ThemeChoice.custom(t.name),
+      ];
+
+  /// What the picker shows as selected. A custom theme whose name no longer
+  /// matches anything saved falls back to the built-in underneath it.
+  ThemeChoice get themeChoice => activeCustomTheme != null
+      ? ThemeChoice.custom(activeCustomTheme!.name)
+      : ThemeChoice.builtIn(colorScheme);
+
+  void choose(ThemeChoice choice) {
+    final custom = choice.customName;
+    if (custom != null) {
+      setCustomTheme(custom);
+    } else {
+      setScheme2(choice.scheme!);
+    }
+  }
+
+  /// Select a built-in scheme, leaving any custom theme behind.
+  void setScheme2(LumitColorScheme s) {
+    colorScheme = s;
+    customThemeName = null;
+    recompose();
+    save();
+  }
+
+  /// Select one of the user's themes by name.
+  void setCustomTheme(String name) {
+    customThemeName = name;
+    recompose();
+    save();
+  }
+
+  /// Save a custom theme — replacing one of the same name, else appending —
+  /// and select it. What the editor's Save does.
+  void saveCustomTheme(CustomTheme theme) {
+    final at = customThemes.indexWhere((t) => t.name == theme.name);
+    if (at >= 0) {
+      customThemes[at] = theme;
+    } else {
+      customThemes.add(theme);
+    }
+    customThemeName = theme.name;
+    recompose();
+    save();
+  }
+
+  /// Forget a custom theme. Selecting it afterwards is impossible, so a
+  /// session using it falls back to its built-in scheme.
+  void deleteCustomTheme(String name) {
+    customThemes.removeWhere((t) => t.name == name);
+    if (customThemeName == name) customThemeName = null;
+    recompose();
+    save();
+  }
+
+  void setThemedScopes(bool on) {
+    themedScopes = on;
+    notifyListeners();
+    save();
   }
 
   void setScheme(LumitColorScheme s) {
@@ -239,6 +365,9 @@ class Workspace extends ChangeNotifier {
         'performance': performance.toJson(),
         'interface': interface.toJson(),
         'keymap': keymapJson,
+        'custom_themes': [for (final t in customThemes) t.toJson()],
+        'custom_theme': customThemeName,
+        'themed_scopes': themedScopes,
         'last_project_path': lastProjectPath,
         'sessions': {
           for (final e in sessions.entries) e.key: e.value.toJson(),
@@ -268,6 +397,19 @@ class Workspace extends ChangeNotifier {
       interface = InterfaceSettings.fromJson(j['interface']);
     }
     keymapJson = j['keymap'] is String ? j['keymap'] as String : null;
+    customThemes = [];
+    final rawThemes = j['custom_themes'];
+    if (rawThemes is List) {
+      for (final entry in rawThemes) {
+        if (entry is Map) {
+          final theme = CustomTheme.fromJson(entry.cast<String, dynamic>());
+          if (theme != null) customThemes.add(theme);
+        }
+      }
+    }
+    customThemeName =
+        j['custom_theme'] is String ? j['custom_theme'] as String : null;
+    themedScopes = j['themed_scopes'] == true;
     lastProjectPath = j['last_project_path'] is String
         ? j['last_project_path'] as String
         : null;
@@ -305,4 +447,34 @@ class Workspace extends ChangeNotifier {
       // Persistence is best-effort; the session keeps working without it.
     }
   }
+}
+
+
+/// A choice in the theme picker: one of the built-in schemes, or one of the
+/// user's own themes by name (K-202).
+class ThemeChoice {
+  final LumitColorScheme? scheme;
+  final String? customName;
+
+  const ThemeChoice.builtIn(LumitColorScheme this.scheme) : customName = null;
+  const ThemeChoice.custom(String this.customName) : scheme = null;
+
+  String get label => scheme?.label ?? customName!;
+
+  /// The heading this choice sits under. Light and dark first because that is
+  /// what anyone is choosing by; the user's own last, because they are theirs.
+  String get group => scheme == null
+      ? 'Custom'
+      : scheme!.mode == ThemeMode2.light
+          ? 'Light'
+          : 'Dark';
+
+  @override
+  bool operator ==(Object other) =>
+      other is ThemeChoice &&
+      other.scheme == scheme &&
+      other.customName == customName;
+
+  @override
+  int get hashCode => Object.hash(scheme, customName);
 }

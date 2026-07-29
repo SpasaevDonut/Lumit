@@ -4018,6 +4018,60 @@ yes yet. The point of asking now is that when the first one arrives it says so
 in one place, rather than becoming a special case wedged into the middle of
 the layout.
 
+### Making your own theme, and the Timeline's two grounds (K-202)
+
+**Themes you can edit.** Settings → Appearance has a **Customise…** button under
+the colour scheme. It opens a window listing every colour the interface uses —
+what it is called, a line saying where it shows up, and a swatch you click to
+pick a new one. It opens on the colours you are *currently* using, and every
+change shows in the app straight away, because a colour you cannot see against
+everything else is a colour you cannot judge.
+
+**Save** asks for a name the first time and makes it a theme of your own, which
+then appears in the scheme list. Select it later, press Customise… again, and
+Save updates that theme rather than making another. Closing with unsaved
+changes asks whether to keep them; discarding puts back exactly what was there.
+
+What gets saved is deliberately *not* a copy of the whole theme — it is a name,
+whether it is a light or a dark theme, and the colours you set. That matters
+because Lumit gains colours over time: a theme you saved last year still opens,
+and anything new simply comes from the light or dark base underneath. The
+colours are written into your settings file as ordinary `#rrggbb` text, so you
+can read them, paste one in by hand, or send a theme to somebody.
+
+One colour is not offered: the **Viewer's surround**, the neutral grey around
+the picture. It stays a fixed neutral on purpose — you cannot judge a colour
+grade against a tinted background, so this is the one place the interface's
+taste has to give way to being able to see straight.
+
+**The scheme list is grouped** into Dark, Light and Custom, because light or
+dark is the first thing anyone picks by.
+
+**Scopes.** A waveform or vectorscope is a *measuring instrument*: it is read on
+a near-black background with a bright trace, whatever colour the rest of the app
+is. That is what the design docs have always said, and the panel now does it.
+If you like the look of scopes matching your theme — and it does look good —
+there is a switch for it in Settings → Appearance, off by default.
+
+**Why the Timeline has two background shades now.** The lane and layer areas
+used to be one flat colour end to end. Two things suffered: a selected row had
+almost nothing to stand out against, and the **work area** — the span you are
+actually going to export — was invisible unless you looked at the thin band on
+the ruler. So the part inside the work area keeps the normal panel colour and
+everything outside it is washed slightly darker, which tells you at a glance
+what you are delivering. On a light theme the wash is a bigger step, because the
+same small difference reads as less on a bright background.
+
+Selected rows got their own colour at the same time, rather than borrowing one
+from the general set of greys. It brightens on a dark theme and *darkens* on a
+light one — a selection has to stand out from whichever background it lands on,
+and that is not something a simple light-to-dark ramp can express. Both of these
+are ordinary colours in the customise window, so you can set them yourself.
+
+And the work area's two edges can now be **dragged on the ruler**. Until now you
+could only set them from the Timeline menu, which was precise but roundabout —
+a span you can see is one you expect to be able to grab.
+
 ### The keyboard, and why the engine owns it (K-199)
 
 **The problem it solves.** Every editor lets you change its shortcuts, because

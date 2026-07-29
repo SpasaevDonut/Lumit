@@ -145,6 +145,14 @@ than hidden, because a shortcuts page that quietly omits bindings is worse than 
 shows a key you have not built yet. Either build the commands or drop the bindings; do not
 leave the two disagreeing for long.
 
+**Appearance, after K-202.** Custom themes are per-machine: they live in the workspace file
+and there is no import/export *of a theme* (the keymap has one; a theme does not yet), so
+sending one to somebody means sending them the JSON block by hand. The editor also has no
+preview swatch strip and no duplicate-a-theme button — the way to make a variant is to
+select the theme, change it, and Save, which updates rather than forks it. And the seven
+built-in schemes still restate every colour individually; only the two Timeline tokens
+default from the mode.
+
 **Shell and onboarding:**
 - **The boot splash is not in the frb shell.** The bottom status line landed
   2026-07-28 (saved/unsaved state, the cache meter, a notices area with a close

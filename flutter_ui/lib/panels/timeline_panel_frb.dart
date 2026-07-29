@@ -868,6 +868,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                           axis: axis,
                                                           fps: ui.model.fps,
                                                           height: _rulerHeight,
+                                                          onWorkArea: (span) {
+                                                            comp.setWorkArea(
+                                                                span: span);
+                                                            setState(() {});
+                                                          },
                                                           onSeek: (f) => ui
                                                                   .playheadFrame
                                                                   .value =
@@ -1235,9 +1240,9 @@ class _FoldRow extends StatelessWidget {
       // same at half strength, exactly as a layer row marks itself.
       decoration: BoxDecoration(
         color: selected
-            ? t.surface2
+            ? t.selectionFill
             : contains
-                ? t.surface2.withValues(alpha: 0.45)
+                ? t.selectionFill.withValues(alpha: 0.45)
                 : null,
       ),
       padding: EdgeInsets.only(left: indent, right: 4),
@@ -2510,9 +2515,9 @@ class _OutlineRowState extends State<_OutlineRow> {
           // layer's fold-out was last touched) is the same surface at half
           // strength, so they read apart at a glance.
           color: widget.selected
-              ? t.surface2
+              ? t.selectionFill
               : widget.highlighted
-                  ? t.surface2.withValues(alpha: 0.45)
+                  ? t.selectionFill.withValues(alpha: 0.45)
                   : null,
           // One hairline under every row, both halves of the table (K-190),
           // drawn inside the box so the row height — and the lane beside it
@@ -3061,6 +3066,16 @@ class _LayerArea extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    // Where the work area falls in this area's own pixels, or null when the
+    // comp has none — in which case the whole strip is "in range" and the
+    // ground stays one colour.
+    final work = comp.getWorkArea();
+    final workAreaPixels = work == null
+        ? null
+        : (
+            axis.xOf(frameAtTime(comp, work.inPoint)),
+            axis.xOf(frameAtTime(comp, work.outPoint)),
+          );
     return Stack(
       children: [
         Column(
@@ -3072,6 +3087,10 @@ class _LayerArea extends StatelessWidget {
               fps: fps,
               height: _rulerHeight,
               onSeek: onSeek,
+              onWorkArea: (span) {
+                comp.setWorkArea(span: span);
+                onChanged();
+              },
             ),
             // Directly under the ruler and above the lanes, which is where the
             // interface spec puts it (docs/07 §3.2).
@@ -3106,6 +3125,25 @@ class _LayerArea extends StatelessWidget {
                   },
                   child: Stack(
                     children: [
+                      // The ground, in two shades (K-202): the work area keeps
+                      // the panel's own surface, and everything outside it is
+                      // washed a step darker. Without it the lane area was one
+                      // long strip at a single value, which left a selected
+                      // row almost nothing to stand out against — and left the
+                      // span you are actually delivering invisible below the
+                      // ruler.
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            painter: WorkAreaGroundPainter(
+                              startX: workAreaPixels?.$1,
+                              endX: workAreaPixels?.$2,
+                              inside: t.surface1,
+                              outside: t.timelineOutOfRange,
+                            ),
+                          ),
+                        ),
+                      ),
                       // Behind the bars: dragging empty lane space boxes up
                       // keyframes (docs/07 §4.3); bars and key handles above
                       // still win their own gestures.

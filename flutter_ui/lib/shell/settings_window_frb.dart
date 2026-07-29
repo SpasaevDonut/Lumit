@@ -39,8 +39,10 @@ import 'package:provider/provider.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
 import '../state/settings.dart';
+import '../state/workspace.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'theme_editor_frb.dart';
 
 /// The smallest budget worth setting, in MiB. Below this the cache holds a
 /// frame or two and costs more in bookkeeping than it saves.
@@ -201,16 +203,50 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             'Colour scheme',
             'The palette every panel draws from.',
             SizedBox(
-              width: 130,
-              child: BareDropdown<LumitColorScheme>(
+              width: 150,
+              child: BareDropdown<ThemeChoice>(
                 key: const ValueKey('settings-scheme'),
-                value: ui.scheme,
-                options: LumitColorScheme.values,
-                // The enum names them; a label written here would be a
-                // second list to keep in step for no gain.
-                label: (s) => s.label,
-                onChanged: (s) => setState(() => ui.setScheme(s)),
+                value: ui.workspace.themeChoice,
+                options: ui.workspace.themeChoices,
+                label: (c) => c.label,
+                // Dark, Light, then the user's own (K-202): seven built-ins
+                // and a growing list of custom themes is a long flat menu,
+                // and light/dark is the first thing anyone is choosing by.
+                group: (c) => c.group,
+                onChanged: (c) => setState(() => ui.workspace.choose(c)),
               ),
+            ),
+          ),
+          _row(
+            t,
+            'Custom colours',
+            ui.workspace.customThemeName == null
+                ? 'Start from this scheme and set any colour yourself.'
+                : 'Edit the colours of ${ui.workspace.customThemeName}.',
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (ui.workspace.customThemeName != null) ...[
+                  HouseButton(
+                    key: const ValueKey('settings-theme-delete'),
+                    small: true,
+                    frameless: true,
+                    onPressed: () => setState(() => ui.workspace
+                        .deleteCustomTheme(ui.workspace.customThemeName!)),
+                    child: Text('Delete', style: t.small),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                HouseButton(
+                  key: const ValueKey('settings-customise'),
+                  small: true,
+                  onPressed: () async {
+                    await showThemeEditorFrb(context, ui);
+                    if (mounted) setState(() {});
+                  },
+                  child: Text('Customise…', style: t.small),
+                ),
+              ],
             ),
           ),
           _row(
@@ -246,6 +282,20 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                 onChanged: (a) =>
                     setState(() => ui.workspace.setAnimationLevel(a)),
               ),
+            ),
+          ),
+        ]),
+        _section(t, 'Scopes', [
+          _row(
+            t,
+            'Use theme colours',
+            'Off, a scope reads on the standard near-black graticule '
+                'whatever the chrome — which is how a signal is measured. On, '
+                'it takes the theme\'s colours instead.',
+            HouseCheckbox(
+              key: const ValueKey('settings-themed-scopes'),
+              value: ui.workspace.themedScopes,
+              onChanged: (v) => setState(() => ui.workspace.setThemedScopes(v)),
             ),
           ),
         ]),
