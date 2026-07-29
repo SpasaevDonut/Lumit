@@ -9,6 +9,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
@@ -681,6 +682,141 @@ void main() {
           reason: "and so does the property's layer");
     });
 
+    /// **The highlight with nowhere to sit (K-203).** A selected property
+    /// stayed selected when its layer was twirled shut — invisible, but still
+    /// the selection — so it came back lit when the layer reopened, and it
+    /// went on colouring the layer's row while the user worked on a different
+    /// layer entirely.
+    testWidgets('closing a layer drops the selection inside it',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+      await tester.tap(find.text('Opacity'));
+      await tester.pump();
+      expect(fillOver('Opacity'), t.selectionFill);
+
+      // Shut the layer, open it again — the Transform twirl inside it is
+      // remembered, so the rows come straight back. Nothing should be lit.
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-$id')));
+      await tester.pump();
+      expect(fillOver('Opacity'), isNull,
+          reason: 'a selection you could not see is not a selection');
+    });
+
+    /// Clicking a layer means "this layer", not "this layer and whatever was
+    /// picked on the last one" (K-203).
+    testWidgets('selecting another layer clears the property selection',
+        (tester) async {
+      final p = withComp();
+      final first = p.comp.addSolidLayer();
+      final second = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${first.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.text('Transform'));
+      await tester.pump();
+      await tester.tap(find.text('Opacity'));
+      await tester.pump();
+      expect(fillOver('Opacity'), t.selectionFill);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${second.internallayerId}')));
+      // Past the double-tap window the name carries for renaming, so its timer
+      // is spent rather than left pending.
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(fillOver('Opacity'), isNull,
+          reason: "the other layer's property is no longer the selection");
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          second.internallayerId);
+    });
+
+    /// **No way out of a selection (K-203).** Every command that reads the
+    /// selection — Delete, the Retime chord, U — was stuck with whatever was
+    /// picked last, because the only way to change it was to pick something
+    /// else. A click on empty ground is the way out.
+    testWidgets('clicking empty outline ground deselects everything',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}')));
+      // Past the double-tap window the name carries for renaming.
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(p.uiState.selectedLayer.value, isNotNull);
+
+      // Well below the single layer row, which is empty outline.
+      final ground =
+          tester.getRect(find.byKey(const ValueKey('tl-outline-ground')));
+      await tester.tapAt(Offset(ground.center.dx, ground.bottom - 20));
+      await tester.pump();
+      expect(p.uiState.selectedLayer.value, isNull);
+    });
+
+    /// With nothing selected, the reveal is the whole composition's: "show me
+    /// what is animated" is a question about the comp as often as about one
+    /// layer (K-203).
+    testWidgets('U with nothing selected reveals every animated layer',
+        (tester) async {
+      final p = withComp();
+      final animated = p.comp.addSolidLayer();
+      animated.setTransform(
+        prop: BridgeTransformProp.opacity,
+        value: BridgeScalar.keyframed([
+          for (final f in [0, 30])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: f),
+              value: f.toDouble(),
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      final still = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      expect(p.uiState.selectedLayer.value, isNull,
+          reason: 'nothing is picked');
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyU);
+      await tester.pump();
+
+      expect(
+          find.byKey(ValueKey<String>('tl-lanes-${animated.internallayerId}')),
+          findsOneWidget,
+          reason: 'the keyed layer opened');
+      expect(find.byKey(ValueKey<String>('tl-lanes-${still.internallayerId}')),
+          findsNothing,
+          reason: 'a layer with nothing animated stays shut');
+    });
+
     /// Selecting keyframes on a lane selects the property they belong to, so
     /// the outline follows what was boxed (docs/07 §4.3).
     testWidgets('boxing keyframes on a lane selects their property',
@@ -964,11 +1100,20 @@ void main() {
 
       expect(find.byKey(const ValueKey('tl-work-area')), findsOneWidget);
 
+      // Clearing it does not take the bar away: a comp that has not been
+      // narrowed has a work area of the whole comp (K-203), which is what the
+      // engine's null means and what leaves its ends there to grab.
+      final narrowed =
+          tester.getRect(find.byKey(const ValueKey('tl-work-area')));
       await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-clear-work-area')));
       await tester.pumpAndSettle();
       expect(p.comp.getWorkArea(), isNull);
-      expect(find.byKey(const ValueKey('tl-work-area')), findsNothing);
+      final whole = tester.getRect(find.byKey(const ValueKey('tl-work-area')));
+      expect(whole.width, greaterThan(narrowed.width),
+          reason: 'cleared, the work area spans the whole comp');
+      expect(find.byKey(const ValueKey('tl-work-start')), findsOneWidget);
+      expect(find.byKey(const ValueKey('tl-work-end')), findsOneWidget);
     });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
@@ -1478,8 +1623,8 @@ void main() {
       final t = LumitTheme.dark();
       expect(rowColour(top.internallayerId), t.selectionFill,
           reason: 'the selected layer keeps the full surface');
-      expect(
-          rowColour(below.internallayerId), t.selectionFill.withValues(alpha: 0.45),
+      expect(rowColour(below.internallayerId),
+          t.selectionFill.withValues(alpha: 0.45),
           reason: 'the touched fold marks its layer at half strength');
       expect(
           p.uiState.selectedLayer.value?.internallayerId, top.internallayerId,

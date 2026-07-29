@@ -4,6 +4,8 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/scopes_panel_frb.dart';
+import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
 import 'package:lumit_flutter/theme/custom_theme.dart';
 import 'package:lumit_flutter/theme/theme.dart';
@@ -86,10 +88,12 @@ void main() {
       await tester.scrollUntilVisible(
         swatch,
         120,
-        scrollable: find.descendant(
-          of: find.byKey(const ValueKey('theme-editor-body')),
-          matching: find.byType(Scrollable),
-        ).first,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('theme-editor-body')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
       );
       await tester.pumpAndSettle();
       expect(swatch, findsOneWidget);
@@ -156,6 +160,41 @@ void main() {
       final themed = scopeColoursFor(LumitTheme.dark(), themed: true);
       expect(themed.first, isNot(standard.first),
           reason: 'on, it takes the theme instead');
+    });
+
+    /// The Viewer's surround is neutral for the same reason the scopes are:
+    /// a grade cannot be judged against a tinted ground (docs/15-DESIGN
+    /// §2.1/§11). It had been painting the theme's own surface — the defect
+    /// K-203 fixes — so this pins the default and the way out of it.
+    testWidgets('the Viewer surround is neutral until switched on',
+        (tester) async {
+      final p = await openAppearance(tester);
+      expect(p.uiState.workspace.themedViewerSurround, isFalse);
+
+      final dark = LumitTheme.dark();
+      expect(viewerSurroundFor(dark), dark.viewerSurround,
+          reason: 'off, the surround is the theme-independent grey');
+      expect(dark.viewerSurround.r, dark.viewerSurround.g,
+          reason: 'and that grey really is neutral');
+
+      await tester.tap(find.byKey(const ValueKey('settings-themed-surround')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.workspace.themedViewerSurround, isTrue);
+      expect(viewerSurroundFor(dark, themed: true), dark.surface0,
+          reason: 'on, it takes the panel surface like everything else');
+    });
+
+    /// The toggle is machine-local settings, so it has to survive a restart.
+    testWidgets('both surround and scope choices survive the workspace file',
+        (tester) async {
+      final p = await openAppearance(tester);
+      p.uiState.workspace.setThemedViewerSurround(true);
+      p.uiState.workspace.setThemedScopes(true);
+      await tester.pumpAndSettle();
+
+      final restored = Workspace()..applyJson(p.uiState.workspace.toJson());
+      expect(restored.themedViewerSurround, isTrue);
+      expect(restored.themedScopes, isTrue);
     });
   }, skip: !engineAvailable);
 }

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:lumit_flutter/panels/panels_frb.dart';
+import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
 import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
@@ -830,6 +831,30 @@ class _LumitAppViewState extends State<LumitAppView> {
           handled = false;
         } else {
           layer.duplicate();
+          state.notifyDocumentChanged();
+        }
+      case 'file.save':
+        // Ctrl+S goes through exactly the same call the File menu's Save does
+        // (K-203) — a shortcut with its own path to disk is a second save to
+        // keep honest. Without a path yet it opens the picker, which is what
+        // Save has always meant on a document that has never been written.
+        saveProjectFrb(state);
+      // The work area is the span the Viewer previews and the export writes
+      // (K-037), so setting its ends from the playhead is a two-key job, not a
+      // trip to a menu. A comp that has never had one set reads as the whole
+      // comp, so B and N always have something to move.
+      case 'workarea.set.start' || 'workarea.set.end':
+        if (comp == null) {
+          handled = false;
+        } else {
+          comp.setWorkArea(
+            span: workAreaWith(
+              comp: comp,
+              current: comp.getWorkArea(),
+              frame: ui.playheadFrame.value,
+              isStart: action == 'workarea.set.start',
+            ),
+          );
           state.notifyDocumentChanged();
         }
       case 'edit.delete.selection':

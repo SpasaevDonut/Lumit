@@ -4148,3 +4148,69 @@ Effect controls groups — are bindings for commands this frontend has not built
 yet. The keys are really bound; pressing them does nothing, because there is
 nothing on the other end. They are listed rather than hidden so the table
 describes the keymap truthfully, and `docs/TODO.md` carries the gap.
+
+### Letting go of a selection, and a work area that is really there (K-203)
+
+Six small things reported after the Appearance work landed. Four of them turn
+out to be the same mistake in different clothes: the interface was holding on to
+state you could no longer see or reach.
+
+**A selection you can get out of.** Click a property's name and it lights up.
+Twirl the layer shut and — until now — it *stayed* selected: invisible, but
+still the selection, so it came back lit the moment you reopened the layer, and
+it went on tinting that layer's row while you were working on a different layer
+entirely. Now closing a fold forgets what was selected inside it, and clicking a
+layer's name clears the property selection, because "select this layer" ought to
+mean this layer and not also whatever you picked on the last one.
+
+More basic than either: there was **no way to select nothing**. The only way to
+change the selection was to pick something else. Every command that reads the
+selection — Delete, the Retime chord, `U` — was stuck with whatever was picked
+last. Clicking empty ground in either half of the Timeline now deselects
+everything: no layer, no properties, no keyframes. Empty ground means exactly
+that — a name, a switch, a property row, a bar or a keyframe still takes its own
+click.
+
+**`U` with nothing selected asks about the whole composition.** "Show me what is
+animated" is a question about the comp at least as often as about one layer, and
+before this the key simply did nothing unless a layer was selected. The
+`U`/`UU`/`UUU` cycle is otherwise the same; it just runs over every layer.
+
+**The work area exists from the start.** The engine stores "this comp has not
+been narrowed" as *nothing at all*, which is honest — but the interface has no
+such state. A comp nobody has narrowed has a work area of the whole comp, which
+is what every editor shows you and what leaves the two ends there to take hold
+of. Because the frontend was showing the engine's "nothing" literally, there was
+no bar to see, no handles to drag, nothing for the darker out-of-range wash to
+shade, and `B` and `N` — which have been in the keymap since the keymap came
+back — had never been wired to anything, so pressing them did nothing. All of
+that is fixed: the bar spans the comp until you narrow it, its ends drag on the
+ruler, `B` and `N` set them from the playhead, and the two-shade ground runs the
+full height of the lane view *and* the graph view. "Clear work area" now widens
+it back to the whole comp rather than making it vanish.
+
+One implementation note worth recording, because it is the kind of thing that
+bites twice. The first version of this worked the work area out *inside each
+widget that drew it*, and each answer cost several calls across the
+Rust/Flutter boundary. On a panel that rebuilds as often as the Timeline does
+that added eighteen extra calls to opening a single twirl, and the standing
+call-budget test caught it. It is now read once per panel build, in frames, and
+handed down.
+
+**Ctrl+S saves.** It was bound and it resolved to the right command; nothing in
+the shell was listening for that command, so the chord ran off the end and the
+status line kept saying "Unsaved changes". The File menu's Save is now an
+ordinary function that both the menu and the keyboard call, so there is one path
+to disk instead of two that have to agree.
+
+**The Viewer's surround is grey again.** The area around the picture had been
+taking the theme's panel colour. It should not: you cannot judge a grade against
+a tinted surround, which is why the theme has carried a deliberately neutral
+surround colour all along — the Viewer simply was not asking for it. Neutral is
+the default now, and Settings → Appearance → Viewer has a switch to take the
+theme's colour instead if you prefer the look. Same shape of answer as the
+scopes switch: off-spec, opt-in, and squarely a matter of taste.
+
+**The Scopes toolbar no longer prints the frame number.** The Timeline and the
+Viewer both say where the playhead is; a third copy sitting directly above the
+trace was only competing with it.

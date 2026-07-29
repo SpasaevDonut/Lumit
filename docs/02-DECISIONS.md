@@ -2942,3 +2942,53 @@ surface ramp cannot express, because it is a ramp. Both default from the mode ra
 being restated by seven schemes, and both are editable like any other token. The work
 area's edges are **draggable on the ruler** for the first time on this frontend: it was
 settable only from the menu, and a span you can see is one you expect to take hold of.
+
+**K-203 · DECIDED · Selection you can get out of, a work area that exists, and a surround
+that is grey.** From Mack (2026-07-29). Six defects reported against the K-199…K-202 work,
+fixed together because four of them are one theme: the interface holding state the user
+could no longer see or reach.
+
+**Selection lets go.** A selected property survived its layer being twirled shut — invisible
+but still the selection, so it came back lit when the layer reopened and went on colouring
+that layer's row while the user worked on a different layer entirely. Closing a fold now
+drops the selection inside it; clicking a layer clears the property selection, because "this
+layer" means this layer and not also whatever was picked on the last one. And there is a way
+out: **a click on empty ground in either half of the table deselects everything** — no
+layer, no properties, no keyframes. Until now the only way to change the selection was to
+pick something else, which left every command that reads it (Delete, the Retime chord, `U`)
+stuck with whatever was picked last.
+
+**`U` with nothing selected is the whole composition's.** "Show me what is animated" is a
+question about the comp at least as often as about one layer; refusing to answer it unless
+something was selected made the commonest use of the key the one it did not serve. The
+`U`/`UU`/`UUU` cycle is unchanged — it simply runs over every layer instead of one.
+
+**The work area is the whole comp until it is narrowed.** The engine stores "not narrowed"
+as null, which is right. The *interface* has no such state: a comp that has not been
+narrowed has a work area of the whole thing, which is what every editor shows and what
+leaves the ends there to grab. Without it the K-202 drag handles had nothing to hang on,
+the wash had nothing to shade, and `B`/`N` — bound since K-199 and dispatched by nobody —
+did nothing at all, so the whole feature read as unimplemented. The two-shade ground now
+runs the full height of the lane view **and the graph view**, and the ruler's ends are
+draggable from the first frame. Clearing the work area no longer removes it; it widens it
+back to the comp.
+
+The read is in **frames, once per panel build**, handed down to the ruler, the lanes and the
+curves rather than asked again in each — the first cut of this cost eighteen extra bridge
+calls per twirl and broke the call-budget gate (docs/13).
+
+**Ctrl+S saves.** `file.save` was in the keymap from the day the keymap came back and had no
+case in the shell's dispatch, so the chord resolved to an action nobody ran and the status
+line went on saying "Unsaved changes". The menu's save is now a free function both call, so
+there is one path to disk rather than two to keep honest.
+
+**The Viewer's surround is neutral again.** It was painting `surface0` — the theme's own
+panel surface — where the theme has carried a neutral `viewer_surround` all along, for the
+reason 15-DESIGN §2.1/§11 gives: a grade cannot be judged against a tinted surround. Neutral
+is the default; taking the theme is an Appearance toggle, off by default, the same shape of
+answer K-202 gave the scopes. This does not reopen K-202's decision to keep the surround out
+of the theme editor: it is still not a token, it is a switch between the theme's neutral and
+the theme's surface.
+
+**The Scopes toolbar drops its frame readout.** The playhead's position is the Timeline's
+and the Viewer's to state; a third copy above the trace only competed with it.

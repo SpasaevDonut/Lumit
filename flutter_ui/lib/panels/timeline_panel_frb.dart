@@ -122,8 +122,64 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
   }
 
+  /// Twirl a fold open or shut. Shutting one drops the selection inside it
+  /// (K-203): a selected property that is no longer on screen is a highlight
+  /// with nowhere to sit, and it came back as soon as the fold reopened — on a
+  /// layer the user had since stopped working on.
   void _toggle(String path) => setState(() {
-        if (!_open.remove(path)) _open.add(path);
+        if (_open.remove(path)) {
+          _dropSelectionUnder(path);
+        } else {
+          _open.add(path);
+        }
+      });
+
+  /// Forget any selected property at or below [path], and any keyframes of
+  /// theirs the marquee had caught.
+  void _dropSelectionUnder(String path) {
+    _selectedProperties.removeWhere((p) => p == path || isUnderPath(path, p));
+    _laneKeySelection.removeWhere((id) {
+      final hash = id.lastIndexOf('#');
+      if (hash <= 0) return false;
+      final row = id.substring(0, hash);
+      return row == path || isUnderPath(path, row);
+    });
+    _graphKeySelection.clear();
+  }
+
+  /// Nothing selected: no layer, no properties, no keyframes (K-203).
+  ///
+  /// Clicking empty space in either half of the table is how you get here. An
+  /// editor with no way *out* of a selection makes every following command
+  /// ambiguous — Delete, U and the Retime chord all read the selection first,
+  /// and until now the only way to change it was to pick something else.
+  void _deselectAll(LumitUiState ui) {
+    if (ui.selectedLayer.value == null &&
+        _selectedProperties.isEmpty &&
+        _laneKeySelection.isEmpty &&
+        _graphKeySelection.isEmpty &&
+        _highlighted == null) {
+      return;
+    }
+    setState(() {
+      ui.selectedLayer.value = null;
+      _selectedProperties.clear();
+      _laneKeySelection.clear();
+      _graphKeySelection.clear();
+      _highlighted = null;
+    });
+  }
+
+  /// Select a layer by click. Its properties are not selected with it: a click
+  /// on a layer's name means "this layer", and leaving a property of the layer
+  /// before it lit is the highlight belonging to nothing on screen that K-203
+  /// went looking for.
+  void _selectLayer(LumitUiState ui, LayerReference? layer) => setState(() {
+        if (ui.selectedLayer.value?.internallayerId != layer?.internallayerId) {
+          _selectedProperties.clear();
+          _graphKeySelection.clear();
+        }
+        ui.selectedLayer.value = layer;
       });
 
   /// Fill in any layer's has-audio answer we do not have, off the build.
@@ -355,9 +411,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           _graph ? BridgeKeyContext.graph : BridgeKeyContext.timeline,
           event,
         ) ??
-        (_graph
-            ? ui.keymap.actionFor(BridgeKeyContext.timeline, event)
-            : null);
+        (_graph ? ui.keymap.actionFor(BridgeKeyContext.timeline, event) : null);
 
     if (action == 'graph.toggle') {
       setState(() => _graph = !_graph);
@@ -444,43 +498,57 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// document, and the document may have changed between taps.
   bool _revealTap() {
     final ui = Provider.of<LumitUiState>(context, listen: false);
-    final layer = ui.selectedLayer.value;
-    if (layer == null) return false;
+    // With nothing selected the reveal is the whole composition's (K-203):
+    // "show me what is animated" is a question about the comp as often as
+    // about one layer, and refusing to answer it unless something was selected
+    // made the commonest use of the key the one it did not serve.
+    final selected = ui.selectedLayer.value;
+    final layers = selected != null
+        ? [selected]
+        : [for (final entry in ui.model.layers) entry.layer];
+    if (layers.isEmpty) return false;
 
     final now = DateTime.now();
     final last = _lastReveal;
-    _revealTaps =
-        (last != null && now.difference(last) <= _revealWindow) ? _revealTaps + 1 : 1;
+    _revealTaps = (last != null && now.difference(last) <= _revealWindow)
+        ? _revealTaps + 1
+        : 1;
     _lastReveal = now;
 
-    final id = layer.internallayerId.toString();
-    // Every tap starts from the layer closed, so a reveal shows exactly what it
-    // says rather than adding to whatever was already open.
     setState(() {
-      _open.removeWhere((path) => path == id || isUnderPath(id, path));
+      // Every tap starts from the layers closed, so a reveal shows exactly
+      // what it says rather than adding to whatever was already open.
+      for (final layer in layers) {
+        final id = layer.internallayerId.toString();
+        _open.removeWhere((path) => path == id || isUnderPath(id, path));
+        _dropSelectionUnder(id);
+      }
       if (_revealTaps >= 3) {
         // UUU: shut, and the next U starts the cycle over.
         _revealTaps = 0;
         _lastReveal = null;
         return;
       }
-      final groups = layer.revealGroups(
-        kind: _revealTaps == 1
-            ? BridgeRevealKind.animated
-            : BridgeRevealKind.modified,
-      );
-      // Nothing qualifies: leave the layer shut rather than opening it onto a
-      // list of headings the reveal just said were empty.
-      if (!groups.any) return;
-      _open.add(id);
-      if (groups.transform) _open.add(transformPath(id));
-      if (groups.effects.isNotEmpty) {
-        _open.add(effectsPath(id));
-        for (final fx in groups.effects) {
-          _open.add(effectPath(id, fx));
+      for (final layer in layers) {
+        final id = layer.internallayerId.toString();
+        final groups = layer.revealGroups(
+          kind: _revealTaps == 1
+              ? BridgeRevealKind.animated
+              : BridgeRevealKind.modified,
+        );
+        // Nothing qualifies: leave the layer shut rather than opening it onto
+        // a list of headings the reveal just said were empty.
+        if (!groups.any) continue;
+        _open.add(id);
+        if (groups.transform) _open.add(transformPath(id));
+        if (groups.effects.isNotEmpty) {
+          _open.add(effectsPath(id));
+          for (final fx in groups.effects) {
+            _open.add(effectPath(id, fx));
+          }
         }
+        if (groups.audio) _open.add(audioPath(id));
       }
-      if (groups.audio) _open.add(audioPath(id));
     });
     return true;
   }
@@ -610,6 +678,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     ];
     final channels =
         graphChannels(layers: ui.model.layers, selected: _selectedProperties);
+    // The work area, in frames, read once for the whole panel (K-203): the
+    // ruler draws it, the lanes and the curves are washed by it, and the two
+    // are one span.
+    final work = workAreaFrames(comp);
     final graphColours = <String, List<Color>>{};
     for (final channel in channels) {
       (graphColours[channel.path] ??= [])
@@ -683,6 +755,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                   final axis =
                       TimelineAxis(frames: frames, width: laneViewport * _zoom);
 
+                  // Where the work area falls, read once and handed to the
+                  // ruler, the lanes and the curves alike (K-203) — and null
+                  // pixels when it covers the whole comp, which is when there
+                  // is no out-of-range ground to wash.
+                  final graphWork = work.whole
+                      ? null
+                      : (axis.xOf(work.start), axis.xOf(work.end));
+
                   // **Not** wrapped in a playhead listener. Every layer row and
                   // every bar used to rebuild each time the playhead moved —
                   // sixty times a second during playback, growing with the layer
@@ -752,35 +832,52 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                             // The rows scroll under the pinned toolbar
                                             // and header, in step with the lanes.
                                             Expanded(
-                                              child: SingleChildScrollView(
-                                                controller: _vOutline,
-                                                child: _Outline(
-                                                  comp: comp,
-                                                  layers: layers,
-                                                  groupOrder: _groupOrder,
-                                                  widths: _groupWidths,
-                                                  selected:
-                                                      ui.selectedLayer.value,
-                                                  highlighted: _highlighted,
-                                                  selectedProperties:
-                                                      _selectedProperties,
-                                                  graphColours: graphColours,
-                                                  onSelectProperty:
-                                                      _selectProperty,
-                                                  onEditProperty: _selectOnEdit,
-                                                  open: _open,
-                                                  hasAudio: _hasAudio,
-                                                  onToggle: _toggle,
-                                                  playheadFrame:
-                                                      ui.playheadFrame.value,
-                                                  onSeek: (f) => ui
-                                                      .playheadFrame.value = f,
-                                                  onSelect: (l) => setState(() {
-                                                    ui.selectedLayer.value = l;
-                                                  }),
-                                                  onHighlight: (id) => setState(
-                                                      () => _highlighted = id),
-                                                  onChanged: ui.model.refresh,
+                                              // A click that misses every row
+                                              // deselects (K-203). Translucent
+                                              // and outermost, so a name, a
+                                              // switch or a property still
+                                              // wins its own tap in the arena
+                                              // and only the empty ground
+                                              // below the last layer reaches
+                                              // here.
+                                              child: GestureDetector(
+                                                key: const ValueKey(
+                                                    'tl-outline-ground'),
+                                                behavior:
+                                                    HitTestBehavior.translucent,
+                                                onTap: () => _deselectAll(ui),
+                                                child: SingleChildScrollView(
+                                                  controller: _vOutline,
+                                                  child: _Outline(
+                                                    comp: comp,
+                                                    layers: layers,
+                                                    groupOrder: _groupOrder,
+                                                    widths: _groupWidths,
+                                                    selected:
+                                                        ui.selectedLayer.value,
+                                                    highlighted: _highlighted,
+                                                    selectedProperties:
+                                                        _selectedProperties,
+                                                    graphColours: graphColours,
+                                                    onSelectProperty:
+                                                        _selectProperty,
+                                                    onEditProperty:
+                                                        _selectOnEdit,
+                                                    open: _open,
+                                                    hasAudio: _hasAudio,
+                                                    onToggle: _toggle,
+                                                    playheadFrame:
+                                                        ui.playheadFrame.value,
+                                                    onSeek: (f) => ui
+                                                        .playheadFrame
+                                                        .value = f,
+                                                    onSelect: (l) =>
+                                                        _selectLayer(ui, l),
+                                                    onHighlight: (id) =>
+                                                        setState(() =>
+                                                            _highlighted = id),
+                                                    onChanged: ui.model.refresh,
+                                                  ),
                                                 ),
                                               ),
                                             ),
@@ -868,6 +965,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                           axis: axis,
                                                           fps: ui.model.fps,
                                                           height: _rulerHeight,
+                                                          work: work,
                                                           onWorkArea: (span) {
                                                             comp.setWorkArea(
                                                                 span: span);
@@ -893,30 +991,68 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                           ]),
                                                         ),
                                                         Expanded(
-                                                          child: GraphEditorFrb(
-                                                            key: _graphPane,
-                                                            comp: comp,
-                                                            channels: channels,
-                                                            axis: axis,
-                                                            frames: frames,
-                                                            fps: ui.model.fps,
-                                                            fpsNum: fpsNum,
-                                                            fpsDen: fpsDen,
-                                                            magnet: _magnet,
-                                                            lens: _graphLens,
-                                                            autoFit:
-                                                                _graphAutoFit,
-                                                            selectedKeys:
-                                                                _graphKeySelection,
-                                                            onSelectionChanged:
-                                                                () => setState(
-                                                                    () {}),
-                                                            onChanged: ui
-                                                                .model.refresh,
-                                                            onWheelTime: (e,
-                                                                    x) =>
-                                                                _wheel(e, x,
-                                                                    axis.perFrame),
+                                                          child: Stack(
+                                                            children: [
+                                                              // The same two-shade
+                                                              // ground the lanes
+                                                              // get (K-203): the
+                                                              // work area runs the
+                                                              // full height of
+                                                              // whichever view is
+                                                              // open, so the span
+                                                              // being delivered is
+                                                              // never only a mark
+                                                              // on the ruler.
+                                                              Positioned.fill(
+                                                                child:
+                                                                    IgnorePointer(
+                                                                  child:
+                                                                      CustomPaint(
+                                                                    painter:
+                                                                        WorkAreaGroundPainter(
+                                                                      startX:
+                                                                          graphWork
+                                                                              ?.$1,
+                                                                      endX: graphWork
+                                                                          ?.$2,
+                                                                      inside: t
+                                                                          .surface1,
+                                                                      outside: t
+                                                                          .timelineOutOfRange,
+                                                                    ),
+                                                                  ),
+                                                                ),
+                                                              ),
+                                                              GraphEditorFrb(
+                                                                key: _graphPane,
+                                                                comp: comp,
+                                                                channels:
+                                                                    channels,
+                                                                axis: axis,
+                                                                frames: frames,
+                                                                fps: ui
+                                                                    .model.fps,
+                                                                fpsNum: fpsNum,
+                                                                fpsDen: fpsDen,
+                                                                magnet: _magnet,
+                                                                lens:
+                                                                    _graphLens,
+                                                                autoFit:
+                                                                    _graphAutoFit,
+                                                                selectedKeys:
+                                                                    _graphKeySelection,
+                                                                onSelectionChanged:
+                                                                    () => setState(
+                                                                        () {}),
+                                                                onChanged: ui
+                                                                    .model
+                                                                    .refresh,
+                                                                onWheelTime: (e,
+                                                                        x) =>
+                                                                    _wheel(e, x,
+                                                                        axis.perFrame),
+                                                              ),
+                                                            ],
                                                           ),
                                                         ),
                                                       ],
@@ -1013,6 +1149,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   vScroll: _vLane,
                                                   selectedKeys:
                                                       _laneKeySelection,
+                                                  onDeselectAll: () =>
+                                                      _deselectAll(ui),
+                                                  work: work,
                                                   onKeysSelected: (keys) {
                                                     // Picking keyframes picks
                                                     // their properties too —
@@ -1060,9 +1199,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                               frames == 0
                                                                   ? 0
                                                                   : frames - 1),
-                                                  onSelect: (l) => setState(() {
-                                                    ui.selectedLayer.value = l;
-                                                  }),
+                                                  onSelect: (l) =>
+                                                      _selectLayer(ui, l),
                                                   onChanged: ui.model.refresh,
                                                   cacheRevision:
                                                       Listenable.merge([
@@ -2994,6 +3132,13 @@ class _LayerArea extends StatelessWidget {
   final Set<String> selectedKeys;
   final ValueChanged<Set<String>> onKeysSelected;
 
+  /// A click on empty lane space — no bar, no diamond, no drag. Everything
+  /// lets go (K-203).
+  final VoidCallback onDeselectAll;
+
+  /// The work area in frames, read once by the panel (K-203).
+  final ({int start, int end, bool whole}) work;
+
   /// The comp's exact rate, for the times a key drag commits.
   final int fpsNum;
   final int fpsDen;
@@ -3024,6 +3169,8 @@ class _LayerArea extends StatelessWidget {
     required this.vScroll,
     required this.selectedKeys,
     required this.onKeysSelected,
+    required this.onDeselectAll,
+    required this.work,
     required this.fpsNum,
     required this.fpsDen,
     required this.magnet,
@@ -3066,16 +3213,11 @@ class _LayerArea extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    // Where the work area falls in this area's own pixels, or null when the
-    // comp has none — in which case the whole strip is "in range" and the
-    // ground stays one colour.
-    final work = comp.getWorkArea();
-    final workAreaPixels = work == null
-        ? null
-        : (
-            axis.xOf(frameAtTime(comp, work.inPoint)),
-            axis.xOf(frameAtTime(comp, work.outPoint)),
-          );
+    // Where the work area falls in this area's own pixels, or null when it
+    // covers the whole comp — in which case there is no out-of-range ground to
+    // wash and the strip stays one colour.
+    final workAreaPixels =
+        work.whole ? null : (axis.xOf(work.start), axis.xOf(work.end));
     return Stack(
       children: [
         Column(
@@ -3086,6 +3228,7 @@ class _LayerArea extends StatelessWidget {
               axis: axis,
               fps: fps,
               height: _rulerHeight,
+              work: work,
               onSeek: onSeek,
               onWorkArea: (span) {
                 comp.setWorkArea(span: span);
@@ -3151,7 +3294,11 @@ class _LayerArea extends StatelessWidget {
                         child: MarqueeSelect(
                           key: const ValueKey('tl-lane-marquee'),
                           onSelect: (rect) => onKeysSelected(_keysIn(rect)),
-                          onClear: () => onKeysSelected(const {}),
+                          // A click that caught nothing is a click on empty
+                          // lane space, which is the deselect gesture: the
+                          // bars and the key handles above take their own
+                          // taps, so only the ground reaches here.
+                          onClear: onDeselectAll,
                         ),
                       ),
                       Column(
