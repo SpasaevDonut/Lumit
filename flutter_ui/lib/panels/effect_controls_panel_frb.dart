@@ -69,6 +69,13 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
   /// moment after applying one.
   final Set<String> _shut = <String>{};
 
+  /// The last layer this panel drew. Deselecting does not empty the panel: the
+  /// stack you were just editing stays up, because clicking away in the
+  /// Timeline is not a request to lose your place. It is replaced the moment
+  /// another layer is selected, and falls back to the placeholder only if that
+  /// layer leaves the read model (deleted, or another comp fronted).
+  LayerReference? _lastLayer;
+
   bool _isOpen(String path) => !_shut.contains(path);
   void _toggle(String path) => setState(() {
         if (!_shut.remove(path)) _shut.add(path);
@@ -89,14 +96,16 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
     return ValueListenableBuilder<LayerReference?>(
       valueListenable: ui.selectedLayer,
       builder: (context, layer, _) {
-        if (layer == null) {
+        if (layer != null) _lastLayer = layer;
+        final shown = layer ?? _lastLayer;
+        if (shown == null) {
           return const PlaceholderPanel(
             icon: LumitIcon.fx,
             title: 'Effect controls',
             hint: 'Select a layer in the Timeline.',
           );
         }
-        return _body(context, comp, layer);
+        return _body(context, comp, shown);
       },
     );
   }

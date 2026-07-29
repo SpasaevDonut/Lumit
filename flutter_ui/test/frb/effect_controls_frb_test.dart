@@ -70,6 +70,20 @@ void main() {
       expect(find.textContaining('Select a layer'), findsOneWidget);
     });
 
+    testWidgets('deselecting a layer keeps the last one on the panel',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+      expect(find.textContaining('No effects'), findsOneWidget);
+
+      p.uiState.selectedLayer.value = null;
+      await tester.pump();
+      // Still the same layer's stack: clicking away in the Timeline is not a
+      // request to lose your place.
+      expect(find.textContaining('Select a layer'), findsNothing);
+      expect(find.textContaining('No effects'), findsOneWidget);
+    });
+
     testWidgets('Add effect commits one, and it appears as a card',
         (tester) async {
       final p = withLayer();
