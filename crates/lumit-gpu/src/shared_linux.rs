@@ -41,8 +41,12 @@
 //! the task sanctions, and it needs only the external-memory extensions, not the
 //! modifier extension. The DRM fourcc reported is therefore `DRM_FORMAT_ABGR8888`
 //! (memory order R,G,B,A — matching `R8G8B8A8_UNORM` and Flutter's RGBA8888) with
-//! modifier `DRM_FORMAT_MOD_LINEAR` (0). The EGL import side omits the modifier
-//! attributes when the modifier is 0, exactly as the reference does.
+//! modifier `DRM_FORMAT_MOD_LINEAR` (0). The EGL import side states that modifier
+//! explicitly whenever the driver advertises
+//! `EGL_EXT_image_dma_buf_import_modifiers`, and omits the attributes only when it
+//! does not (they are illegal without that extension). Stating them matters:
+//! Nvidia's driver guesses without an explicit modifier and the import then yields
+//! a black texture.
 //!
 //! # Device extensions (the runtime prerequisite)
 //!
@@ -97,10 +101,11 @@ const SHARED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 pub struct SharedDmabuf {
     /// The copy destination the render path writes the finished frame into.
     pub texture: wgpu::Texture,
-    /// The exported DMA-BUF file descriptor. Ownership passes to the Flutter
-    /// runner on registration, which closes it on unregister; a fd exported but
-    /// never registered (the fallback path) lives until process exit — a single,
-    /// negligible descriptor for the session.
+    /// The exported DMA-BUF file descriptor. **This struct owns it** and closes
+    /// it in `Drop`, so an exported-but-never-registered fd is not leaked. The
+    /// descriptor sent across the bridge is only a number to look at: the Flutter
+    /// runner `dup()`s it on registration and closes its own copy on unregister.
+    /// Exactly one owner per side, so neither can double-close the other's.
     fd: i32,
     stride: u32,
     offset: u32,

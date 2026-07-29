@@ -2292,6 +2292,31 @@ format is reported to Flutter as the DRM code `DRM_FORMAT_ABGR8888` (which, in
 DRM's little-endian naming, means bytes in memory order red, green, blue, alpha —
 matching what Flutter samples) with a "linear" modifier.
 
+**Who owns the descriptor: the one rule the DMA-BUF path lives by.** A file
+descriptor is just a small number — an index into a table the operating system
+keeps for the program, saying "slot 7 is this piece of graphics memory". Closing a
+descriptor means giving that slot back. The catch is that the number itself
+carries no ownership: two parts of the program can hold the same number, and if
+both close it, the second close frees a slot that has *already* been handed out
+again — after which whoever now owns slot 7 finds someone else reading and writing
+it. That class of bug is miserable to find, because nothing fails at the moment of
+the mistake.
+
+Lumit's rule is therefore: **each side of the boundary owns its own descriptor.**
+The engine's Rust side owns the one it exported, and closes it when the shared
+image is thrown away. What crosses to Flutter is only the *number*, to look at.
+The Linux runner, when it registers the texture, immediately calls `dup()` — the
+operating system call that means "give me my own second descriptor pointing at the
+same thing" — and from then on it owns and closes only that copy. Neither side can
+close the other's, and neither has to know when the other is finished. It costs one
+table slot.
+
+The corollary is that a failed `dup()` is not something to shrug at. If it fails
+and the runner carries on with an invalid descriptor, the import quietly produces
+nothing and the Viewer is black for the whole session with no error anywhere. So
+the runner checks it and refuses the registration, which the Dart side reads as
+"this path is not available" — a visible fallback instead of an invisible failure.
+
 **macOS gets it too, via IOSurface (K-195).** The third platform, the third name
 for the same idea. Apple's primitive for "two parts of a program pointing at one
 piece of graphics memory" is an **IOSurface**, and it comes with something the

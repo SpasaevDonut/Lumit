@@ -205,7 +205,11 @@ path, documented beside the types in
 through the headless seam.
 - **`shared-texture`**, **`shared-texture-linux`**, **`shared-texture-macos`**
 (all default on) enable the zero-copy path above, one per platform; each is inert
-off its own target, so one default set builds everywhere.
+off its own target, so one default set builds everywhere. They scope the interop
+code only. The **backend pin is not one of them** (K-205): `GpuContext::headless`
+selects DX12 on Windows, Vulkan on Linux and Metal on macOS in every build,
+feature or no feature, because a mixed-backend instance has no remaining use now
+that read-back is gone.
 
 ## Threading and long-running work
 

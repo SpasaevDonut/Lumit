@@ -237,16 +237,30 @@ jobs:
         env:
           LUMIT_NO_ZERO_COPY_VIEWER: "1"
         run: flutter test --concurrency=1
-      # Compile the Linux DMA-BUF zero-copy Viewer path (K-177): the Vulkan/ash
-      # export code lives behind `shared-texture-linux` and cfg(target_os =
-      # "linux"), so it is only ever type-checked here (the authoring box is
-      # Windows). This is the CI gate that proves the Rust half of the Linux
-      # shared-texture path builds; the runtime verification is the collaborator's
-      # (docs/GUIDE §9).
-      - name: Compile-check the Linux DMA-BUF path (shared-texture-linux)
-        run: cargo check -p lumit_bridge --features shared-texture-linux
+      # Lint the Linux DMA-BUF zero-copy Viewer path (K-177): the Vulkan/ash
+      # export code in `lumit-gpu/src/shared_linux.rs` lives behind
+      # `shared-texture-linux` and cfg(target_os = "linux"), so it is only ever
+      # compiled here (the authoring box is Windows).
+      #
+      # It is named explicitly, with the feature spelled out, on purpose. The
+      # `linux` job's `cargo clippy --workspace` does reach this file today —
+      # the bridge has `shared-texture-linux` on by default and resolver 3
+      # unifies that down to lumit-gpu — but that is coverage by side effect: a
+      # future default-feature change or a `--no-default-features` run would drop
+      # it silently and nobody would notice until a Linux user did. This step
+      # says what it covers, so it cannot stop covering it by accident.
+      #
+      # `-D warnings` matches the rest of CI. The runtime verification (does a
+      # picture actually appear) is not CI-testable on a GPU-less runner and
+      # stays the collaborator's (docs/GUIDE §9).
+      - name: Lint the Linux DMA-BUF path (shared-texture-linux)
+        run: cargo clippy -p lumit-gpu --all-targets --features shared-texture-linux -- -D warnings
       # The real gate: the Flutter Linux runner (linux/, GTK, the multi-window
-      # plugin's Linux side) compiles and links.
+      # plugin's Linux side) compiles and links. That includes
+      # `linux/runner/viewer_texture_bridge.cc` — it is listed unconditionally in
+      # `linux/runner/CMakeLists.txt` and is not behind any feature or define, so
+      # this step is the compile gate for the C++ half of the zero-copy Viewer,
+      # the same way the clippy step above is for the Rust half.
       - name: flutter build linux --release
         working-directory: flutter_ui
         run: flutter build linux --release
