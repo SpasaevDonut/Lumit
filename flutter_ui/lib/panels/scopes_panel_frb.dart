@@ -133,11 +133,9 @@ class _ScopesPanelFrbState extends State<ScopesPanelFrb> {
                         }),
                       ),
                     ),
-                    // A gap, not a Spacer: a horizontal scroller has no finite
-                    // width for a Spacer to fill.
-                    const SizedBox(width: 16),
-                    Text('frame $frame',
-                        style: t.small.copyWith(color: t.textMuted)),
+                    // No frame readout here: the playhead's position is the
+                    // Timeline's and the Viewer's to state, and repeating it in
+                    // the scope's own toolbar only competes with the trace.
                   ],
                 ),
               ),

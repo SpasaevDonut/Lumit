@@ -525,6 +525,34 @@ class _MarkerEditorState extends State<_MarkerEditor> {
   }
 }
 
+/// The work area as the Timeline draws it, in frames (K-203).
+///
+/// The engine stores "no work area" as null, which is right — it means the
+/// comp has not been narrowed. The *interface* has no such state: a comp that
+/// has not been narrowed is one whose work area is the whole thing, which is
+/// what every editor shows and what makes the ends grabbable from the first
+/// frame. Without this the handles had nothing to hang on and B and N had
+/// nothing to move, so the work area read as unimplemented.
+///
+/// Frames, not a [BridgeSpan], because frames are what everything drawing it
+/// actually wants — an x on the axis. Handing back a span meant every caller
+/// converted it straight back, four bridge calls at a time, on a widget that
+/// rebuilds with the panel (docs/13). `whole` says the span covers the comp,
+/// which is when there is no out-of-range ground to wash.
+///
+/// Two bridge calls when nothing is set, four when it is. Work it out once per
+/// build and pass it down rather than asking again in each widget.
+({int start, int end, bool whole}) workAreaFrames(CompositionReference comp) {
+  final duration = comp.durationFrames();
+  final set = comp.getWorkArea();
+  if (set == null) {
+    return (start: 0, end: duration < 1 ? 1 : duration, whole: true);
+  }
+  final start = comp.frameAtTime(time: set.inPoint);
+  final end = comp.frameAtTime(time: set.outPoint);
+  return (start: start, end: end, whole: start <= 0 && end >= duration);
+}
+
 /// Set the work area from the playhead: one click for its start, one for its
 /// end. The two buttons match the egui frontend's B and N keys.
 BridgeSpan workAreaWith({
@@ -676,6 +704,11 @@ class TimelineRuler extends StatelessWidget {
   /// wants.
   final void Function(BridgeSpan span)? onWorkArea;
 
+  /// Where the work area falls, in frames — worked out once by the panel and
+  /// handed down, because asking the engine again in each widget that draws it
+  /// is a per-rebuild cost on a panel that rebuilds a lot (docs/13).
+  final ({int start, int end, bool whole}) work;
+
   const TimelineRuler({
     super.key,
     required this.comp,
@@ -683,13 +716,13 @@ class TimelineRuler extends StatelessWidget {
     required this.fps,
     required this.height,
     required this.onSeek,
+    required this.work,
     this.onWorkArea,
   });
 
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final work = comp.getWorkArea();
     final markers = comp.getMarkers();
 
     return GestureDetector(
@@ -714,33 +747,30 @@ class TimelineRuler extends StatelessWidget {
                 ),
               ),
             ),
-            // The work area, when there is one: the span the Viewer previews
-            // and the export writes.
-            if (work != null)
-              Positioned(
-                left: axis.xOf(frameAtTime(comp, work.inPoint)),
-                width: (axis.xOf(frameAtTime(comp, work.outPoint)) -
-                        axis.xOf(frameAtTime(comp, work.inPoint)))
-                    .clamp(1.0, 1e6),
-                top: 0,
-                bottom: 0,
-                child: IgnorePointer(
-                  child: Container(
-                    key: const ValueKey('tl-work-area'),
-                    color: t.accent.withValues(alpha: 0.14),
-                  ),
+            // The work area: the span the Viewer previews and the export
+            // writes.
+            Positioned(
+              left: axis.xOf(work.start),
+              width:
+                  (axis.xOf(work.end) - axis.xOf(work.start)).clamp(1.0, 1e6),
+              top: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                child: Container(
+                  key: const ValueKey('tl-work-area'),
+                  color: t.accent.withValues(alpha: 0.14),
                 ),
               ),
+            ),
             // The work area's two edges, draggable (K-202). Grabbable rather
             // than drawn-only: the menu's "set from playhead" is precise but
             // roundabout, and a span you can see is one you expect to be able
             // to take hold of. Each edge stops one frame short of the other,
             // so a drag can never invert the span.
-            if (work != null && onWorkArea != null)
+            if (onWorkArea != null)
               for (final isStart in const [true, false])
                 Positioned(
-                  left: axis.xOf(frameAtTime(
-                          comp, isStart ? work.inPoint : work.outPoint)) -
+                  left: axis.xOf(isStart ? work.start : work.end) -
                       _workHandleWidth / 2,
                   width: _workHandleWidth,
                   top: 0,
@@ -748,12 +778,11 @@ class TimelineRuler extends StatelessWidget {
                   child: MouseRegion(
                     cursor: SystemMouseCursors.resizeLeftRight,
                     child: GestureDetector(
-                      key: ValueKey(
-                          'tl-work-${isStart ? 'start' : 'end'}'),
+                      key: ValueKey('tl-work-${isStart ? 'start' : 'end'}'),
                       behavior: HitTestBehavior.opaque,
                       onHorizontalDragUpdate: (d) {
-                        final frame =
-                            axis.frameAt(d.globalPosition.dx - _originX(context));
+                        final frame = axis
+                            .frameAt(d.globalPosition.dx - _originX(context));
                         onWorkArea!(workAreaWith(
                           comp: comp,
                           current: comp.getWorkArea(),

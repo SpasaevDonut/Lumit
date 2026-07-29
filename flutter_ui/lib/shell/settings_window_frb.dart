@@ -299,6 +299,21 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
+        _section(t, 'Viewer', [
+          _row(
+            t,
+            'Surround takes theme colours',
+            'Off, the area around the picture is a neutral grey — a grade '
+                'cannot be judged against a tinted surround. On, it matches '
+                'the rest of the shell.',
+            HouseCheckbox(
+              key: const ValueKey('settings-themed-surround'),
+              value: ui.workspace.themedViewerSurround,
+              onChanged: (v) =>
+                  setState(() => ui.workspace.setThemedViewerSurround(v)),
+            ),
+          ),
+        ]),
       ];
 
   List<Widget> _interface(LumitTheme t, LumitUiState ui) {
@@ -502,7 +517,9 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     try {
       text = await File(path).readAsString();
     } catch (e) {
-      if (mounted) setState(() => _keymapMessage = 'That file could not be read.');
+      if (mounted) {
+        setState(() => _keymapMessage = 'That file could not be read.');
+      }
       return;
     }
     final refusal = await km.fromJson(text);
