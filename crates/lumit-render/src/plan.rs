@@ -179,7 +179,8 @@ pub fn collect_comp_jobs(
             LayerKind::Solid { .. }
             | LayerKind::Text { .. }
             | LayerKind::Camera { .. }
-            | LayerKind::Adjustment => {}
+            | LayerKind::Adjustment
+            | LayerKind::Null => {}
             LayerKind::Sequence { clips } => {
                 // Resolve the clip under the playhead to a footage frame
                 // (comp-source clips + gaps are handled elsewhere/skip).

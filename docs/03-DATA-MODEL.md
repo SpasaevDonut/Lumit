@@ -195,8 +195,8 @@ Invariants:
 | `Text { document: TextDocument }` | yes | §9.1 | v1: one run. |
 | `Camera { zoom: Property }` | yes | — | AE camera: `zoom` is focal distance in comp pixels (z=0 maps 1:1). Only affects 3D-switch layers; the topmost visible camera is active. |
 | `Adjustment` | yes | — | No source of its own; its masks + effect stack apply to the composite of every layer beneath it, within its span. (There is no `adjustment` switch — it is this kind.) |
+| `Null` | yes | — | No source and no size; carries only a transform, so layers parent to it and move as a rig. Never draws, emits no node in the evaluation graph, and reports no picture — so it is not offered as a matte or a layer-valued effect parameter. Masks and effects can be added to it but never run (as on a Camera). The bridge enum names this kind `NullLayer` for Dart's sake only (K-206). |
 | `Shape { contents: Vec<ShapeElement> }` | future | §9.2 | |
-| `Null` | future | — | Transform-only, invisible. |
 | `Audio { item: Uuid }` | future | An audio item | v1 audio is only a footage layer's own stream (§5.2, docs/09). |
 | `Light` | future | — | Paired with Camera; not in v1. |
 | `Light { light: LightProps }` | §9.3 | 3D only. |

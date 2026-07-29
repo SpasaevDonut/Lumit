@@ -17,7 +17,7 @@ import 'retime.dart';
 import 'solid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_layer_info`, `read`, `with_effects`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -109,7 +109,8 @@ class BridgeLayerInfo {
   /// data for *drawing*; an edit reads fresh instance handles at commit time.
   final List<BridgeEffectInstanceInfo> effects;
 
-  /// The label colour index (0-7), drawn as the outline's swatch.
+  /// The label colour index into the theme's palette, drawn as the outline's
+  /// swatch. Out-of-range values wrap rather than fault.
   final int label;
 
   /// The layer's matte, for the outline's matte cell (K-184: the row draws
@@ -190,6 +191,11 @@ enum BridgeLayerKind {
   camera,
   sequence,
   adjustment,
+
+  /// A Null layer. Named `NullLayer` rather than `Null` only because the
+  /// generated Dart enum would otherwise carry a member called `null`, which
+  /// is a Dart reserved word (K-206); `lumit-core` keeps `LayerKind::Null`.
+  nullLayer,
   ;
 }
 
@@ -693,8 +699,9 @@ class LayerReference {
   /// [`Self::has_audio`], and what tells a matte or a layer-valued effect
   /// parameter which layers are worth offering (K-194).
   ///
-  /// Every synthetic kind draws; a Camera does not (it *is* a viewpoint);
-  /// footage draws only when its container carries a video stream, so an
+  /// Every synthetic kind draws except the two that carry no pixels at all: a
+  /// Camera (it *is* a viewpoint) and a Null (a transform and nothing else).
+  /// Footage draws only when its container carries a video stream, so an
   /// audio-only clip answers false. Probing costs an FFmpeg open, so callers
   /// ask when a menu opens, never while drawing a row.
   bool hasPicture() =>

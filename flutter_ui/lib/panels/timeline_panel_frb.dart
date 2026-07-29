@@ -2397,6 +2397,7 @@ Future<void> _showLayerMenu(
             'Text',
             'Camera',
             'Adjustment',
+            'Null',
             'Sequence'
           ])
             MenuRow(onPressed: () => close(kind), child: Text(kind)),
@@ -2413,6 +2414,8 @@ Future<void> _showLayerMenu(
       comp.addCameraLayer();
     case 'Adjustment':
       comp.addAdjustmentLayer();
+    case 'Null':
+      comp.addNullLayer();
     case 'Sequence':
       comp.addSequenceLayer();
     case _:
@@ -2929,7 +2932,7 @@ class _OutlineRowState extends State<_OutlineRow> {
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (var i = 0; i < 8; i++)
+                  for (var i = 0; i < LumitTheme.labelCount; i++)
                     GestureDetector(
                       key: ValueKey<String>('tl-label-chip-$i'),
                       onTap: () => close(i),

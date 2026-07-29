@@ -132,6 +132,7 @@ void main() {
         'Text',
         'Camera',
         'Adjustment',
+        'Null',
         'Sequence'
       ]) {
         await openMore(tester);
@@ -142,7 +143,7 @@ void main() {
       }
 
       final layers = p.comp.getLayers();
-      expect(layers, hasLength(5));
+      expect(layers, hasLength(6));
       expect(layers.first.getKind(), BridgeLayerKind.sequence,
           reason: 'the newest layer is at the top of the stack');
       expect(

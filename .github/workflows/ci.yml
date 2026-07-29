@@ -345,6 +345,99 @@ jobs:
           FLUTTER_XCODE_ONLY_ACTIVE_ARCH: "YES"
         run: flutter build macos --release
 
+  # The bridge's Dart and Rust glue is generated from crates/lumit-bridge/src/api
+  # (docs/17-BRIDGE-CONTRACT.md), and generated files are never edited by hand —
+  # so the only thing that keeps them honest is regenerating and checking nothing
+  # moved. Without this job a reworded doc comment, a renamed method or a new API
+  # function could sit in `api/**` with stale output checked in beside it, and the
+  # frontend would be reading a description of an engine that no longer exists.
+  # That is not hypothetical: it is how the K-206 Null layer arrived.
+  #
+  # Linux. Generating compiles lumit-bridge, so this job installs the same
+  # native dependencies the `linux` job does.
+  codegen-fresh:
+    name: bridge codegen is fresh (generate produces no diff)
+    runs-on: ubuntu-latest
+    env:
+      FFMPEG_ASSET: ffmpeg-n7.1-latest-linux64-gpl-shared-7.1
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # The generator formats its Dart output, so it needs the SDK — pinned to
+      # the same version the other Flutter job takes.
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+          cache: true
+      # Generating compiles lumit-bridge, so this job needs the same native
+      # dependencies the `linux` job installs — FFmpeg for rusty_ffmpeg and
+      # libclang 18 for bindgen. Without them `generate` fails while building
+      # rusty_ffmpeg, which looks like a codegen fault and is not one.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libgl-dev libegl-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxcb1-dev \
+            libwayland-dev mesa-vulkan-drivers libclang-18-dev
+      - name: Install FFmpeg 7.1 (BtbN shared build)
+        run: |
+          url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FFMPEG_ASSET}.tar.xz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/ffmpeg.tar.xz"
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP/ffmpeg" --strip-components=1
+          root="$RUNNER_TEMP/ffmpeg"
+          sed -i "s|^prefix=.*|prefix=$root|" "$root"/lib/pkgconfig/*.pc
+          # PKG_CONFIG_PATH, not FFMPEG_PKG_CONFIG_PATH — the contributor's path
+          # (K-204); see the `linux` job for why.
+          echo "PKG_CONFIG_PATH=$root/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$root/lib" >> "$GITHUB_ENV"
+          echo "$root/bin" >> "$GITHUB_PATH"
+      - name: Point bindgen at libclang
+        run: echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      # The version is pinned once, on the runtime crate the generated glue links
+      # against (`flutter_rust_bridge = { version = "=2.12.0", … }`). Read it from
+      # there rather than restating it here: a generator that drifts from its
+      # runtime rewrites the whole tree, and this job would become the noisiest
+      # thing in CI while proving nothing.
+      - name: Read the pinned flutter_rust_bridge version
+        id: frb
+        run: |
+          v=$(sed -n 's/^flutter_rust_bridge = { version = "=\([0-9.]*\)".*/\1/p' \
+                crates/lumit-bridge/Cargo.toml)
+          test -n "$v" || { echo "no pinned version found in Cargo.toml"; exit 1; }
+          echo "pinned flutter_rust_bridge: $v"
+          echo "v=$v" >> "$GITHUB_OUTPUT"
+      - name: Install flutter_rust_bridge_codegen at the pinned version
+        run: cargo install flutter_rust_bridge_codegen --version "${{ steps.frb.outputs.v }}" --locked
+      - name: flutter pub get
+        working-directory: flutter_ui
+        run: flutter pub get
+      - name: Regenerate the bridge
+        working-directory: flutter_ui
+        run: flutter_rust_bridge_codegen generate
+      # If this fails, the fix is never to edit the generated file: run the same
+      # command from flutter_ui/ and commit what it writes.
+      #
+      # One known way to see a diff that is not a stale commit: part of the
+      # generated output quotes names from the Rust compiler's own derive
+      # expansion, so regenerating on a different `stable` than the one that last
+      # wrote the tree can shift a comment line. The cure is the same — regenerate
+      # on current stable and commit — but it is worth knowing before hunting for
+      # an API change that is not there.
+      - name: The checked-in generated tree must match
+        run: |
+          if ! git diff --exit-code; then
+            echo
+            echo "Generated bridge code is stale (docs/17-BRIDGE-CONTRACT.md)."
+            echo "Run 'flutter_rust_bridge_codegen generate' from flutter_ui/"
+            echo "and commit the result. Never edit generated files by hand."
+            exit 1
+          fi
+
   coverage:
     name: engine-crate coverage gate
     runs-on: macos-latest

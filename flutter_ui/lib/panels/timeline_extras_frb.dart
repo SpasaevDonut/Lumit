@@ -290,7 +290,7 @@ class MattePickerFrb extends StatelessWidget {
               label: sourceName,
               // Built when the menu opens, never per rebuild — which is what
               // lets it probe (K-194). A matte gates this layer with another
-              // layer's *picture*, so a layer with none (a camera, an
+              // layer's *picture*, so a layer with none (a camera, a Null, an
               // audio-only clip) is not offered, and neither is this one:
               // matting a layer with itself has no meaning.
               options: () => [
@@ -599,6 +599,7 @@ LumitIcon iconForKind(BridgeLayerKind kind) => switch (kind) {
       // An adjustment layer is a comp-sized effect container, drawn as a solid —
       // the same choice layer_style.dart and the egui frontend make.
       BridgeLayerKind.solid || BridgeLayerKind.adjustment => LumitIcon.solid,
+      BridgeLayerKind.nullLayer => LumitIcon.nullLayer,
     };
 
 /// The cache bar: a thin stripe under the time ruler showing which frames are

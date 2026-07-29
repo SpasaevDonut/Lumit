@@ -107,6 +107,8 @@ class LumitMenuBarFrb extends StatelessWidget {
                 _onComp(context, (c) => c.addCameraLayer())),
             _Item('Add adjustment layer',
                 _onComp(context, (c) => c.addAdjustmentLayer())),
+            _Item('Add null layer',
+                _onComp(context, (c) => c.addNullLayer())),
             _Item('Add sequence layer',
                 _onComp(context, (c) => c.addSequenceLayer())),
             _Item.divider(),

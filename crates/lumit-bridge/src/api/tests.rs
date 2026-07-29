@@ -1385,6 +1385,7 @@ fn every_layer_kind_adds_and_undoes_as_one_step() {
         BridgeLayerKind::Text,
         BridgeLayerKind::Camera,
         BridgeLayerKind::Adjustment,
+        BridgeLayerKind::NullLayer,
         BridgeLayerKind::Sequence,
     ] {
         let added = match expected {
@@ -1392,6 +1393,7 @@ fn every_layer_kind_adds_and_undoes_as_one_step() {
             BridgeLayerKind::Text => comp.add_text_layer(),
             BridgeLayerKind::Camera => comp.add_camera_layer(),
             BridgeLayerKind::Adjustment => comp.add_adjustment_layer(),
+            BridgeLayerKind::NullLayer => comp.add_null_layer(),
             BridgeLayerKind::Sequence => comp.add_sequence_layer(),
             other => panic!("{other:?} has no Layer-menu entry"),
         }
@@ -1412,6 +1414,31 @@ fn every_layer_kind_adds_and_undoes_as_one_step() {
         );
         project.redo().expect("redone");
     }
+}
+
+/// `has_picture` is what fills the matte cell and every layer-valued effect
+/// parameter (K-194), so a kind with no pixels must answer false or the user is
+/// offered a matte source that silently mattes nothing. A Camera has always
+/// answered false; a Null has to as well — it is the same "no pixels at all"
+/// case, and the catch-all arm used to hand it a picture it does not have.
+#[test]
+fn the_pixel_less_kinds_report_no_picture() {
+    let (_project, layer) = project_with_layer();
+    let comp = CompositionReference::new(_project.id, layer.comp_id());
+
+    let null = comp.add_null_layer().expect("null added");
+    assert!(
+        !null.has_picture().expect("has_picture"),
+        "a Null has no pixels, so it can never be a matte or a layer parameter"
+    );
+    let camera = comp.add_camera_layer().expect("camera added");
+    assert!(!camera.has_picture().expect("has_picture"));
+    // And the kinds that do draw still say so, so the fix did not empty the
+    // dropdowns it was meant to correct.
+    let solid = comp.add_solid_layer().expect("solid added");
+    assert!(solid.has_picture().expect("has_picture"));
+    let adjustment = comp.add_adjustment_layer().expect("adjustment added");
+    assert!(adjustment.has_picture().expect("has_picture"));
 }
 
 /// Each switch is its own op, so a click is one undo step and toggling one

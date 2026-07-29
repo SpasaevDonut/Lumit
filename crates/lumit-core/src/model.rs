@@ -809,6 +809,12 @@ pub enum LayerKind {
     /// masks and effect stack apply to the accumulated composite of every layer
     /// beneath it, within its span. A comp-sized container for effects.
     Adjustment,
+    /// A Null layer (docs/01-GLOSSARY.md): an invisible layer with no source
+    /// and no size, carrying only a transform, so other layers can be parented
+    /// to it and moved as a rig. It never draws. Masks and effects can be added
+    /// to it — nothing enforces otherwise — but with no pixels to act on they
+    /// never run, the same as on a Camera layer.
+    Null,
 }
 
 /// The active camera's evaluated placement at one comp time — what both the

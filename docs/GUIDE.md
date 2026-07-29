@@ -1564,6 +1564,24 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   for that precomp (the switch dims) — its effects must see only its own comp's contents,
   which splicing into the parent cannot honour. It still reuses the solid's glyph for the
   moment; a distinct icon is a small later touch.
+- **Null layers** (Composition → Add null layer) — an invisible layer that is nothing but a
+  transform: no source, no size, no pixels, and it never appears in the picture. Its whole
+  job is to be something to parent *to*. Park a null in a comp, parent five layers to it,
+  and moving, rotating or scaling the null moves all five together while each keeps its own
+  animation on top — the standard rig for a camera-style push or a group that has to travel
+  as one. Change your mind about the move and you re-animate one layer, not five.
+  Mechanically it is the emptiest kind in the model: the evaluation graph skips it entirely
+  (it emits no node, so it costs no drawing pass), the renderer returns no pixels for it,
+  and it answers "no" when asked whether it has a picture — so it is never offered as a
+  matte source or as a layer-valued effect parameter, where picking it would have quietly
+  produced nothing. It is *not* invisible to the frame cache, though, and that distinction
+  matters: the transform still feeds the key that decides which cached frames are still
+  good, so nudging a null correctly throws away the cached frames of everything hanging off
+  it. Two honest limits for now. You cannot click a null in the Viewer — After Effects draws
+  its null as a grabbable 100×100 box, whereas Lumit's has no size at all, so you move it
+  from its Timeline property rows. And effects added to a null are accepted and then never
+  run, since there are no pixels for them to touch; harmless, the same as on a camera, but
+  not yet either refused or labelled.
 - **The window layout** (K-074, refined by K-086) — the picture (the Viewer) fills the middle
   with nothing above it: no tab, no strip, just the image. Around it sit the other panels:
   Project and the effect panels stacked as tabs on the left, scopes on the right, the
@@ -2517,7 +2535,12 @@ halves of the plumbing: the Rust side that packs values up
 edited by hand — the command `flutter_rust_bridge_codegen generate`, run from
 `flutter_ui/`, rewrites them from scratch, so any manual change is simply lost
 next time. If you add a Rust function and Dart cannot see it, that command is
-almost always what is missing. A second tool, **cargokit**, sits under
+almost always what is missing. Forgetting it has its own quiet failure mode: the
+checked-in Dart goes on describing the engine as it used to be, and nobody
+notices because it still compiles. So CI now runs the generator itself and fails
+if the result differs from what is committed (the `codegen-fresh` job) — the
+generated files are an output, and an output is something a machine checks, not
+something a reviewer is expected to spot. A second tool, **cargokit**, sits under
 `flutter_ui/rust_builder/` and does an unglamorous but useful job: it compiles
 the Rust library automatically as part of the normal `flutter run`, so there is
 no separate build step to forget.

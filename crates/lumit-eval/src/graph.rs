@@ -144,7 +144,7 @@ pub fn compile(comp: &Composition) -> EvalGraph {
             continue;
         }
         let Some(source) = source_ref(&layer.kind) else {
-            continue; // a camera contributes no pixels
+            continue; // a Camera or a Null contributes no pixels
         };
         let mut top = if let Some(&id) = sources.get(&source) {
             id
@@ -203,7 +203,7 @@ pub fn compile(comp: &Composition) -> EvalGraph {
     g
 }
 
-/// The source a layer kind fetches, or None for a camera (no pixels).
+/// The source a layer kind fetches, or None for the kinds with no pixels.
 fn source_ref(kind: &LayerKind) -> Option<SourceRef> {
     Some(match kind {
         LayerKind::Footage { item, .. } => SourceRef::Footage(*item),
@@ -211,9 +211,10 @@ fn source_ref(kind: &LayerKind) -> Option<SourceRef> {
         LayerKind::Precomp { comp } => SourceRef::Precomp(*comp),
         LayerKind::Text { .. } => SourceRef::Text,
         LayerKind::Sequence { .. } => SourceRef::Sequence,
-        // Cameras and adjustment layers have no source of their own; the
-        // compiler handles both before this point.
-        LayerKind::Camera { .. } | LayerKind::Adjustment => return None,
+        // Three kinds have no source of their own. An Adjustment layer is
+        // handled before this point (it wraps what is below it); a Camera and a
+        // Null reach here and are dropped by the caller's `continue`.
+        LayerKind::Camera { .. } | LayerKind::Adjustment | LayerKind::Null => return None,
     })
 }
 
@@ -424,6 +425,42 @@ mod tests {
         // An adjustment with nothing beneath it has nothing to process.
         let g2 = compile(&comp_with(vec![layer(LayerKind::Adjustment, Vec::new())]));
         assert!(!g2.kinds().any(|k| matches!(k, NodeKind::Adjust { .. })));
+    }
+
+    /// A Null has no pixels, so it must add nothing to the graph: the compiled
+    /// DAG for a comp with a Null over a footage layer is the same graph as for
+    /// the footage layer alone. A stray Source or Composite node for a Null
+    /// would cost a whole comp-sized pass drawing nothing.
+    #[test]
+    fn a_null_layer_emits_no_node() {
+        let plain = compile(&comp_with(vec![footage(None, Vec::new())]));
+        let with_null = compile(&comp_with(vec![
+            layer(LayerKind::Null, Vec::new()),
+            footage(None, Vec::new()),
+        ]));
+        let shape: Vec<_> = with_null.kinds().collect();
+        assert_eq!(
+            with_null.nodes.len(),
+            plain.nodes.len(),
+            "the Null added a node: {shape:?}"
+        );
+        // Node ids and layer uuids differ per build; the shapes must not.
+        assert_eq!(
+            shape
+                .iter()
+                .filter(|k| matches!(k, NodeKind::Source { .. }))
+                .count(),
+            1,
+            "the Null adds no source: {shape:?}"
+        );
+        assert_eq!(
+            shape
+                .iter()
+                .filter(|k| matches!(k, NodeKind::Composite { .. }))
+                .count(),
+            1,
+            "the Null adds no composite: {shape:?}"
+        );
     }
 
     #[test]
