@@ -14,7 +14,9 @@ import 'package:lumit_flutter/shell/recovery_dialog_frb.dart';
 import 'package:lumit_flutter/shell/settings_window_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
+import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/export.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -373,6 +375,101 @@ void main() {
           reason: 'the dialogue survives whatever the exporter said');
 
       exportCancel();
+      await tester.tap(find.byKey(const ValueKey('export-close')));
+      await tester.pumpAndSettle();
+    });
+
+    /// The dialogue's fields default to the composition's own facts (K-201):
+    /// the frame rate is the comp's, and the range is the work area exactly as
+    /// the Timeline set it — already typed, not re-derived by the user.
+    testWidgets('the rate and range default to the comp and its work area',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addAdjustmentLayer();
+      // A 60 fps comp with a work area over frames 60..180 (1 s .. 3 s).
+      comp.setWorkArea(
+        span: const BridgeSpan(
+          inPoint: BridgeRational(num: 1, den: 1),
+          outPoint: BridgeRational(num: 3, den: 1),
+          startOffset: BridgeRational(num: 0, den: 1),
+        ),
+      );
+
+      await tester.pumpWidget(hostPanel(
+        child: Builder(
+          builder: (context) => HouseButton(
+            key: const ValueKey('open-export'),
+            onPressed: () =>
+                showExportDialogFrb(context: context, comp: comp),
+            child: const Text('Open'),
+          ),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('open-export')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Frame rate'), findsOneWidget);
+      expect(find.text('60.00'), findsOneWidget,
+          reason: 'the rate starts as the comp order — its own 60');
+      expect(find.text('60'), findsOneWidget,
+          reason: 'the range starts at the work area start');
+      expect(find.text('180'), findsOneWidget,
+          reason: 'and ends at the work area end');
+
+      await tester.tap(find.byKey(const ValueKey('export-close')));
+      await tester.pumpAndSettle();
+    });
+
+    /// An image sequence is stills: the video-only rows leave rather than
+    /// sitting greyed, and the picker's suggestion follows the extension.
+    testWidgets('choosing a sequence format sheds the video-only rows',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addAdjustmentLayer();
+
+      await tester.pumpWidget(hostPanel(
+        child: Builder(
+          builder: (context) => HouseButton(
+            key: const ValueKey('open-export'),
+            onPressed: () =>
+                showExportDialogFrb(context: context, comp: comp),
+            child: const Text('Open'),
+          ),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('open-export')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('export-audio')), findsOneWidget);
+      expect(find.byKey(const ValueKey('export-bitrate')), findsOneWidget);
+      expect(find.byKey(const ValueKey('export-audio-rate')), findsOneWidget,
+          reason: 'audio has its own rate once audio is on');
+
+      await tester.tap(find.byKey(const ValueKey('export-format')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('PNG image sequence').last);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('export-audio')), findsNothing,
+          reason: 'stills carry no sound');
+      expect(find.byKey(const ValueKey('export-bitrate')), findsNothing,
+          reason: 'stills are lossless');
+      expect(find.byKey(const ValueKey('export-preset')), findsNothing,
+          reason: 'the delivery presets are mp4 by nature');
+      expect(find.textContaining('One numbered PNG per frame'), findsOneWidget,
+          reason: 'the dialogue says what a sequence writes');
+      // The rate and range stay: stills have both.
+      expect(find.byKey(const ValueKey('export-fps')), findsOneWidget);
+      expect(find.byKey(const ValueKey('export-range-start')), findsOneWidget);
+
       await tester.tap(find.byKey(const ValueKey('export-close')));
       await tester.pumpAndSettle();
     });

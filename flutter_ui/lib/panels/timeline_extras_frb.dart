@@ -671,6 +671,11 @@ class TimelineRuler extends StatelessWidget {
   final double height;
   final ValueChanged<int> onSeek;
 
+  /// Dragging a work-area edge (K-202). Given the new span; null leaves the
+  /// edges as plain marks, which is what a caller with nothing to commit to
+  /// wants.
+  final void Function(BridgeSpan span)? onWorkArea;
+
   const TimelineRuler({
     super.key,
     required this.comp,
@@ -678,6 +683,7 @@ class TimelineRuler extends StatelessWidget {
     required this.fps,
     required this.height,
     required this.onSeek,
+    this.onWorkArea,
   });
 
   @override
@@ -725,6 +731,45 @@ class TimelineRuler extends StatelessWidget {
                   ),
                 ),
               ),
+            // The work area's two edges, draggable (K-202). Grabbable rather
+            // than drawn-only: the menu's "set from playhead" is precise but
+            // roundabout, and a span you can see is one you expect to be able
+            // to take hold of. Each edge stops one frame short of the other,
+            // so a drag can never invert the span.
+            if (work != null && onWorkArea != null)
+              for (final isStart in const [true, false])
+                Positioned(
+                  left: axis.xOf(frameAtTime(
+                          comp, isStart ? work.inPoint : work.outPoint)) -
+                      _workHandleWidth / 2,
+                  width: _workHandleWidth,
+                  top: 0,
+                  bottom: 0,
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.resizeLeftRight,
+                    child: GestureDetector(
+                      key: ValueKey(
+                          'tl-work-${isStart ? 'start' : 'end'}'),
+                      behavior: HitTestBehavior.opaque,
+                      onHorizontalDragUpdate: (d) {
+                        final frame =
+                            axis.frameAt(d.globalPosition.dx - _originX(context));
+                        onWorkArea!(workAreaWith(
+                          comp: comp,
+                          current: comp.getWorkArea(),
+                          frame: frame,
+                          isStart: isStart,
+                        ));
+                      },
+                      child: Center(
+                        child: Container(
+                          width: 2,
+                          color: t.accent,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             for (final marker in markers)
               Positioned(
                 left: axis.xOf(frameAtTime(comp, marker.time)) - 3,
@@ -748,6 +793,17 @@ class TimelineRuler extends StatelessWidget {
       ),
     );
   }
+}
+
+/// How wide a work-area edge is to grab. Wider than the 2 px it draws, so the
+/// handle is catchable without the mark being heavy.
+const double _workHandleWidth = 10;
+
+/// The ruler's left edge in global coordinates — a drag reports globally, and
+/// the axis speaks in the ruler's own pixels.
+double _originX(BuildContext context) {
+  final box = context.findRenderObject();
+  return box is RenderBox ? box.localToGlobal(Offset.zero).dx : 0;
 }
 
 /// The label step for a ruler: the smallest nice second count whose labels
@@ -900,4 +956,58 @@ class _CacheBarPainter extends CustomPainter {
   @override
   bool shouldRepaint(_CacheBarPainter old) =>
       old.tiers != tiers || old.ready != ready || old.coarse != coarse;
+}
+
+/// The Timeline's two-tone ground (K-202): the work area at one value, and a
+/// darker wash either side of it.
+///
+/// Painted rather than laid out as two boxes because it sits *under* the bars
+/// and the marquee, and a decorated box there would absorb the pointer — the
+/// same reason the row seams are a painter. With no work area both shades
+/// collapse to the inside one, so an unmarked comp looks exactly as it did.
+class WorkAreaGroundPainter extends CustomPainter {
+  /// The work area's edges in this area's own pixels, or null for none.
+  final double? startX;
+  final double? endX;
+  final Color inside;
+  final Color outside;
+
+  const WorkAreaGroundPainter({
+    required this.startX,
+    required this.endX,
+    required this.inside,
+    required this.outside,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final full = Offset.zero & size;
+    if (startX == null || endX == null) {
+      canvas.drawRect(full, Paint()..color = inside);
+      return;
+    }
+    // The wash goes down first and the work area is painted back over it, so
+    // the two always meet exactly — two abutting rectangles would show a seam
+    // at fractional pixel positions.
+    canvas.drawRect(full, Paint()..color = outside);
+    final left = startX!.clamp(0.0, size.width);
+    final right = endX!.clamp(0.0, size.width);
+    if (right > left) {
+      canvas.drawRect(
+        Rect.fromLTRB(left, 0, right, size.height),
+        Paint()..color = inside,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(WorkAreaGroundPainter old) =>
+      old.startX != startX ||
+      old.endX != endX ||
+      old.inside != inside ||
+      old.outside != outside;
+
+  /// Never absorbs a pointer — it is the ground, not a control.
+  @override
+  bool? hitTest(Offset position) => false;
 }

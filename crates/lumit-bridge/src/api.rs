@@ -12,6 +12,7 @@ pub mod effect;
 pub mod export;
 pub mod folder;
 pub mod footage;
+pub mod keymap;
 pub mod layer;
 pub mod project;
 pub mod project_item;
@@ -96,6 +97,12 @@ pub enum BridgeError {
     /// A staged effect stack no longer matches the document's — something else
     /// added, removed or reordered an effect while it was being edited.
     StaleEffectStack,
+    /// The text offered as a keyboard chord is not one — empty, or naming a
+    /// modifier this build does not know. Carries the keymap's own words.
+    InvalidKeyChord(String),
+    /// The JSON offered as a keymap is not one. Refused whole rather than
+    /// applied in part, so a corrupt stored blob leaves the live keymap alone.
+    InvalidKeymapFile(String),
     ReadFailed,
     WriteFailed,
     InvalidWorkerState,
@@ -140,6 +147,10 @@ impl fmt::Display for BridgeError {
                 write!(f, "A scope needs five red/green/blue triples")
             }
             BridgeError::InvalidPreset => write!(f, "That is not a valid effect preset"),
+            BridgeError::InvalidKeyChord(why) => {
+                write!(f, "That is not a keyboard shortcut: {why}")
+            }
+            BridgeError::InvalidKeymapFile(why) => write!(f, "That is not a keymap file: {why}"),
             BridgeError::ExportFailed(why) => write!(f, "{why}"),
             BridgeError::NoAudioPipeline => {
                 write!(f, "This machine has no audio pipeline")

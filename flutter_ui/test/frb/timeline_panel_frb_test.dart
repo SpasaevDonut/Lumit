@@ -667,9 +667,9 @@ void main() {
       await tester.tap(find.text('Radius'));
       await tester.pump();
 
-      expect(fillOver('Radius'), t.surface2,
+      expect(fillOver('Radius'), t.selectionFill,
           reason: 'the property row is the one selected');
-      expect(fillOver('Gaussian blur'), t.surface2.withValues(alpha: 0.45),
+      expect(fillOver('Gaussian blur'), t.selectionFill.withValues(alpha: 0.45),
           reason: 'the effect holding it marks itself, a shade dimmer');
       expect(
           (tester
@@ -677,7 +677,7 @@ void main() {
                       find.byKey(ValueKey<String>('tl-rowbody-$id')))
                   .decoration as BoxDecoration)
               .color,
-          t.surface2.withValues(alpha: 0.45),
+          t.selectionFill.withValues(alpha: 0.45),
           reason: "and so does the property's layer");
     });
 
@@ -727,7 +727,7 @@ void main() {
       expect(
           (tester.widget<Container>(row.first).decoration as BoxDecoration)
               .color,
-          t.surface2,
+          t.selectionFill,
           reason: 'the boxed keys picked their own property row');
     });
 
@@ -1476,10 +1476,10 @@ void main() {
       }
 
       final t = LumitTheme.dark();
-      expect(rowColour(top.internallayerId), t.surface2,
+      expect(rowColour(top.internallayerId), t.selectionFill,
           reason: 'the selected layer keeps the full surface');
       expect(
-          rowColour(below.internallayerId), t.surface2.withValues(alpha: 0.45),
+          rowColour(below.internallayerId), t.selectionFill.withValues(alpha: 0.45),
           reason: 'the touched fold marks its layer at half strength');
       expect(
           p.uiState.selectedLayer.value?.internallayerId, top.internallayerId,

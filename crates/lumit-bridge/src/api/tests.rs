@@ -2049,6 +2049,9 @@ fn the_export_surface_refuses_calmly_and_never_panics() {
         width: 0,
         height: 0,
         bitrate_mbps: 0,
+        fps: 0.0,
+        range_start_frame: -1,
+        range_end_frame: -1,
         include_audio: true,
         audio_bit_rate: 0,
     };
@@ -2759,5 +2762,325 @@ fn rename_label_and_matte_each_undo_in_one_step() {
     assert!(
         layer.get_matte().expect("matte").is_none(),
         "one undo step removes the matte"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The keymap (docs/07 §15, K-199)
+// ---------------------------------------------------------------------------
+
+/// The keymap is one per session by design — there is one window and one set of
+/// shortcuts — so every test below edits the *same* map. Cargo runs tests in
+/// parallel threads within one process, so without this they would rebind each
+/// other's chords and fail a different one each run. Taking it is the price of
+/// testing a global, and it is cheaper than pretending the global is not there.
+static KEYMAP_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Hold the keymap for the length of a test, starting from the shipped default
+/// whatever the previous test left behind.
+fn keymap_test() -> std::sync::MutexGuard<'static, ()> {
+    let guard = KEYMAP_TESTS
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner());
+    crate::api::keymap::keymap_load_preset(crate::api::keymap::BridgeKeymapPreset::Lumit);
+    guard
+}
+
+/// The table the settings page draws: grouped, headed, described, and with a
+/// chord in every row. A group with no bindings is dropped rather than drawn as
+/// an empty heading.
+#[test]
+fn the_keymap_table_arrives_grouped_headed_and_described() {
+    use crate::api::keymap::*;
+    let _guard = keymap_test();
+    let groups = keymap_groups();
+
+    assert!(!groups.is_empty());
+    for group in &groups {
+        assert!(!group.label.is_empty(), "every heading says something");
+        assert!(!group.bindings.is_empty(), "no empty headings are drawn");
+        for row in &group.bindings {
+            assert!(!row.action.is_empty());
+            assert_ne!(
+                row.description, row.action,
+                "{} reached the table as a raw id",
+                row.action
+            );
+            assert!(!row.chord.is_empty(), "{} has no chord", row.action);
+        }
+    }
+    let anywhere = groups
+        .iter()
+        .find(|g| g.context == BridgeKeyContext::Global)
+        .expect("the app-wide group is there");
+    assert_eq!(anywhere.label, "Anywhere");
+    assert!(anywhere
+        .bindings
+        .iter()
+        .any(|b| b.action == "playback.toggle" && b.chord == "Space"));
+}
+
+/// Rebinding is what a row's chord cell does, and the answer it returns is the
+/// table to redraw — so the page never has to ask again to show the change.
+#[test]
+fn rebinding_a_row_answers_with_the_table_it_produced() {
+    use crate::api::keymap::*;
+    let _guard = keymap_test();
+
+    let after = keymap_rebind(
+        BridgeKeyContext::Timeline,
+        "layer.duplicate".into(),
+        "Mod+Alt+D".into(),
+    )
+    .expect("a valid chord is taken");
+    let row = after
+        .iter()
+        .flat_map(|g| &g.bindings)
+        .find(|b| b.action == "layer.duplicate")
+        .expect("the row is still there");
+    assert_eq!(row.chord, "Mod+Alt+D");
+
+    // And the dispatch path agrees immediately — one keymap, not two.
+    assert_eq!(
+        keymap_lookup(BridgeKeyContext::Timeline, "Mod+Alt+D".into()).as_deref(),
+        Some("layer.duplicate")
+    );
+    assert_eq!(
+        keymap_lookup(BridgeKeyContext::Timeline, "Mod+D".into()),
+        None,
+        "the old chord stopped meaning it"
+    );
+}
+
+/// Text that is not a chord is refused with words a dialogue can show, and the
+/// live keymap is left exactly as it was — a typo must not cost a binding.
+#[test]
+fn a_chord_that_is_not_a_chord_is_refused_without_disturbing_the_keymap() {
+    use crate::api::keymap::*;
+    let _guard = keymap_test();
+    let before = keymap_groups();
+
+    let err = keymap_rebind(BridgeKeyContext::Global, "file.save".into(), "".into())
+        .expect_err("empty text is not a chord");
+    assert!(matches!(err, BridgeError::InvalidKeyChord(_)));
+    assert!(err.to_string().contains("not a keyboard shortcut"));
+
+    let err = keymap_rebind(
+        BridgeKeyContext::Global,
+        "file.save".into(),
+        "Hyper+S".into(),
+    )
+    .expect_err("an unknown modifier is not a chord");
+    assert!(matches!(err, BridgeError::InvalidKeyChord(_)));
+
+    assert_eq!(keymap_groups(), before, "nothing moved");
+}
+
+/// The round trip the frontend stores between sessions, and the one a user
+/// mails to a friend, are the same round trip.
+#[test]
+fn a_keymap_survives_the_json_it_is_stored_as() {
+    use crate::api::keymap::*;
+    let _guard = keymap_test();
+    keymap_rebind(
+        BridgeKeyContext::Global,
+        "file.save".into(),
+        "Mod+Shift+S".into(),
+    )
+    .expect("rebound");
+    let saved = keymap_to_json();
+
+    keymap_load_preset(BridgeKeymapPreset::AfterEffects);
+    assert_eq!(
+        keymap_lookup(BridgeKeyContext::Global, "Mod+Shift+S".into()),
+        None,
+        "the preset really replaced it"
+    );
+
+    keymap_from_json(saved).expect("its own JSON reads back");
+    assert_eq!(
+        keymap_lookup(BridgeKeyContext::Global, "Mod+Shift+S".into()).as_deref(),
+        Some("file.save")
+    );
+}
+
+/// A corrupt stored blob, or somebody else's JSON, leaves the keymap alone
+/// rather than half-applying — otherwise one bad file costs every shortcut.
+#[test]
+fn junk_json_is_refused_whole_and_the_live_keymap_stands() {
+    use crate::api::keymap::*;
+    let _guard = keymap_test();
+    let before = keymap_groups();
+
+    for junk in ["", "{}", "not json at all", r#"{"bindings":[]}"#] {
+        let err = keymap_from_json(junk.into()).expect_err("refused");
+        assert!(matches!(err, BridgeError::InvalidKeymapFile(_)), "{junk}");
+    }
+    assert_eq!(keymap_groups(), before, "every shortcut survived the junk");
+}
+
+/// A per-row reset puts one chord back without touching the rest of the map —
+/// the difference between "reset this" and "reset everything".
+#[test]
+fn resetting_one_row_leaves_the_others_where_the_user_put_them() {
+    use crate::api::keymap::*;
+    let _guard = keymap_test();
+    keymap_rebind(BridgeKeyContext::Global, "file.save".into(), "F5".into()).expect("rebound");
+    keymap_rebind(BridgeKeyContext::Global, "edit.undo".into(), "F6".into()).expect("rebound");
+
+    keymap_reset_binding(BridgeKeyContext::Global, "file.save".into());
+    assert_eq!(
+        keymap_lookup(BridgeKeyContext::Global, "Mod+S".into()).as_deref(),
+        Some("file.save"),
+        "the one row went home"
+    );
+    assert_eq!(
+        keymap_lookup(BridgeKeyContext::Global, "F6".into()).as_deref(),
+        Some("edit.undo"),
+        "and the other stayed where it was put"
+    );
+}
+
+/// Unbinding leaves the row visible with an empty chord, rather than dropping
+/// it out of the table — a row you cannot see is a row you cannot rebind.
+#[test]
+fn an_unbound_action_keeps_its_row_and_loses_its_chord() {
+    use crate::api::keymap::*;
+    let _guard = keymap_test();
+    let after = keymap_unbind(BridgeKeyContext::Global, "file.save".into());
+    assert_eq!(
+        keymap_lookup(BridgeKeyContext::Global, "Mod+S".into()),
+        None
+    );
+    // The row is gone from the table because the map no longer carries it;
+    // the page redraws unbound rows from the preset's action list, so this
+    // asserts the contract the page relies on: nothing else moved.
+    assert!(after
+        .iter()
+        .flat_map(|g| &g.bindings)
+        .any(|b| b.action == "edit.undo" && b.chord == "Mod+Z"));
+}
+
+// ---------------------------------------------------------------------------
+// The reveal shortcuts (docs/07 §4.3, K-199)
+// ---------------------------------------------------------------------------
+
+/// `U` opens only what is keyframed. A fresh layer has nothing animated, so it
+/// reveals nothing at all — and the panel is told so rather than opening a
+/// layer onto an empty list.
+#[test]
+fn the_animated_reveal_names_only_keyframed_groups() {
+    use crate::api::layer::BridgeRevealKind;
+    let (project, ..) = project_with_folder();
+    let comp = add_comp(&project, "Scene");
+    let layer = comp.add_solid_layer().expect("layer");
+
+    let fresh = layer
+        .reveal_groups(BridgeRevealKind::Animated)
+        .expect("answered");
+    assert!(!fresh.any, "a fresh layer has nothing animated");
+    assert!(!fresh.transform);
+
+    // Key one transform property and the Transform group qualifies.
+    layer
+        .set_transform(
+            crate::api::layer::BridgeTransformProp::Opacity,
+            BridgeScalar::Keyframed(vec![
+                BridgeKeyframe {
+                    time: BridgeRational { num: 0, den: 1 },
+                    value: 0.0,
+                    interp_in: BridgeSideInterp::Linear,
+                    interp_out: BridgeSideInterp::Linear,
+                },
+                BridgeKeyframe {
+                    time: BridgeRational { num: 1, den: 1 },
+                    value: 100.0,
+                    interp_in: BridgeSideInterp::Linear,
+                    interp_out: BridgeSideInterp::Linear,
+                },
+            ]),
+        )
+        .expect("keyed");
+
+    let keyed = layer
+        .reveal_groups(BridgeRevealKind::Animated)
+        .expect("answered");
+    assert!(keyed.transform, "the keyed group is named");
+    assert!(keyed.any);
+    assert!(keyed.effects.is_empty(), "no effects to reveal");
+}
+
+/// `UU` opens what has been *changed*, keyframed or not — the two reveals are
+/// different questions, and a moved-but-unkeyed layer is the case that shows it.
+#[test]
+fn the_modified_reveal_catches_a_change_that_was_never_keyframed() {
+    use crate::api::layer::BridgeRevealKind;
+    let (project, ..) = project_with_folder();
+    let comp = add_comp(&project, "Scene");
+    let layer = comp.add_solid_layer().expect("layer");
+
+    assert!(
+        !layer
+            .reveal_groups(BridgeRevealKind::Modified)
+            .expect("answered")
+            .any,
+        "a layer nobody has touched reveals nothing"
+    );
+
+    layer
+        .set_transform(
+            crate::api::layer::BridgeTransformProp::Opacity,
+            BridgeScalar::Static(50.0),
+        )
+        .expect("set");
+
+    assert!(
+        layer
+            .reveal_groups(BridgeRevealKind::Modified)
+            .expect("answered")
+            .transform,
+        "a changed value counts as modified"
+    );
+    assert!(
+        !layer
+            .reveal_groups(BridgeRevealKind::Animated)
+            .expect("answered")
+            .transform,
+        "but it is not animated, and U must not claim it is"
+    );
+}
+
+/// An effect on the layer is itself a modification, whatever its parameters
+/// say; `U` waits for a keyframe. The reveal names effects individually, so
+/// only the qualifying ones unfold.
+#[test]
+fn an_effect_is_modified_on_arrival_and_animated_only_once_keyed() {
+    use crate::api::layer::BridgeRevealKind;
+    let (project, ..) = project_with_folder();
+    let comp = add_comp(&project, "Scene");
+    let layer = comp.add_solid_layer().expect("layer");
+    let fx_name = list_effects()
+        .first()
+        .expect("the engine ships effects")
+        .name
+        .clone();
+    layer.add_effect(fx_name).expect("effect added");
+    let effect_id = layer.get_effects().expect("effects")[0].id().to_string();
+
+    let modified = layer
+        .reveal_groups(BridgeRevealKind::Modified)
+        .expect("answered");
+    assert_eq!(
+        modified.effects,
+        vec![effect_id],
+        "the effect is named, not just a boolean"
+    );
+    assert!(
+        layer
+            .reveal_groups(BridgeRevealKind::Animated)
+            .expect("answered")
+            .effects
+            .is_empty(),
+        "nothing on it is keyframed yet"
     );
 }

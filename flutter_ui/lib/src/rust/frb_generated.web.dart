@@ -15,6 +15,7 @@ import 'api/effect.dart';
 import 'api/export.dart';
 import 'api/folder.dart';
 import 'api/footage.dart';
+import 'api/keymap.dart';
 import 'api/layer.dart';
 import 'api/project.dart';
 import 'api/project_item.dart';
@@ -268,7 +269,22 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeHistory dco_decode_bridge_history(dynamic raw);
 
   @protected
+  BridgeKeyBinding dco_decode_bridge_key_binding(dynamic raw);
+
+  @protected
+  BridgeKeyConflict dco_decode_bridge_key_conflict(dynamic raw);
+
+  @protected
+  BridgeKeyContext dco_decode_bridge_key_context(dynamic raw);
+
+  @protected
   BridgeKeyframe dco_decode_bridge_keyframe(dynamic raw);
+
+  @protected
+  BridgeKeymapGroup dco_decode_bridge_keymap_group(dynamic raw);
+
+  @protected
+  BridgeKeymapPreset dco_decode_bridge_keymap_preset(dynamic raw);
 
   @protected
   BridgeLayerEntry dco_decode_bridge_layer_entry(dynamic raw);
@@ -329,6 +345,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRetimeInterp dco_decode_bridge_retime_interp(dynamic raw);
+
+  @protected
+  BridgeRevealGroups dco_decode_bridge_reveal_groups(dynamic raw);
+
+  @protected
+  BridgeRevealKind dco_decode_bridge_reveal_kind(dynamic raw);
 
   @protected
   BridgeScalar dco_decode_bridge_scalar(dynamic raw);
@@ -416,7 +438,16 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dynamic raw);
 
   @protected
+  List<BridgeKeyBinding> dco_decode_list_bridge_key_binding(dynamic raw);
+
+  @protected
+  List<BridgeKeyConflict> dco_decode_list_bridge_key_conflict(dynamic raw);
+
+  @protected
   List<BridgeKeyframe> dco_decode_list_bridge_keyframe(dynamic raw);
+
+  @protected
+  List<BridgeKeymapGroup> dco_decode_list_bridge_keymap_group(dynamic raw);
 
   @protected
   List<BridgeLayerEntry> dco_decode_list_bridge_layer_entry(dynamic raw);
@@ -784,7 +815,25 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeHistory sse_decode_bridge_history(SseDeserializer deserializer);
 
   @protected
+  BridgeKeyBinding sse_decode_bridge_key_binding(SseDeserializer deserializer);
+
+  @protected
+  BridgeKeyConflict sse_decode_bridge_key_conflict(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeKeyContext sse_decode_bridge_key_context(SseDeserializer deserializer);
+
+  @protected
   BridgeKeyframe sse_decode_bridge_keyframe(SseDeserializer deserializer);
+
+  @protected
+  BridgeKeymapGroup sse_decode_bridge_keymap_group(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeKeymapPreset sse_decode_bridge_keymap_preset(
+      SseDeserializer deserializer);
 
   @protected
   BridgeLayerEntry sse_decode_bridge_layer_entry(SseDeserializer deserializer);
@@ -851,6 +900,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeRetimeInterp sse_decode_bridge_retime_interp(
       SseDeserializer deserializer);
+
+  @protected
+  BridgeRevealGroups sse_decode_bridge_reveal_groups(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeRevealKind sse_decode_bridge_reveal_kind(SseDeserializer deserializer);
 
   @protected
   BridgeScalar sse_decode_bridge_scalar(SseDeserializer deserializer);
@@ -946,7 +1002,19 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<BridgeKeyBinding> sse_decode_list_bridge_key_binding(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeKeyConflict> sse_decode_list_bridge_key_conflict(
+      SseDeserializer deserializer);
+
+  @protected
   List<BridgeKeyframe> sse_decode_list_bridge_keyframe(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeKeymapGroup> sse_decode_list_bridge_keymap_group(
       SseDeserializer deserializer);
 
   @protected
@@ -1347,8 +1415,28 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_bridge_history(BridgeHistory self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_key_binding(
+      BridgeKeyBinding self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_key_conflict(
+      BridgeKeyConflict self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_key_context(
+      BridgeKeyContext self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_keyframe(
       BridgeKeyframe self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_keymap_group(
+      BridgeKeymapGroup self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_keymap_preset(
+      BridgeKeymapPreset self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_layer_entry(
@@ -1425,6 +1513,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_retime_interp(
       BridgeRetimeInterp self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_reveal_groups(
+      BridgeRevealGroups self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_reveal_kind(
+      BridgeRevealKind self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_scalar(BridgeScalar self, SseSerializer serializer);
@@ -1528,8 +1624,20 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       List<BridgeEffectInstanceInfo> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_key_binding(
+      List<BridgeKeyBinding> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_key_conflict(
+      List<BridgeKeyConflict> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_bridge_keyframe(
       List<BridgeKeyframe> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_keymap_group(
+      List<BridgeKeymapGroup> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_layer_entry(

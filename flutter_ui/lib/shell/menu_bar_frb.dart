@@ -110,10 +110,9 @@ class LumitMenuBarFrb extends StatelessWidget {
             _Item('Add sequence layer',
                 _onComp(context, (c) => c.addSequenceLayer())),
             _Item.divider(),
-            // The selected layer's Retime (K-197). Reachable here as well as
-            // on the keyboard because Alt+Shift+T is the Windows
-            // input-language switch on a machine with two layouts, which eats
-            // the chord before the application sees it.
+            // The selected layer's Retime (K-197). In the menu as well as on
+            // the keyboard (K-198's lesson: a command whose only route is a
+            // chord has no route the day something intercepts the chord).
             _Item(
               _retimeLabel(context),
               _onSelectedLayer(context, (l) => app.toggleRetime(l)),
