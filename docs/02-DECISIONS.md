@@ -2993,6 +2993,55 @@ the theme's surface.
 **The Scopes toolbar drops its frame readout.** The playhead's position is the Timeline's
 and the Viewer's to state; a third copy above the trace only competed with it.
 
+**K-204 · DECIDED · Installed memory is answerable on all three targets, and no tracked
+file carries one platform's absolute path.** From two outside contributors (2026-07-29),
+whose pull request is where both halves of this came from.
+
+**The build fix first, because it was the real breakage.** `.cargo/config.toml` carried an
+`[env]` block setting `FFMPEG_PKG_CONFIG_PATH` to the macOS Homebrew keg
+(`/opt/homebrew/opt/ffmpeg@7/lib/pkgconfig`), because ffmpeg@7 is keg-only and pkg-config
+cannot otherwise find it. Cargo's `[env]` has no per-target form, so every platform got it.
+On Linux that directory does not exist, and rusty_ffmpeg's build script does not shrug and
+fall back — it panics outright ("FFMPEG_PKG_CONFIG_PATH is set to `…`, which does not
+exist"), so a fresh clone could not build at all until the line was deleted or overridden.
+Two contributors independently deleted it. The `[env]` block is therefore **gone**, and each
+platform is pointed at FFmpeg from outside the repo: macOS exports
+`FFMPEG_PKG_CONFIG_PATH="$(brew --prefix ffmpeg@7)/lib/pkgconfig"` (per CI job, per
+developer shell), Linux exports nothing because the distro's FFmpeg 7 development packages
+already sit on pkg-config's default search path, and Windows keeps `FFMPEG_LIBS_DIR` /
+`FFMPEG_INCLUDE_DIR` (rusty_ffmpeg's pkg-config branch is `cfg(not(windows))`, so it never
+read the variable there). Moving the discovery into a build script of our own was
+considered and rejected: the discovery lives in rusty_ffmpeg's build script, which is a
+dependency of ours and therefore runs *before* anything we could write, and
+`cargo::rustc-env` reaches our own compilation rather than a dependency's build script.
+There is no seam without forking, so the fix is the honest one — the platform with the
+unusual requirement states it, instead of every other platform undoing it.
+
+**CI was masking the defect, which is the part that must not recur.** Both Linux jobs
+exported `FFMPEG_PKG_CONFIG_PATH` themselves before building, and Cargo's `[env]` without
+`force = true` does not override an already-set variable — so CI took rusty_ffmpeg's
+explicit-override branch and stayed green while every real Linux clone failed. Contributors
+were doing CI's job. The Linux jobs now export **`PKG_CONFIG_PATH`** instead, which is what
+a distro install produces implicitly, so the branch a contributor actually takes is the
+branch that gets tested, and re-adding the `[env]` line would now turn the Linux jobs red.
+The pinned FFmpeg 7.1 tarball stays: the runner's own distribution still ships FFmpeg 6.
+The standing lesson is the general one — a CI job that pre-sets what a contributor would
+not have set is not testing the contributor's build.
+
+**`system_memory_bytes()` now answers on Linux and macOS too**, extending the Windows-only
+implementation K-194 recorded (that entry's "both answer 0 off Windows" is superseded for
+this function only; `video_memory_bytes()` stays Windows-only and still answers 0
+elsewhere). K-082 already makes Linux and macOS supported build targets, so this fills in a
+target that was supported rather than adding one. `MemTotal:` from `/proc/meminfo` on
+Linux, the `hw.memsize` sysctl on macOS, both falling through to 0 if the file, the field,
+or the call does not yield a number. One honesty note recorded rather than corrected:
+Linux's `MemTotal` is *usable* RAM, excluding what firmware and an integrated GPU reserved
+before the kernel booted — about 15.5 GB on a 16 GB machine. It errs low, and low is the
+safe direction for a cache-budget ceiling, which is the same reasoning K-194 already
+applied to reporting the first adapter's video memory. Regression test:
+`system_memory_bytes_reports_non_zero_on_supported_platforms` in
+`crates/lumit-bridge/src/api/tests.rs`.
+
 **K-205 · DECIDED · The renderer's backend is pinned on every platform, in every build.**
 From Mack (2026-07-29), out of the Linux hybrid-GPU report. K-177 pinned the D3D12 backend
 only under the opt-in `shared-texture` feature and said in as many words that "every
