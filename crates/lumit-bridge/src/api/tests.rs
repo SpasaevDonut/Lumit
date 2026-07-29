@@ -3084,3 +3084,15 @@ fn an_effect_is_modified_on_arrival_and_animated_only_once_keyed() {
         "nothing on it is keyframed yet"
     );
 }
+
+#[test]
+fn system_memory_bytes_reports_non_zero_on_supported_platforms() {
+    #[cfg(any(windows, target_os = "linux", target_os = "macos"))]
+    {
+        let mem = crate::api::system::system_memory_bytes();
+        assert!(
+            mem > 0,
+            "system memory should be positive on Linux/macOS/Windows"
+        );
+    }
+}
