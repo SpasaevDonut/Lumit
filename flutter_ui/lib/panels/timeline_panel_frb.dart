@@ -3854,16 +3854,20 @@ class _KeyLaneState extends State<_KeyLane> {
             height: _rowHeight,
             child: MouseRegion(
               cursor: SystemMouseCursors.resizeLeftRight,
-              // Selecting the diamond happens on the pointer DOWN, outside the
-              // gesture arena — the same trick the layer name row uses, because
-              // a tap recognizer here competes with the drag below it and
-              // swallowed the key drag outright. Without any per-key selection
-              // only the marquee could fill the lane catch, so easing a single
-              // key from the lanes (F9, the bottom bar's buttons) had nothing
-              // to act on and looked like it did nothing.
-              child: Listener(
-                onPointerDown: (event) {
-                  if (event.buttons != kPrimaryButton) return;
+              child: GestureDetector(
+                key: ValueKey<String>('tl-key-${widget.rowId}#$i'),
+                behavior: HitTestBehavior.opaque,
+                // Touching a diamond selects it, and a drag is a touch that
+                // went somewhere — so the drag's own start is where selection
+                // belongs. This recognizer is alone in the arena, which means
+                // it wins on release even when the pointer never moved: one
+                // callback covers the click and the drag, and no second
+                // recognizer competes for the sub-pixel-per-frame movements a
+                // lane drag is made of. Without a per-key selection only the
+                // marquee could fill the lane catch, so easing one key from
+                // the lanes (F9, the bottom bar's buttons) had nothing to act
+                // on and looked like it did nothing.
+                onHorizontalDragStart: (_) {
                   final keyboard = HardwareKeyboard.instance;
                   widget.onSelectKey(
                     i,
@@ -3871,22 +3875,18 @@ class _KeyLaneState extends State<_KeyLane> {
                         keyboard.isControlPressed ||
                         keyboard.isMetaPressed,
                   );
-                },
-                child: GestureDetector(
-                  key: ValueKey<String>('tl-key-${widget.rowId}#$i'),
-                  behavior: HitTestBehavior.opaque,
-                  onHorizontalDragStart: (_) => setState(() {
+                  setState(() {
                     _dragging = i;
                     _deltaPx = 0;
-                  }),
-                  onHorizontalDragUpdate: (d) =>
-                      setState(() => _deltaPx += d.delta.dx),
-                  onHorizontalDragEnd: (_) => _commit(i),
-                  onHorizontalDragCancel: () => setState(() {
-                    _dragging = null;
-                    _deltaPx = 0;
-                  }),
-                ),
+                  });
+                },
+                onHorizontalDragUpdate: (d) =>
+                    setState(() => _deltaPx += d.delta.dx),
+                onHorizontalDragEnd: (_) => _commit(i),
+                onHorizontalDragCancel: () => setState(() {
+                  _dragging = null;
+                  _deltaPx = 0;
+                }),
               ),
             ),
           ),

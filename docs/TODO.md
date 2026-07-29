@@ -278,6 +278,21 @@ the keymap).
     razor, rename, reorder and delete all refuse; its transform/effect/volume rows are
     still editable. Either guard the rows or enforce in the engine ops — decide which
     before wiring.
+- **The Timeline's two halves are built twice, and kept in step by hand.** The
+    outline (`_Outline`, layer names and columns) and the lane area (`_LayerArea`,
+    bars and keyframes) are separate widget trees that each walk the same layer
+    list, each consume the same `layerBlockHeights` list, and are aligned only
+    because both happen to read the same numbers. Vertical scroll is two
+    controllers mirrored through `_followScroll` behind a reentrancy flag. Flutter
+    gives all of that for nothing if a layer is built **once** as a row holding
+    both halves inside one vertical scrollable (the lane side keeping its own
+    horizontal controller) — one pass, one scroll position, alignment by
+    construction. The current shape keeps producing the same class of bug (K-208's
+    layer drag moving only one half; the test that exists purely to check an open
+    layer's bars still line up with its names) and is most of why the file is 4400
+    lines. A session's refactor, no behaviour change intended, with the alignment
+    tests as the safety net — and it deletes `blockHeights`, both scroll
+    controllers' sync and the guard flag rather than adding anything.
 - **The lane keyframe selection selects and eases, nothing more (K-189, K-196).** The
     marquee gathers diamonds, a click selects one and a diamond drags in time (K-190),
     and the F9 family and the bottom bar's easing buttons act on the catch — but moving

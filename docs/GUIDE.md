@@ -1399,7 +1399,11 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   work**: **F9** and its family (and the bottom bar's Linear / Bezier / Hold buttons) act on
   whatever keys are selected here, so easing a key never means opening the graph. The easing
   chords are bound in the graph context in docs/07 §15; the Timeline honours them because the
-  two views are one panel with one key selection between them. **Shift-click** adds a key to
+  two views are one panel with one key selection between them. (Touching a diamond is what
+  selects it — the same gesture that drags it, which is why a click with no movement still
+  counts: the lane's drag recogniser is alone in its arena, so it wins on release either way.
+  That matters more than it sounds: a lane at fit zoom is a third of a pixel per frame, and a
+  competing tap recogniser would swallow every drag short of twenty frames.) **Shift-click** adds a key to
   the selection, **Ctrl-click**
   toggles one, and dragging over empty timeline space draws a **marquee** box that selects
   every key it covers — *across different property rows*, so you can grab, say, a Position key
