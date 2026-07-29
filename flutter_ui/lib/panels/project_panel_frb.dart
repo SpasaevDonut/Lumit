@@ -409,7 +409,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                 frameless: true,
                 onPressed: _import,
                 child:
-                    lumitIcon(LumitIcon.folder, size: 14, color: t.textMuted),
+                    lumitIcon(LumitIcon.folder, size: iconSize, color: t.textMuted),
               ),
             ),
             const SizedBox(width: 4),
@@ -431,7 +431,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
                     frameless: true,
                     onPressed: _newComposition,
                     child:
-                        lumitIcon(LumitIcon.comp, size: 14, color: t.textMuted),
+                        lumitIcon(LumitIcon.comp, size: iconSize, color: t.textMuted),
                   ),
                 ),
               ),
@@ -483,7 +483,7 @@ class _ProjectPanelFrbState extends State<ProjectPanelFrb> {
         child: image == null
             ? Center(
                 child: lumitIcon(LumitIcon.footage,
-                    size: 14, color: t.layer.footage))
+                    size: iconSize, color: t.layer.footage))
             : ClipRRect(
                 borderRadius: BorderRadius.circular(t.tokens.controlRadius),
                 child: Container(
@@ -725,7 +725,7 @@ class _MissingHeaderFrb extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8),
           child: Row(
             children: [
-              lumitIcon(LumitIcon.unlink, size: 13, color: t.warning),
+              lumitIcon(LumitIcon.unlink, size: iconSize, color: t.warning),
               const SizedBox(width: 6),
               Text(
                 '$count missing file${count == 1 ? '' : 's'}',
@@ -1011,7 +1011,7 @@ class _ProjectRowFrbState extends State<_ProjectRowFrb> {
     final (icon, tint) = _iconFor(item, t);
     return lumitIcon(
       widget.missing ? LumitIcon.unlink : icon,
-      size: 14,
+      size: iconSize,
       color: widget.missing ? t.warning : tint,
     );
   }
@@ -1067,7 +1067,7 @@ class _DragFeedbackFrb extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             lumitIcon(icon,
-                size: 13,
+                size: iconSize,
                 color:
                     icon == LumitIcon.comp ? t.layer.precomp : t.layer.footage),
             const SizedBox(width: 6),

@@ -241,7 +241,7 @@ class KeyframeControlsFrb extends StatelessWidget {
             context,
             keyName: 'kf-stopwatch-$rowKey',
             child: lumitIcon(LumitIcon.stopwatch,
-                size: 12, color: _animated ? t.accent : t.textMuted),
+                size: iconSize, color: _animated ? t.accent : t.textMuted),
             onPressed: () => _toggleAnimated(frame),
           ),
         ),
@@ -264,7 +264,7 @@ class KeyframeControlsFrb extends StatelessWidget {
               keyName: 'kf-toggle-$rowKey',
               child: lumitIcon(
                 onKey ? LumitIcon.keyframeFilled : LumitIcon.keyframe,
-                size: 11,
+                size: iconSize,
                 color: onKey ? t.accent : t.textMuted,
               ),
               onPressed: () => _toggleKeyHere(frame),

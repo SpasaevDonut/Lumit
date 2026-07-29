@@ -115,6 +115,24 @@ enum LumitIcon {
   nullLayer,
 }
 
+/// The size an icon draws at (15-DESIGN §5: 16px for panels, 20px for the
+/// transport).
+///
+/// **These are not free numbers.** Every Iconoir glyph is drawn on a 24-unit
+/// grid with a 1.5-unit stroke, so the stroke's width on screen is
+/// `size / 24 * 1.5` — at 16 that is exactly one pixel at 100% display
+/// scaling, and at 20 it is 1.25. The panel icons had been drawn at 10–13,
+/// where the stroke comes to 0.63–0.81 of a pixel: there is no such pixel, so
+/// the renderer spreads each line across two of them at partial strength and
+/// the whole set reads as smeared and unevenly weighted. That is the "crunch",
+/// and no amount of anti-aliasing fixes it — anti-aliasing is what is *doing*
+/// it. The cure is drawing at a size whose stroke a pixel can hold.
+const double iconSize = 16;
+const double iconSizeTransport = 20;
+
+/// How wide an Iconoir stroke is, in the glyph's own 24-unit grid.
+const double _iconStrokeUnits = 1.5;
+
 /// Build `icon` at `size` in `color`. The motion-blur mark is drawn, not
 /// looked up, exactly as in the Rust frontend.
 Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
@@ -129,8 +147,47 @@ Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
   if (painter != null) {
     return CustomPaint(size: Size.square(size), painter: painter);
   }
-  final w = _glyph(icon, color);
-  return SizedBox(width: size, height: size, child: w);
+  return _CrispGlyph(size: size, child: _glyph(icon, color));
+}
+
+/// A glyph, nudged onto the pixel grid.
+///
+/// A stroke straddles the line it is drawn along — half its width each side.
+/// Iconoir's paths run along whole units of the 24-grid, so a one-pixel stroke
+/// lands centred on a pixel *boundary* and comes out as two half-lit pixels
+/// instead of one lit one: a grey, doubled line rather than a crisp one. Half
+/// a pixel across puts those strokes back on pixel centres, which is the whole
+/// difference for every horizontal and vertical line in the set — most of it,
+/// since these are interface icons.
+///
+/// Only when the stroke is an odd number of device pixels: at 2px (a 200%
+/// display, or the 20px transport at 150%) the line already covers whole
+/// pixels and moving it would be the thing that blurred it. Curves and
+/// diagonals are unaffected either way.
+///
+/// Best effort at a UI scale other than 1: the scale multiplies in above this
+/// widget, so the nudge lands near, rather than exactly on, half a pixel.
+class _CrispGlyph extends StatelessWidget {
+  final double size;
+  final Widget child;
+
+  const _CrispGlyph({required this.size, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    final ratio = MediaQuery.maybeDevicePixelRatioOf(context) ?? 1.0;
+    final strokeDevicePixels =
+        (size / 24.0 * _iconStrokeUnits * ratio).round();
+    final nudge = strokeDevicePixels.isOdd ? 0.5 / ratio : 0.0;
+    return SizedBox(
+      width: size,
+      height: size,
+      child: Transform.translate(
+        offset: Offset(nudge, nudge),
+        child: child,
+      ),
+    );
+  }
 }
 
 Widget _glyph(LumitIcon icon, Color color) => switch (icon) {

@@ -445,7 +445,7 @@ class _MissingBadgeState extends State<_MissingBadge> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          lumitIcon(LumitIcon.unlink, size: 12, color: t.warning),
+          lumitIcon(LumitIcon.unlink, size: iconSize, color: t.warning),
           const SizedBox(width: 6),
           Text(
             '$_missing missing file${_missing == 1 ? '' : 's'}',
@@ -867,8 +867,10 @@ class _Toolbar extends StatelessWidget {
               key: const ValueKey('viewer-play'),
               small: true,
               onPressed: onPlayPause,
+              // The transport is the one place the spec asks for 20 (§5): it
+              // is the control the eye goes to without looking for it.
               child: lumitIcon(playing ? LumitIcon.pause : LumitIcon.play,
-                  size: 12, color: t.textPrimary),
+                  size: iconSizeTransport, color: t.textPrimary),
             ),
             HouseButton(
               key: const ValueKey('viewer-step-forward'),

@@ -3183,3 +3183,19 @@ and becomes an offset the rows apply themselves, taking the ruler, the cache bar
 playhead, the work-area ground, the marquee and the graph view's scroll plumbing with it.
 The requirement attached to this round was that both views behave exactly as they do now, so
 the seam stays for the moment; this entry does not close the door on it.
+
+**K-209 · DECIDED · Icons draw at 16px and land on the pixel grid.** From Mack, reporting
+Airizz (2026-07-29): the icons read as crunchy, and the guess was that anti-aliasing was
+missing. It was not — it was the mechanism. Iconoir's line art carries a 1.5-unit stroke on
+a 24-unit grid, so an icon drawn at 12px has a 0.75px stroke, which the renderer can only
+show as two part-lit pixels either side of where the line belongs. Panels had drifted to
+10–13px against 15-DESIGN §5's stated 16 for panels and 20 for the transport; both are now
+named constants, and 16 is recorded as a **floor** with the arithmetic that makes it one.
+
+Icons are additionally offset half a device pixel when their stroke is an **odd** number of
+device pixels wide, so a one-pixel stroke lands on a pixel centre rather than on the
+boundary between two — the difference between one lit pixel and two half-lit ones, and it
+applies to most of the geometry in an interface icon set. Not applied at even widths, where
+the stroke already covers whole pixels and the nudge is what would blur it. At fractional
+display scalings (150%) no offset makes a stroke whole; that is inherent and is stated in
+the note rather than papered over.

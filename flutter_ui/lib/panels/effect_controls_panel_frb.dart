@@ -260,7 +260,7 @@ class _Header extends StatelessWidget {
       color: t.surface1,
       child: Row(
         children: [
-          lumitIcon(LumitIcon.fx, size: 13, color: t.textMuted),
+          lumitIcon(LumitIcon.fx, size: iconSize, color: t.textMuted),
           const SizedBox(width: 6),
           Expanded(
             child: Text(layerName,

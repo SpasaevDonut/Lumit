@@ -175,13 +175,13 @@ class _HierarchyRow extends StatelessWidget {
                       onTap: onToggle,
                       child: lumitIcon(
                         open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                        size: 10,
+                        size: iconSize,
                         color: t.textMuted,
                       ),
                     )
                   : null,
             ),
-            lumitIcon(iconForKind(kind), size: 12, color: t.textMuted),
+            lumitIcon(iconForKind(kind), size: iconSize, color: t.textMuted),
             const SizedBox(width: 6),
             Expanded(
               child: Text(name, style: t.body, overflow: TextOverflow.ellipsis),

@@ -4359,3 +4359,38 @@ once by the overlay that runs the full height of the panel. The two disagreed by
 whatever fraction of a pixel the scroll offset happened to sit at, so the
 outline's rows looked a hair taller than the lanes. The per-row line is gone; one
 overlay draws the seams for each half.
+
+### Why the icons looked crunchy, and what actually fixes it (K-209)
+
+The complaint was that the icons look rough — and the instinct, reasonably, was
+that they were missing anti-aliasing. They were not. Anti-aliasing was on the
+whole time; it was what was doing it.
+
+Every icon in the set is drawn as line art on a 24-by-24 grid, with lines 1.5
+units thick. When you draw that icon at some size on screen, the lines scale
+with it: at 24 pixels the lines are 1.5 pixels, at 16 pixels they are exactly 1,
+and at the 12 the panels were using they are 0.75. A three-quarter-pixel line
+does not exist. The renderer's only honest option is to light up the pixels
+either side of where the line should be, each at partial brightness — so a line
+that should be one clean stroke becomes two grey ones. Do that to every stroke
+in every icon and the whole set reads as smeared and unevenly weighted. That is
+the crunch.
+
+So the first fix is simply to draw them at a size the strokes fit into. 16px is
+not a taste decision, it is the smallest size at which these icons have a whole
+pixel to put a line in — and it is what the design spec asked for in the first
+place; the code had drifted to 10–13.
+
+The second fix is subtler and worth knowing because it applies to any hairline
+you draw anywhere. A stroke is centred on the path it follows: a 1-pixel line
+drawn along the boundary between two pixels covers half of each, and comes out
+grey and doubled rather than crisp. The icons' own geometry sits on whole units
+of that 24 grid, so at 16px every horizontal and vertical line lands exactly on
+a boundary. Shifting the icon by half a pixel puts those lines back on pixel
+centres, where one pixel can hold them. We only do it when the stroke is an odd
+number of screen pixels wide — on a high-DPI display where the line is a full 2
+pixels, it already covers whole pixels and moving it is what would blur it.
+
+None of this helps at display scalings like 150%, where a stroke comes to 1.5
+screen pixels and there is no whole number to land on. That is the nature of the
+thing, not something left undone.

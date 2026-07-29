@@ -349,7 +349,7 @@ class _CompSettingsBodyState extends State<_CompSettingsBody> {
                 onPressed: () => setState(() => _locked = !_locked),
                 child: lumitIcon(
                   _locked ? LumitIcon.lock : LumitIcon.unlock,
-                  size: 12,
+                  size: iconSize,
                   color: _locked ? t.accent : t.textMuted,
                 ),
               ),

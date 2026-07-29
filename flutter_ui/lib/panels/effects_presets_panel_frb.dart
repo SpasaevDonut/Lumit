@@ -91,7 +91,7 @@ class _EffectsPresetsPanelFrbState extends State<EffectsPresetsPanelFrb> {
           padding: const EdgeInsets.symmetric(horizontal: 6),
           child: Row(
             children: [
-              lumitIcon(LumitIcon.star, size: 12, color: t.textMuted),
+              lumitIcon(LumitIcon.star, size: iconSize, color: t.textMuted),
               const SizedBox(width: 6),
               Expanded(
                 child: HouseTextField(

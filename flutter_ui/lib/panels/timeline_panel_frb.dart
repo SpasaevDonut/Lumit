@@ -1543,7 +1543,7 @@ class _FoldRow extends StatelessWidget {
             children: [
               lumitIcon(
                 open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                size: 12,
+                size: iconSize,
                 color: open ? t.textPrimary : t.textMuted,
               ),
               const SizedBox(width: 4),
@@ -2144,7 +2144,7 @@ class _Toolbar extends StatelessWidget {
         frameless: true,
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
         onPressed: onPressed,
-        child: lumitIcon(icon, size: 12, color: on ? t.accent : t.textMuted),
+        child: lumitIcon(icon, size: iconSize, color: on ? t.accent : t.textMuted),
       ),
     );
   }
@@ -2452,7 +2452,7 @@ class _ColumnHeader extends StatelessWidget {
   Widget _cells(LumitTheme t, TimelineGroup group, double width) {
     Widget icon(LumitIcon i, String tip) => LumitTooltip(
           message: tip,
-          child: Center(child: lumitIcon(i, size: 13, color: t.textMuted)),
+          child: Center(child: lumitIcon(i, size: iconSize, color: t.textMuted)),
         );
     Widget cell(LumitIcon i, String tip) =>
         SizedBox(width: switchCellWidth, child: icon(i, tip));
@@ -2928,7 +2928,7 @@ class _OutlineRowState extends State<_OutlineRow> {
               child: Center(
                 child: lumitIcon(
                   widget.open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                  size: 13,
+                  size: iconSize,
                   color: widget.open ? t.textPrimary : t.textMuted,
                 ),
               ),
@@ -3178,8 +3178,8 @@ class _OutlineRowState extends State<_OutlineRow> {
     final t = ThemeScope.of(context).theme;
     final glyph = on || offIcon != null
         ? lumitIcon(on ? icon : offIcon!,
-            size: 13, color: on ? t.textPrimary : t.textMuted)
-        : lumitIcon(icon, size: 13, color: t.textDisabled);
+            size: iconSize, color: on ? t.textPrimary : t.textMuted)
+        : lumitIcon(icon, size: iconSize, color: t.textDisabled);
     final cell = GestureDetector(
       key: ValueKey<String>('tl-$name-$id'),
       behavior: HitTestBehavior.opaque,
@@ -4064,7 +4064,7 @@ class _LaneBottomBar extends StatelessWidget {
                                 horizontal: 4, vertical: 2),
                             onPressed: onToggleMagnet,
                             child: lumitIcon(LumitIcon.magnet,
-                                size: 13,
+                                size: iconSize,
                                 color: magnet ? t.accent : t.textMuted),
                           ),
                         ),

@@ -303,7 +303,13 @@ The **Iconoir** set (MIT), embedded as an icon font via the `iconflow` crate (K-
 reversing this section's earlier hand-drawn-only rule): one consistent, professionally drawn
 family, rendered as glyphs so every icon takes the theme colour exactly like text —
 `text_secondary` at rest, `text_primary` on hover, `accent` when active — at 16px for panel
-toolbars, 20px for the transport. Layer-type glyphs in the Timeline are tinted with the
+toolbars, 20px for the transport. **16 is a floor, not a preference** (K-209): an Iconoir
+glyph carries a 1.5-unit stroke on a 24-unit grid, so 16px is the size at which that stroke
+comes to exactly one pixel at 100% display scaling. Below it the stroke is narrower than a
+pixel and gets spread across two at partial strength, which is what "crunchy icons" are —
+anti-aliasing is not the missing cure, it is the mechanism. Icons are also offset half a
+pixel when their stroke is an odd number of device pixels wide, so it lands on a pixel
+centre rather than straddling a boundary. Layer-type glyphs in the Timeline are tinted with the
 layer-type family (§6.1). Rules that stand: monochrome only, no filled multi-colour icons,
 and **no emoji or bare symbol characters in UI ever** — a glyph is either from the icon set
 or deliberately painter-drawn (keyframe diamonds on tracks); never a Unicode character we

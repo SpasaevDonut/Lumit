@@ -109,7 +109,7 @@ class FxSection extends StatelessWidget {
                   children: [
                     lumitIcon(
                       open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                      size: 12,
+                      size: iconSize,
                       color: open ? t.textPrimary : t.textMuted,
                     ),
                     const SizedBox(width: 2),
