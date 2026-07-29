@@ -102,6 +102,172 @@ pub fn encoder_label(encoder: &str) -> &'static str {
     }
 }
 
+/// A still-image sequence format the exporter can write (K-201). PNG and TIFF
+/// both carry the full RGBA frame losslessly, which is what a compositor's
+/// image export is for — a lossy sequence would be an mp4 with extra steps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageFormat {
+    Png,
+    Tiff,
+}
+
+impl ImageFormat {
+    /// User-facing name (glossary voice: plain, no marketing).
+    pub fn label(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "PNG sequence",
+            ImageFormat::Tiff => "TIFF sequence",
+        }
+    }
+
+    /// The file extension each frame carries.
+    pub fn extension(self) -> &'static str {
+        match self {
+            ImageFormat::Png => "png",
+            ImageFormat::Tiff => "tiff",
+        }
+    }
+
+    fn codec_id(self) -> ffi::AVCodecID {
+        match self {
+            ImageFormat::Png => ffi::AV_CODEC_ID_PNG,
+            ImageFormat::Tiff => ffi::AV_CODEC_ID_TIFF,
+        }
+    }
+}
+
+/// The numbered-frame pattern for a sequence chosen as `name.ext`:
+/// `name.%05d.ext` beside it, which FFmpeg's image2 muxer expands to
+/// `name.00001.ext`, `name.00002.ext`, … Five digits covers half an hour at
+/// 60 fps and printf simply widens beyond it, so nothing truncates.
+pub fn sequence_pattern(path: &Path) -> std::path::PathBuf {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("export");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    path.with_file_name(format!("{stem}.%05d.{ext}"))
+}
+
+/// The path of frame `n` (1-based) of the sequence chosen as `path` — what
+/// [`sequence_pattern`] makes the muxer write, reproduced so a cancelled
+/// export can remove exactly the files it made.
+pub fn sequence_frame_path(path: &Path, n: usize) -> std::path::PathBuf {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("export");
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("png");
+    path.with_file_name(format!("{stem}.{n:05}.{ext}"))
+}
+
+/// Writes one image file per frame through FFmpeg's image2 muxer — the same
+/// packet path the mp4 encoder uses, so there is no second way to be wrong
+/// about timestamps or draining. No scaler and no audio: the frames are
+/// already RGBA (both image codecs take it directly), and a folder of stills
+/// has nowhere for sound to go.
+pub struct ImageSequenceEncoder {
+    output: AVFormatContextOutput,
+    video: AVCodecContext,
+    width: i32,
+    height: i32,
+    next_pts: i64,
+    finished: bool,
+}
+
+impl ImageSequenceEncoder {
+    /// Open a sequence at `path` (e.g. `shot.png` — the numbered pattern is
+    /// derived beside it), sized `width`×`height`, stamped at `fps_num/fps_den`.
+    pub fn open(
+        path: &Path,
+        format: ImageFormat,
+        width: u32,
+        height: u32,
+        fps_num: i32,
+        fps_den: i32,
+    ) -> Result<Self, MediaError> {
+        let pattern = sequence_pattern(path);
+        let cpath = CString::new(pattern.to_str().ok_or(MediaError::BadPath)?)
+            .map_err(|_| MediaError::BadPath)?;
+        let mut output = AVFormatContextOutput::create(&cpath)?;
+
+        let codec = AVCodec::find_encoder(format.codec_id()).ok_or_else(|| {
+            MediaError::Ffmpeg(format!(
+                "no {} encoder in this FFmpeg build",
+                format.label()
+            ))
+        })?;
+        let mut ctx = AVCodecContext::new(&codec);
+        let w =
+            i32::try_from(width).map_err(|_| MediaError::Ffmpeg("frame width overflows".into()))?;
+        let h = i32::try_from(height)
+            .map_err(|_| MediaError::Ffmpeg("frame height overflows".into()))?;
+        ctx.set_width(w);
+        ctx.set_height(h);
+        ctx.set_time_base(AVRational {
+            num: fps_den,
+            den: fps_num,
+        });
+        ctx.set_pix_fmt(ffi::AV_PIX_FMT_RGBA);
+        ctx.open(None)?;
+
+        {
+            let mut stream = output.new_stream();
+            stream.set_codecpar(ctx.extract_codecpar());
+            stream.set_time_base(AVRational {
+                num: fps_den,
+                den: fps_num,
+            });
+        }
+        output.write_header(&mut None)?;
+
+        Ok(Self {
+            output,
+            video: ctx,
+            width: w,
+            height: h,
+            next_pts: 0,
+            finished: false,
+        })
+    }
+
+    /// Encode one tightly-packed RGBA frame into the next numbered file.
+    pub fn write_rgba(&mut self, rgba: &[u8]) -> Result<(), MediaError> {
+        let expect = rgba_frame_len(self.width, self.height)?;
+        if rgba.len() != expect {
+            return Err(MediaError::Ffmpeg(format!(
+                "frame size {} != expected {expect}",
+                rgba.len()
+            )));
+        }
+        let mut frame = AVFrame::new();
+        frame.set_width(self.width);
+        frame.set_height(self.height);
+        frame.set_format(ffi::AV_PIX_FMT_RGBA);
+        frame
+            .alloc_buffer()
+            .map_err(|e| MediaError::Ffmpeg(e.to_string()))?;
+        copy_rgba_into(&mut frame, rgba, self.width, self.height)?;
+        frame.set_pts(self.next_pts);
+        self.next_pts += 1;
+
+        self.video.send_frame(Some(&frame))?;
+        drain_packets(&mut self.video, &mut self.output, 0, false)
+    }
+
+    /// Flush the encoder and close the muxer. Idempotent, like the mp4 finish.
+    pub fn finish(&mut self) -> Result<(), MediaError> {
+        if self.finished {
+            return Ok(());
+        }
+        self.finished = true;
+        self.video.send_frame(None)?;
+        drain_packets(&mut self.video, &mut self.output, 0, true)?;
+        self.output.write_trailer()?;
+        Ok(())
+    }
+}
+
 /// The audio half of the muxer: AAC context plus the sample bookkeeping.
 struct AudioTrack {
     ctx: AVCodecContext,
@@ -922,6 +1088,60 @@ mod tests {
             .sqrt();
         // RMS of a 0.5-amplitude sine is 0.5/√2 ≈ 0.354 (AAC lossy: ±10%).
         assert!((rms - 0.3535).abs() < 0.035, "rms {rms}");
+    }
+
+    /// A PNG sequence really writes one numbered file per frame, where the
+    /// pattern says, and each is a readable image (the PNG magic is enough to
+    /// prove the codec ran — a zero-byte or misnumbered file is the failure
+    /// this guards).
+    #[test]
+    fn a_png_sequence_writes_one_numbered_file_per_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        let mut enc = ImageSequenceEncoder::open(&path, ImageFormat::Png, 32, 18, 30, 1).unwrap();
+        for shade in [0u8, 128, 255] {
+            enc.write_rgba(&vec![shade; 32 * 18 * 4]).unwrap();
+        }
+        enc.finish().unwrap();
+
+        for n in 1..=3 {
+            let frame = sequence_frame_path(&path, n);
+            let bytes =
+                std::fs::read(&frame).unwrap_or_else(|_| panic!("{} missing", frame.display()));
+            assert_eq!(&bytes[1..4], b"PNG", "{} is not a PNG", frame.display());
+        }
+        assert!(
+            !sequence_frame_path(&path, 4).exists(),
+            "no fourth frame was asked for"
+        );
+    }
+
+    /// TIFF takes the same path; one frame proves the codec is in the build.
+    #[test]
+    fn a_tiff_sequence_writes_readable_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("plate.tiff");
+        let mut enc = ImageSequenceEncoder::open(&path, ImageFormat::Tiff, 16, 16, 24, 1).unwrap();
+        enc.write_rgba(&vec![64u8; 16 * 16 * 4]).unwrap();
+        enc.finish().unwrap();
+        let bytes = std::fs::read(sequence_frame_path(&path, 1)).unwrap();
+        // Little- or big-endian TIFF magic.
+        assert!(bytes.starts_with(b"II") || bytes.starts_with(b"MM"));
+    }
+
+    /// The pattern and the per-frame path must agree, or a cancelled export
+    /// would delete the wrong files (or none).
+    #[test]
+    fn the_sequence_pattern_and_frame_paths_agree() {
+        let p = Path::new("C:/out/shot.png");
+        assert!(sequence_pattern(p)
+            .to_str()
+            .unwrap()
+            .ends_with("shot.%05d.png"));
+        assert!(sequence_frame_path(p, 7)
+            .to_str()
+            .unwrap()
+            .ends_with("shot.00007.png"));
     }
 
     /// Feeding audio to a video-only export is a caller bug and must be a

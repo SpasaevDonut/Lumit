@@ -1023,7 +1023,7 @@ pub struct Layer {
     /// is always there: an un-retimed layer shows no Retime row (docs/07 §4.3)
     /// and skips the map entirely.
     ///
-    /// Enabled from the Timeline with Alt+Shift+T, which installs the identity
+    /// Enabled from the Timeline with Ctrl+Alt+T, which installs the identity
     /// map ([`Layer::identity_retime`]) so switching it on changes nothing
     /// visible and gives the row something to key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1048,7 +1048,7 @@ pub struct Layer {
 impl Layer {
     /// The identity Retime for a layer `duration` seconds long: two linear keys
     /// running source time alongside local time, so the layer plays at source
-    /// rate. What Alt+Shift+T installs — the AE Time Remap starting state.
+    /// rate. What Ctrl+Alt+T installs — the AE Time Remap starting state.
     pub fn identity_retime(duration: Rational) -> Property {
         let key = |time: Rational, value: f64| crate::anim::Keyframe {
             time,

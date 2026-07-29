@@ -17,7 +17,7 @@ import 'retime.dart';
 import 'solid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_layer_info`, `read`, `with_effects`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -301,6 +301,59 @@ class BridgeMatte {
           layer == other.layer &&
           luma == other.luma &&
           inverted == other.inverted;
+}
+
+/// The groups a reveal should open on one layer. Effects are named
+/// individually, because the Effects group opens onto one row per effect and
+/// only the qualifying ones should unfold.
+class BridgeRevealGroups {
+  final bool transform;
+  final bool audio;
+  final bool retime;
+
+  /// The qualifying effects' ids, as text — the same form the fold paths use.
+  final List<String> effects;
+
+  /// Whether anything qualified at all. The panel leaves the layer's own
+  /// twirl shut when nothing did, rather than opening onto an empty list.
+  final bool any;
+
+  const BridgeRevealGroups({
+    required this.transform,
+    required this.audio,
+    required this.retime,
+    required this.effects,
+    required this.any,
+  });
+
+  @override
+  int get hashCode =>
+      transform.hashCode ^
+      audio.hashCode ^
+      retime.hashCode ^
+      effects.hashCode ^
+      any.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeRevealGroups &&
+          runtimeType == other.runtimeType &&
+          transform == other.transform &&
+          audio == other.audio &&
+          retime == other.retime &&
+          effects == other.effects &&
+          any == other.any;
+}
+
+/// Which reveal the Timeline is asking for (docs/07 §4.3).
+enum BridgeRevealKind {
+  /// `U`: groups holding a keyframed property.
+  animated,
+
+  /// `UU`: groups holding anything changed from a fresh layer's state.
+  modified,
+  ;
 }
 
 /// Where a layer sits on the comp timeline, in exact rational seconds.
@@ -699,6 +752,20 @@ class LayerReference {
       BridgeLib.instance.api.crateApiLayerLayerReferenceReorderEffect(
           that: this, effect: effect, newIndex: newIndex);
 
+  /// Which of this layer's property groups the reveal shortcuts should open
+  /// (docs/07 §4.3's `U` / `UU`, K-199).
+  ///
+  /// The *question* is the engine's, which is why it is answered here rather
+  /// than in the Timeline: "does this group hold anything animated" and "is
+  /// any of it changed from what a fresh layer would have" are facts about
+  /// the document, and the second needs the seeding rule
+  /// ([`crate::edits::centred_transform`]) that decides what "unchanged"
+  /// means for Position. The panel is told which groups to open; it decides
+  /// nothing about why.
+  BridgeRevealGroups revealGroups({required BridgeRevealKind kind}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceRevealGroups(that: this, kind: kind);
+
   /// Serialise this layer's whole effect stack to `.lumfx` JSON.
   ///
   /// Returns the text rather than writing a file: choosing where something
@@ -848,7 +915,7 @@ class LayerReference {
   void setVolumeDb({required BridgeScalar value}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetVolumeDb(that: this, value: value);
 
-  /// Turn Retime on or off (Alt+Shift+T), returning whether it is now on.
+  /// Turn Retime on or off (Ctrl+Alt+T), returning whether it is now on.
   ///
   /// On installs the identity map — source time running alongside local time
   /// — so switching it on changes nothing visible and gives the row something

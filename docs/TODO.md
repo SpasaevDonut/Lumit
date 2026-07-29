@@ -117,7 +117,7 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 
 **Retime is a property row now, and the segment card is the leftover (K-197).** A layer
 carries `retime: Option<Property>` — source time in seconds, keyframable like any other
-property, given with Alt+Shift+T and drawn above Transform in the fold-out. Deliberately
+property, given with Ctrl+Alt+T and drawn above Transform in the fold-out. Deliberately
 bare: no lenses, no ease presets, no freeze, no interpolation policy. What is left over is
 the **old segment path**, still in the model (`LayerKind::Footage::retime`), still evaluated
 as the fallback in `Layer::source_time_at`, and still edited by the Source card's
@@ -133,8 +133,25 @@ macOS/Linux want `sysctl hw.memsize` and `/proc/meminfo` when those targets land
 Appearance, Interface, Performance — but the egui build's **Export** page (default preset,
 filename template) and **Autosave** group (interval, copies kept) have nothing behind them
 on this frontend, so they are not listed rather than shown dead. Build the settings first,
-then the page. Same for the Keymap editor, colour management, CUDA and the plugins page
-(listed under *Settings pages not built* below).
+then the page. Same for colour management, CUDA and the plugins page (listed under
+*Settings pages not built* below). The **Keymap** page landed with K-199.
+
+**Bound keys with nothing behind them (K-199).** The keymap ships the whole docs/07 §15
+table, and this frontend dispatches the Global and Timeline/Graph parts of it. The
+**Tools**, **Project**, **Panels** and **Effects** contexts have real bindings and no
+commands — no tool palette, no panel-focus cycling, no panel search focus — so those rows
+are honest about the keymap and silent in use. They are listed in Settings → Keymap rather
+than hidden, because a shortcuts page that quietly omits bindings is worse than one that
+shows a key you have not built yet. Either build the commands or drop the bindings; do not
+leave the two disagreeing for long.
+
+**Appearance, after K-202.** Custom themes are per-machine: they live in the workspace file
+and there is no import/export *of a theme* (the keymap has one; a theme does not yet), so
+sending one to somebody means sending them the JSON block by hand. The editor also has no
+preview swatch strip and no duplicate-a-theme button — the way to make a variant is to
+select the theme, change it, and Save, which updates rather than forks it. And the seven
+built-in schemes still restate every colour individually; only the two Timeline tokens
+default from the mode.
 
 **Shell and onboarding:**
 - **The boot splash is not in the frb shell.** The bottom status line landed
@@ -253,10 +270,8 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
     timeline razor/clip editing and overrun hatching surface here too.
 
 **Settings pages not built ([07-UI-SPEC.md](07-UI-SPEC.md) §15):**
-- Keymap editor (the `lumit-keymap` model was deleted unused in K-182; restore
-    it from git history when the editor is actually built); colour-management
-    settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
-    plugins/decoder page.
+- Colour-management settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
+    plugins/decoder page. (The **Keymap** editor landed with K-199.)
 - The egui shell's fuller Performance/General/Export pages are not rebuilt in
     Flutter yet: the disk cache budget and root folder (the tier itself is
     unbuilt), autosave interval/keep, and the export defaults (preset +
@@ -291,6 +306,11 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
 **Linux packaging** - the flatpak shipped the egui `lumit-app` binary and was
     retired with it (K-182); the Flutter Linux build needs its own packaging
     when a Linux release matters.
+**Export options still to build (K-201 landed format/fps/range/audio-rate; docs/06 §7).**
+The one-click vertical variants (centre-crop reframe), user presets serialised beside the
+built-ins, export priority and encoder preference order, and the 48 kHz-only audio rate
+becoming a choice. The size fields also stay preset-driven — the dialogue has no free
+width/height boxes yet.
 **Export status still speaks v0's idiom** - `export.rs` replies in JSON strings
     (`err_json`) that the export dialog polls on a timer; the worker shows the
     typed-stream way, and export should follow it.

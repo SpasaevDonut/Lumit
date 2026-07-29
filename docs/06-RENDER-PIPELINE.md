@@ -522,6 +522,20 @@ codecs for interchange are planned but **not in v1** - v1 encodes H.264/HEVC onl
 space -> the preset's output space (Rec.709/sRGB in v1) as the final export transform; alpha
 export straight or premultiplied per output settings.
 
+**Image sequences (K-201).** Beside the video formats, an export can write one still per
+frame: **PNG** or **TIFF**, lossless RGBA, through the same ffmpeg seam (the image2 muxer) and
+the same frame walk — choose `shot.png` and the frames land beside it as `shot.00001.png`,
+`shot.00002.png`, … A sequence carries no audio (a folder of stills has nowhere to put it) and
+no bitrate (it is lossless); a cancelled or failed sequence removes the frames it wrote rather
+than leaving a folder that looks like a finished export.
+
+**The export dialogue's own fields (K-201).** Beyond the preset stamp, the dialogue carries a
+**frame rate** (defaulting to the comp's own; a different rate resamples by nearest comp frame
+over the same wall-clock span, and the file is stamped with the chosen rate as an exact
+rational — 29.97 never quietly becomes 30) and an explicit **range** in comp frames
+(defaulting to the work area exactly as §7.1 says, else the whole comp), plus the AAC bitrate
+when audio joins.
+
 ### 7.5 Preset set (v1)
 
 | Preset | Frame | Codec | Bitrate |

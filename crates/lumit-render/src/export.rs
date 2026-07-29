@@ -212,18 +212,54 @@ impl ExportPreset {
     }
 }
 
+/// What the export writes: a video file, or one still image per frame (K-201).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ExportFormat {
+    /// An `.mp4`, in the given codec.
+    Video(lumit_media::encode::VideoCodec),
+    /// A numbered image per frame — `shot.00001.png` beside the chosen path.
+    Images(lumit_media::encode::ImageFormat),
+}
+
 /// Everything one queued export needs beyond the document snapshot: the
-/// resolved output size, codec, rates, and whether audio joins.
+/// format, resolved output size, rates, range and whether audio joins.
 #[derive(Clone)]
 pub struct ExportSpec {
-    pub codec: lumit_media::encode::VideoCodec,
+    pub format: ExportFormat,
     pub target: (u32, u32),
     /// Average video bitrate in bits/second; None = encoder default quality.
+    /// Ignored by image sequences, which are lossless.
     pub bit_rate: Option<i64>,
     /// VBR peak in bits/second.
     pub max_rate: Option<i64>,
+    /// Output frame rate; None = the composition's own (K-201). A different
+    /// rate resamples by nearest comp frame — the honest thing without optical
+    /// flow in the export path — and the file is stamped with the chosen rate.
+    pub fps: Option<f64>,
+    /// The export range in comp frames, end exclusive; None = the work area
+    /// when one is set, else the whole comp (the standing K-037 behaviour).
+    pub range: Option<(usize, usize)>,
     pub include_audio: bool,
     pub audio_bit_rate: i64,
+}
+
+/// A chosen output rate as the exact rational the encoder is stamped with:
+/// thousandths, reduced — 29.97 → 2997/100, 60 → 60/1. Millihertz is finer
+/// than any delivery rate needs and keeps the arithmetic in integers.
+pub fn fps_rational(fps: f64) -> (i32, i32) {
+    let clamped = fps.clamp(1.0, 1000.0);
+    let mut num = (clamped * 1000.0).round() as i64;
+    let mut den = 1000i64;
+    let gcd = {
+        let (mut a, mut b) = (num, den);
+        while b != 0 {
+            (a, b) = (b, a % b);
+        }
+        a.max(1)
+    };
+    num /= gcd;
+    den /= gcd;
+    (num as i32, den as i32)
 }
 
 /// One export waiting its turn. The document and audio jobs are snapshotted
@@ -346,28 +382,47 @@ fn run(
     let comp = doc.comp(comp_id).ok_or("composition missing")?;
     let fps = comp.frame_rate.fps().max(1.0);
     let comp_frames = (comp.duration.0.to_f64() * fps).round().max(1.0) as usize;
-    // The work area is the export range (docs/01-GLOSSARY.md; K-037 relies on it).
-    let (first, end) = match comp.work_area {
+    // The range: the dialogue's own when it set one, else the work area, else
+    // the whole comp (docs/01-GLOSSARY.md; K-037 relies on the work-area rule).
+    let (first, end) = match spec.range {
         Some((a, b)) => {
-            let s = ((a.0.to_f64() * fps).round() as usize).min(comp_frames.saturating_sub(1));
-            let e = ((b.0.to_f64() * fps).round() as usize).clamp(s + 1, comp_frames);
+            let s = a.min(comp_frames.saturating_sub(1));
+            let e = b.clamp(s + 1, comp_frames);
             (s, e)
         }
-        None => (0, comp_frames),
+        None => match comp.work_area {
+            Some((a, b)) => {
+                let s = ((a.0.to_f64() * fps).round() as usize).min(comp_frames.saturating_sub(1));
+                let e = ((b.0.to_f64() * fps).round() as usize).clamp(s + 1, comp_frames);
+                (s, e)
+            }
+            None => (0, comp_frames),
+        },
     };
-    let total = end - first;
+    // The output rate. A rate other than the comp's resamples by nearest comp
+    // frame over the same wall-clock span, so a 60 fps comp exported at 30
+    // shows every other frame and lasts exactly as long.
+    let out_fps = spec.fps.unwrap_or(fps).clamp(1.0, 1000.0);
+    let span_seconds = (end - first) as f64 / fps;
+    let total = ((span_seconds * out_fps).round() as usize).max(1);
     let _ = tx.send(ExportEvent::Progress { frame: 0, total });
 
     // The comp's audio, mixed exactly as playback mixes it, then cut to the
     // export range and padded so sound and picture end together.
     let rate = EXPORT_AUDIO_RATE;
-    let audio_mix: Option<Vec<f32>> = if spec.include_audio && !audio_jobs.is_empty() {
+    // Sound only joins a video container; a folder of stills has nowhere to
+    // put it, and the dialogue says so rather than silently dropping it.
+    let wants_audio = spec.include_audio && matches!(spec.format, ExportFormat::Video(_));
+    let audio_mix: Option<Vec<f32>> = if wants_audio && !audio_jobs.is_empty() {
         let full = mixdown(audio_jobs, rate, comp.duration.0.to_f64());
         if cancel.load(Ordering::Relaxed) {
             return Ok(());
         }
+        // The cut starts where the range starts on the comp's own clock, and
+        // covers the output's duration — total frames at the *output* rate —
+        // so sound and picture end together whatever rate was chosen.
         let start = audio_samples_through(first, fps, rate).min(full.len() / 2);
-        let expect = audio_samples_through(total, fps, rate);
+        let expect = audio_samples_through(total, out_fps, rate);
         let mut cut = full[start * 2..(start + expect).min(full.len() / 2) * 2].to_vec();
         cut.resize(expect * 2, 0.0);
         Some(cut)
@@ -382,56 +437,93 @@ fn run(
     // Viewer's GPU work.
     let mut renderer =
         crate::headless::HeadlessRenderer::new().map_err(|e| format!("export renderer: {e}"))?;
-    // Encoded frame dimensions must be even for 4:2:0 H.264/HEVC.
-    let (tw, th) = (spec.target.0 & !1, spec.target.1 & !1);
-    let (tw, th) = (tw.max(2), th.max(2));
-    let resize = (tw, th) != (comp.width, comp.height);
-    let audio_settings = audio_mix
-        .as_ref()
-        .map(|_| lumit_media::encode::AudioSettings {
-            rate,
-            bit_rate: spec.audio_bit_rate,
-        });
-    let mut encoder = lumit_media::Encoder::open(
-        out_path,
-        &lumit_media::encode::VideoSettings {
-            codec: spec.codec,
-            width: tw,
-            height: th,
-            fps_num: i32::try_from(comp.frame_rate.fps().round() as i64).unwrap_or(60),
-            fps_den: 1,
-            bit_rate: spec.bit_rate,
-            max_rate: spec.max_rate,
-        },
-        audio_settings.as_ref(),
-    )
-    .map_err(|e| e.to_string())?;
-    let _ = tx.send(ExportEvent::Encoder(encoder.encoder_label()));
+    let (out_num, out_den) = fps_rational(out_fps);
+    // One sink, two shapes: the mp4 muxer, or one image file per frame. The
+    // loop below is shared — a second frame loop would be a second chance to
+    // disagree about sampling, cancellation or progress.
+    let mut sink = match spec.format {
+        ExportFormat::Video(codec) => {
+            // Encoded frame dimensions must be even for 4:2:0 H.264/HEVC.
+            let (tw, th) = (spec.target.0 & !1, spec.target.1 & !1);
+            let (tw, th) = (tw.max(2), th.max(2));
+            let audio_settings = audio_mix
+                .as_ref()
+                .map(|_| lumit_media::encode::AudioSettings {
+                    rate,
+                    bit_rate: spec.audio_bit_rate,
+                });
+            let encoder = lumit_media::Encoder::open(
+                out_path,
+                &lumit_media::encode::VideoSettings {
+                    codec,
+                    width: tw,
+                    height: th,
+                    fps_num: out_num,
+                    fps_den: out_den,
+                    bit_rate: spec.bit_rate,
+                    max_rate: spec.max_rate,
+                },
+                audio_settings.as_ref(),
+            )
+            .map_err(|e| e.to_string())?;
+            let _ = tx.send(ExportEvent::Encoder(encoder.encoder_label()));
+            Sink::Video {
+                encoder,
+                size: (tw, th),
+            }
+        }
+        ExportFormat::Images(format) => {
+            // Stills have no chroma subsampling, so no evenness rule.
+            let (tw, th) = (spec.target.0.max(1), spec.target.1.max(1));
+            let encoder = lumit_media::encode::ImageSequenceEncoder::open(
+                out_path, format, tw, th, out_num, out_den,
+            )
+            .map_err(|e| e.to_string())?;
+            let _ = tx.send(ExportEvent::Encoder(format.label()));
+            Sink::Images {
+                encoder,
+                size: (tw, th),
+                written: 0,
+            }
+        }
+    };
+    let resize = sink.size() != (comp.width, comp.height);
 
     let mut audio_fed = 0usize;
     for frame_n in 0..total {
         if cancel.load(Ordering::Relaxed) {
+            sink.remove_written(out_path);
             return Ok(());
         }
+        // The comp frame under this output frame: exact when the rates match
+        // (the rounding is then of an integer), nearest otherwise.
+        let src = first + ((frame_n as f64) * fps / out_fps).round() as usize;
+        let src = src.min(end.saturating_sub(1));
         let (rgba, _, _) = renderer.render_preview(
             doc,
             comp_id,
-            (first + frame_n) as u64,
+            src as u64,
             crate::plan::Quality::default(),
             1.0,
             None,
         )?;
-        // Letterbox into the delivery frame when a preset changes the size.
+        // Letterbox into the delivery frame when the size was changed.
+        let (tw, th) = sink.size();
         let rgba = if resize {
             lumit_core::pixels::letterbox_resize(&rgba, comp.width, comp.height, tw, th)
         } else {
             rgba
         };
-        encoder.write_rgba(&rgba).map_err(|e| e.to_string())?;
+        if let Err(e) = sink.write_rgba(&rgba) {
+            // A folder of stills that failed half-way is tidied rather than
+            // left as a trap that looks like a finished export.
+            sink.remove_written(out_path);
+            return Err(e);
+        }
         // Interleave: after each picture frame, the samples that cover it,
         // so the muxer keeps sound and picture together in the file.
-        if let Some(mix) = &audio_mix {
-            let upto = audio_samples_through(frame_n + 1, fps, rate).min(mix.len() / 2);
+        if let (Some(mix), Sink::Video { encoder, .. }) = (&audio_mix, &mut sink) {
+            let upto = audio_samples_through(frame_n + 1, out_fps, rate).min(mix.len() / 2);
             if upto > audio_fed {
                 encoder
                     .write_audio(&mix[audio_fed * 2..upto * 2])
@@ -445,15 +537,69 @@ fn run(
         });
     }
     // Any samples the per-frame rounding left behind.
-    if let Some(mix) = &audio_mix {
+    if let (Some(mix), Sink::Video { encoder, .. }) = (&audio_mix, &mut sink) {
         if mix.len() / 2 > audio_fed {
             encoder
                 .write_audio(&mix[audio_fed * 2..])
                 .map_err(|e| e.to_string())?;
         }
     }
-    encoder.finish().map_err(|e| e.to_string())?;
-    Ok(())
+    sink.finish()
+}
+
+/// Where the rendered frames go: the mp4 muxer, or the numbered stills. One
+/// type so the frame loop stays single.
+enum Sink {
+    Video {
+        encoder: lumit_media::Encoder,
+        size: (u32, u32),
+    },
+    Images {
+        encoder: lumit_media::encode::ImageSequenceEncoder,
+        size: (u32, u32),
+        /// Frames written so far — exactly the files a cancel removes.
+        written: usize,
+    },
+}
+
+impl Sink {
+    fn size(&self) -> (u32, u32) {
+        match self {
+            Sink::Video { size, .. } | Sink::Images { size, .. } => *size,
+        }
+    }
+
+    fn write_rgba(&mut self, rgba: &[u8]) -> Result<(), String> {
+        match self {
+            Sink::Video { encoder, .. } => encoder.write_rgba(rgba).map_err(|e| e.to_string()),
+            Sink::Images {
+                encoder, written, ..
+            } => {
+                encoder.write_rgba(rgba).map_err(|e| e.to_string())?;
+                *written += 1;
+                Ok(())
+            }
+        }
+    }
+
+    fn finish(&mut self) -> Result<(), String> {
+        match self {
+            Sink::Video { encoder, .. } => encoder.finish().map_err(|e| e.to_string()),
+            Sink::Images { encoder, .. } => encoder.finish().map_err(|e| e.to_string()),
+        }
+    }
+
+    /// Remove what a cancelled or failed image export left behind. The mp4
+    /// path needs nothing here — its half file is removed by the caller, which
+    /// cannot know a sequence's file names; this does.
+    fn remove_written(&self, chosen_path: &std::path::Path) {
+        if let Sink::Images { written, .. } = self {
+            for n in 1..=*written {
+                let _ =
+                    std::fs::remove_file(lumit_media::encode::sequence_frame_path(chosen_path, n));
+            }
+        }
+    }
 }
 
 /// Coverage bytes → white RGBA whose alpha is the coverage (the layer-mask
@@ -535,6 +681,174 @@ pub fn item_infos(
 mod tests {
     use super::*;
     use lumit_media::encode::VideoCodec;
+
+    /// A 30 fps, 5 s solid comp — the smallest document a real export can run
+    /// against (mirrors the headless tests' builder; modules cannot share test
+    /// helpers without exporting them, and exporting a test helper is worse).
+    fn solid_doc(w: u32, h: u32) -> (Arc<Document>, Uuid) {
+        use lumit_core::model::{
+            Composition, LayerKind, LinearColour, ProjectItem, SolidDef, Switches,
+        };
+        use lumit_core::time::{CompTime, Duration as CompDuration, FrameRate, Rational};
+        let mut doc = Document::new();
+        let solid_id = Uuid::now_v7();
+        doc.items.push(ProjectItem::Solid(SolidDef {
+            id: solid_id,
+            name: "Solid".into(),
+            colour: LinearColour([0.9, 0.2, 0.1, 1.0]),
+            width: w,
+            height: h,
+            extra: serde_json::Map::new(),
+        }));
+        let comp_id = Uuid::now_v7();
+        doc.items.push(ProjectItem::Composition(Composition {
+            id: comp_id,
+            name: "Scene".into(),
+            width: w,
+            height: h,
+            frame_rate: FrameRate::new(30, 1).unwrap(),
+            duration: CompDuration(Rational::new(5, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers: vec![lumit_core::model::Layer {
+                id: Uuid::now_v7(),
+                name: "Solid".into(),
+                kind: LayerKind::Solid { def: solid_id },
+                in_point: CompTime(Rational::new(0, 1).unwrap()),
+                out_point: CompTime(Rational::new(5, 1).unwrap()),
+                start_offset: CompTime(Rational::new(0, 1).unwrap()),
+                transform: Default::default(),
+                matte: None,
+                parent: None,
+                label: 0,
+                volume_db: lumit_core::anim::Property::zero(),
+                retime: None,
+                blend: Default::default(),
+                masks: Vec::new(),
+                effects: Vec::new(),
+                switches: Switches::default(),
+                extra: serde_json::Map::new(),
+            }],
+            markers: Vec::new(),
+            motion_blur: lumit_core::model::MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        }));
+        (Arc::new(doc), comp_id)
+    }
+
+    fn spec(format: ExportFormat, w: u32, h: u32) -> ExportSpec {
+        ExportSpec {
+            format,
+            target: (w, h),
+            bit_rate: None,
+            max_rate: None,
+            fps: None,
+            range: None,
+            include_audio: false,
+            audio_bit_rate: 320_000,
+        }
+    }
+
+    /// Run an export to completion on this thread, skipping (Ok(None)) on a
+    /// machine with no GPU adapter — the lavapipe convention.
+    fn run_now(
+        doc: &Document,
+        comp: Uuid,
+        path: &std::path::Path,
+        spec: &ExportSpec,
+    ) -> Option<Result<(), String>> {
+        let (tx, _rx) = channel();
+        let cancel = AtomicBool::new(false);
+        match run(doc, comp, &[], path, spec, &tx, &cancel) {
+            Err(e) if e.starts_with("export renderer:") => {
+                eprintln!("skipping: no GPU adapter");
+                None
+            }
+            other => Some(other),
+        }
+    }
+
+    /// The chosen rate is stamped as an exact rational, never a rounded whole
+    /// number — 29.97 must not quietly become 30 (docs/impl/rational-time).
+    #[test]
+    fn fps_rational_keeps_fractional_rates_exact() {
+        assert_eq!(fps_rational(60.0), (60, 1));
+        assert_eq!(fps_rational(29.97), (2997, 100));
+        assert_eq!(fps_rational(23.976), (2997, 125));
+        assert_eq!(fps_rational(0.0), (1, 1), "clamped, never zero");
+    }
+
+    /// An explicit range exports exactly its frames — here comp frames 10..20
+    /// as a PNG sequence, so the file count *is* the assertion (K-201).
+    #[test]
+    fn an_explicit_range_exports_exactly_its_frames_as_stills() {
+        let (doc, comp) = solid_doc(32, 16);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("shot.png");
+        let mut sp = spec(
+            ExportFormat::Images(lumit_media::encode::ImageFormat::Png),
+            32,
+            16,
+        );
+        sp.range = Some((10, 20));
+        let Some(result) = run_now(&doc, comp, &path, &sp) else {
+            return;
+        };
+        result.expect("export runs");
+        for n in 1..=10 {
+            assert!(
+                lumit_media::encode::sequence_frame_path(&path, n).exists(),
+                "frame {n} missing"
+            );
+        }
+        assert!(
+            !lumit_media::encode::sequence_frame_path(&path, 11).exists(),
+            "ten frames were asked for, ten written"
+        );
+    }
+
+    /// A different output rate keeps the wall-clock span: one second of a
+    /// 30 fps comp at 10 fps is ten frames, not thirty.
+    #[test]
+    fn an_fps_override_resamples_over_the_same_span() {
+        let (doc, comp) = solid_doc(32, 16);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("slow.png");
+        let mut sp = spec(
+            ExportFormat::Images(lumit_media::encode::ImageFormat::Png),
+            32,
+            16,
+        );
+        sp.range = Some((0, 30));
+        sp.fps = Some(10.0);
+        let Some(result) = run_now(&doc, comp, &path, &sp) else {
+            return;
+        };
+        result.expect("export runs");
+        assert!(lumit_media::encode::sequence_frame_path(&path, 10).exists());
+        assert!(
+            !lumit_media::encode::sequence_frame_path(&path, 11).exists(),
+            "one second at 10 fps is ten frames"
+        );
+    }
+
+    /// The mp4 path takes the same range and rate machinery and writes a real
+    /// file — the smoke that the Sink split did not orphan the video half.
+    #[test]
+    fn a_ranged_mp4_export_still_writes_a_file() {
+        let (doc, comp) = solid_doc(32, 16);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("out.mp4");
+        let mut sp = spec(ExportFormat::Video(VideoCodec::H264), 32, 16);
+        sp.range = Some((0, 15));
+        sp.fps = Some(15.0);
+        let Some(result) = run_now(&doc, comp, &path, &sp) else {
+            return;
+        };
+        result.expect("export runs");
+        let len = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        assert!(len > 0, "the mp4 has bytes in it");
+    }
 
     /// Volume baking (docs/09 §6): a static Volume is exactly its constant
     /// gain; a keyframed fade becomes a control-rate envelope sampled in

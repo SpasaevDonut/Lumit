@@ -141,7 +141,7 @@ struct Layer {
     volume_db: Property,               // K-172: animatable Volume (docs/09 §6); 0 dB unity, −100 = −∞
     retime: Option<Property>,          // K-197: Retime as an ordinary keyframable property —
                                        // layer-local time → source time, in seconds. None = not
-                                       // retimed (no row, no map). Alt+Shift+T installs the identity.
+                                       // retimed (no row, no map). Ctrl+Alt+T installs the identity.
     switches: Switches,
 }
 // Future (not in v1): `stretch` (uniform rate multiplier) and per-layer `markers`.

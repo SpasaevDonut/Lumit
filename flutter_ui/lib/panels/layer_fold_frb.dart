@@ -76,7 +76,7 @@ final class FoldVolumeRow extends LayerFoldRow {
 
 /// The layer's Retime (K-197): source time in seconds, keyframable like any
 /// other property. It sits above Transform rather than inside it, and only
-/// appears on a layer that has been given one (Alt+Shift+T) — which is why the
+/// appears on a layer that has been given one (Ctrl+Alt+T) — which is why the
 /// scalar rides on the row: `null` retime means no row at all, so a row that
 /// exists always has a curve to draw.
 final class FoldRetimeRow extends LayerFoldRow {
