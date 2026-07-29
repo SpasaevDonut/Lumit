@@ -295,6 +295,8 @@ jobs:
   codegen-fresh:
     name: bridge codegen is fresh (generate produces no diff)
     runs-on: ubuntu-latest
+    env:
+      FFMPEG_ASSET: ffmpeg-n7.1-latest-linux64-gpl-shared-7.1
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -305,6 +307,33 @@ jobs:
           flutter-version: 3.44.7
           channel: stable
           cache: true
+      # Generating compiles lumit-bridge, so this job needs the same native
+      # dependencies the `linux` job installs — FFmpeg for rusty_ffmpeg and
+      # libclang 18 for bindgen. Without them `generate` fails while building
+      # rusty_ffmpeg, which looks like a codegen fault and is not one.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libasound2-dev libgl-dev libegl-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev \
+            libx11-dev libxcursor-dev libxi-dev libxrandr-dev libxcb1-dev \
+            libwayland-dev mesa-vulkan-drivers libclang-18-dev
+      - name: Install FFmpeg 7.1 (BtbN shared build)
+        run: |
+          url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/${FFMPEG_ASSET}.tar.xz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/ffmpeg.tar.xz"
+          mkdir -p "$RUNNER_TEMP/ffmpeg"
+          tar -xJf "$RUNNER_TEMP/ffmpeg.tar.xz" -C "$RUNNER_TEMP/ffmpeg" --strip-components=1
+          root="$RUNNER_TEMP/ffmpeg"
+          sed -i "s|^prefix=.*|prefix=$root|" "$root"/lib/pkgconfig/*.pc
+          # PKG_CONFIG_PATH, not FFMPEG_PKG_CONFIG_PATH — the contributor's path
+          # (K-204); see the `linux` job for why.
+          echo "PKG_CONFIG_PATH=$root/lib/pkgconfig:${PKG_CONFIG_PATH:-}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$root/lib" >> "$GITHUB_ENV"
+          echo "$root/bin" >> "$GITHUB_PATH"
+      - name: Point bindgen at libclang
+        run: echo "LIBCLANG_PATH=/usr/lib/llvm-18/lib" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       # The version is pinned once, on the runtime crate the generated glue links
       # against (`flutter_rust_bridge = { version = "=2.12.0", … }`). Read it from
