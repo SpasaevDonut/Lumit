@@ -412,18 +412,37 @@ class LumitUiState extends ChangeNotifier {
   void play() {
     final comp = selectedComp;
     if (comp == null) return;
-    comp.play(
-      from: BigInt.from(playheadFrame.value),
-      scale: viewerScale,
-      mode: workspace.performance.playback == PlaybackMode.adaptive
-          ? BridgePlaybackMode.adaptive
-          : BridgePlaybackMode.everyFrame,
-    );
+    // The work area is the span being worked on, so it is the span playback
+    // runs round: reaching its end goes back to its start and carries on,
+    // rather than playing out to the end of the comp and stopping. Read once
+    // here rather than per frame — it cannot change while the transport is
+    // running, and [_arrived] fires at the comp's rate.
+    final set = comp.getWorkArea();
+    _loop = set == null
+        ? null
+        : (
+            start: comp.frameAtTime(time: set.inPoint),
+            end: comp.frameAtTime(time: set.outPoint)
+          );
+    _playFrom(comp, playheadFrame.value);
     playing.value = true;
   }
 
+  /// The work area playback loops round, or null when the comp has not been
+  /// narrowed — in which case playback ends at the end, as it always did.
+  ({int start, int end})? _loop;
+
+  void _playFrom(CompositionReference comp, int frame) => comp.play(
+        from: BigInt.from(frame),
+        scale: viewerScale,
+        mode: workspace.performance.playback == PlaybackMode.adaptive
+            ? BridgePlaybackMode.adaptive
+            : BridgePlaybackMode.everyFrame,
+      );
+
   void stopPlayback() {
     playing.value = false;
+    _loop = null;
     selectedComp?.stopPlayback();
   }
 
@@ -458,8 +477,17 @@ class LumitUiState extends ChangeNotifier {
   /// user's and is left alone.
   void _arrived(int frame) {
     frameArrived.value++;
-    if (playing.value && playheadFrame.value != frame) {
-      playheadFrame.value = frame;
+    if (!playing.value) return;
+    if (playheadFrame.value != frame) playheadFrame.value = frame;
+    // Round the work area: the frame at its end is shown, then playback starts
+    // again from its start. Restarted through `play` rather than by moving the
+    // playhead, because the sound and the scheduler's clock both take their
+    // baseline from the frame play was asked for.
+    final loop = _loop;
+    final comp = selectedComp;
+    if (loop != null && comp != null && frame >= loop.end) {
+      playheadFrame.value = loop.start;
+      _playFrom(comp, loop.start);
     }
   }
 

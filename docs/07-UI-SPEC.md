@@ -303,7 +303,12 @@ layer lanes.
   in the same ribbon, visually distinct, and behave as first-class snap targets. Layer
   markers render on the layer's own row.
 - **Work area**: `B` and `N` set start/end at the playhead; drag the ends; double-click the
-  bar to reset to the full comp. Work area is the preview range and default export range.
+  bar to reset to the full comp. Work area is the preview range and default export range,
+  and playback **loops** it (§10's default loop mode): reaching its end resumes from its
+  start. On the ruler it occupies the **lower half** only, so the ticks and their labels
+  keep the upper half; over the lane area the wash outside it is drawn both under the rows
+  and again, lightly, over the layer bars — under them alone it was invisible along every
+  row that had a layer in it (K-207).
   A comp that has never had one set **reads as the whole comp** (K-203) — the engine's
   "not narrowed" is null, but the interface has no such state, and a bar with no ends is
   a bar nobody can take hold of. Clearing the work area widens it back to the comp.

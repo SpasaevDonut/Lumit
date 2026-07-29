@@ -3109,3 +3109,38 @@ the generated doc comment described wording the Rust source no longer had — be
 in CI ran `flutter_rust_bridge_codegen generate` and checked the tree came back unchanged. It
 does now, on Linux, at the version the workspace pins. A generated file is an output, and an
 output is checked by CI, not by a reviewer's eye.
+
+**K-207 · DECIDED · The lane area is rows all the way down, the work area is a band you can
+drag, and the playhead has a head.** From Mack (2026-07-29). Four defects reported against
+K-202/K-203 while testing them.
+
+**The lane area has no bottom.** The rows were laid out to their own height, so with one
+layer in the comp everything below 22px was blank: no ground, no seams, and — since K-203
+put deselect on the ground — nothing to click on to let go of a selection. The scrolled
+content is now given at least the viewport's height, and the two-shade ground, the row
+seams and the marquee run to the bottom of the panel whatever the comp holds.
+
+**The work-area wash is drawn over the bars as well as under them.** K-202 put it under, so
+it showed only in the gaps between layers — which is to say it disappeared exactly where
+there was something to look at. The same wash is now painted again over the rows at reduced
+strength: out of range reads as dimmed, not hidden.
+
+**On the ruler the work area is a band in the lower half**, as 07-UI-SPEC §4.1's
+top-to-bottom order always said it was, rather than a tint over the whole ruler competing
+with the ticks and labels. Its handles keep the full height to grab.
+
+**Dragging an edge no longer lags the pointer.** The handle was drawn from the work area the
+*engine* returned, so every frame of the drag went out to the document and back before the
+mark moved. The ruler now holds the dragged edge itself and draws from that, and commits
+only when the drag crosses a frame — a pointer emits many moves per frame of travel, and
+each commit costs a document write and a panel rebuild.
+
+**Playback loops the work area** (07-UI-SPEC §10: loop work area is the default mode).
+Reaching the end starts again from the start, restarted through `play` rather than by moving
+the playhead, because the sound and the scheduler's clock both take their baseline from the
+frame play was asked for. A comp that has not been narrowed plays to its end and stops, as
+before.
+
+**The playhead has a head** (15-DESIGN §6.5): an 11×8px accent triangle at the top of the
+ruler with the line carried into it as a notch in `surface_0` — black on a dark scheme,
+white on a light one. A 1px line alone reads as a row seam at a glance.

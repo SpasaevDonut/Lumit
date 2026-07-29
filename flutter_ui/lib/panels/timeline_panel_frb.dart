@@ -1065,16 +1065,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                       builder: (context, frame,
                                                               child) =>
                                                           Positioned(
-                                                        left: axis.xOf(frame),
+                                                        left: axis.xOf(frame) -
+                                                            PlayheadMarker
+                                                                .halfWidth,
                                                         top: 0,
                                                         bottom: 0,
                                                         child: child!,
                                                       ),
-                                                      child: IgnorePointer(
-                                                        child: Container(
-                                                            width: 1,
-                                                            color: t.accent),
-                                                      ),
+                                                      child:
+                                                          const PlayheadMarker(),
                                                     ),
                                                   ],
                                                 ),
@@ -3246,121 +3245,150 @@ class _LayerArea extends StatelessWidget {
             // stays pinned to the viewport's edge rather than riding the
             // horizontally-scrolled content (docs/07 §4.6).
             Expanded(
-              child: SingleChildScrollView(
-                controller: vScroll,
-                // Innermost, so the pointer-signal resolver hands it the
-                // wheel before the scrollables do — a modified wheel zooms or
-                // pans instead of scrolling, and a plain one is left alone.
-                child: Listener(
-                  // A *modified* wheel is claimed through the resolver, so the
-                  // scroll views around this one cannot act on the same event
-                  // as well — a Ctrl+wheel zoom that also scrolled the lanes
-                  // sideways is what an unclaimed signal looks like. A plain
-                  // wheel is deliberately left unregistered: it belongs to the
-                  // scrollable, which is what moves the rows (docs/07 §4.6).
-                  onPointerSignal: (event) {
-                    if (event is! PointerScrollEvent) return;
-                    final keys = HardwareKeyboard.instance;
-                    if (!keys.isControlPressed && !keys.isShiftPressed) return;
-                    GestureBinding.instance.pointerSignalResolver
-                        .register(event, (resolved) {
-                      if (resolved is PointerScrollEvent) {
-                        onWheel(resolved, resolved.localPosition.dx);
-                      }
-                    });
-                  },
-                  child: Stack(
-                    children: [
-                      // The ground, in two shades (K-202): the work area keeps
-                      // the panel's own surface, and everything outside it is
-                      // washed a step darker. Without it the lane area was one
-                      // long strip at a single value, which left a selected
-                      // row almost nothing to stand out against — and left the
-                      // span you are actually delivering invisible below the
-                      // ruler.
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: CustomPaint(
-                            painter: WorkAreaGroundPainter(
-                              startX: workAreaPixels?.$1,
-                              endX: workAreaPixels?.$2,
-                              inside: t.surface1,
-                              outside: t.timelineOutOfRange,
-                            ),
-                          ),
-                        ),
-                      ),
-                      // Behind the bars: dragging empty lane space boxes up
-                      // keyframes (docs/07 §4.3); bars and key handles above
-                      // still win their own gestures.
-                      Positioned.fill(
-                        child: MarqueeSelect(
-                          key: const ValueKey('tl-lane-marquee'),
-                          onSelect: (rect) => onKeysSelected(_keysIn(rect)),
-                          // A click that caught nothing is a click on empty
-                          // lane space, which is the deselect gesture: the
-                          // bars and the key handles above take their own
-                          // taps, so only the ground reaches here.
-                          onClear: onDeselectAll,
-                        ),
-                      ),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (final entry in layers) ...[
-                            _Bar(
-                              key: ValueKey<String>(
-                                  'tl-bar-${entry.layer.internallayerId}'),
-                              comp: comp,
-                              entry: entry,
-                              axis: axis,
-                              razor: razor,
-                              playheadFrame: () => playhead.value,
-                              onSelect: () => onSelect(entry.layer),
-                              onChanged: onChanged,
-                              dragPreview: dragPreview,
-                            ),
-                            // One lane per fold-out row the outline shows,
-                            // from the same list it builds: keyframe rows
-                            // draw their diamonds, the waveform row its
-                            // peaks (K-172), the rest leave their room.
-                            if (open.contains(
-                                entry.layer.internallayerId.toString()))
-                              Column(
-                                key: ValueKey<String>(
-                                    'tl-lanes-${entry.layer.internallayerId}'),
-                                children: [
-                                  for (final row in _rowsOf(entry))
-                                    SizedBox(
-                                      height: _rowHeight,
-                                      child: _lane(t, entry, row),
+              // The rows are given at least the viewport's height, so the
+              // ground, the row seams and the marquee carry on below the last
+              // layer rather than stopping at it: a lane area that ran out of
+              // rows half way down read as a hole in the table, and a click in
+              // that hole reached nothing to deselect against.
+              child: LayoutBuilder(
+                  builder: (context, box) => SingleChildScrollView(
+                        controller: vScroll,
+                        child: ConstrainedBox(
+                          constraints: BoxConstraints(minHeight: box.maxHeight),
+                          // Innermost, so the pointer-signal resolver hands it
+                          // the wheel before the scrollables do — a modified
+                          // wheel zooms or pans instead of scrolling, and a
+                          // plain one is left alone.
+                          child: Listener(
+                            // A *modified* wheel is claimed through the resolver, so the
+                            // scroll views around this one cannot act on the same event
+                            // as well — a Ctrl+wheel zoom that also scrolled the lanes
+                            // sideways is what an unclaimed signal looks like. A plain
+                            // wheel is deliberately left unregistered: it belongs to the
+                            // scrollable, which is what moves the rows (docs/07 §4.6).
+                            onPointerSignal: (event) {
+                              if (event is! PointerScrollEvent) return;
+                              final keys = HardwareKeyboard.instance;
+                              if (!keys.isControlPressed && !keys.isShiftPressed) return;
+                              GestureBinding.instance.pointerSignalResolver
+                                  .register(event, (resolved) {
+                                if (resolved is PointerScrollEvent) {
+                                  onWheel(resolved, resolved.localPosition.dx);
+                                }
+                              });
+                            },
+                            child: Stack(
+                              children: [
+                                // The ground, in two shades (K-202): the work area keeps
+                                // the panel's own surface, and everything outside it is
+                                // washed a step darker. Without it the lane area was one
+                                // long strip at a single value, which left a selected
+                                // row almost nothing to stand out against — and left the
+                                // span you are actually delivering invisible below the
+                                // ruler.
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: WorkAreaGroundPainter(
+                                        startX: workAreaPixels?.$1,
+                                        endX: workAreaPixels?.$2,
+                                        inside: t.surface1,
+                                        outside: t.timelineOutOfRange,
+                                      ),
                                     ),
-                                ],
-                              ),
-                          ],
-                        ],
-                      ),
-                      // The row hairlines, over everything and touching
-                      // nothing (K-190): they run the full width of the lane
-                      // area so the eye can track a row across the table,
-                      // and they are drawn rather than given to each row as
-                      // a border because a decorated box absorbs pointers —
-                      // which would eat the marquee underneath.
-                      Positioned.fill(
-                        child: IgnorePointer(
-                          child: CustomPaint(
-                            painter: _RowDividerPainter(
-                              step: _rowHeight,
-                              colour: t.hairline,
+                                  ),
+                                ),
+                                // Behind the bars: dragging empty lane space boxes up
+                                // keyframes (docs/07 §4.3); bars and key handles above
+                                // still win their own gestures.
+                                Positioned.fill(
+                                  child: MarqueeSelect(
+                                    key: const ValueKey('tl-lane-marquee'),
+                                    onSelect: (rect) => onKeysSelected(_keysIn(rect)),
+                                    // A click that caught nothing is a click on empty
+                                    // lane space, which is the deselect gesture: the
+                                    // bars and the key handles above take their own
+                                    // taps, so only the ground reaches here.
+                                    onClear: onDeselectAll,
+                                  ),
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                                  children: [
+                                    for (final entry in layers) ...[
+                                      _Bar(
+                                        key: ValueKey<String>(
+                                            'tl-bar-${entry.layer.internallayerId}'),
+                                        comp: comp,
+                                        entry: entry,
+                                        axis: axis,
+                                        razor: razor,
+                                        playheadFrame: () => playhead.value,
+                                        onSelect: () => onSelect(entry.layer),
+                                        onChanged: onChanged,
+                                        dragPreview: dragPreview,
+                                      ),
+                                      // One lane per fold-out row the outline shows,
+                                      // from the same list it builds: keyframe rows
+                                      // draw their diamonds, the waveform row its
+                                      // peaks (K-172), the rest leave their room.
+                                      if (open.contains(
+                                          entry.layer.internallayerId.toString()))
+                                        Column(
+                                          key: ValueKey<String>(
+                                              'tl-lanes-${entry.layer.internallayerId}'),
+                                          children: [
+                                            for (final row in _rowsOf(entry))
+                                              SizedBox(
+                                                height: _rowHeight,
+                                                child: _lane(t, entry, row),
+                                              ),
+                                          ],
+                                        ),
+                                    ],
+                                  ],
+                                ),
+                                // The same wash again, over the bars this time: under
+                                // them it was invisible along any row that had a layer
+                                // in it, which is exactly the rows being looked at. Kept
+                                // light, so what is out of range is dimmed rather than
+                                // hidden.
+                                if (workAreaPixels != null)
+                                  Positioned.fill(
+                                    child: IgnorePointer(
+                                      child: CustomPaint(
+                                        painter: WorkAreaGroundPainter(
+                                          startX: workAreaPixels.$1,
+                                          endX: workAreaPixels.$2,
+                                          inside: t.surface1.withValues(alpha: 0),
+                                          outside:
+                                              t.timelineOutOfRange.withValues(alpha: 0.55),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                // The row hairlines, over everything and touching
+                                // nothing (K-190): they run the full width of the lane
+                                // area so the eye can track a row across the table,
+                                // and they are drawn rather than given to each row as
+                                // a border because a decorated box absorbs pointers —
+                                // which would eat the marquee underneath.
+                                Positioned.fill(
+                                  child: IgnorePointer(
+                                    child: CustomPaint(
+                                      painter: _RowDividerPainter(
+                                        step: _rowHeight,
+                                        colour: t.hairline,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
                       ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+                  )),
           ],
         ),
         // The playhead rides above every bar so it is never hidden behind one,
@@ -3368,14 +3396,12 @@ class _LayerArea extends StatelessWidget {
         ValueListenableBuilder<int>(
           valueListenable: playhead,
           builder: (context, frame, child) => Positioned(
-            left: axis.xOf(frame),
+            left: axis.xOf(frame) - PlayheadMarker.halfWidth,
             top: 0,
             bottom: 0,
             child: child!,
           ),
-          child: IgnorePointer(
-            child: Container(width: 1, color: t.accent),
-          ),
+          child: const PlayheadMarker(),
         ),
       ],
     );

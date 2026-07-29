@@ -1116,6 +1116,23 @@ void main() {
       expect(find.byKey(const ValueKey('tl-work-start')), findsOneWidget);
       expect(find.byKey(const ValueKey('tl-work-end')), findsOneWidget);
     });
+
+    /// The lane area is rows all the way down. One layer used to leave the
+    /// ground, the seams and the marquee stopping 22 px in, so most of the
+    /// area was a hole: nothing to look at and nothing to click on.
+    testWidgets('the lanes fill the viewport below the last layer',
+        (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      await mount(tester, p);
+
+      // The marquee is `Positioned.fill` inside the scrolled content, so its
+      // height is the content's height.
+      final lanes =
+          tester.getSize(find.byKey(const ValueKey('tl-lane-marquee')));
+      expect(lanes.height, greaterThan(400),
+          reason: 'one 22 px row does not end the lane area');
+    });
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
     /// The gesture the whole Project panel drag exists for. It had no drop

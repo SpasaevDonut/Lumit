@@ -691,7 +691,7 @@ class TimelineAxis implements CacheBarAxis {
 /// The time ruler: the time labels and ticks, the work area, the markers, and
 /// the scrub surface — drawn over the lanes in lane view and over the curves
 /// in graph view, so neither loses the clock (docs/07 §4.1, §5).
-class TimelineRuler extends StatelessWidget {
+class TimelineRuler extends StatefulWidget {
   final CompositionReference comp;
   final TimelineAxis axis;
 
@@ -722,17 +722,52 @@ class TimelineRuler extends StatelessWidget {
   });
 
   @override
+  State<TimelineRuler> createState() => _TimelineRulerState();
+}
+
+class _TimelineRulerState extends State<TimelineRuler> {
+  /// The frame a work-area edge has been dragged to, and which edge it is.
+  ///
+  /// Held here so the handle follows the pointer at once: committing a drag
+  /// goes through the engine and comes back out as a fresh `work`, and drawing
+  /// the edge from *that* left it visibly trailing the mouse. The commit still
+  /// happens on every frame the drag crosses — this only decides where the
+  /// edge is drawn while the button is down.
+  int? _dragFrame;
+  bool _dragIsStart = false;
+
+  /// The work area as it should draw right now: the panel's, with the edge
+  /// being dragged moved to where the pointer is. Each edge stops one frame
+  /// short of the other, the rule [workAreaWith] commits.
+  ({int start, int end, bool whole}) get _work {
+    final work = widget.work;
+    final frame = _dragFrame;
+    if (frame == null) return work;
+    return _dragIsStart
+        ? (start: frame.clamp(0, work.end - 1), end: work.end, whole: false)
+        : (
+            start: work.start,
+            end: frame.clamp(work.start + 1, widget.axis.frames),
+            whole: false
+          );
+  }
+
+  @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    final comp = widget.comp;
+    final axis = widget.axis;
+    final work = _work;
     final markers = comp.getMarkers();
 
     return GestureDetector(
       key: const ValueKey('tl-ruler'),
       behavior: HitTestBehavior.opaque,
-      onTapDown: (d) => onSeek(axis.frameAt(d.localPosition.dx)),
-      onHorizontalDragUpdate: (d) => onSeek(axis.frameAt(d.localPosition.dx)),
+      onTapDown: (d) => widget.onSeek(axis.frameAt(d.localPosition.dx)),
+      onHorizontalDragUpdate: (d) =>
+          widget.onSeek(axis.frameAt(d.localPosition.dx)),
       child: Container(
-        height: height,
+        height: widget.height,
         color: t.surface2,
         child: Stack(
           children: [
@@ -741,7 +776,7 @@ class TimelineRuler extends StatelessWidget {
                 child: CustomPaint(
                   painter: _RulerTicksPainter(
                     axis: axis,
-                    fps: fps,
+                    fps: widget.fps,
                     tick: t.hairlineStrong,
                     label: t.small.copyWith(color: t.textMuted),
                   ),
@@ -749,12 +784,14 @@ class TimelineRuler extends StatelessWidget {
               ),
             ),
             // The work area: the span the Viewer previews and the export
-            // writes.
+            // writes. The ruler's lower half only, so the ticks and labels
+            // above it stay legible and the band reads as a bar hung under the
+            // clock rather than a tint over it.
             Positioned(
               left: axis.xOf(work.start),
               width:
                   (axis.xOf(work.end) - axis.xOf(work.start)).clamp(1.0, 1e6),
-              top: 0,
+              top: widget.height / 2,
               bottom: 0,
               child: IgnorePointer(
                 child: Container(
@@ -768,7 +805,7 @@ class TimelineRuler extends StatelessWidget {
             // roundabout, and a span you can see is one you expect to be able
             // to take hold of. Each edge stops one frame short of the other,
             // so a drag can never invert the span.
-            if (onWorkArea != null)
+            if (widget.onWorkArea != null)
               for (final isStart in const [true, false])
                 Positioned(
                   left: axis.xOf(isStart ? work.start : work.end) -
@@ -781,20 +818,37 @@ class TimelineRuler extends StatelessWidget {
                     child: GestureDetector(
                       key: ValueKey('tl-work-${isStart ? 'start' : 'end'}'),
                       behavior: HitTestBehavior.opaque,
+                      onHorizontalDragStart: (_) =>
+                          setState(() => _dragIsStart = isStart),
                       onHorizontalDragUpdate: (d) {
                         final frame = axis
                             .frameAt(d.globalPosition.dx - _originX(context));
-                        onWorkArea!(workAreaWith(
+                        if (frame == _dragFrame) return;
+                        // Drawn from here at once; committed only when the
+                        // drag actually crosses a frame, because the commit
+                        // costs a document write and a panel rebuild while a
+                        // pointer emits many moves per frame of travel.
+                        setState(() => _dragFrame = frame);
+                        widget.onWorkArea!(workAreaWith(
                           comp: comp,
                           current: comp.getWorkArea(),
                           frame: frame,
                           isStart: isStart,
                         ));
                       },
-                      child: Center(
-                        child: Container(
+                      onHorizontalDragEnd: (_) =>
+                          setState(() => _dragFrame = null),
+                      onHorizontalDragCancel: () =>
+                          setState(() => _dragFrame = null),
+                      // The grab stays the ruler's full height — a handle you
+                      // have to aim at is not a handle — while the mark it
+                      // draws follows the band into the lower half.
+                      child: Align(
+                        alignment: Alignment.bottomCenter,
+                        child: SizedBox(
                           width: 2,
-                          color: t.accent,
+                          height: widget.height / 2,
+                          child: ColoredBox(color: t.accent),
                         ),
                       ),
                     ),
@@ -828,6 +882,82 @@ class TimelineRuler extends StatelessWidget {
 /// How wide a work-area edge is to grab. Wider than the 2 px it draws, so the
 /// handle is catchable without the mark being heavy.
 const double _workHandleWidth = 10;
+
+/// The playhead: a hairline down the whole area with a head at the top.
+///
+/// The head is the familiar editor marker — a bare hairline is findable only by
+/// hunting along the ruler, and at a glance it reads as a row seam rather than
+/// as where you are. The notch through it is drawn in the darkest surface (so
+/// black on a dark scheme, white on a light one), which is what makes the head
+/// read as the line running *into* it rather than a shape parked near it.
+///
+/// Centred on the frame, so a caller positions it at `xOf(frame) - halfWidth`.
+class PlayheadMarker extends StatelessWidget {
+  const PlayheadMarker({super.key});
+
+  /// Half the head's width — how far left of the frame the marker starts.
+  static const double halfWidth = 5;
+
+  /// How tall the head is. It sits at the very top of the ruler, with the
+  /// labels: in the lower half the work-area band would sit over it.
+  static const double headHeight = 8;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return IgnorePointer(
+      child: SizedBox(
+        width: halfWidth * 2 + 1,
+        child: Column(
+          children: [
+            CustomPaint(
+              size: const Size(halfWidth * 2 + 1, headHeight),
+              painter: _PlayheadHeadPainter(head: t.accent, notch: t.surface0),
+            ),
+            Expanded(
+              child: SizedBox(width: 1, child: ColoredBox(color: t.accent)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// The playhead's head: a downward triangle with the hairline carried up into
+/// it as a notch.
+class _PlayheadHeadPainter extends CustomPainter {
+  final Color head;
+  final Color notch;
+
+  const _PlayheadHeadPainter({required this.head, required this.notch});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final mid = size.width / 2;
+    canvas.drawPath(
+      Path()
+        ..moveTo(0, 0)
+        ..lineTo(size.width, 0)
+        ..lineTo(mid, size.height)
+        ..close(),
+      Paint()..color = head,
+    );
+    // Up from the tip to about where the triangle is still wide enough to hold
+    // it: the short stub that joins the head to the line.
+    canvas.drawLine(
+      Offset(mid, size.height * 0.45),
+      Offset(mid, size.height),
+      Paint()
+        ..color = notch
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_PlayheadHeadPainter old) =>
+      old.head != head || old.notch != notch;
+}
 
 /// The ruler's left edge in global coordinates — a drag reports globally, and
 /// the axis speaks in the ruler's own pixels.
@@ -1013,7 +1143,20 @@ class WorkAreaGroundPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final full = Offset.zero & size;
     if (startX == null || endX == null) {
-      canvas.drawRect(full, Paint()..color = inside);
+      if (inside.a > 0) canvas.drawRect(full, Paint()..color = inside);
+      return;
+    }
+    // A transparent inside makes this an overlay: the same wash painted over
+    // the bars instead of under them, so the span being delivered is legible
+    // across a row that has a layer in it — which is every row worth looking
+    // at. Only the two outside strips are painted; there is nothing to lay
+    // over the work area itself.
+    if (inside.a == 0) {
+      final paint = Paint()..color = outside;
+      final from = startX!.clamp(0.0, size.width);
+      final to = endX!.clamp(from, size.width);
+      canvas.drawRect(Rect.fromLTRB(0, 0, from, size.height), paint);
+      canvas.drawRect(Rect.fromLTRB(to, 0, size.width, size.height), paint);
       return;
     }
     // The wash goes down first and the work area is painted back over it, so

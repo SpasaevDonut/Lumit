@@ -410,7 +410,11 @@ failure.
 ### 6.5 Selection, focus, drop targets
 
 - **Selection**: `accent` 1px border + `accent` @ 16% fill on clips, layers, keyframes, assets.
-  The playhead is a 1px `accent` line with a full-radius grab handle (≥24px visual, §7.2).
+  The playhead is a 1px `accent` line with an 11×8px `accent` **head** at the top of the
+  ruler — a downward triangle, with the line carried up into it as a 1px notch in
+  `surface_0` (K-207). A bare hairline is findable only by hunting along the ruler, and at
+  a glance it reads as a row seam; the head is the editor idiom for "you are here". The
+  grab target stays ≥24px wide (§7.2) whatever the head draws.
 - **Focus ring** (the household `ring-clay` equivalent): every focusable control shows a 1px
   `accent` stroke offset 1px outside its bounds when keyboard-focused. Focus is never
   invisible; egui's `Visuals` focus stroke is set from this token so stock widgets comply.
