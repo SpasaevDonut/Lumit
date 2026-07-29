@@ -282,6 +282,69 @@ jobs:
         working-directory: flutter_ui
         run: flutter build linux --release
 
+  flutter-macos:
+    name: flutter frontend (macOS runner build)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # Same keg-only FFmpeg the macOS Rust jobs install. The build_pod.sh phase
+      # inside the Xcode build compiles the bridge crate, so rusty_ffmpeg needs
+      # the same formula here, and the podspec's -L flags need the keg present.
+      # The keg is not on pkg-config's default search path, so point the build at
+      # it explicitly, exactly as the `check` and `coverage` jobs do (K-204).
+      # Xcode's build environment inherits this from $GITHUB_ENV; it is not
+      # supplied by .cargo/config.toml, which deliberately sets no [env] block.
+      - name: Install FFmpeg (keg-only) and point pkg-config at it
+        run: |
+          brew install ffmpeg@7
+          echo "FFMPEG_PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig" >> "$GITHUB_ENV"
+      - name: FFmpeg version for the cache key
+        id: ffver
+        run: echo "v=$(brew list --versions ffmpeg@7 | awk '{print $2}')" >> "$GITHUB_OUTPUT"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ffmpeg-${{ steps.ffver.outputs.v }}
+      # The same pinned Flutter the Linux job takes, so the two agree.
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+          cache: true
+      - name: Cache pub packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.pub-cache
+          key: pub-${{ runner.os }}-${{ hashFiles('flutter_ui/pubspec.lock') }}
+          restore-keys: pub-${{ runner.os }}-
+      - name: flutter pub get
+        working-directory: flutter_ui
+        run: flutter pub get
+      # The gate. `flutter build macos` runs CocoaPods for macos/Runner, so it
+      # resolves rust_builder/macos/lumit_bridge.podspec by the plugin's pubspec
+      # name — a podspec named anything else fails here — then compiles the Swift
+      # runner (MainFlutterWindow, the K-195 IOSurface ViewerTextureBridge) and
+      # links the bridge static library with the podspec's OTHER_LDFLAGS.
+      #
+      # analyze and test are not repeated: the Linux job already runs both, and
+      # neither is platform-specific. This job exists for the parts only a mac
+      # can compile.
+      # Host architecture only. A release build otherwise goes universal
+      # (x86_64 + arm64), and on an arm64 runner the x86_64 slice counts as
+      # cross-compilation, which pkg-config-rs refuses outright ("has not been
+      # configured to support cross-compilation"). Forcing it with
+      # PKG_CONFIG_ALLOW_CROSS would be the wrong answer: Homebrew's ffmpeg@7 keg
+      # holds one architecture, so it would hand arm64 link flags to an x86_64
+      # link. A universal build needs both kegs present and is out of scope for
+      # this gate, which exists to compile the Swift runner and resolve the
+      # podspec — both of which the host slice does.
+      - name: flutter build macos --release
+        working-directory: flutter_ui
+        env:
+          FLUTTER_XCODE_ARCHS: arm64
+          FLUTTER_XCODE_ONLY_ACTIVE_ARCH: "YES"
+        run: flutter build macos --release
+
   coverage:
     name: engine-crate coverage gate
     runs-on: macos-latest
