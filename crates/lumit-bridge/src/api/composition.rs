@@ -850,6 +850,12 @@ impl CompositionReference {
             let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
             state.store.snapshot()
         };
+        // Building the mix means decoding, which is slow and asynchronous, so it
+        // is kicked off HERE rather than after the pre-roll: the decode then
+        // overlaps the first renders instead of following them. Only the "now
+        // play" waits. A prepare of a mix already loaded is recognised by its
+        // signature and costs nothing.
+        self.audio_prepare()?;
 
         self.dispatch(WorkerRequest::Play(
             crate::api::worker_thread::PlayRequest {
