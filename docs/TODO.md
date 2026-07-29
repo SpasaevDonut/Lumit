@@ -59,9 +59,28 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     *enforces* it at the type level.
 - **`DocumentStore::set_callback` takes `&mut self`**, so the observer can
     only be attached before the store is shared.
-- **The macOS/iOS podspecs are untested** (no target yet, K-033) and named
-    `rust_lib_lumit_flutter.podspec` while the plugin's pubspec name is
-    `lumit_bridge`; check what CocoaPods resolution requires before renaming.
+- **The macOS podspec now has a CI gate but no runtime check.** Its name matches
+    the plugin's pubspec (`lumit_bridge`), and the `flutter-macos` job in
+    [.github/workflows/ci.yml](../.github/workflows/ci.yml) builds `macos/Runner`
+    so a rename or a missing framework fails there. What is still untested is
+    everything past the link: nobody has launched the .app, so the K-195 IOSurface
+    Viewer path on macOS is unproven (K-033).
+- **The macOS .app is not relocatable.** The podspec links keg-only FFmpeg by
+    absolute Homebrew path, so the bundle runs only where that keg is installed.
+    Distribution needs the dylibs vendored in and their install names rewritten;
+    this belongs to the K-033 notarisation pass, and the podspec says so.
+- **The macOS build is single-architecture.** A release build wants to go
+    universal, but `pkg-config-rs` refuses to cross-compile and a Homebrew keg
+    holds one architecture, so the x86_64 slice cannot link against an arm64
+    keg's FFmpeg. The `flutter-macos` job therefore pins `ARCHS` to the runner's
+    own architecture. A universal bundle needs both `ffmpeg@7` kegs installed and
+    the podspec's `-L` flags selected per slice — part of the K-033 distribution
+    pass, along with whether Intel macs are a supported target at all.
+- **The iOS podspec is still misnamed** —
+    [ios/rust_lib_lumit_flutter.podspec:6](../flutter_ui/rust_builder/ios/rust_lib_lumit_flutter.podspec)
+    declares `s.name = 'rust_lib_lumit_flutter'` while the plugin's pubspec name
+    is `lumit_bridge`. Same fix the macOS side took; iOS has no target and no CI
+    job yet.
 
 - **The frame cache keys by position, not by content (K-178's design).** Each
     entry is filed under `(comp, frame, scale)`, so an edit does not change any
