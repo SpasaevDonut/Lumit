@@ -264,8 +264,8 @@ abstract class BridgeLibApi extends BaseApi {
   void crateApiCompositionCompositionReferenceSamplePixels(
       {required CompositionReference that,
       required BigInt frame,
-      required int x,
-      required int y,
+      required double u,
+      required double v,
       required int window,
       required double scale,
       LayerReference? layer});
@@ -2011,8 +2011,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   void crateApiCompositionCompositionReferenceSamplePixels(
       {required CompositionReference that,
       required BigInt frame,
-      required int x,
-      required int y,
+      required double u,
+      required double v,
       required int window,
       required double scale,
       LayerReference? layer}) {
@@ -2021,8 +2021,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_composition_reference(that, serializer);
         sse_encode_u_64(frame, serializer);
-        sse_encode_u_32(x, serializer);
-        sse_encode_u_32(y, serializer);
+        sse_encode_f_64(u, serializer);
+        sse_encode_f_64(v, serializer);
         sse_encode_u_32(window, serializer);
         sse_encode_f_32(scale, serializer);
         sse_encode_opt_box_autoadd_layer_reference(layer, serializer);
@@ -2034,7 +2034,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiCompositionCompositionReferenceSamplePixelsConstMeta,
-      argValues: [that, frame, x, y, window, scale, layer],
+      argValues: [that, frame, u, v, window, scale, layer],
       apiImpl: this,
     ));
   }
@@ -2043,7 +2043,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       get kCrateApiCompositionCompositionReferenceSamplePixelsConstMeta =>
           const TaskConstMeta(
             debugName: "composition_reference_sample_pixels",
-            argNames: ["that", "frame", "x", "y", "window", "scale", "layer"],
+            argNames: ["that", "frame", "u", "v", "window", "scale", "layer"],
           );
 
   @override

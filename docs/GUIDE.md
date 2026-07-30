@@ -887,7 +887,10 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (that is what makes playback cheap), so the dropper cannot simply look at what is on screen.
   Instead it asks the engine for a **window** of the picture — a 129-pixel square around where
   you are pointing, about 66 KB — and then cuts the nine-by-nine it shows out of that window
-  itself. That is why moving the pointer feels free: it is reading pixels it already has, and
+  itself. It asks by *where in the picture* you are pointing rather than by pixel number,
+  because when the Viewer is showing the picture smaller than full size the engine is working
+  on a smaller grid than the composition's, and only the engine knows which; its answer says
+  which grid it used. That is why moving the pointer feels free: it is reading pixels it already has, and
   it only asks the engine again when you get near the edge of that window (or move the playhead,
   or edit something). Sending a whole 1080p frame across that boundary would cost about eight
   milliseconds every time, which is why nothing does it. The averaging is done in **light**, not

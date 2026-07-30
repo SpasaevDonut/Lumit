@@ -25,6 +25,8 @@ BridgeSampledPixels windowOf(
   int side = 21,
   int cx = 40,
   int cy = 20,
+  int width = 100,
+  int height = 50,
   bool layerAlone = false,
 }) {
   final bytes = Uint8List(side * side * 4);
@@ -42,8 +44,8 @@ BridgeSampledPixels windowOf(
   return BridgeSampledPixels(
     window: side,
     rgba: bytes,
-    width: 100,
-    height: 50,
+    width: width,
+    height: height,
     x: cx,
     y: cy,
     frame: BigInt.zero,
@@ -123,12 +125,19 @@ void main() {
       expect(sample.r, closeTo(1.0, 1e-9));
     });
 
-    test('a pixel outside the window clamps to its edge rather than throwing',
-        () {
+    /// **The flat-magnifier regression.** A position outside the window is
+    /// answered with nothing, not with the nearest edge pixel. The window
+    /// already carries the picture's own edge repeats, so a pixel past the
+    /// picture's border is *inside* it and answers normally; a position outside
+    /// the window means the caller is asking in the wrong grid, and clamping
+    /// answered that with a plausible colour — which is how a whole magnifier
+    /// of one repeated pixel, looking like a flat average, went unnoticed.
+    test('a position outside the window answers nothing, not its edge', () {
       final w = windowOf((x, y) => [10, 20, 30], side: 11);
-      final px = windowPixel(w, 4000, 4000);
-      expect(px, isNotNull);
-      expect([px!.r, px.g, px.b], [10, 20, 30]);
+      expect(windowPixel(w, 4000, 4000), isNull);
+      expect(windowPixel(w, 40, 20), isNotNull, reason: 'the centre is in it');
+      expect(windowPixel(w, 45, 25), isNotNull, reason: 'and so is its corner');
+      expect(windowPixel(w, 46, 20), isNull, reason: 'one past it is not');
     });
 
     test('depth is Rec. 709 luma in linear light', () {
@@ -164,6 +173,50 @@ void main() {
       expect(reach, greaterThan(50));
       expect(windowCovers(full, 40 + reach, 20), isTrue);
       expect(windowCovers(full, 40 + reach + 1, 20), isFalse);
+    });
+  });
+
+
+  group('which pixel grid a point is in', () {
+    /// **The bug this exists to prevent.** The picture the engine reads is a
+    /// reduced-resolution preview whenever the Viewer is not at 100 %, so its
+    /// pixel grid is NOT the composition's. A point must therefore be turned
+    /// into a pixel through the *reply's* own raster; doing it through the
+    /// composition's put every index outside the window, every cell clamped to
+    /// the same edge pixel, and the magnifier showed a flat colour.
+    test('a point becomes a pixel of the reply raster, not of the comp', () {
+      // A 1920x1080 comp read at half resolution: the reply is 960x540.
+      final half = windowOf((x, y) => [0, 0, 0],
+          side: 129, cx: 480, cy: 270, width: 960, height: 540);
+
+      expect(windowPixelAt(half, 0.5, 0.5), (480, 270),
+          reason: 'the middle of the picture is the middle of THIS raster');
+      // The comp-pixel answer would have been (960, 540) — which is not even
+      // inside the picture, let alone inside the window.
+      expect(windowCovers(half, 960, 540), isFalse);
+      expect(windowCovers(half, 480, 270), isTrue);
+    });
+
+    test('the ends of the picture are its first and last pixel', () {
+      final w = windowOf((x, y) => [0, 0, 0], width: 960, height: 540);
+      expect(windowPixelAt(w, 0, 0), (0, 0));
+      expect(windowPixelAt(w, 1, 1), (959, 539), reason: 'never one past the end');
+      expect(windowPixelAt(w, 2, -1), (959, 0), reason: 'and clamped either way');
+    });
+
+    /// With the grids agreeing again, the magnifier shows nine *different*
+    /// pixels rather than one repeated: the whole complaint.
+    test('the magnifier reads nine distinct pixels across the grid', () {
+      // A vertical stripe every other pixel, in a half-resolution raster.
+      final w = windowOf((x, y) => x.isEven ? [255, 255, 255] : [0, 0, 0],
+          side: 129, cx: 480, cy: 270, width: 960, height: 540);
+      final (cx, cy) = windowPixelAt(w, 0.5, 0.5);
+      final row = [
+        for (var dx = -4; dx <= 4; dx++) windowPixel(w, cx + dx, cy)?.r,
+      ];
+      expect(row.contains(null), isFalse, reason: 'every cell has a pixel');
+      expect(row.toSet().length, 2, reason: 'stripes, not one flat colour');
+      expect(row.first, isNot(row[1]), reason: 'neighbours differ');
     });
   });
 
@@ -242,6 +295,26 @@ void main() {
       )));
       expect(find.textContaining('Composite'), findsOneWidget);
       expect(find.textContaining('Depth pass'), findsNothing);
+    });
+
+    testWidgets('says so when the pointer has outrun the window it holds',
+        (tester) async {
+      final arm = DropperArm(
+        id: 'test',
+        reads: DropperReads.colour,
+        label: 'Key colour',
+        onPick: (_) {},
+      );
+      await tester.pumpWidget(harness(DropperViewfinder(
+        arm: arm,
+        window: windowOf((x, y) => [255, 128, 0], side: 11),
+        // Well outside the 11-wide window centred on (40, 20): a value read
+        // from the cells that happen to be inside it would be a lie.
+        centre: (90, 20),
+        region: 1,
+      )));
+      expect(find.text('Reading…'), findsOneWidget);
+      expect(find.text('255 128 0'), findsNothing);
     });
 
     testWidgets('says so while the first read is still in flight',

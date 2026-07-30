@@ -585,21 +585,25 @@ class LumitUiState extends ChangeNotifier {
     dropperPatch.value = null;
   }
 
-  /// Ask the engine for a window of pixels around `(x, y)` in the fronted
-  /// comp's own pixel grid. The answer arrives on the worker stream and lands
-  /// in [dropperPatch]; nothing here waits for it.
+  /// Ask the engine for a window of pixels around the point `(u, v)` of the
+  /// picture, each a fraction from 0 to 1. The answer arrives on the worker
+  /// stream and lands in [dropperPatch]; nothing here waits for it.
+  ///
+  /// A fraction rather than a pixel because the frontend cannot know which
+  /// raster will be read — a reduced-resolution preview has its own grid, and
+  /// the reply is what says which one it used.
   ///
   /// Called only when the window in hand cannot answer — the caller checks
   /// first — so this is a handful of calls per pick, not one per mouse move.
-  void requestDropperSample(int x, int y) {
+  void requestDropperSample(double u, double v) {
     final comp = selectedComp;
     final arm = dropper.value;
     if (comp == null || arm == null) return;
     try {
       comp.samplePixels(
         frame: BigInt.from(playheadFrame.value),
-        x: x < 0 ? 0 : x,
-        y: y < 0 ? 0 : y,
+        u: u,
+        v: v,
         window: dropperWindow,
         scale: viewerScale,
         layer: arm.sampleLayer,

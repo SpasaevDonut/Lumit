@@ -538,8 +538,19 @@ class CompositionReference {
           that: this, frame: frame, scale: scale, kind: kind, colours: colours);
 
   /// Ask the worker for the pixels under the dropper: a `window × window`
-  /// square of `frame` centred on `(x, y)` in this composition's own pixel
-  /// grid (docs/07 §6.1).
+  /// square of `frame` centred on the point `(u, v)` of the picture, each a
+  /// fraction from 0 to 1 (docs/07 §6.1).
+  ///
+  /// **A fraction, not a pixel, and that is the point.** The picture actually
+  /// read may be a reduced-resolution preview, so its pixel grid is neither
+  /// the composition's nor anything the caller can know in advance. The reply
+  /// says which raster it cut from (`width`, `height`) and where in that
+  /// raster the window's centre landed, and every pixel the caller then names
+  /// is in that same raster. Asking in composition pixels and indexing the
+  /// reply with them is a real bug that has been made unwritable here: with a
+  /// fitted Viewer the two grids differ by the preview scale, and the
+  /// magnifier showed one repeated edge pixel — a flat colour where the
+  /// picture should be.
   ///
   /// A window rather than the nine pixels the magnifier shows, because the
   /// pointer moves and the picture does not: the caller reads its grid out of
@@ -554,8 +565,8 @@ class CompositionReference {
   /// keeps what it had.
   void samplePixels(
           {required BigInt frame,
-          required int x,
-          required int y,
+          required double u,
+          required double v,
           required int window,
           required double scale,
           LayerReference? layer}) =>
@@ -563,8 +574,8 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceSamplePixels(
               that: this,
               frame: frame,
-              x: x,
-              y: y,
+              u: u,
+              v: v,
               window: window,
               scale: scale,
               layer: layer);

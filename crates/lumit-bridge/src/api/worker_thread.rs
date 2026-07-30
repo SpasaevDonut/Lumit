@@ -557,11 +557,11 @@ pub struct SamplePixelsRequest {
     pub comp: CompositionReference,
     pub frame: u64,
     pub scale: f32,
-    /// The centre pixel, in the composition's own full-resolution pixel grid.
-    /// Clamped to the picture the sample is actually taken from, so a click on
-    /// the very edge still answers.
-    pub x: u32,
-    pub y: u32,
+    /// Where to read, as a fraction of the picture: `(0, 0)` its top-left,
+    /// `(1, 1)` its bottom-right. **Not a pixel** — see [`sample_pixels`] for
+    /// why the caller cannot name one.
+    pub u: f64,
+    pub v: f64,
     /// The window's side length in pixels, forced odd and capped at
     /// [`MAX_WINDOW`]. Bigger than the magnifier's own grid on purpose: the
     /// frontend follows the pointer inside what it already has, and asks again
@@ -1346,15 +1346,12 @@ fn sample_pixels(
 
     let layer_alone = req.layer.is_some();
 
-    // The point arrives in the composition's own pixel grid; the picture in
-    // hand may be a reduced-resolution preview, so it is carried across as a
-    // fraction rather than assumed to line up.
-    let (cw, ch) = document
-        .comp(req.comp.id)
-        .map(|c| (c.width.max(1), c.height.max(1)))
-        .unwrap_or((1, 1));
-    let u = f64::from(req.x) / f64::from(cw);
-    let v = f64::from(req.y) / f64::from(ch);
+    // The point arrives as a FRACTION of the picture, not as a pixel of
+    // anything, and that is deliberate: the picture actually read may be a
+    // reduced-resolution preview, so its pixel grid is not the composition's
+    // and neither side can name a pixel in the other's. The reply says which
+    // raster it cut from, and every pixel the caller then names is in that one.
+    let (u, v) = (req.u.clamp(0.0, 1.0), req.v.clamp(0.0, 1.0));
 
     let cut = match &req.layer {
         Some(layer) => sample_layer_alone(&document, layer.layer_id, &req, state)

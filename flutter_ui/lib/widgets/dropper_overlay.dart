@@ -138,9 +138,15 @@ class DropperViewfinder extends StatelessWidget {
   /// choosing (docs/07 §6.1).
   Widget _infoBar(LumitTheme t) {
     final held = window;
-    final sample = held == null
-        ? null
-        : sampleFromWindow(held, region, centre.$1, centre.$2);
+    // Only read when the window actually holds every pixel the region needs.
+    // A window the pointer has outrun — a frame just changed, a fast sweep —
+    // would otherwise average whatever cells happened to be inside it and show
+    // that as the value about to be picked, which is worse than saying nothing.
+    final covered =
+        held != null && windowCovers(held, centre.$1, centre.$2);
+    final sample = covered
+        ? sampleFromWindow(held, region, centre.$1, centre.$2)
+        : null;
     final round = t.shape == ThemeShape.round;
     return Container(
       decoration: BoxDecoration(

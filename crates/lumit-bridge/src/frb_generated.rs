@@ -1834,8 +1834,8 @@ fn wire__crate__api__composition__composition_reference_sample_pixels_impl(
             let api_that =
                 <crate::api::composition::CompositionReference>::sse_decode(&mut deserializer);
             let api_frame = <u64>::sse_decode(&mut deserializer);
-            let api_x = <u32>::sse_decode(&mut deserializer);
-            let api_y = <u32>::sse_decode(&mut deserializer);
+            let api_u = <f64>::sse_decode(&mut deserializer);
+            let api_v = <f64>::sse_decode(&mut deserializer);
             let api_window = <u32>::sse_decode(&mut deserializer);
             let api_scale = <f32>::sse_decode(&mut deserializer);
             let api_layer =
@@ -1843,7 +1843,7 @@ fn wire__crate__api__composition__composition_reference_sample_pixels_impl(
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
                 let output_ok = crate::api::composition::CompositionReference::sample_pixels(
-                    &api_that, api_frame, api_x, api_y, api_window, api_scale, api_layer,
+                    &api_that, api_frame, api_u, api_v, api_window, api_scale, api_layer,
                 )?;
                 Ok(output_ok)
             })())

@@ -730,7 +730,11 @@ disagree.
 The pixels themselves come from the engine, a **window** at a time
 (`CompositionReference::sample_pixels` → `WorkerResponse::Sampled`,
 [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)): a 129×129 square of the picture, out of which
-the magnifier cuts its own 9×9 as the pointer moves. Moving the pointer, and changing the
+the magnifier cuts its own 9×9 as the pointer moves. The read is asked for as a **fraction of
+the picture**, not as a pixel of the composition, and every pixel is then named in the raster
+the reply says it cut from — the picture read is a reduced-resolution preview whenever the
+Viewer is showing one, so the two grids are not the same and mixing them shows one repeated
+edge pixel where the picture should be. Moving the pointer, and changing the
 sample size, therefore cost **nothing** — no bridge call, no render, no message — and a new
 read happens only when the pointer nears the window's edge, the playhead moves, an edit lands,
 or a different layer is being read. A window is 66 KiB, so this does not reopen the read-back

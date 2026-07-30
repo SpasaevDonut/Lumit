@@ -3246,6 +3246,20 @@ middle (Mack, on testing: "a crazy number of calls"). Two fixes, both kept: the 
 `framecache::with_best_frame`, which hands a reader the pixels **in place** under the cache
 lock instead of cloning them — bounded, pure-CPU, nowhere near the GPU or the FFI boundary.
 
+**A read is asked for as a fraction of the picture, never as a pixel.** The picture the engine
+reads is a reduced-resolution preview whenever the Viewer is showing one, so its pixel grid is
+neither the composition's nor anything the frontend can know in advance. The first cut of the
+window asked in composition pixels and then indexed the reply with them: with a fitted Viewer
+the two grids differ by the preview scale, every index fell outside the window, each one
+clamped to the nearest edge — and the magnifier showed nine by nine of the *same* pixel, which
+reads as a flat average of the area (Mack, on testing: "just an average of all the values in
+it… and it might not be aligned"). The request now carries `(u, v)` in 0–1, the reply says
+which raster it cut from, and every pixel either side names is in that raster; asking in the
+wrong grid is no longer expressible. The clamp went too: a position outside the window answers
+**nothing** rather than its nearest edge, so the next such mistake shows as blank cells instead
+of a plausible colour. (Beyond the *picture's* border nothing changes — the window carries the
+picture's own edge repeats, so those positions are inside it and answer normally.)
+
 The size is chosen to sit between the two failure modes. Whole-picture-once — the obvious
 answer — is 8 MiB at 1080p and 33 MiB at 4K, an 8.8 ms codec stall (35 ms at 4K) on arming and
 that much held while armed, which is the very transport K-183 deleted, reintroduced through a

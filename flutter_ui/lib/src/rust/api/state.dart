@@ -99,6 +99,11 @@ class BridgeSampledPixels {
 
   /// The raster the window was taken from, and where in it the centre pixel
   /// sits — which is what says where in the picture the window lies.
+  ///
+  /// **This raster, not the composition's.** The picture read may be a
+  /// reduced-resolution preview, so these are the only coordinates in which
+  /// the window can be indexed; a caller holding composition pixels must map
+  /// through `width`/`height` rather than assume they line up.
   final int width;
   final int height;
   final int x;

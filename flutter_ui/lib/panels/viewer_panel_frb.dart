@@ -473,9 +473,6 @@ class _DropperLayerState extends State<DropperLayer> {
   /// position is the only one worth answering.
   final PreviewThrottle _throttle = PreviewThrottle();
 
-  /// The comp's pixel size, read once while armed rather than per pointer move.
-  BridgeCompSize? _size;
-
   @override
   void initState() {
     super.initState();
@@ -494,10 +491,9 @@ class _DropperLayerState extends State<DropperLayer> {
   @override
   void didUpdateWidget(DropperLayer old) {
     super.didUpdateWidget(old);
-    // A different composition is a different pixel grid; the cached size and
-    // any window read against the old one are both meaningless now.
+    // A different composition is a different picture; a window read against the
+    // old one is meaningless now.
     if (old.comp.internalid != widget.comp.internalid) {
-      _size = null;
       widget.uiState.dropperPatch.value = null;
     }
   }
@@ -557,7 +553,6 @@ class _DropperLayerState extends State<DropperLayer> {
       return const SizedBox.expand();
     }
     final origin = dropperViewfinderOrigin(at, widget.fitted);
-    final centre = _compPixel(at);
     return Stack(
       children: [
         Positioned(
@@ -568,7 +563,11 @@ class _DropperLayerState extends State<DropperLayer> {
             builder: (context, window, _) => DropperViewfinder(
               arm: arm,
               window: window,
-              centre: centre,
+              // In the window's own raster, which the reply describes — the
+              // magnifier cannot be indexed in any other grid.
+              centre: window == null
+                  ? (0, 0)
+                  : windowPixelAt(window, _u(at), _v(at)),
               region: _region,
             ),
           ),
@@ -596,7 +595,7 @@ class _DropperLayerState extends State<DropperLayer> {
     if (window.layerAlone != (widget.uiState.dropper.value?.sampleLayer != null)) {
       return false;
     }
-    final (x, y) = _compPixel(local);
+    final (x, y) = windowPixelAt(window, _u(local), _v(local));
     return windowCovers(window, x, y);
   }
 
@@ -617,34 +616,28 @@ class _DropperLayerState extends State<DropperLayer> {
       _request(local);
       return;
     }
-    final (x, y) = _compPixel(local);
+    final (x, y) = windowPixelAt(window, _u(local), _v(local));
     arm.onPick(sampleFromWindow(window, _region, x, y));
     widget.uiState.disarmDropper();
   }
 
-  /// Which pixel of the composition is under `local`.
+  /// Where the pointer is *inside the drawn picture*, as a fraction from 0 to 1.
   ///
-  /// The comp's size is read once per armed session rather than per move: it
-  /// cannot change while a pick is in flight, and asking the engine for it on
-  /// every mouse move is exactly the kind of per-move bridge crossing the
-  /// window read exists to remove.
-  (int, int) _compPixel(Offset local) {
-    final size = _size ??= widget.comp.getSize();
-    final rect = widget.fitted;
-    if (rect.width <= 0 || rect.height <= 0) return (0, 0);
-    final u = ((local.dx - rect.left) / rect.width).clamp(0.0, 1.0);
-    final v = ((local.dy - rect.top) / rect.height).clamp(0.0, 1.0);
-    return (
-      (u * size.width).floor().clamp(0, (size.width - 1).clamp(0, 1 << 30)),
-      (v * size.height).floor().clamp(0, (size.height - 1).clamp(0, 1 << 30)),
-    );
-  }
+  /// The only thing this panel actually knows, and deliberately all it says:
+  /// which pixel that is depends on the raster the engine ends up reading, which
+  /// is a reduced-resolution preview whenever the Viewer is showing one. The
+  /// reply carries that raster, and every pixel is named in it.
+  double _u(Offset local) => widget.fitted.width <= 0
+      ? 0
+      : ((local.dx - widget.fitted.left) / widget.fitted.width).clamp(0.0, 1.0);
 
-  /// Ask the engine for a window around the pixel under `local`.
-  void _request(Offset local) {
-    final (x, y) = _compPixel(local);
-    widget.uiState.requestDropperSample(x, y);
-  }
+  double _v(Offset local) => widget.fitted.height <= 0
+      ? 0
+      : ((local.dy - widget.fitted.top) / widget.fitted.height).clamp(0.0, 1.0);
+
+  /// Ask the engine for a window around the point under `local`.
+  void _request(Offset local) =>
+      widget.uiState.requestDropperSample(_u(local), _v(local));
 }
 
 /// The badge that appears only once a probe has actually found a file gone.

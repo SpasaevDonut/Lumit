@@ -199,7 +199,10 @@ path, documented beside the types in
     frame transport by the back door. It is deliberately **bigger than the nine
     pixels the magnifier shows**: the frontend reads its grid out of the window
     it already holds, so following the pointer costs no calls at all and a read
-    happens only when the pointer nears the window's edge.
+    happens only when the pointer nears the window's edge. The request names a
+    **fraction of the picture**, not a pixel, and the reply says which raster it
+    cut from: the engine may be working at preview resolution, so neither side
+    can name a pixel in the other's grid.
 - **Readings ride the frame stream and have their own lane.** A scope trace
     (`WorkerResponse::Scope`) and a dropper patch (`WorkerResponse::Sampled`)
     come back on the worker's one response stream, so neither needs a second

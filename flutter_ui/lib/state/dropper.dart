@@ -8,6 +8,15 @@
 // point — which is why this file talks about "what is being read" rather than
 // about colour.
 //
+// **Which pixel grid all of this is in.** The engine's reply says which raster
+// it cut from, and that is the only grid the window can be indexed in: the
+// picture read is often a reduced-resolution preview, so its pixels are not the
+// composition's. Every position here is therefore a pixel of the *reply's* own
+// raster, arrived at from a fraction of the picture (which is what the Viewer
+// actually knows: where the pointer is inside the drawn image). Mixing the two
+// grids is what made the magnifier show one repeated edge pixel — a flat colour
+// where the picture should be.
+//
 // **Why a window rather than nine pixels.** The engine answers a read with a
 // whole square of the picture — 129 pixels a side — and the magnifier's own 9×9
 // grid is cut out of it here, in Dart. The pointer can then move, and the sample
@@ -94,7 +103,9 @@ class DropperSample {
   /// The region's average Rec. 709 luma in linear light, 0–1: the depth proxy.
   final double depth;
 
-  /// Where the centre pixel sits, in the composition's own pixel grid.
+  /// Where the centre pixel sits, in the raster the window was read from (the
+  /// reply's `width`/`height`) — which is the composition's own grid only when
+  /// the picture was read at full resolution.
   final int x, y;
 
   /// How many pixels a side were averaged.
@@ -127,7 +138,7 @@ const int dropperGrid = 9;
 const int dropperWindow = 129;
 
 /// Whether the window in hand still has every pixel the magnifier needs around
-/// `(x, y)` — the comp pixel under the pointer.
+/// `(x, y)` — the pixel under the pointer, in the window's own raster.
 ///
 /// The half-grid margin is what makes a read last: the pointer may travel to
 /// within four pixels of the window's edge before another is needed. Edge
@@ -142,13 +153,32 @@ bool windowCovers(BridgeSampledPixels window, int x, int y) {
       (y + reach) <= window.y + half;
 }
 
-/// One pixel of a window, by its position in the picture. Positions outside the
-/// window are clamped to its edge, which is what the window's own edge repeats
-/// already do — so an index can never be out of bounds.
+/// The pixel of the reply's raster at the fraction `(u, v)` of the picture.
+///
+/// The one place a point in the picture becomes a pixel, and it goes through
+/// the reply's **own** `width`/`height` — never the composition's, which is a
+/// different grid whenever the Viewer is showing a reduced-resolution preview.
+(int, int) windowPixelAt(BridgeSampledPixels window, double u, double v) => (
+      (u.clamp(0.0, 1.0) * window.width).floor().clamp(0, window.width - 1),
+      (v.clamp(0.0, 1.0) * window.height).floor().clamp(0, window.height - 1),
+    );
+
+/// One pixel of a window, by its position in the reply's raster, or null when
+/// that position lies outside the window.
+///
+/// **Null rather than clamped to the edge.** The window already carries the
+/// picture's own edge repeats, so a pixel beyond the picture's border is inside
+/// it and answers normally; a position outside the *window* means the caller is
+/// asking in the wrong grid or has outrun what it holds, and a clamp would
+/// answer that with a plausible colour — which is exactly how a whole magnifier
+/// of one repeated edge pixel went unnoticed. Blank cells say it instead.
 ({int r, int g, int b})? windowPixel(BridgeSampledPixels window, int x, int y) {
   final half = window.window ~/ 2;
-  final col = (x - (window.x - half)).clamp(0, window.window - 1);
-  final row = (y - (window.y - half)).clamp(0, window.window - 1);
+  final col = x - (window.x - half);
+  final row = y - (window.y - half);
+  if (col < 0 || row < 0 || col >= window.window || row >= window.window) {
+    return null;
+  }
   final i = (row * window.window + col) * 4;
   if (i + 2 >= window.rgba.length) return null;
   return (r: window.rgba[i], g: window.rgba[i + 1], b: window.rgba[i + 2]);
@@ -188,7 +218,7 @@ int srgbEncode(double linear) {
 /// Average the `region × region` pixels around `(x, y)` of a window, and say
 /// what they mean.
 ///
-/// `(x, y)` is the pixel under the pointer, in the picture's own grid — not the
+/// `(x, y)` is the pixel under the pointer, in the reply's own raster — not the
 /// window's centre, which is only where the pointer *was* when the window was
 /// read. A region wider than the magnifier's grid is clamped rather than taken.
 DropperSample sampleFromWindow(
