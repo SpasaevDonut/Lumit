@@ -47,12 +47,16 @@ pub enum Cmd {
     /// the index ranks the frame by when the cap has to take something
     /// (docs/06 §5.3) — a frame that was dear to render is worth keeping over a
     /// cheap one of the same size.
+    ///
+    /// The bytes come in a shared handle, because the memory tier keeps the same
+    /// frame. A frame is 8 MB at 1080p. Thus the two tiers point at one
+    /// allocation, and the demotion does not copy it.
     Store {
         hash: u128,
         width: u32,
         height: u32,
         bgra: bool,
-        bytes: Vec<u8>,
+        bytes: Arc<Vec<u8>>,
         cost_ms: u32,
         scale_q: u16,
     },
@@ -170,21 +174,26 @@ pub fn spawn() -> DiskIo {
                         width,
                         height,
                         bgra,
-                        mut bytes,
+                        bytes,
                         cost_ms,
                         scale_q,
                     } => {
                         let Some(c) = &mut cache else { continue };
                         // One order on disk (see the module note); the swizzle is
-                        // this thread's to pay, never the renderer's.
-                        if bgra {
-                            swizzle_rb(&mut bytes);
-                        }
+                        // this thread's to pay, never the renderer's. The bytes
+                        // are shared with the memory tier, thus a swizzle needs
+                        // its own copy. Only the two zero-copy platforms pay for
+                        // that copy, and they pay for it on this thread.
+                        let swizzled = bgra.then(|| {
+                            let mut owned = bytes.as_ref().clone();
+                            swizzle_rb(&mut owned);
+                            owned
+                        });
                         c.store(lumit_cache::disk::Parked {
                             hash,
                             width,
                             height,
-                            rgba: &bytes,
+                            rgba: swizzled.as_deref().unwrap_or(bytes.as_ref()),
                             cost_ms,
                             scale_q,
                         });
@@ -263,7 +272,7 @@ mod tests {
                 width: 8,
                 height: 4,
                 bgra: false,
-                bytes: bytes.clone(),
+                bytes: Arc::new(bytes.clone()),
                 cost_ms: 8,
                 scale_q: 1000,
             })
@@ -330,7 +339,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 bgra: true,
-                bytes: vec![1, 2, 3, 4],
+                bytes: Arc::new(vec![1, 2, 3, 4]),
                 cost_ms: 8,
                 scale_q: 1000,
             })
@@ -377,7 +386,7 @@ mod tests {
                 width: 1,
                 height: 1,
                 bgra: false,
-                bytes: vec![0, 0, 0, 255],
+                bytes: Arc::new(vec![0, 0, 0, 255]),
                 cost_ms: 8,
                 scale_q: 1000,
             })

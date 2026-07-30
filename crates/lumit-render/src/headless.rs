@@ -123,6 +123,10 @@ pub struct HeadlessRenderer {
     /// demotion ladder (docs/06 §5.3). Bounded by
     /// [`MAX_DEMOTIONS_IN_FLIGHT`]; drained by [`Self::poll_demotions`].
     demotions: Vec<Demotion>,
+    /// Display textures that left the cache and can hold the next promoted
+    /// frame — see [`Self::upload_frame_texture`]. Bounded by
+    /// [`MAX_POOLED_TEXTURES`].
+    upload_pool: Vec<std::sync::Arc<wgpu::Texture>>,
     /// How many `render_prepared` calls were served from [`Self::frame_textures`].
     frame_texture_hits: u64,
     /// Bumped whenever the held set changes — see [`Self::frame_texture_version`].
@@ -265,6 +269,16 @@ type FrameTextureKey = (u128, bool);
 /// is good enough.
 const MAX_DEMOTIONS_IN_FLIGHT: usize = 4;
 
+/// How many display textures are kept for re-use after they leave the VRAM
+/// cache ([`HeadlessRenderer::upload_frame_texture`]).
+///
+/// Four, because these textures are not counted against the VRAM budget: they
+/// are memory on the card that the meter does not show. Four frames is 32 MB at
+/// 1080p, which is small beside the default budget, and it is more than enough
+/// for the promotions of one playback pass — a pass promotes one frame at a
+/// time, and the texture of the frame before it is usually free again.
+const MAX_POOLED_TEXTURES: usize = 4;
+
 /// One frame on its way out of VRAM and down to the tiers below: the read-back
 /// is already running on the card and nobody is waiting for it.
 struct Demotion {
@@ -337,7 +351,7 @@ impl DemotedFrame {
 /// One cached display texture. Costed by its pixel footprint — display
 /// textures are 4 bytes per pixel in either channel order.
 struct FrameTexture {
-    texture: wgpu::Texture,
+    texture: std::sync::Arc<wgpu::Texture>,
     provenance: FrameProvenance,
     /// True when this frame arrived by being promoted UP the ladder rather than
     /// composited here ([`HeadlessRenderer::upload_frame_texture`]). It is
@@ -372,7 +386,10 @@ pub struct PrefetchWant {
 /// Holding one costs its texture's VRAM and nothing else; dropping it frees
 /// that. It is only valid on the renderer that made it.
 pub struct PreparedFrame {
-    texture: wgpu::Texture,
+    /// A share of the cached texture, not a texture of its own. The share is
+    /// what tells the pool of textures for re-use that a present still needs
+    /// this one ([`HeadlessRenderer::upload_frame_texture`]).
+    texture: std::sync::Arc<wgpu::Texture>,
 }
 
 impl PreparedFrame {
@@ -421,6 +438,7 @@ impl HeadlessRenderer {
                 lru
             },
             demotions: Vec::new(),
+            upload_pool: Vec::new(),
             frame_texture_version: 0,
             frame_texture_hits: 0,
             #[cfg(all(windows, feature = "shared-texture"))]
@@ -861,6 +879,7 @@ impl HeadlessRenderer {
         let started = std::time::Instant::now();
         let (texture, _, _) =
             self.preview_display_texture_fmt(doc, comp_id, frame, quality, None, bgra)?;
+        let texture = std::sync::Arc::new(texture);
         if let Some(key) = key {
             // What it actually cost, so the store's cost-aware eviction has
             // something true to weigh (docs §5.3: stale × cheap × large) and the
@@ -898,22 +917,59 @@ impl HeadlessRenderer {
         for ((key, bgra), evicted, cost_ms) in self.frame_textures.take_evicted() {
             // Already downstairs, or no room in flight: both mean this frame is
             // not read back, and neither loses anything but a possible re-render.
-            if evicted.from_lower_tier || self.demotions.len() >= MAX_DEMOTIONS_IN_FLIGHT {
-                continue;
+            let read_back = !evicted.from_lower_tier
+                && self.demotions.len() < MAX_DEMOTIONS_IN_FLIGHT
+                && self.parts.is_some();
+            if read_back {
+                // No engines means an earlier render faulted; there is nothing to
+                // encode with, and a lost demotion only costs a re-render.
+                if let Some(parts) = self.parts.as_ref() {
+                    self.demotions.push(Demotion {
+                        key,
+                        bgra,
+                        cost_ms,
+                        provenance: evicted.provenance,
+                        pending: parts.colour.start_readback8(&self.gpu, &evicted.texture),
+                    });
+                }
             }
-            // No engines means an earlier render faulted; there is nothing to
-            // encode with, and a lost demotion only costs a re-render.
-            let Some(parts) = self.parts.as_ref() else {
-                return;
-            };
-            self.demotions.push(Demotion {
-                key,
-                bgra,
-                cost_ms,
-                provenance: evicted.provenance,
-                pending: parts.colour.start_readback8(&self.gpu, &evicted.texture),
-            });
+            // The texture itself can serve the next promoted frame, whether or
+            // not its pixels went downstairs. Only a texture that a promotion
+            // made can: a composited frame is a render target, and the card does
+            // not let you write bytes into one. A present may still hold the
+            // texture; the pool tests for that before it hands one out.
+            if self.upload_pool.len() < MAX_POOLED_TEXTURES
+                && evicted
+                    .texture
+                    .usage()
+                    .contains(wgpu::TextureUsages::COPY_DST)
+            {
+                self.upload_pool.push(evicted.texture);
+            }
         }
+    }
+
+    /// Take a texture from the pool that the next promoted frame can use, if
+    /// there is one.
+    ///
+    /// A texture is only free when this pool holds the last share of it. A
+    /// present holds a share for as long as it can show the frame, and a write
+    /// into a texture that is still on screen would show the wrong picture. The
+    /// share count is thus the test, and it needs no bookkeeping of its own.
+    fn take_pooled(
+        &mut self,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Option<std::sync::Arc<wgpu::Texture>> {
+        let at = self.upload_pool.iter().position(|t| {
+            std::sync::Arc::strong_count(t) == 1
+                && t.width() == width
+                && t.height() == height
+                && t.format() == format
+                && t.usage().contains(wgpu::TextureUsages::COPY_DST)
+        })?;
+        Some(self.upload_pool.swap_remove(at))
     }
 
     /// Collect any demotion read-backs the graphics card has finished — the
@@ -961,14 +1017,35 @@ impl HeadlessRenderer {
     /// `None` when the payload is not exactly one frame of the stated size — a
     /// corrupt or truncated entry is refused rather than shown as garbage.
     pub fn upload_frame_texture(&mut self, frame: Promotion<'_>) -> Option<PreparedFrame> {
+        // A texture that the cache has finished with, and that nothing shows any
+        // more, holds the next frame as well as a new one does. Playback goes
+        // past a promoted frame each time it comes round, so a new texture for
+        // each of them is an allocation on the card for each frame.
+        let format = lumit_gpu::ColourEngine::display8_format(frame.bgra);
+        let pooled = self.take_pooled(frame.width, frame.height, format);
         let parts = self.parts.as_ref()?;
-        let texture = parts.colour.upload_display8(
-            &self.gpu,
-            frame.bytes,
-            frame.width,
-            frame.height,
-            frame.bgra,
-        )?;
+        let texture = match pooled {
+            Some(free)
+                if parts.colour.write_display8(
+                    &self.gpu,
+                    &free,
+                    frame.bytes,
+                    frame.width,
+                    frame.height,
+                ) =>
+            {
+                free
+            }
+            // Nothing free of the correct size, or a payload the write refused:
+            // make one, which also refuses a payload that is not one frame.
+            _ => std::sync::Arc::new(parts.colour.upload_display8(
+                &self.gpu,
+                frame.bytes,
+                frame.width,
+                frame.height,
+                frame.bgra,
+            )?),
+        };
         self.frame_textures.insert_with_cost(
             (frame.key, frame.bgra),
             FrameTexture {
@@ -1009,6 +1086,9 @@ impl HeadlessRenderer {
     /// and these are keyed by position, or the user asked (Clear cache).
     pub fn clear_frame_textures(&mut self) {
         self.frame_textures.clear();
+        // Give the memory on the card back as well: the pool exists to make
+        // promotions cheap, and after a clear there is nothing to promote.
+        self.upload_pool.clear();
         self.frame_texture_version += 1;
     }
 
@@ -2241,6 +2321,72 @@ mod tests {
             !came_down.contains(&first),
             "a promoted frame is not read back a second time"
         );
+    }
+
+    /// A promotion uses a texture that the cache has finished with, in place of
+    /// a new one — but only when nothing shows that texture any more.
+    ///
+    /// Playback goes past a promoted frame each time it comes round, and a new
+    /// texture for each of them is an allocation on the card for each frame.
+    /// The share count is the test of whether a texture is free, and it has to
+    /// be: a write into a texture that a present still shows would put the wrong
+    /// picture on the screen.
+    #[test]
+    fn a_free_texture_holds_the_next_promoted_frame() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let comp = Uuid::now_v7();
+        let bytes = vec![0u8; 8 * 8 * 4];
+        let promote = |key: u128| Promotion {
+            key,
+            bgra: false,
+            width: 8,
+            height: 8,
+            bytes: &bytes,
+            cost_ms: 4,
+            provenance: FrameProvenance {
+                comp,
+                frame: key as u64,
+                scale_q: 1000,
+            },
+        };
+        // Room for exactly one 8×8 frame, so each promotion evicts the one
+        // before it.
+        r.set_frame_texture_budget(8 * 8 * 4 + 64);
+
+        let first = r.upload_frame_texture(promote(1)).expect("first promotion");
+        let first_texture = std::sync::Arc::as_ptr(&first.texture);
+
+        // The first frame is evicted here, but `first` is still held — as a
+        // present holds a frame it is showing. Its texture must not be written
+        // over.
+        let second = r
+            .upload_frame_texture(promote(2))
+            .expect("second promotion");
+        assert!(
+            !std::ptr::eq(std::sync::Arc::as_ptr(&second.texture), first_texture),
+            "a texture that something still shows is never written over"
+        );
+
+        // Nothing shows the first frame now, thus the next promotion takes its
+        // texture in place of making one.
+        drop(first);
+        let third = r.upload_frame_texture(promote(3)).expect("third promotion");
+        assert!(
+            std::ptr::eq(std::sync::Arc::as_ptr(&third.texture), first_texture),
+            "a free texture is used again"
+        );
+        assert_eq!(third.size(), (8, 8));
+        // And Clear cache gives the memory on the card back.
+        drop(second);
+        drop(third);
+        r.clear_frame_textures();
+        assert!(r.upload_pool.is_empty(), "a clear empties the pool as well");
     }
 
     /// The interactive path renders the same picture the export path does — the

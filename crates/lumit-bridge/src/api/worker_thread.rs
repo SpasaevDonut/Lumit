@@ -286,20 +286,24 @@ fn disk_root(
 /// banked what it rendered.
 #[frb(ignore)]
 fn drain_demotions(state: &mut WorkerState) {
-    for demoted in state.renderer.poll_demotions() {
+    for mut demoted in state.renderer.poll_demotions() {
+        // One allocation for both tiers. The frame goes to memory and to disk at
+        // the same time, and it is 8 MB at 1080p, thus a copy for each tier was
+        // the most costly part of a demotion.
+        let bytes = std::sync::Arc::new(std::mem::take(&mut demoted.rgba));
         _ = state.disk.tx.send(lumit_render::diskio::Cmd::Store {
             hash: demoted.key,
             width: demoted.width,
             height: demoted.height,
             bgra: demoted.bgra,
-            bytes: demoted.rgba.clone(),
+            bytes: bytes.clone(),
             // What it cost and what size it was made at, so the disk tier's cap
             // can weigh it against its neighbours rather than taking whatever
             // was written first (docs/06 §5.3).
             cost_ms: demoted.cost_ms,
             scale_q: demoted.provenance.scale_q,
         });
-        crate::framecache::put_demoted(demoted.key, &demoted);
+        crate::framecache::put_demoted(demoted.key, &demoted, bytes);
     }
 }
 
@@ -576,6 +580,71 @@ fn zero_copy_wants_bgra() -> bool {
     ))
 }
 
+/// Ask the disk tier for a frame that playback will want soon.
+///
+/// **Why the lead time is the whole point.** A read off disk goes to the IO
+/// thread, and the frame it brings back arrives one or two turns of the worker
+/// loop later. [`prepare_frame`] asks for a frame at the moment it must show it,
+/// thus the bytes always come too late for that frame and it is composited
+/// again. Playback then gets no good from a span that is parked on disk, which
+/// is most of what the disk tier holds after a project is re-opened.
+///
+/// This asks for the frames that playback will reach in a moment, at the same
+/// time as the decodes for those frames go to the prefetch thread. The bytes
+/// arrive, [`collect_disk_loads`] puts them on the card, and playback finds the
+/// frame already there.
+///
+/// Nothing here waits and nothing here is expensive: naming a frame is a hash of
+/// the composition, and the watermark in [`play_one_frame`] names each coming
+/// frame once for each pass of playback.
+#[frb(ignore)]
+fn request_disk_lead(
+    renderer: &mut lumit_render::HeadlessRenderer,
+    disk: &lumit_render::diskio::DiskIo,
+    disk_wanted: &mut std::collections::HashMap<u128, lumit_render::FrameProvenance>,
+    document: &lumit_core::Document,
+    comp: Uuid,
+    frame: u64,
+    quality: lumit_render::Quality,
+) {
+    let bgra = zero_copy_wants_bgra();
+    let Some(key) = renderer.frame_key(document, comp, frame, quality) else {
+        // Not nameable yet (footage still being probed), thus not on disk under
+        // any name either.
+        return;
+    };
+    if !wants_disk_lead(
+        renderer.has_frame_texture(key, bgra),
+        crate::framecache::contains(key),
+        disk.contains(key),
+        disk_wanted.contains_key(&key),
+    ) {
+        return;
+    }
+    disk_wanted.insert(
+        key,
+        lumit_render::FrameProvenance {
+            comp,
+            frame,
+            scale_q: lumit_render::preview_scale_q(quality),
+        },
+    );
+    _ = disk
+        .tx
+        .send(lumit_render::diskio::Cmd::Load { hash: key, bgra });
+}
+
+/// Whether a coming frame is worth a read off disk.
+///
+/// Only one of the four answers leads to a read: the frame is on disk, and no
+/// tier above holds it, and nobody has asked for it yet. A read in any other
+/// case is IO for a frame that is already there, or a second copy of a read that
+/// is already running.
+#[frb(ignore)]
+fn wants_disk_lead(on_card: bool, in_memory: bool, on_disk: bool, already_asked: bool) -> bool {
+    on_disk && !on_card && !in_memory && !already_asked
+}
+
 /// Get one frame ready to show, taking the cheapest route the tiers allow
 /// (docs/06 §5.1: VRAM first, then promote from the tiers below, and only then
 /// composite).
@@ -590,7 +659,9 @@ fn zero_copy_wants_bgra() -> bool {
 ///    decompression is not something to hold the preview open for, so the frame
 ///    is composited now and the copy off disk lands a turn or two later, in time
 ///    for the next visit. This is what makes reopening a project warm up as you
-///    scrub rather than only where the fill has reached.
+///    scrub rather than only where the fill has reached. Playback does not wait
+///    for that second visit: it asks for the coming frames in advance
+///    ([`request_disk_lead`]), thus a parked span plays from the card.
 /// 4. **Composited**, and banked on the way past.
 #[frb(ignore)]
 fn prepare_frame(
@@ -1309,6 +1380,7 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                 .prefetched_to
                 .map_or(frame + 1, |posted| posted + 1)
                 .max(frame + 1);
+            let comp_ahead = playback.comp.id;
             for future in from..=ahead_to {
                 let wants = state.renderer.prefetch_wants(
                     &document,
@@ -1319,6 +1391,20 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                 for want in wants {
                     state.prefetcher.request(want);
                 }
+                // And ask the disk tier for the coming frames at the same time.
+                // A read off disk takes a turn or two of the loop, thus a frame
+                // asked for when it is shown always comes too late and is
+                // composited again. Asked for now, it is on the card before
+                // playback gets there.
+                request_disk_lead(
+                    &mut state.renderer,
+                    &state.disk,
+                    &mut state.disk_wanted,
+                    &document,
+                    comp_ahead,
+                    future,
+                    quality_for(effective),
+                );
             }
             if ahead_to >= from {
                 playback.prefetched_to = Some(ahead_to);
@@ -2319,7 +2405,34 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod bar_strip_tests {
-    use super::{refine_bar_strip, sample_bar_strip};
+    use super::{refine_bar_strip, sample_bar_strip, wants_disk_lead};
+
+    /// Playback asks the disk tier for a frame in advance, and only when the
+    /// read is of use.
+    ///
+    /// **Why this matters.** A read off disk arrives one or two turns of the
+    /// worker loop after it is asked for. A frame asked for at the moment it
+    /// must be shown thus always arrives too late, and the frame is composited
+    /// again — which made a span parked on disk worth nothing to playback. The
+    /// loop asks for the coming frames instead, at the same time as it posts
+    /// their source decodes.
+    ///
+    /// The rule is tested here; that playback applies it over the whole
+    /// look-ahead window is `play_one_frame`'s to do, and the tiers below it are
+    /// proven in `lumit_render::diskio::tests`.
+    #[test]
+    fn a_coming_frame_is_read_off_disk_only_when_the_read_helps() {
+        // On disk, and nowhere above it: the one case that gains a read.
+        assert!(wants_disk_lead(false, false, true, false));
+        // On the card already: playback shows it without any of this.
+        assert!(!wants_disk_lead(true, false, true, false));
+        // In memory: one upload away, which is cheaper than a file.
+        assert!(!wants_disk_lead(false, true, true, false));
+        // Not on disk at all: there is nothing to read.
+        assert!(!wants_disk_lead(false, false, false, false));
+        // Asked for already: a second read of the same frame is pure IO.
+        assert!(!wants_disk_lead(false, false, true, true));
+    }
 
     /// A composition short enough to name every frame of is named exactly, and
     /// reports itself finished — there is nothing for the refinement pass to do.

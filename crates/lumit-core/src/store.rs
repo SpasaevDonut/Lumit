@@ -236,7 +236,7 @@ mod tests {
     /// round trip work in both directions.
     #[test]
     fn a_projects_cache_location_is_an_undoable_op() {
-        let mut store = DocumentStore::new(Document::new());
+        let store = DocumentStore::new(Document::new());
         assert!(store.snapshot().cache_location.is_none());
 
         store

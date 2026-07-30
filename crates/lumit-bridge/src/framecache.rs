@@ -62,7 +62,7 @@
 //! if the count ever grows large, noted as future work).
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// The default RAM cap for rendered frames: 512 MiB. Sized so a comfortable run
 /// of 1080p frames (~8 MiB each → ~64 frames) stays warm without the cache
@@ -85,7 +85,10 @@ pub(crate) type Provenance = lumit_render::FrameProvenance;
 struct Entry {
     width: u32,
     height: u32,
-    bytes: Vec<u8>,
+    /// The display bytes, in a shared handle. A frame is 8 MB at 1080p, and it
+    /// goes up to the graphics card again each time playback comes past it. The
+    /// handle makes that trip a counter increment in place of an 8 MB copy.
+    bytes: Arc<Vec<u8>>,
     /// True when `bytes` are BGRA (the Windows and macOS zero-copy order) rather
     /// than RGBA. Frames come down off the card in the order they were
     /// composited in and go back up the same way, so no swizzle is paid on the
@@ -133,7 +136,7 @@ impl Cache {
             Some(entry) => {
                 entry.last_used = clock;
                 self.hits += 1;
-                Some((entry.width, entry.height, entry.bytes.clone()))
+                Some((entry.width, entry.height, entry.bytes.as_ref().clone()))
             }
             None => {
                 self.misses += 1;
@@ -246,7 +249,7 @@ pub(crate) fn get_or_render(
             Entry {
                 width,
                 height,
-                bytes: bytes.clone(),
+                bytes: Arc::new(bytes.clone()),
                 bgra: false,
                 cost_ms: 1,
                 provenance,
@@ -260,14 +263,14 @@ pub(crate) fn get_or_render(
 /// File a frame the demotion ladder brought down off the graphics card
 /// (docs/06 §5.3). Its bytes stay in the channel order they were composited in,
 /// so the trip back up needs no conversion.
-pub(crate) fn put_demoted(key: FrameKey, frame: &lumit_render::DemotedFrame) {
+pub(crate) fn put_demoted(key: FrameKey, frame: &lumit_render::DemotedFrame, bytes: Arc<Vec<u8>>) {
     with_cache(|c| {
         c.put(
             key,
             Entry {
                 width: frame.width,
                 height: frame.height,
-                bytes: frame.rgba.clone(),
+                bytes,
                 bgra: frame.bgra,
                 cost_ms: frame.cost_ms,
                 provenance: frame.provenance,
@@ -281,7 +284,9 @@ pub(crate) fn put_demoted(key: FrameKey, frame: &lumit_render::DemotedFrame) {
 pub(crate) struct HeldFrame {
     pub width: u32,
     pub height: u32,
-    pub bytes: Vec<u8>,
+    /// A share of the cached bytes, not a copy of them. The cache keeps its own
+    /// share until the frame ages out.
+    pub bytes: Arc<Vec<u8>>,
     pub bgra: bool,
     pub cost_ms: u32,
 }
@@ -342,7 +347,7 @@ pub(crate) fn best_frame(comp: uuid::Uuid, frame: u64) -> Option<(u32, u32, Vec<
         let entry = c.map.get_mut(&key)?;
         c.clock += 1;
         entry.last_used = c.clock;
-        let mut bytes = entry.bytes.clone();
+        let mut bytes = entry.bytes.as_ref().clone();
         if entry.bgra {
             // The Scopes bin R, G and B by name, so BGRA bytes would read as a
             // channel-swapped picture. Paid on this consumer's own copy (it is
@@ -660,7 +665,7 @@ mod tests {
         Entry {
             width,
             height,
-            bytes: vec![7u8; bytes],
+            bytes: Arc::new(vec![7u8; bytes]),
             bgra: false,
             cost_ms: 1,
             provenance,
@@ -823,7 +828,7 @@ mod tests {
                 Entry {
                     width: 1,
                     height: 1,
-                    bytes: vec![1, 2, 3, 4],
+                    bytes: Arc::new(vec![1, 2, 3, 4]),
                     bgra: true,
                     cost_ms: 9,
                     provenance: at(comp, 0, 1000),
@@ -835,7 +840,7 @@ mod tests {
         let (_, _, bytes) = best_frame(comp, 0).unwrap();
         assert_eq!(bytes, vec![3, 2, 1, 4], "given to the Scopes as RGBA");
         let up = held(A).expect("still held for promotion");
-        assert_eq!(up.bytes, vec![1, 2, 3, 4], "and kept as it came down");
+        assert_eq!(*up.bytes, vec![1, 2, 3, 4], "and kept as it came down");
         assert!(up.bgra);
         assert_eq!(up.cost_ms, 9, "with the cost that earned it its place");
         clear();

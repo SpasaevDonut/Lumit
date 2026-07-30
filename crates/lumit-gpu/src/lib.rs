@@ -541,9 +541,9 @@ impl ColourEngine {
         height: u32,
         bgra: bool,
     ) -> Option<wgpu::Texture> {
-        // A payload that is not exactly one frame is refused rather than
-        // uploaded short: `write_texture` would panic on a slice too small, and
-        // an engine crate does not panic (docs/14).
+        // A payload that is not exactly one frame is refused before anything is
+        // made: a texture of no width stops the program, and an engine crate
+        // does not stop the program (docs/14).
         let want = (width as usize)
             .checked_mul(height as usize)?
             .checked_mul(4)?;
@@ -560,16 +560,65 @@ impl ColourEngine {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: if bgra {
-                wgpu::TextureFormat::Bgra8UnormSrgb
-            } else {
-                SRGB_FORMAT
-            },
+            format: Self::display8_format(bgra),
             usage: wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST
                 | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
+        self.write_display8(ctx, &texture, bytes, width, height)
+            .then_some(texture)
+    }
+
+    /// The pixel format [`Self::upload_display8`] gives a frame of each channel
+    /// order. A pool of textures for re-use must compare formats, thus the
+    /// choice is stated once here and not in each caller.
+    #[must_use]
+    pub fn display8_format(bgra: bool) -> wgpu::TextureFormat {
+        if bgra {
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        } else {
+            SRGB_FORMAT
+        }
+    }
+
+    /// Write display-encoded bytes into a texture that already exists — the
+    /// re-use path for [`Self::upload_display8`].
+    ///
+    /// A new texture for each promoted frame means one allocation on the
+    /// graphics card for each frame that playback goes past, and each one is
+    /// 8 MB at 1080p. A texture that came out of the cache has the correct size
+    /// and format for the next frame, thus the caller keeps it and writes over
+    /// it. The queue keeps the two operations in order: a write always occurs
+    /// after the copies that were sent before it.
+    ///
+    /// `false` when the payload is not exactly one frame of the given size, or
+    /// when the texture is a different size. The caller must then make a new
+    /// texture. A short payload is refused because `write_texture` stops the
+    /// program if you give it too few bytes, and an engine crate does not stop
+    /// the program (docs/14).
+    #[must_use]
+    pub fn write_display8(
+        &self,
+        ctx: &GpuContext,
+        texture: &wgpu::Texture,
+        bytes: &[u8],
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(want) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|px| px.checked_mul(4))
+        else {
+            return false;
+        };
+        if want == 0
+            || bytes.len() != want
+            || texture.width() != width
+            || texture.height() != height
+        {
+            return false;
+        }
         ctx.queue.write_texture(
             texture.as_image_copy(),
             bytes,
@@ -584,7 +633,7 @@ impl ColourEngine {
                 depth_or_array_layers: 1,
             },
         );
-        Some(texture)
+        true
     }
 
     /// Begin reading a display texture back WITHOUT waiting for it — the

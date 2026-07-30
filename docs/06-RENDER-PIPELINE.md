@@ -356,6 +356,23 @@ is read back off the card and lands in RAM and on disk, and a frame held below i
 straight back into a texture rather than composited again. What the tiers hold is
 **final comp frames only** — node-output caching is the evaluator's, and is not built.
 
+**"Ahead of the playhead" is what makes the disk tier count during playback.** A read off disk
+goes to the IO thread, and the bytes come back one or two turns of the worker loop later. A
+frame asked for at the moment it must be shown thus always arrives too late, and playback
+composites it again — a span parked on disk was then worth nothing to playback, which is most
+of what the disk tier holds after a project is re-opened. Playback asks for the frames of its
+look-ahead window instead, at the same time as it posts their source decodes, so the frame is
+on the card before playback reaches it. Nothing waits: a frame that has not arrived is
+composited as before.
+
+**Two costs the ladder used to pay for each frame, and no longer pays.** The bytes of a frame
+are held in one allocation that the memory tier and the disk tier share, in place of a copy for
+each (8 MB for each 1080p frame, twice, on the worker thread). And a promotion writes into a
+display texture that the VRAM cache has finished with, in place of making one, whenever nothing
+shows that texture any more. The share count of the texture is what says so, which is the only
+safe test: a write into a texture that a present still shows would put the wrong picture on the
+screen.
+
 ### 5.2 Cache key
 
 Every cache entry is keyed by a 128-bit content hash (BLAKE3-short or xxHash3-128; collisions

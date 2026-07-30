@@ -4766,3 +4766,50 @@ caches where you said. And it is an ordinary edit — the same op machinery as
 moving a layer — so it is undoable, it is journalled with everything else, and it
 is saved when you save. A project that has never been given a location of its own
 stores nothing at all, so its file does not grow a line for a choice nobody made.
+
+### Making playback use the cache it has
+
+The three tiers were built and full, and playback still did not get all it could
+from them. Three things were in the way. None of them changes what the cache
+holds — they change what it costs to get a frame out of it.
+
+**The disk tier was always one step too late.** Reading a frame off disk is done
+by a different thread, and the bytes come back a moment after they are asked
+for — a turn or two of the worker loop. Playback asked for a frame at the moment
+it had to show it, so the bytes always arrived after the frame had gone past, and
+playback composited the frame from the beginning instead. The frames did arrive,
+and they were used the *second* time you played over that part; but a first pass
+over a span that had been parked on disk got no good from it at all. That is most
+of what the disk tier holds when you re-open a project, which is exactly when you
+want it to help.
+
+Playback already looks ahead: while it makes one frame, it tells the decode
+thread which video frames the *coming* frames will need, so those decodes happen
+alongside. The disk reads now go out in the same place. By the time playback
+reaches the frame, the bytes have arrived and the frame is on the card. Nothing
+waits for a read — a frame that has not turned up is composited as it was before.
+
+**A frame in memory was copied to be put back on the card.** A 1080p frame is
+8 MB. Putting one back on the card handed the uploader a *copy* of those bytes,
+because the cache must not hold its lock while the graphics card works. The fix
+is a shared handle (Rust calls it an `Arc`): the cache and the uploader point at
+the same 8 MB, and the count of who is looking is what keeps it alive. Handing a
+frame over is now the cost of adding one to a number. The same handle goes to the
+disk thread, so a frame that falls out of the card is no longer copied twice on
+its way down.
+
+**Every promoted frame made a new texture on the card.** A texture is memory on
+the graphics card, and asking for one is not free. Playback promotes a frame each
+time it passes one, so that was an allocation per frame — while the cache was, at
+the same moment, throwing away a texture of exactly the same size, because a
+promotion pushes something out. So the ones that leave are kept in a small pool
+(four of them) and written over instead.
+
+The care here is in one question: is anybody still using that texture? A texture
+that the Viewer is showing must not be written over — you would see the wrong
+picture, and no error would be raised. The shared handle answers it without any
+bookkeeping: if the pool holds the *only* remaining share of a texture, nothing
+else can be showing it. Only then is it used again. One more rule, which is about
+what the card allows rather than about safety: a texture that a composite drew
+into cannot have bytes written into it, so only textures that a promotion made
+are kept.
