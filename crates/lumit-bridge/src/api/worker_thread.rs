@@ -81,6 +81,11 @@ pub struct WorkerState {
     /// world is not hashed again: what the bar asked for, the document revision,
     /// and each tier's own change counter.
     published_bar: Option<BarFingerprint>,
+    /// The strip as last published, and how far the refinement pass has got
+    /// through it — see [`publish_cache_bar`]. Kept between turns so a long
+    /// composition converges to per-frame truth instead of staying sampled.
+    bar_strip: Vec<u8>,
+    bar_refined_to: u64,
     /// When the strip was last published — see [`BAR_MIN_INTERVAL`].
     bar_published_at: std::time::Instant,
     /// True when the idle fill has nothing left to do (everything near the
@@ -108,12 +113,19 @@ const BAR_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1
 /// which has the whole thread to itself, is happy to spend.
 const BAR_MIN_INTERVAL_PLAYING: std::time::Duration = std::time::Duration::from_millis(500);
 
-/// The most frames the bar's strip is computed at. A longer composition is
-/// sampled every `frames / this` frames and each sample fills its stride: the
-/// stripe is a thousand-odd pixels wide at most, so it cannot show more than
-/// this anyway, and the alternative is hashing forty thousand frames to draw a
-/// picture a thousand pixels wide.
+/// The most frames named in the bar's **first** pass over a composition. A
+/// longer one is sampled every `frames / this` frames, each sample filling its
+/// stride, so the whole stripe has an answer immediately rather than filling in
+/// from the left. The refinement pass below then replaces those samples with
+/// per-frame truth.
 const BAR_MAX_SAMPLES: u64 = 1024;
+
+/// How many frames the refinement pass names per turn. The first pass gives the
+/// whole stripe a coarse answer; this walks it in chunks, replacing each sample
+/// with the frames it stood for, so a composition of any length reaches per-frame
+/// truth within a second or two of standing still — and no single turn costs more
+/// than the first pass did.
+const BAR_REFINE_PER_TURN: u64 = 1024;
 
 /// The coarser preview scales worth probing for the bar's dimmed state: the
 /// adaptive tiers the realtime controller actually drops to (Half, Third,
@@ -229,10 +241,28 @@ fn disk_root(
     location: &crate::framecache::disk::Location,
 ) -> Option<std::path::PathBuf> {
     use crate::framecache::disk::Location;
-    let (doc_id, path) = {
+    let (doc_id, own, path) = {
         let project = state.project.state().ok()?;
         let project = project.read().ok()?;
-        (project.store.snapshot().id, project.path.clone())
+        let document = project.store.snapshot();
+        (
+            document.id,
+            document.cache_location.clone(),
+            project.path.clone(),
+        )
+    };
+    // The project's own answer wins where it has one: a project told to cache on
+    // a scratch drive, or beside itself, should do that whatever the application
+    // is set to (docs/06 §5.4).
+    let location = match own {
+        Some(lumit_core::model::CacheLocation::AppData) => Location::AppData,
+        Some(lumit_core::model::CacheLocation::BesideProject) => Location::BesideProject,
+        Some(lumit_core::model::CacheLocation::Custom { folder }) if !folder.is_empty() => {
+            Location::Custom(std::path::PathBuf::from(folder))
+        }
+        // A custom location with no folder in it is not a location.
+        Some(lumit_core::model::CacheLocation::Custom { .. }) => Location::AppData,
+        None => location.clone(),
     };
     match location {
         Location::AppData => lumit_project::frame_cache_dir(doc_id),
@@ -242,7 +272,7 @@ fn disk_root(
             None => lumit_project::frame_cache_dir(doc_id),
         },
         Location::Custom(root) => match path.as_deref() {
-            Some(path) => lumit_render::diskio::cache_root_for(path, Some(root)),
+            Some(path) => lumit_render::diskio::cache_root_for(path, Some(&root)),
             None => Some(root.join(format!("{doc_id}-cache"))),
         },
     }
@@ -263,6 +293,11 @@ fn drain_demotions(state: &mut WorkerState) {
             height: demoted.height,
             bgra: demoted.bgra,
             bytes: demoted.rgba.clone(),
+            // What it cost and what size it was made at, so the disk tier's cap
+            // can weigh it against its neighbours rather than taking whatever
+            // was written first (docs/06 §5.3).
+            cost_ms: demoted.cost_ms,
+            scale_q: demoted.provenance.scale_q,
         });
         crate::framecache::put_demoted(demoted.key, &demoted);
     }
@@ -312,6 +347,18 @@ const DISK_PROMOTION_COST_MS: u32 = 16;
 /// three tiers whether they hold it. The interface never touches a cache itself
 /// — it could not, since naming a frame needs the renderer's probe results, and
 /// hashing hundreds of frames is not work for the thread that paints.
+///
+/// **Two passes, because the two things the bar owes are in tension.** It owes an
+/// answer for the whole composition straight away — a stripe that fills in from
+/// one end looks like the *cache* filling in from one end — and it owes the truth
+/// per frame, which on a long composition is tens of thousands of hashes. So the
+/// first pass samples the whole strip, one frame per stride standing for its
+/// neighbours, and a refinement pass then walks it in bounded chunks replacing
+/// each sample with the frames it stood for. A composition short enough to name
+/// in one go has a stride of one, and its first pass *is* the truth.
+///
+/// The refinement walk starts at the frame last shown and wraps, so the part of
+/// the bar the user is actually looking at is the part that firms up first.
 #[frb(ignore)]
 fn publish_cache_bar(state: &mut WorkerState) {
     let Some((comp_id, frames, scale_q)) = crate::framecache::bar::wanted() else {
@@ -347,34 +394,69 @@ fn publish_cache_bar(state: &mut WorkerState) {
         ram_entries,
         disk_entries,
     };
-    if state.published_bar == Some(fingerprint) {
+    let was = state.published_bar;
+    let changed = was != Some(fingerprint);
+    // Nothing has moved and the strip is already true per frame: nothing to do.
+    // Note the second half — an unchanged world is exactly when the refinement
+    // pass gets to make progress, so this cannot simply return on `!changed`.
+    if !changed && state.bar_refined_to >= frames {
         return;
     }
     if document.comp(comp_id).is_none() {
         return;
     }
+    // Whether every frame's *name* may have changed, as against merely which of
+    // them are held. A different composition, length, scale or document revision
+    // renames frames, so the strip means nothing and is rebuilt; a frame merely
+    // arriving in a tier leaves the names alone, so the strip stands and only its
+    // values need refreshing.
+    let renamed = was.is_none_or(|old| {
+        (old.comp, old.frames, old.scale_q, old.revision) != (comp_id, frames, scale_q, revision)
+    });
     state.published_bar = Some(fingerprint);
     state.bar_published_at = std::time::Instant::now();
 
     let bgra = zero_copy_wants_bgra();
     let scale = f32::from(scale_q) / 1000.0;
     let quality = quality_for(scale);
-    // A composition longer than the bar is wide in pixels is sampled: one frame
-    // per stride stands for its neighbours, which is all the stripe can draw.
     let stride = frames.div_ceil(BAR_MAX_SAMPLES).max(1);
-    let mut tiers = vec![0u8; frames as usize];
-    let mut sample = 0u64;
-    while sample < frames {
-        let tier = frame_tier(state, &document, comp_id, sample, quality, scale, bgra);
-        if tier != 0 {
-            let end = (sample + stride).min(frames);
-            for slot in &mut tiers[sample as usize..end as usize] {
-                *slot = tier;
-            }
+
+    // Naming one frame needs the renderer, the document and the three tiers; the
+    // walk over frames needs none of them. Split so the walk can be tested
+    // without a graphics card (see `bar_strip_tests`).
+    //
+    // The strip is taken out of the worker for the duration: naming a frame wants
+    // the whole of `state`, and holding a borrow of one of its fields across that
+    // is what the borrow checker is for.
+    let mut strip = std::mem::take(&mut state.bar_strip);
+    let mut refined_to = if changed { 0 } else { state.bar_refined_to };
+    let rebuild = renamed || strip.len() != frames as usize;
+    let anchor = match &state.last_shown {
+        Some((comp, frame, _)) if comp.id == comp_id => *frame % frames,
+        _ => 0,
+    };
+    {
+        let mut tier_of =
+            |frame: u64| frame_tier(state, &document, comp_id, frame, quality, scale, bgra);
+        if rebuild {
+            let sampled = sample_bar_strip(frames, stride, &mut tier_of);
+            strip = sampled.tiers;
+            refined_to = sampled.refined_to;
+        } else {
+            // Names are the same but holdings may have moved: sweep again from
+            // the anchor, keeping the strip on screen while it refreshes.
+            refined_to = refine_bar_strip(
+                &mut strip,
+                anchor,
+                refined_to,
+                BAR_REFINE_PER_TURN,
+                &mut tier_of,
+            );
         }
-        sample += stride;
     }
-    crate::framecache::bar::publish(comp_id, scale_q, tiers);
+    state.bar_strip = strip;
+    state.bar_refined_to = refined_to;
+    crate::framecache::bar::publish(comp_id, scale_q, state.bar_strip.clone());
 }
 
 /// What the bar should draw for one frame: `0` nothing, `1` held coarser, `2`
@@ -415,6 +497,72 @@ fn frame_tier(
     } else {
         0
     }
+}
+
+/// A freshly sampled strip and how much of it counts as exact.
+#[frb(ignore)]
+struct SampledStrip {
+    tiers: Vec<u8>,
+    refined_to: u64,
+}
+
+/// The first pass: name one frame per `stride` and let it stand for the frames it
+/// skipped, so the whole stripe has an answer at once (see
+/// [`publish_cache_bar`]). A stride of one names everything, and says so by
+/// reporting itself fully refined.
+///
+/// A skipped run is only painted when its sample is held: an uncached sample
+/// leaves its neighbours as nothing, which is what they are until something says
+/// otherwise. The reverse — painting a whole stride green off one held frame and
+/// correcting it later — would flash cache the user does not have.
+#[frb(ignore)]
+fn sample_bar_strip(frames: u64, stride: u64, tier_of: &mut dyn FnMut(u64) -> u8) -> SampledStrip {
+    let stride = stride.max(1);
+    let mut tiers = vec![0u8; frames as usize];
+    let mut sample = 0u64;
+    while sample < frames {
+        let tier = tier_of(sample);
+        if tier != 0 {
+            let end = (sample + stride).min(frames);
+            for slot in &mut tiers[sample as usize..end as usize] {
+                *slot = tier;
+            }
+        }
+        sample += stride;
+    }
+    let refined_to = if stride == 1 { frames } else { 0 };
+    SampledStrip { tiers, refined_to }
+}
+
+/// One turn of the refinement pass: name up to `per_turn` more frames, starting
+/// `refined_to` steps on from `anchor` and wrapping, and write each answer into
+/// its own slot. Returns how far the sweep has now got.
+///
+/// Wrapping from the anchor rather than walking from frame zero is what puts the
+/// part of the bar under the playhead first in the queue — on a long composition
+/// the difference is whether the region you are looking at firms up now or in a
+/// few seconds.
+#[frb(ignore)]
+fn refine_bar_strip(
+    tiers: &mut [u8],
+    anchor: u64,
+    refined_to: u64,
+    per_turn: u64,
+    tier_of: &mut dyn FnMut(u64) -> u8,
+) -> u64 {
+    let frames = tiers.len() as u64;
+    if frames == 0 {
+        return 0;
+    }
+    let end = refined_to.saturating_add(per_turn).min(frames);
+    for step in refined_to..end {
+        let frame = (anchor + step) % frames;
+        let tier = tier_of(frame);
+        if let Some(slot) = tiers.get_mut(frame as usize) {
+            *slot = tier;
+        }
+    }
+    end
 }
 
 /// Whether this build's zero-copy transport wants BGRA (Windows and macOS) or
@@ -979,6 +1127,8 @@ fn worker_loop(
         seen_vram_clears: crate::framecache::vram::clears(),
         published_vram: (0, 0),
         published_bar: None,
+        bar_strip: Vec::new(),
+        bar_refined_to: 0,
         bar_published_at: std::time::Instant::now() - BAR_MIN_INTERVAL,
         fill_exhausted: true,
         last_request: std::time::Instant::now(),
@@ -2163,5 +2313,129 @@ mod tests {
         );
         assert_eq!(scope, Some(Req::Scope(1)));
         assert_eq!(superseded, 0, "nothing every-frame was thrown away");
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod bar_strip_tests {
+    use super::{refine_bar_strip, sample_bar_strip};
+
+    /// A composition short enough to name every frame of is named exactly, and
+    /// reports itself finished — there is nothing for the refinement pass to do.
+    #[test]
+    fn a_short_composition_is_exact_on_the_first_pass() {
+        let held = [false, true, true, false, true];
+        let mut asked = Vec::new();
+        let sampled = sample_bar_strip(5, 1, &mut |frame| {
+            asked.push(frame);
+            u8::from(held[frame as usize]) * 2
+        });
+        assert_eq!(sampled.tiers, vec![0, 2, 2, 0, 2]);
+        assert_eq!(sampled.refined_to, 5, "a stride of one leaves nothing over");
+        assert_eq!(asked, vec![0, 1, 2, 3, 4], "every frame named once");
+    }
+
+    /// A long one is sampled: one frame in four is named and stands for the four.
+    /// The whole stripe therefore has an answer immediately — the alternative is a
+    /// bar that fills in from one end, which reads as the *cache* filling in from
+    /// one end.
+    #[test]
+    fn a_long_composition_is_sampled_then_refined_to_the_truth() {
+        // Frame 4 is the only one held, and it is not a sample point (samples are
+        // 0, 4, 8, … with stride 4 — so it IS one here; use 5 instead).
+        let held = |frame: u64| frame == 5;
+        let tier = move |frame: u64| u8::from(held(frame)) * 2;
+
+        let mut sampled = sample_bar_strip(12, 4, &mut { tier });
+        assert_eq!(
+            sampled.tiers,
+            vec![0; 12],
+            "frame 5 is not a sample point, so the coarse pass misses it"
+        );
+        assert_eq!(sampled.refined_to, 0, "and the strip needs refining");
+
+        // Two turns of four frames each: the truth appears where it belongs, and
+        // only there.
+        let refined = refine_bar_strip(&mut sampled.tiers, 0, 0, 4, &mut { tier });
+        assert_eq!(refined, 4);
+        assert_eq!(sampled.tiers, vec![0; 12], "the first four hold nothing");
+        let refined = refine_bar_strip(&mut sampled.tiers, 0, refined, 4, &mut { tier });
+        assert_eq!(refined, 8);
+        assert_eq!(
+            sampled.tiers,
+            vec![0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 0, 0],
+            "frame 5 alone, not the run of four it sits in"
+        );
+
+        // And the sweep finishes rather than running past the end.
+        let refined = refine_bar_strip(&mut sampled.tiers, 0, refined, 100, &mut { tier });
+        assert_eq!(refined, 12);
+    }
+
+    /// A held sample paints the frames it stands for, so a warm span reads warm
+    /// straight away — the coarse pass's whole purpose.
+    #[test]
+    fn a_held_sample_stands_for_the_frames_it_skipped() {
+        let sampled = sample_bar_strip(8, 4, &mut |frame| if frame == 0 { 2 } else { 0 });
+        assert_eq!(sampled.tiers, vec![2, 2, 2, 2, 0, 0, 0, 0]);
+    }
+
+    /// **The refinement starts where the user is looking.** It sweeps from the
+    /// anchor and wraps, so on a long composition the region under the playhead
+    /// firms up in the first turn rather than after a sweep of everything before
+    /// it.
+    #[test]
+    fn the_refinement_sweep_starts_at_the_anchor_and_wraps() {
+        let mut asked = Vec::new();
+        let mut tiers = vec![0u8; 10];
+        let refined = refine_bar_strip(&mut tiers, 8, 0, 4, &mut |frame| {
+            asked.push(frame);
+            0
+        });
+        assert_eq!(
+            asked,
+            vec![8, 9, 0, 1],
+            "from the anchor, wrapping past the end"
+        );
+        assert_eq!(refined, 4);
+
+        // Picking up where it left off, still relative to the anchor.
+        asked.clear();
+        refine_bar_strip(&mut tiers, 8, refined, 3, &mut |frame| {
+            asked.push(frame);
+            0
+        });
+        assert_eq!(asked, vec![2, 3, 4]);
+    }
+
+    /// Refinement overwrites a coarse guess with the truth, including downwards:
+    /// a frame the coarse pass painted green because its sample was held reads as
+    /// nothing once it is named itself.
+    #[test]
+    fn refinement_corrects_the_coarse_guess_in_both_directions() {
+        let mut tiers = vec![2u8, 2, 2, 2];
+        refine_bar_strip(&mut tiers, 0, 0, 4, &mut |frame| {
+            if frame == 1 {
+                4
+            } else {
+                0
+            }
+        });
+        assert_eq!(tiers, vec![0, 4, 0, 0]);
+    }
+
+    /// Degenerate spans do nothing rather than panicking — an empty composition
+    /// and a zero-length turn both reach here from ordinary interface states.
+    #[test]
+    fn empty_strips_and_empty_turns_are_calm() {
+        let mut none: Vec<u8> = Vec::new();
+        assert_eq!(refine_bar_strip(&mut none, 0, 0, 8, &mut |_| 2), 0);
+        let mut some = vec![0u8; 4];
+        assert_eq!(refine_bar_strip(&mut some, 0, 0, 0, &mut |_| 2), 0);
+        assert_eq!(some, vec![0; 4]);
+        assert!(sample_bar_strip(0, 4, &mut |_| 2).tiers.is_empty());
+        // A stride of zero would divide by nothing; it is floored to one.
+        assert_eq!(sample_bar_strip(2, 0, &mut |_| 2).tiers, vec![2, 2]);
     }
 }

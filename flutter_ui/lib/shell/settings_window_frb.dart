@@ -32,6 +32,7 @@ import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
+import 'package:lumit_flutter/src/rust/api/project.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
 import 'package:lumit_flutter/src/rust/api/system.dart';
 import 'package:provider/provider.dart';
@@ -79,6 +80,12 @@ class _SettingsWindow extends StatefulWidget {
   @override
   State<_SettingsWindow> createState() => _SettingsWindowState();
 }
+
+/// Whether a cache-location choice is this project's or the application's
+/// (docs/07 §15). Interface-only: the engine stores the two in different places —
+/// one in the document, one in the settings file — and this is the control that
+/// says which the user means.
+enum CacheScope { everywhere, thisProject }
 
 class _SettingsWindowState extends State<_SettingsWindow> {
   SettingsPage _page = SettingsPage.general;
@@ -697,8 +704,13 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   /// outlives the session, which is why it has a folder at all.
   List<Widget> _diskCache(LumitTheme t, LumitUiState ui) {
     final disk = diskCacheStats();
-    final where = cacheLocationFromName(
-        ui.workspace.performance.diskCacheLocation ?? BridgeCacheLocation.appData.name);
+    // What this project says, if it says anything: a project's own choice
+    // overrides the application's, so it is what the controls should show.
+    final own = _project(context)?.cacheLocation();
+    final scope = own == null ? CacheScope.everywhere : CacheScope.thisProject;
+    final where = own?.location ??
+        cacheLocationFromName(ui.workspace.performance.diskCacheLocation ??
+            BridgeCacheLocation.appData.name);
     return [
       _section(t, 'Frames parked on disk', [
         _budgetRow(
@@ -729,7 +741,7 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                   value: where,
                   options: BridgeCacheLocation.values,
                   label: _locationLabel,
-                  onChanged: (l) => _setLocation(ui, l),
+                  onChanged: (l) => _setLocation(ui, l, scope),
                 ),
               ),
               if (where == BridgeCacheLocation.custom) ...[
@@ -739,12 +751,32 @@ class _SettingsWindowState extends State<_SettingsWindow> {
                   child: HouseButton(
                     key: const ValueKey('settings-disk-folder'),
                     small: true,
-                    onPressed: () => _pickCacheFolder(ui),
+                    onPressed: () => _pickCacheFolder(ui, scope),
                     child: Text('Choose…', style: t.small),
                   ),
                 ),
               ],
             ],
+          ),
+        ),
+        _row(
+          t,
+          'Applies to',
+          scope == CacheScope.thisProject
+              ? 'Saved inside this project, so it travels with a copy of it.'
+              : 'Every project that has not been given a place of its own.',
+          SizedBox(
+            width: 150,
+            child: BareDropdown<CacheScope>(
+              key: const ValueKey('settings-disk-scope'),
+              value: scope,
+              options: CacheScope.values,
+              label: (s) => switch (s) {
+                CacheScope.everywhere => 'Everything',
+                CacheScope.thisProject => 'This project',
+              },
+              onChanged: (s) => _setScope(ui, s, where),
+            ),
           ),
         ),
         _row(
@@ -776,30 +808,79 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     ];
   }
 
+  /// The open project, or null before one exists — read through the provider
+  /// rather than held, since the settings window outlives no project.
+  ProjectReference? _project(BuildContext context) =>
+      Provider.of<LumitState>(context, listen: false).project;
+
   static String _locationLabel(BridgeCacheLocation l) => switch (l) {
         BridgeCacheLocation.appData => 'With Lumit',
         BridgeCacheLocation.besideProject => 'Beside the project',
         BridgeCacheLocation.custom => 'A folder I choose',
       };
 
-  void _setLocation(LumitUiState ui, BridgeCacheLocation location) {
-    final folder = ui.workspace.performance.diskCacheFolder;
-    // Choosing the custom option without a folder yet leaves the tier where it
-    // is; the engine says so by keeping its default, and the Choose… button
-    // appears beside the dropdown.
+  /// Point the cache somewhere, at whichever scope is in force. The project's own
+  /// choice is an op (undoable, saved in the `.lum`); the application's is a
+  /// setting. Same control, same three options — only the store differs.
+  void _setLocation(
+    LumitUiState ui,
+    BridgeCacheLocation location,
+    CacheScope scope,
+  ) {
+    final folder = scope == CacheScope.thisProject
+        ? (_project(context)?.cacheLocation()?.folder ?? '')
+        : (ui.workspace.performance.diskCacheFolder ?? '');
     setState(() {
-      setDiskCacheLocation(location: location, folder: folder ?? '');
-      ui.workspace.setDiskCacheLocation(location.name, folder);
+      if (scope == CacheScope.thisProject) {
+        _project(context)?.setCacheLocation(
+          location: BridgeProjectCacheLocation(
+              location: location, folder: folder),
+        );
+      } else {
+        // Choosing the custom option without a folder yet leaves the tier where
+        // it is; the engine says so by keeping its default, and the Choose…
+        // button appears beside the dropdown.
+        setDiskCacheLocation(location: location, folder: folder);
+        ui.workspace
+            .setDiskCacheLocation(location.name, folder.isEmpty ? null : folder);
+      }
     });
   }
 
-  Future<void> _pickCacheFolder(LumitUiState ui) async {
+  /// Switch between "this project decides" and "the application decides".
+  /// Turning it off clears the project's override rather than copying the
+  /// application's answer into it, so the project follows along afterwards.
+  void _setScope(LumitUiState ui, CacheScope scope, BridgeCacheLocation where) {
+    setState(() {
+      switch (scope) {
+        case CacheScope.thisProject:
+          _project(context)?.setCacheLocation(
+            location: BridgeProjectCacheLocation(
+              location: where,
+              folder: ui.workspace.performance.diskCacheFolder ?? '',
+            ),
+          );
+        case CacheScope.everywhere:
+          _project(context)?.setCacheLocation(location: null);
+      }
+    });
+  }
+
+  Future<void> _pickCacheFolder(LumitUiState ui, CacheScope scope) async {
     final folder = await pickFolder();
     if (folder == null || !mounted) return;
     setState(() {
-      setDiskCacheLocation(
-          location: BridgeCacheLocation.custom, folder: folder);
-      ui.workspace.setDiskCacheLocation(BridgeCacheLocation.custom.name, folder);
+      if (scope == CacheScope.thisProject) {
+        _project(context)?.setCacheLocation(
+          location: BridgeProjectCacheLocation(
+              location: BridgeCacheLocation.custom, folder: folder),
+        );
+      } else {
+        setDiskCacheLocation(
+            location: BridgeCacheLocation.custom, folder: folder);
+        ui.workspace
+            .setDiskCacheLocation(BridgeCacheLocation.custom.name, folder);
+      }
     });
   }
 

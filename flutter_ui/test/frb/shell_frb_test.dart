@@ -156,8 +156,50 @@ void main() {
       expect(find.byKey(const ValueKey('settings-disk-folder')), findsOneWidget);
 
       // Leave the engine on its default, since the location is process-wide.
-      setDiskCacheLocation(
-          location: BridgeCacheLocation.appData, folder: '');
+      setDiskCacheLocation(location: BridgeCacheLocation.appData, folder: '');
+    });
+
+    /// **A project can be told to cache somewhere of its own** (docs/06 §5.4).
+    /// The scope control decides where the answer is kept: in the settings file
+    /// for every project, or inside this `.lum` so it travels with a copy of it.
+    /// Switching back to Everything clears the project's override rather than
+    /// copying the application's answer into it, so the project follows along
+    /// afterwards.
+    testWidgets('a project can keep its own cache location', (tester) async {
+      final p = freshProject();
+      expect(p.state.project!.cacheLocation(), isNull,
+          reason: 'a fresh project follows the application');
+
+      await tester.pumpWidget(hostPanel(
+        child: Builder(
+          builder: (context) => HouseButton(
+            key: const ValueKey('open-settings'),
+            onPressed: () => showSettingsWindowFrb(context),
+            child: const Text('Open'),
+          ),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('open-settings')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings-page-performance')));
+      await tester.pumpAndSettle();
+      await tester.drag(find.byKey(const ValueKey('settings-body-performance')),
+          const Offset(0, -400));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('settings-disk-scope')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('This project').last);
+      await tester.pumpAndSettle();
+      expect(p.state.project!.cacheLocation(), isNotNull,
+          reason: 'the project now carries its own answer');
+
+      // And it is a document change, so it undoes like any other edit.
+      p.state.project!.undo();
+      expect(p.state.project!.cacheLocation(), isNull);
     });
 
     /// **Clearing the disk tier asks first.** The other two cost a re-render;

@@ -53,8 +53,17 @@ struct Document {
     id: Uuid,
     items: Vec<ProjectItem>,   // flat storage; Project-panel order = Vec order; folders hold children by id
     auto_folders: AutoFolders, // where new solids / comps are auto-filed (K-068)
+    cache_location: Option<CacheLocation>, // this project's own frame-cache folder (K-211)
 }
 ```
+
+`cache_location` is the one piece of *machine* preference the document carries, and it is here on
+purpose (K-211, docs/06 §5.4): where a project's rendered frames are parked belongs to the
+project — a scratch drive it lives on, or beside itself so the cache travels with a copy — and a
+setting held in one machine's settings file could not travel with it. `None`, the usual case,
+means the project follows the application-wide choice. It is set through an ordinary op, so it is
+undoable and journalled like any other change, and it changes no pixel: cache entries are named
+by content, and where they are kept is not part of that name.
 
 A `ProjectItem` (the intended **Asset**) is one of the following. **v1 ships
 `Footage`, `Folder`, `Composition`, `Solid`**; the audio/still/sequence kinds

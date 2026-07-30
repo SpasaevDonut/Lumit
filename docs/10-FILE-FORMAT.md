@@ -83,12 +83,17 @@ the media index are built; `proxies/`, `peaks/`, and `flow/` are planned
 
 ```
 <global cache root>/
-├── frames/<project-uuid>/frames/  # rendered frame cache, LZ4 .kfr files (06 §5.4), the default
+├── frames/<project-uuid>/         # rendered frame cache (06 §5.4), the default location
+│   ├── frames/                    #   LZ4 .kfr files, sharded by the first two hex chars
+│   ├── index.bin                  #   the index snapshot: hash, size, cost, last use, quality
+│   └── index.log                  #   changes since that snapshot, replayed at open
 ├── media-index/       # frame indexes for exact long-GOP seeking, shared across projects
 └── <project-uuid>/journal/ops.jsonl # the crash-recovery journal (§4)
 
 <project>.lum-cache/   # the same frame cache, when the user asks for it beside the project
-└── frames/
+├── frames/
+├── index.bin
+└── index.log
 ```
 
 The intended full per-project layout (`<cache root>/<project-uuid>/` with `disk-cache/`,
@@ -108,6 +113,14 @@ a folder deletable at any time. The sidecar cannot be the default because it
 needs the project to *have* a file, and a project caches from the moment it is created — the
 document uuid is inside the `.lum` and survives every save, so the global-root folder still
 finds its frames after a save and a reopen.
+
+The choice is application-wide by default and **may be made per project** (K-211), in which case
+it is a field on the document (`cache_location`) and therefore inside `project.json`: it travels
+with a copy of the project and survives being opened on another machine, which a setting in one
+machine's settings file cannot. Absent when the project follows the application, so a project
+that has never been given a place of its own gains no line for it and an older build reads the
+file unchanged (§1.1's forward-compatibility rule). Nothing is moved when the choice changes —
+the frames in the old folder simply stop being addressed.
 
 Rules, binding:
 - The global cache root defaults under the user's local app-data and is configurable with a

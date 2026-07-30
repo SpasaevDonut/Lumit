@@ -4702,3 +4702,67 @@ composition it samples rather than naming all forty thousand frames to draw a
 stripe a thousand pixels wide. Mint means the frame plays now; steel blue means it
 is parked on disk and one promotion away; dimmed means it is held, but at a
 coarser resolution than you are viewing.
+
+### Three things the cache learned afterwards (K-211)
+
+The three-tier cache above shipped with three known gaps, written into the
+backlog rather than papered over. All three are closed now, and each is worth a
+paragraph because each is a different *kind* of gap.
+
+**The disk tier could not tell a dear frame from a cheap one.** The two tiers
+above it evict by the rule the design asks for — throw out whatever is *stale,
+large, and cheap to make again* — because they hold that information in memory
+beside each frame. The disk tier held nothing beside its files, so all it could
+sort by was the one thing a filesystem remembers: when each file was written. It
+therefore deleted the oldest frame even when that frame had taken half a second
+to render and its neighbour had taken two milliseconds.
+
+It now keeps a small **index**: for each parked frame, its size, what it cost to
+render, when it was last wanted, and what preview size it was made at. Two files,
+and the reason there are two is worth knowing, because it is a pattern you will
+meet again. A single file rewritten on every change would rewrite megabytes to
+record one frame. A single file rewritten only occasionally would lose whatever
+happened since — and those frames are *worse than forgotten*, because the files
+are still on the disk taking up room nothing knows to reclaim. So there is a
+snapshot (`index.bin`) rewritten now and then, and a log (`index.log`) with one
+small fixed-size record appended per change. Opening reads the snapshot and
+replays the log. A record half-written when the power went is a partial record at
+the end, and being fixed-size is exactly what makes that detectable — it is
+discarded and the whole ones before it still count. If either file is missing or
+unreadable the folder is walked once and the index rebuilt from it, so a cache
+from an older build, or one whose index was deleted, costs a scan and nothing
+else.
+
+**The cache bar was sampled on a long composition, and now it converges.**
+Drawing the stripe means asking "is this frame held?" per frame, and each answer
+means naming that frame — hashing the whole composition at that moment. On a
+ten-minute composition that is tens of thousands of hashes, so the first version
+sampled: one frame in forty stood for its neighbours. Honest at the width a
+stripe is drawn, and wrong if you zoom in.
+
+What it does now is two passes. The sampled pass still runs first, because the
+bar owes an answer for the *whole* composition immediately — a stripe that fills
+in from the left looks like the cache filling in from the left, which is a lie
+about something the user is watching closely. Then a refinement pass walks the
+strip in bounded chunks, replacing each sample with the frames it stood for, and
+it starts at the frame last shown and wraps — so the part of the bar under the
+playhead is the part that firms up first. A composition short enough to name in
+one go has a stride of one and its first pass is already the truth. One detail
+that took a moment to get right: only a *held* sample paints the frames it
+skipped. Painting a whole stride green off one held frame and correcting it a
+moment later would flash cache the user does not have.
+
+**Where a project caches is now the project's business, if it wants it to be.**
+The location setting was application-wide: every project cached wherever Lumit
+was set to. That is the right default and the wrong only-option — a project
+living on a scratch drive wants its frames on that drive, and a project you hand
+to someone else should carry the choice with it. So the document itself can hold
+a location, and Settings → Performance grew an **Applies to** row: *Everything*,
+which is the setting, or *This project*, which is a field inside the `.lum`.
+
+Two consequences fall out of it being in the document rather than in the
+settings. It travels: copy the project, open it on another machine, and it still
+caches where you said. And it is an ordinary edit — the same op machinery as
+moving a layer — so it is undoable, it is journalled with everything else, and it
+is saved when you save. A project that has never been given a location of its own
+stores nothing at all, so its file does not grow a line for a choice nobody made.

@@ -227,6 +227,20 @@ pub fn set_disk_cache_location(
     disk_cache_stats()
 }
 
+/// A cache location as a pair: which of the three, and the folder that goes with
+/// `Custom` (empty for the other two).
+///
+/// The same shape whether it is being set for the application
+/// ([`set_disk_cache_location`]) or for one project
+/// (`ProjectReference::set_cache_location`), so the interface has one control and
+/// one type for both, and the only difference is where the answer is stored.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeProjectCacheLocation {
+    pub location: BridgeCacheLocation,
+    pub folder: String,
+}
+
 /// Delete every parked frame, on the IO thread. Unlike the other two tiers this
 /// destroys files that may represent hours of rendering and cannot be undone, so
 /// the interface asks first (docs/07-UI-SPEC.md §15).

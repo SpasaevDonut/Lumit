@@ -1339,6 +1339,42 @@ mod tests {
         assert_eq!(back.fingerprint, m.fingerprint);
     }
 
+    /// **A project's own cache location travels with it.** The whole reason it
+    /// lives in the document rather than in the settings file: copy the project
+    /// to another machine, or hand it to someone else, and the folder it caches
+    /// to comes along. A project that has not been given one saves nothing at
+    /// all — an absent field, so an older build reads the file unchanged and a
+    /// project's file does not grow a line for a choice nobody made.
+    #[test]
+    fn a_projects_own_cache_location_survives_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edit.lum");
+
+        let mut doc = doc_with_item();
+        assert!(doc.cache_location.is_none(), "no override by default");
+        save(&doc, &path).unwrap();
+        assert!(open(&path).unwrap().0.cache_location.is_none());
+
+        doc.cache_location = Some(lumit_core::model::CacheLocation::Custom {
+            folder: "E:/scratch".into(),
+        });
+        save(&doc, &path).unwrap();
+        assert_eq!(
+            open(&path).unwrap().0.cache_location,
+            Some(lumit_core::model::CacheLocation::Custom {
+                folder: "E:/scratch".into()
+            })
+        );
+
+        // The other two carry no folder, and still round-trip as themselves.
+        doc.cache_location = Some(lumit_core::model::CacheLocation::BesideProject);
+        save(&doc, &path).unwrap();
+        assert_eq!(
+            open(&path).unwrap().0.cache_location,
+            Some(lumit_core::model::CacheLocation::BesideProject)
+        );
+    }
+
     #[test]
     fn save_open_round_trip_and_no_temp_litter() {
         let dir = tempfile::tempdir().unwrap();

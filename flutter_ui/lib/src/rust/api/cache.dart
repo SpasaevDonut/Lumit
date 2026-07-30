@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `read`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// The cache's live numbers.
 ///
@@ -182,6 +182,34 @@ class BridgeDiskCacheStats {
           budgetBytes == other.budgetBytes &&
           entries == other.entries &&
           root == other.root;
+}
+
+/// A cache location as a pair: which of the three, and the folder that goes with
+/// `Custom` (empty for the other two).
+///
+/// The same shape whether it is being set for the application
+/// ([`set_disk_cache_location`]) or for one project
+/// (`ProjectReference::set_cache_location`), so the interface has one control and
+/// one type for both, and the only difference is where the answer is stored.
+class BridgeProjectCacheLocation {
+  final BridgeCacheLocation location;
+  final String folder;
+
+  const BridgeProjectCacheLocation({
+    required this.location,
+    required this.folder,
+  });
+
+  @override
+  int get hashCode => location.hashCode ^ folder.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeProjectCacheLocation &&
+          runtimeType == other.runtimeType &&
+          location == other.location &&
+          folder == other.folder;
 }
 
 /// Which route a rendered frame takes from the engine to the Viewer.

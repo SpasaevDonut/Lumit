@@ -453,7 +453,10 @@ The disk cache lives in the project's sidecar folder (`<project>.lum-cache/`,
 
 - **Where.** Three choices, in Settings → Performance (docs/07 §15): the application's own
   cache folder keyed by the document's id (the default), a `<project>.lum-cache/` folder beside
-  the project file, or a folder the user picks. The sidecar cannot be the default because it
+  the project file, or a folder the user picks. The choice is application-wide by default and
+  can be made **per project** instead (K-211), in which case it is stored in the `.lum` through
+  an ordinary op — so it is undoable, and it travels with a copy of the project rather than
+  staying behind in one machine's settings. A project's own answer overrides the application's. The sidecar cannot be the default because it
   only works once the project *has* a file, and a project should cache from the moment it is
   created; the document id is written into the `.lum` and survives every save, so an app-data
   cache still finds its frames tomorrow. An unsaved project set to "beside the project" falls
@@ -466,10 +469,19 @@ The disk cache lives in the project's sidecar folder (`<project>.lum-cache/`,
   canonical channel order on disk, so a cache is not silently unreadable on the next platform:
   the Windows and macOS zero-copy paths composite in BGRA, and the swizzle is paid on the IO
   thread in both directions, never on a render.
-- **No index yet.** A frame's presence is "does this file exist", and the byte total is a scan
-  at open plus running arithmetic. The layout is exactly the one `index.db` would index, so it
-  is a later speed-up rather than a redesign. Eviction without it is oldest-modified-first
-  rather than cost-aware.
+- **The index** (K-211). `index.bin` — every entry's hash, size, recompute cost, last use and
+  quality — plus `index.log`, one fixed-size record appended per change since that snapshot.
+  Opening reads the snapshot and replays the log; a record torn by a crash is a partial
+  trailing record and is discarded by length. Either file missing or unreadable means the
+  folder is walked once and the index rebuilt from it, which is this section's "rebuilt by scan
+  if missing or corrupt". So presence, the byte total and the eviction order all cost nothing at
+  run time, and **eviction is the same stale × large ÷ cheap-to-remake policy as the tiers
+  above** rather than the modification-time order a filesystem is limited to.
+
+  A **deviation, recorded rather than silent**: the spec says `index.db`, SQLite. This is a flat
+  map of fixed-size rows, read once at start-up and otherwise held in memory; SQLite would add a
+  C dependency to an engine crate to store it, and the media frame index (docs/10 §3) already
+  sets the house precedent of a plain binary sidecar.
 - Anything unreadable — bad magic, unknown format, truncation, a failed decompression, the
   wrong pixel count — is deleted and re-rendered. The cache can never make a frame wrong, only
   faster.

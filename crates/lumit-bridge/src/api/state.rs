@@ -201,6 +201,10 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         | Op::SetMediaRef { .. }
         | Op::SetFolderChildren { .. }
         | Op::SetAutoFolder { .. }
+        // Where this project parks its frames. No panel draws it — Settings
+        // reads it directly — but it is a document change like any other, so it
+        // belongs in the item scope rather than in a silent default.
+        | Op::SetCacheLocation { .. }
         // A solid def is a project item, and its name shows in the panel.
         | Op::SetSolidDef { .. } => (None, None, true),
 

@@ -229,6 +229,39 @@ mod tests {
     use crate::time::{CompTime, Duration, FrameRate, Rational};
     use uuid::Uuid;
 
+    /// **A project's own cache location is an ordinary op**, so it undoes like
+    /// anything else and is journalled with the rest — which is what puts it in
+    /// the `.lum` and lets it travel with a copy of the project (docs/06 §5.4).
+    /// Clearing it is the same op carrying nothing, which is what makes the
+    /// round trip work in both directions.
+    #[test]
+    fn a_projects_cache_location_is_an_undoable_op() {
+        let mut store = DocumentStore::new(Document::new());
+        assert!(store.snapshot().cache_location.is_none());
+
+        store
+            .commit(Op::SetCacheLocation {
+                location: Some(CacheLocation::Custom {
+                    folder: "E:/scratch".into(),
+                }),
+            })
+            .unwrap();
+        assert_eq!(
+            store.snapshot().cache_location,
+            Some(CacheLocation::Custom {
+                folder: "E:/scratch".into()
+            })
+        );
+
+        store.undo().unwrap();
+        assert!(
+            store.snapshot().cache_location.is_none(),
+            "undo puts the project back to following the application"
+        );
+        store.redo().unwrap();
+        assert!(store.snapshot().cache_location.is_some());
+    }
+
     fn t(n: i64, d: i64) -> CompTime {
         CompTime(Rational::new(n, d).unwrap())
     }

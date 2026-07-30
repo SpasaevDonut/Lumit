@@ -1008,8 +1008,13 @@ budget (the same typed-and-draggable row), a readout of what is parked and where
 **Where** row choosing between *With Lumit* — the application's own cache folder, the default
 and the only one that works before a project has been saved — *Beside the project*, which is
 the per-project choice, and *A folder I choose*, which offers a folder picker beside the
-dropdown. The location is application-wide and remembered; changing it moves nothing, so the
-old folder can be deleted by hand whenever the user likes. Its **Clear** asks before deleting,
+dropdown. An **Applies to** row beside it chooses the scope (K-211): *Everything*, kept in the settings
+file, or *This project*, kept inside the `.lum` so it travels with a copy of the project —
+a project's own answer overriding the application's. Switching back to Everything clears the
+project's answer rather than copying the application's into it, so the project follows along
+afterwards; and because it is an ordinary op, giving a project its own location undoes like any
+other edit. Changing any of this moves nothing, so the old folder can be deleted by hand
+whenever the user likes. Its **Clear** asks before deleting,
 unlike the other two tiers': RAM and VRAM cost a re-render each, while this one destroys files
 that may be a night's work and there is nothing to undo. With nothing parked it does not ask —
 a question about deleting nothing is only noise. The status line's cache meter grew a matching

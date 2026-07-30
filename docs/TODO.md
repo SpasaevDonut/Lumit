@@ -332,22 +332,6 @@ disk, and is uploaded straight back when it is wanted. Registering a texture sti
 happen in a widget test; `integration_test/shared_texture_test.dart` (run by hand on a real
 window) is the coverage.
 
-**The three-tier cache landed (K-210); three smaller pieces of it are still worth doing.**
-Content keying, the demotion ladder and the disk tier shipped 2026-07-30, so a picture-free
-edit no longer empties the cache, an undo is warm, and frames survive a restart. What is left:
-- **An `index.db` for the disk tier** (docs/06 §5.4). Presence is "does this file exist" and the
-    byte total is a scan at open plus arithmetic, which works — but eviction is
-    oldest-modified-first rather than cost-aware, and the open scan is `O(files)`. The layout on
-    disk is exactly the one the index would index, so this is a speed-up, not a redesign.
-- **A per-project cache location.** The choice (app data / beside the project / a folder you
-    pick) is application-wide. A per-project override belongs in the `.lum` and needs a document
-    field, so it was deliberately left out.
-- **The cache bar samples a long composition.** The strip is computed for at most ~1024 frames
-    and each sample stands for its stride, because naming a frame means hashing the composition
-    at that time. Right at any plausible stripe width; wrong the moment something wants
-    per-frame truth from `cached_frames` for another purpose. If that day comes, the answer is
-    probably an incremental per-frame key cache on the worker rather than a finer sample.
-
 **Playback scheduler — what remains.** The ring landed (2026-07-27): renders run
 ahead of the clock into a bounded ring sized by measured p95 cost
 ([impl/playback-scheduler.md](impl/playback-scheduler.md) §5), presents pace
@@ -377,7 +361,8 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
     Flutter yet: autosave interval/keep, and the export defaults (preset +
     filename template). All three cache budgets are in the Settings window and
     survive a restart — RAM and VRAM with K-187, the disk tier's budget and its
-    location with K-210; idle background fill landed with no setting (it costs
+    location with K-210, and its scope — application-wide or this project — with
+    K-211; idle background fill landed with no setting (it costs
     nothing the user would trade). Each remaining page lands wired to the
     engine through the bridge, not as a Dart-side setting nothing reads
     (K-181/K-182).

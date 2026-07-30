@@ -1,8 +1,12 @@
 //! The cache crate — **Nebula** (K-083): byte-budgeted stores per
 //! docs/06-RENDER-PIPELINE.md §5 (K-016). The RAM tier ([`ByteLru`]) is a
 //! byte-budget store with cost-aware (GreedyDual-style) eviction and pinning
-//! (§5.3); the disk tier ([`disk`]) parks frames in the project's sidecar
-//! folder. The VRAM tier, index.db and the governor join as the evaluator grows.
+//! (§5.3); the disk tier ([`disk`]) parks frames in a cache folder and keeps an
+//! [`index`] of them. The governor joins as the evaluator grows.
+//!
+//! The disk tier keeps an [`index`] of what it holds — size, recompute cost and
+//! last use — so it can evict by the same rule the tiers above it use rather than
+//! by the one thing a filesystem remembers.
 //!
 //! In plain terms: a cupboard with a strict size limit. When it's full and you
 //! add something, it throws out the item that is the best bargain to lose —
@@ -12,6 +16,7 @@
 //! point: one 4K frame costs what sixty thumbnails cost.
 
 pub mod disk;
+pub mod index;
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};

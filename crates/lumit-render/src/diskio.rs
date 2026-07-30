@@ -43,13 +43,18 @@ pub enum Cmd {
     /// parking). Any previously open cache is closed; the cap survives.
     SetRoot(Option<PathBuf>),
     /// Park a rendered frame (write-behind). `bgra` describes the bytes given,
-    /// not the file: the file is always RGBA.
+    /// not the file: the file is always RGBA. `cost_ms` and `scale_q` are what
+    /// the index ranks the frame by when the cap has to take something
+    /// (docs/06 §5.3) — a frame that was dear to render is worth keeping over a
+    /// cheap one of the same size.
     Store {
         hash: u128,
         width: u32,
         height: u32,
         bgra: bool,
         bytes: Vec<u8>,
+        cost_ms: u32,
+        scale_q: u16,
     },
     /// Bring a frame back for the tiers above, in the channel order the caller
     /// will upload it in.
@@ -126,6 +131,12 @@ pub fn spawn() -> DiskIo {
             while let Ok(cmd) = rx.recv() {
                 match cmd {
                     Cmd::SetRoot(root) => {
+                        // Snapshot the index of the cache being closed: its log
+                        // already carries everything, but folding it in now keeps
+                        // the next open cheap.
+                        if let Some(c) = &mut cache {
+                            c.flush_index();
+                        }
                         cache = root.map(|r| lumit_cache::disk::DiskCache::open(r, cap));
                         let hashes = cache.as_ref().map(|c| c.known_hashes()).unwrap_or_default();
                         if let Ok(mut k) = known_worker.lock() {
@@ -137,11 +148,18 @@ pub fn spawn() -> DiskIo {
                         cap = bytes;
                         if let Some(c) = &mut cache {
                             c.set_cap(bytes);
+                            // Lowering the cap evicts, so the mirror has to
+                            // follow or the bar promises what was just deleted.
+                            if let Ok(mut k) = known_worker.lock() {
+                                k.clear();
+                                k.extend(c.known_hashes());
+                            }
                         }
                     }
                     Cmd::Clear => {
                         if let Some(c) = &mut cache {
                             c.clear();
+                            c.flush_index();
                         }
                         if let Ok(mut k) = known_worker.lock() {
                             k.clear();
@@ -153,6 +171,8 @@ pub fn spawn() -> DiskIo {
                         height,
                         bgra,
                         mut bytes,
+                        cost_ms,
+                        scale_q,
                     } => {
                         let Some(c) = &mut cache else { continue };
                         // One order on disk (see the module note); the swizzle is
@@ -160,11 +180,21 @@ pub fn spawn() -> DiskIo {
                         if bgra {
                             swizzle_rb(&mut bytes);
                         }
-                        c.store(hash, width, height, &bytes);
-                        if c.contains(hash) {
-                            if let Ok(mut k) = known_worker.lock() {
-                                k.insert(hash);
-                            }
+                        c.store(lumit_cache::disk::Parked {
+                            hash,
+                            width,
+                            height,
+                            rgba: &bytes,
+                            cost_ms,
+                            scale_q,
+                        });
+                        // The store may have evicted to stay under the cap, so
+                        // the mirror is refreshed from the index rather than just
+                        // gaining this hash — otherwise the cache bar would go on
+                        // promising frames the cap has taken.
+                        if let Ok(mut k) = known_worker.lock() {
+                            k.clear();
+                            k.extend(c.known_hashes());
                         }
                     }
                     Cmd::Load { hash, bgra } => {
@@ -234,6 +264,8 @@ mod tests {
                 height: 4,
                 bgra: false,
                 bytes: bytes.clone(),
+                cost_ms: 8,
+                scale_q: 1000,
             })
             .unwrap();
         io.tx
@@ -299,6 +331,8 @@ mod tests {
                 height: 1,
                 bgra: true,
                 bytes: vec![1, 2, 3, 4],
+                cost_ms: 8,
+                scale_q: 1000,
             })
             .unwrap();
 
@@ -344,6 +378,8 @@ mod tests {
                 height: 1,
                 bgra: false,
                 bytes: vec![0, 0, 0, 255],
+                cost_ms: 8,
+                scale_q: 1000,
             })
             .unwrap();
         io.tx

@@ -30,6 +30,21 @@ const COLOURSPACE_SRGB: u32 = 1;
 /// Header: magic + format + colourspace + width + height (5 × 4 bytes).
 const HEADER_LEN: usize = 20;
 
+/// One frame on its way to disk, with what the index needs to rank it later.
+pub struct Parked<'a> {
+    /// The frame's content hash — its name in every tier.
+    pub hash: u128,
+    pub width: u32,
+    pub height: u32,
+    /// Tightly-packed RGBA8, exactly `width * height * 4` bytes.
+    pub rgba: &'a [u8],
+    /// What the frame cost to render, in milliseconds. Feeds the
+    /// cheap-to-remake half of the eviction score.
+    pub cost_ms: u32,
+    /// The preview scale it was made at, in thousandths.
+    pub scale_q: u16,
+}
+
 /// One frame loaded back from disk.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DiskFrame {
@@ -87,51 +102,60 @@ pub fn cache_root_for(project_path: &Path, override_root: Option<&Path>) -> Opti
 pub struct DiskCache {
     root: PathBuf,
     cap_bytes: u64,
-    /// Running total of stored bytes, seeded by a scan on construction and
-    /// maintained by store/evict so the cap check never re-walks the folder.
-    used_bytes: u64,
+    /// What is here, how big, how dear, and when it was last wanted — so
+    /// presence, the byte total and the eviction order are all answered without
+    /// walking the folder (docs/06 §5.4).
+    index: crate::index::FrameIndex,
 }
 
 impl DiskCache {
-    /// Open (or prepare) the cache under `root`, scanning any existing
-    /// entries so the size accounting starts truthful.
+    /// Open (or prepare) the cache under `root`.
+    ///
+    /// The index is read if it is there; if it is missing or unreadable — a first
+    /// run, a cache from a build that had none, a half-written file — the folder
+    /// is walked once and the index rebuilt from it, which is the spec's
+    /// "rebuilt by scan" (docs/06 §5.4). A folder with frames in it and an empty
+    /// index counts as needing a rebuild, so an index that loses everything can
+    /// never quietly orphan the files it forgot.
     pub fn open(root: PathBuf, cap_bytes: u64) -> Self {
-        let used_bytes = scan_bytes(&root.join("frames"));
+        let mut index = crate::index::FrameIndex::open(root.clone());
+        let frames = root.join("frames");
+        if index.is_empty() && frames.is_dir() {
+            index.rebuild_from_scan(&frames);
+        }
         Self {
             root,
             cap_bytes,
-            used_bytes,
+            index,
         }
     }
 
-    /// Bytes currently stored (approximate across crashes; re-seeded by scan).
+    /// Bytes currently stored, as the index accounts them.
     pub fn used_bytes(&self) -> u64 {
-        self.used_bytes
+        self.index.used_bytes()
     }
 
-    /// Every hash currently present, from a folder walk — seeds the UI's
-    /// "on disk" set for the cache bar's blue tier.
+    /// How many frames are parked.
+    pub fn len(&self) -> usize {
+        self.index.len()
+    }
+
+    /// Whether nothing is parked.
+    pub fn is_empty(&self) -> bool {
+        self.index.is_empty()
+    }
+
+    /// Every hash currently present — seeds the UI's "on disk" set for the cache
+    /// bar's blue tier. Read from the index, so no folder walk.
     pub fn known_hashes(&self) -> Vec<u128> {
-        let mut out = Vec::new();
-        let frames = self.root.join("frames");
-        let Ok(shards) = fs::read_dir(&frames) else {
-            return out;
-        };
-        for shard in shards.flatten() {
-            let Ok(entries) = fs::read_dir(shard.path()) else {
-                continue;
-            };
-            for e in entries.flatten() {
-                let name = e.file_name();
-                let Some(stem) = Path::new(&name).file_stem().and_then(|s| s.to_str()) else {
-                    continue;
-                };
-                if let Ok(h) = u128::from_str_radix(stem, 16) {
-                    out.push(h);
-                }
-            }
-        }
-        out
+        self.index.hashes().collect()
+    }
+
+    /// Write the index's snapshot out — at a quiet moment, or before closing.
+    /// Everything since the last one is already in its log, so this is a
+    /// tidying-up rather than a durability requirement.
+    pub fn flush_index(&mut self) {
+        self.index.write_snapshot();
     }
 
     fn path_for(&self, hash: u128) -> PathBuf {
@@ -142,22 +166,35 @@ impl DiskCache {
             .join(format!("{hex}.kfr"))
     }
 
-    /// Whether a frame is present (fs metadata only; contents unverified —
-    /// corruption is discovered and discarded at load).
+    /// Whether a frame is parked, from the index rather than the filesystem.
+    /// Contents unverified — corruption is discovered and discarded at load, and
+    /// a file deleted behind the cache's back is dropped from the index then too.
     pub fn contains(&self, hash: u128) -> bool {
-        self.path_for(hash).is_file()
+        self.index.contains(hash)
     }
 
     /// Park a frame on disk (write-behind). Errors are swallowed: a frame
     /// that fails to store is simply re-rendered next time.
-    pub fn store(&mut self, hash: u128, width: u32, height: u32, rgba: &[u8]) {
+    pub fn store(&mut self, frame: Parked<'_>) {
+        let Parked {
+            hash,
+            width,
+            height,
+            rgba,
+            cost_ms,
+            scale_q,
+        } = frame;
         if rgba.len() != (width as usize) * (height as usize) * 4 {
             return; // malformed input never reaches disk
         }
-        let path = self.path_for(hash);
-        if path.is_file() {
-            return; // content-addressed: already present means identical
+        if self.index.contains(hash) {
+            // Content-addressed: already present means identical. Count the ask
+            // as use, so a frame kept alive by being wanted is not evicted as
+            // though it were forgotten.
+            self.index.touch(hash, crate::index::now_secs());
+            return;
         }
+        let path = self.path_for(hash);
         let Some(dir) = path.parent() else { return };
         if fs::create_dir_all(dir).is_err() {
             return;
@@ -177,7 +214,15 @@ impl DiskCache {
             .and_then(|()| fs::rename(&tmp, &path));
         match write {
             Ok(()) => {
-                self.used_bytes = self.used_bytes.saturating_add(buf.len() as u64);
+                self.index.put(
+                    hash,
+                    crate::index::IndexEntry {
+                        bytes: buf.len() as u64,
+                        cost_ms: cost_ms.max(1),
+                        scale_q,
+                        last_used: crate::index::now_secs(),
+                    },
+                );
                 self.enforce_cap();
             }
             Err(_) => {
@@ -196,23 +241,29 @@ impl DiskCache {
             .and_then(|mut f| f.read_to_end(&mut bytes))
             .is_err()
         {
+            // Not there, or unreadable. Either way the index must stop claiming
+            // it: a folder emptied by hand, or reclaimed by the operating
+            // system, would otherwise leave every entry promising a frame that
+            // cannot be served.
+            self.remove(hash);
             return None;
         }
         let parsed = parse_kfr(&bytes);
-        if parsed.is_none() {
-            self.remove(hash);
+        match parsed {
+            // Wanted, so no longer stale: this is what keeps a frame the user
+            // keeps returning to from being evicted ahead of one nobody asks for.
+            Some(_) => self.index.touch(hash, crate::index::now_secs()),
+            None => self.remove(hash),
         }
         parsed
     }
 
-    /// Drop one entry (corruption discard, or external invalidation).
+    /// Drop one entry (corruption discard, or external invalidation). The index
+    /// forgets it whether or not the file was there to delete — a file removed
+    /// behind the cache's back must not stay in the index promising a frame.
     pub fn remove(&mut self, hash: u128) {
-        let path = self.path_for(hash);
-        if let Ok(meta) = fs::metadata(&path) {
-            if fs::remove_file(&path).is_ok() {
-                self.used_bytes = self.used_bytes.saturating_sub(meta.len());
-            }
-        }
+        let _ = fs::remove_file(self.path_for(hash));
+        self.index.remove(hash);
     }
 
     /// Delete every entry (Settings → Clear cache). The folder itself stays, so
@@ -220,54 +271,31 @@ impl DiskCache {
     /// here: a file that will not delete is left, and the next scan counts it.
     pub fn clear(&mut self) {
         let frames = self.root.join("frames");
-        let Ok(shards) = fs::read_dir(&frames) else {
-            self.used_bytes = 0;
-            return;
-        };
-        for shard in shards.flatten() {
-            let _ = fs::remove_dir_all(shard.path());
+        if let Ok(shards) = fs::read_dir(&frames) {
+            for shard in shards.flatten() {
+                let _ = fs::remove_dir_all(shard.path());
+            }
         }
-        self.used_bytes = scan_bytes(&frames);
+        // Whatever survived deletion is what the index should now describe, so
+        // the totals cannot drift from the folder on a partial clear.
+        self.index.rebuild_from_scan(&frames);
     }
 
-    /// Evict oldest-modified entries until the running total fits the cap
-    /// Change the byte cap, evicting oldest-first until within it (Settings →
-    /// Performance sets the disk budget).
+    /// Change the byte cap, evicting until within it (Settings → Performance
+    /// sets the disk budget).
     pub fn set_cap(&mut self, cap_bytes: u64) {
         self.cap_bytes = cap_bytes;
         self.enforce_cap();
     }
 
-    /// (the spec's cost-aware policy refines this once the index exists —
-    /// recompute cost isn't tracked without it).
+    /// Evict until the total fits the cap, worst-scoring entry first — **stale ×
+    /// large ÷ cheap-to-remake**, the same policy the tiers above use (docs/06
+    /// §5.3), which is what the index exists to make possible. Before it, this
+    /// walked the folder and could only sort by modification time.
     fn enforce_cap(&mut self) {
-        if self.used_bytes <= self.cap_bytes {
-            return;
-        }
-        let mut entries: Vec<(std::time::SystemTime, PathBuf, u64)> = Vec::new();
-        let frames = self.root.join("frames");
-        let Ok(shards) = fs::read_dir(&frames) else {
-            return;
-        };
-        for shard in shards.flatten() {
-            let Ok(files) = fs::read_dir(shard.path()) else {
-                continue;
-            };
-            for e in files.flatten() {
-                if let Ok(meta) = e.metadata() {
-                    let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
-                    entries.push((mtime, e.path(), meta.len()));
-                }
-            }
-        }
-        entries.sort_by_key(|(mtime, ..)| *mtime);
-        for (_, path, len) in entries {
-            if self.used_bytes <= self.cap_bytes {
-                break;
-            }
-            if fs::remove_file(&path).is_ok() {
-                self.used_bytes = self.used_bytes.saturating_sub(len);
-            }
+        let now = crate::index::now_secs();
+        for hash in self.index.victims(self.cap_bytes, now) {
+            self.remove(hash);
         }
     }
 }
@@ -302,23 +330,6 @@ fn parse_kfr(bytes: &[u8]) -> Option<DiskFrame> {
     })
 }
 
-/// Total bytes under a folder (recursive, best-effort).
-fn scan_bytes(dir: &Path) -> u64 {
-    let mut total = 0;
-    let Ok(entries) = fs::read_dir(dir) else {
-        return 0;
-    };
-    for e in entries.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            total += scan_bytes(&p);
-        } else if let Ok(meta) = e.metadata() {
-            total += meta.len();
-        }
-    }
-    total
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
@@ -330,13 +341,27 @@ mod tests {
             .collect()
     }
 
+    /// One frame to park, at a stated cost. `cost_ms` is what the eviction order
+    /// weighs, so a test that cares about it says so; the rest pass 8, which is
+    /// what an ordinary comp frame measures.
+    fn parked(hash: u128, w: u32, h: u32, rgba: &[u8], cost_ms: u32) -> Parked<'_> {
+        Parked {
+            hash,
+            width: w,
+            height: h,
+            rgba,
+            cost_ms,
+            scale_q: 1000,
+        }
+    }
+
     #[test]
     fn round_trips_a_frame_and_reports_presence() {
         let dir = tempfile::tempdir().unwrap();
         let mut c = DiskCache::open(dir.path().to_path_buf(), u64::MAX);
         let rgba = frame(8, 4, 7);
         assert!(!c.contains(42));
-        c.store(42, 8, 4, &rgba);
+        c.store(parked(42, 8, 4, &rgba, 8));
         assert!(c.contains(42));
         assert!(c.used_bytes() > 0);
         let f = c.load(42).unwrap();
@@ -349,7 +374,7 @@ mod tests {
     fn corrupt_or_foreign_entries_are_silently_discarded() {
         let dir = tempfile::tempdir().unwrap();
         let mut c = DiskCache::open(dir.path().to_path_buf(), u64::MAX);
-        c.store(7, 4, 4, &frame(4, 4, 1));
+        c.store(parked(7, 4, 4, &frame(4, 4, 1), 8));
         // Truncate the file behind the cache's back.
         let hex = format!("{:032x}", 7u128);
         let path = dir
@@ -370,45 +395,132 @@ mod tests {
         assert!(c.load(7).is_none());
     }
 
+    /// **The cap now evicts by the spec's policy, not by modification time.**
+    /// Three frames of equal size, one of them far dearer to render: the cap
+    /// takes the cheap ones and keeps the dear one, which the old
+    /// oldest-modified-first walk could not do — it would have taken the dear
+    /// frame purely for being written first (docs/06 §5.3).
     #[test]
-    fn cap_evicts_oldest_first() {
+    fn the_cap_evicts_the_cheap_frame_and_keeps_the_dear_one() {
         let dir = tempfile::tempdir().unwrap();
-        // A cap small enough for roughly two of the three frames.
         let one_size = {
             let mut probe = DiskCache::open(dir.path().join("probe"), u64::MAX);
-            probe.store(1, 16, 16, &frame(16, 16, 3));
+            probe.store(parked(1, 16, 16, &frame(16, 16, 3), 8));
             probe.used_bytes()
         };
-        let mut c = DiskCache::open(dir.path().join("real"), one_size * 2 + one_size / 2);
-        c.store(1, 16, 16, &frame(16, 16, 1));
-        // Distinct mtimes even on coarse filesystem clocks.
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        c.store(2, 16, 16, &frame(16, 16, 2));
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        c.store(3, 16, 16, &frame(16, 16, 3));
-        assert!(c.used_bytes() <= one_size * 2 + one_size / 2);
-        assert!(!c.contains(1), "oldest entry evicts first");
-        assert!(c.contains(3), "newest entry survives");
+        let cap = one_size * 2 + one_size / 2;
+        let mut c = DiskCache::open(dir.path().join("real"), cap);
+        // The dear one first, so being oldest is not what saves it.
+        c.store(parked(1, 16, 16, &frame(16, 16, 1), 500));
+        c.store(parked(2, 16, 16, &frame(16, 16, 2), 1));
+        c.store(parked(3, 16, 16, &frame(16, 16, 3), 1));
+
+        assert!(c.used_bytes() <= cap);
+        assert!(
+            c.contains(1),
+            "the frame that cost 500 ms to make is the one worth keeping"
+        );
+        assert_eq!(c.len(), 2, "and the cap was actually enforced");
     }
 
+    /// Lowering the cap evicts at once rather than waiting for the next store,
+    /// so the space the user just asked to reclaim is really gone.
     #[test]
     fn set_cap_evicts_immediately_when_lowered() {
         let dir = tempfile::tempdir().unwrap();
         let one_size = {
             let mut probe = DiskCache::open(dir.path().join("probe"), u64::MAX);
-            probe.store(1, 16, 16, &frame(16, 16, 3));
+            probe.store(parked(1, 16, 16, &frame(16, 16, 3), 8));
             probe.used_bytes()
         };
         let mut c = DiskCache::open(dir.path().join("real"), u64::MAX);
-        c.store(1, 16, 16, &frame(16, 16, 1));
-        std::thread::sleep(std::time::Duration::from_millis(30));
-        c.store(2, 16, 16, &frame(16, 16, 2));
+        c.store(parked(1, 16, 16, &frame(16, 16, 1), 1));
+        c.store(parked(2, 16, 16, &frame(16, 16, 2), 500));
         assert!(c.contains(1) && c.contains(2));
-        // Tightening the cap to hold one frame evicts the oldest at once.
+
         c.set_cap(one_size + one_size / 2);
         assert!(c.used_bytes() <= one_size + one_size / 2);
-        assert!(!c.contains(1), "lowering the cap evicts the oldest");
-        assert!(c.contains(2));
+        assert!(c.contains(2), "the dear frame survives the squeeze");
+        assert!(!c.contains(1));
+    }
+
+    /// **The index is what makes the tier cheap to open**, and it must agree with
+    /// the folder across a close and a reopen — otherwise the cache either
+    /// forgets frames that are taking up room, or promises frames that are gone.
+    #[test]
+    fn a_reopened_cache_knows_what_it_holds_without_a_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        let (used, hashes) = {
+            let mut c = DiskCache::open(dir.path().to_path_buf(), u64::MAX);
+            c.store(parked(1, 8, 8, &frame(8, 8, 1), 20));
+            c.store(parked(2, 8, 8, &frame(8, 8, 2), 20));
+            c.flush_index();
+            let mut hashes = c.known_hashes();
+            hashes.sort_unstable();
+            (c.used_bytes(), hashes)
+        };
+
+        let reopened = DiskCache::open(dir.path().to_path_buf(), u64::MAX);
+        assert_eq!(reopened.used_bytes(), used);
+        let mut again = reopened.known_hashes();
+        again.sort_unstable();
+        assert_eq!(again, hashes);
+        assert!(reopened.contains(1) && reopened.contains(2));
+    }
+
+    /// A cache written by a build with no index — or one whose index file was
+    /// deleted — is rebuilt by walking the folder, so nothing is orphaned
+    /// (docs/06 §5.4's "rebuilt by scan if missing or corrupt").
+    #[test]
+    fn a_missing_index_is_rebuilt_from_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        {
+            let mut c = DiskCache::open(dir.path().to_path_buf(), u64::MAX);
+            c.store(parked(1, 8, 8, &frame(8, 8, 1), 20));
+            c.flush_index();
+        }
+        fs::remove_file(dir.path().join("index.bin")).unwrap();
+        let _ = fs::remove_file(dir.path().join("index.log"));
+
+        let mut rebuilt = DiskCache::open(dir.path().to_path_buf(), u64::MAX);
+        assert!(rebuilt.contains(1), "the frame on disk was found again");
+        assert!(rebuilt.used_bytes() > 0);
+        assert_eq!(rebuilt.load(1).map(|f| (f.width, f.height)), Some((8, 8)));
+    }
+
+    /// A file deleted behind the cache's back (a user emptying the folder, the
+    /// operating system reclaiming a cache directory) must not leave the index
+    /// promising a frame that is not there: the failed load drops it.
+    #[test]
+    fn a_frame_deleted_underneath_is_dropped_from_the_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = DiskCache::open(dir.path().to_path_buf(), u64::MAX);
+        c.store(parked(5, 8, 8, &frame(8, 8, 1), 20));
+        let hex = format!("{:032x}", 5u128);
+        fs::remove_file(
+            dir.path()
+                .join("frames")
+                .join(&hex[..2])
+                .join(format!("{hex}.kfr")),
+        )
+        .unwrap();
+
+        assert!(c.load(5).is_none(), "there is nothing to load");
+        assert!(!c.contains(5), "and the index no longer claims otherwise");
+        assert_eq!(c.used_bytes(), 0);
+    }
+
+    /// Storing the same frame twice is not a second copy — the name is the
+    /// content — but it does count as the frame being wanted again.
+    #[test]
+    fn storing_a_held_frame_again_is_a_use_not_a_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut c = DiskCache::open(dir.path().to_path_buf(), u64::MAX);
+        c.store(parked(9, 8, 8, &frame(8, 8, 1), 20));
+        let used = c.used_bytes();
+        c.store(parked(9, 8, 8, &frame(8, 8, 1), 20));
+        assert_eq!(c.used_bytes(), used, "content-addressed: one file");
+        assert_eq!(c.len(), 1);
     }
 
     #[test]
