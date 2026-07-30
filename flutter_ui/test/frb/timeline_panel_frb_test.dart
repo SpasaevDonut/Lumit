@@ -16,6 +16,7 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
+import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -1067,6 +1068,300 @@ void main() {
       final trimOut = barDragPreview('a', BarGrab.trimOut, 7);
       expect(
           (trimOut.deltaIn, trimOut.deltaOut, trimOut.offsetShift), (0, 7, 0));
+    });
+
+    /// Which part of a bar a press takes hold of. The third-of-the-bar cap is
+    /// the point: without it a short bar is all edge and cannot be moved.
+    test('barGrabAt keeps a middle on even the shortest bar', () {
+      expect(barGrabAt(2, 100), BarGrab.trimIn);
+      expect(barGrabAt(50, 100), BarGrab.move);
+      expect(barGrabAt(97, 100), BarGrab.trimOut);
+      // Nine pixels wide: three each way, and a middle that still moves.
+      expect(barGrabAt(1, 9), BarGrab.trimIn);
+      expect(barGrabAt(4.5, 9), BarGrab.move);
+      expect(barGrabAt(8, 9), BarGrab.trimOut);
+    });
+
+    /// The rule the ends obey (K-211): a source-backed layer stops where its
+    /// media does, and Retime takes the limits off.
+    test('barBounds pins a source-backed layer and frees a retimed one', () {
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: 50, retimed: false),
+        const BarBounds(minIn: 10, maxOut: 60),
+      );
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: 50, retimed: true),
+        BarBounds.free,
+        reason: 'Retime decides its own source times, so the ends are free',
+      );
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: null, retimed: false),
+        BarBounds.free,
+        reason: 'a generated layer — or media that would not read — is free',
+      );
+    });
+
+    /// What the clamp actually does to a gesture in flight.
+    test('clampBarDelta holds a trim inside its source', () {
+      const bounds = BarBounds(minIn: 10, maxOut: 60);
+      int clamp(BarGrab grab, int delta,
+              {int inFrame = 20, int outFrame = 50, BarBounds b = bounds}) =>
+          clampBarDelta(
+              grab: grab,
+              delta: delta,
+              inFrame: inFrame,
+              outFrame: outFrame,
+              bounds: b);
+
+      expect(clamp(BarGrab.trimIn, -5), -5, reason: 'room to spare');
+      expect(clamp(BarGrab.trimIn, -50), -10,
+          reason: 'the head stops on the source\'s first frame');
+      expect(clamp(BarGrab.trimOut, 50), 10,
+          reason: 'the tail stops on the source\'s last frame');
+      expect(clamp(BarGrab.trimOut, 500, b: BarBounds.free), 500,
+          reason: 'a free end goes wherever it is dragged');
+      // A move carries the start offset, so it can never leave the source.
+      expect(clamp(BarGrab.move, 900), 900);
+      // Never inside out: a bar always keeps at least one frame.
+      expect(clamp(BarGrab.trimIn, 100), 29);
+      expect(clamp(BarGrab.trimOut, -100), -29);
+      // A layer already longer than its source keeps the length it has: the
+      // bound holds it still rather than dragging it back.
+      expect(clamp(BarGrab.trimOut, 5, inFrame: 20, outFrame: 80), 0);
+      expect(clamp(BarGrab.trimOut, -5, inFrame: 20, outFrame: 80), -5,
+          reason: 'pulling it back towards the source is always allowed');
+    });
+
+    /// Frames from exact times, in integers (K-184): the panel maps a start
+    /// offset without asking the engine, and must floor the way `frame_at`
+    /// does — including for a layer that starts before the comp.
+    test('frameOfTime floors the way the engine does', () {
+      BridgeRational r(int num, int den) => BridgeRational(num: num, den: den);
+      expect(frameOfTime(r(1, 1), 30, 1), 30);
+      expect(frameOfTime(r(1, 2), 30, 1), 15);
+      expect(frameOfTime(r(1, 30), 24, 1), 0, reason: 'floors, never rounds');
+      expect(frameOfTime(r(-1, 1), 30, 1), -30);
+      expect(frameOfTime(r(-1, 30), 24, 1), -1,
+          reason: 'negative times floor downwards, as div_euclid does');
+      expect(frameOfTime(r(1, 1), 30000, 1001), 29,
+          reason: '29.97: one second is 29 whole frames');
+    });
+
+    /// A Precomp layer cannot be trimmed past the comp it holds — and turning
+    /// Retime on takes the limit off (K-211). Fails without the clamp: the
+    /// tail simply followed the pointer.
+    testWidgets('a precomp bar stops at the end of its source', (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      // A short source, so the tail can reach the end of it in one drag.
+      final settings = inner.getSettings();
+      inner.setSettings(
+        settings: BridgeCompSettings(
+          name: settings.name,
+          width: settings.width,
+          height: settings.height,
+          fpsNum: settings.fpsNum,
+          fpsDen: settings.fpsDen,
+          duration: const BridgeRational(num: 5, den: 1),
+        ),
+      );
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      final sourceFrames = inner.durationFrames().toInt();
+      // Well inside the source, so there is room to drag outward.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: 200),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      // Far more than the source has left: the tail must stop, not follow.
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: layer.getSpan().outPoint), sourceFrames,
+          reason: 'the tail landed on the source\'s last frame');
+
+      // The corner mark says why it stopped.
+      final marks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((marks.painter as BarEndMarksPainter).atOut, isTrue);
+
+      // Retime on: the layer now decides its own source times, so it stretches.
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(100, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: layer.getSpan().outPoint),
+          greaterThan(sourceFrames),
+          reason: 'a retimed layer is any length the user drags it to');
+      final retimedMarks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((retimedMarks.painter as BarEndMarksPainter).atOut, isFalse,
+          reason: 'no limit, no mark');
+    });
+
+    /// Switching Retime on keys the layer where it *is* (K-213): the two
+    /// diamonds land on its own start and end, not at the start of the
+    /// composition. Fails without the comp-clock conversion at the seam — the
+    /// keys drew at frames 0 and (duration) however far along the layer sat.
+    testWidgets('the Retime keys land on the layer, not the comp start',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      // Moved along the timeline and trimmed a little off its head, so its own
+      // zero is neither the comp's zero nor its in point.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 180),
+          outPoint: p.comp.timeOfFrame(frame: 480),
+          startOffset: p.comp.timeOfFrame(frame: 120),
+        ),
+      );
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final keys = layer.getRetimeProperty()! as BridgeScalar_Keyframed;
+      final frames = [
+        for (final key in keys.field0) p.comp.frameAtTime(time: key.time)
+      ];
+      expect(frames, [180, 480],
+          reason: 'the keys sit on the layer\'s own start and end');
+
+      // And that is where the lane draws them, in the panel's own arithmetic.
+      final fps = p.comp.fps();
+      expect([for (final key in keys.field0) laneKeyFrame(key, fps).round()],
+          [180, 480]);
+    });
+
+    /// A generated layer has no source to run out of: both ends go wherever
+    /// they are dragged, and neither wears a corner mark.
+    testWidgets('a solid bar trims freely and wears no marks', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: 200),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(120, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(
+          p.comp.frameAtTime(time: layer.getSpan().outPoint), greaterThan(200));
+
+      final marks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((marks.painter as BarEndMarksPainter).atIn, isFalse);
+      expect((marks.painter as BarEndMarksPainter).atOut, isFalse);
+      expect(
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}')),
+          findsNothing,
+          reason: 'no source, nothing to show past the ends');
+    });
+
+    /// A trimmed source-backed layer shows where its media would reach — the
+    /// faint outline behind the bar (K-212) — and stops showing it once the bar
+    /// fills the source, or once Retime makes "the source's reach" meaningless.
+    /// The one-frame bug: the ghost outline appearing part-way through a trim
+    /// took the bar's place in its Stack, so the bar's element — and the
+    /// recogniser holding the drag — was rebuilt mid-gesture. The bar moved by
+    /// the first pointer event's frames and then went dead, which read as "the
+    /// edge only moves one frame". Fails without the keys on the Stack's
+    /// children; a single-event drag hides it, so this one moves in steps, as
+    /// a hand does.
+    testWidgets('a source-backed edge follows the pointer the whole way',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      final rect = tester.getRect(fill);
+      final before = p.comp.frameAtTime(time: layer.getSpan().outPoint);
+      // A mouse: precise pointers have a one-pixel slop, so every step of this
+      // counts as movement. Ten steps, the way a hand drags.
+      final gesture = await tester.startGesture(
+          Offset(rect.right - 2, rect.center.dy),
+          kind: PointerDeviceKind.mouse);
+      for (var i = 0; i < 10; i++) {
+        await gesture.moveBy(const Offset(-4, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // Forty pixels of pointer, at this zoom, is far more than the couple of
+      // frames one event carries.
+      final after = p.comp.frameAtTime(time: layer.getSpan().outPoint);
+      final perPixel = (before - after) / 40;
+      expect(perPixel, greaterThan(3),
+          reason: 'the edge tracked all forty pixels, not just the first four');
+      expect(
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}')),
+          findsOneWidget,
+          reason: 'and the ghost that used to break it is on screen');
+    });
+
+    testWidgets('a trimmed precomp shows how far its source reaches',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      final sourceFrames = inner.durationFrames().toInt();
+      final ghost =
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}'));
+
+      await mount(tester, p);
+      expect(ghost, findsNothing,
+          reason: 'a layer filling its source has nothing left to show');
+
+      // Crop the tail: the outline now reaches past it, to the source's end.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: sourceFrames - 300),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      expect(ghost, findsOneWidget);
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      expect(tester.getRect(ghost).right,
+          greaterThan(tester.getRect(fill).right),
+          reason: 'it reaches past the trimmed end');
+      expect(tester.getRect(ghost).left, closeTo(tester.getRect(fill).left, 0.5),
+          reason: 'and not past the end that is still at the source start');
+
+      // Retime on: the source has no reach worth drawing any more.
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      expect(ghost, findsNothing);
     });
 
     /// A layer can start BEFORE the comp (docs/TODO: "re-introduce"): drag a

@@ -1229,7 +1229,10 @@ fn render_comp_with_preview(
         comp.layers[index].effects = effects;
     }
     if let Some(transform) = &req.transform {
-        transform.write(&mut comp.layers[index].transform)?;
+        // The preview's keys arrive on the composition's clock like every other
+        // read (K-213); the layer's own offset carries them back.
+        let offset = comp.layers[index].start_offset.0;
+        transform.write_at(&mut comp.layers[index].transform, offset)?;
     }
 
     // A drag is not playback: full resolution (EveryFrame skips the adaptive

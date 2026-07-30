@@ -390,6 +390,17 @@ remains worthwhile but is now much lower stakes. Registering a texture still
 cannot happen in a widget test; `integration_test/shared_texture_test.dart`
 (run by hand on a real window) is the coverage.
 
+**The Windows shared-texture test races, rarely (seen 2026-07-30).**
+`lumit-gpu`'s `shared::tests::the_legacy_handle_yields_the_pixels_angle_style` failed one
+CI run with `[0, 0, 0, 0]` where the orange should be, and passed on the run before and the
+run after with nothing between them touching that code. The cause is the missing handshake
+the module note already records: `present` ends with a D3D11 `CopyResource` and a `Flush`,
+which *submits* the copy without waiting for it, and the test's reader opens the shared
+texture on a third device with no keyed mutex to wait on — so it can map the surface before
+the copy has landed. Fix it with the reader waiting on a `D3D11_QUERY_EVENT` (test-side, no
+change to the shipping path) or by landing the keyed-mutex handshake K-177 defers. Wants a
+Windows machine to write it on: a blind fix cannot be run before it is pushed.
+
 **Playback scheduler — what remains.** The ring landed (2026-07-27): renders run
 ahead of the clock into a bounded ring sized by measured p95 cost
 ([impl/playback-scheduler.md](impl/playback-scheduler.md) §5), presents pace

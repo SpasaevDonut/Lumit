@@ -3331,3 +3331,147 @@ from Apply, so it would be a button that promises a choice it does not have.
 **Not done here:** the x/y position pick for coordinate-valued parameter pairs. The magnifier
 carries the mode, but no Flutter row pairs x and y into one control yet, so there is nothing
 to arm it from; recorded in docs/TODO.md rather than half-wired.
+**K-211 · DECIDED · A layer's ends are handles, and its source is the limit.** From the
+owner (2026-07-30; numbered K-210 while it was in review, and renumbered on the merge that
+gave that number to the dropper): the start and end of a layer must be draggable to change its length,
+for every layer kind — and a Footage, audio or Precomp layer must not be draggable to show
+what its source does not hold, unless it is retimed.
+
+**Trimming for every kind.** Dragging either end of a bar trims that end; dragging its
+middle moves it, as before. The grab zone at each end is 8px but never more than a third of
+the bar, which is what makes a short bar draggable at all: at a flat 6px a two-frame bar was
+entirely edge, so it could be trimmed but never moved. The pointer takes the horizontal
+resize arrow over each zone, because an affordance nobody can see is one nobody uses — the
+gesture existed before this entry and the report was that it did not.
+
+**The source is the limit.** A layer whose source has a length of its own trims within it:
+the in point stops at the source's first frame (the layer's own time zero, which is where
+`start_offset` puts it on the comp timeline) and the out point stops at its last. That is
+Footage — picture and sound alike — and Precomp, whose length is the nested comp's duration.
+Every generated kind (Solid, Text, Adjustment, Null, Camera, Sequence) has nothing to run
+out of and trims freely. **Retime takes both limits off** (docs/04-RETIMING.md): a retimed
+layer maps its own local time onto source time, so its length stops being the source's
+business and it stretches as far as it is dragged. Both routes to a retime count — the
+Retime property (K-197) and the Source card's older speed map — because both make the same
+promise. Moving a bar is never limited: `start_offset` travels with it.
+
+**A bound never drags an edge that is already outside it.** A layer stretched while retimed
+and then un-retimed keeps the length it has; the limit holds its end still rather than
+snapping it back, and pulling back towards the source is always allowed. Anything else would
+silently destroy work on a switch toggle.
+
+**Media that will not read leaves the ends free.** A missing file, or a build with no media
+feature, answers "no length" — and no length means no limit, never a limit guessed at. A
+layer must never be cropped by the absence of an answer.
+
+**The marks: a small triangle in the top corner of the bar** on the side that is at its
+limit, drawn in the same ink as the clip splits so the bar keeps one vocabulary. Present
+only on the kinds that have a source, absent the moment Retime is on — the mark and the
+rule are the same fact, so they can never disagree on screen.
+
+**Where the rule lives.** In the panel, not the engine. `SetLayerSpan` still accepts any
+span that is not inverted: AE import, project load and `trim_to_source_end` all legitimately
+write spans the drag would refuse, and an op that second-guesses its caller would break
+them. The gesture is what is bounded, and the bound is a pure function with its own tests.
+
+**What it costs per rebuild: nothing (K-184).** A footage length comes from probing the file,
+so it is asked once per layer off the build and kept for the session, like the waveform
+peaks. The rest — a precomp's duration, whether Retime is on, where the start offset sits —
+is worked out once per *document revision* and cached; `CompModel` now exposes that revision
+so a panel can cache anything derived from the model honestly. Frames come from exact
+integer arithmetic on the comp's rate rather than a `frame_at` call per layer per frame.
+
+**K-212 · DECIDED · Letting go of Retime re-hangs the layer on its source, and a
+trimmed layer shows how far its media reaches.** From the owner (2026-07-30), refining
+K-211. Two halves, both about the same thing: a layer's relationship with the material
+behind it should be visible, and should survive being switched about.
+
+**Switching Retime off re-anchors the layer.** While it is retimed a layer can be any
+length, because it chooses which source moment each of its own frames shows; when the map
+goes away it plays at source rate again and has to be given a length. Holding the stretched
+length (K-211's first answer) was wrong: it left the layer showing material the source does
+not have. The rule now is the frame already on screen. The layer keeps its **in point** and
+shows the **same frame** there — so if that was the source's first frame it simply starts
+from the beginning, and if it was some way in it carries on from there. From that anchor it
+runs at source rate until either the source runs out or its own out point arrives,
+**whichever comes first**. It never grows: a layer trimmed short stays short. One undo step
+covers the removal and the span together.
+
+The anchor is snapped to the **comp's** frame grid rather than kept at full precision. The
+start offset it produces is what every later trim measures from, and an offset sitting
+between two frames puts the layer's own zero between two frames for good; the timeline edits
+in whole frames, so the anchor does too. Both routes to a retime behave identically — the
+Retime property (K-197) and the Source card's speed map — because both make the same promise.
+
+`unretimed_span` is a pure function in `lumit-core::ops`, next to `edit_layer_span`: this is
+span arithmetic, and it is the kind of rule that must be provable rather than observed. The
+bridge supplies the two facts it cannot derive — the source moment showing at the in point,
+read through the map that is about to go, and the source's own length. No readable length
+(missing media, a build without the media feature) re-anchors and leaves the out point
+alone, the same "no length is never a guessed length" rule K-211 set.
+
+**A trimmed layer shows its source's reach.** A Footage, audio or Precomp layer that is not
+retimed and does not fill its source draws a **faint outlined rectangle spanning the whole
+source**, behind the bar, in the layer's own label colour. What shows past each end is
+exactly the material trimmed away, and because it is drawn behind, the layer reads as one
+clip with the middle solid rather than as three objects. It is absent when the bar already
+fills the source, absent on the kinds with no source, and absent under Retime, where "the
+source's reach" is not a fact about the layer at all. It sits with K-211's corner triangles
+in one vocabulary: a triangle says *this end can go no further*, the ghost says *this end
+could go further, and this is how far*.
+
+**Both marks travel with a move.** They are drawn from the source's reach, which moves with
+the layer: sliding a bar along the timeline carries its start offset, so the bounds slide
+with it. Drawn from the document's bounds alone, a bar being moved appeared to leave its
+limit behind — the fix is one shift applied to both marks while a move is in flight.
+
+**The trap the ghost set, recorded because it cost a working gesture.** The outline is a
+second child of the bar's `Stack`, and it appears the moment a trim starts. Unkeyed,
+Flutter matches a `Stack`'s children by position, so the ghost arriving took the bar's slot
+and the bar's element — with it the recogniser holding the drag in the gesture arena — was
+rebuilt from scratch mid-gesture. The bar moved by the first pointer event's worth of
+frames and then went dead: "dragging a footage edge only moves one frame". Both children
+carry keys now. It only ever bit the source-backed kinds, because they are the only ones
+with a ghost to appear, and only when the pointer moved in more than one event — which is
+why the first round of tests, each dragging in a single synthetic step, all passed.
+
+**K-213 · DECIDED · Keyframes live in the layer's time and cross on the composition's
+clock.** From the owner (2026-07-30): switching Retime on put its two keys "where the start
+and end points would be if the layer's position was still at the start of the comp". They
+were, and so was every other keyframe on any layer that had been moved — the report caught a
+seam fault whose only unmissable face is the two keys Retime creates for you.
+
+**The engine keys properties in layer-local time, and that is right.** Every evaluation
+path — the render plan, the transform sampler, the cache-key hasher — reads a property at
+`comp time − start_offset`, so a layer's animation travels with the layer when it is
+dragged along the timeline. That is the behaviour an editor must have; nothing about it
+changes.
+
+**The frontend thinks in comp frames, and that is also right.** The ruler counts comp
+frames, a lane is drawn against the comp's axis, and a key drag commits where the pointer
+is. Asking the interface to hold two clocks would put the conversion in every row, lane,
+curve and field that touches a key.
+
+**So the bridge converts, and it is the only place that does.** `BridgeScalar::read_at`
+carries each key out by the owning layer's `start_offset`; `animation_at` carries it back.
+Both take the offset as an argument with no default, so a new reader cannot quietly forget
+one — the compiler asked for it at all forty-odd call sites when the signatures changed.
+Everything that crosses carrying keys goes through them: the transform group, the Retime
+property, effect parameters, a camera's zoom, a volume curve, and the staged
+`BridgeEffectInstance` — which now carries its layer's offset, because a handle read out of
+a layer is the only place that fact is known. `BridgeEffectInstance::new` stopped being
+exposed to Dart in the same move: it was never called from there, and a constructor with no
+layer would have no honest offset to take.
+
+**Retime's two keys span the layer's own in and out.** `Layer::identity_retime` took a
+duration and keyed zero and that duration; it now takes the layer's local in and out points.
+Two faults in one: on screen the keys sat at the start of the composition, and in the model
+a trimmed layer's map stopped short of its tail — past the last key a property holds, so
+everything beyond `duration` played one frame over and over. Spanning the real range fixes
+both, and keeps the promise that switching Retime on changes nothing visible.
+
+**Not done: the pre-K-197 speed map.** The Source card's segment store has the same
+"identity across `0..duration`" shape and the same tail problem on a trimmed layer. It is
+not keyframed, so nothing draws it in the wrong place, and it is the arm the ponytail
+comment in `Layer::source_time_at` marks for deletion; it is left alone rather than being
+half-migrated. Recorded here so the next person meets it deliberately.

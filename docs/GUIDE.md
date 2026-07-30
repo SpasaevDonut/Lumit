@@ -976,7 +976,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   because it genuinely *is* every other property — there is no Retime-specific code in any
   of those places. Switching it on installs two keys running source time alongside layer
   time, so the picture does not move; drag the second key later and the clip plays slower,
-  drag it earlier and it plays faster. That is deliberately *all* it does for now: no speed
+  drag it earlier and it plays faster. **The two keys land on the layer's own start and
+  end** — where it currently sits on the timeline, and where its ends currently are if you
+  have trimmed it (K-213). That sounds obvious and was not: keyframes are stored in the
+  layer's *own* clock, which is what makes a layer's animation travel with it when you slide
+  the layer along the timeline, and the Timeline draws in the composition's clock. The two
+  are converted for each other in exactly one place, at the engine boundary; before that,
+  every keyframe on a layer that had been moved was drawn as though the layer still began at
+  the start of the composition, and Retime's own two keys made it impossible to miss. That is deliberately *all* it does for now: no speed
   ramps, no ease presets, no freeze command. `Layer::source_time_at` is the one function
   that answers the question, so what the renderer decodes and what the frame cache files it
   under can never drift apart. The older, much larger machinery below still answers for
@@ -1516,7 +1523,30 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   ruler with each layer's bar on its own *lane*). Each bar wears its layer's **label
   colour** — the same chip its outline swatch shows (K-189) — so a tall stack reads at a
   glance and picking a new label recolours the bar. Drag a layer's bar body to slide it
-  earlier or later in time (one undo per drag); drag its ends to trim. A layer twirled
+  earlier or later in time (one undo per drag); drag its ends to trim — the pointer turns
+  into the horizontal resize arrow over the last few pixels of each end, which is where
+  the trim grab lives. **The ends know what the source holds** (K-211): a Footage, audio
+  or Precomp layer stops where its media does — you cannot drag its head earlier than the
+  clip's first frame or its tail past the last, and when an end is sitting on that limit a
+  small triangle appears in that top corner of the bar to say so. Every generated kind —
+  Solid, Text, Adjustment, Null, Camera — has no source to run out of, so both its ends go
+  wherever you drag them and neither wears a triangle. Switch **Retime** on and the limits
+  come off (and the triangles go): a retimed layer chooses which source moment each of its
+  own frames shows, so it can be stretched to any length you like. Sliding a bar along the
+  timeline is never limited — moving carries the content with it, so a clip that fits its
+  source still fits it wherever it lands.
+  **Trim one back and you can see what you cut off**: a faint outline runs behind the bar
+  as far as the media reaches, so the trimmed-away head or tail shows as an empty extension
+  of the clip — drag the end back out and the bar fills it again. It appears only when there
+  is something to show, and never while Retime is on.
+  **Turning Retime off puts the layer back on its source.** A retimed layer can be any
+  length, so when you switch the retime off Lumit has to give it one again, and it does that
+  from the frame you are already looking at: the layer keeps its start, still shows that
+  same frame there, and plays at normal speed from there until the footage runs out (or
+  until where the layer already ended, if that came first — it never gets longer than it
+  was). So a clip that started on its first frame simply plays from the beginning again,
+  and one parked half-way in carries on from half-way in. It is one undo either way.
+  A layer twirled
   open shows its **keyframes as diamonds on the lanes**: drag a diamond to move that
   keyframe in time, or drag a box on empty lane space to select the diamonds inside it.
   Dragging never scrolls the timeline — the wheel and the scrollbars do: a plain wheel

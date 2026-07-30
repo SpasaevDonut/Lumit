@@ -515,6 +515,36 @@ keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   **name** in the outline moves it up or down the stack — drop it on a row and it takes
   that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
 
+  **The ends are handles, and the source is the limit (K-211).** Dragging the last few
+  pixels of either end of a bar trims that end — the pointer shows the horizontal resize
+  arrow there, and the grab zone never takes more than a third of a short bar, so even a
+  two-frame bar keeps a middle to move by. A layer whose source has a length of its own —
+  Footage (picture or sound) and Precomp — trims **within** it: the in point cannot go
+  earlier than the source's first frame, the out point cannot go past its last, and a bar
+  already at that limit draws a small triangle in that top corner. Every generated kind
+  (Solid, Text, Adjustment, Null, Camera, Sequence) has no such source and trims freely,
+  with no corner marks. **Retime removes both limits and both marks**: a retimed layer
+  maps its own local time onto source time (docs/04-RETIMING.md), so its length is no
+  longer the source's business. Media whose length cannot be read leaves the ends free —
+  a missing file must never silently crop a layer. Moving a bar is never limited: the
+  start offset travels with it, so what fits its source keeps fitting it.
+
+  **A trimmed layer shows its source's reach (K-212).** A source-backed layer that is not
+  retimed and does not fill its source draws a faint outlined rectangle spanning the whole
+  source, behind the bar and in the layer's own label colour — so what shows past each end
+  is exactly the material trimmed away. Absent when the bar already fills its source, on
+  the kinds with no source, and under Retime. One vocabulary with the corner triangles: a
+  triangle says *this end can go no further*, the outline says *this end could, and this
+  is how far*. Both travel with a bar being moved, because the source's reach moves with it.
+
+  **Switching Retime off re-hangs the layer on its source (K-212).** A retimed layer may be
+  any length; when the map goes away it plays at source rate again and needs a length. It
+  keeps its in point and the frame showing there, then runs at source rate until either the
+  source runs out or its own out point arrives, whichever comes first — it never grows, so
+  a layer trimmed short stays short. One undo step covers the removal and the span. Both
+  routes to a retime behave the same way, and media with no readable length re-anchors and
+  leaves the out point alone.
+
   **Both halves move (K-208).** While the drag is in flight the stack shows where the drop
   would land: the lifted layer slides towards its slot and the layers it passes slide the
   other way — in the outline **and** in the lane area at once, from one drag state and one

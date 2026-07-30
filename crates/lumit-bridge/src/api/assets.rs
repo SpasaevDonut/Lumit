@@ -87,20 +87,23 @@ impl LayerReference {
     /// model where the z=0 plane maps 1:1. `None` on any other kind.
     #[frb(sync)]
     pub fn get_camera_zoom(&self) -> Result<Option<BridgeScalar>, BridgeError> {
-        let lumit_core::model::LayerKind::Camera { zoom } = self.item()?.kind else {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Camera { zoom } = layer.kind else {
             return Ok(None);
         };
-        Ok(Some(BridgeScalar::read(&zoom)))
+        // Keys on the composition's clock, like every other channel (K-213).
+        Ok(Some(BridgeScalar::read_at(&zoom, layer.start_offset.0)))
     }
 
     /// Set a camera's zoom. Animatable, so it takes a whole `BridgeScalar` like
     /// every other curve-capable value.
     #[frb(sync)]
     pub fn set_camera_zoom(&self, zoom: BridgeScalar) -> Result<(), BridgeError> {
-        let lumit_core::model::LayerKind::Camera { .. } = self.item()?.kind else {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Camera { .. } = layer.kind else {
             return Err(BridgeError::NotCamera);
         };
-        let animation = zoom.animation()?;
+        let animation = zoom.animation_at(layer.start_offset.0)?;
         self.commit(lumit_core::Op::SetCameraZoom {
             comp: self.comp_id,
             layer: self.layer_id,
