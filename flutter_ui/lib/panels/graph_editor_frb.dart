@@ -90,6 +90,7 @@ class GraphChannel {
   double get staticValue => switch (scalar) {
         BridgeScalar_Static(:final field0) => field0,
         BridgeScalar_Keyframed() => 0,
+        BridgeScalar_Expression() => 0,
       };
 }
 

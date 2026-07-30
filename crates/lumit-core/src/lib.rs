@@ -15,6 +15,7 @@ pub mod retime;
 pub mod sequence;
 pub mod store;
 pub mod time;
+pub mod expression;
 
 pub use model::Document;
 pub use ops::{Op, OpError};

@@ -98,10 +98,12 @@ List<BridgeKeyframe> laneKeysOf(LayerFoldRow row) => switch (row) {
             read(transform, group.axes.first.prop)) {
           BridgeScalar_Keyframed(:final field0) => field0,
           BridgeScalar_Static() => const [],
+          BridgeScalar_Expression() => const[],
         },
       FoldRetimeRow(:final scalar) => switch (scalar) {
           BridgeScalar_Keyframed(:final field0) => field0,
           BridgeScalar_Static() => const [],
+          BridgeScalar_Expression() => const[],
         },
       FoldEffectParamRow(:final value) => switch (value) {
           BridgeEffectValue_Float(

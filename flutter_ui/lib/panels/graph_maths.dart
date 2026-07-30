@@ -15,6 +15,7 @@
 // pinned by the impl note on both sides, and the golden tests hold the two
 // implementations together.
 
+import 'package:flutter/rendering.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 
 /// A rational time as plain seconds — the evaluation domain (docs/14 §2:
@@ -30,6 +31,7 @@ const BridgeSideInterp easyEase = BridgeSideInterp.bezier(
 List<BridgeKeyframe> keysOf(BridgeScalar scalar) => switch (scalar) {
       BridgeScalar_Keyframed(:final field0) => field0,
       BridgeScalar_Static() => const [],
+      BridgeScalar_Expression() => const [],
     };
 
 // ---------------------------------------------------------------------------
@@ -155,6 +157,10 @@ double evaluateKeys(List<BridgeKeyframe> keys, double t) {
 double evaluateScalar(BridgeScalar scalar, double t) => switch (scalar) {
       BridgeScalar_Static(:final field0) => field0,
       BridgeScalar_Keyframed(:final field0) => evaluateKeys(field0, t),
+      BridgeScalar_Expression(:final field0) => () {
+        debugPrint("TODO: implement evaluate scalar expression in flutter ui");
+        return 0.0;
+      }()
     };
 
 /// dv/dt at `t` seconds — the engine's `evaluate_speed`: 0 outside the keys

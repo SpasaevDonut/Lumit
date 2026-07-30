@@ -236,9 +236,11 @@ class BareDropdown<T> extends StatelessWidget {
                   for (var i = 0; i < options.length; i++) ...[
                     if (group != null &&
                         group!(options[i]) != null &&
-                        (i == 0 || group!(options[i - 1]) != group!(options[i])))
+                        (i == 0 ||
+                            group!(options[i - 1]) != group!(options[i])))
                       Padding(
-                        padding: EdgeInsets.fromLTRB(10, i == 0 ? 6 : 10, 10, 2),
+                        padding:
+                            EdgeInsets.fromLTRB(10, i == 0 ? 6 : 10, 10, 2),
                         child: Text(
                           group!(options[i])!,
                           style: t.small.copyWith(color: t.textMuted),
@@ -411,6 +413,8 @@ class HouseTextField extends StatefulWidget {
   final TextEditingController controller;
   final double width;
   final ValueChanged<String>? onSubmitted;
+  final bool submitOnLostFocus;
+  final TextStyle? style;
 
   /// Grab focus on first build — for fields that appear in response to a
   /// gesture (an inline rename), where a second click to focus would be
@@ -426,7 +430,9 @@ class HouseTextField extends StatefulWidget {
     required this.controller,
     this.width = 200,
     this.onSubmitted,
+    this.submitOnLostFocus = false,
     this.autofocus = false,
+    this.style,
     this.hint,
   });
 
@@ -473,11 +479,17 @@ class _HouseTextFieldState extends State<HouseTextField> {
             controller: widget.controller,
             focusNode: _focus,
             autofocus: widget.autofocus,
-            style: t.bodyPrimary,
+            style: widget.style ?? t.bodyPrimary,
             cursorColor: t.accent,
             backgroundCursorColor: t.surface2,
             selectionColor: t.accent.withValues(alpha: 0.5),
             onSubmitted: widget.onSubmitted,
+            onTapOutside: (event) {
+              if (widget.submitOnLostFocus) {
+                widget.onSubmitted?.call(widget.controller.text);
+                _focus.unfocus();
+              }
+            },
           ),
         ],
       ),
@@ -702,6 +714,8 @@ class DragValueField extends StatefulWidget {
   /// that never crossed one [speed] increment — so nothing was ever ticked).
   final VoidCallback? onDragCancel;
 
+  final VoidCallback? setExpression;
+
   const DragValueField({
     super.key,
     required this.value,
@@ -717,6 +731,7 @@ class DragValueField extends StatefulWidget {
     this.onChangeLive,
     this.onChangeEnd,
     this.onDragCancel,
+    this.setExpression,
   });
 
   @override
@@ -816,6 +831,14 @@ class _DragValueFieldState extends State<DragValueField> {
                 },
                 child: const Text('Paste'),
               ),
+              if (widget.setExpression != null)
+                MenuRow(
+                  onPressed: () {
+                    close(null);
+                    widget.setExpression?.call();
+                  },
+                  child: const Text('Set Expression'),
+                ),
             ],
           ),
         ),
@@ -905,6 +928,41 @@ class _DragValueFieldState extends State<DragValueField> {
                 width: 1),
           ),
           child: Text(_format(widget.value), style: t.bodyPrimary),
+        ),
+      ),
+    );
+  }
+}
+
+class HouseContextMenu extends StatelessWidget {
+  const HouseContextMenu({this.child, this.itemBuilder, super.key});
+  final Widget? child;
+  final List<MenuRow> Function(void Function() close)? itemBuilder;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+        cursor: SystemMouseCursors.resizeLeftRight,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
+          child: child,
+        ));
+  }
+
+  void _contextMenu(BuildContext context, Offset globalPos) {
+    showLumitPopup<void>(
+      context: context,
+      position: globalPos,
+      builder: (close) => FloatSurface(
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              ...(itemBuilder?.call(() => close(())) ?? []),
+            ],
+          ),
         ),
       ),
     );

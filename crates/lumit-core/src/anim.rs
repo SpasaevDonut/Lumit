@@ -280,6 +280,7 @@ pub enum Animation {
     Static(f64),
     /// Sorted by time, unique times (enforced by the editing ops).
     Keyframed(Vec<Keyframe>),
+    Expression(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -308,6 +309,7 @@ impl Property {
         match &self.animation {
             Animation::Static(v) => *v,
             Animation::Keyframed(keys) => evaluate(keys, t).unwrap_or(0.0),
+            Animation::Expression(expression) => crate::expression::evaluate(expression, t),
         }
     }
 

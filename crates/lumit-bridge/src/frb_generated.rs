@@ -6508,6 +6508,10 @@ impl SseDecode for crate::api::effect::BridgeScalar {
                     <Vec<crate::api::effect::BridgeKeyframe>>::sse_decode(deserializer);
                 return crate::api::effect::BridgeScalar::Keyframed(var_field0);
             }
+            2 => {
+                let mut var_field0 = <String>::sse_decode(deserializer);
+                return crate::api::effect::BridgeScalar::Expression(var_field0);
+            }
             _ => {
                 unimplemented!("");
             }
@@ -8920,6 +8924,9 @@ impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeScalar {
             crate::api::effect::BridgeScalar::Keyframed(field0) => {
                 [1.into_dart(), field0.into_into_dart().into_dart()].into_dart()
             }
+            crate::api::effect::BridgeScalar::Expression(field0) => {
+                [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
             _ => {
                 unimplemented!("");
             }
@@ -10199,6 +10206,10 @@ impl SseEncode for crate::api::effect::BridgeScalar {
             crate::api::effect::BridgeScalar::Keyframed(field0) => {
                 <i32>::sse_encode(1, serializer);
                 <Vec<crate::api::effect::BridgeKeyframe>>::sse_encode(field0, serializer);
+            }
+            crate::api::effect::BridgeScalar::Expression(field0) => {
+                <i32>::sse_encode(2, serializer);
+                <String>::sse_encode(field0, serializer);
             }
             _ => {
                 unimplemented!("");

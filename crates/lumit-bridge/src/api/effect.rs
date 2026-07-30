@@ -17,6 +17,8 @@
 //! unchanged. That is what lets the panel treat "read the value, change one
 //! field, write it" as safe — the ordinary way every control in it works.
 
+use std::println;
+
 use flutter_rust_bridge::frb;
 pub use lumit_core::model::EffectInstance;
 use lumit_core::{
@@ -168,6 +170,9 @@ pub fn sample_scalar(scalar: BridgeScalar, time: BridgeRational) -> f64 {
                 })
                 .collect();
             lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
+        }
+        BridgeScalar::Expression(expr) => {
+            lumit_core::expression::evaluate(&expr, Rational::new(time.num, time.den).unwrap_or(Rational::ZERO).to_f64())
         }
     }
 }
@@ -413,6 +418,7 @@ pub enum BridgeScalar {
     /// At least one key, strictly ascending in time — the invariant the
     /// engine's keyframe ops maintain, enforced here on the way in.
     Keyframed(Vec<BridgeKeyframe>),
+    Expression(String),
 }
 
 impl BridgeScalar {
@@ -431,6 +437,7 @@ impl BridgeScalar {
             Animation::Keyframed(keys) => {
                 BridgeScalar::Keyframed(keys.iter().map(BridgeKeyframe::read).collect())
             }
+            Animation::Expression(expr) => BridgeScalar::Expression(expr.clone())
         }
     }
 
@@ -460,7 +467,8 @@ impl BridgeScalar {
                     out.push(key);
                 }
                 Ok(Animation::Keyframed(out))
-            }
+            },
+            BridgeScalar::Expression(expr) =>Ok(Animation::Expression(expr.clone()))
         }
     }
 }
@@ -740,6 +748,7 @@ impl BridgeEffectInstance {
 
         value.write(&mut param.value)
     }
+    
 
     #[frb(ignore)]
     fn param(&self, id: &str) -> Result<&EffectParam, BridgeError> {

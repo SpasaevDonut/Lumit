@@ -6014,6 +6014,10 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         return BridgeScalar_Keyframed(
           dco_decode_list_bridge_keyframe(raw[1]),
         );
+      case 2:
+        return BridgeScalar_Expression(
+          dco_decode_String(raw[1]),
+        );
       default:
         throw Exception("unreachable");
     }
@@ -7594,6 +7598,9 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       case 1:
         var var_field0 = sse_decode_list_bridge_keyframe(deserializer);
         return BridgeScalar_Keyframed(var_field0);
+      case 2:
+        var var_field0 = sse_decode_String(deserializer);
+        return BridgeScalar_Expression(var_field0);
       default:
         throw UnimplementedError('');
     }
@@ -9284,6 +9291,9 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       case BridgeScalar_Keyframed(field0: final field0):
         sse_encode_i_32(1, serializer);
         sse_encode_list_bridge_keyframe(field0, serializer);
+      case BridgeScalar_Expression(field0: final field0):
+        sse_encode_i_32(2, serializer);
+        sse_encode_String(field0, serializer);
     }
   }
 

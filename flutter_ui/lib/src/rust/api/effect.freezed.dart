@@ -1696,6 +1696,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult maybeMap<TResult extends Object?>({
     TResult Function(BridgeScalar_Static value)? static_,
     TResult Function(BridgeScalar_Keyframed value)? keyframed,
+    TResult Function(BridgeScalar_Expression value)? expression,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -1704,6 +1705,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that);
       case BridgeScalar_Keyframed() when keyframed != null:
         return keyframed(_that);
+      case BridgeScalar_Expression() when expression != null:
+        return expression(_that);
       case _:
         return orElse();
     }
@@ -1726,6 +1729,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult map<TResult extends Object?>({
     required TResult Function(BridgeScalar_Static value) static_,
     required TResult Function(BridgeScalar_Keyframed value) keyframed,
+    required TResult Function(BridgeScalar_Expression value) expression,
   }) {
     final _that = this;
     switch (_that) {
@@ -1733,6 +1737,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that);
       case BridgeScalar_Keyframed():
         return keyframed(_that);
+      case BridgeScalar_Expression():
+        return expression(_that);
     }
   }
 
@@ -1752,6 +1758,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult? mapOrNull<TResult extends Object?>({
     TResult? Function(BridgeScalar_Static value)? static_,
     TResult? Function(BridgeScalar_Keyframed value)? keyframed,
+    TResult? Function(BridgeScalar_Expression value)? expression,
   }) {
     final _that = this;
     switch (_that) {
@@ -1759,6 +1766,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that);
       case BridgeScalar_Keyframed() when keyframed != null:
         return keyframed(_that);
+      case BridgeScalar_Expression() when expression != null:
+        return expression(_that);
       case _:
         return null;
     }
@@ -1780,6 +1789,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult maybeWhen<TResult extends Object?>({
     TResult Function(double field0)? static_,
     TResult Function(List<BridgeKeyframe> field0)? keyframed,
+    TResult Function(String field0)? expression,
     required TResult orElse(),
   }) {
     final _that = this;
@@ -1788,6 +1798,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that.field0);
       case BridgeScalar_Keyframed() when keyframed != null:
         return keyframed(_that.field0);
+      case BridgeScalar_Expression() when expression != null:
+        return expression(_that.field0);
       case _:
         return orElse();
     }
@@ -1810,6 +1822,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult when<TResult extends Object?>({
     required TResult Function(double field0) static_,
     required TResult Function(List<BridgeKeyframe> field0) keyframed,
+    required TResult Function(String field0) expression,
   }) {
     final _that = this;
     switch (_that) {
@@ -1817,6 +1830,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that.field0);
       case BridgeScalar_Keyframed():
         return keyframed(_that.field0);
+      case BridgeScalar_Expression():
+        return expression(_that.field0);
     }
   }
 
@@ -1836,6 +1851,7 @@ extension BridgeScalarPatterns on BridgeScalar {
   TResult? whenOrNull<TResult extends Object?>({
     TResult? Function(double field0)? static_,
     TResult? Function(List<BridgeKeyframe> field0)? keyframed,
+    TResult? Function(String field0)? expression,
   }) {
     final _that = this;
     switch (_that) {
@@ -1843,6 +1859,8 @@ extension BridgeScalarPatterns on BridgeScalar {
         return static_(_that.field0);
       case BridgeScalar_Keyframed() when keyframed != null:
         return keyframed(_that.field0);
+      case BridgeScalar_Expression() when expression != null:
+        return expression(_that.field0);
       case _:
         return null;
     }
@@ -1984,6 +2002,72 @@ class _$BridgeScalar_KeyframedCopyWithImpl<$Res>
           ? _self._field0
           : field0 // ignore: cast_nullable_to_non_nullable
               as List<BridgeKeyframe>,
+    ));
+  }
+}
+
+/// @nodoc
+
+class BridgeScalar_Expression extends BridgeScalar {
+  const BridgeScalar_Expression(this.field0) : super._();
+
+  @override
+  final String field0;
+
+  /// Create a copy of BridgeScalar
+  /// with the given fields replaced by the non-null parameter values.
+  @JsonKey(includeFromJson: false, includeToJson: false)
+  @pragma('vm:prefer-inline')
+  $BridgeScalar_ExpressionCopyWith<BridgeScalar_Expression> get copyWith =>
+      _$BridgeScalar_ExpressionCopyWithImpl<BridgeScalar_Expression>(
+          this, _$identity);
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        (other.runtimeType == runtimeType &&
+            other is BridgeScalar_Expression &&
+            (identical(other.field0, field0) || other.field0 == field0));
+  }
+
+  @override
+  int get hashCode => Object.hash(runtimeType, field0);
+
+  @override
+  String toString() {
+    return 'BridgeScalar.expression(field0: $field0)';
+  }
+}
+
+/// @nodoc
+abstract mixin class $BridgeScalar_ExpressionCopyWith<$Res>
+    implements $BridgeScalarCopyWith<$Res> {
+  factory $BridgeScalar_ExpressionCopyWith(BridgeScalar_Expression value,
+          $Res Function(BridgeScalar_Expression) _then) =
+      _$BridgeScalar_ExpressionCopyWithImpl;
+  @useResult
+  $Res call({String field0});
+}
+
+/// @nodoc
+class _$BridgeScalar_ExpressionCopyWithImpl<$Res>
+    implements $BridgeScalar_ExpressionCopyWith<$Res> {
+  _$BridgeScalar_ExpressionCopyWithImpl(this._self, this._then);
+
+  final BridgeScalar_Expression _self;
+  final $Res Function(BridgeScalar_Expression) _then;
+
+  /// Create a copy of BridgeScalar
+  /// with the given fields replaced by the non-null parameter values.
+  @pragma('vm:prefer-inline')
+  $Res call({
+    Object? field0 = null,
+  }) {
+    return _then(BridgeScalar_Expression(
+      null == field0
+          ? _self.field0
+          : field0 // ignore: cast_nullable_to_non_nullable
+              as String,
     ));
   }
 }

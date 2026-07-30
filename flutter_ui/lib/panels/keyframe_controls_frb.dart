@@ -188,6 +188,7 @@ class KeyframeControlsFrb extends StatelessWidget {
   List<BridgeKeyframe> _keysOf(BridgeScalar scalar) => switch (scalar) {
         BridgeScalar_Keyframed(:final field0) => field0,
         BridgeScalar_Static() => const [],
+        BridgeScalar_Expression() => const [],
       };
 
   List<BridgeKeyframe> get _keys => _keysOf(_lead);
