@@ -42,6 +42,7 @@ import '../state/settings.dart';
 import '../state/workspace.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'cache_confirm_frb.dart';
 import 'theme_editor_frb.dart';
 
 /// The smallest budget worth setting, in MiB. Below this the cache holds a
@@ -687,8 +688,126 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
+      ..._diskCache(t, ui),
     ];
   }
+
+  /// The disk tier (docs/06 §5.4, docs/07 §15): its budget, where it lives, and
+  /// what it holds. The bottom of the three-tier cache and the only one that
+  /// outlives the session, which is why it has a folder at all.
+  List<Widget> _diskCache(LumitTheme t, LumitUiState ui) {
+    final disk = diskCacheStats();
+    final where = cacheLocationFromName(
+        ui.workspace.performance.diskCacheLocation ?? BridgeCacheLocation.appData.name);
+    return [
+      _section(t, 'Frames parked on disk', [
+        _budgetRow(
+          t,
+          key: 'settings-disk-budget',
+          description: 'How much disk space parked frames may take. These '
+              'survive closing Lumit, so a project reopens warm.',
+          bytes: disk.budgetBytes.toInt(),
+          ceilingMib: _diskCeilingMib,
+          onSet: (bytes) => setState(() {
+            setDiskCacheBudget(bytes: bytes);
+            ui.workspace.setDiskBudgetBytes(bytes.toInt());
+          }),
+        ),
+        _row(
+          t,
+          'Where',
+          disk.root.isEmpty
+              ? 'Nowhere: this machine has no folder Lumit may write to.'
+              : disk.root,
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              SizedBox(
+                width: 150,
+                child: BareDropdown<BridgeCacheLocation>(
+                  key: const ValueKey('settings-disk-location'),
+                  value: where,
+                  options: BridgeCacheLocation.values,
+                  label: _locationLabel,
+                  onChanged: (l) => _setLocation(ui, l),
+                ),
+              ),
+              if (where == BridgeCacheLocation.custom) ...[
+                const SizedBox(width: 8),
+                LumitTooltip(
+                  message: 'Choose the folder parked frames go in',
+                  child: HouseButton(
+                    key: const ValueKey('settings-disk-folder'),
+                    small: true,
+                    onPressed: () => _pickCacheFolder(ui),
+                    child: Text('Choose…', style: t.small),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        _row(
+          t,
+          'In use',
+          'Frames on disk, one promotion away from playing.',
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                '${_mib(disk.usedBytes.toInt())} MB in ${disk.entries}',
+                key: const ValueKey('settings-disk-used'),
+                style: t.small,
+              ),
+              const SizedBox(width: 8),
+              HouseButton(
+                key: const ValueKey('settings-disk-clear'),
+                small: true,
+                onPressed: () async {
+                  final cleared = await confirmClearDiskCache(context);
+                  if (cleared && mounted) setState(() {});
+                },
+                child: Text('Clear', style: t.small),
+              ),
+            ],
+          ),
+        ),
+      ]),
+    ];
+  }
+
+  static String _locationLabel(BridgeCacheLocation l) => switch (l) {
+        BridgeCacheLocation.appData => 'With Lumit',
+        BridgeCacheLocation.besideProject => 'Beside the project',
+        BridgeCacheLocation.custom => 'A folder I choose',
+      };
+
+  void _setLocation(LumitUiState ui, BridgeCacheLocation location) {
+    final folder = ui.workspace.performance.diskCacheFolder;
+    // Choosing the custom option without a folder yet leaves the tier where it
+    // is; the engine says so by keeping its default, and the Choose… button
+    // appears beside the dropdown.
+    setState(() {
+      setDiskCacheLocation(location: location, folder: folder ?? '');
+      ui.workspace.setDiskCacheLocation(location.name, folder);
+    });
+  }
+
+  Future<void> _pickCacheFolder(LumitUiState ui) async {
+    final folder = await pickFolder();
+    if (folder == null || !mounted) return;
+    setState(() {
+      setDiskCacheLocation(
+          location: BridgeCacheLocation.custom, folder: folder);
+      ui.workspace.setDiskCacheLocation(BridgeCacheLocation.custom.name, folder);
+    });
+  }
+
+  /// The ceiling for the disk budget. Free disk space is not something the
+  /// engine reports yet (K-194 covers memory only), so the field is generous
+  /// rather than guessed at: 500 GB, which no cache should reach and no user
+  /// should be stopped short of.
+  static const double _diskCeilingMib = 500 * 1024;
 
   // ---- the shapes every page is built from ---------------------------------
 

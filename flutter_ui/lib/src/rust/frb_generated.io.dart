@@ -222,6 +222,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeBezierSide dco_decode_bridge_bezier_side(dynamic raw);
 
   @protected
+  BridgeCacheLocation dco_decode_bridge_cache_location(dynamic raw);
+
+  @protected
   BridgeCacheStats dco_decode_bridge_cache_stats(dynamic raw);
 
   @protected
@@ -241,6 +244,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeCompSize dco_decode_bridge_comp_size(dynamic raw);
+
+  @protected
+  BridgeDiskCacheStats dco_decode_bridge_disk_cache_stats(dynamic raw);
 
   @protected
   BridgeEffectInfo dco_decode_bridge_effect_info(dynamic raw);
@@ -763,6 +769,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeBezierSide sse_decode_bridge_bezier_side(SseDeserializer deserializer);
 
   @protected
+  BridgeCacheLocation sse_decode_bridge_cache_location(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeCacheStats sse_decode_bridge_cache_stats(SseDeserializer deserializer);
 
   @protected
@@ -783,6 +793,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeCompSize sse_decode_bridge_comp_size(SseDeserializer deserializer);
+
+  @protected
+  BridgeDiskCacheStats sse_decode_bridge_disk_cache_stats(
+      SseDeserializer deserializer);
 
   @protected
   BridgeEffectInfo sse_decode_bridge_effect_info(SseDeserializer deserializer);
@@ -1356,6 +1370,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeBezierSide self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_cache_location(
+      BridgeCacheLocation self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_cache_stats(
       BridgeCacheStats self, SseSerializer serializer);
 
@@ -1380,6 +1398,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_comp_size(
       BridgeCompSize self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_disk_cache_stats(
+      BridgeDiskCacheStats self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_effect_info(

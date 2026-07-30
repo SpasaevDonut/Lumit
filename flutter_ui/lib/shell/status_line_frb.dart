@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
 
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import 'cache_confirm_frb.dart';
 
 class StatusLineFrb extends StatefulWidget {
   /// The poll seam, injected by tests so no engine has to run an export.
@@ -68,10 +69,21 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
           _savedState(t, state),
           _divider(t),
           // Deliberately NOT const: a const child is skipped by the tick's
-          // rebuild, which froze the meter at whatever it first read. Two
+          // rebuild, which froze the meter at whatever it first read. Three
           // sync stat reads a second is the whole cost of keeping it live.
-          // ignore: prefer_const_constructors
-          CacheMeterFrb(),
+          //
+          // Inside a horizontal scroll view that cannot be scrolled: the meter
+          // is three tiers wide now, and on a window too narrow for all of them
+          // the last one should be cut off quietly. A plain Row would report an
+          // overflow instead, which is a striped warning across the strip.
+          Flexible(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              physics: const NeverScrollableScrollPhysics(),
+              // ignore: prefer_const_constructors
+              child: CacheMeterFrb(),
+            ),
+          ),
           _divider(t),
           Expanded(
             child: Row(
@@ -206,13 +218,15 @@ class _StatusLineFrbState extends State<StatusLineFrb> {
 }
 
 /// How full each tier of the frame cache is — one bar per tier, with the
-/// megabytes beside it. Clicking a tier's bar empties that tier.
+/// megabytes beside it. Clicking a tier's bar empties that tier (the disk one
+/// asks first: it deletes files rather than costing a re-render).
 ///
-/// **Why one bar each.** The tiers hold different things and fill at different
-/// rates: since the zero-copy transport (K-183) the RAM tier is only the scope
-/// path's, so a Viewer that is busily banking frames on the card reported
-/// "nothing held" here and looked broken. A merged number cannot answer "what is
-/// cached" for either tier, so it does not try to.
+/// **Why one bar each.** The three tiers hold different things and fill at
+/// different rates: the card's cache fills first and fastest, memory takes what
+/// the card evicts, and disk takes what memory does — so a merged number cannot
+/// answer "what is cached" for any of them, and does not try to. (Before the
+/// demotion ladder the RAM tier was only the Scopes' own, and a Viewer busily
+/// banking frames on the card reported "nothing held" here and looked broken.)
 ///
 /// Lives on the status line rather than under the Timeline: it measures the
 /// whole store, not one comp's frames. Redrawn on the line's own half-second
@@ -231,6 +245,7 @@ class CacheMeterFrb extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final ram = cacheStats();
     final vram = vramCacheStats();
+    final disk = diskCacheStats();
     final requests = ram.hits.toInt() + ram.misses.toInt();
 
     return Row(
@@ -251,7 +266,7 @@ class CacheMeterFrb extends StatelessWidget {
                   '${_mibText(ram.budgetBytes.toInt())} MB — click to clear',
           onClear: clearCache,
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         _TierMeter(
           keyName: 'cache-meter-vram',
           label: 'VRAM',
@@ -262,14 +277,28 @@ class CacheMeterFrb extends StatelessWidget {
               '— click to clear',
           onClear: clearVramCache,
         ),
+        const SizedBox(width: 8),
+        _TierMeter(
+          keyName: 'cache-meter-disk',
+          label: 'Disk',
+          used: disk.usedBytes.toInt(),
+          budget: disk.budgetBytes.toInt(),
+          tip: disk.root.isEmpty
+              ? 'Nowhere to park frames on this machine'
+              : 'Frames parked on disk, one promotion from playing, of '
+                  '${_mibText(disk.budgetBytes.toInt())} MB in ${disk.root} '
+                  '— click to delete them',
+          // The one tier whose clear destroys files rather than costing a
+          // re-render, so it asks first (docs/07 §15).
+          onClear: () => confirmClearDiskCache(context),
+        ),
       ],
     );
   }
 }
 
-/// One tier: its name, how full it is, and the megabytes. Its own widget so a
-/// third tier (disk, when that tier actually runs — docs/TODO.md) is one more
-/// entry rather than a third copy of this layout.
+/// One tier: its name, how full it is, and the megabytes. Its own widget, so all
+/// three tiers are one layout rather than three copies of it.
 class _TierMeter extends StatelessWidget {
   final String keyName;
   final String label;
@@ -303,7 +332,7 @@ class _TierMeter extends StatelessWidget {
             Text(label, style: t.small.copyWith(color: t.textMuted)),
             const SizedBox(width: 4),
             SizedBox(
-              width: 40,
+              width: 32,
               child: Stack(children: [
                 Container(height: 4, color: t.surface3),
                 FractionallySizedBox(

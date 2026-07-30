@@ -82,18 +82,25 @@ the media index are built; `proxies/`, `peaks/`, and `flow/` are planned
 ([TODO.md](TODO.md)). What exists today:
 
 ```
-<project>.lum-cache/
-└── frames/            # rendered frame cache, LZ4 .kfr files (06-RENDER-PIPELINE.md tier 3)
-
 <global cache root>/
+├── frames/<project-uuid>/frames/  # rendered frame cache, LZ4 .kfr files (06 §5.4), the default
 ├── media-index/       # frame indexes for exact long-GOP seeking, shared across projects
 └── <project-uuid>/journal/ops.jsonl # the crash-recovery journal (§4)
+
+<project>.lum-cache/   # the same frame cache, when the user asks for it beside the project
+└── frames/
 ```
 
 The intended full per-project layout (`<cache root>/<project-uuid>/` with `disk-cache/`,
 `proxies/`, `peaks/`, `flow/`, `index/`) is the design direction; audio peaks are currently
-computed on demand rather than stored, and the frame cache sits in a `.lum-cache/` sidecar
-beside the project rather than under the global root.
+computed on demand rather than stored.
+
+**Where the frame cache sits is the user's choice (K-210, docs/07 §15):** under the global
+root keyed by the document's uuid (the default), in a `<project>.lum-cache/` sidecar beside the
+project file, or under a folder the user picks. The sidecar cannot be the default because it
+needs the project to *have* a file, and a project caches from the moment it is created — the
+document uuid is inside the `.lum` and survives every save, so the global-root folder still
+finds its frames after a save and a reopen.
 
 Rules, binding:
 - The global cache root defaults under the user's local app-data and is configurable with a

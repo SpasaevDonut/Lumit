@@ -3199,3 +3199,68 @@ applies to most of the geometry in an interface icon set. Not applied at even wi
 the stroke already covers whole pixels and the nudge is what would blur it. At fractional
 display scalings (150%) no offset makes a stroke whole; that is inherent and is stated in
 the note rather than papered over.
+
+**K-210 · DECIDED · The frame cache is named by content, and its three tiers are one ladder.**
+Requested by Mack (2026-07-30), from two complaints that turned out to be the same one: "a lot
+of things are resetting the cache when they shouldn't — moving the work area, adding audio to a
+layer, changing the opacity of a hidden layer", and "when I undo, we shouldn't have to cache
+from scratch again". Both are the cost of positional keying, which K-178 recorded as an interim
+and this entry closes.
+
+**Every tier is keyed by the content hash the specification always asked for** (docs/06 §5.2),
+not by `(comp, frame, scale)`. A positional name does not change when the picture does, so the
+only safe answer to a committed edit was to drop every held frame of every composition — and
+the price was paid on exactly the edits that cannot change a pixel. There is now no
+invalidation step anywhere: an edit renames the frames it changed and leaves the rest
+addressable, so a rename keeps the bar green and an undo finds its frames still filed under the
+names the restored document asks for. It also makes the disk tier honest, which is why the
+TODO listed content keying as its blocker: a frame parked under a positional name would serve
+the picture from before an edit, or from another day's document entirely.
+
+**The key gained a layer's inherited parent chain, and `ALGO_VERSION` went to 2.** A hidden
+layer contributes nothing — it draws nothing — but its children still follow it, so moving a
+hidden Null changed the picture while leaving every name alone. Harmless while everything was
+discarded on every edit; a stale-frame bug the moment names started surviving. K-206 makes it
+the common case rather than a corner: a Null is the layer a user will most readily hide.
+
+**The demotion ladder runs both ways, and the read-back is asynchronous.** A frame evicted from
+the card is read back into memory and written behind to disk; a frame held below is uploaded
+straight back into a texture instead of being composited again. The upward half is what makes
+the lower tiers worth having at all — before it, nothing could turn held bytes into a picture
+the Viewer shows.
+
+**Deviation from docs/06 §5.3, recorded rather than hidden: there is no cost threshold on
+demoting.** The specification says to read a frame back only when its recompute cost exceeds
+the read-back's, which is the right idea; the number to compare is not available. A composite
+is *submitted* to the graphics card and the call returns, so the wall-clock a renderer can
+measure around it is the submit, not the work — a frame that costs the card 8 ms can measure
+under one, and a threshold on that gates the ladder on noise. What bounds the traffic instead
+is a ceiling of four read-backs in flight, which bounds it directly; the measured cost is still
+used for eviction *ordering*, where a comparative number is good enough. Two derived rules: a
+frame promoted up is never demoted again (it is already below), and a frame goes to disk on the
+way down rather than when memory later forgets it.
+
+**The disk cache lives in Lumit's own cache folder by default**, keyed by the document id,
+rather than in the `<project>.lum-cache/` sidecar docs/06 §5.4 describes. The sidecar only works
+once a project *has* a file, and a project should cache from the moment it is created; the
+document id is in the `.lum` and survives every save. Both other options are offered in
+Settings → Performance — beside the project (the per-project choice) and a folder the user picks
+— and changing the setting moves nothing, since a cache folder is deletable at any time with no
+correctness effect. A per-project override stored inside the `.lum` is left in the backlog.
+
+**Clearing the disk tier asks first**; the other two do not. RAM and VRAM cost a re-render each,
+while this one deletes files that may represent a night's work and there is nothing to undo.
+With nothing parked it does not ask.
+
+**The cache bar became a published strip rather than a query** (docs/06 §5.6's "lock-free bitmap
+snapshot", which was always the design). Naming a frame needs the renderer's probe results and a
+hash per frame, so the interface cannot answer its own question: the bar records what it is
+drawing and the worker publishes the strip for it. Consequences stated rather than papered over —
+up to ~150 ms stale, blank for a beat after a composition switch, and sampled on a composition
+longer than about a thousand frames, because the stripe is a thousand pixels wide at most. Its
+values grew from three to five: nothing, held-coarser, held, on-disk-coarser, on-disk, with
+playable outranking promotable.
+
+**The card's tier and memory's share one colour on the bar** (mint), because they answer the same
+question — does this frame play now — and a frame in memory is one upload from the screen. Which
+of the two holds it is the status line meter's business, where each tier has its own bar.

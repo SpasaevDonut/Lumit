@@ -215,6 +215,21 @@ impl DiskCache {
         }
     }
 
+    /// Delete every entry (Settings → Clear cache). The folder itself stays, so
+    /// the tier keeps working; only the frames go. Best-effort like everything
+    /// here: a file that will not delete is left, and the next scan counts it.
+    pub fn clear(&mut self) {
+        let frames = self.root.join("frames");
+        let Ok(shards) = fs::read_dir(&frames) else {
+            self.used_bytes = 0;
+            return;
+        };
+        for shard in shards.flatten() {
+            let _ = fs::remove_dir_all(shard.path());
+        }
+        self.used_bytes = scan_bytes(&frames);
+    }
+
     /// Evict oldest-modified entries until the running total fits the cap
     /// Change the byte cap, evicting oldest-first until within it (Settings →
     /// Performance sets the disk budget).

@@ -320,16 +320,18 @@ impl LumitBridgeState {
 
         let (comp, layer, items) = op_scope(&document_change.op);
 
-        // Frames are filed by position, not by content, so the edit that just
-        // landed did not change any frame's name — drop the held frames or the
-        // Viewer would be served the picture from before it.
+        // **Nothing is invalidated here, and that is the point (K-178).** This
+        // used to drop every held frame of every composition on every committed
+        // op, because frames were filed by position: the edit did not change any
+        // frame's *name*, so the only safe answer was to throw them all away.
+        // The cost was paid on edits that cannot change a pixel — a rename, a
+        // work-area nudge, a solo toggle, sound added to a layer — and the cache
+        // bar went blank with each one.
         //
-        // All of them, not the scope's composition: `op_scope` answers "which
-        // panel redraws", which is a different and narrower question. A batched
-        // edit names no composition, a solid or a relink belongs to the project
-        // rather than to one comp, and a precomp layer means an edit to one
-        // composition changes every composition that contains it.
-        crate::framecache::invalidate_all();
+        // Frames are now filed under a hash of what is in them (docs/06 §5.2),
+        // so an edit renames exactly the frames it changed and every other frame
+        // stays addressable. An undo asks for the names it asked for before and
+        // finds them still held. There is no invalidation step left to get right.
 
         let change = ScopedChange {
             project: ProjectReference::new(project_id),

@@ -1001,7 +1001,19 @@ fold-out already shows them), and **Performance** (playback mode, quality tier a
 and the RAM and VRAM frame-cache budgets with their readouts and Clear buttons). The two
 budgets are **typed and draggable numbers capped at what the machine has** — installed RAM
 and the adapter's dedicated video memory, asked of the engine — rather than a pick from a
-fixed list of sizes (K-194). The egui build's
+fixed list of sizes (K-194).
+
+**The disk tier's controls landed with K-210**, as a third section on the same page: its
+budget (the same typed-and-draggable row), a readout of what is parked and where, and a
+**Where** row choosing between *With Lumit* — the application's own cache folder, the default
+and the only one that works before a project has been saved — *Beside the project*, which is
+the per-project choice, and *A folder I choose*, which offers a folder picker beside the
+dropdown. The location is application-wide and remembered; changing it moves nothing, so the
+old folder can be deleted by hand whenever the user likes. Its **Clear** asks before deleting,
+unlike the other two tiers': RAM and VRAM cost a re-render each, while this one destroys files
+that may be a night's work and there is nothing to undo. With nothing parked it does not ask —
+a question about deleting nothing is only noise. The status line's cache meter grew a matching
+third bar (Disk), which asks the same question when clicked. The egui build's
 **Export** and **Autosave** groups are *not* rebuilt yet: neither has anything behind it on
 this frontend (docs/TODO.md), and an empty page is a promise the window cannot keep.
 

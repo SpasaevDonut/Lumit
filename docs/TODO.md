@@ -18,40 +18,6 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
-- **The disk tier is written but dark.** `crates/lumit-cache/src/disk.rs` and
-    `crates/lumit-render/src/diskio.rs` are complete — open, park, load back,
-    budget, the cache bar's blue tier, and a cache-root override honouring
-    "Settings → Performance → Cache" ([07-UI-SPEC.md](07-UI-SPEC.md) §15). Nothing
-    outside `diskio.rs` ever constructs it: `grep -rn 'diskio::' crates/` returns
-    nothing, so the third tier of the three-tier cache never runs and the Settings
-    control it was written for does not exist. Wanted: the worker spawns it, the
-    Settings window gets its budget row and root-folder picker back beside the RAM
-    and VRAM rows, and the cache bar shows the blue tier. Land the **disk bar** with
-    it: the status line's cache meter gains a third bar beside the RAM and VRAM ones
-    it grew on 2026-07-29.
-    **The demotion ladder is also unbuilt.** docs/06 §5 wants a frame evicted from
-    VRAM to fall to RAM, and one evicted from RAM to fall to disk; today an eviction
-    simply drops the frame. VRAM→RAM needs a read-back at eviction time and — to be
-    worth anything — a way back up, since nothing can currently turn held bytes into
-    a texture the Viewer shows, so a demoted frame would be re-rendered anyway. That
-    upload path is the same piece the disk tier needs, so the two want doing together:
-    read-back on evict, upload on hit, then disk underneath both.
-    **Blocked, and on what.** The tier cannot be wired honestly while frames are
-    filed by *position*. A disk tier exists to outlive an edit and a restart, and a
-    positional name does not identify pixels: the RAM and VRAM tiers are emptied on
-    every commit precisely because of that, and a disk copy that survived one would
-    serve the picture from before the edit — or, after reopening a project, from
-    another day's document. So **content keying comes first** (the entry under *Next*:
-    file frames under a content hash). The pieces for it are closer than that entry
-    says: `lumit_render::cache::frame_key` already computes the hash, and the
-    renderer holds the probe cache it needs (`ProbeView`), so a hash is computable on
-    the worker thread without any new bridge view — what needs designing is how the
-    cache bar names a frame from its position once the keys are hashes (the worker
-    can publish held *positions* alongside the hashes, which is what the VRAM mirror
-    already does). Two further pieces the disk tier needs on top: a way back INTO the
-    VRAM tier from bytes (nothing uploads a frame to a texture today), and a decision
-    about when to pay the read-back that parking a frame costs at all — the zero-copy
-    path (K-183) keeps no bytes, so the idle fill is the honest place to spend it.
 - **Multi-frame rendering is built; the worker pool is what is left.** Renders run
     ahead of the clock into a bounded ring sized by measured p95 cost, presents pace
     against the clock, decode runs on its own thread, and the sound waits out a
@@ -144,33 +110,6 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
     is `lumit_bridge`. Same fix the macOS side took; iOS has no target and no CI
     job yet.
 
-- **The frame cache keys by position, not by content (K-178's design).** Each
-    entry is filed under `(comp, frame, scale)`, so an edit does not change any
-    frame's name and the cache must be told to drop the composition's frames on
-    every committed change — which it now is. The cost is that a change which
-    cannot alter a pixel (a rename, a work-area nudge, a solo toggle) still
-    retires every held frame of that comp, and the cache bar goes blank with it.
-    The fix is the documented one: file frames under
-    `lumit_render::cache::frame_key`, a hash of what is actually in them. That
-    needs a `SourceProbes` view on the bridge side, which is why it was not done
-    here. Note the cache bar's per-frame query (`cached_frames`) depends on being
-    able to name a frame from its position — under content keying it would
-    compute the same hash per frame instead, which works but needs the probes too.
-- **The frame key never hashes a layer's parent chain, and skips hidden layers.**
-    `comp_frame_key` (crates/lumit-eval/src/lib.rs) `continue`s past any layer with
-    `visible == false`, and no layer's key includes the transforms it inherits — so
-    hiding a *parent* and then moving it changes the picture (its children still
-    follow it) while the key stays put, and the children keep serving stale cached
-    frames. This pre-dates the Null layer for any hidden parent, but K-206 makes it
-    the common case: a Null is the layer a user will most naturally hide, having
-    nothing to look at. Fix is either to hash the parent chain into each child's
-    contribution, or to stop gating hidden layers out when something is parented
-    to them.
-- **The disk frame cache is built but never constructed** — see "The disk tier
-    is written but dark" under *Now*, which carries the detail. The VRAM tier
-    landed 2026-07-27 (K-187), the RAM tier exists, and the design language's
-    steel blue for "on disk only" ([15-DESIGN.md](15-DESIGN.md) §6.3) waits on
-    the same wiring.
 - **The shared-texture chain has no keyed mutex** (a torn frame is possible in
     principle — see the fence entry under Threading), and the D3D12 → D3D11
     legacy-handle hop the Windows path rides is knowledge docs/06 does not yet
@@ -386,14 +325,28 @@ the budget ranking (`bridge_call_budget_test.dart` prints it).
     (they are never built while hidden, 2026-07-28); scoping the visible tree
     remains.
 
-**The RAM frame cache is now only the scope path's cache (K-183, narrowed by
-K-187).** The zero-copy transport keeps no CPU bytes, so `framecache` is filled
-only by scope traces; what serves the Viewer is the VRAM final-frame cache
-(K-187, "cache on the card"), which the cache bar merges into its answer.
-`framecache`'s content-keying upgrade (K-178's design, needs the probe view)
-remains worthwhile but is now much lower stakes. Registering a texture still
-cannot happen in a widget test; `integration_test/shared_texture_test.dart`
-(run by hand on a real window) is the coverage.
+**The RAM frame cache is the middle rung of the ladder now (K-210).** It was briefly only the
+scope path's — the zero-copy transport keeps no CPU bytes (K-183) — and it is filled again by
+the demotion ladder: every frame read back off the graphics card lands there on its way to
+disk, and is uploaded straight back when it is wanted. Registering a texture still cannot
+happen in a widget test; `integration_test/shared_texture_test.dart` (run by hand on a real
+window) is the coverage.
+
+**The three-tier cache landed (K-210); three smaller pieces of it are still worth doing.**
+Content keying, the demotion ladder and the disk tier shipped 2026-07-30, so a picture-free
+edit no longer empties the cache, an undo is warm, and frames survive a restart. What is left:
+- **An `index.db` for the disk tier** (docs/06 §5.4). Presence is "does this file exist" and the
+    byte total is a scan at open plus arithmetic, which works — but eviction is
+    oldest-modified-first rather than cost-aware, and the open scan is `O(files)`. The layout on
+    disk is exactly the one the index would index, so this is a speed-up, not a redesign.
+- **A per-project cache location.** The choice (app data / beside the project / a folder you
+    pick) is application-wide. A per-project override belongs in the `.lum` and needs a document
+    field, so it was deliberately left out.
+- **The cache bar samples a long composition.** The strip is computed for at most ~1024 frames
+    and each sample stands for its stride, because naming a frame means hashing the composition
+    at that time. Right at any plausible stripe width; wrong the moment something wants
+    per-frame truth from `cached_frames` for another purpose. If that day comes, the answer is
+    probably an incremental per-frame key cache on the worker rather than a finer sample.
 
 **Playback scheduler — what remains.** The ring landed (2026-07-27): renders run
 ahead of the clock into a bounded ring sized by measured p95 cost
@@ -421,12 +374,11 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
 - Colour-management settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
     plugins/decoder page. (The **Keymap** editor landed with K-199.)
 - The egui shell's fuller Performance/General/Export pages are not rebuilt in
-    Flutter yet: the disk cache budget and root folder (the tier is built but
-    never constructed — see *Now*), autosave interval/keep, and the export
-    defaults (preset + filename template). The RAM and VRAM cache budgets
-    landed in the Settings window (K-187) and now survive a restart; idle
-    background fill landed with no setting (it costs nothing the user would
-    trade). Each remaining page lands wired to the
+    Flutter yet: autosave interval/keep, and the export defaults (preset +
+    filename template). All three cache budgets are in the Settings window and
+    survive a restart — RAM and VRAM with K-187, the disk tier's budget and its
+    location with K-210; idle background fill landed with no setting (it costs
+    nothing the user would trade). Each remaining page lands wired to the
     engine through the bridge, not as a Dart-side setting nothing reads
     (K-181/K-182).
 

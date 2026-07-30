@@ -244,6 +244,25 @@ pub fn journal_path(doc_id: Uuid) -> Option<PathBuf> {
     )
 }
 
+/// Where a document's parked frames live when the disk frame cache is kept in
+/// the application's own data area rather than beside the project file
+/// (docs/06-RENDER-PIPELINE.md §5.4, Settings → Performance → Cache).
+///
+/// In plain terms: the frames the cache parks have to go *somewhere*, and beside
+/// the project file only works once the project HAS a file. Keyed by the
+/// document's own id, which is written into the `.lum` and survives every save
+/// and reopen, so a project caches from the moment it is created and still finds
+/// its frames tomorrow. Sitting under the platform's cache directory also means
+/// the operating system may reclaim it, which is exactly right for a folder that
+/// is deletable at any time with no correctness effect.
+///
+/// `None` only when the platform has no home directory; the caller then runs
+/// with no disk tier rather than failing.
+pub fn frame_cache_dir(doc_id: Uuid) -> Option<PathBuf> {
+    let dirs = directories::ProjectDirs::from("dev", "Lumit", "Lumit")?;
+    Some(dirs.cache_dir().join("frames").join(doc_id.to_string()))
+}
+
 /// Media frame-index cache directory (docs/10-FILE-FORMAT.md §3) — global,
 /// keyed by content fingerprint, so shared across projects and machines-safe.
 pub fn media_index_dir() -> Option<PathBuf> {

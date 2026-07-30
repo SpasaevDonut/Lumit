@@ -55,20 +55,34 @@ pub struct WorkerState {
     /// Where the user is looking — the comp, frame and scale last shown — the
     /// idle cache-fill's anchor (docs/06 §5.5).
     last_shown: Option<(CompositionReference, u64, f32)>,
-    /// The framecache invalidation generation last seen. When it moves an edit
-    /// committed, and the position-keyed VRAM frame cache must drop with the
-    /// RAM one.
-    seen_generation: u64,
+    /// The disk tier (docs/06 §5.4) and its IO thread. Owned here because this
+    /// is the thread that has both halves of every hand-off: the renderer whose
+    /// evictions fall to disk, and the frame keys to file them under.
+    disk: lumit_render::diskio::DiskIo,
+    /// Disk frames asked for and not yet arrived, with the position each was
+    /// asked for — a frame off disk carries only its name, and putting it back
+    /// on the card records where it sits.
+    disk_wanted: std::collections::HashMap<u128, lumit_render::FrameProvenance>,
+    /// The disk budget last applied, the clear count last honoured, and the
+    /// location epoch last opened — all arriving as atomics from the settings
+    /// ops (see [`crate::framecache::disk`]).
+    applied_disk_budget: u64,
+    seen_disk_clears: u64,
+    seen_disk_location: (u64, Option<std::path::PathBuf>),
     /// The VRAM budget last applied and the clear-request count last honoured
     /// (both arrive as atomics from the settings ops — see
     /// [`crate::framecache::vram`]).
     applied_vram_budget: usize,
     seen_vram_clears: u64,
-    /// `(used, entries, version)` last published to the cache-bar mirror, so an
-    /// unchanged cache publishes nothing. The version is what catches a *swap*:
-    /// a cache at its budget trades one frame for another of the same size, so
-    /// the first two numbers stay put while the holdings change completely.
-    published_vram: (u64, u64, u64),
+    /// `(used, entries)` last published for the VRAM meter, so an unchanged
+    /// cache publishes nothing.
+    published_vram: (u64, u64),
+    /// What the cache bar's published strip was computed from, so an unchanged
+    /// world is not hashed again: what the bar asked for, the document revision,
+    /// and each tier's own change counter.
+    published_bar: Option<BarFingerprint>,
+    /// When the strip was last published — see [`BAR_MIN_INTERVAL`].
+    bar_published_at: std::time::Instant,
     /// True when the idle fill has nothing left to do (everything near the
     /// playhead is held, or the budget is full). Cleared whenever the anchor,
     /// the document or the budget moves.
@@ -78,19 +92,55 @@ pub struct WorkerState {
     last_request: std::time::Instant,
 }
 
-/// Apply cross-thread cache controls and keep the cache-bar mirror fresh —
-/// run once per worker loop turn, cheap when nothing changed (three atomic
-/// loads and one mutex'd read of five counters).
+/// How often the cache bar's strip may be recomputed. Building it names every
+/// frame of the composition, which is a hash apiece — cheap per frame, worth
+/// bounding across a long one. A tenth of a second is far finer than the eye
+/// needs on a progress stripe and leaves the worker's core to the fill.
+const BAR_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// The most frames the bar's strip is computed at. A longer composition is
+/// sampled every `frames / this` frames and each sample fills its stride: the
+/// stripe is a thousand-odd pixels wide at most, so it cannot show more than
+/// this anyway, and the alternative is hashing forty thousand frames to draw a
+/// picture a thousand pixels wide.
+const BAR_MAX_SAMPLES: u64 = 1024;
+
+/// The coarser preview scales worth probing for the bar's dimmed state: the
+/// adaptive tiers the realtime controller actually drops to (Half, Third,
+/// Quarter — [`crate::realtime::tier_scale`]). Under content keying the scale is
+/// inside the name, so "held at *some* coarser scale" cannot be read off a hash;
+/// these are the scales frames genuinely get cached at, which is what the dimmed
+/// state exists to report.
+const BAR_COARSE_TIERS: [f32; 3] = [0.5, 1.0 / 3.0, 0.25];
+
+/// What a published cache-bar strip was computed from. Recomputed only when one
+/// of these moves, so an editor sitting still hashes nothing.
+#[frb(ignore)]
+#[derive(PartialEq, Eq, Clone, Copy)]
+struct BarFingerprint {
+    comp: Uuid,
+    frames: u64,
+    scale_q: u16,
+    revision: u64,
+    /// The VRAM cache's change counter — it moves on every insert, clear and
+    /// resize, which is what catches a cache at its budget swapping one frame
+    /// for another (both totals stay put while the holdings change).
+    vram_version: u64,
+    ram_entries: u64,
+    disk_entries: u64,
+}
+
+/// Apply cross-thread cache controls, move frames between the tiers, and keep
+/// the meters and the cache bar fresh — run once per worker loop turn, cheap
+/// when nothing changed (a handful of atomic loads).
 #[frb(ignore)]
 fn sync_caches(state: &mut WorkerState) {
-    // A committed edit drops the VRAM frames exactly as it drops the RAM
-    // bytes: both are keyed by position, so neither name changed.
-    let generation = crate::framecache::generation();
-    if generation != state.seen_generation {
-        state.seen_generation = generation;
-        state.renderer.clear_frame_textures();
-        state.fill_exhausted = false;
-    }
+    // Nothing here clears a tier because the document changed. It used to: the
+    // frames were named by position, so a committed edit did not rename any of
+    // them and the only safe answer was to throw them all away. They are named
+    // by content now (K-178, docs/06 §5.2), so an edit renames exactly the frames
+    // it changed and leaves the rest addressable — which is what keeps the cache
+    // bar green through a rename, and what makes an undo instantly valid.
     let budget = crate::framecache::vram::budget();
     if budget != state.applied_vram_budget {
         state.applied_vram_budget = budget;
@@ -109,19 +159,333 @@ fn sync_caches(state: &mut WorkerState) {
     }
     crate::framecache::publish_comp_decodes(state.renderer.decoded_frames());
     let (used, _, entries) = state.renderer.frame_texture_stats();
-    let version = state.renderer.frame_texture_version();
-    if (used as u64, entries as u64, version) != state.published_vram {
-        state.published_vram = (used as u64, entries as u64, version);
-        let keys = state
-            .renderer
-            .frame_texture_keys()
-            .into_iter()
-            .map(|(comp, frame, scale_q)| {
-                crate::framecache::frame_key_quantised(comp, frame, scale_q)
-            })
-            .collect();
-        crate::framecache::vram::publish(state.seen_generation, used as u64, entries as u64, keys);
+    if (used as u64, entries as u64) != state.published_vram {
+        state.published_vram = (used as u64, entries as u64);
+        crate::framecache::vram::publish(used as u64, entries as u64);
     }
+
+    sync_disk(state);
+    drain_demotions(state);
+    collect_disk_loads(state);
+    publish_cache_bar(state);
+}
+
+/// Keep the disk tier pointed at the right folder and inside its budget, and
+/// mirror what it holds (docs/06 §5.4).
+#[frb(ignore)]
+fn sync_disk(state: &mut WorkerState) {
+    let (epoch, location) = crate::framecache::disk::location();
+    let root = disk_root(state, &location);
+    if (epoch, root.clone()) != state.seen_disk_location {
+        state.seen_disk_location = (epoch, root.clone());
+        crate::framecache::disk::publish_root(
+            root.as_ref().map(|r| r.to_string_lossy().into_owned()),
+        );
+        _ = state
+            .disk
+            .tx
+            .send(lumit_render::diskio::Cmd::SetRoot(root.clone()));
+        // A different folder holds different frames, so there may be something
+        // to promote again.
+        state.fill_exhausted = false;
+    }
+    let budget = crate::framecache::disk::budget();
+    if budget != state.applied_disk_budget {
+        state.applied_disk_budget = budget;
+        _ = state
+            .disk
+            .tx
+            .send(lumit_render::diskio::Cmd::SetCap(budget));
+    }
+    let clears = crate::framecache::disk::clears();
+    if clears != state.seen_disk_clears {
+        state.seen_disk_clears = clears;
+        _ = state.disk.tx.send(lumit_render::diskio::Cmd::Clear);
+    }
+    let (disk_used, disk_entries) = state.disk.stats();
+    crate::framecache::disk::publish(disk_used, disk_entries);
+}
+
+/// Where this project's parked frames belong, for the location the user chose.
+///
+/// `None` means the tier stays off — only possible on a platform with no home
+/// directory at all, since an unsaved project falls back to the application's
+/// own cache folder rather than losing the tier (a project caches from the
+/// moment it is created; the document's id is in the `.lum` and survives every
+/// save, so its frames are still there tomorrow).
+#[frb(ignore)]
+fn disk_root(
+    state: &WorkerState,
+    location: &crate::framecache::disk::Location,
+) -> Option<std::path::PathBuf> {
+    use crate::framecache::disk::Location;
+    let (doc_id, path) = {
+        let project = state.project.state().ok()?;
+        let project = project.read().ok()?;
+        (project.store.snapshot().id, project.path.clone())
+    };
+    match location {
+        Location::AppData => lumit_project::frame_cache_dir(doc_id),
+        Location::BesideProject => match path.as_deref() {
+            Some(path) => lumit_render::diskio::sidecar_root(path),
+            // Nowhere to sit beside yet.
+            None => lumit_project::frame_cache_dir(doc_id),
+        },
+        Location::Custom(root) => match path.as_deref() {
+            Some(path) => lumit_render::diskio::cache_root_for(path, Some(root)),
+            None => Some(root.join(format!("{doc_id}-cache"))),
+        },
+    }
+}
+
+/// Collect the frames the graphics card has finished handing back, and put them
+/// where they belong: in memory, and parked on disk (docs/06 §5.3's ladder).
+///
+/// Both are handed over rather than chained — a frame goes to disk on the way
+/// down, not when memory later forgets it, so an editor that crashes has still
+/// banked what it rendered.
+#[frb(ignore)]
+fn drain_demotions(state: &mut WorkerState) {
+    for demoted in state.renderer.poll_demotions() {
+        _ = state.disk.tx.send(lumit_render::diskio::Cmd::Store {
+            hash: demoted.key,
+            width: demoted.width,
+            height: demoted.height,
+            bgra: demoted.bgra,
+            bytes: demoted.rgba.clone(),
+        });
+        crate::framecache::put_demoted(demoted.key, &demoted);
+    }
+}
+
+/// Put frames that have come back off disk onto the graphics card, so a promoted
+/// frame is shown without compositing anything (docs/06 §5.1: "promotes
+/// disk→RAM→VRAM ahead of the playhead").
+#[frb(ignore)]
+fn collect_disk_loads(state: &mut WorkerState) {
+    let loaded: Vec<_> = state.disk.loaded.try_iter().collect();
+    for frame in loaded {
+        let Some(provenance) = state.disk_wanted.remove(&frame.hash) else {
+            // Nobody is waiting for it any more (a comp switch, a clear); the
+            // frame is still on disk and will be asked for again if wanted.
+            continue;
+        };
+        let promoted = state
+            .renderer
+            .upload_frame_texture(lumit_render::Promotion {
+                key: frame.hash,
+                bgra: frame.bgra,
+                width: frame.width,
+                height: frame.height,
+                bytes: &frame.bytes,
+                // Dear enough to hold on to: a frame that reached disk was worth
+                // reading back, and re-rendering it is what this saved.
+                cost_ms: DISK_PROMOTION_COST_MS,
+                provenance,
+            });
+        if promoted.is_some() {
+            state.fill_exhausted = false;
+        }
+    }
+}
+
+/// The recompute cost a promoted frame is credited with. It is not measured —
+/// the render that made it happened in another session, possibly on another day
+/// — so it is stated: a frame that earned its way to disk is dear enough that
+/// the store should not throw it out ahead of a trivial one.
+const DISK_PROMOTION_COST_MS: u32 = 16;
+
+/// Compute and publish the cache bar's per-frame strip (docs/06 §5.6).
+///
+/// The bar leaves a note saying which composition, how many frames and what
+/// preview scale it is drawing; this names each of those frames and asks the
+/// three tiers whether they hold it. The interface never touches a cache itself
+/// — it could not, since naming a frame needs the renderer's probe results, and
+/// hashing hundreds of frames is not work for the thread that paints.
+#[frb(ignore)]
+fn publish_cache_bar(state: &mut WorkerState) {
+    let Some((comp_id, frames, scale_q)) = crate::framecache::bar::wanted() else {
+        return;
+    };
+    if frames == 0 {
+        return;
+    }
+    if state.bar_published_at.elapsed() < BAR_MIN_INTERVAL {
+        return;
+    }
+    let (document, revision) = {
+        let Ok(project) = state.project.state() else {
+            return;
+        };
+        let Ok(project) = project.read() else {
+            return;
+        };
+        (project.store.snapshot(), project.store.revision())
+    };
+    let (ram_entries, disk_entries) = (crate::framecache::stats().2 as u64, state.disk.stats().1);
+    let fingerprint = BarFingerprint {
+        comp: comp_id,
+        frames,
+        scale_q,
+        revision,
+        vram_version: state.renderer.frame_texture_version(),
+        ram_entries,
+        disk_entries,
+    };
+    if state.published_bar == Some(fingerprint) {
+        return;
+    }
+    if document.comp(comp_id).is_none() {
+        return;
+    }
+    state.published_bar = Some(fingerprint);
+    state.bar_published_at = std::time::Instant::now();
+
+    let bgra = zero_copy_wants_bgra();
+    let scale = f32::from(scale_q) / 1000.0;
+    let quality = quality_for(scale);
+    // A composition longer than the bar is wide in pixels is sampled: one frame
+    // per stride stands for its neighbours, which is all the stripe can draw.
+    let stride = frames.div_ceil(BAR_MAX_SAMPLES).max(1);
+    let mut tiers = vec![0u8; frames as usize];
+    let mut sample = 0u64;
+    while sample < frames {
+        let tier = frame_tier(state, &document, comp_id, sample, quality, scale, bgra);
+        if tier != 0 {
+            let end = (sample + stride).min(frames);
+            for slot in &mut tiers[sample as usize..end as usize] {
+                *slot = tier;
+            }
+        }
+        sample += stride;
+    }
+    crate::framecache::bar::publish(comp_id, scale_q, tiers);
+}
+
+/// What the bar should draw for one frame: `0` nothing, `1` held coarser, `2`
+/// held at this scale, `3` on disk coarser, `4` on disk at this scale. Playable
+/// beats promotable — a frame both held and parked reads as held.
+#[frb(ignore)]
+fn frame_tier(
+    state: &mut WorkerState,
+    document: &lumit_core::Document,
+    comp: Uuid,
+    frame: u64,
+    quality: lumit_render::Quality,
+    scale: f32,
+    bgra: bool,
+) -> u8 {
+    let mut on_disk_at_scale = false;
+    if let Some(key) = state.renderer.frame_key(document, comp, frame, quality) {
+        if state.renderer.has_frame_texture(key, bgra) || crate::framecache::contains(key) {
+            return 2;
+        }
+        on_disk_at_scale = state.disk.contains(key);
+    }
+    let mut on_disk_coarser = false;
+    for factor in BAR_COARSE_TIERS {
+        let coarser = quality_for(scale * factor);
+        let Some(key) = state.renderer.frame_key(document, comp, frame, coarser) else {
+            continue;
+        };
+        if state.renderer.has_frame_texture(key, bgra) || crate::framecache::contains(key) {
+            return 1;
+        }
+        on_disk_coarser |= state.disk.contains(key);
+    }
+    if on_disk_at_scale {
+        4
+    } else if on_disk_coarser {
+        3
+    } else {
+        0
+    }
+}
+
+/// Whether this build's zero-copy transport wants BGRA (Windows and macOS) or
+/// RGBA (Linux, and any build without one). The channel order is part of a
+/// cached texture's identity, so every consumer has to ask the same question.
+#[frb(ignore)]
+fn zero_copy_wants_bgra() -> bool {
+    cfg!(any(
+        all(windows, feature = "shared-texture"),
+        all(target_os = "macos", feature = "shared-texture-macos")
+    ))
+}
+
+/// Get one frame ready to show, taking the cheapest route the tiers allow
+/// (docs/06 §5.1: VRAM first, then promote from the tiers below, and only then
+/// composite).
+///
+/// The order is the ladder itself:
+///
+/// 1. **Already on the card** — [`HeadlessRenderer::render_prepared`] answers
+///    from its own cache without compositing.
+/// 2. **Held in memory** — uploaded straight back into a texture, which is a
+///    fraction of a composite and the reason the RAM tier exists at all.
+/// 3. **Parked on disk** — *asked for*, never waited on. A disk read plus
+///    decompression is not something to hold the preview open for, so the frame
+///    is composited now and the copy off disk lands a turn or two later, in time
+///    for the next visit. This is what makes reopening a project warm up as you
+///    scrub rather than only where the fill has reached.
+/// 4. **Composited**, and banked on the way past.
+#[frb(ignore)]
+fn prepare_frame(
+    state: &mut WorkerState,
+    document: &lumit_core::Document,
+    comp: Uuid,
+    frame: u64,
+    quality: lumit_render::Quality,
+    bgra: bool,
+    cacheable: bool,
+) -> Result<lumit_render::PreparedFrame, String> {
+    let name = cacheable
+        .then(|| state.renderer.frame_key(document, comp, frame, quality))
+        .flatten();
+    if let Some(key) = name.filter(|key| !state.renderer.has_frame_texture(*key, bgra)) {
+        let provenance = lumit_render::FrameProvenance {
+            comp,
+            frame,
+            scale_q: lumit_render::preview_scale_q(quality),
+        };
+        match crate::framecache::held(key) {
+            // Only the order it came down in can go back up: a frame read in the
+            // other channel order would show with red and blue swapped, so it is
+            // left for the composite below.
+            Some(held) if held.bgra == bgra => {
+                if let Some(prepared) =
+                    state
+                        .renderer
+                        .upload_frame_texture(lumit_render::Promotion {
+                            key,
+                            bgra,
+                            width: held.width,
+                            height: held.height,
+                            bytes: &held.bytes,
+                            cost_ms: held.cost_ms,
+                            provenance,
+                        })
+                {
+                    return Ok(prepared);
+                }
+            }
+            Some(_) => {}
+            None => {
+                if state.disk.contains(key) && !state.disk_wanted.contains_key(&key) {
+                    state.disk_wanted.insert(key, provenance);
+                    _ = state
+                        .disk
+                        .tx
+                        .send(lumit_render::diskio::Cmd::Load { hash: key, bgra });
+                }
+            }
+        }
+    }
+    // Named once, above: hashing the composition again here would be the same
+    // walk twice per frame.
+    state
+        .renderer
+        .render_prepared_named(document, comp, frame, quality, bgra, name)
 }
 
 /// Render ONE uncached frame near the playhead into the VRAM frame cache —
@@ -166,10 +530,7 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         None => (0, frames - 1),
     };
     let quality = quality_for(scale);
-    let bgra = cfg!(any(
-        all(windows, feature = "shared-texture"),
-        all(target_os = "macos", feature = "shared-texture-macos")
-    ));
+    let bgra = zero_copy_wants_bgra();
     let (_, budget, _) = state.renderer.frame_texture_stats();
     let (cw, ch) = (comp.width, comp.height);
     let s = scale.clamp(0.05, 1.0);
@@ -191,16 +552,18 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     // bounded, and every frame in the window ends up held.
     let window = (budget / frame_bytes).max(1);
     for frame in crate::playback::fill_order(anchor, first, last).take(window) {
-        if state
+        // Naming the frame is what tells the fill whether there is anything to
+        // do — and under content keying the name is the same one every tier files
+        // it under, so a frame already held anywhere is skipped without a render.
+        if let Some(key) = state
             .renderer
-            .has_frame_texture(comp_ref.id, frame, quality, bgra)
+            .frame_key(&document, comp_ref.id, frame, quality)
         {
-            continue;
+            if state.renderer.has_frame_texture(key, bgra) {
+                continue;
+            }
         }
-        match state
-            .renderer
-            .render_prepared(&document, comp_ref.id, frame, quality, bgra, true)
-        {
+        match prepare_frame(state, &document, comp_ref.id, frame, quality, bgra, true) {
             // Tell the frontend, or the fill is invisible: the cache bar only
             // redraws when it hears something, and a fill shows no frame.
             Ok(_) => _ = stream.add(WorkerResponse::CacheFilled),
@@ -581,7 +944,14 @@ fn worker_loop(
         playback: None,
         prefetcher: crate::prefetch::Prefetcher::default(),
         last_shown: None,
-        seen_generation: crate::framecache::generation(),
+        disk: lumit_render::diskio::spawn(),
+        disk_wanted: std::collections::HashMap::new(),
+        // Zero and "never opened", so the first sync applies whatever the
+        // settings hold and opens the folder for the project that is loaded —
+        // see the note on `applied_vram_budget` below.
+        applied_disk_budget: 0,
+        seen_disk_clears: crate::framecache::disk::clears(),
+        seen_disk_location: (u64::MAX, None),
         // NOT the wish's current value. A fresh renderer's cache holds the
         // built-in default, and the settings' value is usually already in that
         // atomic by the time a worker starts — restored at launch, or left there
@@ -592,7 +962,9 @@ fn worker_loop(
         // the wish is.
         applied_vram_budget: 0,
         seen_vram_clears: crate::framecache::vram::clears(),
-        published_vram: (0, 0, 0),
+        published_vram: (0, 0),
+        published_bar: None,
+        bar_published_at: std::time::Instant::now() - BAR_MIN_INTERVAL,
         fill_exhausted: true,
         last_request: std::time::Instant::now(),
     };
@@ -642,14 +1014,14 @@ fn worker_loop(
 
         if let Some(request) = request {
             state.last_request = std::time::Instant::now();
-            // Again, before serving it. The sync at the top of the turn ran
-            // BEFORE this request existed: a commit that landed while the
-            // worker was parked in `recv` bumped the invalidation generation
-            // and then asked for a frame, so serving without re-syncing
-            // answers from the very caches that edit retired — the Viewer keeps
-            // the picture from before it until something else moves the
-            // playhead. Cheap when nothing changed (three atomic loads).
-            sync_caches(&mut state);
+            // No second sync before serving. There used to be one, and it
+            // mattered: a commit landing while the worker was parked in `recv`
+            // retired every held frame, and the sync at the top of the turn had
+            // already run — so the request the commit provoked was answered from
+            // the caches that commit had just invalidated, and the Viewer kept
+            // the pre-edit picture until something else moved the playhead. With
+            // content-hash names there is no invalidation to be on the wrong side
+            // of: the edited document asks for different names and misses.
             handle_requests(request, &receiver, &mut state, &mut stream);
         }
 
@@ -788,22 +1160,21 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             }
             // BGRA on the Windows shared-texture path (ANGLE only opens BGRA
             // surfaces); RGBA everywhere else.
-            let bgra = cfg!(any(
-                all(windows, feature = "shared-texture"),
-                all(target_os = "macos", feature = "shared-texture-macos")
-            ));
+            let bgra = zero_copy_wants_bgra();
             let started = std::time::Instant::now();
-            let rendered = state.renderer.render_prepared(
-                &document,
-                playback.comp.id,
-                frame,
-                quality_for(effective),
-                bgra,
+            let (comp_id, quality) = (playback.comp.id, quality_for(effective));
+            let rendered = prepare_frame(
+                state, &document, comp_id, frame, quality, bgra,
                 // Committed document: a warm span plays from the VRAM cache
                 // and every rendered frame warms it for the next pass.
                 true,
             );
             let cost = started.elapsed().as_secs_f64();
+            // `prepare_frame` borrowed the whole worker, so the playback state
+            // has to be picked up again to file the result.
+            let Some(playback) = &mut state.playback else {
+                return;
+            };
             match rendered {
                 Ok(prepared) => {
                     playback.ring.push_back((frame, prepared));
@@ -976,12 +1347,6 @@ fn handle_requests(
         // asks every 120 ms while the Viewer asks every tick, so the picture
         // froze on its first frame while the scopes kept updating. A trace and
         // a frame are different jobs; neither is the other's replacement.
-        // The caches must be the ones this document deserves *before* a single
-        // frame goes out — see the sync in the loop above. Counted rather than
-        // merely commented so a regression is a failing test.
-        if crate::framecache::generation() != state.seen_generation {
-            crate::framecache::note_stale_serve();
-        }
         let (pictures, scope, superseded) = drain_to_newest(request, receiver, classify_request);
         // Deliberately not logged. Superseding is the normal, healthy case —
         // it is how a drag stays attached to the pointer — and a line per
@@ -1202,9 +1567,19 @@ fn trace_scope(
         Some(held) => held,
         None => {
             // Nothing held for this frame — the zero-copy Viewer keeps no bytes,
-            // so on that path the trace still has to make its own. Cached, so a
-            // second trace of the same frame is free.
-            let key = crate::framecache::frame_key(req.comp.id, req.frame, req.scale);
+            // so on that path the trace still has to make its own. Cached under
+            // the frame's content name, so a second trace of the same frame is
+            // free; an unnameable frame (footage still being probed) is traced
+            // without banking anything.
+            let quality = quality_for(req.scale);
+            let key = state
+                .renderer
+                .frame_key(&document, req.comp.id, req.frame, quality);
+            let provenance = lumit_render::FrameProvenance {
+                comp: req.comp.id,
+                frame: req.frame,
+                scale_q: lumit_render::preview_scale_q(quality),
+            };
             let mut render = || {
                 state
                     .renderer
@@ -1219,7 +1594,11 @@ fn trace_scope(
                     .ok()
                     .map(|(rgba, width, height)| (width, height, rgba))
             };
-            let Some(made) = crate::framecache::get_or_render(key, &mut render) else {
+            let made = match key {
+                Some(key) => crate::framecache::get_or_render(key, provenance, &mut render),
+                None => render(),
+            };
+            let Some(made) = made else {
                 eprintln!("Scope render failed, dropping the trace");
                 return Ok(());
             };
@@ -1305,17 +1684,29 @@ fn publish_zero_copy(
     } else {
         scale
     };
-    let shared = match state.renderer.render_to_shared_dmabuf(
+    // Through the ladder, not straight to a composite: a frame already held on
+    // the card, in memory, or parked on disk costs a copy or an upload rather
+    // than a render (see `prepare_frame`).
+    let prepared = match prepare_frame(
+        state,
         document,
         comp,
         frame,
         quality_for(effective),
+        false,
         cacheable,
     ) {
-        Ok(shared) => shared,
+        Ok(prepared) => prepared,
         Err(err) => {
             // Dropped, not fatal: the next request renders afresh.
             eprintln!("Shared DMA-BUF render failed, dropping frame: {err}");
+            return;
+        }
+    };
+    let shared = match state.renderer.present_prepared_dmabuf(&prepared) {
+        Ok(shared) => shared,
+        Err(err) => {
+            eprintln!("Shared DMA-BUF present failed, dropping frame: {err}");
             return;
         }
     };
@@ -1357,17 +1748,27 @@ fn publish_zero_copy(
     } else {
         scale
     };
-    let shared = match state.renderer.render_to_shared(
+    // Through the ladder, not straight to a composite — see `prepare_frame`.
+    let prepared = match prepare_frame(
+        state,
         document,
         comp,
         frame,
         quality_for(effective),
+        true,
         cacheable,
     ) {
-        Ok(shared) => shared,
+        Ok(prepared) => prepared,
         Err(err) => {
             // Dropped, not fatal: the next request renders afresh.
             eprintln!("Shared-texture render failed, dropping frame: {err}");
+            return;
+        }
+    };
+    let shared = match state.renderer.present_prepared(&prepared) {
+        Ok(shared) => shared,
+        Err(err) => {
+            eprintln!("Shared-texture present failed, dropping frame: {err}");
             return;
         }
     };

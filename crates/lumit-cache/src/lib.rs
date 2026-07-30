@@ -55,6 +55,10 @@ pub struct ByteLru<K, V> {
     budget: usize,
     used: usize,
     tick: u64,
+    /// Evicted entries the owner asked to see ([`ByteLru::collect_evictions`]),
+    /// waiting to be drained. Empty — and never filled — unless it did.
+    evicted: Vec<(K, V, u32)>,
+    collect_evicted: bool,
 }
 
 struct Entry<V> {
@@ -82,7 +86,35 @@ impl<K: Eq + Hash + Clone, V: ByteSized> ByteLru<K, V> {
             budget: budget_bytes,
             used: 0,
             tick: 0,
+            evicted: Vec::new(),
+            collect_evicted: false,
         }
+    }
+
+    /// Keep evicted entries for the owner to collect with [`Self::take_evicted`]
+    /// instead of dropping them — what a **demotion ladder** needs (docs/06 §5.3:
+    /// a frame leaving VRAM falls to RAM, one leaving RAM falls to disk). Without
+    /// this an eviction is invisible: the value is dropped inside the insert that
+    /// displaced it and the tier below never hears that it exists.
+    ///
+    /// Off by default, and deliberately opt-in: a store nobody drains would grow
+    /// a second copy of everything it evicted. The owner is expected to drain
+    /// after each insert (the renderer does, so the log holds one turn's
+    /// evictions at most).
+    ///
+    /// An explicit [`Self::clear`] is NOT logged: emptying a tier on purpose —
+    /// the user's Clear cache — means the frames should go, not go downstairs.
+    pub fn collect_evictions(&mut self) {
+        self.collect_evicted = true;
+    }
+
+    /// Take the evicted entries logged since the last call, as
+    /// `(key, value, recompute cost)`. Empty unless [`Self::collect_evictions`]
+    /// was asked for. The cost travels with them because it is what decides
+    /// whether the tier below is worth the trouble (docs §5.3: demote when
+    /// recompute cost exceeds the cost of moving it down).
+    pub fn take_evicted(&mut self) -> Vec<(K, V, u32)> {
+        std::mem::take(&mut self.evicted)
     }
 
     /// The highest-scoring evictable (non-pinned) key, or None when every
@@ -100,6 +132,20 @@ impl<K: Eq + Hash + Clone, V: ByteSized> ByteLru<K, V> {
             .map(|(k, _)| k.clone())
     }
 
+    /// Remove one entry, accounting for its bytes and — when the owner asked to
+    /// see evictions — handing it to the log rather than dropping it. The one
+    /// place an eviction happens, so the ladder cannot be bypassed by a second
+    /// copy of this loop.
+    fn evict(&mut self, victim: &K) {
+        let Some(entry) = self.map.remove(victim) else {
+            return;
+        };
+        self.used -= entry.bytes;
+        if self.collect_evicted {
+            self.evicted.push((victim.clone(), entry.value, entry.cost));
+        }
+    }
+
     /// Evict non-pinned entries by eviction score until within budget, or until
     /// only pinned entries remain (then stop — a pin is never dropped).
     fn evict_to_fit(&mut self) {
@@ -107,9 +153,7 @@ impl<K: Eq + Hash + Clone, V: ByteSized> ByteLru<K, V> {
             let Some(victim) = self.victim() else {
                 break; // only pins left; accept the bounded overage (§5.3)
             };
-            if let Some(evicted) = self.map.remove(&victim) {
-                self.used -= evicted.bytes;
-            }
+            self.evict(&victim);
         }
     }
 
@@ -147,9 +191,7 @@ impl<K: Eq + Hash + Clone, V: ByteSized> ByteLru<K, V> {
             let Some(victim) = self.victim() else {
                 break; // only pins remain; accept the bounded overage (§5.3)
             };
-            if let Some(evicted) = self.map.remove(&victim) {
-                self.used -= evicted.bytes;
-            }
+            self.evict(&victim);
         }
         self.map.insert(
             key,
@@ -343,6 +385,60 @@ mod tests {
             "the large frame is reclaimed first"
         );
         assert!(lru.contains_key(&"c"));
+    }
+
+    /// docs §5.3's demotion ladder needs eviction to be *visible*: the tier
+    /// below cannot take a frame it never hears about. Opt-in, so a store whose
+    /// owner does not drain keeps behaving exactly as before.
+    #[test]
+    fn evictions_can_be_collected_for_the_tier_below() {
+        let mut lru: ByteLru<&str, Vec<u8>> = ByteLru::new(100);
+        lru.collect_evictions();
+        // Equal cost, so plain staleness decides: "a" is the stalest and goes.
+        assert!(lru.insert_with_cost("a", v(40), 7));
+        assert!(lru.insert_with_cost("b", v(40), 7));
+        lru.get(&"b");
+        assert!(lru.insert_with_cost("c", v(40), 7));
+
+        let evicted = lru.take_evicted();
+        assert_eq!(evicted.len(), 1);
+        assert_eq!(evicted[0].0, "a");
+        assert_eq!(evicted[0].1.len(), 40, "the value comes with it");
+        assert_eq!(
+            evicted[0].2, 7,
+            "and its recompute cost, which is what decides whether the tier \
+             below is worth the trouble"
+        );
+        assert!(lru.take_evicted().is_empty(), "drained once, not twice");
+
+        // Lowering the budget is an eviction too — the frames squeezed out
+        // should fall downstairs rather than vanish.
+        lru.set_budget(40);
+        assert_eq!(lru.take_evicted().len(), 1);
+
+        // Clearing on purpose is NOT: the user asked for the tier to be empty.
+        assert!(lru.insert("d", v(40)));
+        lru.take_evicted(); // "d" displaced the survivor; that is an eviction
+        lru.clear();
+        assert!(
+            lru.take_evicted().is_empty(),
+            "an explicit clear means gone, not demoted"
+        );
+
+        // Replacing a key is a replacement, not an eviction.
+        assert!(lru.insert("e", v(20)));
+        assert!(lru.insert("e", v(30)));
+        assert!(lru.take_evicted().is_empty());
+    }
+
+    /// Without the opt-in nothing is kept, so the default store cannot grow a
+    /// second copy of everything it evicted.
+    #[test]
+    fn evictions_are_dropped_unless_asked_for() {
+        let mut lru: ByteLru<&str, Vec<u8>> = ByteLru::new(40);
+        assert!(lru.insert("a", v(40)));
+        assert!(lru.insert("b", v(40)));
+        assert!(lru.take_evicted().is_empty());
     }
 
     /// docs §5.3 pinning: a pinned key is never the victim, so the eviction

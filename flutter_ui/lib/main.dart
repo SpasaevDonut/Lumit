@@ -577,6 +577,17 @@ class LumitUiState extends ChangeNotifier {
     if (ramBudget != null) setCacheBudget(bytes: BigInt.from(ramBudget));
     final vramBudget = perf.vramBudgetBytes;
     if (vramBudget != null) setVramCacheBudget(bytes: BigInt.from(vramBudget));
+    final diskBudget = perf.diskBudgetBytes;
+    if (diskBudget != null) setDiskCacheBudget(bytes: BigInt.from(diskBudget));
+    // Where the parked frames go. Restored the same way, and by name rather
+    // than by index so a reordered enum cannot silently move a user's cache.
+    final where = perf.diskCacheLocation;
+    if (where != null) {
+      setDiskCacheLocation(
+        location: cacheLocationFromName(where),
+        folder: perf.diskCacheFolder ?? '',
+      );
+    }
     // The read model re-reads on every committed change — one bridge call —
     // and every panel that draws layers repaints from it (K-184).
     _changes = state.onChange.listen((_) {
