@@ -44,17 +44,50 @@ const Size dropperViewfinderSize = Size(
 /// build, so the hand does not cover what is being read.
 const Offset dropperViewfinderOffset = Offset(18, 18);
 
-/// Where the viewfinder goes for a pointer at [cursor].
+/// Where the viewfinder goes for a pointer at [cursor], within [bounds].
 ///
-/// **The same offset wherever the pointer is, with nothing to push against.**
-/// It used to be pulled back to stay inside the Viewer, which meant that near
-/// the bottom-right corner — where a pick is as likely as anywhere else — the
-/// viewfinder crept over the very pixels being aimed at and then stopped
-/// following the pointer at all. It is drawn in the application's overlay
-/// instead of inside the panel, so it can hang over whatever is beside the
-/// Viewer and needs no clamp; it is simply not shown while the pointer is off
-/// the picture.
-Offset dropperViewfinderOrigin(Offset cursor) => cursor + dropperViewfinderOffset;
+/// **The same offset wherever the pointer is on the picture.** It used to be
+/// pulled back to stay inside the *Viewer*, which meant that near the
+/// bottom-right corner — where a pick is as likely as anywhere else — it crept
+/// over the very pixels being aimed at and then stopped following the pointer
+/// at all. It is drawn in the application's overlay instead, so it can hang
+/// over whatever sits beside the Viewer and the panel's edges mean nothing
+/// to it.
+///
+/// **The one edge that does mean something is the window's**, and it is
+/// answered the way a tooltip answers it: rather than sliding, the viewfinder
+/// **flips to the other side of the pointer** on whichever axis would run off —
+/// above instead of below, left instead of right, each axis on its own. The
+/// distance from the pointer is the same either way, so it never creeps over
+/// the pixel being read. Only if flipping does not fit either (a window
+/// narrower than the viewfinder) is it finally clamped, because a magnifier
+/// half off screen is still better than none.
+///
+/// [bounds] is the window's content area, not the display's: an application
+/// cannot paint outside its own window, so a magnifier "off the screen edge"
+/// is one the window would have clipped anyway. Where the window sits on the
+/// display is not something Flutter tells us without a windowing plugin, and
+/// knowing it would not buy a pixel more room.
+Offset dropperViewfinderOrigin(Offset cursor, Rect bounds) {
+  double place(double at, double offset, double size, double low, double high) {
+    // Below / to the right of the pointer, which is where it belongs.
+    final after = at + offset;
+    if (after + size <= high) return after;
+    // It would run off the end: the same distance the other side instead.
+    final before = at - offset - size;
+    if (before >= low) return before;
+    // Neither side fits — a window barely bigger than the viewfinder itself.
+    // Show as much of it as there is rather than nothing.
+    return high - size < low ? low : high - size;
+  }
+
+  return Offset(
+    place(cursor.dx, dropperViewfinderOffset.dx, dropperViewfinderSize.width,
+        bounds.left, bounds.right),
+    place(cursor.dy, dropperViewfinderOffset.dy, dropperViewfinderSize.height,
+        bounds.top, bounds.bottom),
+  );
+}
 
 /// The viewfinder itself: the grid, the region border, and the info strip.
 class DropperViewfinder extends StatelessWidget {

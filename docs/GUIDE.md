@@ -856,7 +856,9 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   **magnifier** follows it. It appears only once the pointer is actually over the picture, and
   it sits the same distance from the pointer wherever you go — including the corners, where it
   simply hangs over whatever is next to the Viewer rather than shuffling out of your way and
-  covering the pixel you were aiming at. The magnifier shows a **9×9 grid** of the pixels under the pointer,
+  covering the pixel you were aiming at. At the edge of the *window* it hops to the other side
+  of the pointer instead — above rather than below, or left rather than right — the way a
+  tooltip does, at the same distance, so it stays out of your way there too. The magnifier shows a **9×9 grid** of the pixels under the pointer,
   each blown up to a square you can aim at, with **dashed lines between every pair** so you can
   tell one pixel from the next. A **solid border** rings the pixels that will actually be taken:
   **just the centre one** to begin with, and **Shift+scroll** grows it to 3×3, 5×5, 7×7 and 9×9

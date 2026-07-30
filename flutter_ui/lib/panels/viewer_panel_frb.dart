@@ -470,6 +470,18 @@ class _DropperLayerState extends State<DropperLayer> {
   /// a corner — the pointer keeps it at one fixed offset everywhere.
   OverlayEntry? _viewfinderEntry;
 
+  /// Where the pointer is in the *overlay's* coordinates, and how much room the
+  /// overlay has — both worked out when the pointer moves, and used afterwards
+  /// as plain numbers.
+  ///
+  /// **Never worked out while building.** Placing the magnifier means asking
+  /// render objects where they are, and a scroll over the Viewer zooms the
+  /// picture, which relays this panel out: asking mid-rebuild asserts
+  /// `attached` and takes the window red. A pointer event is the one moment
+  /// both trees are settled, so that is when it is asked.
+  Offset? _overlayCursor;
+  Rect _overlayBounds = Rect.zero;
+
   /// How many pixels a side are averaged. One — this pixel and no other —
   /// until Shift+scroll says otherwise, and remembered for as long as the tool
   /// stays armed.
@@ -507,7 +519,12 @@ class _DropperLayerState extends State<DropperLayer> {
   /// picture, and nothing else.
   void _onArmChanged() {
     _hideViewfinder();
-    if (mounted) setState(() => _cursor = null);
+    if (mounted) {
+      setState(() {
+        _cursor = null;
+        _overlayCursor = null;
+      });
+    }
   }
 
   @override
@@ -520,8 +537,19 @@ class _DropperLayerState extends State<DropperLayer> {
       _hideViewfinder();
     }
     // The picture moved under the pointer (a zoom, a pan, the panel resized):
-    // the magnifier is placed against it, so it has to be placed again.
-    if (old.fitted != widget.fitted) _viewfinderEntry?.markNeedsBuild();
+    // which pixel is under the pointer has changed, so the magnifier has to be
+    // redrawn — but AFTER this build, never during it. Marking an overlay entry
+    // dirty from inside a build is the "setState() called during build" error,
+    // and it is what an ordinary scroll over the Viewer used to do.
+    if (old.fitted != widget.fitted) _refreshViewfinderAfterFrame();
+  }
+
+  /// Redraw the magnifier once this frame is over.
+  void _refreshViewfinderAfterFrame() {
+    if (_viewfinderEntry == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _viewfinderEntry?.markNeedsBuild();
+    });
   }
 
   bool _onKey(KeyEvent event) {
@@ -546,13 +574,16 @@ class _DropperLayerState extends State<DropperLayer> {
       child: MouseRegion(
         cursor: SystemMouseCursors.precise,
         onExit: (_) {
-          setState(() => _cursor = null);
+          setState(() {
+            _cursor = null;
+            _overlayCursor = null;
+          });
           _hideViewfinder();
         },
         child: Listener(
           behavior: HitTestBehavior.opaque,
-          onPointerHover: (e) => _moved(e.localPosition),
-          onPointerMove: (e) => _moved(e.localPosition),
+          onPointerHover: (e) => _moved(e.localPosition, e.position),
+          onPointerMove: (e) => _moved(e.localPosition, e.position),
           onPointerSignal: (e) {
             if (e is! PointerScrollEvent) return;
             if (!HardwareKeyboard.instance.isShiftPressed) return;
@@ -584,7 +615,7 @@ class _DropperLayerState extends State<DropperLayer> {
   /// instead of being pushed back inside the panel near an edge.
   void _syncViewfinder(DropperArm arm) {
     final at = _cursor;
-    if (at == null || !widget.fitted.contains(at)) {
+    if (at == null || !widget.fitted.contains(at) || _overlayCursor == null) {
       _hideViewfinder();
       return;
     }
@@ -603,18 +634,35 @@ class _DropperLayerState extends State<DropperLayer> {
     _viewfinderEntry = null;
   }
 
-  /// The magnifier, placed at a fixed offset from the pointer in the overlay's
-  /// own coordinates (which the UI-scale transform sits above, so the pointer's
-  /// global position is carried across rather than assumed to match).
+  /// The pointer's global position in the overlay's own coordinates, and the
+  /// room the overlay has — remembered for the builder, which must not go
+  /// looking for render objects itself (see [_overlayCursor]).
+  ///
+  /// The overlay's box is what carries the UI-scale transform, so a global
+  /// pointer position is put through it rather than assumed to match.
+  void _noteOverlayPosition(Offset global) {
+    final overlayBox = Overlay.maybeOf(context)?.context.findRenderObject();
+    if (overlayBox is! RenderBox || !overlayBox.attached || !overlayBox.hasSize) {
+      _overlayCursor = null;
+      return;
+    }
+    _overlayCursor = overlayBox.globalToLocal(global);
+    _overlayBounds = Offset.zero & overlayBox.size;
+  }
+
+  /// The magnifier, placed at a fixed offset from the pointer — from numbers
+  /// worked out when the pointer last moved, so this touches no render object
+  /// and is safe to run in any frame.
   Widget _viewfinderAt(DropperArm arm) {
     final at = _cursor;
-    final box = context.findRenderObject();
-    final overlayBox = Overlay.maybeOf(context)?.context.findRenderObject();
-    if (at == null || box is! RenderBox || overlayBox is! RenderBox) {
-      return const SizedBox.shrink();
-    }
-    final origin =
-        dropperViewfinderOrigin(overlayBox.globalToLocal(box.localToGlobal(at)));
+    final overlayAt = _overlayCursor;
+    if (at == null || overlayAt == null) return const SizedBox.shrink();
+    final origin = dropperViewfinderOrigin(
+      overlayAt,
+      // The window's content area: what the application can actually paint on,
+      // and so the only edge the viewfinder has to answer to.
+      _overlayBounds,
+    );
     return Positioned(
       left: origin.dx,
       top: origin.dy,
@@ -638,7 +686,8 @@ class _DropperLayerState extends State<DropperLayer> {
   /// The pointer moved. Redrawing is free — the magnifier reads the window
   /// already in hand — so the engine is only asked when that window has run out
   /// of pixels under the pointer.
-  void _moved(Offset local) {
+  void _moved(Offset local, Offset global) {
+    _noteOverlayPosition(global);
     setState(() => _cursor = local);
     final arm = widget.uiState.dropper.value;
     if (arm != null) _syncViewfinder(arm);

@@ -3232,6 +3232,25 @@ It is drawn in the application's overlay rather than in the panel's own stack, w
 lets it hang over whatever is beside the Viewer and so need no clamp. (Both reported by Mack
 on testing.)
 
+The **window's** edge is the one exception, and it is answered by flipping rather than sliding
+(Mack, asked for explicitly): the viewfinder goes to the other side of the pointer on whichever
+axis would run off — above instead of below, left instead of right, each axis independently —
+at the same distance, so it still never creeps over the pixel being read. Only a window with
+room for neither side clamps, because half a magnifier beats none. The bound is the **window's
+content area, not the display's**: an application cannot paint outside its own window, so a
+magnifier past the screen edge is one the window would have clipped anyway — and where the
+window sits on the display is not something Flutter reports without a windowing plugin, which
+would buy no extra room.
+
+**Living in the overlay means the panel's rebuilds are not the magnifier's.** Where it goes is
+worked out when the **pointer moves** — the one moment both trees are settled — and used
+afterwards as plain numbers. Asking render objects where they are from inside the overlay's own
+build, and marking that overlay dirty from inside the panel's build, are both wrong for the
+same reason, and an ordinary scroll over the Viewer did both: the wheel zooms the picture, the
+panel relays out, and the magnifier tried to place itself against a tree mid-rebuild — a red
+window and `'attached': is not true` (Mack, on testing). Nothing that places it touches a render
+object now, and a redraw asked for during a build is deferred to after the frame.
+
 **The strip under the grid says what is about to be taken, in the terms of the thing being
 picked.** A colour pick shows the colour and its numbers. A pick reading something else shows
 **the layer the numbers come from and the value found there** — a swatch of the composite

@@ -114,6 +114,50 @@ void main() {
           reason: 'a fresh arm starts with the pointer nowhere');
     });
 
+    /// **The scroll crash.** Scrolling over the Viewer with the dropper armed
+    /// zooms the picture, which relays the panel out under the magnifier. The
+    /// magnifier is in the application's overlay, so working out where to put
+    /// it from render objects *while that rebuild is happening* asserts
+    /// `attached` and takes the whole window red. Its position is worked out
+    /// when the pointer moves instead, and used as a plain number afterwards.
+    testWidgets('scrolling with the dropper armed does not throw',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      p.uiState.armDropper(DropperArm(
+        id: 'test',
+        reads: DropperReads.colour,
+        label: 'Key colour',
+        onPick: (_) {},
+      ));
+      await tester.pump();
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      final centre = tester.getCenter(find.byType(DropperLayer));
+      await gesture.moveTo(centre);
+      await tester.pump();
+      expect(find.byType(DropperViewfinder), findsOneWidget);
+
+      // An ordinary wheel scroll: the Viewer zooms about the pointer.
+      await tester.sendEventToBinding(
+        PointerScrollEvent(position: centre, scrollDelta: const Offset(0, -60)),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull, reason: 'zooming under it is fine');
+
+      // And again the other way, with the magnifier still up.
+      await tester.sendEventToBinding(
+        PointerScrollEvent(position: centre, scrollDelta: const Offset(0, 120)),
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(find.byType(DropperViewfinder), findsOneWidget,
+          reason: 'and it is still following the pointer');
+    });
+
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();
       await tester.pumpWidget(hostPanel(

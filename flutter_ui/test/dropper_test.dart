@@ -330,19 +330,61 @@ void main() {
       expect(find.text('Reading…'), findsOneWidget);
     });
 
+  group('where it sits', () {
+    // A window with plenty of room, and one with the pointer hard against its
+    // far corner.
+    const window = Rect.fromLTWH(0, 0, 1000, 800);
+    final w = dropperViewfinderSize.width;
+    final h = dropperViewfinderSize.height;
+
     /// **The corner regression.** The viewfinder used to be pulled back to stay
-    /// inside the Viewer, so near the bottom-right corner it crept over the
-    /// very pixels being aimed at and stopped following the pointer. It keeps
-    /// one offset everywhere now — it is drawn in the application's overlay, so
-    /// it has nothing to be pushed back inside — and is simply not shown while
-    /// the pointer is off the picture.
-    test('the viewfinder keeps the same offset from the pointer everywhere',
-        () {
-      expect(dropperViewfinderOrigin(const Offset(100, 100)),
+    /// inside the *Viewer*, so near the bottom-right corner it crept over the
+    /// very pixels being aimed at and stopped following the pointer. It is
+    /// drawn in the application's overlay now, so a panel edge means nothing
+    /// to it: the offset is the same wherever the pointer is on the picture.
+    test('keeps the same offset from the pointer with room to spare', () {
+      expect(dropperViewfinderOrigin(const Offset(100, 100), window),
           const Offset(100, 100) + dropperViewfinderOffset);
-      expect(dropperViewfinderOrigin(const Offset(399, 299)),
-          const Offset(399, 299) + dropperViewfinderOffset);
-      expect(dropperViewfinderOrigin(Offset.zero), dropperViewfinderOffset);
+      expect(dropperViewfinderOrigin(const Offset(700, 500), window),
+          const Offset(700, 500) + dropperViewfinderOffset);
+      expect(dropperViewfinderOrigin(Offset.zero, window),
+          dropperViewfinderOffset);
     });
+
+    /// The window's edge is the one it must answer to — an application cannot
+    /// paint outside its own window. It answers the way a tooltip does: the
+    /// same distance on the *other* side of the pointer, so it never creeps
+    /// over the pixel being read.
+    test('flips to the other side of the pointer at the window edge', () {
+      const at = Offset(990, 790);
+      final origin = dropperViewfinderOrigin(at, window);
+      expect(origin.dx, at.dx - dropperViewfinderOffset.dx - w);
+      expect(origin.dy, at.dy - dropperViewfinderOffset.dy - h);
+      expect(origin.dx + w, lessThanOrEqualTo(window.right));
+      expect(origin.dy + h, lessThanOrEqualTo(window.bottom));
+      // The gap from the pointer is the one it has everywhere else.
+      expect(at.dx - (origin.dx + w), dropperViewfinderOffset.dx);
+      expect(at.dy - (origin.dy + h), dropperViewfinderOffset.dy);
+    });
+
+    test('flips each axis on its own, not both together', () {
+      // Hard against the bottom, plenty of room to the right.
+      final low = dropperViewfinderOrigin(const Offset(100, 790), window);
+      expect(low.dx, 100 + dropperViewfinderOffset.dx, reason: 'still right');
+      expect(low.dy, 790 - dropperViewfinderOffset.dy - h, reason: 'now above');
+
+      // Hard against the right, plenty of room below.
+      final right = dropperViewfinderOrigin(const Offset(990, 100), window);
+      expect(right.dx, 990 - dropperViewfinderOffset.dx - w);
+      expect(right.dy, 100 + dropperViewfinderOffset.dy);
+    });
+
+    test('a window with room for neither side shows what it can', () {
+      const tiny = Rect.fromLTWH(0, 0, 60, 60);
+      final origin = dropperViewfinderOrigin(const Offset(30, 30), tiny);
+      expect(origin, Offset.zero,
+          reason: 'a magnifier half on screen beats none at all');
+    });
+  });
   });
 }

@@ -709,7 +709,10 @@ fresh arm never opens where the last pick left off — and it keeps **one fixed 
 pointer everywhere on the picture, drawn over whatever sits beside the Viewer rather than
 pushed back inside it near an edge (a pick in the bottom-right corner is as ordinary as any
 other, and the magnifier must not creep over the pixels being aimed at to make room for
-itself). It shows:
+itself). The **window's** edge it does answer to, the way a tooltip does: it **flips to the
+other side of the pointer** on whichever axis would run off — above instead of below, left
+instead of right, each axis on its own — at the same distance, so it still never covers what
+is being read. It shows:
 
 - a **9×9 grid** of the pixels under the pointer, one enlarged square each, with **dashed
   rules between every pair** so pixel boundaries are legible;
