@@ -100,7 +100,7 @@ The intended full per-project layout (`<cache root>/<project-uuid>/` with `disk-
 `proxies/`, `peaks/`, `flow/`, `index/`) is the design direction; audio peaks are currently
 computed on demand rather than stored.
 
-**Where the frame cache sits is the user's choice (K-210, docs/07 §15):** under the global
+**Where the frame cache sits is the user's choice (K-214, docs/07 §15):** under the global
 root keyed by the document's uuid (the default), in a `<project>.lum-cache/` sidecar beside the
 project file, or under a folder the user picks. The global root is the platform's own cache
 directory, resolved by `directories::ProjectDirs` exactly as the journal and media index resolve
@@ -114,7 +114,7 @@ needs the project to *have* a file, and a project caches from the moment it is c
 document uuid is inside the `.lum` and survives every save, so the global-root folder still
 finds its frames after a save and a reopen.
 
-The choice is application-wide by default and **may be made per project** (K-211), in which case
+The choice is application-wide by default and **may be made per project** (K-215), in which case
 it is a field on the document (`cache_location`) and therefore inside `project.json`: it travels
 with a copy of the project and survives being opened on another machine, which a setting in one
 machine's settings file cannot. Absent when the project follows the application, so a project

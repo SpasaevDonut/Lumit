@@ -349,7 +349,7 @@ Playback reads VRAM first, promotes RAM→VRAM, and promotes disk→RAM→VRAM a
 (never plays directly from disk). Writes are write-behind on background IO threads; a disk
 write never blocks a render.
 
-**Shipped (K-210).** All three tiers run. The VRAM tier holds finished display textures
+**Shipped (K-214).** All three tiers run. The VRAM tier holds finished display textures
 (K-187), the RAM tier holds their bytes, and the disk tier parks them in a folder that
 outlives the session. The rungs between them are built both ways: a frame evicted from VRAM
 is read back off the card and lands in RAM and on disk, and a frame held below is uploaded
@@ -410,7 +410,7 @@ Normative details:
 dependency walker: an edit changes evaluated values, values change hashes, old entries simply
 stop being addressed and age out via eviction.
 
-**As built (K-210).** Every tier is content-keyed, and the invalidation machinery is gone. It
+**As built (K-214).** Every tier is content-keyed, and the invalidation machinery is gone. It
 briefly existed: while the tiers were keyed by `(comp, frame, scale)` an edit did not rename any
 frame, so the only safe answer was for a committed change to drop every held frame of every
 composition — and the cost was paid on the edits that cannot change a pixel. A rename, a
@@ -437,7 +437,7 @@ playhead are pinned; final comp frames outlive intermediates at equal staleness 
 finals; intermediates rebuild from cached inputs); VRAM eviction demotes to RAM only when
 recompute cost exceeds a readback-cost threshold, otherwise drops.
 
-**As built (K-210), with one deviation, and why.** Every eviction demotes; there is no cost
+**As built (K-214), with one deviation, and why.** Every eviction demotes; there is no cost
 threshold on the decision. The threshold is the right idea and the number to compare against
 is not available: a composite is *submitted* to the graphics card and the call returns, so the
 wall-clock the renderer can measure around it is the submit rather than the work — a frame that
@@ -466,12 +466,12 @@ The disk cache lives in the project's sidecar folder (`<project>.lum-cache/`,
   missing or corrupt; a corrupt entry is discarded silently and re-rendered.
 - Default size cap 50 GB, user-set; evicted by the same cost-aware policy using the index.
 
-**As built (K-210).**
+**As built (K-214).**
 
 - **Where.** Three choices, in Settings → Performance (docs/07 §15): the application's own
   cache folder keyed by the document's id (the default), a `<project>.lum-cache/` folder beside
   the project file, or a folder the user picks. The choice is application-wide by default and
-  can be made **per project** instead (K-211), in which case it is stored in the `.lum` through
+  can be made **per project** instead (K-215), in which case it is stored in the `.lum` through
   an ordinary op — so it is undoable, and it travels with a copy of the project rather than
   staying behind in one machine's settings. A project's own answer overrides the application's. The sidecar cannot be the default because it
   only works once the project *has* a file, and a project should cache from the moment it is
@@ -486,7 +486,7 @@ The disk cache lives in the project's sidecar folder (`<project>.lum-cache/`,
   canonical channel order on disk, so a cache is not silently unreadable on the next platform:
   the Windows and macOS zero-copy paths composite in BGRA, and the swizzle is paid on the IO
   thread in both directions, never on a render.
-- **The index** (K-211). `index.bin` — every entry's hash, size, recompute cost, last use and
+- **The index** (K-215). `index.bin` — every entry's hash, size, recompute cost, last use and
   quality — plus `index.log`, one fixed-size record appended per change since that snapshot.
   Opening reads the snapshot and replays the log; a record torn by a crash is a partial
   trailing record and is discarded by length. Either file missing or unreadable means the
@@ -518,7 +518,7 @@ current quality, plays in real time now; **blue** — on disk only, promotable; 
 green/blue** — cached at a lower preview resolution than currently displayed. Redrawn from a
 lock-free bitmap snapshot; the UI thread never queries the cache itself (K-017).
 
-**As built (K-210).** The strip is five values per frame — `0` nothing, `1` held coarser,
+**As built (K-214).** The strip is five values per frame — `0` nothing, `1` held coarser,
 `2` held at this resolution, `3` on disk coarser, `4` on disk at this resolution — and playable
 outranks promotable, so a frame both held and parked reads as held.
 

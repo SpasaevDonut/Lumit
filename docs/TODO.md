@@ -29,7 +29,7 @@ These sit above everything else: they are what the editor feels like in the hand
     made it moot.
     **It does not mean reviving the read-back transport** (deleted in K-183) and
     must not: the Viewer receives a GPU handle and nothing else. The ladder's own
-    read-back (K-210) copies finished frames into the engine's cache and never
+    read-back (K-214) copies finished frames into the engine's cache and never
     crosses the bridge — same word, different thing.
 
     The other three fixes of this group are done (2026-07-30): the coming frames
@@ -355,7 +355,7 @@ the budget ranking (`bridge_call_budget_test.dart` prints it).
     (they are never built while hidden, 2026-07-28); scoping the visible tree
     remains.
 
-**The RAM frame cache is the middle rung of the ladder now (K-210).** It was briefly only the
+**The RAM frame cache is the middle rung of the ladder now (K-214).** It was briefly only the
 scope path's — the zero-copy transport keeps no CPU bytes (K-183) — and it is filled again by
 the demotion ladder: every frame read back off the graphics card lands there on its way to
 disk, and is uploaded straight back when it is wanted. Registering a texture still cannot
@@ -402,8 +402,8 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
     Flutter yet: autosave interval/keep, and the export defaults (preset +
     filename template). All three cache budgets are in the Settings window and
     survive a restart — RAM and VRAM with K-187, the disk tier's budget and its
-    location with K-210, and its scope — application-wide or this project — with
-    K-211; idle background fill landed with no setting (it costs
+    location with K-214, and its scope — application-wide or this project — with
+    K-215; idle background fill landed with no setting (it costs
     nothing the user would trade). Each remaining page lands wired to the
     engine through the bridge, not as a Dart-side setting nothing reads
     (K-181/K-182).

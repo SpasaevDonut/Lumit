@@ -1158,7 +1158,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   at stay resident on the graphics card, so scrubbing back over them re-shows the exact
   texture with zero work — no upload, no colour maths. All three tiers answer to the same
   content fingerprint, so a frame is a frame wherever it lives — and a frame pushed out of
-  one tier falls into the next rather than being lost (K-210; the long section at the end of
+  one tier falls into the next rather than being lost (K-214; the long section at the end of
   this guide walks the whole ladder).
 - **Timeline guide lines** — the faint vertical lines through the lanes have a mode picker
   in the bottom bar ("Grid"): **beats** (the default — detected beats shine through every
@@ -2533,7 +2533,7 @@ shelf under a label, so scrubbing back and forth is a shelf lookup with no
 drawing at all.
 
 *What the label says has since changed, and it matters — see "The three-tier
-cache" at the end of this guide (K-210).* As first built it said which comp, which
+cache" at the end of this guide (K-214).* As first built it said which comp, which
 frame, at what preview size, and which version of the document — and because a
 label like that does not change when the picture does, the only safe thing to do
 on any edit was to throw the whole shelf away. The label is now a hash of what is
@@ -2552,7 +2552,7 @@ back instantly, exactly as the old egui app shows it. (At this point the Flutter
 side kept its own note of which frames it had driven onto the shelf, because the
 engine reported only *how many* were cached; the engine answers per frame now, and
 the strip gained a steel-blue state for frames parked on disk — again, see the
-K-210 section at the end.) The strip is scoped to the current preview size — which matters,
+K-214 section at the end.) The strip is scoped to the current preview size — which matters,
 because the **resolution picker** (Full / Half / Third / Quarter in the transport)
 now genuinely renders a smaller picture rather than a full-size one relabelled:
 choosing Half asks the engine for half-resolution pixels, which are faster to
@@ -4580,7 +4580,7 @@ One number cannot answer "what is cached" for any of them, so the meter no longe
 tries: it draws a small bar per tier with the megabytes held beside it, and
 clicking a bar empties that tier alone. The budget for each is in the tooltip and
 in Settings → Performance, because the status line is one line shared with the
-notices and the export progress. All three bars are there now (K-210) — the disk
+notices and the export progress. All three bars are there now (K-214) — the disk
 one asks before it deletes, since that tier holds files rather than a re-render's
 worth of work.
 
@@ -4653,7 +4653,7 @@ sounds like belt and braces, but the rule in docs/14 is not "validate at the
 edges", it is *no panics in engine crates* — and a document from disk is not
 something the ops layer has vetted.
 
-### The three-tier cache, and why editing stopped throwing frames away (K-210)
+### The three-tier cache, and why editing stopped throwing frames away (K-214)
 
 The most expensive thing Lumit does is composite a frame. Everything about how
 the editor *feels* comes back to how rarely it has to do that twice. This is the
@@ -4779,7 +4779,7 @@ stripe a thousand pixels wide. Mint means the frame plays now; steel blue means 
 is parked on disk and one promotion away; dimmed means it is held, but at a
 coarser resolution than you are viewing.
 
-### Three things the cache learned afterwards (K-211)
+### Three things the cache learned afterwards (K-215)
 
 The three-tier cache above shipped with three known gaps, written into the
 backlog rather than papered over. All three are closed now, and each is worth a

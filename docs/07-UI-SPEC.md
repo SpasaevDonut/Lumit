@@ -1120,12 +1120,12 @@ budgets are **typed and draggable numbers capped at what the machine has** — i
 and the adapter's dedicated video memory, asked of the engine — rather than a pick from a
 fixed list of sizes (K-194).
 
-**The disk tier's controls landed with K-210**, as a third section on the same page: its
+**The disk tier's controls landed with K-214**, as a third section on the same page: its
 budget (the same typed-and-draggable row), a readout of what is parked and where, and a
 **Where** row choosing between *With Lumit* — the application's own cache folder, the default
 and the only one that works before a project has been saved — *Beside the project*, which is
 the per-project choice, and *A folder I choose*, which offers a folder picker beside the
-dropdown. An **Applies to** row beside it chooses the scope (K-211): *Everything*, kept in the settings
+dropdown. An **Applies to** row beside it chooses the scope (K-215): *Everything*, kept in the settings
 file, or *This project*, kept inside the `.lum` so it travels with a copy of the project —
 a project's own answer overriding the application's. Switching back to Everything clears the
 project's answer rather than copying the application's into it, so the project follows along

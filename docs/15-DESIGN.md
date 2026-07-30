@@ -380,7 +380,7 @@ Sequence layer show thumbnails/waveforms.
 The cache bar is a thin stripe under the time ruler showing which frames are cached, per
 tier. Cached is *good news* — quiet and cool, never alarming.
 
-All three of Nebula's tiers ship (K-210, docs/06 §5.6). Every run draws as a 2px band beneath
+All three of Nebula's tiers ship (K-214, docs/06 §5.6). Every run draws as a 2px band beneath
 the ruler:
 
 | State | Token | Value | Meaning |
