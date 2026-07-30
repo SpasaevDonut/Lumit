@@ -30,6 +30,7 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:provider/provider.dart';
 
 import '../icons/icons.dart';
@@ -75,7 +76,20 @@ const double _rulerHeight =
 
 /// How near the end of a bar counts as grabbing its edge to trim rather than its
 /// middle to move.
-const double _trimGrab = 6;
+const double _trimGrab = 8;
+
+/// Which part of a bar [width] pixels wide a press at [dx] takes hold of.
+///
+/// Each trim zone is [_trimGrab] wide but never more than a third of the bar,
+/// so a bar only a few frames long still keeps a middle to move by — without
+/// the cap, a short bar was all edge and could not be dragged along the
+/// timeline at all.
+BarGrab barGrabAt(double dx, double width) {
+  final edge = min(_trimGrab, width / 3);
+  if (dx < edge) return BarGrab.trimIn;
+  if (dx > width - edge) return BarGrab.trimOut;
+  return BarGrab.move;
+}
 
 /// A layer drag in flight: the index lifted, and the index it would land on.
 ///
@@ -272,6 +286,23 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// One lane's worth of buckets: plenty for any panel width.
   static const int _peakBuckets = 2048;
 
+  /// Each Footage layer's source length in comp frames, by layer id. Cached
+  /// for the same reason [_hasAudio] is: the answer comes from probing the
+  /// file with FFmpeg, which must never happen in a build. Absent means "not
+  /// asked yet"; a null value means the answer never came (no media feature,
+  /// missing file), which leaves that layer's ends free.
+  final Map<String, int?> _footageFrames = {};
+
+  /// How far each layer's ends may be dragged, by layer id (K-210) — what the
+  /// bars trim within and draw their corner marks from.
+  Map<String, BarBounds> _barBounds = {};
+
+  /// The document revision [_barBounds] was worked out at. A precomp's length
+  /// and a layer's Retime are both one edit away from changing, so the bounds
+  /// are taken again whenever the document moves — and never in between, which
+  /// is what keeps a rebuild free of bridge calls (K-184).
+  BigInt? _boundsRevision;
+
   /// Fetch peaks for any layer whose Waveform twirl is open and unanswered.
   void _refreshPeaks(List<BridgeLayerEntry> layers) {
     for (final entry in layers) {
@@ -286,6 +317,87 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
         setState(() => _peaks[id] = peaks);
       });
     }
+  }
+
+  /// Work out how far every layer's ends may be dragged (K-210).
+  ///
+  /// Two costs, kept apart. A **footage** length means opening the file, so it
+  /// is asked once per layer, off the build, and kept for the session — the
+  /// same bargain [_refreshPeaks] strikes. Everything else is a cheap read that
+  /// an edit can change (a precomp lengthened in its comp settings, Retime
+  /// switched on), so the whole table is rebuilt when — and only when — the
+  /// document revision moves.
+  void _refreshBounds(CompModel model, int fpsNum, int fpsDen) {
+    final layers = model.layers;
+    for (final entry in layers) {
+      final id = entry.layer.internallayerId.toString();
+      if (entry.info.kind != BridgeLayerKind.footage ||
+          _footageFrames.containsKey(id)) {
+        continue;
+      }
+      // Claim the slot first, so a rebuild mid-probe does not probe twice.
+      _footageFrames[id] = null;
+      final ItemReference? source;
+      try {
+        source = entry.layer.getSourceItem();
+      } catch (_) {
+        continue;
+      }
+      if (source is! ItemReference_Footage) continue;
+      source.field0.mediaInfo().then((info) {
+        if (!mounted || info == null) return;
+        setState(() {
+          _footageFrames[id] = frameOfTime(info.duration, fpsNum, fpsDen);
+          // The answer changes the bounds, and the document has not moved:
+          // forget the revision so the next build works them out again.
+          _boundsRevision = null;
+        });
+      });
+    }
+
+    final revision = model.revision;
+    if (revision != null && revision == _boundsRevision) return;
+    _boundsRevision = revision;
+    _barBounds = {
+      for (final entry in layers)
+        entry.layer.internallayerId.toString():
+            _boundsOf(entry, fpsNum, fpsDen),
+    };
+  }
+
+  /// One layer's bounds, from what its kind can be asked cheaply.
+  BarBounds _boundsOf(BridgeLayerEntry entry, int fpsNum, int fpsDen) {
+    final info = entry.info;
+    // Retime frees both ends (docs/04-RETIMING.md): the Retime property
+    // (K-197), and the Source card's speed map, which is the same promise by
+    // the older route and is still live in the interface.
+    var retimed = info.retime != null;
+    int? sourceFrames;
+    try {
+      switch (info.kind) {
+        case BridgeLayerKind.footage:
+          retimed = retimed || entry.layer.getRetime() != null;
+          sourceFrames = _footageFrames[entry.layer.internallayerId.toString()];
+        case BridgeLayerKind.precomp:
+          final source = entry.layer.getSourceItem();
+          if (source is ItemReference_Composition) {
+            sourceFrames = frameOfTime(
+                source.field0.getSettings().duration, fpsNum, fpsDen);
+          }
+        default:
+          // Every generated kind: nothing to run out of, both ends free.
+          sourceFrames = null;
+      }
+    } catch (_) {
+      // A layer that has gone, or a source that cannot be read: free ends
+      // rather than a bar pinned to a guess.
+      return BarBounds.free;
+    }
+    return barBounds(
+      startOffsetFrame: frameOfTime(info.span.startOffset, fpsNum, fpsDen),
+      sourceFrames: sourceFrames,
+      retimed: retimed,
+    );
   }
 
   /// Twirl a fold open or shut. Shutting one drops the selection inside it
@@ -850,6 +962,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     ];
     _refreshAudio(layers);
     _refreshPeaks(layers);
+    // Every layer, not the filtered list: a bar hidden by the search box still
+    // has ends, and they must be known the moment it comes back.
+    _refreshBounds(ui.model, fpsNum, fpsDen);
 
     // The property rows on screen, in display order — what a Shift+click
     // range runs along — and the graph channels the selection resolves to,
@@ -1406,6 +1521,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                     ui.cacheChanged
                                                   ]),
                                                   dragPreview: _barDrag,
+                                                  bounds: _barBounds,
                                                 ),
                                               ),
                                             ),
@@ -1979,6 +2095,161 @@ BarDragPreview barDragPreview(String layerId, BarGrab grab, int delta) =>
       BarGrab.trimIn => BarDragPreview(layerId, delta, 0, 0),
       BarGrab.trimOut => BarDragPreview(layerId, 0, delta, 0),
     };
+
+/// How far a layer's ends may be dragged, in comp frames (K-210).
+///
+/// **In plain terms:** a Footage, audio or Precomp layer can only show what its
+/// source actually holds, so its bar stops where the media does — its head
+/// cannot be dragged earlier than the source's first frame, and its tail cannot
+/// be dragged past its last. Every generated kind — Solid, Text, Adjustment,
+/// Null, Camera, Sequence — has no such source, so both its ends are free and
+/// it is whatever length the user drags it to. Switching **Retime** on frees
+/// the ends too (docs/04-RETIMING.md): a retimed layer decides for itself which
+/// source moment each of its own frames shows, so its length stops being the
+/// source's business.
+class BarBounds {
+  /// The earliest frame the in point may be trimmed to; null = the head is free.
+  final int? minIn;
+
+  /// The latest frame the out point may be trimmed to; null = the tail is free.
+  final int? maxOut;
+
+  const BarBounds({this.minIn, this.maxOut});
+
+  /// Both ends free: every generated kind, anything retimed, and any source
+  /// whose length could not be read.
+  static const BarBounds free = BarBounds();
+
+  @override
+  bool operator ==(Object other) =>
+      other is BarBounds && other.minIn == minIn && other.maxOut == maxOut;
+
+  @override
+  int get hashCode => Object.hash(minIn, maxOut);
+}
+
+/// The bounds one layer's bar trims within.
+///
+/// [startOffsetFrame] is where the layer's own time zero sits on the comp
+/// timeline, which is where its source's first frame shows; [sourceFrames] is
+/// the source's length in comp frames, or null when the layer has no source of
+/// its own — or when its length could not be read at all, which leaves the ends
+/// free rather than pinning them to a guess (missing media must never silently
+/// crop a layer).
+BarBounds barBounds({
+  required int startOffsetFrame,
+  required int? sourceFrames,
+  required bool retimed,
+}) =>
+    retimed || sourceFrames == null
+        ? BarBounds.free
+        : BarBounds(
+            minIn: startOffsetFrame,
+            maxOut: startOffsetFrame + sourceFrames,
+          );
+
+/// How far a grab of [grab] may actually travel when the gesture has moved
+/// [delta] frames: inside the layer's source, and never far enough to turn the
+/// bar inside out — a bar always keeps at least one frame.
+///
+/// A **move** is never clamped. Moving carries the start offset with the bar,
+/// so a layer that sits inside its source stays inside it however far it
+/// travels; only the two trims can run out of source.
+///
+/// A bound never drags an edge that is *already* outside it — a layer whose
+/// Retime was switched off after being stretched keeps the length it has, and
+/// its ends stay where the user left them until they are dragged back in.
+int clampBarDelta({
+  required BarGrab grab,
+  required int delta,
+  required int inFrame,
+  required int outFrame,
+  required BarBounds bounds,
+}) {
+  switch (grab) {
+    case BarGrab.move:
+      return delta;
+    case BarGrab.trimIn:
+      var want = inFrame + delta;
+      final earliest = bounds.minIn;
+      if (earliest != null) want = max(want, min(earliest, inFrame));
+      return min(want, outFrame - 1) - inFrame;
+    case BarGrab.trimOut:
+      var want = outFrame + delta;
+      final latest = bounds.maxOut;
+      if (latest != null) want = min(want, max(latest, outFrame));
+      return max(want, inFrame + 1) - outFrame;
+  }
+}
+
+/// An exact time as a comp frame number, without asking the engine (K-184).
+///
+/// The same floor `FrameRate::frame_at` takes, in whole integers so a long
+/// timeline cannot drift the way a double would: a time `num/den` seconds at
+/// `fpsNum/fpsDen` frames a second is `num·fpsNum / (den·fpsDen)`, rounded
+/// down — and down for negative times too, which is what a layer starting
+/// before the comp needs.
+int frameOfTime(BridgeRational time, int fpsNum, int fpsDen) {
+  final den = time.den.toInt() * fpsDen;
+  if (den <= 0) return 0;
+  final scaled = time.num.toInt() * fpsNum;
+  final quotient = scaled ~/ den;
+  return scaled % den != 0 && scaled < 0 ? quotient - 1 : quotient;
+}
+
+/// The corner marks that say a bar has run out of source (K-210): a small
+/// triangle in the top-left corner when the head is as early as its media
+/// allows, and one in the top-right when the tail is as late. Drawn only on the
+/// kinds that have a source to run out of, and never on a retimed layer, whose
+/// ends are free.
+class BarEndMarksPainter extends CustomPainter {
+  final bool atIn;
+  final bool atOut;
+  final Color colour;
+
+  /// The triangle's legs. Small enough to read as a corner cut on a 22px row
+  /// rather than as a badge sitting on the bar.
+  static const double leg = 5;
+
+  const BarEndMarksPainter({
+    required this.atIn,
+    required this.atOut,
+    required this.colour,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.width <= 0) return;
+    // Never let the two marks meet in the middle of a very short bar: a bar
+    // narrower than both legs draws marks scaled to fit it instead.
+    final l = min(leg, size.width / 2);
+    final paint = Paint()..color = colour;
+    if (atIn) {
+      canvas.drawPath(
+        Path()
+          ..moveTo(0, 0)
+          ..lineTo(l, 0)
+          ..lineTo(0, l)
+          ..close(),
+        paint,
+      );
+    }
+    if (atOut) {
+      canvas.drawPath(
+        Path()
+          ..moveTo(size.width, 0)
+          ..lineTo(size.width - l, 0)
+          ..lineTo(size.width, l)
+          ..close(),
+        paint,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(BarEndMarksPainter old) =>
+      old.atIn != atIn || old.atOut != atOut || old.colour != colour;
+}
 
 /// The waveform lane's painter: the layer's source peaks, mapped through its
 /// live in/out/offset so dragging or trimming the bar carries the transients
@@ -3373,6 +3644,11 @@ class _LayerArea extends StatelessWidget {
   /// lanes, so the peaks move with the gesture rather than on release.
   final ValueNotifier<BarDragPreview?> dragPreview;
 
+  /// How far each layer's ends may be dragged, by layer id (K-210). A layer
+  /// with no entry has free ends — the honest answer while a source length is
+  /// still being read.
+  final Map<String, BarBounds> bounds;
+
   /// The lanes' vertical scroll — the outline mirrors it, and the thumb in
   /// the gutter beside this area is the one the user grabs.
   final ScrollController vScroll;
@@ -3422,6 +3698,7 @@ class _LayerArea extends StatelessWidget {
     required this.onChanged,
     required this.cacheRevision,
     required this.dragPreview,
+    required this.bounds,
     required this.vScroll,
     required this.selectedKeys,
     required this.onKeysSelected,
@@ -3597,6 +3874,11 @@ class _LayerArea extends StatelessWidget {
                                                   onSelect(layers[i].layer),
                                               onChanged: onChanged,
                                               dragPreview: dragPreview,
+                                              bounds: bounds[layers[i]
+                                                      .layer
+                                                      .internallayerId
+                                                      .toString()] ??
+                                                  BarBounds.free,
                                             ),
                                             // One lane per fold-out row the outline shows,
                                             // from the same list it builds: keyframe rows
@@ -4203,6 +4485,10 @@ class _Bar extends StatefulWidget {
   /// Where the live preview is published, for the waveform lane to follow.
   final ValueNotifier<BarDragPreview?> dragPreview;
 
+  /// How far this layer's ends may be dragged (K-210). [BarBounds.free] for
+  /// every kind that has no source to run out of.
+  final BarBounds bounds;
+
   const _Bar({
     super.key,
     required this.comp,
@@ -4213,6 +4499,7 @@ class _Bar extends StatefulWidget {
     required this.onSelect,
     required this.onChanged,
     required this.dragPreview,
+    required this.bounds,
   });
 
   @override
@@ -4312,17 +4599,24 @@ class _BarState extends State<_Bar> {
                     : (d) => setState(() {
                           _delta = 0;
                           _deltaPx = 0;
-                          _grab = _downDx < _trimGrab
-                              ? BarGrab.trimIn
-                              : _downDx > width - _trimGrab
-                                  ? BarGrab.trimOut
-                                  : BarGrab.move;
+                          _grab = barGrabAt(_downDx, width);
                         }),
                 onHorizontalDragUpdate: widget.razor || held
                     ? null
                     : (d) => setState(() {
                           _deltaPx += d.delta.dx;
-                          _delta = widget.axis.frameAt(_deltaPx);
+                          // The pointer keeps travelling; the bar does not.
+                          // Held against the source's ends (K-210) and against
+                          // itself, so a trim can neither run past the media
+                          // nor turn the bar inside out — and dragging back
+                          // picks the edge up again from where it stuck.
+                          _delta = clampBarDelta(
+                            grab: _grab ?? BarGrab.move,
+                            delta: widget.axis.frameAt(_deltaPx),
+                            inFrame: inFrame,
+                            outFrame: outFrame,
+                            bounds: widget.bounds,
+                          );
                           _publishPreview();
                         }),
                 onHorizontalDragEnd: widget.razor || held
@@ -4357,6 +4651,33 @@ class _BarState extends State<_Bar> {
                           bottom: 0,
                           child: Container(width: 1, color: t.surface0),
                         ),
+                      // The two trim zones say so under the pointer: a bar
+                      // whose ends can be taken hold of should not have to be
+                      // discovered by trial. Inside the gesture detector, not
+                      // over it, so hovering never costs the drag its events.
+                      if (!held && !widget.razor) ...[
+                        _trimCursor(width, left: true),
+                        _trimCursor(width, left: false),
+                      ],
+                      // The corner marks: this bar is as long as its source
+                      // allows in that direction (K-210).
+                      Positioned.fill(
+                        child: IgnorePointer(
+                          child: CustomPaint(
+                            key: ValueKey<String>(
+                                'tl-bar-ends-${widget.entry.layer.internallayerId}'),
+                            painter: BarEndMarksPainter(
+                              atIn: widget.bounds.minIn != null &&
+                                  drawIn <= widget.bounds.minIn!,
+                              atOut: widget.bounds.maxOut != null &&
+                                  drawOut >= widget.bounds.maxOut!,
+                              // The same ink the clip splits use, so the bar
+                              // keeps one vocabulary of marks.
+                              colour: t.surface0,
+                            ),
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -4364,6 +4685,23 @@ class _BarState extends State<_Bar> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// One end's hover strip: the pointer becomes the horizontal resize arrow
+  /// over exactly the width [barGrabAt] treats as that end.
+  Widget _trimCursor(double width, {required bool left}) {
+    final edge = min(_trimGrab, width / 3);
+    return Positioned(
+      left: left ? 0 : null,
+      right: left ? null : 0,
+      top: 0,
+      bottom: 0,
+      width: edge,
+      child: const MouseRegion(
+        cursor: SystemMouseCursors.resizeLeftRight,
+        child: SizedBox.expand(),
       ),
     );
   }
@@ -4380,7 +4718,18 @@ class _BarState extends State<_Bar> {
   /// and the start offset together is a single undo step.
   void _commit(int inFrame, int outFrame) {
     final grab = _grab;
-    final delta = _delta;
+    // Clamped once more on the way out: a source length that arrived from its
+    // probe part-way through the gesture only reaches the bar on the next
+    // build, and what is committed must obey the bounds in force at release.
+    final delta = grab == null
+        ? 0
+        : clampBarDelta(
+            grab: grab,
+            delta: _delta,
+            inFrame: inFrame,
+            outFrame: outFrame,
+            bounds: widget.bounds,
+          );
     setState(() {
       _delta = 0;
       _deltaPx = 0;

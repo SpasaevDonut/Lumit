@@ -515,6 +515,20 @@ keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   **name** in the outline moves it up or down the stack — drop it on a row and it takes
   that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
 
+  **The ends are handles, and the source is the limit (K-210).** Dragging the last few
+  pixels of either end of a bar trims that end — the pointer shows the horizontal resize
+  arrow there, and the grab zone never takes more than a third of a short bar, so even a
+  two-frame bar keeps a middle to move by. A layer whose source has a length of its own —
+  Footage (picture or sound) and Precomp — trims **within** it: the in point cannot go
+  earlier than the source's first frame, the out point cannot go past its last, and a bar
+  already at that limit draws a small triangle in that top corner. Every generated kind
+  (Solid, Text, Adjustment, Null, Camera, Sequence) has no such source and trims freely,
+  with no corner marks. **Retime removes both limits and both marks**: a retimed layer
+  maps its own local time onto source time (docs/04-RETIMING.md), so its length is no
+  longer the source's business. Media whose length cannot be read leaves the ends free —
+  a missing file must never silently crop a layer. Moving a bar is never limited: the
+  start offset travels with it, so what fits its source keeps fitting it.
+
   **Both halves move (K-208).** While the drag is in flight the stack shows where the drop
   would land: the lifted layer slides towards its slot and the layers it passes slide the
   other way — in the outline **and** in the lane area at once, from one drag state and one

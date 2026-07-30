@@ -1470,7 +1470,18 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   ruler with each layer's bar on its own *lane*). Each bar wears its layer's **label
   colour** — the same chip its outline swatch shows (K-189) — so a tall stack reads at a
   glance and picking a new label recolours the bar. Drag a layer's bar body to slide it
-  earlier or later in time (one undo per drag); drag its ends to trim. A layer twirled
+  earlier or later in time (one undo per drag); drag its ends to trim — the pointer turns
+  into the horizontal resize arrow over the last few pixels of each end, which is where
+  the trim grab lives. **The ends know what the source holds** (K-210): a Footage, audio
+  or Precomp layer stops where its media does — you cannot drag its head earlier than the
+  clip's first frame or its tail past the last, and when an end is sitting on that limit a
+  small triangle appears in that top corner of the bar to say so. Every generated kind —
+  Solid, Text, Adjustment, Null, Camera — has no source to run out of, so both its ends go
+  wherever you drag them and neither wears a triangle. Switch **Retime** on and the limits
+  come off (and the triangles go): a retimed layer chooses which source moment each of its
+  own frames shows, so it can be stretched to any length you like. Sliding a bar along the
+  timeline is never limited — moving carries the content with it, so a clip that fits its
+  source still fits it wherever it lands. A layer twirled
   open shows its **keyframes as diamonds on the lanes**: drag a diamond to move that
   keyframe in time, or drag a box on empty lane space to select the diamonds inside it.
   Dragging never scrolls the timeline — the wheel and the scrollbars do: a plain wheel

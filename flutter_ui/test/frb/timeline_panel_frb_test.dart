@@ -1069,6 +1069,177 @@ void main() {
           (trimOut.deltaIn, trimOut.deltaOut, trimOut.offsetShift), (0, 7, 0));
     });
 
+    /// Which part of a bar a press takes hold of. The third-of-the-bar cap is
+    /// the point: without it a short bar is all edge and cannot be moved.
+    test('barGrabAt keeps a middle on even the shortest bar', () {
+      expect(barGrabAt(2, 100), BarGrab.trimIn);
+      expect(barGrabAt(50, 100), BarGrab.move);
+      expect(barGrabAt(97, 100), BarGrab.trimOut);
+      // Nine pixels wide: three each way, and a middle that still moves.
+      expect(barGrabAt(1, 9), BarGrab.trimIn);
+      expect(barGrabAt(4.5, 9), BarGrab.move);
+      expect(barGrabAt(8, 9), BarGrab.trimOut);
+    });
+
+    /// The rule the ends obey (K-210): a source-backed layer stops where its
+    /// media does, and Retime takes the limits off.
+    test('barBounds pins a source-backed layer and frees a retimed one', () {
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: 50, retimed: false),
+        const BarBounds(minIn: 10, maxOut: 60),
+      );
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: 50, retimed: true),
+        BarBounds.free,
+        reason: 'Retime decides its own source times, so the ends are free',
+      );
+      expect(
+        barBounds(startOffsetFrame: 10, sourceFrames: null, retimed: false),
+        BarBounds.free,
+        reason: 'a generated layer — or media that would not read — is free',
+      );
+    });
+
+    /// What the clamp actually does to a gesture in flight.
+    test('clampBarDelta holds a trim inside its source', () {
+      const bounds = BarBounds(minIn: 10, maxOut: 60);
+      int clamp(BarGrab grab, int delta,
+              {int inFrame = 20, int outFrame = 50, BarBounds b = bounds}) =>
+          clampBarDelta(
+              grab: grab,
+              delta: delta,
+              inFrame: inFrame,
+              outFrame: outFrame,
+              bounds: b);
+
+      expect(clamp(BarGrab.trimIn, -5), -5, reason: 'room to spare');
+      expect(clamp(BarGrab.trimIn, -50), -10,
+          reason: 'the head stops on the source\'s first frame');
+      expect(clamp(BarGrab.trimOut, 50), 10,
+          reason: 'the tail stops on the source\'s last frame');
+      expect(clamp(BarGrab.trimOut, 500, b: BarBounds.free), 500,
+          reason: 'a free end goes wherever it is dragged');
+      // A move carries the start offset, so it can never leave the source.
+      expect(clamp(BarGrab.move, 900), 900);
+      // Never inside out: a bar always keeps at least one frame.
+      expect(clamp(BarGrab.trimIn, 100), 29);
+      expect(clamp(BarGrab.trimOut, -100), -29);
+      // A layer already longer than its source keeps the length it has: the
+      // bound holds it still rather than dragging it back.
+      expect(clamp(BarGrab.trimOut, 5, inFrame: 20, outFrame: 80), 0);
+      expect(clamp(BarGrab.trimOut, -5, inFrame: 20, outFrame: 80), -5,
+          reason: 'pulling it back towards the source is always allowed');
+    });
+
+    /// Frames from exact times, in integers (K-184): the panel maps a start
+    /// offset without asking the engine, and must floor the way `frame_at`
+    /// does — including for a layer that starts before the comp.
+    test('frameOfTime floors the way the engine does', () {
+      BridgeRational r(int num, int den) => BridgeRational(num: num, den: den);
+      expect(frameOfTime(r(1, 1), 30, 1), 30);
+      expect(frameOfTime(r(1, 2), 30, 1), 15);
+      expect(frameOfTime(r(1, 30), 24, 1), 0, reason: 'floors, never rounds');
+      expect(frameOfTime(r(-1, 1), 30, 1), -30);
+      expect(frameOfTime(r(-1, 30), 24, 1), -1,
+          reason: 'negative times floor downwards, as div_euclid does');
+      expect(frameOfTime(r(1, 1), 30000, 1001), 29,
+          reason: '29.97: one second is 29 whole frames');
+    });
+
+    /// A Precomp layer cannot be trimmed past the comp it holds — and turning
+    /// Retime on takes the limit off (K-210). Fails without the clamp: the
+    /// tail simply followed the pointer.
+    testWidgets('a precomp bar stops at the end of its source', (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      // A short source, so the tail can reach the end of it in one drag.
+      final settings = inner.getSettings();
+      inner.setSettings(
+        settings: BridgeCompSettings(
+          name: settings.name,
+          width: settings.width,
+          height: settings.height,
+          fpsNum: settings.fpsNum,
+          fpsDen: settings.fpsDen,
+          duration: const BridgeRational(num: 5, den: 1),
+        ),
+      );
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      final sourceFrames = inner.durationFrames().toInt();
+      // Well inside the source, so there is room to drag outward.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: 200),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      // Far more than the source has left: the tail must stop, not follow.
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(400, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: layer.getSpan().outPoint), sourceFrames,
+          reason: 'the tail landed on the source\'s last frame');
+
+      // The corner mark says why it stopped.
+      final marks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((marks.painter as BarEndMarksPainter).atOut, isTrue);
+
+      // Retime on: the layer now decides its own source times, so it stretches.
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(100, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(p.comp.frameAtTime(time: layer.getSpan().outPoint),
+          greaterThan(sourceFrames),
+          reason: 'a retimed layer is any length the user drags it to');
+      final retimedMarks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((retimedMarks.painter as BarEndMarksPainter).atOut, isFalse,
+          reason: 'no limit, no mark');
+    });
+
+    /// A generated layer has no source to run out of: both ends go wherever
+    /// they are dragged, and neither wears a corner mark.
+    testWidgets('a solid bar trims freely and wears no marks', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: 200),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      await tester.dragFrom(
+        Offset(tester.getRect(fill).right - 2, tester.getRect(fill).center.dy),
+        const Offset(120, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(
+          p.comp.frameAtTime(time: layer.getSpan().outPoint), greaterThan(200));
+
+      final marks = tester.widget<CustomPaint>(
+          find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
+      expect((marks.painter as BarEndMarksPainter).atIn, isFalse);
+      expect((marks.painter as BarEndMarksPainter).atOut, isFalse);
+    });
+
     /// A layer can start BEFORE the comp (docs/TODO: "re-introduce"): drag a
     /// bar left past frame zero and the span goes negative, carrying its
     /// content with it — the comp shows the part that overlaps.

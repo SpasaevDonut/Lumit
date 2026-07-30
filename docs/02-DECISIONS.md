@@ -3199,3 +3199,52 @@ applies to most of the geometry in an interface icon set. Not applied at even wi
 the stroke already covers whole pixels and the nudge is what would blur it. At fractional
 display scalings (150%) no offset makes a stroke whole; that is inherent and is stated in
 the note rather than papered over.
+
+**K-210 · DECIDED · A layer's ends are handles, and its source is the limit.** From the
+owner (2026-07-30): the start and end of a layer must be draggable to change its length,
+for every layer kind — and a Footage, audio or Precomp layer must not be draggable to show
+what its source does not hold, unless it is retimed.
+
+**Trimming for every kind.** Dragging either end of a bar trims that end; dragging its
+middle moves it, as before. The grab zone at each end is 8px but never more than a third of
+the bar, which is what makes a short bar draggable at all: at a flat 6px a two-frame bar was
+entirely edge, so it could be trimmed but never moved. The pointer takes the horizontal
+resize arrow over each zone, because an affordance nobody can see is one nobody uses — the
+gesture existed before this entry and the report was that it did not.
+
+**The source is the limit.** A layer whose source has a length of its own trims within it:
+the in point stops at the source's first frame (the layer's own time zero, which is where
+`start_offset` puts it on the comp timeline) and the out point stops at its last. That is
+Footage — picture and sound alike — and Precomp, whose length is the nested comp's duration.
+Every generated kind (Solid, Text, Adjustment, Null, Camera, Sequence) has nothing to run
+out of and trims freely. **Retime takes both limits off** (docs/04-RETIMING.md): a retimed
+layer maps its own local time onto source time, so its length stops being the source's
+business and it stretches as far as it is dragged. Both routes to a retime count — the
+Retime property (K-197) and the Source card's older speed map — because both make the same
+promise. Moving a bar is never limited: `start_offset` travels with it.
+
+**A bound never drags an edge that is already outside it.** A layer stretched while retimed
+and then un-retimed keeps the length it has; the limit holds its end still rather than
+snapping it back, and pulling back towards the source is always allowed. Anything else would
+silently destroy work on a switch toggle.
+
+**Media that will not read leaves the ends free.** A missing file, or a build with no media
+feature, answers "no length" — and no length means no limit, never a limit guessed at. A
+layer must never be cropped by the absence of an answer.
+
+**The marks: a small triangle in the top corner of the bar** on the side that is at its
+limit, drawn in the same ink as the clip splits so the bar keeps one vocabulary. Present
+only on the kinds that have a source, absent the moment Retime is on — the mark and the
+rule are the same fact, so they can never disagree on screen.
+
+**Where the rule lives.** In the panel, not the engine. `SetLayerSpan` still accepts any
+span that is not inverted: AE import, project load and `trim_to_source_end` all legitimately
+write spans the drag would refuse, and an op that second-guesses its caller would break
+them. The gesture is what is bounded, and the bound is a pure function with its own tests.
+
+**What it costs per rebuild: nothing (K-184).** A footage length comes from probing the file,
+so it is asked once per layer off the build and kept for the session, like the waveform
+peaks. The rest — a precomp's duration, whether Retime is on, where the start offset sits —
+is worked out once per *document revision* and cached; `CompModel` now exposes that revision
+so a panel can cache anything derived from the model honestly. Frames come from exact
+integer arithmetic on the comp's rate rather than a `frame_at` call per layer per frame.
