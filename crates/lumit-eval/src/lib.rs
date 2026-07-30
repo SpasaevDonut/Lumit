@@ -21,7 +21,7 @@
 //! - **Algorithm version** (`ALGO_VERSION`) is bumped whenever rendering
 //!   output changes, invalidating every old entry by construction.
 
-use lumit_core::model::{Composition, Document, LayerKind, MatteChannel};
+use lumit_core::{expression::ExpressionContext, model::{Composition, Document, LayerKind, MatteChannel}};
 use uuid::Uuid;
 
 pub mod epoch;
@@ -184,6 +184,7 @@ fn feed_effect_stack(
         return Some(());
     }
     h.update(b"effects/");
+    
     // The §1.4 marker context, built lazily (only marker-driven effects read
     // it) by the same shared constructor resolution uses (K-031), so the key
     // hashes exactly the beat times resolution sees.
@@ -389,20 +390,26 @@ fn feed_layer(
     h.update(b"layer/");
     feed_source(h, doc, layer, lt, quality, stamper, visited)?;
 
+    let context = ExpressionContext {
+        document: doc,
+        comp: Some(comp.id),
+        layer: Some(layer.id),
+    };
+
     // Evaluated transform at the layer's local time — never keyframe data.
     let tr = &layer.transform;
     for v in [
-        tr.position_x.value_at(lt),
-        tr.position_y.value_at(lt),
-        tr.position_z.value_at(lt),
-        tr.anchor_x.value_at(lt),
-        tr.anchor_y.value_at(lt),
-        tr.scale_x.value_at(lt),
-        tr.scale_y.value_at(lt),
-        tr.rotation.value_at(lt),
-        tr.rotation_x.value_at(lt),
-        tr.rotation_y.value_at(lt),
-        tr.opacity.value_at(lt),
+        tr.position_x.value_at_with_context(lt, &context),
+        tr.position_y.value_at_with_context(lt, &context),
+        tr.position_z.value_at_with_context(lt, &context),
+        tr.anchor_x.value_at_with_context(lt, &context),
+        tr.anchor_y.value_at_with_context(lt, &context),
+        tr.scale_x.value_at_with_context(lt, &context),
+        tr.scale_y.value_at_with_context(lt, &context),
+        tr.rotation.value_at_with_context(lt, &context),
+        tr.rotation_x.value_at_with_context(lt, &context),
+        tr.rotation_y.value_at_with_context(lt, &context),
+        tr.opacity.value_at_with_context(lt, &context),
     ] {
         feed_f64(h, v);
     }

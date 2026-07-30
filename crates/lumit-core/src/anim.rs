@@ -9,7 +9,7 @@
 //! note's bracketed-Newton method: fast like Newton, and mathematically
 //! incapable of escaping the valid range like plain Newton can.
 
-use crate::time::Rational;
+use crate::{Document, expression::ExpressionContext, time::Rational};
 use serde::{Deserialize, Serialize};
 
 /// Per-side interpolation of a keyframe (docs/03-DATA-MODEL.md §6.2).
@@ -309,7 +309,15 @@ impl Property {
         match &self.animation {
             Animation::Static(v) => *v,
             Animation::Keyframed(keys) => evaluate(keys, t).unwrap_or(0.0),
-            Animation::Expression(expression) => crate::expression::evaluate(expression, t),
+            Animation::Expression(expression) => crate::expression::evaluate(expression, t, None),
+        }
+    }
+
+    pub fn value_at_with_context(&self, t: f64, context: &ExpressionContext) -> f64 {
+        match &self.animation {
+            Animation::Static(v) => *v,
+            Animation::Keyframed(keys) => evaluate(keys, t).unwrap_or(0.0),
+            Animation::Expression(expression) => crate::expression::evaluate(expression, t, Some(context)),
         }
     }
 

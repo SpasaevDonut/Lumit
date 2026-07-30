@@ -24,6 +24,7 @@ use crate::draw::{
 };
 use crate::export::mask_rgba;
 use crate::realise::Realiser;
+use lumit_core::expression::ExpressionContext;
 use lumit_core::pixels::{px_tile, solid_rgba};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -373,6 +374,13 @@ pub fn build_comp_draws_at(
                         let comp_diag =
                             ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
                         let scale = tex_w as f32 / natural.0.max(1.0);
+
+                        let context = ExpressionContext {
+                            document: doc,
+                            layer: Some(src.id),
+                            comp: Some(comp.id),
+                        };
+
                         let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
                         (
                             lumit_core::fx::resolve_stack(
@@ -381,6 +389,7 @@ pub fn build_comp_draws_at(
                                 comp_diag * scale,
                                 scale,
                                 &markers,
+                                &context,
                             ),
                             lut_files(&src.effects, slt),
                         )
@@ -525,6 +534,13 @@ pub fn build_comp_draws_at(
                 // blends back by coverage — masks × opacity, placed by the
                 // transform. A dead stack contributes nothing at all.
                 let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
+
+                let context = ExpressionContext {
+                    document: doc,
+                    layer: Some(layer.id),
+                    comp: Some(comp.id),
+                };
+
                 let fx = if layer.switches.fx {
                     // The §1.4 marker context, built by the same shared
                     // constructor export uses (K-031). Effects flagged
@@ -538,6 +554,7 @@ pub fn build_comp_draws_at(
                         comp_diag,
                         1.0,
                         &markers,
+                        &context,
                     )
                 } else {
                     Vec::new()
@@ -672,6 +689,13 @@ pub fn build_comp_draws_at(
             let (fx, lut_files) = if mr.source.folds_effects() && src.switches.fx {
                 let comp_diag = ((comp.width as f32).powi(2) + (comp.height as f32).powi(2)).sqrt();
                 let scale = m_w as f32 / m_nat.0.max(1.0);
+
+                let context = ExpressionContext {
+                    document: doc,
+                    layer: Some(src.id),
+                    comp: Some(comp.id),
+                };
+
                 let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
                 (
                     lumit_core::fx::resolve_stack(
@@ -680,6 +704,7 @@ pub fn build_comp_draws_at(
                         comp_diag * scale,
                         scale,
                         &markers,
+                        &context,
                     ),
                     lut_files(&src.effects, mlt),
                 )
@@ -736,6 +761,13 @@ pub fn build_comp_draws_at(
                 // at the frame time `frame_lt` (§5); on an ordinary render
                 // `frame_lt == lt`, so this is the plain resolve.
                 let markers = lumit_core::fx::MarkerContext::for_layer(comp, layer);
+
+                let context = ExpressionContext {
+                    document: doc,
+                    layer: Some(layer.id),
+                    comp: Some(comp.id),
+                };
+
                 lumit_core::fx::resolve_stack_temporal(
                     &layer.effects,
                     effect_lt,
@@ -743,6 +775,7 @@ pub fn build_comp_draws_at(
                     comp_diag * scale,
                     scale,
                     &markers,
+                    &context,
                 )
             } else {
                 Vec::new()

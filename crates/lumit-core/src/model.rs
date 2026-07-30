@@ -5,6 +5,7 @@
 //! All mutation goes through operations (ops.rs); this module is data + queries.
 
 use crate::anim::Property;
+use crate::expression::ExpressionContext;
 use crate::time::{CompTime, Duration, FrameRate, Rational};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -588,6 +589,14 @@ impl EffectInstance {
             _ => None,
         }
     }
+    
+    pub fn float_at_with_context(&self, id: &str, lt: f64, context: &ExpressionContext) -> Option<f64> {
+        match self.param(id)? {
+            EffectValue::Float(p) => Some(p.value_at_with_context(lt, context)),
+            _ => None,
+        }
+    }
+    
 
     /// A colour parameter's evaluated scene-linear RGBA at layer time `lt`
     /// (channels animate independently), or None when absent or not a
@@ -599,6 +608,18 @@ impl EffectInstance {
                 ch[1].value_at(lt),
                 ch[2].value_at(lt),
                 ch[3].value_at(lt),
+            ]),
+            _ => None,
+        }
+    }
+
+    pub fn colour_at_with_context(&self, id: &str, lt: f64, context: &ExpressionContext) -> Option<[f64; 4]> {
+        match self.param(id)? {
+            EffectValue::Colour(ch) => Some([
+                ch[0].value_at_with_context(lt, context),
+                ch[1].value_at_with_context(lt, context),
+                ch[2].value_at_with_context(lt, context),
+                ch[3].value_at_with_context(lt, context),
             ]),
             _ => None,
         }

@@ -229,6 +229,7 @@ class EffectParamRowFrb extends StatelessWidget {
               value: expr,
               comp: comp,
               frame: frame,
+              layer: currentLayer,
               set: _set,
               setLive: _setLive,
             );
@@ -238,8 +239,8 @@ class EffectParamRowFrb extends StatelessWidget {
             context,
             scalar: field0,
             setExpression: () {
-              var sampled =
-                  sampleScalar(scalar: field0, time: timeOfFrame(comp, frame));
+              var sampled = sampleScalarWithContext(
+                  scalar: field0, time: timeOfFrame(comp, frame), layer: currentLayer);
 
               _set(BridgeEffectValue.float(
                   BridgeScalar.expression(sampled.toString())));
@@ -335,6 +336,10 @@ class EffectParamRowFrb extends StatelessWidget {
     }
   }
 
+  LayerReference get currentLayer => ownerLayers
+      .firstWhere((i) => i.layer.internallayerId == ownerLayerId)
+      .layer;
+
   /// A number field for a scalar. A static value drags with live preview; an
   /// animated one shows the value under the playhead and a change writes it
   /// into the key sitting there — or plants one — never flattening the curve
@@ -357,8 +362,8 @@ class EffectParamRowFrb extends StatelessWidget {
     final speed = span <= 0 ? 0.5 : span / 200;
 
     if (scalar case BridgeScalar_Keyframed()) {
-      final sampled =
-          sampleScalar(scalar: scalar, time: timeOfFrame(comp, frame));
+      final sampled = sampleScalarWithContext(
+          scalar: scalar, time: timeOfFrame(comp, frame), layer: currentLayer);
       // No live preview mid-drag on a curve; the release is one op — the key
       // at the playhead updated or planted.
       return SizedBox(
@@ -658,12 +663,14 @@ class EffectParamRowExpression extends StatefulWidget {
       required this.comp,
       required this.frame,
       required this.setLive,
+      required this.layer,
       super.key});
   final BridgeScalar_Expression value;
   final CompositionReference comp;
   final int frame;
   final void Function(BridgeEffectValue value) set;
   final void Function(BridgeEffectValue value) setLive;
+  final LayerReference layer;
 
   @override
   State<EffectParamRowExpression> createState() =>
@@ -676,10 +683,12 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
   double value = 0.0;
   late ValueNotifier<int> playhead;
 
+
   String lastText = "";
   @override
   void initState() {
     playhead = Provider.of<LumitUiState>(context, listen: false).playheadFrame;
+
     Provider.of<LumitState>(context, listen: false)
         .onChange
         .listen(onProjectChanged);
@@ -690,8 +699,10 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
     controller.addListener(onTextChanged);
     lastText = controller.text;
 
-    value = sampleScalar(
-        scalar: widget.value, time: timeOfFrame(widget.comp, playhead.value));
+    value = sampleScalarWithContext(
+        scalar: widget.value,
+        time: timeOfFrame(widget.comp, playhead.value),
+        layer: widget.layer);
     super.initState();
   }
 
@@ -715,7 +726,6 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
   @override
   void didUpdateWidget(covariant EffectParamRowExpression oldWidget) {
     if (widget.value.field0 != controller.text) {
-
       // we dont want to trigger the update when setting text manually, so remove it then add it back
       controller.removeListener(onTextChanged);
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -730,9 +740,10 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
     final expr = controller.text;
 
     setState(() {
-      value = sampleScalar(
+      value = sampleScalarWithContext(
           scalar: BridgeScalar_Expression(expr),
-          time: timeOfFrame(widget.comp, playhead.value));
+          time: timeOfFrame(widget.comp, playhead.value),
+          layer: widget.layer);
     });
   }
 
@@ -742,9 +753,10 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
       widget.setLive(BridgeEffectValue.float(BridgeScalar.expression(expr)));
 
       setState(() {
-        value = sampleScalar(
+        value = sampleScalarWithContext(
             scalar: BridgeScalar_Expression(expr),
-            time: timeOfFrame(widget.comp, playhead.value));
+            time: timeOfFrame(widget.comp, playhead.value),
+            layer: widget.layer);
       });
     }
 
@@ -754,9 +766,10 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
   void removeExpression() {
     final expr = controller.text;
 
-    var v = sampleScalar(
+    var v = sampleScalarWithContext(
         scalar: BridgeScalar_Expression(expr),
-        time: timeOfFrame(widget.comp, playhead.value));
+        time: timeOfFrame(widget.comp, playhead.value),
+        layer: widget.layer);
 
     widget.set(BridgeEffectValue.float(BridgeScalar_Static(v)));
   }
@@ -800,7 +813,7 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
           ),
         )),
         SizedBox(
-          width: 65,
+          width: 78,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [

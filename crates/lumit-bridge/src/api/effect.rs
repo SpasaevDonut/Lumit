@@ -23,13 +23,14 @@ use flutter_rust_bridge::frb;
 pub use lumit_core::model::EffectInstance;
 use lumit_core::{
     anim::{Animation, Keyframe, Property, SideInterp},
+    expression::ExpressionContext,
     model::{EffectParam, EffectValue, FileParam},
     time::Rational,
 };
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::api::BridgeError;
+use crate::api::{layer::LayerReference, state::PROJECTS, BridgeError};
 
 /// One built-in effect as the Add-effect menu needs it: the stable `name` to
 /// pass to [`crate::api::layer::LayerReference::add_effect`], the sentence-case
@@ -171,8 +172,62 @@ pub fn sample_scalar(scalar: BridgeScalar, time: BridgeRational) -> f64 {
                 .collect();
             lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
         }
+        BridgeScalar::Expression(expr) => lumit_core::expression::evaluate(
+            &expr,
+            Rational::new(time.num, time.den)
+                .unwrap_or(Rational::ZERO)
+                .to_f64(),
+            None,
+        ),
+    }
+}
+
+#[frb(sync)]
+pub fn sample_scalar_with_context(
+    scalar: BridgeScalar,
+    time: BridgeRational,
+    layer: LayerReference,
+) -> f64 {
+    let seconds = if time.den == 0 {
+        0.0
+    } else {
+        time.num as f64 / time.den as f64
+    };
+    match scalar {
+        BridgeScalar::Static(value) => value,
+        BridgeScalar::Keyframed(keys) => {
+            let keys: Vec<Keyframe> = keys
+                .iter()
+                .map(|k| Keyframe {
+                    time: Rational::new(k.time.num, k.time.den).unwrap_or(Rational::ZERO),
+                    value: k.value,
+                    interp_in: k.interp_in.write(),
+                    interp_out: k.interp_out.write(),
+                })
+                .collect();
+            lumit_core::anim::evaluate(&keys, seconds).unwrap_or(0.0)
+        }
         BridgeScalar::Expression(expr) => {
-            lumit_core::expression::evaluate(&expr, Rational::new(time.num, time.den).unwrap_or(Rational::ZERO).to_f64())
+            let projects = PROJECTS
+                .read()
+                .map_err(|_| BridgeError::ReadFailed)
+                .unwrap();
+            let project = projects.get(&layer.project_id).unwrap();
+
+            let doc = project.read().unwrap();
+            let doc = doc.store.snapshot();
+
+            lumit_core::expression::evaluate(
+                &expr,
+                Rational::new(time.num, time.den)
+                    .unwrap_or(Rational::ZERO)
+                    .to_f64(),
+                Some(&ExpressionContext {
+                    document: &doc,
+                    comp: Some(layer.comp_id),
+                    layer: Some(layer.layer_id),
+                }),
+            )
         }
     }
 }
@@ -437,7 +492,7 @@ impl BridgeScalar {
             Animation::Keyframed(keys) => {
                 BridgeScalar::Keyframed(keys.iter().map(BridgeKeyframe::read).collect())
             }
-            Animation::Expression(expr) => BridgeScalar::Expression(expr.clone())
+            Animation::Expression(expr) => BridgeScalar::Expression(expr.clone()),
         }
     }
 
@@ -467,8 +522,8 @@ impl BridgeScalar {
                     out.push(key);
                 }
                 Ok(Animation::Keyframed(out))
-            },
-            BridgeScalar::Expression(expr) =>Ok(Animation::Expression(expr.clone()))
+            }
+            BridgeScalar::Expression(expr) => Ok(Animation::Expression(expr.clone())),
         }
     }
 }
@@ -748,7 +803,6 @@ impl BridgeEffectInstance {
 
         value.write(&mut param.value)
     }
-    
 
     #[frb(ignore)]
     fn param(&self, id: &str) -> Result<&EffectParam, BridgeError> {

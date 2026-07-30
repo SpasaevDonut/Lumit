@@ -1,14 +1,28 @@
 use std::eprintln;
 
-use crate::Rational;
+use crate::{Document, Rational};
 use rhai::{Dynamic, Engine, Scope};
+use uuid::Uuid;
 
-pub fn evaluate(expression: &String, time: f64) -> f64 {
+pub struct ExpressionContext<'a> {
+    pub document: &'a Document,
+    pub comp: Option<Uuid>,
+    pub layer: Option<Uuid>,
+}
+
+pub fn evaluate(expression: &String, time: f64, context: Option<&ExpressionContext>) -> f64 {
     let engine = Engine::new();
 
     let mut scope = Scope::new();
 
     scope.push_constant("time", time);
+
+    match context {
+        Some(context) => {
+            apply_context_to_scope(&mut scope, context);
+        }
+        None => (),
+    }
 
     let result = engine.eval_expression_with_scope::<Dynamic>(&mut scope, &expression);
 
@@ -27,7 +41,7 @@ pub fn evaluate(expression: &String, time: f64) -> f64 {
                 return match val.as_bool().unwrap() {
                     true => 1.0,
                     false => 0.0,
-                }
+                };
             }
 
             eprintln!("Invalid expression result: {:?}", val.type_name());
@@ -37,6 +51,27 @@ pub fn evaluate(expression: &String, time: f64) -> f64 {
         Err(e) => {
             eprintln!("Expression error: {:?}", e.unwrap_inner());
             -1.0
+        }
+    }
+}
+
+fn apply_context_to_scope(scope: &mut Scope<'_>, context: &ExpressionContext<'_>) {
+    let doc = context.document;
+
+    if let Some(comp_id) = context.comp {
+        if let Some(comp) = doc.comp(comp_id) {
+            scope.push_constant("comp_height",  comp.height as i64);
+            scope.push_constant("comp_width", comp.width as i64);
+            scope.push_constant("comp_fps", comp.frame_rate.fps() as i64);
+            scope.push_constant("num_markers", comp.markers.len() as i64);
+            scope.push_constant("num_layers", comp.layers.len() as i64);
+
+            if let Some(layer_id) = context.layer {
+                if let Some(layer) = comp.layers.iter().find(|l| l.id == layer_id) {
+                    scope.push_constant("cut_in", layer.in_point.0.to_f64());
+                    scope.push_constant("cut_out", layer.out_point.0.to_f64());
+                }
+            }
         }
     }
 }

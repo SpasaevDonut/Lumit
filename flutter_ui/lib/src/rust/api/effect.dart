@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 import 'package:uuid/uuid.dart';
@@ -51,6 +52,13 @@ double sampleScalar(
         {required BridgeScalar scalar, required BridgeRational time}) =>
     BridgeLib.instance.api
         .crateApiEffectSampleScalar(scalar: scalar, time: time);
+
+double sampleScalarWithContext(
+        {required BridgeScalar scalar,
+        required BridgeRational time,
+        required LayerReference layer}) =>
+    BridgeLib.instance.api.crateApiEffectSampleScalarWithContext(
+        scalar: scalar, time: time, layer: layer);
 
 /// Every parameter `effect` declares, in schema order — what the panel draws a
 /// row per.
