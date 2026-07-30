@@ -97,7 +97,14 @@ computed on demand rather than stored.
 
 **Where the frame cache sits is the user's choice (K-210, docs/07 §15):** under the global
 root keyed by the document's uuid (the default), in a `<project>.lum-cache/` sidecar beside the
-project file, or under a folder the user picks. The sidecar cannot be the default because it
+project file, or under a folder the user picks. The global root is the platform's own cache
+directory, resolved by `directories::ProjectDirs` exactly as the journal and media index resolve
+theirs, so one Lumit folder serves all three: `%LOCALAPPDATA%\Lumit\Lumit\cache` on Windows
+(**local**, never roaming — a cache this size must not follow a domain profile over the
+network), `~/Library/Caches/dev.Lumit.Lumit` on macOS, and `$XDG_CACHE_HOME/lumit` (default
+`~/.cache/lumit`) on Linux. The cache directory, not the temp directory: these survive a
+reboot, and may be reclaimed by the operating system under disk pressure — which is correct for
+a folder deletable at any time. The sidecar cannot be the default because it
 needs the project to *have* a file, and a project caches from the moment it is created — the
 document uuid is inside the `.lum` and survives every save, so the global-root folder still
 finds its frames after a save and a reopen.

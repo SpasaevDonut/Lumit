@@ -4662,11 +4662,33 @@ made.
 **Where the disk cache lives.** By default in Lumit's own cache folder, in a
 subfolder named after the project's internal id — which is written into the
 `.lum` and never changes, so an unsaved project caches from the moment it is
-created and still finds its frames after a save and a reopen. Settings →
-Performance offers two alternatives: beside the project file (which makes the
-cache travel with the project) or a folder you pick (to put it on a faster or
-roomier drive). Changing the setting moves nothing; the old folder is simply no
-longer looked at, and deleting a cache folder by hand is always safe.
+created and still finds its frames after a save and a reopen. Each platform has
+its own idea of where that folder is, and Lumit uses the local one rather than
+inventing a path (the same call the crash journal and the media index already
+make, so there is only ever one Lumit folder):
+
+| | Where the frames go |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Lumit\Lumit\cache\frames\<document id>\` |
+| macOS | `~/Library/Caches/dev.Lumit.Lumit/frames/<document id>/` |
+| Linux | `$XDG_CACHE_HOME/lumit/frames/<document id>/`, or `~/.cache/lumit/…` |
+
+On Windows that is deliberately **Local** AppData and not Roaming: a roaming
+profile on a work machine would try to copy the whole cache to a network share at
+logoff, and a frame cache can be tens of gigabytes.
+
+This is the *cache* directory, not the temp directory — temp is emptied on
+reboot, so a project would come back cold every morning. These do survive a
+reboot. What they do allow is the operating system reclaiming the space when a
+disk gets tight (macOS's Optimise Storage and the usual Linux cleaners both treat
+these folders as fair game), which is exactly right for something deletable at
+any time: "warm yesterday, cold today" is possible and is not a fault.
+
+Settings → Performance offers two alternatives: beside the project file, which
+makes the cache travel with the project and is never reclaimed by anyone, or a
+folder you pick, to put it on a faster or roomier drive. Changing the setting
+moves nothing; the old folder is simply no longer looked at, and deleting a cache
+folder by hand is always safe.
 
 **Why the cache bar is a photograph rather than a question.** The stripe under the
 ruler shows which frames are held. Answering that per frame now means *naming*

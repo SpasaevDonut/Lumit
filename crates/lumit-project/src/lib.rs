@@ -252,9 +252,26 @@ pub fn journal_path(doc_id: Uuid) -> Option<PathBuf> {
 /// the project file only works once the project HAS a file. Keyed by the
 /// document's own id, which is written into the `.lum` and survives every save
 /// and reopen, so a project caches from the moment it is created and still finds
-/// its frames tomorrow. Sitting under the platform's cache directory also means
-/// the operating system may reclaim it, which is exactly right for a folder that
-/// is deletable at any time with no correctness effect.
+/// its frames tomorrow.
+///
+/// The platform's own cache directory, through the same `ProjectDirs` call the
+/// journal and the media index make, so there is one Lumit folder rather than
+/// three:
+///
+/// | | |
+/// |---|---|
+/// | Windows | `%LOCALAPPDATA%\Lumit\Lumit\cache\frames\<id>\` |
+/// | macOS | `~/Library/Caches/dev.Lumit.Lumit/frames/<id>/` |
+/// | Linux | `$XDG_CACHE_HOME/lumit/frames/<id>/` (default `~/.cache/lumit`) |
+///
+/// On Windows that is **local** app data, never roaming: a roaming profile would
+/// try to copy the cache to a network share at logoff, and this one can be tens
+/// of gigabytes.
+///
+/// The *cache* directory, not the temp directory — temp is emptied on reboot, so
+/// every project would come back cold. These survive a reboot, and the operating
+/// system may reclaim them under disk pressure, which is exactly right for a
+/// folder deletable at any time with no correctness effect.
 ///
 /// `None` only when the platform has no home directory; the caller then runs
 /// with no disk tier rather than failing.
@@ -712,6 +729,68 @@ mod tests {
                 extra: serde_json::Map::new(),
             },
         }
+    }
+
+    /// **Where a document's parked frames go, pinned per platform.**
+    ///
+    /// Not a restatement of `directories`' documentation: what is checked is that
+    /// the frame cache lands in the *same* Lumit folder as the journal and the
+    /// media index (one folder, not three), under the platform's **cache**
+    /// directory rather than its data or config directory, and keyed by the
+    /// document id. Each of those is a one-word edit away from being wrong — and
+    /// two of the ways it can be wrong are quiet: parking tens of gigabytes under
+    /// Windows' *roaming* app data makes a work machine copy the lot to a network
+    /// share at logoff, and parking them under the temp directory makes every
+    /// project come back cold after a reboot, which reads as "the cache is
+    /// broken" rather than as a wrong path.
+    #[test]
+    fn the_frame_cache_sits_in_lumits_own_cache_folder() {
+        let id = Uuid::now_v7();
+        let (Some(frames), Some(index), Some(journal), Some(presets)) = (
+            frame_cache_dir(id),
+            media_index_dir(),
+            journal_path(id),
+            presets_dir(),
+        ) else {
+            // No home directory at all (a bare container): the disk tier is off
+            // rather than misplaced, which is the documented answer.
+            eprintln!("skipping: this platform has no home directory");
+            return;
+        };
+
+        // One Lumit folder: the frame cache shares the cache root with the media
+        // index and the journal, both of which pre-date it.
+        let cache_root = index.parent().expect("media-index has a parent");
+        assert!(
+            frames.starts_with(cache_root),
+            "frames at {frames:?} left the cache root {cache_root:?}"
+        );
+        assert!(journal.starts_with(cache_root));
+        assert!(
+            frames.to_string_lossy().contains(&id.to_string()),
+            "the document id is what makes a project find its frames again"
+        );
+
+        // The cache directory, not the data or config one: presets and settings
+        // are kilobytes that should be backed up, and this is gigabytes that
+        // should not.
+        assert!(
+            !frames.starts_with(presets.parent().expect("presets has a parent")),
+            "the frame cache must not sit with the presets in app data"
+        );
+
+        // Never roaming (Windows), and never temp (all three).
+        let shown = frames.to_string_lossy().to_lowercase();
+        assert!(
+            !shown.contains("roaming"),
+            "a cache this size must not follow a roaming profile over the \
+             network: {frames:?}"
+        );
+        assert!(
+            !frames.starts_with(std::env::temp_dir()),
+            "temp is emptied on reboot, so every project would come back cold: \
+             {frames:?}"
+        );
     }
 
     fn doc_with_item() -> Document {
