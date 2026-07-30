@@ -350,18 +350,19 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
           onTap: () async {
             final box = context.findRenderObject();
             if (box is! RenderBox) return;
-            final picked = await showColourPicker(
+            await showColourPicker(
               context: context,
               position: box.localToGlobal(Offset(0, box.size.height + 4)),
               initial: shown,
+              // A solid's colour applies as it is chosen — there is no
+              // cheaper preview of a solid than the solid itself.
+              onCommit: (picked) => onPicked(BridgeColourRgba(
+                r: picked.r,
+                g: picked.g,
+                b: picked.b,
+                a: colour.a,
+              )),
             );
-            if (picked == null) return;
-            onPicked(BridgeColourRgba(
-              r: picked.r,
-              g: picked.g,
-              b: picked.b,
-              a: colour.a,
-            ));
           },
           child: MouseRegion(
             cursor: SystemMouseCursors.click,

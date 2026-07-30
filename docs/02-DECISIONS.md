@@ -3199,3 +3199,59 @@ applies to most of the geometry in an interface icon set. Not applied at even wi
 the stroke already covers whole pixels and the nudge is what would blur it. At fractional
 display scalings (150%) no offset makes a stroke whole; that is inherent and is stated in
 the note rather than papered over.
+
+
+**K-210 · DECIDED · The dropper reads a value at a pixel — not only a colour — and the
+picker applies live.** From Mack (2026-07-30), asking for the egui build's two tools back in
+Flutter, in the shape they had there.
+
+**The dropper is a pixel tool, not a colour tool.** It is armed from whatever wants a value
+at a point, and what it lifts is that thing's business: a colour for a Colour parameter, a
+*depth* for the depth-of-field focal point. The armed state therefore carries what is being
+read and a closure to write it, rather than naming a layer, an effect and a parameter index
+to be re-resolved on the far side of the picture — which is what the egui build did, and the
+source of its silent "the target has since moved" no-ops.
+
+**The magnifier is fixed at 9×9 with the region inside it.** Nine pixels a side, dashed rules
+between every pair, and a solid border round the pixels actually taken — the centre pixel
+alone by default, grown by Shift+scroll through 3×3, 5×5, 7×7, 9×9. The ladder is odd
+throughout so there is always one centre pixel, and never exceeds the grid, so the tool can
+never average over pixels it is not showing. The border's corners take the theme's control
+radius: rounded under the round shape, square under the sharp one, with no shape flag in the
+widget. Shift+scroll no longer also zooms the Viewer — sizing the sample while the picture
+moves out from under the pointer is not two features, it is one broken one.
+
+**The strip under the grid says what is about to be taken, in the terms of the thing being
+picked.** A colour pick shows the colour and its numbers. A pick reading something else shows
+**the layer the numbers come from and the value found there** — a swatch of the composite
+would be a colour nobody is choosing.
+
+**A layer pick samples that layer rendered alone.** The egui build read the depth from the
+composite's luma, or from a stashed copy of the layer's decoded pixels; the composite is
+wrong (a depth pass is nearly always hidden, so it contributes nothing to it) and the stash
+was a second path to keep in step. The worker instead renders the composition with that layer
+soloed and visible, on a *patched copy* of the snapshot that never goes near `commit`, and
+holds one such render against `(comp, frame, layer, cache generation)` so dragging the pointer
+renders once rather than once per move. `depth_invert` is applied at the pick, so the caption
+and the committed number cannot disagree.
+
+**The pixels cross as a patch, not a frame.** A `sample_pixels` request answers with a 9×9
+patch — 324 bytes — on the same stream the frames and traces ride. This does not reopen the
+read-back transport K-183 deleted: the cap is enforced engine-side, and the payload is a
+reading about a few pixels rather than a picture to display. It is a worker request rather
+than a synchronous call because the pixels only exist where the renderer does, and the
+renderer is owned outright by the worker thread — a sync call would have to render on Dart's
+UI isolate or take a lock across GPU work, both of which docs/14 forbids.
+
+**The picker applies to the document as it changes.** R, G and B sit above the graph, each
+drag-scrubbable and typeable, and every edit — a number, the square, the strip, the hex box —
+previews live and settles into one undoable edit, the same staged-drag shape the effect rows
+use. Because the live value *is* the document's, closing the picker needs no decision:
+clicking away from it keeps what is applied, and so does Apply. **Cancel** is the one button
+that changes anything on the way out — it writes back the colour the picker opened with. A
+plain "Close" was considered and rejected: with live application it would be indistinguishable
+from Apply, so it would be a button that promises a choice it does not have.
+
+**Not done here:** the x/y position pick for coordinate-valued parameter pairs. The magnifier
+carries the mode, but no Flutter row pairs x and y into one control yet, so there is nothing
+to arm it from; recorded in docs/TODO.md rather than half-wired.

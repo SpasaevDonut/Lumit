@@ -1,13 +1,24 @@
-// A house HSV colour picker: a saturation/value square, a hue strip, a
-// current-vs-picked preview and a hex field, all kept in sync. Built to the
-// same borderless, theme-driven style as the rest of controls.dart, and shaped
-// so a future "edit every editor colour" submenu can reuse it (checklist F0).
+// A house HSV colour picker, in the shape the egui build had: the red, green
+// and blue numbers across the top, then the saturation/value square, the hue
+// strip, and a hex field, all kept in sync.
 //
-// In plain terms: the big square chooses how vivid and how bright the colour
-// is, the rainbow strip chooses the hue, and the hex box lets you type or read
-// the exact value. Nothing here carries a fixed colour of its own — every
-// swatch is built from the numbers the user is choosing, so the theme rule
-// (only theme.dart may hold colour constants) still holds.
+// **In plain terms.** The three numbers at the top are the colour written out
+// as red, green and blue; each can be dragged sideways or typed into, and the
+// square and strip below follow. The big square chooses how vivid and how
+// bright the colour is, the rainbow strip chooses the hue, and the hex box
+// lets you type or read the exact value.
+//
+// **It applies as you go.** Whatever the picker is showing is what the thing
+// being coloured shows — there is no dialogue standing between choosing a
+// colour and seeing it. A drag previews continuously and settles into one
+// undoable edit when you let go, exactly as dragging a number in Effect
+// controls does; clicking away from the picker closes it and keeps what is
+// applied. Cancel is the way back: it puts the colour the picker opened with
+// back and closes.
+//
+// Nothing here carries a fixed colour of its own — every swatch is built from
+// the numbers the user is choosing, so the theme rule (only theme.dart may hold
+// colour constants) still holds.
 
 import 'dart:math' as math;
 
@@ -103,17 +114,27 @@ const double _pickerWidth = 208;
 const double _squareHeight = 150;
 const double _stripHeight = 16;
 
-/// Open the colour picker near [position], seeded with [initial]. Completes
-/// with the chosen colour on OK, or null when dismissed (outside click or
-/// Escape). [presets] draws an optional row of quick swatches inside the
-/// popup. Applying the result is the caller's job.
-Future<Color?> showColourPicker({
+/// Open the colour picker near [position], seeded with [initial].
+///
+/// **The result is not returned — it is applied as it changes.** [onPreview]
+/// fires continuously while a drag is in flight (the same live-preview tick an
+/// effect row's drag sends) and [onCommit] fires once each time a change
+/// settles: a drag released, a number typed, a preset clicked, Apply pressed.
+/// So closing the picker — by Apply, by Escape, or by clicking away from it —
+/// needs nothing at all: what is applied is already what the picker last
+/// settled on. Cancel commits [initial] back.
+///
+/// [presets] draws an optional row of quick swatches inside the popup. The
+/// future completes when the picker closes, for a caller that wants to know.
+Future<void> showColourPicker({
   required BuildContext context,
   required Offset position,
   required Color initial,
+  required ValueChanged<Color> onCommit,
+  ValueChanged<Color>? onPreview,
   List<Color> presets = const [],
-}) {
-  return showLumitPopup<Color>(
+}) async {
+  await showLumitPopup<Color>(
     context: context,
     position: position,
     builder: (close) => FloatSurface(
@@ -125,7 +146,9 @@ Future<Color?> showColourPicker({
         child: _ColourPickerBody(
           initial: initial,
           presets: presets,
-          onCommit: close,
+          onPreview: onPreview ?? onCommit,
+          onCommit: onCommit,
+          onClose: () => close(null),
         ),
       ),
     ),
@@ -135,12 +158,21 @@ Future<Color?> showColourPicker({
 class _ColourPickerBody extends StatefulWidget {
   final Color initial;
   final List<Color> presets;
-  final ValueChanged<Color?> onCommit;
+
+  /// A tick of a drag: show it, do not record it.
+  final ValueChanged<Color> onPreview;
+
+  /// A change that has settled: one undoable edit.
+  final ValueChanged<Color> onCommit;
+
+  final VoidCallback onClose;
 
   const _ColourPickerBody({
     required this.initial,
     required this.presets,
+    required this.onPreview,
     required this.onCommit,
+    required this.onClose,
   });
 
   @override
@@ -180,30 +212,46 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
     if (!_hexFocus.hasFocus) _hexController.text = formatHex(_colour);
   }
 
-  void _setSV(Offset local) {
+  /// Take a new hue/saturation/value and show it everywhere: the square, the
+  /// strip, the numbers, the hex box — and the thing being coloured.
+  void _apply(double h, double s, double v, {required bool settled}) {
     setState(() {
-      _s = (local.dx / _pickerWidth).clamp(0.0, 1.0);
-      _v = 1 - (local.dy / _squareHeight).clamp(0.0, 1.0);
+      _h = h;
+      _s = s;
+      _v = v;
       _syncHex();
     });
+    settled ? widget.onCommit(_colour) : widget.onPreview(_colour);
   }
 
-  void _setHue(Offset local) {
-    setState(() {
-      _h = (local.dx / _pickerWidth).clamp(0.0, 1.0) * 360;
-      _syncHex();
-    });
-  }
+  void _setSV(Offset local, {required bool settled}) => _apply(
+        _h,
+        (local.dx / _pickerWidth).clamp(0.0, 1.0),
+        1 - (local.dy / _squareHeight).clamp(0.0, 1.0),
+        settled: settled,
+      );
 
-  void _setColour(Color colour) {
+  void _setHue(Offset local, {required bool settled}) => _apply(
+        (local.dx / _pickerWidth).clamp(0.0, 1.0) * 360,
+        _s,
+        _v,
+        settled: settled,
+      );
+
+  void _setColour(Color colour, {required bool settled}) {
     final hsv = rgbToHsv(colour);
-    setState(() {
-      // Keep the chosen hue when the pick is a pure grey (hue undefined).
-      if (hsv.$2 > 0) _h = hsv.$1;
-      _s = hsv.$2;
-      _v = hsv.$3;
-      _syncHex();
-    });
+    // Keep the chosen hue when the pick is a pure grey (hue undefined) — the
+    // square would otherwise jump to red the moment saturation reached zero.
+    _apply(hsv.$2 > 0 ? hsv.$1 : _h, hsv.$2, hsv.$3, settled: settled);
+  }
+
+  /// One of the three channel numbers, 0–255.
+  void _setChannel(int index, int value, {required bool settled}) {
+    final c = _colour;
+    int ch(double f) => (f * 255).round().clamp(0, 255);
+    final rgb = [ch(c.r), ch(c.g), ch(c.b)];
+    rgb[index] = value.clamp(0, 255);
+    _setColour(documentColour(rgb[0], rgb[1], rgb[2], 0xff), settled: settled);
   }
 
   /// Live-parse while the user types: update the pick on a valid hex, leaving
@@ -217,11 +265,12 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
       _s = hsv.$2;
       _v = hsv.$3;
     });
+    widget.onPreview(_colour);
   }
 
   void _commitHex() {
     final parsed = parseHex(_hexController.text);
-    if (parsed != null) _setColour(parsed);
+    if (parsed != null) _setColour(parsed, settled: true);
     // Snap the field back to the canonical form (or the unchanged colour on a
     // rejected entry).
     _hexController.text = formatHex(_colour);
@@ -230,17 +279,33 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    final c = _colour;
+    int ch(double f) => (f * 255).round().clamp(0, 255);
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // The three numbers, above the graph, as the egui picker had them:
+        // each draggable and typeable, and each one changes the colour under
+        // the pointer immediately.
+        Row(
+          children: [
+            _channelField(t, 'R', 0, ch(c.r)),
+            const SizedBox(width: 4),
+            _channelField(t, 'G', 1, ch(c.g)),
+            const SizedBox(width: 4),
+            _channelField(t, 'B', 2, ch(c.b)),
+          ],
+        ),
+        const SizedBox(height: 8),
         // Saturation / value square.
         GestureDetector(
           key: const Key('colour-picker-square'),
           behavior: HitTestBehavior.opaque,
-          onTapDown: (d) => _setSV(d.localPosition),
-          onPanStart: (d) => _setSV(d.localPosition),
-          onPanUpdate: (d) => _setSV(d.localPosition),
+          onTapDown: (d) => _setSV(d.localPosition, settled: true),
+          onPanStart: (d) => _setSV(d.localPosition, settled: false),
+          onPanUpdate: (d) => _setSV(d.localPosition, settled: false),
+          onPanEnd: (_) => widget.onCommit(_colour),
           child: SizedBox(
             width: _pickerWidth,
             height: _squareHeight,
@@ -254,9 +319,10 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
         GestureDetector(
           key: const Key('colour-picker-strip'),
           behavior: HitTestBehavior.opaque,
-          onTapDown: (d) => _setHue(d.localPosition),
-          onPanStart: (d) => _setHue(d.localPosition),
-          onPanUpdate: (d) => _setHue(d.localPosition),
+          onTapDown: (d) => _setHue(d.localPosition, settled: true),
+          onPanStart: (d) => _setHue(d.localPosition, settled: false),
+          onPanUpdate: (d) => _setHue(d.localPosition, settled: false),
+          onPanEnd: (_) => widget.onCommit(_colour),
           child: SizedBox(
             width: _pickerWidth,
             height: _stripHeight,
@@ -269,7 +335,7 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
           children: [
             _previewSwatch(t, widget.initial, 'was'),
             const SizedBox(width: 4),
-            _previewSwatch(t, _colour, 'now'),
+            _previewSwatch(t, c, 'now'),
             const Spacer(),
             _hexField(t),
           ],
@@ -283,21 +349,58 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
             HouseButton(
+              key: const Key('colour-picker-cancel'),
               small: true,
-              onPressed: () => widget.onCommit(null),
+              onPressed: () {
+                // Put back what the picker opened with: the live changes have
+                // already landed, so closing alone would keep them.
+                widget.onCommit(widget.initial);
+                widget.onClose();
+              },
               child: const Text('Cancel'),
             ),
             const SizedBox(width: 6),
             HouseButton(
+              key: const Key('colour-picker-apply'),
               small: true,
-              onPressed: () => widget.onCommit(_colour),
-              child: const Text('OK'),
+              onPressed: () {
+                widget.onCommit(_colour);
+                widget.onClose();
+              },
+              child: const Text('Apply'),
             ),
           ],
         ),
       ],
     );
   }
+
+  /// One channel: a drag-and-type field over 0–255, labelled by its letter.
+  Widget _channelField(LumitTheme t, String label, int index, int value) =>
+      Expanded(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: t.small.copyWith(color: t.textMuted)),
+            const SizedBox(width: 3),
+            Expanded(
+              child: DragValueField(
+                key: Key('colour-picker-$label'),
+                value: value,
+                min: 0,
+                max: 255,
+                speed: 1,
+                fill: t.surface0,
+                onChanged: (v) =>
+                    _setChannel(index, v.round(), settled: true),
+                onChangeLive: (v) =>
+                    _setChannel(index, v.round(), settled: false),
+                onChangeEnd: (v) => _setChannel(index, v.round(), settled: true),
+              ),
+            ),
+          ],
+        ),
+      );
 
   Widget _previewSwatch(LumitTheme t, Color colour, String label) => Column(
         mainAxisSize: MainAxisSize.min,
@@ -342,7 +445,7 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
                 selectionColor: t.accent.withValues(alpha: 0.5),
                 // Fold a valid hex into the pick as it is typed, without
                 // reformatting the field mid-entry; focus loss then snaps it
-                // to canonical form.
+                // to canonical form and commits.
                 onChanged: _onHexTyped,
                 onSubmitted: (_) => _commitHex(),
               ),
@@ -357,7 +460,7 @@ class _ColourPickerBodyState extends State<_ColourPickerBody> {
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: GestureDetector(
-                onTap: () => _setColour(c),
+                onTap: () => _setColour(c, settled: true),
                 child: Container(
                   width: 18,
                   height: 18,

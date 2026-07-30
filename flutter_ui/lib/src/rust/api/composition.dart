@@ -537,6 +537,33 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderScope(
           that: this, frame: frame, scale: scale, kind: kind, colours: colours);
 
+  /// Ask the worker for the pixels under the dropper: a `grid × grid` patch of
+  /// `frame` centred on `(x, y)` in this composition's own pixel grid
+  /// (docs/07 §7).
+  ///
+  /// `layer` reads that layer **alone** rather than the composite — what a
+  /// depth pick does, since a depth pass is usually hidden and so never
+  /// appears in the composite at all. The answer arrives as
+  /// `WorkerResponse::Sampled`, on the stream the frames and traces already
+  /// ride; a frame with nothing to read publishes nothing, and the magnifier
+  /// keeps what it had.
+  void samplePixels(
+          {required BigInt frame,
+          required int x,
+          required int y,
+          required int grid,
+          required double scale,
+          LayerReference? layer}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceSamplePixels(
+              that: this,
+              frame: frame,
+              x: x,
+              y: y,
+              grid: grid,
+              scale: scale,
+              layer: layer);
+
   /// Replace the whole marker list — one op, trivially invertible, which is
   /// also how beat detection commits a regenerated set.
   void setMarkers({required List<BridgeMarker> markers}) =>

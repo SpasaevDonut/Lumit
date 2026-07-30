@@ -123,6 +123,36 @@ pub struct BridgeScopeTrace {
     pub rgba: Vec<u8>,
 }
 
+/// The pixels under the dropper: a small square patch of the picture, centred
+/// on the point the pointer is over (docs/07 §6.1).
+///
+/// Tiny by construction — a 9×9 patch is 324 bytes, against a 1080p frame's
+/// 8 MiB — so it crosses the boundary as plain pixels without breaking the
+/// K-183 rule that *frames* only ever cross as GPU handles. It is the answer to
+/// a question about a few pixels, not a picture to display.
+#[frb(non_opaque)]
+pub struct BridgeSampledPixels {
+    /// The patch's side length in pixels: `grid × grid`, always odd, so there is
+    /// a single centre pixel.
+    pub grid: u32,
+    /// Tightly packed display-ready sRGB RGBA8, `grid * grid * 4`, row-major
+    /// from the top-left of the patch. Edge pixels repeat where the patch runs
+    /// off the picture, so it is always exactly this size.
+    pub rgba: Vec<u8>,
+    /// The raster the patch was taken from, and where in it the centre pixel
+    /// sits — what the caption reports, and what a position pick writes.
+    pub width: u32,
+    pub height: u32,
+    pub x: u32,
+    pub y: u32,
+    /// Which frame this is of, so a patch that arrives after the playhead has
+    /// moved on can be recognised as stale rather than drawn.
+    pub frame: u64,
+    /// True when the patch is of one layer rendered alone rather than of the
+    /// composite — a depth pass being read for a focal point, say.
+    pub layer_alone: bool,
+}
+
 /// What the render worker publishes for one frame. Which frame variant a build
 /// can actually produce is decided at compile time by the zero-copy features —
 /// see `worker_thread::publish_frame` — but both are always declared, so the
@@ -137,6 +167,10 @@ pub enum WorkerResponse {
     /// A scope trace, which rides the same stream as the frames so the panel
     /// needs no second channel.
     Scope(BridgeScopeTrace),
+    /// The pixels under the dropper — the answer to one
+    /// `CompositionReference::sample_pixels`, riding the same stream for the
+    /// same reason a trace does.
+    Sampled(BridgeSampledPixels),
     /// Playback finished on its own — it ran off the end of the composition.
     ///
     /// Sent so the transport can show itself stopped without the frontend having

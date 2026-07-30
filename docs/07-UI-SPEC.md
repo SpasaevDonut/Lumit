@@ -666,6 +666,60 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
   Still to build here: drag-to-reorder by the effect's name, solo, rename, and the expression
   toggle.
 
+### 6.1 The colour picker and the dropper (K-210)
+
+**The picker.** A colour swatch opens the house picker: the **R, G and B numbers across the
+top**, each drag-scrubbable and typeable, then the saturation/value square, the hue strip, a
+was/now pair and a hex field. Every one of those edits every other — type a number and the
+square moves; drag in the square and the numbers follow.
+
+The picker **applies to the document as it changes**. A drag inside it previews continuously
+on the picture (the same live tick an Effect controls drag sends) and settles into one
+undoable edit when released; a typed number, a hex entry or a preset click is one settled
+edit on its own. So there is no state where the picker shows one colour and the composition
+shows another, and **clicking away from the picker closes it keeping what is applied** —
+nothing is waiting on a button. **Cancel** is the way back: it writes the colour the picker
+opened with and closes. **Apply** closes keeping the current one.
+
+**The dropper** is the pipette beside a swatch — and beside anything else that means "a value
+at a pixel", which is not only colour: the depth-of-field **focal point** carries one, and it
+reads *depth*, not colour. Clicking it arms the tool; clicking it again, pressing Escape, or
+pressing away from the picture puts it away. It lights while armed, so a dropper armed and
+forgotten is visible from across the panel.
+
+While armed, the Viewer grows a **magnifier** that follows the pointer:
+
+- a **9×9 grid** of the pixels under the pointer, one enlarged square each, with **dashed
+  rules between every pair** so pixel boundaries are legible;
+- a **solid border** round the pixels that will actually be taken — the **centre pixel alone**
+  by default, its corners taking the theme's control radius, so it is rounded under the round
+  shape and square under the sharp one;
+- **Shift+scroll** steps the sampled region 1×1 → 3×3 → 5×5 → 7×7 → 9×9 and back, never
+  wrapping and never exceeding the grid; the region is always odd, so there is always one
+  centre pixel. Shift+scroll does not also zoom the picture.
+- a **strip under the grid** saying what would be picked. For a colour pick that is the
+  averaged colour and its numbers; for a pick that is reading something else it is **the layer
+  the numbers are coming from and the value read off it** — a swatch of the composite would be
+  a colour nobody is choosing.
+
+Averages are taken in **scene-linear light**, not over display bytes, because that is the
+space a Colour parameter stores and what "the average of these pixels" physically means.
+
+A pick that reads a **layer** — the depth-of-field focal point reading its own depth pass —
+samples that layer **rendered alone**, not the composite: a depth pass is nearly always
+hidden, so what the composite shows at that pixel is not the number the effect uses. The
+effect's `depth_invert` is applied at the pick, so the caption and the committed value cannot
+disagree.
+
+The pixels themselves come from the engine, a patch at a time
+(`CompositionReference::sample_pixels` → `WorkerResponse::Sampled`,
+[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)). A 9×9 patch is 324 bytes, so this does not
+reopen the read-back frame transport K-183 deleted; it is the answer to a question about a
+few pixels, not a picture.
+
+Still to build here: the x/y **position** pick for coordinate-valued parameter pairs (the
+egui build's T14 viewfinder), and the on-Viewer crosshair handle for point parameters.
+
 ---
 
 ## 7. Effects & Presets

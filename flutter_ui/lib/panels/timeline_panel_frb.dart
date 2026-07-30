@@ -1712,6 +1712,7 @@ class _TimelineParamRowState extends State<_TimelineParamRow> {
       rowPadding: EdgeInsets.zero,
       // The staged value while a drag is in flight, the document's otherwise.
       value: _editor.stagedValue(row.info.id, row.param.id) ?? row.value,
+      siblings: {for (final v in row.info.values) v.id: v.value},
       comp: widget.comp,
       ownerLayerId: widget.layer.internallayerId,
       ownerLayers: ui.model.layers,

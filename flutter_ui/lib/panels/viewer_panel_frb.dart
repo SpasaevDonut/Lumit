@@ -30,6 +30,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/audio.dart';
@@ -44,11 +45,13 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../state/dropper.dart';
 import '../state/preview_throttle.dart';
 import '../state/settings.dart';
 import '../state/timecode.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import '../widgets/dropper_overlay.dart';
 import 'placeholder.dart';
 import 'viewer_layer_map.dart';
 
@@ -202,6 +205,13 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
             // zooming feel like leaning in rather than teleporting.
             onPointerSignal: (event) {
               if (event is PointerScrollEvent) {
+                // Shift+scroll belongs to the armed dropper, which is sizing
+                // its sample region with it — zooming as well would move the
+                // picture out from under the pixel being aimed at.
+                if (ui.dropper.value != null &&
+                    HardwareKeyboard.instance.isShiftPressed) {
+                  return;
+                }
                 _scrollZoom(event.localPosition, event.scrollDelta.dy,
                     constraints, size, fitted);
               }
@@ -398,6 +408,10 @@ class _Stage extends StatelessWidget {
               fitted: fitted,
               onChanged: onChanged,
             ),
+            // Above the overlay, because while the dropper is armed the whole
+            // picture is a target: a drag handle under the pointer must not
+            // take the click that was meant to pick a pixel.
+            DropperLayer(comp: comp, uiState: uiState, fitted: fitted),
           ],
         ),
       ),
@@ -412,6 +426,176 @@ class _Stage extends StatelessWidget {
       left: 8,
       bottom: 8,
       child: _MissingBadge(footage: footage),
+    );
+  }
+}
+
+/// The armed dropper over the picture: the magnifier, the sample-size wheel,
+/// and the click that picks (docs/07 §6.1).
+///
+/// **Why it lives here.** The pixels being picked are the Viewer's, and only
+/// this panel knows where the picture actually sits on screen at the current
+/// magnification and pan. What is *done* with the pick is not this panel's
+/// business at all: the parameter that armed the tool handed over a closure,
+/// and this calls it.
+///
+/// Nothing at all while the tool is not armed — not a hit-test, not a listener.
+class DropperLayer extends StatefulWidget {
+  final CompositionReference comp;
+  final LumitUiState uiState;
+
+  /// Where the picture is drawn in this panel, at the current magnification.
+  final Rect fitted;
+
+  const DropperLayer({
+    super.key,
+    required this.comp,
+    required this.uiState,
+    required this.fitted,
+  });
+
+  @override
+  State<DropperLayer> createState() => _DropperLayerState();
+}
+
+class _DropperLayerState extends State<DropperLayer> {
+  /// Where the pointer is, in this layer's own coordinates, or null before it
+  /// has entered the panel.
+  Offset? _cursor;
+
+  /// How many pixels a side are averaged. One — this pixel and no other —
+  /// until Shift+scroll says otherwise, and remembered for as long as the tool
+  /// stays armed.
+  int _region = dropperRegions.first;
+
+  /// Reads are bounded like a drag's previews: a pointer move is not worth a
+  /// render each, and the newest position is the only one worth answering.
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  @override
+  void initState() {
+    super.initState();
+    // Escape puts the tool away wherever the focus happens to be — a tool armed
+    // by accident must never need a click on the picture to get rid of.
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+    if (widget.uiState.dropper.value == null) return false;
+    widget.uiState.disarmDropper();
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<DropperArm?>(
+      valueListenable: widget.uiState.dropper,
+      builder: (context, arm, _) =>
+          arm == null ? const SizedBox.shrink() : _armed(context, arm),
+    );
+  }
+
+  Widget _armed(BuildContext context, DropperArm arm) {
+    return Positioned.fill(
+      child: MouseRegion(
+        cursor: SystemMouseCursors.precise,
+        onExit: (_) => setState(() => _cursor = null),
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerHover: (e) => _moved(e.localPosition),
+          onPointerMove: (e) => _moved(e.localPosition),
+          onPointerSignal: (e) {
+            if (e is! PointerScrollEvent) return;
+            if (!HardwareKeyboard.instance.isShiftPressed) return;
+            // Shift turns the wheel horizontal on most platforms, so take
+            // whichever axis actually carries the motion — reading only the
+            // vertical delta is why the egui build's size never changed.
+            final d = e.scrollDelta;
+            final scroll = d.dy.abs() >= d.dx.abs() ? d.dy : d.dx;
+            if (scroll.abs() < 0.5) return;
+            setState(() =>
+                _region = nextDropperRegion(_region, scroll < 0 ? 1 : -1));
+            final at = _cursor;
+            if (at != null) _request(at);
+          },
+          onPointerDown: (e) => _pressed(arm, e.localPosition),
+          child: _viewfinder(arm),
+        ),
+      ),
+    );
+  }
+
+  /// The magnifier, placed beside the pointer. Nothing while the pointer is off
+  /// the picture: there is nothing under it to magnify.
+  Widget _viewfinder(DropperArm arm) {
+    final at = _cursor;
+    if (at == null || !widget.fitted.contains(at)) {
+      return const SizedBox.expand();
+    }
+    final origin = dropperViewfinderOrigin(at, widget.fitted);
+    return Stack(
+      children: [
+        Positioned(
+          left: origin.dx,
+          top: origin.dy,
+          child: ValueListenableBuilder<BridgeSampledPixels?>(
+            valueListenable: widget.uiState.dropperPatch,
+            builder: (context, patch, _) => DropperViewfinder(
+              arm: arm,
+              patch: patch,
+              region: _region,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  void _moved(Offset local) {
+    setState(() => _cursor = local);
+    if (widget.fitted.contains(local)) _throttle.request(() => _request(local));
+  }
+
+  /// A press picks when it lands on the picture, and puts the tool away when it
+  /// lands anywhere else — the same escape the egui build gave, so a dropper
+  /// armed in error is dismissed by clicking away from the frame.
+  void _pressed(DropperArm arm, Offset local) {
+    if (!widget.fitted.contains(local)) {
+      widget.uiState.disarmDropper();
+      return;
+    }
+    final patch = widget.uiState.dropperPatch.value;
+    // Nothing read yet, or read of a frame the playhead has since left: ask
+    // again rather than committing a value off a picture that is no longer the
+    // one on screen. The next reply lands before the pointer can click twice.
+    if (patch == null ||
+        patch.frame.toInt() != widget.uiState.playheadFrame.value) {
+      _request(local);
+      return;
+    }
+    arm.onPick(sampleFromPatch(patch, _region));
+    widget.uiState.disarmDropper();
+  }
+
+  /// Which pixel of the composition is under `local`, and ask for it.
+  void _request(Offset local) {
+    final size = widget.comp.getSize();
+    final rect = widget.fitted;
+    if (rect.width <= 0 || rect.height <= 0) return;
+    final u = ((local.dx - rect.left) / rect.width).clamp(0.0, 1.0);
+    final v = ((local.dy - rect.top) / rect.height).clamp(0.0, 1.0);
+    widget.uiState.requestDropperSample(
+      (u * size.width).floor().clamp(0, (size.width - 1).clamp(0, 1 << 30)),
+      (v * size.height).floor().clamp(0, (size.height - 1).clamp(0, 1 << 30)),
     );
   }
 }

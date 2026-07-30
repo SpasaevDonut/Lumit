@@ -12,7 +12,8 @@ use crate::api::{
     layer::LayerReference,
     state::{LumitBridgeState, PROJECTS},
     worker_thread::{
-        RenderCompRequest, RenderCompRequestWithPreview, RenderScopeRequest, WorkerRequest,
+        RenderCompRequest, RenderCompRequestWithPreview, RenderScopeRequest, SamplePixelsRequest,
+        WorkerRequest,
         WorkerRequest::{RenderComp, RenderCompWithPreview},
     },
     BridgeError,
@@ -978,6 +979,37 @@ impl CompositionReference {
             scale,
             kind,
             colours: packed,
+        }))
+    }
+
+    /// Ask the worker for the pixels under the dropper: a `grid × grid` patch of
+    /// `frame` centred on `(x, y)` in this composition's own pixel grid
+    /// (docs/07 §6.1).
+    ///
+    /// `layer` reads that layer **alone** rather than the composite — what a
+    /// depth pick does, since a depth pass is usually hidden and so never
+    /// appears in the composite at all. The answer arrives as
+    /// `WorkerResponse::Sampled`, on the stream the frames and traces already
+    /// ride; a frame with nothing to read publishes nothing, and the magnifier
+    /// keeps what it had.
+    #[frb(sync)]
+    pub fn sample_pixels(
+        &self,
+        frame: u64,
+        x: u32,
+        y: u32,
+        grid: u32,
+        scale: f32,
+        layer: Option<LayerReference>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(WorkerRequest::SamplePixels(SamplePixelsRequest {
+            comp: self.clone(),
+            frame,
+            scale,
+            x,
+            y,
+            grid,
+            layer,
         }))
     }
 

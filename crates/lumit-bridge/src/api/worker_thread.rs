@@ -76,6 +76,23 @@ pub struct WorkerState {
     /// When the last request arrived — the fill waits out a ~200 ms lull
     /// after it (docs/06 §5.5), so a scrub in progress is never contended.
     last_request: std::time::Instant,
+    /// The one soloed-layer render the dropper is reading, against the
+    /// `(comp, frame, layer, generation)` it was made for — see
+    /// [`sample_layer_alone`]. One entry, because the dropper only ever reads
+    /// one layer at a time and a pointer drag asks for the same one on every
+    /// move.
+    layer_sample: Option<LayerSample>,
+}
+
+/// One soloed-layer render, held for the dropper (see [`sample_layer_alone`]).
+#[frb(ignore)]
+struct LayerSample {
+    /// `(comp, frame, layer, framecache generation)` — what this render is of.
+    /// The generation is what retires it when an edit lands.
+    stamp: (Uuid, u64, Uuid, u64),
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
 }
 
 /// Apply cross-thread cache controls and keep the cache-bar mirror fresh —
@@ -217,6 +234,8 @@ pub enum WorkerRequest {
     RenderComp(RenderCompRequest),
     RenderCompWithPreview(RenderCompRequestWithPreview),
     TraceScope(RenderScopeRequest),
+    /// Read the pixels under the dropper (docs/07 §6.1).
+    SamplePixels(SamplePixelsRequest),
     /// Start playing. The worker paces itself from here until it is stopped or
     /// runs off the end.
     Play(PlayRequest),
@@ -525,6 +544,37 @@ pub struct RenderScopeRequest {
     pub colours: [[u8; 3]; 5],
 }
 
+/// One read of the pixels under the dropper — the magnifier's request.
+///
+/// **Why the worker answers it and not a plain synchronous call.** The pixels
+/// only exist where the renderer does, and the renderer is owned outright by
+/// this thread (no lock, by design). A sync call would either have to render on
+/// Dart's UI isolate or reach across a lock at the one place docs/14 forbids
+/// one. So the dropper asks the way the Scopes panel asks, and paints what comes
+/// back.
+#[frb(ignore)]
+pub struct SamplePixelsRequest {
+    pub comp: CompositionReference,
+    pub frame: u64,
+    pub scale: f32,
+    /// The centre pixel, in the composition's own full-resolution pixel grid.
+    /// Clamped to the picture the sample is actually taken from, so a click on
+    /// the very edge still answers.
+    pub x: u32,
+    pub y: u32,
+    /// The patch's side length, forced odd and capped at [`MAX_GRID`].
+    pub grid: u32,
+    /// Read this layer *alone* instead of the composite — what a depth pick
+    /// does, so a hidden depth pass (which never shows in the composite) can
+    /// still be read. `None` samples the composite.
+    pub layer: Option<LayerReference>,
+}
+
+/// The largest patch the dropper ever asks for, and the magnifier's grid: 9×9
+/// (K-210). The sampled region can never exceed what is shown.
+#[frb(ignore)]
+pub const MAX_GRID: u32 = 9;
+
 #[frb(ignore)]
 pub struct RenderCompRequestWithPreview {
     pub comp: CompositionReference,
@@ -595,6 +645,7 @@ fn worker_loop(
         published_vram: (0, 0, 0),
         fill_exhausted: true,
         last_request: std::time::Instant::now(),
+        layer_sample: None,
     };
 
     loop {
@@ -982,7 +1033,8 @@ fn handle_requests(
         if crate::framecache::generation() != state.seen_generation {
             crate::framecache::note_stale_serve();
         }
-        let (pictures, scope, superseded) = drain_to_newest(request, receiver, classify_request);
+        let (pictures, scope, sample, superseded) =
+            drain_to_newest(request, receiver, classify_request);
         // Deliberately not logged. Superseding is the normal, healthy case —
         // it is how a drag stays attached to the pointer — and a line per
         // completed render is console I/O on the worker thread for something
@@ -995,9 +1047,10 @@ fn handle_requests(
         //
         // A frame that cannot be rendered is dropped, not fatal: the worker has
         // to survive to serve the next request.
-        for request in pictures.into_iter().chain(scope) {
+        for request in pictures.into_iter().chain(scope).chain(sample) {
             let outcome = match request {
                 WorkerRequest::RenderComp(req) => render_comp(req, state, stream),
+                WorkerRequest::SamplePixels(req) => sample_pixels(req, state, stream),
                 // Named for what it does rather than "render", so the three
                 // variants do not all share a prefix that says nothing.
                 WorkerRequest::TraceScope(req) => trace_scope(req, state, stream),
@@ -1033,6 +1086,7 @@ fn handle_requests(
 fn classify_request(r: &WorkerRequest) -> DrainClass {
     match r {
         WorkerRequest::TraceScope(_) => DrainClass::Scope,
+        WorkerRequest::SamplePixels(_) => DrainClass::Sample,
         WorkerRequest::Play(_) | WorkerRequest::StopPlayback => DrainClass::PictureKeepAll,
         WorkerRequest::RenderComp(_) | WorkerRequest::RenderCompWithPreview(_) => {
             DrainClass::PictureNewestWins
@@ -1051,6 +1105,12 @@ enum DrainClass {
     PictureKeepAll,
     /// A trace; the newest survives, served after the pictures.
     Scope,
+    /// A dropper read; the newest survives, served after the pictures — and in
+    /// its own lane, not the trace's. The two are different questions, and a
+    /// Scopes panel open while the dropper is armed must not make either one
+    /// throw the other away (the same reasoning that gave a trace its own lane
+    /// against a frame).
+    Sample,
 }
 
 /// Take everything queued and keep what its class says to keep.
@@ -1059,22 +1119,28 @@ enum DrainClass {
 /// `WorkerRequest` needs a live project behind it, and the rule being tested has
 /// nothing to do with rendering.
 ///
-/// Returns `(pictures_in_order, scope, superseded_count)`.
+/// Returns `(pictures_in_order, scope, sample, superseded_count)`.
 #[frb(ignore)]
 fn drain_to_newest<T>(
     first: T,
     receiver: &Receiver<T>,
     classify: impl Fn(&T) -> DrainClass,
-) -> (Vec<T>, Option<T>, usize) {
+) -> (Vec<T>, Option<T>, Option<T>, usize) {
     let mut kept: Vec<T> = Vec::new();
     let mut newest_wins: Option<T> = None;
     let mut scope = None;
+    let mut sample = None;
     let mut superseded = 0usize;
     let mut newest = Some(first);
     while let Some(item) = newest.take() {
         match classify(&item) {
             DrainClass::Scope => {
                 if scope.replace(item).is_some() {
+                    superseded += 1;
+                }
+            }
+            DrainClass::Sample => {
+                if sample.replace(item).is_some() {
                     superseded += 1;
                 }
             }
@@ -1090,7 +1156,7 @@ fn drain_to_newest<T>(
     // A surviving newest-wins picture runs after the kept ones: the kept ones
     // were asked for earlier, and order is part of every-frame's contract.
     kept.extend(newest_wins);
-    (kept, scope, superseded)
+    (kept, scope, sample, superseded)
 }
 
 fn render_comp(
@@ -1239,6 +1305,200 @@ fn trace_scope(
         Err(err) => eprintln!("Scope trace failed: {err}"),
     }
     Ok(())
+}
+
+/// Answer one dropper read: find the pixels, cut the patch, publish it.
+///
+/// The picture comes from the same three places a trace's does, in the same
+/// order: the frame already banked in RAM, else a render of it (banked, so the
+/// next pointer move over the same frame is free). A **layer** read is the one
+/// that cannot reuse either: it needs that layer alone, which is not what the
+/// composite shows, so it renders the composition with the layer soloed and
+/// keeps the result in `layer_sample` — one entry, so dragging the pointer
+/// across the picture renders once, not once per move.
+#[frb(ignore)]
+fn sample_pixels(
+    req: SamplePixelsRequest,
+    state: &mut WorkerState,
+    stream: &mut WorkerResponseStream,
+) -> Result<(), BridgeError> {
+    let document = {
+        let document = state.project.state()?;
+        let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
+        document.store.snapshot()
+    };
+
+    let layer_alone = req.layer.is_some();
+    let held = match &req.layer {
+        Some(layer) => sample_layer_alone(&document, layer.layer_id, &req, state),
+        None => match crate::framecache::best_frame(req.comp.id, req.frame) {
+            Some(held) => Some(held),
+            None => {
+                let key = crate::framecache::frame_key(req.comp.id, req.frame, req.scale);
+                let mut render = || {
+                    state
+                        .renderer
+                        .render_preview(
+                            &document,
+                            req.comp.id,
+                            req.frame,
+                            quality_for(req.scale),
+                            req.scale,
+                            None,
+                        )
+                        .ok()
+                        .map(|(rgba, width, height)| (width, height, rgba))
+                };
+                crate::framecache::get_or_render(key, &mut render)
+            }
+        },
+    };
+
+    // Nothing to read: the dropper says so on screen rather than the worker
+    // going quiet, so no reply is itself the answer — the magnifier keeps the
+    // last patch it had until a new one arrives.
+    let Some((width, height, rgba)) = held else {
+        return Ok(());
+    };
+
+    // The request is in the composition's own pixel grid; the picture in hand
+    // may be a reduced-resolution preview, so the point is carried across as a
+    // fraction rather than assumed to line up.
+    let comp_size = document
+        .comp(req.comp.id)
+        .map(|c| (c.width.max(1), c.height.max(1)));
+    let (cw, ch) = comp_size.unwrap_or((width.max(1), height.max(1)));
+    let u = f64::from(req.x) / f64::from(cw);
+    let v = f64::from(req.y) / f64::from(ch);
+
+    let Some(patch) = cut_patch(&rgba, width, height, u, v, req.grid) else {
+        return Ok(());
+    };
+    _ = stream.add(WorkerResponse::Sampled(
+        crate::api::state::BridgeSampledPixels {
+            grid: patch.grid,
+            rgba: patch.rgba,
+            width,
+            height,
+            x: patch.x,
+            y: patch.y,
+            frame: req.frame,
+            layer_alone,
+        },
+    ));
+    Ok(())
+}
+
+/// The composition rendered with one layer soloed — that layer alone, in its
+/// own place, on nothing.
+///
+/// Held in `state.layer_sample` against `(comp, frame, layer, generation)`: the
+/// dropper asks again on every pointer move, and re-compositing the whole
+/// composition per move is not a thing to do while someone is dragging a
+/// pointer. An edit bumps the framecache generation, which retires the entry
+/// with everything else the document just invalidated.
+#[frb(ignore)]
+fn sample_layer_alone(
+    document: &lumit_core::Document,
+    layer: Uuid,
+    req: &SamplePixelsRequest,
+    state: &mut WorkerState,
+) -> Option<(u32, u32, Vec<u8>)> {
+    let stamp = (
+        req.comp.id,
+        req.frame,
+        layer,
+        crate::framecache::generation(),
+    );
+    if let Some(held) = &state.layer_sample {
+        if held.stamp == stamp {
+            return Some((held.width, held.height, held.rgba.clone()));
+        }
+    }
+
+    // A patched *copy* of the snapshot: soloing for the read must never be
+    // something the document remembers, so nothing here goes near `commit`.
+    let mut patched = lumit_core::Document::clone(document);
+    let comp = patched.comp_mut(req.comp.id)?;
+    for l in &mut comp.layers {
+        l.switches.solo = l.id == layer;
+        // Soloed and still hidden is nothing at all — and a depth pass is very
+        // often hidden, which is exactly why this read exists.
+        if l.id == layer {
+            l.switches.visible = true;
+        }
+    }
+
+    let (rgba, w, h) = state
+        .renderer
+        .render_preview(
+            &patched,
+            req.comp.id,
+            req.frame,
+            quality_for(req.scale),
+            req.scale,
+            None,
+        )
+        .ok()?;
+    state.layer_sample = Some(LayerSample {
+        stamp,
+        width: w,
+        height: h,
+        rgba: rgba.clone(),
+    });
+    Some((w, h, rgba))
+}
+
+/// A patch cut out of a picture: the pixels, and where its centre landed.
+#[frb(ignore)]
+pub(crate) struct Patch {
+    pub grid: u32,
+    pub rgba: Vec<u8>,
+    pub x: u32,
+    pub y: u32,
+}
+
+/// Cut a `grid × grid` patch centred on the fraction `(u, v)` of a picture.
+///
+/// `grid` is forced odd and capped at [`MAX_GRID`] here rather than trusted:
+/// the centre pixel must be a single pixel for the magnifier's centre cell to
+/// mean anything, and the payload must stay small enough to be a reading rather
+/// than a picture. Pixels off the edge repeat the edge, so the patch is always
+/// exactly `grid × grid` and the caller never has a ragged square to draw.
+#[frb(ignore)]
+pub(crate) fn cut_patch(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    u: f64,
+    v: f64,
+    grid: u32,
+) -> Option<Patch> {
+    if width == 0 || height == 0 || rgba.len() < (width as usize * height as usize * 4) {
+        return None;
+    }
+    let grid = grid.clamp(1, MAX_GRID) | 1;
+    let w = width as i64;
+    let h = height as i64;
+    let cx = ((u * width as f64) as i64).clamp(0, w - 1);
+    let cy = ((v * height as f64) as i64).clamp(0, h - 1);
+    let half = i64::from(grid / 2);
+
+    let mut out = Vec::with_capacity((grid * grid * 4) as usize);
+    for dy in 0..i64::from(grid) {
+        for dx in 0..i64::from(grid) {
+            let px = (cx - half + dx).clamp(0, w - 1);
+            let py = (cy - half + dy).clamp(0, h - 1);
+            let i = ((py * w + px) * 4) as usize;
+            out.extend_from_slice(&rgba[i..i + 4]);
+        }
+    }
+    Some(Patch {
+        grid,
+        rgba: out,
+        x: cx as u32,
+        y: cy as u32,
+    })
 }
 
 /// Render one frame and publish it to Dart — always as a GPU handle (K-183).
@@ -1605,6 +1865,7 @@ mod tests {
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     enum Req {
         Adaptive(u32),
+        Sample(u32),
         // Kept-in-order requests — standing in for the transport commands
         // (Play, Stop), the only keep-all class since scrubs became
         // newest-wins in every mode.
@@ -1617,6 +1878,7 @@ mod tests {
             Req::Adaptive(_) => DrainClass::PictureNewestWins,
             Req::EveryFrame(_) => DrainClass::PictureKeepAll,
             Req::Scope(_) => DrainClass::Scope,
+            Req::Sample(_) => DrainClass::Sample,
         }
     }
 
@@ -1667,7 +1929,7 @@ mod tests {
         tx.send(Req::Scope(9)).unwrap();
         drop(tx);
 
-        let (pictures, scope, superseded) = drain_to_newest(Req::Adaptive(0), &rx, classify);
+        let (pictures, scope, _, superseded) = drain_to_newest(Req::Adaptive(0), &rx, classify);
         assert_eq!(
             pictures,
             vec![Req::Adaptive(3)],
@@ -1688,7 +1950,7 @@ mod tests {
         }
         drop(tx);
 
-        let (pictures, scope, superseded) = drain_to_newest(Req::Adaptive(0), &rx, classify);
+        let (pictures, scope, _, superseded) = drain_to_newest(Req::Adaptive(0), &rx, classify);
         assert_eq!(pictures, vec![Req::Adaptive(5)]);
         assert_eq!(scope, None, "nothing asked for a trace");
         assert_eq!(superseded, 5);
@@ -1702,7 +1964,7 @@ mod tests {
         tx.send(Req::Scope(3)).unwrap();
         drop(tx);
 
-        let (pictures, scope, superseded) = drain_to_newest(Req::Scope(1), &rx, classify);
+        let (pictures, scope, _, superseded) = drain_to_newest(Req::Scope(1), &rx, classify);
         assert!(pictures.is_empty());
         assert_eq!(scope, Some(Req::Scope(3)));
         assert_eq!(superseded, 2);
@@ -1714,7 +1976,7 @@ mod tests {
         let (tx, rx) = channel::<Req>();
         drop(tx);
 
-        let (pictures, scope, superseded) = drain_to_newest(Req::Adaptive(7), &rx, classify);
+        let (pictures, scope, _, superseded) = drain_to_newest(Req::Adaptive(7), &rx, classify);
         assert_eq!(pictures, vec![Req::Adaptive(7)]);
         assert_eq!(scope, None);
         assert_eq!(superseded, 0);
@@ -1733,7 +1995,7 @@ mod tests {
         tx.send(Req::Scope(1)).unwrap();
         drop(tx);
 
-        let (pictures, scope, superseded) = drain_to_newest(Req::EveryFrame(1), &rx, classify);
+        let (pictures, scope, _, superseded) = drain_to_newest(Req::EveryFrame(1), &rx, classify);
         assert_eq!(
             pictures,
             vec![
@@ -1747,5 +2009,87 @@ mod tests {
         );
         assert_eq!(scope, Some(Req::Scope(1)));
         assert_eq!(superseded, 0, "nothing every-frame was thrown away");
+    }
+
+    /// A dropper read has its own lane. The Scopes panel and an armed dropper
+    /// are often open together — the panel asks every 120 ms and the magnifier
+    /// asks on every pointer move — and neither question is the other's
+    /// replacement, so neither may supersede the other or a frame.
+    #[test]
+    fn a_dropper_read_and_a_trace_do_not_supersede_each_other() {
+        let (tx, rx) = channel();
+        tx.send(Req::Scope(1)).unwrap();
+        tx.send(Req::Sample(7)).unwrap();
+        tx.send(Req::Sample(8)).unwrap();
+        drop(tx);
+
+        let (pictures, scope, sample, superseded) =
+            drain_to_newest(Req::Adaptive(4), &rx, classify);
+        assert_eq!(pictures, vec![Req::Adaptive(4)], "the frame survives both");
+        assert_eq!(
+            scope,
+            Some(Req::Scope(1)),
+            "and the trace survives the reads"
+        );
+        assert_eq!(
+            sample,
+            Some(Req::Sample(8)),
+            "reads collapse among themselves — only where the pointer is now matters"
+        );
+        assert_eq!(superseded, 1, "one older read, and nothing else");
+    }
+
+    /// The patch is always exactly `grid × grid`, odd, and centred on the pixel
+    /// the fraction names — including hard against an edge, where the picture
+    /// runs out and the edge pixel repeats. A ragged square would leave the
+    /// magnifier drawing whatever was in memory next.
+    #[test]
+    fn a_patch_is_square_odd_and_clamped_to_the_picture() {
+        // 2×2: red, green / blue, white.
+        let rgba = vec![
+            255, 0, 0, 255, 0, 255, 0, 255, //
+            0, 0, 255, 255, 255, 255, 255, 255,
+        ];
+        let patch = super::cut_patch(&rgba, 2, 2, 0.0, 0.0, 3).expect("a picture to read");
+        assert_eq!(patch.grid, 3);
+        assert_eq!(patch.rgba.len(), 3 * 3 * 4);
+        assert_eq!((patch.x, patch.y), (0, 0), "the top-left pixel");
+        // The centre cell is the pixel asked for; the row above repeats it,
+        // because there is no row above.
+        assert_eq!(
+            &patch.rgba[16..20],
+            &[255, 0, 0, 255],
+            "centre is the red pixel"
+        );
+        assert_eq!(
+            &patch.rgba[0..4],
+            &[255, 0, 0, 255],
+            "off the top-left, the edge repeats"
+        );
+        assert_eq!(
+            &patch.rgba[20..24],
+            &[0, 255, 0, 255],
+            "and the neighbour is the green one"
+        );
+
+        // An even grid is forced odd, and an oversized one capped, so the
+        // magnifier's centre cell always means one pixel.
+        assert_eq!(
+            super::cut_patch(&rgba, 2, 2, 0.5, 0.5, 4)
+                .expect("cut")
+                .grid,
+            5
+        );
+        assert_eq!(
+            super::cut_patch(&rgba, 2, 2, 0.5, 0.5, 99)
+                .expect("cut")
+                .grid,
+            super::MAX_GRID
+        );
+
+        // A picture with fewer bytes than it claims is refused rather than read
+        // past the end of.
+        assert!(super::cut_patch(&[0, 0, 0, 255], 2, 2, 0.0, 0.0, 1).is_none());
+        assert!(super::cut_patch(&rgba, 0, 0, 0.0, 0.0, 1).is_none());
     }
 }
