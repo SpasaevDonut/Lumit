@@ -16,7 +16,7 @@ import 'project_item.dart';
 import 'retime.dart';
 import 'solid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_layer_info`, `read`, `with_effects`, `write`
+// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
@@ -838,6 +838,11 @@ class LayerReference {
   /// edit. Off removes the map entirely rather than setting 100%, because
   /// "not retimed" and "retimed to exactly 1×" are different states in the
   /// file and only the first skips the resampler.
+  ///
+  /// Off also re-hangs the layer on its source, exactly as the Retime property
+  /// does (K-212): it keeps its in point and the frame showing there, then
+  /// plays at source rate until the source runs out or its own out point
+  /// arrives, whichever comes first. It never grows. One undo step covers both.
   void setRetimeEnabled({required bool on_}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetRetimeEnabled(that: this, on_: on_);
 
@@ -928,6 +933,12 @@ class LayerReference {
   /// to key, exactly as AE's Time Remap does. Off removes the property
   /// rather than flattening it: "not retimed" and "retimed to exactly 1×" are
   /// different states in the file, and only the first skips the map.
+  ///
+  /// Off also re-hangs the layer on its source (K-212). A retimed layer can be
+  /// any length, so when the map goes away the layer has to be given one
+  /// again: it keeps its in point and the frame showing there, then plays at
+  /// source rate until the source runs out or its own out point arrives,
+  /// whichever comes first. It never grows. One undo step covers both.
   bool toggleRetimeProperty() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceToggleRetimeProperty(
         that: this,

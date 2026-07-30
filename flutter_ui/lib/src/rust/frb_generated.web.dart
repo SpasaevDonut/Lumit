@@ -47,10 +47,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError;
 
   CrossPlatformFinalizerArg
-      get rust_arc_decrement_strong_count_EffectInstancePtr => wire
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance;
-
-  CrossPlatformFinalizerArg
       get rust_arc_decrement_strong_count_LumitBridgeStatePtr => wire
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState;
 
@@ -65,11 +61,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeError
       dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
-          dynamic raw);
-
-  @protected
-  EffectInstance
-      dco_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
           dynamic raw);
 
   @protected
@@ -95,11 +86,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeError
       dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
-          dynamic raw);
-
-  @protected
-  EffectInstance
-      dco_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
           dynamic raw);
 
   @protected
@@ -163,6 +149,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRetime dco_decode_box_autoadd_bridge_retime(dynamic raw);
+
+  @protected
+  BridgeSampledPixels dco_decode_box_autoadd_bridge_sampled_pixels(dynamic raw);
 
   @protected
   BridgeScalar dco_decode_box_autoadd_bridge_scalar(dynamic raw);
@@ -365,6 +354,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRevealKind dco_decode_bridge_reveal_kind(dynamic raw);
+
+  @protected
+  BridgeSampledPixels dco_decode_bridge_sampled_pixels(dynamic raw);
 
   @protected
   BridgeScalar dco_decode_bridge_scalar(dynamic raw);
@@ -605,11 +597,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
           SseDeserializer deserializer);
 
   @protected
-  EffectInstance
-      sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
-          SseDeserializer deserializer);
-
-  @protected
   LumitBridgeState
       sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState(
           SseDeserializer deserializer);
@@ -632,11 +619,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeError
       sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
-          SseDeserializer deserializer);
-
-  @protected
-  EffectInstance
-      sse_decode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
           SseDeserializer deserializer);
 
   @protected
@@ -710,6 +692,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRetime sse_decode_box_autoadd_bridge_retime(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeSampledPixels sse_decode_box_autoadd_bridge_sampled_pixels(
       SseDeserializer deserializer);
 
   @protected
@@ -942,6 +928,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRevealKind sse_decode_bridge_reveal_kind(SseDeserializer deserializer);
+
+  @protected
+  BridgeSampledPixels sse_decode_bridge_sampled_pixels(
+      SseDeserializer deserializer);
 
   @protected
   BridgeScalar sse_decode_bridge_scalar(SseDeserializer deserializer);
@@ -1215,11 +1205,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void
-      sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
-          EffectInstance self, SseSerializer serializer);
-
-  @protected
-  void
       sse_encode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState(
           LumitBridgeState self, SseSerializer serializer);
 
@@ -1242,11 +1227,6 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void
       sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
           BridgeError self, SseSerializer serializer);
-
-  @protected
-  void
-      sse_encode_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
-          EffectInstance self, SseSerializer serializer);
 
   @protected
   void
@@ -1321,6 +1301,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_bridge_retime(
       BridgeRetime self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_sampled_pixels(
+      BridgeSampledPixels self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bridge_scalar(
@@ -1577,6 +1561,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_reveal_kind(
       BridgeRevealKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_sampled_pixels(
+      BridgeSampledPixels self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_scalar(BridgeScalar self, SseSerializer serializer);
@@ -1880,18 +1868,6 @@ class BridgeLibWire implements BaseWire {
           .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
               ptr);
 
-  void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
-          int ptr) =>
-      wasmModule
-          .rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
-              ptr);
-
-  void rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
-          int ptr) =>
-      wasmModule
-          .rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
-              ptr);
-
   void rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerLumitBridgeState(
           int ptr) =>
       wasmModule
@@ -1925,14 +1901,6 @@ extension type BridgeLibWasmModule._(JSObject _) implements JSObject {
 
   external void
       rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError(
-          int ptr);
-
-  external void
-      rust_arc_increment_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
-          int ptr);
-
-  external void
-      rust_arc_decrement_strong_count_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerEffectInstance(
           int ptr);
 
   external void

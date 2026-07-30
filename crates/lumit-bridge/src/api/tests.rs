@@ -1288,7 +1288,7 @@ fn setting_one_property_leaves_the_others_alone_and_undoes_alone() {
         opacity: BridgeScalar::Static(7.0),
         ..after
     }
-    .write(&mut group)
+    .write_at(&mut group, lumit_core::time::Rational::ZERO)
     .expect("preview write");
     assert_eq!(
         group.opacity.animation,
@@ -3164,4 +3164,198 @@ fn system_memory_bytes_reports_non_zero_on_supported_platforms() {
             "system memory should be positive on Linux/macOS/Windows"
         );
     }
+}
+
+/// Switching Retime off re-hangs the layer on its source (K-212): it keeps its
+/// in point, shows the same frame there, and runs at source rate until the
+/// source runs out — never longer than it already was.
+#[test]
+fn switching_retime_off_re_hangs_the_layer_on_its_source() {
+    use crate::api::composition::BridgeCompSettings;
+    use crate::api::effect::BridgeRational;
+    use crate::api::layer::BridgeSpan;
+
+    let rational = |num: i64, den: i64| BridgeRational { num, den };
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    // A five-second source at 60 fps: 300 frames of material, and no file to
+    // probe — a nested comp's length is its own.
+    let inner = project
+        .new_composition(
+            "Inner".into(),
+            Some(BridgeCompSettings {
+                name: "Inner".into(),
+                width: 320,
+                height: 240,
+                fps_num: 60,
+                fps_den: 1,
+                duration: rational(5, 1),
+            }),
+        )
+        .expect("comp");
+    let outer = project.new_composition("Outer".into(), None).expect("comp");
+    let layer = outer.add_precomp_layer(&inner).expect("nested");
+
+    // Retimed, a layer is any length it likes: stretched to twenty seconds.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(20, 1),
+            start_offset: rational(0, 1),
+        })
+        .expect("stretched");
+
+    layer.toggle_retime_property().expect("off");
+    let span = layer.get_span().expect("span");
+    assert_eq!(
+        outer.frame_at_time(span.out_point).expect("frame"),
+        300,
+        "showing the source's first frame, it runs the source's whole length"
+    );
+    assert_eq!(
+        outer.frame_at_time(span.start_offset).expect("frame"),
+        0,
+        "and its own zero stays where that frame is"
+    );
+    assert_eq!(outer.frame_at_time(span.in_point).expect("frame"), 0);
+
+    // Anchored two seconds into the source instead: only the three seconds
+    // that are left of the source remain.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(20, 1),
+            start_offset: rational(-2, 1),
+        })
+        .expect("stretched");
+    layer.toggle_retime_property().expect("off");
+    let span = layer.get_span().expect("span");
+    assert_eq!(
+        outer.frame_at_time(span.out_point).expect("frame"),
+        180,
+        "three seconds of source were left to play"
+    );
+    assert_eq!(
+        outer.frame_at_time(span.start_offset).expect("frame"),
+        -120,
+        "the anchor frame still shows at the in point"
+    );
+
+    // And it never grows: a layer shorter than what is left keeps its length.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(1, 1),
+            start_offset: rational(0, 1),
+        })
+        .expect("trimmed");
+    layer.toggle_retime_property().expect("off");
+    assert_eq!(
+        outer
+            .frame_at_time(layer.get_span().expect("span").out_point)
+            .expect("frame"),
+        60,
+        "one second in, one second out"
+    );
+}
+
+/// Keyframes belong to the layer, and the seam says so in the interface's units
+/// (K-213).
+///
+/// The engine keys every property in the layer's **own** time, which is what
+/// makes a layer's animation travel with it when it is moved. The Timeline
+/// draws and edits in **comp** frames. The bridge is where the two meet: what
+/// crosses is comp time, converted by the layer's `start_offset` in both
+/// directions. Read raw, a moved layer's keys drew at the start of the comp.
+#[test]
+fn keyframes_cross_on_the_comp_clock_and_travel_with_the_layer() {
+    use crate::api::effect::{BridgeKeyframe, BridgeRational, BridgeScalar, BridgeSideInterp};
+    use crate::api::layer::{BridgeSpan, BridgeTransformProp};
+
+    let rational = |num: i64, den: i64| BridgeRational { num, den };
+    let key = |seconds: i64, value: f64| BridgeKeyframe {
+        time: rational(seconds, 1),
+        value,
+        interp_in: BridgeSideInterp::Linear,
+        interp_out: BridgeSideInterp::Linear,
+    };
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let layer = comp.add_solid_layer().expect("solid");
+
+    // A key at comp second 2, written the way a panel writes one.
+    layer
+        .set_transform(
+            BridgeTransformProp::PositionX,
+            BridgeScalar::Keyframed(vec![key(2, 100.0)]),
+        )
+        .expect("keyed");
+    assert_eq!(
+        layer.get_transform().expect("transform").position_x,
+        BridgeScalar::Keyframed(vec![key(2, 100.0)]),
+        "it reads back at the comp time it was written at"
+    );
+
+    // Move the whole layer three seconds later — in, out and the offset all
+    // shift, which is what a bar drag commits.
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(3, 1),
+            out_point: rational(8, 1),
+            start_offset: rational(3, 1),
+        })
+        .expect("moved");
+    assert_eq!(
+        layer.get_transform().expect("transform").position_x,
+        BridgeScalar::Keyframed(vec![key(5, 100.0)]),
+        "the key travelled with the layer, and says so in comp time"
+    );
+}
+
+/// Switching Retime on keys the layer where it *is* (K-213): one key on its in
+/// point, one on its out point, both in comp time — not at the start of the
+/// composition, and not stopping short of a trimmed layer's tail.
+#[test]
+fn enabling_retime_keys_the_layer_where_it_sits() {
+    use crate::api::effect::{BridgeRational, BridgeScalar};
+    use crate::api::layer::BridgeSpan;
+
+    let rational = |num: i64, den: i64| BridgeRational { num, den };
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let inner = project.new_composition("Inner".into(), None).expect("comp");
+    let layer = comp.add_precomp_layer(&inner).expect("nested");
+
+    // Moved to comp second 3 and trimmed a second off its head: its own zero
+    // sits at comp second 2, so local time at the in point is one second.
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(3, 1),
+            out_point: rational(8, 1),
+            start_offset: rational(2, 1),
+        })
+        .expect("placed");
+
+    assert!(layer.toggle_retime_property().expect("on"));
+    let Some(BridgeScalar::Keyframed(keys)) = layer.get_retime_property().expect("retime") else {
+        panic!("switching Retime on installs a keyed map");
+    };
+    assert_eq!(keys.len(), 2, "one key on each end, and no others");
+    assert_eq!(
+        comp.frame_at_time(keys[0].time).expect("frame"),
+        comp.frame_at_time(rational(3, 1)).expect("frame"),
+        "the first key is on the layer's in point"
+    );
+    assert_eq!(
+        comp.frame_at_time(keys[1].time).expect("frame"),
+        comp.frame_at_time(rational(8, 1)).expect("frame"),
+        "and the second on its out point"
+    );
+    // The values are the source times those moments show — the identity map,
+    // so each is the layer's own local time and nothing moves on screen.
+    assert!((keys[0].value - 1.0).abs() < 1e-9);
+    assert!((keys[1].value - 6.0).abs() < 1e-9);
 }

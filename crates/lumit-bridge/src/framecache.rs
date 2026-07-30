@@ -361,6 +361,44 @@ pub(crate) fn best_frame(comp: uuid::Uuid, frame: u64) -> Option<(u32, u32, Vec<
     })
 }
 
+/// Read from the finest held picture of `comp` at `frame` **without copying
+/// it**: `read` is given the pixels, the width, the height and the channel
+/// order, and what it returns is the answer.
+///
+/// The dropper's reason for existing. [`best_frame`] clones the whole frame —
+/// eight megabytes at 1080p — which is the correct shape for the Scopes, who
+/// then bin every pixel of it, and exactly the wrong one for a reader that wants
+/// a few hundred pixels out of the middle. `read` runs under the cache lock,
+/// thus it must stay what the dropper's is: bounded, pure-CPU, and nowhere near
+/// the GPU or the FFI boundary (docs/14 §"no locks across GPU").
+///
+/// **The channel order is given, not corrected.** A frame that came down off the
+/// card on Windows or macOS is BGRA, and putting that right here would mean a
+/// copy of the whole frame — which is the cost this function exists to avoid.
+/// The reader takes its small window first and puts that right instead.
+///
+/// Stamps most-recently-used, like [`best_frame`], and counts as neither a hit
+/// nor a miss for the same reason: those numbers describe how well the Viewer
+/// is served.
+pub(crate) fn with_best_frame<R>(
+    comp: uuid::Uuid,
+    frame: u64,
+    read: impl FnOnce(&[u8], u32, u32, bool) -> R,
+) -> Option<R> {
+    with_cache(|c| {
+        let key = *c
+            .map
+            .iter()
+            .filter(|(_, e)| e.provenance.comp == comp && e.provenance.frame == frame)
+            .max_by_key(|(_, e)| e.provenance.scale_q)
+            .map(|(k, _)| k)?;
+        let entry = c.map.get_mut(&key)?;
+        c.clock += 1;
+        entry.last_used = c.clock;
+        Some(read(&entry.bytes, entry.width, entry.height, entry.bgra))
+    })
+}
+
 /// Resize the RAM budget (Settings → Performance).
 pub(crate) fn set_budget(bytes: usize) {
     with_cache(|c| c.set_budget(bytes));

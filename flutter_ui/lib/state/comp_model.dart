@@ -72,6 +72,16 @@ class CompModel extends ChangeNotifier {
     return _model?.motionBlurEnabled ?? false;
   }
 
+  /// The engine revision the held model was read at, or null before the first
+  /// read. What a panel caching something *derived* from the model compares
+  /// against: the cache is good for as long as this number is, and an edit
+  /// moves it. Reading it freshens the model first, so it never reports a
+  /// revision older than what the caller is about to draw.
+  BigInt? get revision {
+    _freshen();
+    return _revision;
+  }
+
   /// Point the model at [comp] (or null) and read it.
   void bind(CompositionReference? comp) {
     _comp = comp;

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use flutter_rust_bridge::frb;
 use lumit_core::model::{EffectInstance, Layer};
+use lumit_core::time::{CompTime, Duration, Rational, SourceTime};
 
 use uuid::Uuid;
 
@@ -201,11 +202,11 @@ pub(crate) fn read_layer_info(
                 .find(|l| l.id == p)
                 .map(|l| l.name.clone())
         }),
-        transform: BridgeTransform::read(&layer.transform),
+        transform: BridgeTransform::read_at(&layer.transform, layer.start_offset.0),
         effects: layer
             .effects
             .iter()
-            .map(crate::api::effect::read_instance_info)
+            .map(|e| crate::api::effect::read_instance_info(e, layer.start_offset.0))
             .collect(),
         label: layer.label,
         matte: layer.matte.as_ref().map(|m| BridgeMatte {
@@ -213,7 +214,10 @@ pub(crate) fn read_layer_info(
             luma: matches!(m.channel, lumit_core::model::MatteChannel::Luma),
             inverted: m.inverted,
         }),
-        retime: layer.retime.as_ref().map(BridgeScalar::read),
+        retime: layer
+            .retime
+            .as_ref()
+            .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)),
     }
 }
 
@@ -322,40 +326,47 @@ impl BridgeTransformProp {
 
 impl BridgeTransform {
     #[frb(ignore)]
-    pub(crate) fn read(group: &lumit_core::model::TransformGroup) -> BridgeTransform {
+    /// `offset` is the layer's `start_offset`: keys cross on the composition's
+    /// clock, not the layer's own (K-213).
+    #[allow(clippy::similar_names)]
+    pub(crate) fn read_at(
+        group: &lumit_core::model::TransformGroup,
+        offset: Rational,
+    ) -> BridgeTransform {
         BridgeTransform {
-            anchor_x: BridgeScalar::read(&group.anchor_x),
-            anchor_y: BridgeScalar::read(&group.anchor_y),
-            position_x: BridgeScalar::read(&group.position_x),
-            position_y: BridgeScalar::read(&group.position_y),
-            position_z: BridgeScalar::read(&group.position_z),
-            scale_x: BridgeScalar::read(&group.scale_x),
-            scale_y: BridgeScalar::read(&group.scale_y),
-            rotation: BridgeScalar::read(&group.rotation),
-            rotation_x: BridgeScalar::read(&group.rotation_x),
-            rotation_y: BridgeScalar::read(&group.rotation_y),
-            opacity: BridgeScalar::read(&group.opacity),
+            anchor_x: BridgeScalar::read_at(&group.anchor_x, offset),
+            anchor_y: BridgeScalar::read_at(&group.anchor_y, offset),
+            position_x: BridgeScalar::read_at(&group.position_x, offset),
+            position_y: BridgeScalar::read_at(&group.position_y, offset),
+            position_z: BridgeScalar::read_at(&group.position_z, offset),
+            scale_x: BridgeScalar::read_at(&group.scale_x, offset),
+            scale_y: BridgeScalar::read_at(&group.scale_y, offset),
+            rotation: BridgeScalar::read_at(&group.rotation, offset),
+            rotation_x: BridgeScalar::read_at(&group.rotation_x, offset),
+            rotation_y: BridgeScalar::read_at(&group.rotation_y, offset),
+            opacity: BridgeScalar::read_at(&group.opacity, offset),
         }
     }
 
     /// Write this whole group onto `target`, for the drag preview — which needs
     /// a document to render, not an op to commit.
     #[frb(ignore)]
-    pub(crate) fn write(
+    pub(crate) fn write_at(
         &self,
         target: &mut lumit_core::model::TransformGroup,
+        offset: Rational,
     ) -> Result<(), BridgeError> {
-        target.anchor_x.animation = self.anchor_x.animation()?;
-        target.anchor_y.animation = self.anchor_y.animation()?;
-        target.position_x.animation = self.position_x.animation()?;
-        target.position_y.animation = self.position_y.animation()?;
-        target.position_z.animation = self.position_z.animation()?;
-        target.scale_x.animation = self.scale_x.animation()?;
-        target.scale_y.animation = self.scale_y.animation()?;
-        target.rotation.animation = self.rotation.animation()?;
-        target.rotation_x.animation = self.rotation_x.animation()?;
-        target.rotation_y.animation = self.rotation_y.animation()?;
-        target.opacity.animation = self.opacity.animation()?;
+        target.anchor_x.animation = self.anchor_x.animation_at(offset)?;
+        target.anchor_y.animation = self.anchor_y.animation_at(offset)?;
+        target.position_x.animation = self.position_x.animation_at(offset)?;
+        target.position_y.animation = self.position_y.animation_at(offset)?;
+        target.position_z.animation = self.position_z.animation_at(offset)?;
+        target.scale_x.animation = self.scale_x.animation_at(offset)?;
+        target.scale_y.animation = self.scale_y.animation_at(offset)?;
+        target.rotation.animation = self.rotation.animation_at(offset)?;
+        target.rotation_x.animation = self.rotation_x.animation_at(offset)?;
+        target.rotation_y.animation = self.rotation_y.animation_at(offset)?;
+        target.opacity.animation = self.opacity.animation_at(offset)?;
         Ok(())
     }
 }
@@ -990,7 +1001,11 @@ impl LayerReference {
     /// This layer's whole transform.
     #[frb(sync)]
     pub fn get_transform(&self) -> Result<BridgeTransform, BridgeError> {
-        Ok(BridgeTransform::read(&self.item()?.transform))
+        let layer = self.item()?;
+        Ok(BridgeTransform::read_at(
+            &layer.transform,
+            layer.start_offset.0,
+        ))
     }
 
     /// Whether this layer's source actually carries sound.
@@ -1138,7 +1153,11 @@ impl LayerReference {
     /// hides the row.
     #[frb(sync)]
     pub fn get_retime_property(&self) -> Result<Option<BridgeScalar>, BridgeError> {
-        Ok(self.item()?.retime.as_ref().map(BridgeScalar::read))
+        let layer = self.item()?;
+        Ok(layer
+            .retime
+            .as_ref()
+            .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)))
     }
 
     /// Turn Retime on or off (Ctrl+Alt+T), returning whether it is now on.
@@ -1148,24 +1167,124 @@ impl LayerReference {
     /// to key, exactly as AE's Time Remap does. Off removes the property
     /// rather than flattening it: "not retimed" and "retimed to exactly 1×" are
     /// different states in the file, and only the first skips the map.
+    ///
+    /// Off also re-hangs the layer on its source (K-212). A retimed layer can be
+    /// any length, so when the map goes away the layer has to be given one
+    /// again: it keeps its in point and the frame showing there, then plays at
+    /// source rate until the source runs out or its own out point arrives,
+    /// whichever comes first. It never grows. One undo step covers both.
     #[frb(sync)]
     pub fn toggle_retime_property(&self) -> Result<bool, BridgeError> {
         let layer = self.item()?;
         let on = layer.retime.is_none();
+        // The layer's own span in ITS time, which is where the two keys belong
+        // (K-213): its comp in and out less where its zero sits. A layer that
+        // has been moved or trimmed does not start at its own zero, and keys at
+        // zero would sit at the start of the composition on screen and leave
+        // the tail past `duration` frozen on one frame.
         let retime = on.then(|| {
-            let duration = layer
-                .out_point
-                .0
-                .checked_sub(layer.in_point.0)
-                .unwrap_or(layer.out_point.0);
-            Layer::identity_retime(duration)
+            let local = |t: lumit_core::time::CompTime| {
+                t.0.checked_sub(layer.start_offset.0).unwrap_or(t.0)
+            };
+            Layer::identity_retime(local(layer.in_point), local(layer.out_point))
         });
-        self.commit(lumit_core::Op::SetRetimeProperty {
+        let removal = lumit_core::Op::SetRetimeProperty {
             comp: self.comp_id,
             layer: self.layer_id,
             retime,
+        };
+        // Switching it off re-hangs the layer on its source (K-212); switching
+        // it on changes nothing but the map.
+        self.commit(if on {
+            removal
+        } else {
+            self.unretime_op(&layer, removal)
         })?;
         Ok(on)
+    }
+
+    /// One op that switches a Retime off: `removal` — whichever of the two
+    /// retime routes is being cleared — with the layer's span re-anchored on
+    /// the frame that was showing, as a single undo step (K-212).
+    ///
+    /// Plain `removal` when the new span cannot be worked out (unreadable
+    /// source time, or arithmetic that would overflow): switching Retime off
+    /// must always work, even when nothing can be said about the source.
+    #[frb(ignore)]
+    pub(crate) fn unretime_op(&self, layer: &Layer, removal: lumit_core::Op) -> lumit_core::Op {
+        let Some((in_point, out_point, start_offset)) = self.reanchored_span(layer) else {
+            return removal;
+        };
+        lumit_core::Op::Batch {
+            ops: vec![
+                removal,
+                lumit_core::Op::SetLayerSpan {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                    in_point,
+                    out_point,
+                    start_offset,
+                },
+            ],
+        }
+    }
+
+    /// Where this layer's span lands once its Retime goes away: anchored on the
+    /// source moment showing at its in point, running at source rate until the
+    /// source or its own out point ends it (`lumit_core::ops::unretimed_span`).
+    ///
+    /// The anchor is snapped to the **comp's** frame grid rather than kept at
+    /// full precision, because the start offset it produces is what every later
+    /// trim measures from: an offset sitting between two frames puts the
+    /// layer's own zero between two frames for good, and the timeline edits in
+    /// whole frames.
+    #[frb(ignore)]
+    fn reanchored_span(&self, layer: &Layer) -> Option<(CompTime, CompTime, CompTime)> {
+        let rate = self.composition().ok()?.frame_rate;
+        // The source moment showing at the in point, read through the map that
+        // is about to be removed.
+        let local = layer.in_point.0.checked_sub(layer.start_offset.0).ok()?;
+        let seconds = layer.source_time_at(local.to_f64());
+        let approximate = CompTime(Rational::from_f64_on_grid(seconds, Rational::FLICK_DEN).ok()?);
+        let anchor = SourceTime(rate.time_of_frame(rate.frame_at(approximate)).ok()?.0);
+        lumit_core::ops::unretimed_span(
+            layer.in_point,
+            layer.out_point,
+            anchor,
+            self.source_length(layer),
+        )
+    }
+
+    /// How long this layer's source runs, when it has one that can be measured:
+    /// a nested comp's duration, or a footage file's probed length. `None` for
+    /// every generated kind, for media that will not read, and in builds
+    /// without the `media` feature — "no length" is never a guessed length.
+    #[frb(ignore)]
+    fn source_length(&self, layer: &Layer) -> Option<Duration> {
+        let proj = self.project().ok()?;
+        let proj = proj.read().ok()?;
+        let doc = proj.store.snapshot();
+        match layer.kind {
+            lumit_core::model::LayerKind::Precomp { comp } => match doc.item(comp) {
+                Some(lumit_core::model::ProjectItem::Composition(inner)) => Some(inner.duration),
+                _ => None,
+            },
+            #[cfg(feature = "media")]
+            lumit_core::model::LayerKind::Footage { item, .. } => {
+                let Some(lumit_core::model::ProjectItem::Footage(footage)) = doc.item(item) else {
+                    return None;
+                };
+                let path = crate::api::footage::FootageReference::resolve_path(&proj, footage)?;
+                let info = lumit_media::probe::probe(&path).ok()?;
+                // The one sanctioned route back from the container's floating
+                // point duration is an explicit grid (docs/impl/rational-time.md
+                // §4) — the same millisecond grid `media_info` reports on.
+                Some(Duration(
+                    Rational::from_f64_on_grid(info.duration_seconds, 1000).ok()?,
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Replace the Retime property's whole animation, as one undoable step —
@@ -1174,8 +1293,9 @@ impl LayerReference {
     /// only exists once it is.
     #[frb(sync)]
     pub fn set_retime_property(&self, value: BridgeScalar) -> Result<(), BridgeError> {
-        let animation = value.animation()?;
-        let mut retime = self.item()?.retime.clone().ok_or(BridgeError::NotRetimed)?;
+        let layer = self.item()?;
+        let animation = value.animation_at(layer.start_offset.0)?;
+        let mut retime = layer.retime.clone().ok_or(BridgeError::NotRetimed)?;
         retime.animation = animation;
         self.commit(lumit_core::Op::SetRetimeProperty {
             comp: self.comp_id,
@@ -1187,15 +1307,18 @@ impl LayerReference {
     /// This layer's Volume, in dB (docs/09 §6): 0 is unity.
     #[frb(sync)]
     pub fn get_volume_db(&self) -> Result<BridgeScalar, BridgeError> {
-        Ok(BridgeScalar::read(&self.item()?.volume_db))
+        let layer = self.item()?;
+        Ok(BridgeScalar::read_at(
+            &layer.volume_db,
+            layer.start_offset.0,
+        ))
     }
 
     /// Set the Volume, as one undoable step — the same coarse-grained shape as
     /// a transform property, and for the same invertibility reason.
     #[frb(sync)]
     pub fn set_volume_db(&self, value: BridgeScalar) -> Result<(), BridgeError> {
-        let animation = value.animation()?;
-        self.item()?;
+        let animation = value.animation_at(self.item()?.start_offset.0)?;
 
         let proj = self.project()?;
         let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
@@ -1233,7 +1356,7 @@ impl LayerReference {
         if props.is_empty() {
             return Ok(());
         }
-        self.item()?;
+        let offset = self.item()?.start_offset.0;
 
         let mut ops = Vec::with_capacity(props.len());
         for (prop, value) in props.into_iter().zip(values) {
@@ -1241,7 +1364,7 @@ impl LayerReference {
                 comp: self.comp_id,
                 layer: self.layer_id,
                 prop: prop.core(),
-                animation: value.animation()?,
+                animation: value.animation_at(offset)?,
             });
         }
         // One op stays one op; a batch of one would undo the same but reads
@@ -1267,10 +1390,10 @@ impl LayerReference {
         prop: BridgeTransformProp,
         value: BridgeScalar,
     ) -> Result<(), BridgeError> {
-        let animation = value.animation()?;
         // Confirm the layer is there before committing, so a stale reference is
-        // a calm error rather than a failed op.
-        self.item()?;
+        // a calm error rather than a failed op — and its offset is what carries
+        // the keys back onto its own clock (K-213).
+        let animation = value.animation_at(self.item()?.start_offset.0)?;
 
         let proj = self.project()?;
         let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
@@ -1292,7 +1415,7 @@ impl LayerReference {
         Ok(layer
             .effects
             .iter()
-            .map(|f| BridgeEffectInstance::new(f.clone()))
+            .map(|f| BridgeEffectInstance::new(f.clone(), layer.start_offset.0))
             .collect())
     }
 

@@ -73,6 +73,87 @@ class BridgeRenderedFrame {
           rgba == other.rgba;
 }
 
+/// The pixels under the dropper: a square window of the picture, centred on the
+/// point the pointer was over when it was asked for (docs/07 §6.1).
+///
+/// **A window rather than the nine pixels the magnifier shows**, so the pointer
+/// can move without asking again: the frontend cuts the magnifier's grid out of
+/// what it already has, and re-reads only when the pointer approaches the edge
+/// of it. That turns a sweep across the picture from a request per mouse move
+/// into a handful.
+///
+/// Small by construction — 129×129 is 66 KiB, against a 1080p frame's 8 MiB —
+/// so it crosses the boundary as plain pixels without breaking the K-183 rule
+/// that *frames* only ever cross as GPU handles. It is the answer to a question
+/// about a few pixels, not a picture to display.
+class BridgeSampledPixels {
+  /// The window's side length in pixels: `window × window`, always odd, so
+  /// there is a single centre pixel.
+  final int window;
+
+  /// Tightly packed display-ready sRGB RGBA8, `window * window * 4`,
+  /// row-major from the top-left of the window. Edge pixels repeat where the
+  /// window runs off the picture, so it is always exactly this size and can
+  /// be indexed without a border case.
+  final Uint8List rgba;
+
+  /// The raster the window was taken from, and where in it the centre pixel
+  /// sits — which is what says where in the picture the window lies.
+  ///
+  /// **This raster, not the composition's.** The picture read may be a
+  /// reduced-resolution preview, so these are the only coordinates in which
+  /// the window can be indexed; a caller holding composition pixels must map
+  /// through `width`/`height` rather than assume they line up.
+  final int width;
+  final int height;
+  final int x;
+  final int y;
+
+  /// Which frame this is of, so a window that arrives after the playhead has
+  /// moved on can be recognised as stale rather than drawn.
+  final BigInt frame;
+
+  /// True when the window is of one layer rendered alone rather than of the
+  /// composite — a depth pass being read for a focal point, say.
+  final bool layerAlone;
+
+  const BridgeSampledPixels({
+    required this.window,
+    required this.rgba,
+    required this.width,
+    required this.height,
+    required this.x,
+    required this.y,
+    required this.frame,
+    required this.layerAlone,
+  });
+
+  @override
+  int get hashCode =>
+      window.hashCode ^
+      rgba.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      x.hashCode ^
+      y.hashCode ^
+      frame.hashCode ^
+      layerAlone.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeSampledPixels &&
+          runtimeType == other.runtimeType &&
+          window == other.window &&
+          rgba == other.rgba &&
+          width == other.width &&
+          height == other.height &&
+          x == other.x &&
+          y == other.y &&
+          frame == other.frame &&
+          layerAlone == other.layerAlone;
+}
+
 /// One scope trace: a fixed 256x256 RGBA picture the Scopes panel draws.
 ///
 /// The one place pixels still cross the boundary, and small enough not to
@@ -243,6 +324,13 @@ sealed class WorkerResponse with _$WorkerResponse {
   const factory WorkerResponse.scope(
     BridgeScopeTrace field0,
   ) = WorkerResponse_Scope;
+
+  /// The pixels under the dropper — the answer to one
+  /// `CompositionReference::sample_pixels`, riding the same stream for the
+  /// same reason a trace does.
+  const factory WorkerResponse.sampled(
+    BridgeSampledPixels field0,
+  ) = WorkerResponse_Sampled;
 
   /// Playback finished on its own — it ran off the end of the composition.
   ///

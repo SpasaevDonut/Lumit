@@ -373,12 +373,18 @@ pub struct BridgeKeyframe {
 }
 
 impl BridgeKeyframe {
+    /// One key, its time carried into **comp** time by `offset` — the layer's
+    /// `start_offset`, where its own zero sits on the composition's clock
+    /// (K-213). The engine keys every property in layer-local seconds so a
+    /// layer's animation travels with it; the interface draws and edits in comp
+    /// frames. This is the one place the two are reconciled.
     #[frb(ignore)]
-    fn read(key: &Keyframe) -> BridgeKeyframe {
+    fn read_at(key: &Keyframe, offset: Rational) -> BridgeKeyframe {
+        let time = key.time.checked_add(offset).unwrap_or(key.time);
         BridgeKeyframe {
             time: BridgeRational {
-                num: key.time.num(),
-                den: key.time.den(),
+                num: time.num(),
+                den: time.den(),
             },
             value: key.value,
             interp_in: BridgeSideInterp::read(key.interp_in),
@@ -386,10 +392,13 @@ impl BridgeKeyframe {
         }
     }
 
+    /// The way back: a comp-time key returned to the layer's own clock.
     #[frb(ignore)]
-    fn write(&self) -> Result<Keyframe, BridgeError> {
+    fn write_at(&self, offset: Rational) -> Result<Keyframe, BridgeError> {
         Ok(Keyframe {
             time: Rational::new(self.time.num, self.time.den)
+                .map_err(|_| BridgeError::InvalidKeyframes)?
+                .checked_sub(offset)
                 .map_err(|_| BridgeError::InvalidKeyframes)?,
             value: self.value,
             interp_in: self.interp_in.write(),
@@ -416,8 +425,12 @@ pub enum BridgeScalar {
 }
 
 impl BridgeScalar {
+    /// This channel with its keys on the composition's clock — see
+    /// [`BridgeKeyframe::read_at`] for why the seam converts (K-213). Pass the
+    /// layer's `start_offset`; the offset is never guessed, so a caller that
+    /// has no layer cannot forget one.
     #[frb(ignore)]
-    pub(crate) fn read(property: &Property) -> BridgeScalar {
+    pub(crate) fn read_at(property: &Property, offset: Rational) -> BridgeScalar {
         match &property.animation {
             Animation::Static(value) => BridgeScalar::Static(*value),
             // A keyframed property with no keys is not a curve anything can
@@ -428,9 +441,11 @@ impl BridgeScalar {
             Animation::Keyframed(keys) if keys.is_empty() => {
                 BridgeScalar::Static(property.value_at(0.0))
             }
-            Animation::Keyframed(keys) => {
-                BridgeScalar::Keyframed(keys.iter().map(BridgeKeyframe::read).collect())
-            }
+            Animation::Keyframed(keys) => BridgeScalar::Keyframed(
+                keys.iter()
+                    .map(|k| BridgeKeyframe::read_at(k, offset))
+                    .collect(),
+            ),
         }
     }
 
@@ -441,7 +456,7 @@ impl BridgeScalar {
     /// validate every channel *before* writing any of them, or a bad third
     /// channel would leave the parameter half-updated.
     #[frb(ignore)]
-    pub(crate) fn animation(&self) -> Result<Animation, BridgeError> {
+    pub(crate) fn animation_at(&self, offset: Rational) -> Result<Animation, BridgeError> {
         match self {
             BridgeScalar::Static(value) => Ok(Animation::Static(*value)),
             BridgeScalar::Keyframed(keys) => {
@@ -450,7 +465,7 @@ impl BridgeScalar {
                 }
                 let mut out: Vec<Keyframe> = Vec::with_capacity(keys.len());
                 for key in keys {
-                    let key = key.write()?;
+                    let key = key.write_at(offset)?;
                     // Ascending, unique times: `anim::evaluate` walks the list
                     // assuming it is sorted, so an unsorted one does not error,
                     // it silently evaluates wrongly.
@@ -519,26 +534,30 @@ pub enum BridgeEffectValue {
 }
 
 impl BridgeEffectValue {
+    /// `offset` is the owning layer's `start_offset`, carrying every key onto
+    /// the composition's clock (K-213).
     #[frb(ignore)]
-    fn read(value: &EffectValue) -> BridgeEffectValue {
+    fn read_at(value: &EffectValue, offset: Rational) -> BridgeEffectValue {
         match value {
-            EffectValue::Float(property) => BridgeEffectValue::Float(BridgeScalar::read(property)),
+            EffectValue::Float(property) => {
+                BridgeEffectValue::Float(BridgeScalar::read_at(property, offset))
+            }
             EffectValue::Point(x, y) => BridgeEffectValue::Point(BridgePoint {
-                x: BridgeScalar::read(x),
-                y: BridgeScalar::read(y),
+                x: BridgeScalar::read_at(x, offset),
+                y: BridgeScalar::read_at(y, offset),
             }),
             EffectValue::Colour(channels) => BridgeEffectValue::Colour(BridgeColour {
-                r: BridgeScalar::read(&channels[0]),
-                g: BridgeScalar::read(&channels[1]),
-                b: BridgeScalar::read(&channels[2]),
-                a: BridgeScalar::read(&channels[3]),
+                r: BridgeScalar::read_at(&channels[0], offset),
+                g: BridgeScalar::read_at(&channels[1], offset),
+                b: BridgeScalar::read_at(&channels[2], offset),
+                a: BridgeScalar::read_at(&channels[3], offset),
             }),
             EffectValue::Bool(value) => BridgeEffectValue::Bool(*value),
             EffectValue::Choice(index) => BridgeEffectValue::Choice(*index),
             EffectValue::Seed(seed) => BridgeEffectValue::Seed(*seed),
             EffectValue::File(file) => BridgeEffectValue::File(BridgeFileParam {
                 paths: file.paths.clone(),
-                index: BridgeScalar::read(&file.index),
+                index: BridgeScalar::read_at(&file.index, offset),
             }),
             EffectValue::Layer(layer) => BridgeEffectValue::Layer(*layer),
         }
@@ -552,24 +571,24 @@ impl BridgeEffectValue {
     /// effect's own resolver cannot read, and it would be undoable but not
     /// obviously wrong on screen.
     #[frb(ignore)]
-    fn write(self, target: &mut EffectValue) -> Result<(), BridgeError> {
+    fn write_at(self, target: &mut EffectValue, offset: Rational) -> Result<(), BridgeError> {
         match (self, target) {
             (BridgeEffectValue::Float(scalar), EffectValue::Float(property)) => {
-                property.animation = scalar.animation()?;
+                property.animation = scalar.animation_at(offset)?;
                 Ok(())
             }
             (BridgeEffectValue::Point(point), EffectValue::Point(x, y)) => {
-                let (ax, ay) = (point.x.animation()?, point.y.animation()?);
+                let (ax, ay) = (point.x.animation_at(offset)?, point.y.animation_at(offset)?);
                 x.animation = ax;
                 y.animation = ay;
                 Ok(())
             }
             (BridgeEffectValue::Colour(colour), EffectValue::Colour(channels)) => {
                 let animations = [
-                    colour.r.animation()?,
-                    colour.g.animation()?,
-                    colour.b.animation()?,
-                    colour.a.animation()?,
+                    colour.r.animation_at(offset)?,
+                    colour.g.animation_at(offset)?,
+                    colour.b.animation_at(offset)?,
+                    colour.a.animation_at(offset)?,
                 ];
                 for (property, animation) in channels.iter_mut().zip(animations) {
                     property.animation = animation;
@@ -589,7 +608,7 @@ impl BridgeEffectValue {
                 Ok(())
             }
             (BridgeEffectValue::File(file), EffectValue::File(target)) => {
-                let animation = file.index.animation()?;
+                let animation = file.index.animation_at(offset)?;
                 *target = FileParam {
                     paths: file.paths,
                     index: Property {
@@ -622,6 +641,11 @@ impl BridgeEffectValue {
 #[frb(opaque)]
 pub struct BridgeEffectInstance {
     effect: EffectInstance,
+    /// Where the owning layer's own zero sits on the composition's clock, so a
+    /// handle read out of a layer still knows how to speak comp time about its
+    /// keyframes (K-213). Carried rather than looked up: the handle is a
+    /// snapshot, and the layer it came from is the only place this is known.
+    offset: Rational,
 }
 
 /// One parameter's current value, as [`BridgeEffectInstance::get_info`]
@@ -650,7 +674,10 @@ pub struct BridgeEffectInstanceInfo {
 /// Build one instance's [`BridgeEffectInstanceInfo`] — the shared body of
 /// [`BridgeEffectInstance::get_info`] and the comp read model (K-184).
 #[frb(ignore)]
-pub(crate) fn read_instance_info(effect: &EffectInstance) -> BridgeEffectInstanceInfo {
+pub(crate) fn read_instance_info(
+    effect: &EffectInstance,
+    offset: Rational,
+) -> BridgeEffectInstanceInfo {
     BridgeEffectInstanceInfo {
         id: effect.id,
         name: effect.effect.match_name.clone(),
@@ -660,21 +687,27 @@ pub(crate) fn read_instance_info(effect: &EffectInstance) -> BridgeEffectInstanc
             .iter()
             .map(|p| BridgeParamValue {
                 id: p.id.to_string(),
-                value: BridgeEffectValue::read(&p.value),
+                value: BridgeEffectValue::read_at(&p.value, offset),
             })
             .collect(),
     }
 }
 
 impl BridgeEffectInstance {
-    pub fn new(effect: EffectInstance) -> BridgeEffectInstance {
-        BridgeEffectInstance { effect }
+    /// Rust-side only (`frb(ignore)`): a handle is made *from a layer*, which is
+    /// where the keyframe offset comes from (K-213). It was exposed to Dart and
+    /// never called from there — an instance can only be got from the layer
+    /// that owns it — and a Dart constructor with no layer would have no
+    /// honest offset to take.
+    #[frb(ignore)]
+    pub fn new(effect: EffectInstance, offset: Rational) -> BridgeEffectInstance {
+        BridgeEffectInstance { effect, offset }
     }
 
     /// One read for everything a card draws — see [`BridgeEffectInstanceInfo`].
     #[frb(sync)]
     pub fn get_info(&self) -> BridgeEffectInstanceInfo {
-        read_instance_info(&self.effect)
+        read_instance_info(&self.effect, self.offset)
     }
 
     /// This instance's own id — what the stack ops on
@@ -721,7 +754,10 @@ impl BridgeEffectInstance {
     /// no "cannot represent this one" answer any more.
     #[frb(sync)]
     pub fn get_value(&self, id: String) -> Result<BridgeEffectValue, BridgeError> {
-        Ok(BridgeEffectValue::read(&self.param(&id)?.value))
+        Ok(BridgeEffectValue::read_at(
+            &self.param(&id)?.value,
+            self.offset,
+        ))
     }
 
     /// Overwrite a parameter on this staged copy. Nothing is committed — see the
@@ -731,6 +767,7 @@ impl BridgeEffectInstance {
     /// control can never quietly change what a parameter *is*.
     #[frb(sync)]
     pub fn set_value(&mut self, id: String, value: BridgeEffectValue) -> Result<(), BridgeError> {
+        let offset = self.offset;
         let param = self
             .effect
             .params
@@ -738,7 +775,7 @@ impl BridgeEffectInstance {
             .find(|p| p.id == id)
             .ok_or(BridgeError::InvalidParam)?;
 
-        value.write(&mut param.value)
+        value.write_at(&mut param.value, offset)
     }
 
     #[frb(ignore)]

@@ -91,18 +91,13 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 - **Click-to-edit timecode** (currently read-only), may want to remove from this bar and
     only keep the one on timeline and add the functionality there.
 
-**Colour picker and pixel pickers ([07-UI-SPEC.md](07-UI-SPEC.md) §7 colour swatches):**
-- **Bring back the egui picker's look, and make it live.** The Flutter picker
-    (`flutter_ui/lib/widgets/colour_picker.dart`) lost the egui build's layout; git
-    history is the reference. It also only previews on OK — wanted: the colour under
-    the pointer applies to the document live as it changes, the same staged-drag /
-    commit-on-release shape the effect rows use, so no dialogue button stands between
-    picking and seeing.
-- **The remaining picker tools are not built.** An eyedropper that samples the Viewer
-    into a colour swatch (docs/07 §7 asks for one), and a *pixel* picker for
-    coordinate-valued parameters such as the depth focal point — egui's magnifying
-    lens, with a sample size the user chooses from 1×1, 3×3, 5×5, 7×7, 9×9 (the
-    average over that neighbourhood being what is taken).
+**Pixel pickers ([07-UI-SPEC.md](07-UI-SPEC.md) §6.1):**
+- **The x/y position pick is not built.** The colour pick and the depth-of-field focal
+    point both land with K-210; a *coordinate* pick — one dropper writing an x/y Float
+    pair, the egui build's T14 viewfinder — does not, because no Flutter row pairs x and
+    y into one control yet. The magnifier already carries the mode.
+- **The on-Viewer crosshair handle for point parameters** (docs/07 §6) is still absent:
+    a point parameter can be picked but not dragged on the picture.
 
 **Bridge ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)):**
 
@@ -366,6 +361,17 @@ the demotion ladder: every frame read back off the graphics card lands there on 
 disk, and is uploaded straight back when it is wanted. Registering a texture still cannot
 happen in a widget test; `integration_test/shared_texture_test.dart` (run by hand on a real
 window) is the coverage.
+
+**The Windows shared-texture test races, rarely (seen 2026-07-30).**
+`lumit-gpu`'s `shared::tests::the_legacy_handle_yields_the_pixels_angle_style` failed one
+CI run with `[0, 0, 0, 0]` where the orange should be, and passed on the run before and the
+run after with nothing between them touching that code. The cause is the missing handshake
+the module note already records: `present` ends with a D3D11 `CopyResource` and a `Flush`,
+which *submits* the copy without waiting for it, and the test's reader opens the shared
+texture on a third device with no keyed mutex to wait on — so it can map the surface before
+the copy has landed. Fix it with the reader waiting on a `D3D11_QUERY_EVENT` (test-side, no
+change to the shipping path) or by landing the keyed-mutex handshake K-177 defers. Wants a
+Windows machine to write it on: a blind fix cannot be run before it is pushed.
 
 **Playback scheduler — what remains.** The ring landed (2026-07-27): renders run
 ahead of the clock into a bounded ring sized by measured p95 cost

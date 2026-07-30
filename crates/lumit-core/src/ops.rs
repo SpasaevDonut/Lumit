@@ -1014,6 +1014,112 @@ pub fn edit_layer_span(
     }
 }
 
+/// The span a layer takes when its Retime is switched off (K-212).
+///
+/// **In plain terms:** while a layer is retimed it can be any length, because
+/// it chooses which source moment each of its own frames shows. Switch that off
+/// and the layer plays at source rate again, so it has to be re-hung on the
+/// source. The frame that was already showing at the in point is the anchor:
+/// the layer keeps its in point and shows that same frame there, then carries
+/// on at source rate until either the source runs out or the layer's existing
+/// out point arrives — whichever comes first. It never grows: a layer trimmed
+/// short stays short.
+///
+/// `anchor` is the source moment showing at `in_point`, read through the map
+/// that is about to be removed. `source_length` is the source's own length, or
+/// `None` when it has none (or could not be read) — then only the anchor is
+/// honoured and the out point is left alone.
+///
+/// Returns `(in_point, out_point, start_offset)`, or `None` when the arithmetic
+/// would overflow or the result would not be a real span — in which case the
+/// caller leaves the span exactly as it found it.
+#[must_use]
+pub fn unretimed_span(
+    in_point: CompTime,
+    out_point: CompTime,
+    anchor: crate::time::SourceTime,
+    source_length: Option<Duration>,
+) -> Option<(CompTime, CompTime, CompTime)> {
+    // Layer time zero goes wherever it must for `anchor` to show at the in
+    // point: an un-retimed layer reads its source at its own clock, so the
+    // offset *is* the difference between the two.
+    let start_offset = in_point.sub_dur(Duration(anchor.0)).ok()?;
+    let out = match source_length {
+        Some(len) => {
+            let available = len.0.checked_sub(anchor.0).ok()?;
+            // Anchored at or past the end of the source there is nothing to
+            // measure from; the layer holds its last frame and keeps its span.
+            if available.is_negative() || available.is_zero() {
+                out_point
+            } else {
+                out_point.min(in_point.add_dur(Duration(available)).ok()?)
+            }
+        }
+        None => out_point,
+    };
+    (out > in_point).then_some((in_point, out, start_offset))
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod unretime_tests {
+    use super::*;
+    use crate::time::{Rational, SourceTime};
+
+    fn ct(secs: i64) -> CompTime {
+        CompTime(Rational::new(secs, 1).unwrap())
+    }
+    fn st(secs: i64) -> SourceTime {
+        SourceTime(Rational::new(secs, 1).unwrap())
+    }
+    fn dur(secs: i64) -> Duration {
+        Duration(Rational::new(secs, 1).unwrap())
+    }
+
+    /// The simple case: the layer was showing the source's first frame, so it
+    /// simply plays from there until the source runs out.
+    #[test]
+    fn anchored_on_the_first_frame_runs_to_the_source_end() {
+        // In at comp 10, showing source 0, and a 5-second source: the layer
+        // ends at comp 15 however long the retimed version was.
+        let (i, o, off) = unretimed_span(ct(10), ct(100), st(0), Some(dur(5))).unwrap();
+        assert_eq!((i, o, off), (ct(10), ct(15), ct(10)));
+    }
+
+    /// Anchored part-way in, only what is left of the source is available.
+    #[test]
+    fn anchored_mid_source_runs_out_sooner() {
+        let (i, o, off) = unretimed_span(ct(10), ct(100), st(2), Some(dur(5))).unwrap();
+        assert_eq!(i, ct(10));
+        assert_eq!(o, ct(13), "three seconds of source were left");
+        assert_eq!(off, ct(8), "source zero sits two seconds before the in");
+    }
+
+    /// It never grows: a layer already shorter than the source keeps its length.
+    #[test]
+    fn a_trimmed_layer_keeps_its_length() {
+        let (_, o, _) = unretimed_span(ct(10), ct(12), st(0), Some(dur(5))).unwrap();
+        assert_eq!(o, ct(12));
+    }
+
+    /// No readable length — missing media, or a kind with no source of its own
+    /// — re-anchors and leaves the out point alone rather than guessing.
+    #[test]
+    fn no_source_length_leaves_the_out_point_alone() {
+        let (i, o, off) = unretimed_span(ct(10), ct(100), st(2), None).unwrap();
+        assert_eq!((i, o, off), (ct(10), ct(100), ct(8)));
+    }
+
+    /// Anchored at or past the end of the source, there is nothing left to
+    /// measure: the span survives intact rather than collapsing to nothing.
+    #[test]
+    fn an_anchor_past_the_source_end_keeps_the_span() {
+        let (_, o, off) = unretimed_span(ct(10), ct(20), st(5), Some(dur(5))).unwrap();
+        assert_eq!(o, ct(20));
+        assert_eq!(off, ct(5));
+    }
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod span_edit_tests {
