@@ -1778,16 +1778,19 @@ class _GraphPainter extends CustomPainter {
         ..strokeWidth = 1.4
         ..style = PaintingStyle.stroke;
 
-      if (channel.isStatic || keys.isEmpty) {
-        // A static property is a flat line of its value (a flat 0 as speed).
-        final y = _yOf(lens == GraphLens.value ? channel.staticValue : 0, size);
-        canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-        continue;
-      }
-      if (keys.length == 1) {
-        final y = _yOf(lens == GraphLens.value ? keys.first.value : 0, size);
-        canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
-        continue;
+      if (channel.scalar is! BridgeScalar_Expression) {
+        if (channel.isStatic || keys.isEmpty) {
+          // A static property is a flat line of its value (a flat 0 as speed).
+          final y =
+              _yOf(lens == GraphLens.value ? channel.staticValue : 0, size);
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+          continue;
+        }
+        if (keys.length == 1) {
+          final y = _yOf(lens == GraphLens.value ? keys.first.value : 0, size);
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+          continue;
+        }
       }
 
       final path = Path();
@@ -1795,9 +1798,22 @@ class _GraphPainter extends CustomPainter {
       var first = true;
       for (var x = 0.0; x <= size.width; x += step) {
         final seconds = axis.perFrame <= 0 ? 0.0 : x / axis.perFrame / f;
-        final v = lens == GraphLens.value
+
+        var v = 0.0;
+        if(channel.scalar case BridgeScalar_Expression _) {
+           // TODO: see if there is a way to make this fast enough
+           // so we can render the expression values in the graph
+           // Probably would need to be an async task handled on the worker thread
+           // Sending a range of time for it to evaluate and send back
+           //v = evaluateScalar(channel.scalar, seconds);
+            v = 0.0;
+        } else {
+
+        v = lens == GraphLens.value
             ? evaluateKeys(keys, seconds)
             : evaluateKeysSpeed(keys, seconds);
+        }
+        
         final point = Offset(x, _yOf(v, size));
         if (first) {
           path.moveTo(point.dx, point.dy);

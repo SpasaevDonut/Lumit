@@ -800,7 +800,7 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
           ),
         )),
         SizedBox(
-          width: 70,
+          width: 65,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -809,8 +809,8 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
                 style: t.body.copyWith(color: t.textMuted),
               ),
               Text(
-                value.toStringAsFixed(2),
-                style: t.body.copyWith(color: t.textMuted),
+                value.toStringAsPrecision(6),
+                style: t.mono.copyWith(color: t.textMuted),
               ),
             ],
           ),
