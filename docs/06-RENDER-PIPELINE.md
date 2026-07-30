@@ -500,9 +500,10 @@ thread that paints. So the bar leaves a note saying which composition, how many 
 preview scale it is drawing, and the render worker publishes the strip it asks for: all zeros
 until the worker has answered, which is honest rather than another composition's frames.
 
-Two bounds on that work, both stated rather than hidden. It is recomputed only when something
+Three bounds on that work, all stated rather than hidden. It is recomputed only when something
 has actually moved (the bar's request, the document revision, or one of the three tiers'
-contents) and at most every 150 ms. And a composition longer than about a thousand frames is
+contents), at most every 150 ms — and at most every 500 ms while playback is running, since the
+walk shares the thread that renders and that thread has a deadline. And a composition longer than about a thousand frames is
 **sampled** — one frame per stride stands for its neighbours — because the stripe is a
 thousand-odd pixels wide at most and hashing forty thousand frames to draw it would be work
 nobody can see. The dimmed state probes the adaptive tiers' scales (Half, Third, Quarter),

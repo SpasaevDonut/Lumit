@@ -98,6 +98,16 @@ pub struct WorkerState {
 /// needs on a progress stripe and leaves the worker's core to the fill.
 const BAR_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
 
+/// The same, while playback is running.
+///
+/// This walk shares the thread that renders frames, and during playback that
+/// thread has a deadline: every millisecond spent naming frames for the stripe
+/// is a millisecond the next frame does not have. Half a second still fills the
+/// bar visibly as playback lays frames down — a stripe is not something read at
+/// frame precision — and it cuts the work to a third of what an idle editor,
+/// which has the whole thread to itself, is happy to spend.
+const BAR_MIN_INTERVAL_PLAYING: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// The most frames the bar's strip is computed at. A longer composition is
 /// sampled every `frames / this` frames and each sample fills its stride: the
 /// stripe is a thousand-odd pixels wide at most, so it cannot show more than
@@ -310,7 +320,12 @@ fn publish_cache_bar(state: &mut WorkerState) {
     if frames == 0 {
         return;
     }
-    if state.bar_published_at.elapsed() < BAR_MIN_INTERVAL {
+    let interval = if state.playback.is_some() {
+        BAR_MIN_INTERVAL_PLAYING
+    } else {
+        BAR_MIN_INTERVAL
+    };
+    if state.bar_published_at.elapsed() < interval {
         return;
     }
     let (document, revision) = {
