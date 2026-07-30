@@ -1247,6 +1247,48 @@ void main() {
     /// A trimmed source-backed layer shows where its media would reach — the
     /// faint outline behind the bar (K-211) — and stops showing it once the bar
     /// fills the source, or once Retime makes "the source's reach" meaningless.
+    /// The one-frame bug: the ghost outline appearing part-way through a trim
+    /// took the bar's place in its Stack, so the bar's element — and the
+    /// recogniser holding the drag — was rebuilt mid-gesture. The bar moved by
+    /// the first pointer event's frames and then went dead, which read as "the
+    /// edge only moves one frame". Fails without the keys on the Stack's
+    /// children; a single-event drag hides it, so this one moves in steps, as
+    /// a hand does.
+    testWidgets('a source-backed edge follows the pointer the whole way',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      await mount(tester, p);
+
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      final rect = tester.getRect(fill);
+      final before = p.comp.frameAtTime(time: layer.getSpan().outPoint);
+      // A mouse: precise pointers have a one-pixel slop, so every step of this
+      // counts as movement. Ten steps, the way a hand drags.
+      final gesture = await tester.startGesture(
+          Offset(rect.right - 2, rect.center.dy),
+          kind: PointerDeviceKind.mouse);
+      for (var i = 0; i < 10; i++) {
+        await gesture.moveBy(const Offset(-4, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // Forty pixels of pointer, at this zoom, is far more than the couple of
+      // frames one event carries.
+      final after = p.comp.frameAtTime(time: layer.getSpan().outPoint);
+      final perPixel = (before - after) / 40;
+      expect(perPixel, greaterThan(3),
+          reason: 'the edge tracked all forty pixels, not just the first four');
+      expect(
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}')),
+          findsOneWidget,
+          reason: 'and the ghost that used to break it is on screen');
+    });
+
     testWidgets('a trimmed precomp shows how far its source reaches',
         (tester) async {
       final p = withComp();

@@ -3292,3 +3292,13 @@ could go further, and this is how far*.
 the layer: sliding a bar along the timeline carries its start offset, so the bounds slide
 with it. Drawn from the document's bounds alone, a bar being moved appeared to leave its
 limit behind — the fix is one shift applied to both marks while a move is in flight.
+
+**The trap the ghost set, recorded because it cost a working gesture.** The outline is a
+second child of the bar's `Stack`, and it appears the moment a trim starts. Unkeyed,
+Flutter matches a `Stack`'s children by position, so the ghost arriving took the bar's slot
+and the bar's element — with it the recogniser holding the drag in the gesture arena — was
+rebuilt from scratch mid-gesture. The bar moved by the first pointer event's worth of
+frames and then went dead: "dragging a footage edge only moves one frame". Both children
+carry keys now. It only ever bit the source-backed kinds, because they are the only ones
+with a ghost to appear, and only when the pointer moved in more than one event — which is
+why the first round of tests, each dragging in a single synthetic step, all passed.

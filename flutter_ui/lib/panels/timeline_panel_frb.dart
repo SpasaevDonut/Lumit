@@ -4571,17 +4571,25 @@ class _BarState extends State<_Bar> {
     // overlay draws the row seam over it (K-190).
     return SizedBox(
       height: _rowHeight,
+      // **Both children are keyed.** The ghost comes and goes as the bar is
+      // trimmed, and without keys the children were matched by position: the
+      // ghost appearing took the bar's slot, so the bar's element — and with it
+      // the gesture recogniser holding the drag — was rebuilt from scratch
+      // mid-gesture. The bar moved by the first update's frames and then went
+      // dead, which is what "dragging a footage edge only moves one frame"
+      // was. Keys keep each child matched to its own element however many
+      // there are.
       child: Stack(
         children: [
           if (ghost != null)
             Positioned(
+              key: ValueKey<String>(
+                  'tl-bar-ghost-${widget.entry.layer.internallayerId}'),
               left: ghost.$1,
               width: (ghost.$2 - ghost.$1).clamp(1.0, 1e6),
               top: 0,
               bottom: 0,
               child: IgnorePointer(
-                key: ValueKey<String>(
-                    'tl-bar-ghost-${widget.entry.layer.internallayerId}'),
                 child: Container(
                   decoration: BoxDecoration(
                     // The layer's own colour, faint: this is the same clip,
@@ -4597,6 +4605,8 @@ class _BarState extends State<_Bar> {
               ),
             ),
           Positioned(
+            key: ValueKey<String>(
+                'tl-bar-body-${widget.entry.layer.internallayerId}'),
             left: left,
             width: width,
             top: 0,
