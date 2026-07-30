@@ -3235,13 +3235,45 @@ holds one such render against `(comp, frame, layer, cache generation)` so draggi
 renders once rather than once per move. `depth_invert` is applied at the pick, so the caption
 and the committed number cannot disagree.
 
-**The pixels cross as a patch, not a frame.** A `sample_pixels` request answers with a 9×9
-patch — 324 bytes — on the same stream the frames and traces ride. This does not reopen the
-read-back transport K-183 deleted: the cap is enforced engine-side, and the payload is a
-reading about a few pixels rather than a picture to display. It is a worker request rather
-than a synchronous call because the pixels only exist where the renderer does, and the
+**The pixels cross as a window, not a frame — and not a pixel.** A `sample_pixels` request
+answers with a **129×129 square** of the picture (66 KiB) on the same stream the frames and
+traces ride, and the frontend cuts the magnifier's own 9×9 out of it. Moving the pointer and
+changing the sample size then cost nothing at all; a read happens only when the pointer nears
+the window's edge, the playhead moves, an edit lands, or a different layer is being read. The
+first cut of this asked per mouse move — a request, a cache lookup and a stream message at
+pointer rate, each one cloning the whole eight-megabyte frame to copy 81 pixels out of the
+middle (Mack, on testing: "a crazy number of calls"). Two fixes, both kept: the window, and
+`framecache::with_best_frame`, which hands a reader the pixels **in place** under the cache
+lock instead of cloning them — bounded, pure-CPU, nowhere near the GPU or the FFI boundary.
+
+The size is chosen to sit between the two failure modes. Whole-picture-once — the obvious
+answer — is 8 MiB at 1080p and 33 MiB at 4K, an 8.8 ms codec stall (35 ms at 4K) on arming and
+that much held while armed, which is the very transport K-183 deleted, reintroduced through a
+tool. A window is two orders of magnitude smaller, and one still lasts sixty pixels of pointer
+travel in any direction. The cap is enforced engine-side rather than trusted from the caller,
+so no request can turn this into a frame transport by the back door. It is a worker request
+rather than a synchronous call because the pixels only exist where the renderer does, and the
 renderer is owned outright by the worker thread — a sync call would have to render on Dart's
 UI isolate or take a lock across GPU work, both of which docs/14 forbids.
+
+**The picker's numbers are in the scale of the thing being edited, and a channel may exceed
+1.** A display colour — a theme colour, a solid's swatch — is eight bits, so it reads 0–255 and
+its hex is the same value said another way. A scene-linear colour in a float working depth
+(fp16 today, docs/06 §3.1) reads 0–1 for black to white, as decimals, and may go **above 1** or
+below 0 as far as the parameter's own declared range allows: several built-ins declare 0–4
+precisely because HDR tints are legal in linear light, and one declares −1 for a lift. A 0–255
+dial cannot express those at all, so the picker was silently clamping values the engine carries
+happily (Mack, on testing). The square and the strip stay 0–1 — they are a chromaticity
+picture — and an over-range colour is carried through them as a gain on its brightest channel,
+so dragging about on the square does not quietly throw the overshoot away.
+
+**The hex box stays, clipped, and says so.** Hex is an eight-bit display notation and cannot
+say 1.8. Hiding the box on the float scale loses the one notation people actually exchange
+colours in; showing a clipped hex silently would let it read as the truth. So it shows the
+colour clipped into 0–1, typing one sets exactly those values, and a line under the swatches
+appears whenever a channel is outside the range the swatch and the box can show. When the
+project depth switch lands (docs/06 §3.1, not built), an 8 bpc project is what puts an effect
+colour back on the 0–255 scale; nothing else needs to change.
 
 **The picker applies to the document as it changes.** R, G and B sit above the graph, each
 drag-scrubbable and typeable, and every edit — a number, the square, the strip, the hex box —

@@ -16,15 +16,23 @@ import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:lumit_flutter/widgets/dropper_overlay.dart';
 
-/// A 9×9 patch whose pixels are given by `pixel(x, y)` as an RGB triple.
+/// A window of [side] pixels centred on `(cx, cy)` of the picture, whose pixels
+/// are given by `pixel(x, y)` in the *picture's* own coordinates — so a test can
+/// say "white on the left half" without doing the window arithmetic itself.
 /// [layerAlone] marks it as a read of one layer on its own, as a depth reply is.
-BridgeSampledPixels patchOf(List<int> Function(int x, int y) pixel,
-    {bool layerAlone = false}) {
-  final bytes = Uint8List(dropperGrid * dropperGrid * 4);
-  for (var y = 0; y < dropperGrid; y++) {
-    for (var x = 0; x < dropperGrid; x++) {
-      final rgb = pixel(x, y);
-      final i = (y * dropperGrid + x) * 4;
+BridgeSampledPixels windowOf(
+  List<int> Function(int x, int y) pixel, {
+  int side = 21,
+  int cx = 40,
+  int cy = 20,
+  bool layerAlone = false,
+}) {
+  final bytes = Uint8List(side * side * 4);
+  final half = side ~/ 2;
+  for (var row = 0; row < side; row++) {
+    for (var col = 0; col < side; col++) {
+      final rgb = pixel(cx - half + col, cy - half + row);
+      final i = (row * side + col) * 4;
       bytes[i] = rgb[0];
       bytes[i + 1] = rgb[1];
       bytes[i + 2] = rgb[2];
@@ -32,12 +40,12 @@ BridgeSampledPixels patchOf(List<int> Function(int x, int y) pixel,
     }
   }
   return BridgeSampledPixels(
-    grid: dropperGrid,
+    window: side,
     rgba: bytes,
     width: 100,
     height: 50,
-    x: 7,
-    y: 9,
+    x: cx,
+    y: cy,
     frame: BigInt.zero,
     layerAlone: layerAlone,
   );
@@ -73,49 +81,89 @@ void main() {
     });
   });
 
-  group('sampling a patch', () {
+  group('sampling a window', () {
     test('one pixel is that pixel, decoded to scene-linear', () {
-      // Pure red in the middle, black everywhere else.
-      final patch = patchOf((x, y) => x == 4 && y == 4 ? [255, 0, 0] : [0, 0, 0]);
-      final sample = sampleFromPatch(patch, 1);
+      // Pure red at (40, 20), black everywhere else.
+      final w = windowOf((x, y) => x == 40 && y == 20 ? [255, 0, 0] : [0, 0, 0]);
+      final sample = sampleFromWindow(w, 1, 40, 20);
       expect(sample.r, closeTo(1.0, 1e-9), reason: 'sRGB 255 is linear 1.0');
       expect(sample.g, closeTo(0.0, 1e-9));
       expect(sample.b, closeTo(0.0, 1e-9));
       expect(sample.region, 1);
-      expect([sample.x, sample.y], [7, 9], reason: 'the pixel it came from');
+      expect([sample.x, sample.y], [40, 20], reason: 'the pixel it came from');
     });
 
     test('a wider region averages in linear light, not in sRGB bytes', () {
-      // The centre pixel white, its eight neighbours black: over 3×3 that is
-      // one ninth of the light, not the byte midpoint a naive average gives.
-      final patch =
-          patchOf((x, y) => x == 4 && y == 4 ? [255, 255, 255] : [0, 0, 0]);
-      final sample = sampleFromPatch(patch, 3);
+      // One white pixel among its eight black neighbours: over 3×3 that is one
+      // ninth of the light, not the byte midpoint a naive average gives.
+      final w =
+          windowOf((x, y) => x == 40 && y == 20 ? [255, 255, 255] : [0, 0, 0]);
+      final sample = sampleFromWindow(w, 3, 40, 20);
       expect(sample.r, closeTo(1 / 9, 1e-9));
       expect(sample.depth, closeTo(1 / 9, 1e-9));
     });
 
-    test('the region is the centre of the patch, whatever its size', () {
-      // A left half of white and a right half of black: a 9×9 average is
-      // dominated by the left, a 1×1 read of the centre column is not.
-      final patch = patchOf((x, y) => x < 4 ? [255, 255, 255] : [0, 0, 0]);
-      expect(sampleFromPatch(patch, 1).r, closeTo(0.0, 1e-9),
-          reason: 'the centre pixel is on the black side');
-      expect(sampleFromPatch(patch, 9).r, closeTo(4 / 9, 1e-9));
+    /// **The point of a window.** The magnifier reads it around wherever the
+    /// pointer is *now*, not around where it was when the window was read — so
+    /// moving the pointer inside one costs no engine call and still samples the
+    /// right pixel.
+    test('reads around the pointer, not around the window centre', () {
+      // White left of x = 40, black from there on.
+      final w = windowOf((x, y) => x < 40 ? [255, 255, 255] : [0, 0, 0]);
+      expect(sampleFromWindow(w, 1, 40, 20).r, closeTo(0.0, 1e-9));
+      expect(sampleFromWindow(w, 1, 39, 20).r, closeTo(1.0, 1e-9),
+          reason: 'one pixel left of the centre is on the white side');
+      expect(sampleFromWindow(w, 1, 45, 25).r, closeTo(0.0, 1e-9));
     });
 
-    test('a region wider than the patch is clamped rather than read past', () {
-      final patch = patchOf((x, y) => [255, 255, 255]);
-      final sample = sampleFromPatch(patch, 99);
+    test('a region wider than the magnifier is clamped rather than taken', () {
+      final w = windowOf((x, y) => [255, 255, 255]);
+      final sample = sampleFromWindow(w, 99, 40, 20);
       expect(sample.region, dropperGrid);
       expect(sample.r, closeTo(1.0, 1e-9));
     });
 
+    test('a pixel outside the window clamps to its edge rather than throwing',
+        () {
+      final w = windowOf((x, y) => [10, 20, 30], side: 11);
+      final px = windowPixel(w, 4000, 4000);
+      expect(px, isNotNull);
+      expect([px!.r, px.g, px.b], [10, 20, 30]);
+    });
+
     test('depth is Rec. 709 luma in linear light', () {
-      final green = patchOf((x, y) => [0, 255, 0]);
-      expect(sampleFromPatch(green, 1).depth, closeTo(0.7152, 1e-6));
-      final black = patchOf((x, y) => [0, 0, 0]);
-      expect(sampleFromPatch(black, 1).depth, 0);
+      expect(sampleFromWindow(windowOf((x, y) => [0, 255, 0]), 1, 40, 20).depth,
+          closeTo(0.7152, 1e-6));
+      expect(
+          sampleFromWindow(windowOf((x, y) => [0, 0, 0]), 1, 40, 20).depth, 0);
+    });
+  });
+
+  group('when a window has to be re-read', () {
+    // 21 a side centred on (40, 20): it covers the magnifier's grid anywhere
+    // within ten pixels of that centre, less the four the grid itself reaches.
+    final w = windowOf((x, y) => [0, 0, 0]);
+
+    test('covers the pointer while the whole grid still fits inside it', () {
+      expect(windowCovers(w, 40, 20), isTrue, reason: 'dead centre');
+      expect(windowCovers(w, 46, 26), isTrue);
+      expect(windowCovers(w, 34, 14), isTrue, reason: 'the far corner, just');
+    });
+
+    test('stops covering once the grid would reach past its edge', () {
+      expect(windowCovers(w, 47, 20), isFalse);
+      expect(windowCovers(w, 40, 33), isFalse);
+    });
+
+    /// The whole point of the size: a pointer can travel most of a window
+    /// before another read is needed, so a sweep across the picture is a
+    /// handful of reads rather than one per mouse move.
+    test('a full-size window lasts a long pointer travel', () {
+      final full = windowOf((x, y) => [0, 0, 0], side: dropperWindow);
+      final reach = dropperWindow ~/ 2 - dropperGrid ~/ 2;
+      expect(reach, greaterThan(50));
+      expect(windowCovers(full, 40 + reach, 20), isTrue);
+      expect(windowCovers(full, 40 + reach + 1, 20), isFalse);
     });
   });
 
@@ -145,7 +193,8 @@ void main() {
       );
       await tester.pumpWidget(harness(DropperViewfinder(
         arm: arm,
-        patch: patchOf((x, y) => [255, 128, 0]),
+        window: windowOf((x, y) => [255, 128, 0]),
+        centre: (40, 20),
         region: 1,
       )));
       expect(find.text('255 128 0'), findsOneWidget);
@@ -163,7 +212,8 @@ void main() {
       );
       await tester.pumpWidget(harness(DropperViewfinder(
         arm: arm,
-        patch: patchOf((x, y) => [255, 255, 255], layerAlone: true),
+        window: windowOf((x, y) => [255, 255, 255], layerAlone: true),
+        centre: (40, 20),
         region: 3,
       )));
       // The layer the numbers come from, and the value — no colour swatch,
@@ -186,7 +236,8 @@ void main() {
         arm: arm,
         // layerAlone false: the reply is of the composite, so naming the layer
         // would claim the number came from somewhere it did not.
-        patch: patchOf((x, y) => [0, 0, 0]),
+        window: windowOf((x, y) => [0, 0, 0]),
+        centre: (40, 20),
         region: 1,
       )));
       expect(find.textContaining('Composite'), findsOneWidget);
@@ -201,8 +252,8 @@ void main() {
         label: 'Key colour',
         onPick: (_) {},
       );
-      await tester.pumpWidget(
-          harness(DropperViewfinder(arm: arm, patch: null, region: 1)));
+      await tester.pumpWidget(harness(DropperViewfinder(
+          arm: arm, window: null, centre: (0, 0), region: 1)));
       expect(find.text('Reading…'), findsOneWidget);
     });
 

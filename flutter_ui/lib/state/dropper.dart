@@ -8,10 +8,18 @@
 // point — which is why this file talks about "what is being read" rather than
 // about colour.
 //
+// **Why a window rather than nine pixels.** The engine answers a read with a
+// whole square of the picture — 129 pixels a side — and the magnifier's own 9×9
+// grid is cut out of it here, in Dart. The pointer can then move, and the sample
+// size change, without asking the engine anything at all: a sweep across the
+// picture costs a handful of reads rather than one per mouse move. A new read is
+// needed only when the pointer approaches the window's edge, the playhead moves,
+// an edit lands, or a different layer is being read.
+//
 // Nothing here draws anything or crosses the bridge. It holds the armed state
-// and does the sums on a patch of pixels, so both are testable without a
-// running engine — the widget in widgets/dropper_overlay.dart is the part with
-// pixels on screen.
+// and does the sums on the pixels, so both are testable without a running
+// engine — the widget in widgets/dropper_overlay.dart is the part with pixels
+// on screen.
 
 import 'dart:math' as math;
 
@@ -112,6 +120,40 @@ const List<int> dropperRegions = [1, 3, 5, 7, 9];
 /// region can never exceed what is shown.
 const int dropperGrid = 9;
 
+/// How much of the picture one read brings back: 129 pixels a side, 66 KiB.
+///
+/// Must match the engine's own cap (`worker_thread::MAX_WINDOW`), which clamps
+/// it anyway — the reply says how big it actually is, and nothing here assumes.
+const int dropperWindow = 129;
+
+/// Whether the window in hand still has every pixel the magnifier needs around
+/// `(x, y)` — the comp pixel under the pointer.
+///
+/// The half-grid margin is what makes a read last: the pointer may travel to
+/// within four pixels of the window's edge before another is needed. Edge
+/// repeats mean a window against the picture's border still covers points
+/// beyond it, so no border case is needed here either.
+bool windowCovers(BridgeSampledPixels window, int x, int y) {
+  final half = window.window ~/ 2;
+  final reach = dropperGrid ~/ 2;
+  return (x - reach) >= window.x - half &&
+      (x + reach) <= window.x + half &&
+      (y - reach) >= window.y - half &&
+      (y + reach) <= window.y + half;
+}
+
+/// One pixel of a window, by its position in the picture. Positions outside the
+/// window are clamped to its edge, which is what the window's own edge repeats
+/// already do — so an index can never be out of bounds.
+({int r, int g, int b})? windowPixel(BridgeSampledPixels window, int x, int y) {
+  final half = window.window ~/ 2;
+  final col = (x - (window.x - half)).clamp(0, window.window - 1);
+  final row = (y - (window.y - half)).clamp(0, window.window - 1);
+  final i = (row * window.window + col) * 4;
+  if (i + 2 >= window.rgba.length) return null;
+  return (r: window.rgba[i], g: window.rgba[i + 1], b: window.rgba[i + 2]);
+}
+
 /// The next region up or down the [dropperRegions] ladder. `steps` is signed —
 /// one Shift+scroll notch either way — and the ends hold rather than wrap: a
 /// picker that jumped from 9×9 back to 1×1 on one extra notch would lose the
@@ -143,32 +185,34 @@ int srgbEncode(double linear) {
   return (e * 255).round().clamp(0, 255);
 }
 
-/// Average the centre `region × region` pixels of a patch, and say what they
-/// mean.
+/// Average the `region × region` pixels around `(x, y)` of a window, and say
+/// what they mean.
 ///
-/// The patch itself is always the full [dropperGrid] square — the magnifier
-/// shows every one of those pixels — and the region is the part of it inside
-/// the solid border. A region wider than the patch is clamped rather than read
-/// past the end of.
-DropperSample sampleFromPatch(BridgeSampledPixels patch, int region) {
-  final grid = patch.grid;
-  final n = region.clamp(1, grid);
-  final half = (grid - n) ~/ 2;
+/// `(x, y)` is the pixel under the pointer, in the picture's own grid — not the
+/// window's centre, which is only where the pointer *was* when the window was
+/// read. A region wider than the magnifier's grid is clamped rather than taken.
+DropperSample sampleFromWindow(
+  BridgeSampledPixels window,
+  int region,
+  int x,
+  int y,
+) {
+  final n = region.clamp(1, dropperGrid);
+  final half = (n - 1) ~/ 2;
   var sr = 0.0, sg = 0.0, sb = 0.0;
   var count = 0;
-  for (var y = half; y < half + n; y++) {
-    for (var x = half; x < half + n; x++) {
-      final i = (y * grid + x) * 4;
-      if (i + 2 >= patch.rgba.length) continue;
-      sr += srgbDecode(patch.rgba[i]);
-      sg += srgbDecode(patch.rgba[i + 1]);
-      sb += srgbDecode(patch.rgba[i + 2]);
+  for (var dy = -half; dy <= half; dy++) {
+    for (var dx = -half; dx <= half; dx++) {
+      final px = windowPixel(window, x + dx, y + dy);
+      if (px == null) continue;
+      sr += srgbDecode(px.r);
+      sg += srgbDecode(px.g);
+      sb += srgbDecode(px.b);
       count++;
     }
   }
   if (count == 0) {
-    return DropperSample(
-        r: 0, g: 0, b: 0, depth: 0, x: patch.x, y: patch.y, region: n);
+    return DropperSample(r: 0, g: 0, b: 0, depth: 0, x: x, y: y, region: n);
   }
   final r = sr / count, g = sg / count, b = sb / count;
   return DropperSample(
@@ -178,8 +222,8 @@ DropperSample sampleFromPatch(BridgeSampledPixels patch, int region) {
     // Rec. 709 luma in linear light: a grey depth pass has luma equal to its
     // own value, which is the number the effect reads.
     depth: (0.2126 * r + 0.7152 * g + 0.0722 * b).clamp(0.0, 1.0),
-    x: patch.x,
-    y: patch.y,
+    x: x,
+    y: y,
     region: n,
   );
 }

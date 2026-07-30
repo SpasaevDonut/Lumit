@@ -468,9 +468,13 @@ class _DropperLayerState extends State<DropperLayer> {
   /// stays armed.
   int _region = dropperRegions.first;
 
-  /// Reads are bounded like a drag's previews: a pointer move is not worth a
-  /// render each, and the newest position is the only one worth answering.
+  /// The reads that do go out are bounded like a drag's previews: crossing a
+  /// window's edge at speed is not worth a read per frame, and the newest
+  /// position is the only one worth answering.
   final PreviewThrottle _throttle = PreviewThrottle();
+
+  /// The comp's pixel size, read once while armed rather than per pointer move.
+  BridgeCompSize? _size;
 
   @override
   void initState() {
@@ -485,6 +489,17 @@ class _DropperLayerState extends State<DropperLayer> {
     HardwareKeyboard.instance.removeHandler(_onKey);
     _throttle.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(DropperLayer old) {
+    super.didUpdateWidget(old);
+    // A different composition is a different pixel grid; the cached size and
+    // any window read against the old one are both meaningless now.
+    if (old.comp.internalid != widget.comp.internalid) {
+      _size = null;
+      widget.uiState.dropperPatch.value = null;
+    }
   }
 
   bool _onKey(KeyEvent event) {
@@ -522,10 +537,10 @@ class _DropperLayerState extends State<DropperLayer> {
             final d = e.scrollDelta;
             final scroll = d.dy.abs() >= d.dx.abs() ? d.dy : d.dx;
             if (scroll.abs() < 0.5) return;
+            // Nothing is asked of the engine here: the window in hand already
+            // holds every pixel a wider region could want.
             setState(() =>
                 _region = nextDropperRegion(_region, scroll < 0 ? 1 : -1));
-            final at = _cursor;
-            if (at != null) _request(at);
           },
           onPointerDown: (e) => _pressed(arm, e.localPosition),
           child: _viewfinder(arm),
@@ -542,6 +557,7 @@ class _DropperLayerState extends State<DropperLayer> {
       return const SizedBox.expand();
     }
     final origin = dropperViewfinderOrigin(at, widget.fitted);
+    final centre = _compPixel(at);
     return Stack(
       children: [
         Positioned(
@@ -549,9 +565,10 @@ class _DropperLayerState extends State<DropperLayer> {
           top: origin.dy,
           child: ValueListenableBuilder<BridgeSampledPixels?>(
             valueListenable: widget.uiState.dropperPatch,
-            builder: (context, patch, _) => DropperViewfinder(
+            builder: (context, window, _) => DropperViewfinder(
               arm: arm,
-              patch: patch,
+              window: window,
+              centre: centre,
               region: _region,
             ),
           ),
@@ -560,9 +577,27 @@ class _DropperLayerState extends State<DropperLayer> {
     );
   }
 
+  /// The pointer moved. Redrawing is free — the magnifier reads the window
+  /// already in hand — so the engine is only asked when that window has run out
+  /// of pixels under the pointer.
   void _moved(Offset local) {
     setState(() => _cursor = local);
-    if (widget.fitted.contains(local)) _throttle.request(() => _request(local));
+    if (!widget.fitted.contains(local)) return;
+    if (_covered(local)) return;
+    _throttle.request(() => _request(local));
+  }
+
+  /// Whether the window in hand answers for the pointer where it now is: same
+  /// frame, same source, and far enough from its edge.
+  bool _covered(Offset local) {
+    final window = widget.uiState.dropperPatch.value;
+    if (window == null) return false;
+    if (window.frame.toInt() != widget.uiState.playheadFrame.value) return false;
+    if (window.layerAlone != (widget.uiState.dropper.value?.sampleLayer != null)) {
+      return false;
+    }
+    final (x, y) = _compPixel(local);
+    return windowCovers(window, x, y);
   }
 
   /// A press picks when it lands on the picture, and puts the tool away when it
@@ -573,30 +608,42 @@ class _DropperLayerState extends State<DropperLayer> {
       widget.uiState.disarmDropper();
       return;
     }
-    final patch = widget.uiState.dropperPatch.value;
-    // Nothing read yet, or read of a frame the playhead has since left: ask
-    // again rather than committing a value off a picture that is no longer the
-    // one on screen. The next reply lands before the pointer can click twice.
-    if (patch == null ||
-        patch.frame.toInt() != widget.uiState.playheadFrame.value) {
+    final window = widget.uiState.dropperPatch.value;
+    // Nothing read yet, or nothing that answers for this pixel — a frame the
+    // playhead has since left, or a window the pointer has outrun. Ask again
+    // rather than committing a value off a picture that is not the one on
+    // screen; the next reply lands before the pointer can click twice.
+    if (window == null || !_covered(local)) {
       _request(local);
       return;
     }
-    arm.onPick(sampleFromPatch(patch, _region));
+    final (x, y) = _compPixel(local);
+    arm.onPick(sampleFromWindow(window, _region, x, y));
     widget.uiState.disarmDropper();
   }
 
-  /// Which pixel of the composition is under `local`, and ask for it.
-  void _request(Offset local) {
-    final size = widget.comp.getSize();
+  /// Which pixel of the composition is under `local`.
+  ///
+  /// The comp's size is read once per armed session rather than per move: it
+  /// cannot change while a pick is in flight, and asking the engine for it on
+  /// every mouse move is exactly the kind of per-move bridge crossing the
+  /// window read exists to remove.
+  (int, int) _compPixel(Offset local) {
+    final size = _size ??= widget.comp.getSize();
     final rect = widget.fitted;
-    if (rect.width <= 0 || rect.height <= 0) return;
+    if (rect.width <= 0 || rect.height <= 0) return (0, 0);
     final u = ((local.dx - rect.left) / rect.width).clamp(0.0, 1.0);
     final v = ((local.dy - rect.top) / rect.height).clamp(0.0, 1.0);
-    widget.uiState.requestDropperSample(
+    return (
       (u * size.width).floor().clamp(0, (size.width - 1).clamp(0, 1 << 30)),
       (v * size.height).floor().clamp(0, (size.height - 1).clamp(0, 1 << 30)),
     );
+  }
+
+  /// Ask the engine for a window around the pixel under `local`.
+  void _request(Offset local) {
+    final (x, y) = _compPixel(local);
+    widget.uiState.requestDropperSample(x, y);
   }
 }
 

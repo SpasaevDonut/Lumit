@@ -673,6 +673,22 @@ top**, each drag-scrubbable and typeable, then the saturation/value square, the 
 was/now pair and a hex field. Every one of those edits every other — type a number and the
 square moves; drag in the square and the numbers follow.
 
+**The numbers are in the scale of the thing being edited**, which is not always 0–255:
+
+- A **display colour** — a theme colour, a solid's swatch — is eight bits a channel, so it
+    reads **0–255** and its hex is the same value said another way.
+- A **scene-linear colour** in a float working depth (fp16 today, [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.1)
+    reads **0–1 for black to white, as decimals**, and a channel may go **above 1** or below 0
+    as far as the parameter's own declared range allows — several built-ins declare 0–4 for
+    exactly this reason ("linear light: HDR tints are legal"), and one declares −1 for a lift.
+    A 0–255 dial cannot reach those values at all, which is what this scale is for.
+    When the project depth switch lands (§3.1, not built), an 8 bpc project is what puts an
+    effect colour on the 0–255 scale.
+- **The hex box is display-referred**, so on the float scale it shows the colour **clipped**
+    into 0–1, and the picker says so in a line under the swatches whenever a channel is
+    outside that. Typing a hex sets exactly those 0–1 values. The alternative — hiding the box
+    on the float scale — loses the one notation people actually exchange colours in.
+
 The picker **applies to the document as it changes**. A drag inside it previews continuously
 on the picture (the same live tick an Effect controls drag sends) and settles into one
 undoable edit when released; a typed number, a hex entry or a preset click is one settled
@@ -711,11 +727,15 @@ hidden, so what the composite shows at that pixel is not the number the effect u
 effect's `depth_invert` is applied at the pick, so the caption and the committed value cannot
 disagree.
 
-The pixels themselves come from the engine, a patch at a time
+The pixels themselves come from the engine, a **window** at a time
 (`CompositionReference::sample_pixels` → `WorkerResponse::Sampled`,
-[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)). A 9×9 patch is 324 bytes, so this does not
-reopen the read-back frame transport K-183 deleted; it is the answer to a question about a
-few pixels, not a picture.
+[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)): a 129×129 square of the picture, out of which
+the magnifier cuts its own 9×9 as the pointer moves. Moving the pointer, and changing the
+sample size, therefore cost **nothing** — no bridge call, no render, no message — and a new
+read happens only when the pointer nears the window's edge, the playhead moves, an edit lands,
+or a different layer is being read. A window is 66 KiB, so this does not reopen the read-back
+frame transport K-183 deleted (a 1080p frame is 8 MiB and 8.8 ms in the codec); it is the
+answer to a question about a few pixels, not a picture.
 
 Still to build here: the x/y **position** pick for coordinate-valued parameter pairs (the
 egui build's T14 viewfinder), and the on-Viewer crosshair handle for point parameters.

@@ -872,17 +872,27 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   invert** is ticked, the picked number is inverted to match, so what the strip says and what
   lands in Focus are the same thing.
 
+  **The numbers are in the scale of what you are editing.** A theme colour or a solid's swatch
+  is an ordinary eight-bit display colour, so it reads **0–255** and its hex is exactly the same
+  value written another way. An effect's colour is not: Lumit works in **linear light at float
+  precision**, where **0–1 is black to white** and a channel is free to go *above* 1 — a tint
+  brighter than white, which is a real thing in this kind of maths and something several effects
+  explicitly allow (up to 4, and one goes down to −1 for a lift). So those read as decimals, and
+  you can drag or type a channel past 1 as far as that parameter allows. A hex is an eight-bit
+  notation and cannot say "1.8", so on that scale the box shows the colour **clipped** into
+  0–1, and a line under the swatches tells you when that is happening — rather than the box
+  quietly claiming to be the whole truth.
+
   **How the pixels get there.** The Viewer's picture normally never leaves the graphics card
   (that is what makes playback cheap), so the dropper cannot simply look at what is on screen.
-  Instead it asks the engine a small question — "the nine-by-nine block of pixels around this
-  point of this frame" — and the engine sends back those 81 pixels, which is 324 bytes. That is
-  a reading, not a picture: sending a whole 1080p frame across that boundary would cost about
-  eight milliseconds, which is why nothing does it. The averaging is done in **light**, not in
-  screen values, which is why one white pixel among nine averages to a ninth of the light rather
-  than to mid-grey — and it means a picked colour matches what you sampled.
-
-  One honest note kept from before: the square and strip edit ordinary 0–1 colours, so a rare
-  "brighter than white" tint is clamped by them (the number boxes on the row still reach it).
+  Instead it asks the engine for a **window** of the picture — a 129-pixel square around where
+  you are pointing, about 66 KB — and then cuts the nine-by-nine it shows out of that window
+  itself. That is why moving the pointer feels free: it is reading pixels it already has, and
+  it only asks the engine again when you get near the edge of that window (or move the playhead,
+  or edit something). Sending a whole 1080p frame across that boundary would cost about eight
+  milliseconds every time, which is why nothing does it. The averaging is done in **light**, not
+  in screen values, which is why one white pixel among nine averages to a ninth of the light
+  rather than to mid-grey — and it means a picked colour matches what you sampled.
 
 - **LUT (K-114).** Drop this on a layer and press its **Select Cube LUT…** button to pick a
   `.cube` file — a colour recipe a colourist baked elsewhere (the loader below reads it) — and

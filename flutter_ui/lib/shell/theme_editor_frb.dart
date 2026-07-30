@@ -294,9 +294,12 @@ class _Swatch extends StatelessWidget {
         await showColourPicker(
           context: context,
           position: origin + Offset(0, box.size.height + 4),
-          initial: colour,
-          onCommit: onPicked,
-          onPreview: onPicked,
+          initial: PickedColour.of(colour),
+          // A theme colour is a display colour: eight bits a channel, and a
+          // hex is the same value said another way.
+          scale: ColourScale.bytes,
+          onCommit: (picked) => onPicked(picked.clipped),
+          onPreview: (picked) => onPicked(picked.clipped),
         );
       },
       child: Container(

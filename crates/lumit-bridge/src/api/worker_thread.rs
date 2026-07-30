@@ -562,18 +562,25 @@ pub struct SamplePixelsRequest {
     /// the very edge still answers.
     pub x: u32,
     pub y: u32,
-    /// The patch's side length, forced odd and capped at [`MAX_GRID`].
-    pub grid: u32,
+    /// The window's side length in pixels, forced odd and capped at
+    /// [`MAX_WINDOW`]. Bigger than the magnifier's own grid on purpose: the
+    /// frontend follows the pointer inside what it already has, and asks again
+    /// only when the pointer nears the edge of it.
+    pub window: u32,
     /// Read this layer *alone* instead of the composite — what a depth pick
     /// does, so a hidden depth pass (which never shows in the composite) can
     /// still be read. `None` samples the composite.
     pub layer: Option<LayerReference>,
 }
 
-/// The largest patch the dropper ever asks for, and the magnifier's grid: 9×9
-/// (K-210). The sampled region can never exceed what is shown.
+/// The largest window one read may carry: 129×129 pixels, 66 KiB.
+///
+/// Chosen to be worth a read — a pointer can travel sixty pixels in any
+/// direction before the frontend needs another one — while staying far below
+/// the size at which a pixel payload stops being a reading and becomes a frame
+/// transport (a 1080p frame is 8 MiB, and 8.8 ms in the codec: K-183).
 #[frb(ignore)]
-pub const MAX_GRID: u32 = 9;
+pub const MAX_WINDOW: u32 = 129;
 
 #[frb(ignore)]
 pub struct RenderCompRequestWithPreview {
@@ -1307,15 +1314,24 @@ fn trace_scope(
     Ok(())
 }
 
-/// Answer one dropper read: find the pixels, cut the patch, publish it.
+/// Answer one dropper read: find the pixels, cut the window, publish it.
 ///
-/// The picture comes from the same three places a trace's does, in the same
-/// order: the frame already banked in RAM, else a render of it (banked, so the
-/// next pointer move over the same frame is free). A **layer** read is the one
-/// that cannot reuse either: it needs that layer alone, which is not what the
-/// composite shows, so it renders the composition with the layer soloed and
-/// keeps the result in `layer_sample` — one entry, so dragging the pointer
-/// across the picture renders once, not once per move.
+/// **A window, not a pixel.** The reply carries a whole square of the picture —
+/// [`MAX_WINDOW`] a side — so the frontend can follow the pointer through it
+/// without asking again. One read then serves a whole sweep of the pointer and
+/// every change of sample size, instead of a request, a render lookup and a
+/// stream message per mouse move. It stays a *reading* rather than a picture:
+/// 129×129 is 66 KiB, a fraction of a millisecond in the codec, against 8 MiB
+/// for a 1080p frame (K-183's reason for deleting the read-back transport).
+///
+/// The picture comes from the same places a trace's does, in the same order:
+/// the frame already banked in RAM — read **in place**, never cloned, since
+/// cutting a window out of eight megabytes by copying all eight is the cost
+/// this is here to avoid — else a render of it, banked so the next read of the
+/// same frame is free. A **layer** read is the one that can reuse neither: it
+/// needs that layer alone, which is not what the composite shows, so it renders
+/// the composition with the layer soloed and keeps the result in
+/// `layer_sample`.
 #[frb(ignore)]
 fn sample_pixels(
     req: SamplePixelsRequest,
@@ -1329,54 +1345,64 @@ fn sample_pixels(
     };
 
     let layer_alone = req.layer.is_some();
-    let held = match &req.layer {
-        Some(layer) => sample_layer_alone(&document, layer.layer_id, &req, state),
-        None => match crate::framecache::best_frame(req.comp.id, req.frame) {
-            Some(held) => Some(held),
-            None => {
-                let key = crate::framecache::frame_key(req.comp.id, req.frame, req.scale);
-                let mut render = || {
-                    state
-                        .renderer
-                        .render_preview(
-                            &document,
-                            req.comp.id,
-                            req.frame,
-                            quality_for(req.scale),
-                            req.scale,
-                            None,
-                        )
-                        .ok()
-                        .map(|(rgba, width, height)| (width, height, rgba))
-                };
-                crate::framecache::get_or_render(key, &mut render)
-            }
-        },
-    };
 
-    // Nothing to read: the dropper says so on screen rather than the worker
-    // going quiet, so no reply is itself the answer — the magnifier keeps the
-    // last patch it had until a new one arrives.
-    let Some((width, height, rgba)) = held else {
-        return Ok(());
-    };
-
-    // The request is in the composition's own pixel grid; the picture in hand
-    // may be a reduced-resolution preview, so the point is carried across as a
+    // The point arrives in the composition's own pixel grid; the picture in
+    // hand may be a reduced-resolution preview, so it is carried across as a
     // fraction rather than assumed to line up.
-    let comp_size = document
+    let (cw, ch) = document
         .comp(req.comp.id)
-        .map(|c| (c.width.max(1), c.height.max(1)));
-    let (cw, ch) = comp_size.unwrap_or((width.max(1), height.max(1)));
+        .map(|c| (c.width.max(1), c.height.max(1)))
+        .unwrap_or((1, 1));
     let u = f64::from(req.x) / f64::from(cw);
     let v = f64::from(req.y) / f64::from(ch);
 
-    let Some(patch) = cut_patch(&rgba, width, height, u, v, req.grid) else {
+    let cut = match &req.layer {
+        Some(layer) => sample_layer_alone(&document, layer.layer_id, &req, state)
+            .and_then(|(w, h, rgba)| cut_patch(&rgba, w, h, u, v, req.window).map(|p| (p, w, h))),
+        None => {
+            // In place, under the cache lock: a bounded copy of the window's
+            // own pixels, not of the frame around them.
+            let held = crate::framecache::with_best_frame(req.comp.id, req.frame, |rgba, w, h| {
+                cut_patch(rgba, w, h, u, v, req.window).map(|p| (p, w, h))
+            })
+            .flatten();
+            match held {
+                Some(cut) => Some(cut),
+                // Nothing banked for this frame: render it once (banked, so a
+                // re-read of the same frame is free) and cut from that.
+                None => {
+                    let key = crate::framecache::frame_key(req.comp.id, req.frame, req.scale);
+                    let mut render = || {
+                        state
+                            .renderer
+                            .render_preview(
+                                &document,
+                                req.comp.id,
+                                req.frame,
+                                quality_for(req.scale),
+                                req.scale,
+                                None,
+                            )
+                            .ok()
+                            .map(|(rgba, width, height)| (width, height, rgba))
+                    };
+                    crate::framecache::get_or_render(key, &mut render).and_then(|(w, h, rgba)| {
+                        cut_patch(&rgba, w, h, u, v, req.window).map(|p| (p, w, h))
+                    })
+                }
+            }
+        }
+    };
+
+    // Nothing to read: no reply is itself the answer — the magnifier keeps the
+    // window it had until a new one arrives, rather than blanking.
+    let Some((patch, width, height)) = cut else {
         return Ok(());
     };
+
     _ = stream.add(WorkerResponse::Sampled(
         crate::api::state::BridgeSampledPixels {
-            grid: patch.grid,
+            window: patch.window,
             rgba: patch.rgba,
             width,
             height,
@@ -1449,22 +1475,25 @@ fn sample_layer_alone(
     Some((w, h, rgba))
 }
 
-/// A patch cut out of a picture: the pixels, and where its centre landed.
+/// A window cut out of a picture: the pixels, and where its centre landed.
 #[frb(ignore)]
 pub(crate) struct Patch {
-    pub grid: u32,
+    pub window: u32,
     pub rgba: Vec<u8>,
     pub x: u32,
     pub y: u32,
 }
 
-/// Cut a `grid × grid` patch centred on the fraction `(u, v)` of a picture.
+/// Cut a `window × window` square centred on the fraction `(u, v)` of a
+/// picture.
 ///
-/// `grid` is forced odd and capped at [`MAX_GRID`] here rather than trusted:
-/// the centre pixel must be a single pixel for the magnifier's centre cell to
-/// mean anything, and the payload must stay small enough to be a reading rather
-/// than a picture. Pixels off the edge repeat the edge, so the patch is always
-/// exactly `grid × grid` and the caller never has a ragged square to draw.
+/// `window` is forced odd and capped at [`MAX_WINDOW`] here rather than
+/// trusted: the centre must be a single pixel for the magnifier's centre cell
+/// to mean anything, and the payload must stay small enough to be a reading
+/// rather than a picture. Pixels off the edge repeat the edge, so the square is
+/// always exactly `window × window` and the caller never has a ragged one to
+/// draw — and the frontend can index it without a bounds case at the picture's
+/// border.
 #[frb(ignore)]
 pub(crate) fn cut_patch(
     rgba: &[u8],
@@ -1472,12 +1501,12 @@ pub(crate) fn cut_patch(
     height: u32,
     u: f64,
     v: f64,
-    grid: u32,
+    window: u32,
 ) -> Option<Patch> {
     if width == 0 || height == 0 || rgba.len() < (width as usize * height as usize * 4) {
         return None;
     }
-    let grid = grid.clamp(1, MAX_GRID) | 1;
+    let grid = window.clamp(1, MAX_WINDOW) | 1;
     let w = width as i64;
     let h = height as i64;
     let cx = ((u * width as f64) as i64).clamp(0, w - 1);
@@ -1494,7 +1523,7 @@ pub(crate) fn cut_patch(
         }
     }
     Some(Patch {
-        grid,
+        window: grid,
         rgba: out,
         x: cx as u32,
         y: cy as u32,
@@ -2039,19 +2068,20 @@ mod tests {
         assert_eq!(superseded, 1, "one older read, and nothing else");
     }
 
-    /// The patch is always exactly `grid × grid`, odd, and centred on the pixel
-    /// the fraction names — including hard against an edge, where the picture
-    /// runs out and the edge pixel repeats. A ragged square would leave the
-    /// magnifier drawing whatever was in memory next.
+    /// The window is always exactly `window × window`, odd, and centred on the
+    /// pixel the fraction names — including hard against an edge, where the
+    /// picture runs out and the edge pixel repeats. A ragged square would leave
+    /// the magnifier drawing whatever was in memory next, and the frontend
+    /// indexes this square without a border case.
     #[test]
-    fn a_patch_is_square_odd_and_clamped_to_the_picture() {
+    fn a_window_is_square_odd_and_clamped_to_the_picture() {
         // 2×2: red, green / blue, white.
         let rgba = vec![
             255, 0, 0, 255, 0, 255, 0, 255, //
             0, 0, 255, 255, 255, 255, 255, 255,
         ];
         let patch = super::cut_patch(&rgba, 2, 2, 0.0, 0.0, 3).expect("a picture to read");
-        assert_eq!(patch.grid, 3);
+        assert_eq!(patch.window, 3);
         assert_eq!(patch.rgba.len(), 3 * 3 * 4);
         assert_eq!((patch.x, patch.y), (0, 0), "the top-left pixel");
         // The centre cell is the pixel asked for; the row above repeats it,
@@ -2072,20 +2102,26 @@ mod tests {
             "and the neighbour is the green one"
         );
 
-        // An even grid is forced odd, and an oversized one capped, so the
-        // magnifier's centre cell always means one pixel.
+        // An even window is forced odd, and one past the cap is capped, so the
+        // centre cell always means one pixel and the payload stays a reading.
         assert_eq!(
             super::cut_patch(&rgba, 2, 2, 0.5, 0.5, 4)
                 .expect("cut")
-                .grid,
+                .window,
             5
         );
         assert_eq!(
-            super::cut_patch(&rgba, 2, 2, 0.5, 0.5, 99)
+            super::cut_patch(&rgba, 2, 2, 0.5, 0.5, 9999)
                 .expect("cut")
-                .grid,
-            super::MAX_GRID
+                .window,
+            super::MAX_WINDOW
         );
+        // And the cap really is a cap on the payload: the biggest reply the
+        // dropper can ask for stays two orders of magnitude below a frame
+        // (8 MiB at 1080p, K-183), which is what keeps this a reading.
+        let biggest = super::cut_patch(&rgba, 2, 2, 0.5, 0.5, u32::MAX).expect("cut");
+        assert_eq!(biggest.window, super::MAX_WINDOW);
+        assert!(biggest.rgba.len() < 100_000, "{}", biggest.rgba.len());
 
         // A picture with fewer bytes than it claims is refused rather than read
         // past the end of.

@@ -1836,14 +1836,14 @@ fn wire__crate__api__composition__composition_reference_sample_pixels_impl(
             let api_frame = <u64>::sse_decode(&mut deserializer);
             let api_x = <u32>::sse_decode(&mut deserializer);
             let api_y = <u32>::sse_decode(&mut deserializer);
-            let api_grid = <u32>::sse_decode(&mut deserializer);
+            let api_window = <u32>::sse_decode(&mut deserializer);
             let api_scale = <f32>::sse_decode(&mut deserializer);
             let api_layer =
                 <Option<crate::api::layer::LayerReference>>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
                 let output_ok = crate::api::composition::CompositionReference::sample_pixels(
-                    &api_that, api_frame, api_x, api_y, api_grid, api_scale, api_layer,
+                    &api_that, api_frame, api_x, api_y, api_window, api_scale, api_layer,
                 )?;
                 Ok(output_ok)
             })())
@@ -6537,7 +6537,7 @@ impl SseDecode for crate::api::layer::BridgeRevealKind {
 impl SseDecode for crate::api::state::BridgeSampledPixels {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        let mut var_grid = <u32>::sse_decode(deserializer);
+        let mut var_window = <u32>::sse_decode(deserializer);
         let mut var_rgba = <Vec<u8>>::sse_decode(deserializer);
         let mut var_width = <u32>::sse_decode(deserializer);
         let mut var_height = <u32>::sse_decode(deserializer);
@@ -6546,7 +6546,7 @@ impl SseDecode for crate::api::state::BridgeSampledPixels {
         let mut var_frame = <u64>::sse_decode(deserializer);
         let mut var_layerAlone = <bool>::sse_decode(deserializer);
         return crate::api::state::BridgeSampledPixels {
-            grid: var_grid,
+            window: var_window,
             rgba: var_rgba,
             width: var_width,
             height: var_height,
@@ -8984,7 +8984,7 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::layer::BridgeRevealKind>
 impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeSampledPixels {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
-            self.grid.into_into_dart().into_dart(),
+            self.window.into_into_dart().into_dart(),
             self.rgba.into_into_dart().into_dart(),
             self.width.into_into_dart().into_dart(),
             self.height.into_into_dart().into_dart(),
@@ -10291,7 +10291,7 @@ impl SseEncode for crate::api::layer::BridgeRevealKind {
 impl SseEncode for crate::api::state::BridgeSampledPixels {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <u32>::sse_encode(self.grid, serializer);
+        <u32>::sse_encode(self.window, serializer);
         <Vec<u8>>::sse_encode(self.rgba, serializer);
         <u32>::sse_encode(self.width, serializer);
         <u32>::sse_encode(self.height, serializer);

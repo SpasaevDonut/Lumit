@@ -353,9 +353,12 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
             await showColourPicker(
               context: context,
               position: box.localToGlobal(Offset(0, box.size.height + 4)),
-              initial: shown,
-              // A solid's colour applies as it is chosen — there is no
-              // cheaper preview of a solid than the solid itself.
+              initial: PickedColour.of(shown),
+              // A solid's colour is chosen as a display colour, so its
+              // channels read 0–255.
+              scale: ColourScale.bytes,
+              // It applies as it is chosen — there is no cheaper preview of a
+              // solid than the solid itself.
               onCommit: (picked) => onPicked(BridgeColourRgba(
                 r: picked.r,
                 g: picked.g,

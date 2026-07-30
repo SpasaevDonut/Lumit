@@ -562,9 +562,14 @@ class LumitUiState extends ChangeNotifier {
   /// Viewer must not have to be mounted for that click to be harmless.
   final ValueNotifier<DropperArm?> dropper = ValueNotifier(null);
 
-  /// The pixels the last [requestDropperSample] read back, or null before the
-  /// first reply. Cleared when the tool disarms, so a fresh arm never opens on
-  /// the previous pick's pixels.
+  /// The window of pixels the last [requestDropperSample] read back, or null
+  /// before the first reply. Cleared when the tool disarms, so a fresh arm
+  /// never opens on the previous pick's pixels.
+  ///
+  /// A window, not a pixel: the magnifier cuts its own nine-by-nine out of this
+  /// as the pointer moves, and only asks again when the pointer nears its edge
+  /// (see `windowCovers`). That is what keeps a sweep across the picture to a
+  /// handful of reads instead of one per mouse move.
   final ValueNotifier<BridgeSampledPixels?> dropperPatch = ValueNotifier(null);
 
   /// Arm the dropper. Replaces whatever was armed — two pending picks would
@@ -580,9 +585,12 @@ class LumitUiState extends ChangeNotifier {
     dropperPatch.value = null;
   }
 
-  /// Ask the engine for the pixels around `(x, y)` in the fronted comp's own
-  /// pixel grid. The answer arrives on the worker stream and lands in
-  /// [dropperPatch]; nothing here waits for it.
+  /// Ask the engine for a window of pixels around `(x, y)` in the fronted
+  /// comp's own pixel grid. The answer arrives on the worker stream and lands
+  /// in [dropperPatch]; nothing here waits for it.
+  ///
+  /// Called only when the window in hand cannot answer — the caller checks
+  /// first — so this is a handful of calls per pick, not one per mouse move.
   void requestDropperSample(int x, int y) {
     final comp = selectedComp;
     final arm = dropper.value;
@@ -592,7 +600,7 @@ class LumitUiState extends ChangeNotifier {
         frame: BigInt.from(playheadFrame.value),
         x: x < 0 ? 0 : x,
         y: y < 0 ? 0 : y,
-        grid: dropperGrid,
+        window: dropperWindow,
         scale: viewerScale,
         layer: arm.sampleLayer,
       );

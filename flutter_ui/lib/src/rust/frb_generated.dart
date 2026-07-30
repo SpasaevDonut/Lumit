@@ -266,7 +266,7 @@ abstract class BridgeLibApi extends BaseApi {
       required BigInt frame,
       required int x,
       required int y,
-      required int grid,
+      required int window,
       required double scale,
       LayerReference? layer});
 
@@ -2013,7 +2013,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       required BigInt frame,
       required int x,
       required int y,
-      required int grid,
+      required int window,
       required double scale,
       LayerReference? layer}) {
     return handler.executeSync(SyncTask(
@@ -2023,7 +2023,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         sse_encode_u_64(frame, serializer);
         sse_encode_u_32(x, serializer);
         sse_encode_u_32(y, serializer);
-        sse_encode_u_32(grid, serializer);
+        sse_encode_u_32(window, serializer);
         sse_encode_f_32(scale, serializer);
         sse_encode_opt_box_autoadd_layer_reference(layer, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 51)!;
@@ -2034,7 +2034,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiCompositionCompositionReferenceSamplePixelsConstMeta,
-      argValues: [that, frame, x, y, grid, scale, layer],
+      argValues: [that, frame, x, y, window, scale, layer],
       apiImpl: this,
     ));
   }
@@ -2043,7 +2043,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       get kCrateApiCompositionCompositionReferenceSamplePixelsConstMeta =>
           const TaskConstMeta(
             debugName: "composition_reference_sample_pixels",
-            argNames: ["that", "frame", "x", "y", "grid", "scale", "layer"],
+            argNames: ["that", "frame", "x", "y", "window", "scale", "layer"],
           );
 
   @override
@@ -6064,7 +6064,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     if (arr.length != 8)
       throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
     return BridgeSampledPixels(
-      grid: dco_decode_u_32(arr[0]),
+      window: dco_decode_u_32(arr[0]),
       rgba: dco_decode_list_prim_u_8_strict(arr[1]),
       width: dco_decode_u_32(arr[2]),
       height: dco_decode_u_32(arr[3]),
@@ -7670,7 +7670,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeSampledPixels sse_decode_bridge_sampled_pixels(
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    var var_grid = sse_decode_u_32(deserializer);
+    var var_window = sse_decode_u_32(deserializer);
     var var_rgba = sse_decode_list_prim_u_8_strict(deserializer);
     var var_width = sse_decode_u_32(deserializer);
     var var_height = sse_decode_u_32(deserializer);
@@ -7679,7 +7679,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_frame = sse_decode_u_64(deserializer);
     var var_layerAlone = sse_decode_bool(deserializer);
     return BridgeSampledPixels(
-        grid: var_grid,
+        window: var_window,
         rgba: var_rgba,
         width: var_width,
         height: var_height,
@@ -9396,7 +9396,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   void sse_encode_bridge_sampled_pixels(
       BridgeSampledPixels self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_u_32(self.grid, serializer);
+    sse_encode_u_32(self.window, serializer);
     sse_encode_list_prim_u_8_strict(self.rgba, serializer);
     sse_encode_u_32(self.width, serializer);
     sse_encode_u_32(self.height, serializer);

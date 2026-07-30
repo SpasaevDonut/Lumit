@@ -537,9 +537,14 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderScope(
           that: this, frame: frame, scale: scale, kind: kind, colours: colours);
 
-  /// Ask the worker for the pixels under the dropper: a `grid × grid` patch of
-  /// `frame` centred on `(x, y)` in this composition's own pixel grid
-  /// (docs/07 §7).
+  /// Ask the worker for the pixels under the dropper: a `window × window`
+  /// square of `frame` centred on `(x, y)` in this composition's own pixel
+  /// grid (docs/07 §6.1).
+  ///
+  /// A window rather than the nine pixels the magnifier shows, because the
+  /// pointer moves and the picture does not: the caller reads its grid out of
+  /// the window it already holds and asks again only when the pointer nears
+  /// the window's edge, the frame changes, or an edit lands.
   ///
   /// `layer` reads that layer **alone** rather than the composite — what a
   /// depth pick does, since a depth pass is usually hidden and so never
@@ -551,7 +556,7 @@ class CompositionReference {
           {required BigInt frame,
           required int x,
           required int y,
-          required int grid,
+          required int window,
           required double scale,
           LayerReference? layer}) =>
       BridgeLib.instance.api
@@ -560,7 +565,7 @@ class CompositionReference {
               frame: frame,
               x: x,
               y: y,
-              grid: grid,
+              window: window,
               scale: scale,
               layer: layer);
 

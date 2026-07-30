@@ -66,8 +66,13 @@ class DropperViewfinder extends StatelessWidget {
   /// What is armed — which decides what the strip below the grid says.
   final DropperArm arm;
 
-  /// The pixels last read back, or null while the first read is in flight.
-  final BridgeSampledPixels? patch;
+  /// The window last read back, or null while the first read is in flight. The
+  /// magnifier's nine-by-nine is cut out of it here, around [centre], so moving
+  /// the pointer inside the window costs nothing at all.
+  final BridgeSampledPixels? window;
+
+  /// The pixel under the pointer, in the picture's own grid.
+  final (int, int) centre;
 
   /// How many pixels a side are being averaged.
   final int region;
@@ -75,7 +80,8 @@ class DropperViewfinder extends StatelessWidget {
   const DropperViewfinder({
     super.key,
     required this.arm,
-    required this.patch,
+    required this.window,
+    required this.centre,
     required this.region,
   });
 
@@ -107,7 +113,8 @@ class DropperViewfinder extends StatelessWidget {
               height: grid,
               child: CustomPaint(
                 painter: _GridPainter(
-                  patch: patch,
+                  window: window,
+                  centre: centre,
                   region: region,
                   hairline: t.hairline,
                   accent: t.accent,
@@ -130,7 +137,10 @@ class DropperViewfinder extends StatelessWidget {
   /// found there, because a swatch of the composite would be a colour nobody is
   /// choosing (docs/07 §6.1).
   Widget _infoBar(LumitTheme t) {
-    final sample = patch == null ? null : sampleFromPatch(patch!, region);
+    final held = window;
+    final sample = held == null
+        ? null
+        : sampleFromWindow(held, region, centre.$1, centre.$2);
     final round = t.shape == ThemeShape.round;
     return Container(
       decoration: BoxDecoration(
@@ -156,7 +166,7 @@ class DropperViewfinder extends StatelessWidget {
           ] else if (sample != null) ...[
             Expanded(
               child: Text(
-                _readingLabel(sample, patch!),
+                _readingLabel(sample, held!),
                 style: t.small.copyWith(color: t.textSecondary),
                 overflow: TextOverflow.ellipsis,
               ),
@@ -182,8 +192,8 @@ class DropperViewfinder extends StatelessWidget {
   /// the reply says whether it is of one layer alone or of the composite, and a
   /// caption that named a layer the pixels did not come from would be worse
   /// than no caption at all.
-  String _readingLabel(DropperSample sample, BridgeSampledPixels patch) {
-    final from = patch.layerAlone
+  String _readingLabel(DropperSample sample, BridgeSampledPixels window) {
+    final from = window.layerAlone
         ? (arm.sampleLayerName ?? 'That layer')
         : 'Composite';
     return switch (arm.reads) {
@@ -207,7 +217,11 @@ class DropperViewfinder extends StatelessWidget {
 /// The nine-by-nine block, its dashed rules, and the border round the region
 /// that will be averaged.
 class _GridPainter extends CustomPainter {
-  final BridgeSampledPixels? patch;
+  final BridgeSampledPixels? window;
+
+  /// The pixel under the pointer: the grid's centre cell, and what the window
+  /// is indexed around.
+  final (int, int) centre;
   final int region;
   final Color hairline;
   final Color accent;
@@ -215,7 +229,8 @@ class _GridPainter extends CustomPainter {
   final double regionRadius;
 
   const _GridPainter({
-    required this.patch,
+    required this.window,
+    required this.centre,
     required this.region,
     required this.hairline,
     required this.accent,
@@ -226,7 +241,7 @@ class _GridPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final cell = size.width / dropperGrid;
-    final held = patch;
+    final held = window;
 
     // The pixels. Before the first read lands there is nothing to show, so the
     // grid draws as an empty surface rather than as black — which would look
@@ -263,19 +278,15 @@ class _GridPainter extends CustomPainter {
     );
   }
 
-  /// The patch's pixel at `(x, y)`, or null when there is no patch to read.
-  Color? _pixel(BridgeSampledPixels? patch, int x, int y) {
-    if (patch == null) return null;
-    // A patch smaller than the magnifier's grid (a capped or older reply) is
-    // centred rather than stretched: the centre cell must stay the pixel under
-    // the pointer whatever arrives.
-    final offset = (dropperGrid - patch.grid) ~/ 2;
-    final px = x - offset, py = y - offset;
-    if (px < 0 || py < 0 || px >= patch.grid || py >= patch.grid) return null;
-    final i = (py * patch.grid + px) * 4;
-    if (i + 3 >= patch.rgba.length) return null;
-    return documentColour(
-        patch.rgba[i], patch.rgba[i + 1], patch.rgba[i + 2], 0xff);
+  /// The grid cell at `(x, y)` — cut out of the window around the pointer, so
+  /// the centre cell is always the pixel being aimed at. Null when there is no
+  /// window to read yet.
+  Color? _pixel(BridgeSampledPixels? window, int x, int y) {
+    if (window == null) return null;
+    final reach = dropperGrid ~/ 2;
+    final px = windowPixel(window, centre.$1 + x - reach, centre.$2 + y - reach);
+    if (px == null) return null;
+    return documentColour(px.r, px.g, px.b, 0xff);
   }
 
   /// A dashed line, drawn as evenly spaced dots — the same mark the egui
@@ -293,7 +304,8 @@ class _GridPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_GridPainter old) =>
-      old.patch != patch ||
+      old.window != window ||
+      old.centre != centre ||
       old.region != region ||
       old.accent != accent ||
       old.hairline != hairline;

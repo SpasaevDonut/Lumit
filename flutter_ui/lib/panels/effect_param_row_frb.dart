@@ -458,7 +458,7 @@ class EffectParamRowFrb extends StatelessWidget {
 
     // The value written for a picked colour: the three channels as statics,
     // clamped to the parameter's declared range, with alpha left alone.
-    BridgeEffectValue valueOf(Color picked) {
+    BridgeEffectValue valueOf(PickedColour picked) {
       double clamp(double v) => v < min ? min : (v > max ? max : v);
       return BridgeEffectValue.colour(BridgeColour(
         r: BridgeScalar.static_(clamp(picked.r)),
@@ -482,7 +482,17 @@ class EffectParamRowFrb extends StatelessWidget {
               await showColourPicker(
                 context: context,
                 position: box.localToGlobal(Offset(0, box.size.height + 4)),
-                initial: shown,
+                initial: PickedColour(
+                    chan(colour.r), chan(colour.g), chan(colour.b)),
+                // An effect colour is scene-linear in a float working depth
+                // (fp16 today, docs/06 §3.1): 0–1 is black to white, and the
+                // parameter's own range says how far past that it may go — an
+                // HDR tint really does sit above 1, and a 0–255 dial could not
+                // reach it. When the project depth switch lands (docs/06 §3.1),
+                // an 8 bpc project is what passes `bytes` here.
+                scale: ColourScale.unit,
+                min: min,
+                max: max,
                 // Live all the way through: a drag inside the picker previews
                 // on the picture, and each settled change is one undoable edit
                 // — the same shape as dragging the number beside it.

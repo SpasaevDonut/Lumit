@@ -982,9 +982,14 @@ impl CompositionReference {
         }))
     }
 
-    /// Ask the worker for the pixels under the dropper: a `grid × grid` patch of
-    /// `frame` centred on `(x, y)` in this composition's own pixel grid
-    /// (docs/07 §6.1).
+    /// Ask the worker for the pixels under the dropper: a `window × window`
+    /// square of `frame` centred on `(x, y)` in this composition's own pixel
+    /// grid (docs/07 §6.1).
+    ///
+    /// A window rather than the nine pixels the magnifier shows, because the
+    /// pointer moves and the picture does not: the caller reads its grid out of
+    /// the window it already holds and asks again only when the pointer nears
+    /// the window's edge, the frame changes, or an edit lands.
     ///
     /// `layer` reads that layer **alone** rather than the composite — what a
     /// depth pick does, since a depth pass is usually hidden and so never
@@ -998,7 +1003,7 @@ impl CompositionReference {
         frame: u64,
         x: u32,
         y: u32,
-        grid: u32,
+        window: u32,
         scale: f32,
         layer: Option<LayerReference>,
     ) -> Result<(), BridgeError> {
@@ -1008,7 +1013,7 @@ impl CompositionReference {
             scale,
             x,
             y,
-            grid,
+            window,
             layer,
         }))
     }

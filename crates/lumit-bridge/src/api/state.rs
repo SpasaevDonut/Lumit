@@ -123,32 +123,39 @@ pub struct BridgeScopeTrace {
     pub rgba: Vec<u8>,
 }
 
-/// The pixels under the dropper: a small square patch of the picture, centred
-/// on the point the pointer is over (docs/07 §6.1).
+/// The pixels under the dropper: a square window of the picture, centred on the
+/// point the pointer was over when it was asked for (docs/07 §6.1).
 ///
-/// Tiny by construction — a 9×9 patch is 324 bytes, against a 1080p frame's
-/// 8 MiB — so it crosses the boundary as plain pixels without breaking the
-/// K-183 rule that *frames* only ever cross as GPU handles. It is the answer to
-/// a question about a few pixels, not a picture to display.
+/// **A window rather than the nine pixels the magnifier shows**, so the pointer
+/// can move without asking again: the frontend cuts the magnifier's grid out of
+/// what it already has, and re-reads only when the pointer approaches the edge
+/// of it. That turns a sweep across the picture from a request per mouse move
+/// into a handful.
+///
+/// Small by construction — 129×129 is 66 KiB, against a 1080p frame's 8 MiB —
+/// so it crosses the boundary as plain pixels without breaking the K-183 rule
+/// that *frames* only ever cross as GPU handles. It is the answer to a question
+/// about a few pixels, not a picture to display.
 #[frb(non_opaque)]
 pub struct BridgeSampledPixels {
-    /// The patch's side length in pixels: `grid × grid`, always odd, so there is
-    /// a single centre pixel.
-    pub grid: u32,
-    /// Tightly packed display-ready sRGB RGBA8, `grid * grid * 4`, row-major
-    /// from the top-left of the patch. Edge pixels repeat where the patch runs
-    /// off the picture, so it is always exactly this size.
+    /// The window's side length in pixels: `window × window`, always odd, so
+    /// there is a single centre pixel.
+    pub window: u32,
+    /// Tightly packed display-ready sRGB RGBA8, `window * window * 4`,
+    /// row-major from the top-left of the window. Edge pixels repeat where the
+    /// window runs off the picture, so it is always exactly this size and can
+    /// be indexed without a border case.
     pub rgba: Vec<u8>,
-    /// The raster the patch was taken from, and where in it the centre pixel
-    /// sits — what the caption reports, and what a position pick writes.
+    /// The raster the window was taken from, and where in it the centre pixel
+    /// sits — which is what says where in the picture the window lies.
     pub width: u32,
     pub height: u32,
     pub x: u32,
     pub y: u32,
-    /// Which frame this is of, so a patch that arrives after the playhead has
+    /// Which frame this is of, so a window that arrives after the playhead has
     /// moved on can be recognised as stale rather than drawn.
     pub frame: u64,
-    /// True when the patch is of one layer rendered alone rather than of the
+    /// True when the window is of one layer rendered alone rather than of the
     /// composite — a depth pass being read for a focal point, say.
     pub layer_alone: bool,
 }
