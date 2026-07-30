@@ -3166,7 +3166,7 @@ fn system_memory_bytes_reports_non_zero_on_supported_platforms() {
     }
 }
 
-/// Switching Retime off re-hangs the layer on its source (K-211): it keeps its
+/// Switching Retime off re-hangs the layer on its source (K-212): it keeps its
 /// in point, shows the same frame there, and runs at source rate until the
 /// source runs out — never longer than it already was.
 #[test]
@@ -3262,7 +3262,7 @@ fn switching_retime_off_re_hangs_the_layer_on_its_source() {
 }
 
 /// Keyframes belong to the layer, and the seam says so in the interface's units
-/// (K-212).
+/// (K-213).
 ///
 /// The engine keys every property in the layer's **own** time, which is what
 /// makes a layer's animation travel with it when it is moved. The Timeline
@@ -3315,7 +3315,7 @@ fn keyframes_cross_on_the_comp_clock_and_travel_with_the_layer() {
     );
 }
 
-/// Switching Retime on keys the layer where it *is* (K-212): one key on its in
+/// Switching Retime on keys the layer where it *is* (K-213): one key on its in
 /// point, one on its out point, both in comp time — not at the start of the
 /// composition, and not stopping short of a trimmed layer's tail.
 #[test]

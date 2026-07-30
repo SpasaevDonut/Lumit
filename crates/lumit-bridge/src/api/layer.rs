@@ -327,7 +327,7 @@ impl BridgeTransformProp {
 impl BridgeTransform {
     #[frb(ignore)]
     /// `offset` is the layer's `start_offset`: keys cross on the composition's
-    /// clock, not the layer's own (K-212).
+    /// clock, not the layer's own (K-213).
     #[allow(clippy::similar_names)]
     pub(crate) fn read_at(
         group: &lumit_core::model::TransformGroup,
@@ -1168,7 +1168,7 @@ impl LayerReference {
     /// rather than flattening it: "not retimed" and "retimed to exactly 1×" are
     /// different states in the file, and only the first skips the map.
     ///
-    /// Off also re-hangs the layer on its source (K-211). A retimed layer can be
+    /// Off also re-hangs the layer on its source (K-212). A retimed layer can be
     /// any length, so when the map goes away the layer has to be given one
     /// again: it keeps its in point and the frame showing there, then plays at
     /// source rate until the source runs out or its own out point arrives,
@@ -1178,7 +1178,7 @@ impl LayerReference {
         let layer = self.item()?;
         let on = layer.retime.is_none();
         // The layer's own span in ITS time, which is where the two keys belong
-        // (K-212): its comp in and out less where its zero sits. A layer that
+        // (K-213): its comp in and out less where its zero sits. A layer that
         // has been moved or trimmed does not start at its own zero, and keys at
         // zero would sit at the start of the composition on screen and leave
         // the tail past `duration` frozen on one frame.
@@ -1193,7 +1193,7 @@ impl LayerReference {
             layer: self.layer_id,
             retime,
         };
-        // Switching it off re-hangs the layer on its source (K-211); switching
+        // Switching it off re-hangs the layer on its source (K-212); switching
         // it on changes nothing but the map.
         self.commit(if on {
             removal
@@ -1205,7 +1205,7 @@ impl LayerReference {
 
     /// One op that switches a Retime off: `removal` — whichever of the two
     /// retime routes is being cleared — with the layer's span re-anchored on
-    /// the frame that was showing, as a single undo step (K-211).
+    /// the frame that was showing, as a single undo step (K-212).
     ///
     /// Plain `removal` when the new span cannot be worked out (unreadable
     /// source time, or arithmetic that would overflow): switching Retime off
@@ -1392,7 +1392,7 @@ impl LayerReference {
     ) -> Result<(), BridgeError> {
         // Confirm the layer is there before committing, so a stale reference is
         // a calm error rather than a failed op — and its offset is what carries
-        // the keys back onto its own clock (K-212).
+        // the keys back onto its own clock (K-213).
         let animation = value.animation_at(self.item()?.start_offset.0)?;
 
         let proj = self.project()?;

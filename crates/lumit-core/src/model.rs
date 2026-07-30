@@ -1053,7 +1053,7 @@ impl Layer {
     /// What Ctrl+Alt+T installs — the AE Time Remap starting state.
     ///
     /// `from` and `to` are the layer's **local** in and out points — its comp
-    /// span less its `start_offset` — not zero and its duration (K-212). A
+    /// span less its `start_offset` — not zero and its duration (K-213). A
     /// trimmed layer's visible range does not begin at its own zero, and keys
     /// that stopped short of it froze the tail: past the last key a property
     /// holds, so the part of the layer beyond `duration` played one frame over

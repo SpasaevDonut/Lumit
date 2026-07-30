@@ -30,6 +30,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/audio.dart';
@@ -44,11 +45,13 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../state/dropper.dart';
 import '../state/preview_throttle.dart';
 import '../state/settings.dart';
 import '../state/timecode.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
+import '../widgets/dropper_overlay.dart';
 import 'placeholder.dart';
 import 'viewer_layer_map.dart';
 
@@ -202,6 +205,13 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
             // zooming feel like leaning in rather than teleporting.
             onPointerSignal: (event) {
               if (event is PointerScrollEvent) {
+                // Shift+scroll belongs to the armed dropper, which is sizing
+                // its sample region with it — zooming as well would move the
+                // picture out from under the pixel being aimed at.
+                if (ui.dropper.value != null &&
+                    HardwareKeyboard.instance.isShiftPressed) {
+                  return;
+                }
                 _scrollZoom(event.localPosition, event.scrollDelta.dy,
                     constraints, size, fitted);
               }
@@ -398,6 +408,10 @@ class _Stage extends StatelessWidget {
               fitted: fitted,
               onChanged: onChanged,
             ),
+            // Above the overlay, because while the dropper is armed the whole
+            // picture is a target: a drag handle under the pointer must not
+            // take the click that was meant to pick a pixel.
+            DropperLayer(comp: comp, uiState: uiState, fitted: fitted),
           ],
         ),
       ),
@@ -414,6 +428,326 @@ class _Stage extends StatelessWidget {
       child: _MissingBadge(footage: footage),
     );
   }
+}
+
+/// The armed dropper over the picture: the magnifier, the sample-size wheel,
+/// and the click that picks (docs/07 §6.1).
+///
+/// **Why it lives here.** The pixels being picked are the Viewer's, and only
+/// this panel knows where the picture actually sits on screen at the current
+/// magnification and pan. What is *done* with the pick is not this panel's
+/// business at all: the parameter that armed the tool handed over a closure,
+/// and this calls it.
+///
+/// Nothing at all while the tool is not armed — not a hit-test, not a listener.
+class DropperLayer extends StatefulWidget {
+  final CompositionReference comp;
+  final LumitUiState uiState;
+
+  /// Where the picture is drawn in this panel, at the current magnification.
+  final Rect fitted;
+
+  const DropperLayer({
+    super.key,
+    required this.comp,
+    required this.uiState,
+    required this.fitted,
+  });
+
+  @override
+  State<DropperLayer> createState() => _DropperLayerState();
+}
+
+class _DropperLayerState extends State<DropperLayer> {
+  /// Where the pointer is, in this layer's own coordinates, or null when it is
+  /// not over the picture — which is where every arm starts, whatever the
+  /// pointer did last time.
+  Offset? _cursor;
+
+  /// The viewfinder, while it is on screen. It lives in the application's
+  /// overlay rather than in this panel's own stack, so it can hang over
+  /// whatever is beside the Viewer instead of being pushed back inside it near
+  /// a corner — the pointer keeps it at one fixed offset everywhere.
+  OverlayEntry? _viewfinderEntry;
+
+  /// Where the pointer is in the *overlay's* coordinates, and how much room the
+  /// overlay has — both worked out when the pointer moves, and used afterwards
+  /// as plain numbers.
+  ///
+  /// **Never worked out while building.** Placing the magnifier means asking
+  /// render objects where they are, and a scroll over the Viewer zooms the
+  /// picture, which relays this panel out: asking mid-rebuild asserts
+  /// `attached` and takes the window red. A pointer event is the one moment
+  /// both trees are settled, so that is when it is asked.
+  Offset? _overlayCursor;
+  Rect _overlayBounds = Rect.zero;
+
+  /// How many pixels a side are averaged. One — this pixel and no other —
+  /// until Shift+scroll says otherwise, and remembered for as long as the tool
+  /// stays armed.
+  int _region = dropperRegions.first;
+
+  /// The reads that do go out are bounded like a drag's previews: crossing a
+  /// window's edge at speed is not worth a read per frame, and the newest
+  /// position is the only one worth answering.
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  @override
+  void initState() {
+    super.initState();
+    // Escape puts the tool away wherever the focus happens to be — a tool armed
+    // by accident must never need a click on the picture to get rid of.
+    HardwareKeyboard.instance.addHandler(_onKey);
+    widget.uiState.dropper.addListener(_onArmChanged);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    widget.uiState.dropper.removeListener(_onArmChanged);
+    _hideViewfinder();
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Armed or disarmed: forget where the pointer was.
+  ///
+  /// Without this the *previous* pick's last pointer position survived, so
+  /// arming the tool again put the magnifier on screen straight away, sitting
+  /// wherever the last pick happened — before the pointer had gone anywhere
+  /// near the Viewer. The magnifier belongs to the pointer being over the
+  /// picture, and nothing else.
+  void _onArmChanged() {
+    _hideViewfinder();
+    if (mounted) {
+      setState(() {
+        _cursor = null;
+        _overlayCursor = null;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(DropperLayer old) {
+    super.didUpdateWidget(old);
+    // A different composition is a different picture; a window read against the
+    // old one is meaningless now.
+    if (old.comp.internalid != widget.comp.internalid) {
+      widget.uiState.dropperPatch.value = null;
+      _hideViewfinder();
+    }
+    // The picture moved under the pointer (a zoom, a pan, the panel resized):
+    // which pixel is under the pointer has changed, so the magnifier has to be
+    // redrawn — but AFTER this build, never during it. Marking an overlay entry
+    // dirty from inside a build is the "setState() called during build" error,
+    // and it is what an ordinary scroll over the Viewer used to do.
+    if (old.fitted != widget.fitted) _refreshViewfinderAfterFrame();
+  }
+
+  /// Redraw the magnifier once this frame is over.
+  void _refreshViewfinderAfterFrame() {
+    if (_viewfinderEntry == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _viewfinderEntry?.markNeedsBuild();
+    });
+  }
+
+  bool _onKey(KeyEvent event) {
+    if (event is! KeyDownEvent) return false;
+    if (event.logicalKey != LogicalKeyboardKey.escape) return false;
+    if (widget.uiState.dropper.value == null) return false;
+    widget.uiState.disarmDropper();
+    return true;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<DropperArm?>(
+      valueListenable: widget.uiState.dropper,
+      builder: (context, arm, _) =>
+          arm == null ? const SizedBox.shrink() : _armed(context, arm),
+    );
+  }
+
+  Widget _armed(BuildContext context, DropperArm arm) {
+    return Positioned.fill(
+      child: MouseRegion(
+        cursor: SystemMouseCursors.precise,
+        onExit: (_) {
+          setState(() {
+            _cursor = null;
+            _overlayCursor = null;
+          });
+          _hideViewfinder();
+        },
+        child: Listener(
+          behavior: HitTestBehavior.opaque,
+          onPointerHover: (e) => _moved(e.localPosition, e.position),
+          onPointerMove: (e) => _moved(e.localPosition, e.position),
+          onPointerSignal: (e) {
+            if (e is! PointerScrollEvent) return;
+            if (!HardwareKeyboard.instance.isShiftPressed) return;
+            // Shift turns the wheel horizontal on most platforms, so take
+            // whichever axis actually carries the motion — reading only the
+            // vertical delta is why the egui build's size never changed.
+            final d = e.scrollDelta;
+            final scroll = d.dy.abs() >= d.dx.abs() ? d.dy : d.dx;
+            if (scroll.abs() < 0.5) return;
+            // Nothing is asked of the engine here: the window in hand already
+            // holds every pixel a wider region could want.
+            setState(() =>
+                _region = nextDropperRegion(_region, scroll < 0 ? 1 : -1));
+            _viewfinderEntry?.markNeedsBuild();
+          },
+          onPointerDown: (e) => _pressed(arm, e.localPosition),
+          child: const SizedBox.expand(),
+        ),
+      ),
+    );
+  }
+
+  /// Put the magnifier on screen, or take it off, and keep it beside the
+  /// pointer while it is there.
+  ///
+  /// On screen only while the pointer is over the picture — there is nothing
+  /// under it to magnify anywhere else — and in the application's overlay, so
+  /// it keeps one fixed offset from the pointer everywhere on the picture
+  /// instead of being pushed back inside the panel near an edge.
+  void _syncViewfinder(DropperArm arm) {
+    final at = _cursor;
+    if (at == null || !widget.fitted.contains(at) || _overlayCursor == null) {
+      _hideViewfinder();
+      return;
+    }
+    if (_viewfinderEntry != null) {
+      _viewfinderEntry!.markNeedsBuild();
+      return;
+    }
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    _viewfinderEntry = OverlayEntry(builder: (_) => _viewfinderAt(arm));
+    overlay.insert(_viewfinderEntry!);
+  }
+
+  void _hideViewfinder() {
+    _viewfinderEntry?.remove();
+    _viewfinderEntry = null;
+  }
+
+  /// The pointer's global position in the overlay's own coordinates, and the
+  /// room the overlay has — remembered for the builder, which must not go
+  /// looking for render objects itself (see [_overlayCursor]).
+  ///
+  /// The overlay's box is what carries the UI-scale transform, so a global
+  /// pointer position is put through it rather than assumed to match.
+  void _noteOverlayPosition(Offset global) {
+    final overlayBox = Overlay.maybeOf(context)?.context.findRenderObject();
+    if (overlayBox is! RenderBox || !overlayBox.attached || !overlayBox.hasSize) {
+      _overlayCursor = null;
+      return;
+    }
+    _overlayCursor = overlayBox.globalToLocal(global);
+    _overlayBounds = Offset.zero & overlayBox.size;
+  }
+
+  /// The magnifier, placed at a fixed offset from the pointer — from numbers
+  /// worked out when the pointer last moved, so this touches no render object
+  /// and is safe to run in any frame.
+  Widget _viewfinderAt(DropperArm arm) {
+    final at = _cursor;
+    final overlayAt = _overlayCursor;
+    if (at == null || overlayAt == null) return const SizedBox.shrink();
+    final origin = dropperViewfinderOrigin(
+      overlayAt,
+      // The window's content area: what the application can actually paint on,
+      // and so the only edge the viewfinder has to answer to.
+      _overlayBounds,
+    );
+    return Positioned(
+      left: origin.dx,
+      top: origin.dy,
+      child: IgnorePointer(
+        child: ValueListenableBuilder<BridgeSampledPixels?>(
+          valueListenable: widget.uiState.dropperPatch,
+          builder: (context, window, _) => DropperViewfinder(
+            arm: arm,
+            window: window,
+            // In the window's own raster, which the reply describes — the
+            // magnifier cannot be indexed in any other grid.
+            centre:
+                window == null ? (0, 0) : windowPixelAt(window, _u(at), _v(at)),
+            region: _region,
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The pointer moved. Redrawing is free — the magnifier reads the window
+  /// already in hand — so the engine is only asked when that window has run out
+  /// of pixels under the pointer.
+  void _moved(Offset local, Offset global) {
+    _noteOverlayPosition(global);
+    setState(() => _cursor = local);
+    final arm = widget.uiState.dropper.value;
+    if (arm != null) _syncViewfinder(arm);
+    if (!widget.fitted.contains(local)) return;
+    if (_covered(local)) return;
+    _throttle.request(() => _request(local));
+  }
+
+  /// Whether the window in hand answers for the pointer where it now is: same
+  /// frame, same source, and far enough from its edge.
+  bool _covered(Offset local) {
+    final window = widget.uiState.dropperPatch.value;
+    if (window == null) return false;
+    if (window.frame.toInt() != widget.uiState.playheadFrame.value) return false;
+    if (window.layerAlone != (widget.uiState.dropper.value?.sampleLayer != null)) {
+      return false;
+    }
+    final (x, y) = windowPixelAt(window, _u(local), _v(local));
+    return windowCovers(window, x, y);
+  }
+
+  /// A press picks when it lands on the picture, and puts the tool away when it
+  /// lands anywhere else — the same escape the egui build gave, so a dropper
+  /// armed in error is dismissed by clicking away from the frame.
+  void _pressed(DropperArm arm, Offset local) {
+    if (!widget.fitted.contains(local)) {
+      widget.uiState.disarmDropper();
+      return;
+    }
+    final window = widget.uiState.dropperPatch.value;
+    // Nothing read yet, or nothing that answers for this pixel — a frame the
+    // playhead has since left, or a window the pointer has outrun. Ask again
+    // rather than committing a value off a picture that is not the one on
+    // screen; the next reply lands before the pointer can click twice.
+    if (window == null || !_covered(local)) {
+      _request(local);
+      return;
+    }
+    final (x, y) = windowPixelAt(window, _u(local), _v(local));
+    arm.onPick(sampleFromWindow(window, _region, x, y));
+    widget.uiState.disarmDropper();
+  }
+
+  /// Where the pointer is *inside the drawn picture*, as a fraction from 0 to 1.
+  ///
+  /// The only thing this panel actually knows, and deliberately all it says:
+  /// which pixel that is depends on the raster the engine ends up reading, which
+  /// is a reduced-resolution preview whenever the Viewer is showing one. The
+  /// reply carries that raster, and every pixel is named in it.
+  double _u(Offset local) => widget.fitted.width <= 0
+      ? 0
+      : ((local.dx - widget.fitted.left) / widget.fitted.width).clamp(0.0, 1.0);
+
+  double _v(Offset local) => widget.fitted.height <= 0
+      ? 0
+      : ((local.dy - widget.fitted.top) / widget.fitted.height).clamp(0.0, 1.0);
+
+  /// Ask the engine for a window around the point under `local`.
+  void _request(Offset local) =>
+      widget.uiState.requestDropperSample(_u(local), _v(local));
 }
 
 /// The badge that appears only once a probe has actually found a file gone.

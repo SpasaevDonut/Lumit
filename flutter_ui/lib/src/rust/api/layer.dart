@@ -840,7 +840,7 @@ class LayerReference {
   /// file and only the first skips the resampler.
   ///
   /// Off also re-hangs the layer on its source, exactly as the Retime property
-  /// does (K-211): it keeps its in point and the frame showing there, then
+  /// does (K-212): it keeps its in point and the frame showing there, then
   /// plays at source rate until the source runs out or its own out point
   /// arrives, whichever comes first. It never grows. One undo step covers both.
   void setRetimeEnabled({required bool on_}) => BridgeLib.instance.api
@@ -934,7 +934,7 @@ class LayerReference {
   /// rather than flattening it: "not retimed" and "retimed to exactly 1×" are
   /// different states in the file, and only the first skips the map.
   ///
-  /// Off also re-hangs the layer on its source (K-211). A retimed layer can be
+  /// Off also re-hangs the layer on its source (K-212). A retimed layer can be
   /// any length, so when the map goes away the layer has to be given one
   /// again: it keeps its in point and the frame showing there, then plays at
   /// source rate until the source runs out or its own out point arrives,

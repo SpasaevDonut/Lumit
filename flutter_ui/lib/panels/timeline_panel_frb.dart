@@ -293,7 +293,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// missing file), which leaves that layer's ends free.
   final Map<String, int?> _footageFrames = {};
 
-  /// How far each layer's ends may be dragged, by layer id (K-210) — what the
+  /// How far each layer's ends may be dragged, by layer id (K-211) — what the
   /// bars trim within and draw their corner marks from.
   Map<String, BarBounds> _barBounds = {};
 
@@ -319,7 +319,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
   }
 
-  /// Work out how far every layer's ends may be dragged (K-210).
+  /// Work out how far every layer's ends may be dragged (K-211).
   ///
   /// Two costs, kept apart. A **footage** length means opening the file, so it
   /// is asked once per layer, off the build, and kept for the session — the
@@ -1828,6 +1828,7 @@ class _TimelineParamRowState extends State<_TimelineParamRow> {
       rowPadding: EdgeInsets.zero,
       // The staged value while a drag is in flight, the document's otherwise.
       value: _editor.stagedValue(row.info.id, row.param.id) ?? row.value,
+      siblings: {for (final v in row.info.values) v.id: v.value},
       comp: widget.comp,
       ownerLayerId: widget.layer.internallayerId,
       ownerLayers: ui.model.layers,
@@ -2096,7 +2097,7 @@ BarDragPreview barDragPreview(String layerId, BarGrab grab, int delta) =>
       BarGrab.trimOut => BarDragPreview(layerId, 0, delta, 0),
     };
 
-/// How far a layer's ends may be dragged, in comp frames (K-210).
+/// How far a layer's ends may be dragged, in comp frames (K-211).
 ///
 /// **In plain terms:** a Footage, audio or Precomp layer can only show what its
 /// source actually holds, so its bar stops where the media does — its head
@@ -2197,7 +2198,7 @@ int frameOfTime(BridgeRational time, int fpsNum, int fpsDen) {
   return scaled % den != 0 && scaled < 0 ? quotient - 1 : quotient;
 }
 
-/// The corner marks that say a bar has run out of source (K-210): a small
+/// The corner marks that say a bar has run out of source (K-211): a small
 /// triangle in the top-left corner when the head is as early as its media
 /// allows, and one in the top-right when the tail is as late. Drawn only on the
 /// kinds that have a source to run out of, and never on a retimed layer, whose
@@ -3644,7 +3645,7 @@ class _LayerArea extends StatelessWidget {
   /// lanes, so the peaks move with the gesture rather than on release.
   final ValueNotifier<BarDragPreview?> dragPreview;
 
-  /// How far each layer's ends may be dragged, by layer id (K-210). A layer
+  /// How far each layer's ends may be dragged, by layer id (K-211). A layer
   /// with no entry has free ends — the honest answer while a source length is
   /// still being read.
   final Map<String, BarBounds> bounds;
@@ -4485,7 +4486,7 @@ class _Bar extends StatefulWidget {
   /// Where the live preview is published, for the waveform lane to follow.
   final ValueNotifier<BarDragPreview?> dragPreview;
 
-  /// How far this layer's ends may be dragged (K-210). [BarBounds.free] for
+  /// How far this layer's ends may be dragged (K-211). [BarBounds.free] for
   /// every kind that has no source to run out of.
   final BarBounds bounds;
 
@@ -4558,7 +4559,7 @@ class _BarState extends State<_Bar> {
     final minIn = widget.bounds.minIn == null ? null : widget.bounds.minIn! + shift;
     final maxOut =
         widget.bounds.maxOut == null ? null : widget.bounds.maxOut! + shift;
-    // Where the untrimmed source would reach (K-211): drawn behind the bar, so
+    // Where the untrimmed source would reach (K-212): drawn behind the bar, so
     // what shows past each end is exactly the material trimmed away. Only when
     // there is something to show — a bar filling its source draws no ghost.
     final ghost = (minIn != null && maxOut != null) &&
@@ -4655,7 +4656,7 @@ class _BarState extends State<_Bar> {
                     : (d) => setState(() {
                           _deltaPx += d.delta.dx;
                           // The pointer keeps travelling; the bar does not.
-                          // Held against the source's ends (K-210) and against
+                          // Held against the source's ends (K-211) and against
                           // itself, so a trim can neither run past the media
                           // nor turn the bar inside out — and dragging back
                           // picks the edge up again from where it stuck.
@@ -4709,7 +4710,7 @@ class _BarState extends State<_Bar> {
                         _trimCursor(width, left: false),
                       ],
                       // The corner marks: this bar is as long as its source
-                      // allows in that direction (K-210).
+                      // allows in that direction (K-211).
                       Positioned.fill(
                         child: IgnorePointer(
                           child: CustomPaint(

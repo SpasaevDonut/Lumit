@@ -1082,7 +1082,7 @@ void main() {
       expect(barGrabAt(8, 9), BarGrab.trimOut);
     });
 
-    /// The rule the ends obey (K-210): a source-backed layer stops where its
+    /// The rule the ends obey (K-211): a source-backed layer stops where its
     /// media does, and Retime takes the limits off.
     test('barBounds pins a source-backed layer and frees a retimed one', () {
       expect(
@@ -1148,7 +1148,7 @@ void main() {
     });
 
     /// A Precomp layer cannot be trimmed past the comp it holds — and turning
-    /// Retime on takes the limit off (K-210). Fails without the clamp: the
+    /// Retime on takes the limit off (K-211). Fails without the clamp: the
     /// tail simply followed the pointer.
     testWidgets('a precomp bar stops at the end of its source', (tester) async {
       final p = withComp();
@@ -1211,7 +1211,7 @@ void main() {
           reason: 'no limit, no mark');
     });
 
-    /// Switching Retime on keys the layer where it *is* (K-212): the two
+    /// Switching Retime on keys the layer where it *is* (K-213): the two
     /// diamonds land on its own start and end, not at the start of the
     /// composition. Fails without the comp-clock conversion at the seam — the
     /// keys drew at frames 0 and (duration) however far along the layer sat.
@@ -1281,7 +1281,7 @@ void main() {
     });
 
     /// A trimmed source-backed layer shows where its media would reach — the
-    /// faint outline behind the bar (K-211) — and stops showing it once the bar
+    /// faint outline behind the bar (K-212) — and stops showing it once the bar
     /// fills the source, or once Retime makes "the source's reach" meaningless.
     /// The one-frame bug: the ghost outline appearing part-way through a trim
     /// took the bar's place in its Stack, so the bar's element — and the

@@ -24,7 +24,9 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
+import '../icons/icons.dart';
 import '../state/comp_time.dart';
+import '../state/dropper.dart';
 import '../state/preview_throttle.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
@@ -90,6 +92,14 @@ class EffectParamRowFrb extends StatelessWidget {
   /// The parameter's graph line colour while it is selected.
   final Color? graphColour;
 
+  /// The rest of this effect's parameter values, by id — what a control needs
+  /// when its behaviour depends on a *sibling*. The depth-of-field focal point
+  /// is the case that asks for it: its dropper reads the layer named by the
+  /// effect's own `depth` parameter, and inverts what it reads when
+  /// `depth_invert` is set, so it cannot be built from this parameter alone.
+  /// Empty is a fair default — the row then simply offers no dropper.
+  final Map<String, BridgeEffectValue> siblings;
+
   const EffectParamRowFrb({
     super.key,
     required this.effectId,
@@ -107,6 +117,7 @@ class EffectParamRowFrb extends StatelessWidget {
     this.onLabelTap,
     this.graphColour,
     this.twoColumn = false,
+    this.siblings = const {},
   });
 
   @override
@@ -220,7 +231,7 @@ class EffectParamRowFrb extends StatelessWidget {
           :final hardMax
         ):
         if (value case BridgeEffectValue_Float(:final field0)) {
-          return _scalarField(
+          final field = _scalarField(
             context,
             scalar: field0,
             frame: frame,
@@ -230,6 +241,14 @@ class EffectParamRowFrb extends StatelessWidget {
             hardMax: hardMax,
             keyName: '$id-${param.id}',
             write: (s) => _set(BridgeEffectValue.float(s)),
+          );
+          // A number picked off the picture rather than typed: the focal point
+          // of a depth-of-field, read straight off its own depth pass.
+          final depth = _depthDropper(context, id, hardMin, hardMax);
+          if (depth == null) return field;
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [field, const SizedBox(width: 4), depth],
           );
         }
         return Text('—', style: t.small);
@@ -371,6 +390,49 @@ class EffectParamRowFrb extends StatelessWidget {
     );
   }
 
+  /// The dropper beside a depth-of-field focal point, or null when this row is
+  /// not one (docs/07 §6.1, docs/08 §3.22).
+  ///
+  /// It is offered on the `focus` parameter of an effect that carries a `depth`
+  /// layer, and reads that layer **alone** — a depth pass is nearly always
+  /// hidden, so what the composite shows at that pixel is not the number the
+  /// effect uses. `depth_invert` is applied here, at the pick, so the value
+  /// written is the one the parameter means; the caption and the committed
+  /// number can never disagree.
+  Widget? _depthDropper(
+      BuildContext context, UuidValue id, double? hardMin, double? hardMax) {
+    if (param.id != 'focus') return null;
+    if (siblings['depth'] case BridgeEffectValue_Layer(:final field0)
+        when field0 != null) {
+      final entry = ownerLayers
+          .where((l) => l.layer.internallayerId == field0)
+          .firstOrNull;
+      if (entry == null) return null;
+      final invert = switch (siblings['depth_invert']) {
+        BridgeEffectValue_Bool(:final field0) => field0,
+        _ => false,
+      };
+      return _DropperButton(
+        id: 'fx-$id-${param.id}',
+        tip: 'Read the focal point off ${entry.info.name} in the Viewer',
+        arm: (ui) => ui.armDropper(DropperArm(
+          id: 'fx-$id-${param.id}',
+          reads: DropperReads.depth,
+          label: param.label,
+          sampleLayer: entry.layer,
+          sampleLayerName: entry.info.name,
+          onPick: (sample) {
+            final d = invert ? 1 - sample.depth : sample.depth;
+            final low = hardMin ?? 0, high = hardMax ?? 1;
+            _set(BridgeEffectValue.float(
+                BridgeScalar.static_(d.clamp(low, high))));
+          },
+        )),
+      );
+    }
+    return null;
+  }
+
   /// A colour swatch. The four channels animate independently in the model, so a
   /// swatch edit writes all four statics at once; an animated channel is left
   /// alone for the same reason a scalar is.
@@ -394,43 +456,84 @@ class EffectParamRowFrb extends StatelessWidget {
     final shown = documentColour(
         byte(chan(colour.r)), byte(chan(colour.g)), byte(chan(colour.b)), 255);
 
+    // The value written for a picked colour: the three channels as statics,
+    // clamped to the parameter's declared range, with alpha left alone.
+    BridgeEffectValue valueOf(PickedColour picked) {
+      double clamp(double v) => v < min ? min : (v > max ? max : v);
+      return BridgeEffectValue.colour(BridgeColour(
+        r: BridgeScalar.static_(clamp(picked.r)),
+        g: BridgeScalar.static_(clamp(picked.g)),
+        b: BridgeScalar.static_(clamp(picked.b)),
+        a: colour.a,
+      ));
+    }
+
     return SizedBox(
-      width: effectCellWidth,
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: GestureDetector(
-          key: ValueKey<String>('fx-colour-$id-${param.id}'),
-          behavior: HitTestBehavior.opaque,
-          onTap: () async {
-            final box = context.findRenderObject();
-            if (box is! RenderBox) return;
-            final picked = await showColourPicker(
-              context: context,
-              position: box.localToGlobal(Offset(0, box.size.height + 4)),
-              initial: shown,
-            );
-            if (picked == null) return;
-            double clamp(double v) => v < min ? min : (v > max ? max : v);
-            _set(BridgeEffectValue.colour(BridgeColour(
-              r: BridgeScalar.static_(clamp(picked.r)),
-              g: BridgeScalar.static_(clamp(picked.g)),
-              b: BridgeScalar.static_(clamp(picked.b)),
-              a: colour.a,
-            )));
-          },
-          child: MouseRegion(
-            cursor: SystemMouseCursors.click,
-            child: Container(
-              width: 28,
-              height: 18,
-              decoration: BoxDecoration(
-                color: shown,
-                borderRadius: BorderRadius.circular(t.tokens.controlRadius),
-                border: Border.all(color: t.hairlineStrong),
+      width: effectCellWidth + 22,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GestureDetector(
+            key: ValueKey<String>('fx-colour-$id-${param.id}'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () async {
+              final box = context.findRenderObject();
+              if (box is! RenderBox) return;
+              await showColourPicker(
+                context: context,
+                position: box.localToGlobal(Offset(0, box.size.height + 4)),
+                initial: PickedColour(
+                    chan(colour.r), chan(colour.g), chan(colour.b)),
+                // An effect colour is scene-linear in a float working depth
+                // (fp16 today, docs/06 §3.1): 0–1 is black to white, and the
+                // parameter's own range says how far past that it may go — an
+                // HDR tint really does sit above 1, and a 0–255 dial could not
+                // reach it. When the project depth switch lands (docs/06 §3.1),
+                // an 8 bpc project is what passes `bytes` here.
+                scale: ColourScale.unit,
+                min: min,
+                max: max,
+                // Live all the way through: a drag inside the picker previews
+                // on the picture, and each settled change is one undoable edit
+                // — the same shape as dragging the number beside it.
+                onPreview: (picked) => _setLive(valueOf(picked)),
+                onCommit: (picked) => _set(valueOf(picked)),
+              );
+            },
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: Container(
+                width: 28,
+                height: 18,
+                decoration: BoxDecoration(
+                  color: shown,
+                  borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+                  border: Border.all(color: t.hairlineStrong),
+                ),
               ),
             ),
           ),
-        ),
+          const SizedBox(width: 4),
+          // The dropper: lift this colour off the picture instead of choosing
+          // it (docs/07 §6.1).
+          _DropperButton(
+            id: 'fx-$id-${param.id}',
+            tip: 'Sample ${param.label} from the Viewer',
+            arm: (ui) => ui.armDropper(DropperArm(
+              id: 'fx-$id-${param.id}',
+              reads: DropperReads.colour,
+              label: param.label,
+              onPick: (sample) => _set(BridgeEffectValue.colour(BridgeColour(
+                // Scene-linear, exactly as the parameter stores it, so the
+                // sample passes through without a conversion to disagree over.
+                r: BridgeScalar.static_(sample.r.clamp(min, max)),
+                g: BridgeScalar.static_(sample.g.clamp(min, max)),
+                b: BridgeScalar.static_(sample.b.clamp(min, max)),
+                a: colour.a,
+              ))),
+            )),
+          ),
+        ],
       ),
     );
   }
@@ -622,5 +725,53 @@ class EffectStackEditor {
   void clear() {
     _throttle.cancel();
     _staged = null;
+  }
+}
+
+/// The little pipette beside a parameter: click to arm the dropper, click it
+/// again (or press Escape, or click away from the picture) to put it away.
+///
+/// It lights while *this* parameter's pick is the armed one, so a dropper armed
+/// from one row and forgotten is visible from across the panel.
+class _DropperButton extends StatelessWidget {
+  /// This button's arm id — compared with the armed one to know when to light.
+  final String id;
+  final String tip;
+  final void Function(LumitUiState ui) arm;
+
+  const _DropperButton({required this.id, required this.tip, required this.arm});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    return ValueListenableBuilder<DropperArm?>(
+      valueListenable: ui.dropper,
+      builder: (context, armed, _) {
+        final lit = armed?.id == id;
+        return LumitTooltip(
+          message: tip,
+          child: GestureDetector(
+            key: ValueKey<String>('dropper-$id'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => lit ? ui.disarmDropper() : arm(ui),
+            child: MouseRegion(
+              cursor: SystemMouseCursors.click,
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: Center(
+                  child: lumitIcon(
+                    LumitIcon.eyedropper,
+                    size: iconSize,
+                    color: lit ? t.accent : t.textSecondary,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      },
+    );
   }
 }

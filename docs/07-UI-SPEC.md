@@ -515,7 +515,7 @@ keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   **name** in the outline moves it up or down the stack — drop it on a row and it takes
   that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
 
-  **The ends are handles, and the source is the limit (K-210).** Dragging the last few
+  **The ends are handles, and the source is the limit (K-211).** Dragging the last few
   pixels of either end of a bar trims that end — the pointer shows the horizontal resize
   arrow there, and the grab zone never takes more than a third of a short bar, so even a
   two-frame bar keeps a middle to move by. A layer whose source has a length of its own —
@@ -529,7 +529,7 @@ keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   a missing file must never silently crop a layer. Moving a bar is never limited: the
   start offset travels with it, so what fits its source keeps fitting it.
 
-  **A trimmed layer shows its source's reach (K-211).** A source-backed layer that is not
+  **A trimmed layer shows its source's reach (K-212).** A source-backed layer that is not
   retimed and does not fill its source draws a faint outlined rectangle spanning the whole
   source, behind the bar and in the layer's own label colour — so what shows past each end
   is exactly the material trimmed away. Absent when the bar already fills its source, on
@@ -537,7 +537,7 @@ keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   triangle says *this end can go no further*, the outline says *this end could, and this
   is how far*. Both travel with a bar being moved, because the source's reach moves with it.
 
-  **Switching Retime off re-hangs the layer on its source (K-211).** A retimed layer may be
+  **Switching Retime off re-hangs the layer on its source (K-212).** A retimed layer may be
   any length; when the map goes away it plays at source rate again and needs a length. It
   keeps its in point and the frame showing there, then runs at source rate until either the
   source runs out or its own out point arrives, whichever comes first — it never grows, so
@@ -695,6 +695,93 @@ Shows the **effect stack** of the selected layer (tab per recently viewed layer,
 
   Still to build here: drag-to-reorder by the effect's name, solo, rename, and the expression
   toggle.
+
+### 6.1 The colour picker and the dropper (K-210)
+
+**The picker.** A colour swatch opens the house picker: the **R, G and B numbers across the
+top**, each drag-scrubbable and typeable, then the saturation/value square, the hue strip, a
+was/now pair and a hex field. Every one of those edits every other — type a number and the
+square moves; drag in the square and the numbers follow.
+
+**The numbers are in the scale of the thing being edited**, which is not always 0–255:
+
+- A **display colour** — a theme colour, a solid's swatch — is eight bits a channel, so it
+    reads **0–255** and its hex is the same value said another way.
+- A **scene-linear colour** in a float working depth (fp16 today, [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.1)
+    reads **0–1 for black to white, as decimals**, and a channel may go **above 1** or below 0
+    as far as the parameter's own declared range allows — several built-ins declare 0–4 for
+    exactly this reason ("linear light: HDR tints are legal"), and one declares −1 for a lift.
+    A 0–255 dial cannot reach those values at all, which is what this scale is for.
+    When the project depth switch lands (§3.1, not built), an 8 bpc project is what puts an
+    effect colour on the 0–255 scale.
+- **The hex box is display-referred**, so on the float scale it shows the colour **clipped**
+    into 0–1, and the picker says so in a line under the swatches whenever a channel is
+    outside that. Typing a hex sets exactly those 0–1 values. The alternative — hiding the box
+    on the float scale — loses the one notation people actually exchange colours in.
+
+The picker **applies to the document as it changes**. A drag inside it previews continuously
+on the picture (the same live tick an Effect controls drag sends) and settles into one
+undoable edit when released; a typed number, a hex entry or a preset click is one settled
+edit on its own. So there is no state where the picker shows one colour and the composition
+shows another, and **clicking away from the picker closes it keeping what is applied** —
+nothing is waiting on a button. **Cancel** is the way back: it writes the colour the picker
+opened with and closes. **Apply** closes keeping the current one.
+
+**The dropper** is the pipette beside a swatch — and beside anything else that means "a value
+at a pixel", which is not only colour: the depth-of-field **focal point** carries one, and it
+reads *depth*, not colour. Clicking it arms the tool; clicking it again, pressing Escape, or
+pressing away from the picture puts it away. It lights while armed, so a dropper armed and
+forgotten is visible from across the panel.
+
+While armed, the Viewer grows a **magnifier** that follows the pointer. It is on screen only
+while the pointer is **over the picture** — arming the tool shows nothing until then, and a
+fresh arm never opens where the last pick left off — and it keeps **one fixed offset** from the
+pointer everywhere on the picture, drawn over whatever sits beside the Viewer rather than
+pushed back inside it near an edge (a pick in the bottom-right corner is as ordinary as any
+other, and the magnifier must not creep over the pixels being aimed at to make room for
+itself). The **window's** edge it does answer to, the way a tooltip does: it **flips to the
+other side of the pointer** on whichever axis would run off — above instead of below, left
+instead of right, each axis on its own — at the same distance, so it still never covers what
+is being read. It shows:
+
+- a **9×9 grid** of the pixels under the pointer, one enlarged square each, with **dashed
+  rules between every pair** so pixel boundaries are legible;
+- a **solid border** round the pixels that will actually be taken — the **centre pixel alone**
+  by default, its corners taking the theme's control radius, so it is rounded under the round
+  shape and square under the sharp one;
+- **Shift+scroll** steps the sampled region 1×1 → 3×3 → 5×5 → 7×7 → 9×9 and back, never
+  wrapping and never exceeding the grid; the region is always odd, so there is always one
+  centre pixel. Shift+scroll does not also zoom the picture.
+- a **strip under the grid** saying what would be picked. For a colour pick that is the
+  averaged colour and its numbers; for a pick that is reading something else it is **the layer
+  the numbers are coming from and the value read off it** — a swatch of the composite would be
+  a colour nobody is choosing.
+
+Averages are taken in **scene-linear light**, not over display bytes, because that is the
+space a Colour parameter stores and what "the average of these pixels" physically means.
+
+A pick that reads a **layer** — the depth-of-field focal point reading its own depth pass —
+samples that layer **rendered alone**, not the composite: a depth pass is nearly always
+hidden, so what the composite shows at that pixel is not the number the effect uses. The
+effect's `depth_invert` is applied at the pick, so the caption and the committed value cannot
+disagree.
+
+The pixels themselves come from the engine, a **window** at a time
+(`CompositionReference::sample_pixels` → `WorkerResponse::Sampled`,
+[17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md)): a 129×129 square of the picture, out of which
+the magnifier cuts its own 9×9 as the pointer moves. The read is asked for as a **fraction of
+the picture**, not as a pixel of the composition, and every pixel is then named in the raster
+the reply says it cut from — the picture read is a reduced-resolution preview whenever the
+Viewer is showing one, so the two grids are not the same and mixing them shows one repeated
+edge pixel where the picture should be. Moving the pointer, and changing the
+sample size, therefore cost **nothing** — no bridge call, no render, no message — and a new
+read happens only when the pointer nears the window's edge, the playhead moves, an edit lands,
+or a different layer is being read. A window is 66 KiB, so this does not reopen the read-back
+frame transport K-183 deleted (a 1080p frame is 8 MiB and 8.8 ms in the codec); it is the
+answer to a question about a few pixels, not a picture.
+
+Still to build here: the x/y **position** pick for coordinate-valued parameter pairs (the
+egui build's T14 viewfinder), and the on-Viewer crosshair handle for point parameters.
 
 ---
 

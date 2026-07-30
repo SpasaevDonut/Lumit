@@ -91,7 +91,7 @@ impl LayerReference {
         let lumit_core::model::LayerKind::Camera { zoom } = layer.kind else {
             return Ok(None);
         };
-        // Keys on the composition's clock, like every other channel (K-212).
+        // Keys on the composition's clock, like every other channel (K-213).
         Ok(Some(BridgeScalar::read_at(&zoom, layer.start_offset.0)))
     }
 

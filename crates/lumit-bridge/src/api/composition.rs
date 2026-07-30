@@ -12,7 +12,8 @@ use crate::api::{
     layer::LayerReference,
     state::{LumitBridgeState, PROJECTS},
     worker_thread::{
-        RenderCompRequest, RenderCompRequestWithPreview, RenderScopeRequest, WorkerRequest,
+        RenderCompRequest, RenderCompRequestWithPreview, RenderScopeRequest, SamplePixelsRequest,
+        WorkerRequest,
         WorkerRequest::{RenderComp, RenderCompWithPreview},
     },
     BridgeError,
@@ -978,6 +979,53 @@ impl CompositionReference {
             scale,
             kind,
             colours: packed,
+        }))
+    }
+
+    /// Ask the worker for the pixels under the dropper: a `window × window`
+    /// square of `frame` centred on the point `(u, v)` of the picture, each a
+    /// fraction from 0 to 1 (docs/07 §6.1).
+    ///
+    /// **A fraction, not a pixel, and that is the point.** The picture actually
+    /// read may be a reduced-resolution preview, so its pixel grid is neither
+    /// the composition's nor anything the caller can know in advance. The reply
+    /// says which raster it cut from (`width`, `height`) and where in that
+    /// raster the window's centre landed, and every pixel the caller then names
+    /// is in that same raster. Asking in composition pixels and indexing the
+    /// reply with them is a real bug that has been made unwritable here: with a
+    /// fitted Viewer the two grids differ by the preview scale, and the
+    /// magnifier showed one repeated edge pixel — a flat colour where the
+    /// picture should be.
+    ///
+    /// A window rather than the nine pixels the magnifier shows, because the
+    /// pointer moves and the picture does not: the caller reads its grid out of
+    /// the window it already holds and asks again only when the pointer nears
+    /// the window's edge, the frame changes, or an edit lands.
+    ///
+    /// `layer` reads that layer **alone** rather than the composite — what a
+    /// depth pick does, since a depth pass is usually hidden and so never
+    /// appears in the composite at all. The answer arrives as
+    /// `WorkerResponse::Sampled`, on the stream the frames and traces already
+    /// ride; a frame with nothing to read publishes nothing, and the magnifier
+    /// keeps what it had.
+    #[frb(sync)]
+    pub fn sample_pixels(
+        &self,
+        frame: u64,
+        u: f64,
+        v: f64,
+        window: u32,
+        scale: f32,
+        layer: Option<LayerReference>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(WorkerRequest::SamplePixels(SamplePixelsRequest {
+            comp: self.clone(),
+            frame,
+            scale,
+            u,
+            v,
+            window,
+            layer,
         }))
     }
 

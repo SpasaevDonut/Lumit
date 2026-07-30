@@ -1000,7 +1000,7 @@ pub fn edit_layer_span(
     }
 }
 
-/// The span a layer takes when its Retime is switched off (K-211).
+/// The span a layer takes when its Retime is switched off (K-212).
 ///
 /// **In plain terms:** while a layer is retimed it can be any length, because
 /// it chooses which source moment each of its own frames shows. Switch that off

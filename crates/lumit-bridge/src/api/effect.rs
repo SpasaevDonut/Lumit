@@ -375,7 +375,7 @@ pub struct BridgeKeyframe {
 impl BridgeKeyframe {
     /// One key, its time carried into **comp** time by `offset` — the layer's
     /// `start_offset`, where its own zero sits on the composition's clock
-    /// (K-212). The engine keys every property in layer-local seconds so a
+    /// (K-213). The engine keys every property in layer-local seconds so a
     /// layer's animation travels with it; the interface draws and edits in comp
     /// frames. This is the one place the two are reconciled.
     #[frb(ignore)]
@@ -426,7 +426,7 @@ pub enum BridgeScalar {
 
 impl BridgeScalar {
     /// This channel with its keys on the composition's clock — see
-    /// [`BridgeKeyframe::read_at`] for why the seam converts (K-212). Pass the
+    /// [`BridgeKeyframe::read_at`] for why the seam converts (K-213). Pass the
     /// layer's `start_offset`; the offset is never guessed, so a caller that
     /// has no layer cannot forget one.
     #[frb(ignore)]
@@ -535,7 +535,7 @@ pub enum BridgeEffectValue {
 
 impl BridgeEffectValue {
     /// `offset` is the owning layer's `start_offset`, carrying every key onto
-    /// the composition's clock (K-212).
+    /// the composition's clock (K-213).
     #[frb(ignore)]
     fn read_at(value: &EffectValue, offset: Rational) -> BridgeEffectValue {
         match value {
@@ -643,7 +643,7 @@ pub struct BridgeEffectInstance {
     effect: EffectInstance,
     /// Where the owning layer's own zero sits on the composition's clock, so a
     /// handle read out of a layer still knows how to speak comp time about its
-    /// keyframes (K-212). Carried rather than looked up: the handle is a
+    /// keyframes (K-213). Carried rather than looked up: the handle is a
     /// snapshot, and the layer it came from is the only place this is known.
     offset: Rational,
 }
@@ -695,7 +695,7 @@ pub(crate) fn read_instance_info(
 
 impl BridgeEffectInstance {
     /// Rust-side only (`frb(ignore)`): a handle is made *from a layer*, which is
-    /// where the keyframe offset comes from (K-212). It was exposed to Dart and
+    /// where the keyframe offset comes from (K-213). It was exposed to Dart and
     /// never called from there — an instance can only be got from the layer
     /// that owns it — and a Dart constructor with no layer would have no
     /// honest offset to take.

@@ -159,7 +159,7 @@ other side of this boundary.
     `CompositionReference::time_of_frame`/`frame_at_time` exist so no frontend
     has to do that arithmetic itself: at 29.97 fps a frame is 1001/30000 s, and a
     keyframe placed in floating point does not land on the frame it was set on.
-- **Keyframe times cross on the composition's clock (K-212).** The engine keys every
+- **Keyframe times cross on the composition's clock (K-213).** The engine keys every
     animatable property in the layer's **own** time — comp time less its `start_offset` —
     which is what makes a layer's animation travel with it when it is moved. The frontend
     thinks in comp frames: that is what the ruler counts, what a lane draws against, and
@@ -201,8 +201,26 @@ path, documented beside the types in
     surface plus its size (an NT handle there, an `IOSurfaceID` here). Only
     Linux needs more (fd, stride, offset, DRM format).
 - **Small stills still cross as pixels**, deliberately: footage thumbnails
-    (`BridgeRenderedFrame`) and the 256×256 scope traces. Both are bounded and
-    rare, which is what makes the per-byte codec tolerable there.
+    (`BridgeRenderedFrame`), the 256×256 scope traces, and the dropper's
+    129×129 windows (`BridgeSampledPixels`, K-210 — 66 KiB). All are bounded and
+    rare, which is what makes the per-byte codec tolerable there. A window is a
+    *reading*, not a picture: it answers "what is around this pixel", and the
+    size cap is enforced engine-side (`worker_thread::cut_patch`, `MAX_WINDOW`)
+    rather than trusted from the caller, so no request can turn this into a
+    frame transport by the back door. It is deliberately **bigger than the nine
+    pixels the magnifier shows**: the frontend reads its grid out of the window
+    it already holds, so following the pointer costs no calls at all and a read
+    happens only when the pointer nears the window's edge. The request names a
+    **fraction of the picture**, not a pixel, and the reply says which raster it
+    cut from: the engine may be working at preview resolution, so neither side
+    can name a pixel in the other's grid.
+- **Readings ride the frame stream and have their own lane.** A scope trace
+    (`WorkerResponse::Scope`) and a dropper patch (`WorkerResponse::Sampled`)
+    come back on the worker's one response stream, so neither needs a second
+    channel. In the worker's drain policy each is its own class: a frame, a
+    trace and a patch are three different questions, and none may supersede
+    another — only its own kind, where the newest wins (a pointer that has moved
+    on makes the previous position worthless).
 
 ## Feature gates
 

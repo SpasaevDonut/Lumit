@@ -74,7 +74,7 @@ impl LayerReference {
     /// file and only the first skips the resampler.
     ///
     /// Off also re-hangs the layer on its source, exactly as the Retime property
-    /// does (K-211): it keeps its in point and the frame showing there, then
+    /// does (K-212): it keeps its in point and the frame showing there, then
     /// plays at source rate until the source runs out or its own out point
     /// arrives, whichever comes first. It never grows. One undo step covers both.
     #[frb(sync)]
@@ -98,7 +98,7 @@ impl LayerReference {
             retime,
         };
         // Off re-hangs the layer on its source, exactly as the Retime property
-        // does (K-211): both routes make the same promise, so they let go of it
+        // does (K-212): both routes make the same promise, so they let go of it
         // the same way.
         self.commit(if on {
             removal
