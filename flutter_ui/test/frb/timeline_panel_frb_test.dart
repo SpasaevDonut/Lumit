@@ -16,6 +16,7 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:uuid/uuid.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
+import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -1208,6 +1209,41 @@ void main() {
           find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
       expect((retimedMarks.painter as BarEndMarksPainter).atOut, isFalse,
           reason: 'no limit, no mark');
+    });
+
+    /// Switching Retime on keys the layer where it *is* (K-212): the two
+    /// diamonds land on its own start and end, not at the start of the
+    /// composition. Fails without the comp-clock conversion at the seam — the
+    /// keys drew at frames 0 and (duration) however far along the layer sat.
+    testWidgets('the Retime keys land on the layer, not the comp start',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      // Moved along the timeline and trimmed a little off its head, so its own
+      // zero is neither the comp's zero nor its in point.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 180),
+          outPoint: p.comp.timeOfFrame(frame: 480),
+          startOffset: p.comp.timeOfFrame(frame: 120),
+        ),
+      );
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final keys = layer.getRetimeProperty()! as BridgeScalar_Keyframed;
+      final frames = [
+        for (final key in keys.field0) p.comp.frameAtTime(time: key.time)
+      ];
+      expect(frames, [180, 480],
+          reason: 'the keys sit on the layer\'s own start and end');
+
+      // And that is where the lane draws them, in the panel's own arithmetic.
+      final fps = p.comp.fps();
+      expect([for (final key in keys.field0) laneKeyFrame(key, fps).round()],
+          [180, 480]);
     });
 
     /// A generated layer has no source to run out of: both ends go wherever

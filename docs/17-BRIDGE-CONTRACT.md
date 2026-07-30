@@ -159,6 +159,17 @@ other side of this boundary.
     `CompositionReference::time_of_frame`/`frame_at_time` exist so no frontend
     has to do that arithmetic itself: at 29.97 fps a frame is 1001/30000 s, and a
     keyframe placed in floating point does not land on the frame it was set on.
+- **Keyframe times cross on the composition's clock (K-212).** The engine keys every
+    animatable property in the layer's **own** time — comp time less its `start_offset` —
+    which is what makes a layer's animation travel with it when it is moved. The frontend
+    thinks in comp frames: that is what the ruler counts, what a lane draws against, and
+    what a key drag commits. So the seam converts, in both directions, by the owning
+    layer's `start_offset`: `BridgeScalar::read_at` carries a key out to comp time,
+    `animation_at` carries it back. Both take the offset as an argument rather than
+    defaulting it, so a new reader cannot forget one. Anything crossing with keyframes in
+    it — the whole transform, a Retime property, an effect parameter, a camera's zoom, a
+    volume curve, a staged `BridgeEffectInstance` — carries the same conversion. Read raw,
+    every key on a layer that had been moved drew at the start of the composition.
 
 ### Versioning
 

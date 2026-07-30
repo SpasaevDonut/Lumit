@@ -930,7 +930,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   because it genuinely *is* every other property — there is no Retime-specific code in any
   of those places. Switching it on installs two keys running source time alongside layer
   time, so the picture does not move; drag the second key later and the clip plays slower,
-  drag it earlier and it plays faster. That is deliberately *all* it does for now: no speed
+  drag it earlier and it plays faster. **The two keys land on the layer's own start and
+  end** — where it currently sits on the timeline, and where its ends currently are if you
+  have trimmed it (K-212). That sounds obvious and was not: keyframes are stored in the
+  layer's *own* clock, which is what makes a layer's animation travel with it when you slide
+  the layer along the timeline, and the Timeline draws in the composition's clock. The two
+  are converted for each other in exactly one place, at the engine boundary; before that,
+  every keyframe on a layer that had been moved was drawn as though the layer still began at
+  the start of the composition, and Retime's own two keys made it impossible to miss. That is deliberately *all* it does for now: no speed
   ramps, no ease presets, no freeze command. `Layer::source_time_at` is the one function
   that answers the question, so what the renderer decodes and what the frame cache files it
   under can never drift apart. The older, much larger machinery below still answers for

@@ -815,7 +815,7 @@ mod tests {
 
         // Identity over ten seconds, then half of it: local 4 → source 2.
         let ten = Rational::new(10, 1).unwrap();
-        let mut retime = Layer::identity_retime(ten);
+        let mut retime = Layer::identity_retime(Rational::ZERO, ten);
         if let crate::anim::Animation::Keyframed(keys) = &mut retime.animation {
             keys[1].value = 5.0;
         }

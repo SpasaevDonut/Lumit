@@ -3302,3 +3302,44 @@ frames and then went dead: "dragging a footage edge only moves one frame". Both 
 carry keys now. It only ever bit the source-backed kinds, because they are the only ones
 with a ghost to appear, and only when the pointer moved in more than one event — which is
 why the first round of tests, each dragging in a single synthetic step, all passed.
+
+**K-212 · DECIDED · Keyframes live in the layer's time and cross on the composition's
+clock.** From the owner (2026-07-30): switching Retime on put its two keys "where the start
+and end points would be if the layer's position was still at the start of the comp". They
+were, and so was every other keyframe on any layer that had been moved — the report caught a
+seam fault whose only unmissable face is the two keys Retime creates for you.
+
+**The engine keys properties in layer-local time, and that is right.** Every evaluation
+path — the render plan, the transform sampler, the cache-key hasher — reads a property at
+`comp time − start_offset`, so a layer's animation travels with the layer when it is
+dragged along the timeline. That is the behaviour an editor must have; nothing about it
+changes.
+
+**The frontend thinks in comp frames, and that is also right.** The ruler counts comp
+frames, a lane is drawn against the comp's axis, and a key drag commits where the pointer
+is. Asking the interface to hold two clocks would put the conversion in every row, lane,
+curve and field that touches a key.
+
+**So the bridge converts, and it is the only place that does.** `BridgeScalar::read_at`
+carries each key out by the owning layer's `start_offset`; `animation_at` carries it back.
+Both take the offset as an argument with no default, so a new reader cannot quietly forget
+one — the compiler asked for it at all forty-odd call sites when the signatures changed.
+Everything that crosses carrying keys goes through them: the transform group, the Retime
+property, effect parameters, a camera's zoom, a volume curve, and the staged
+`BridgeEffectInstance` — which now carries its layer's offset, because a handle read out of
+a layer is the only place that fact is known. `BridgeEffectInstance::new` stopped being
+exposed to Dart in the same move: it was never called from there, and a constructor with no
+layer would have no honest offset to take.
+
+**Retime's two keys span the layer's own in and out.** `Layer::identity_retime` took a
+duration and keyed zero and that duration; it now takes the layer's local in and out points.
+Two faults in one: on screen the keys sat at the start of the composition, and in the model
+a trimmed layer's map stopped short of its tail — past the last key a property holds, so
+everything beyond `duration` played one frame over and over. Spanning the real range fixes
+both, and keeps the promise that switching Retime on changes nothing visible.
+
+**Not done: the pre-K-197 speed map.** The Source card's segment store has the same
+"identity across `0..duration`" shape and the same tail problem on a trimmed layer. It is
+not keyframed, so nothing draws it in the wrong place, and it is the arm the ponytail
+comment in `Layer::source_time_at` marks for deletion; it is left alone rather than being
+half-migrated. Recorded here so the next person meets it deliberately.

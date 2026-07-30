@@ -1048,10 +1048,19 @@ pub struct Layer {
 }
 
 impl Layer {
-    /// The identity Retime for a layer `duration` seconds long: two linear keys
-    /// running source time alongside local time, so the layer plays at source
-    /// rate. What Ctrl+Alt+T installs — the AE Time Remap starting state.
-    pub fn identity_retime(duration: Rational) -> Property {
+    /// The identity Retime across a layer's own span: two linear keys running
+    /// source time alongside local time, so the layer plays at source rate.
+    /// What Ctrl+Alt+T installs — the AE Time Remap starting state.
+    ///
+    /// `from` and `to` are the layer's **local** in and out points — its comp
+    /// span less its `start_offset` — not zero and its duration (K-212). A
+    /// trimmed layer's visible range does not begin at its own zero, and keys
+    /// that stopped short of it froze the tail: past the last key a property
+    /// holds, so the part of the layer beyond `duration` played one frame over
+    /// and over. Spanning the real range is also what puts the two keys on the
+    /// layer's start and end where the Timeline draws them, rather than at the
+    /// start of the composition.
+    pub fn identity_retime(from: Rational, to: Rational) -> Property {
         let key = |time: Rational, value: f64| crate::anim::Keyframe {
             time,
             value,
@@ -1060,8 +1069,8 @@ impl Layer {
         };
         Property {
             animation: crate::anim::Animation::Keyframed(vec![
-                key(Rational::ZERO, 0.0),
-                key(duration, duration.to_f64()),
+                key(from, from.to_f64()),
+                key(to, to.to_f64()),
             ]),
             extra: serde_json::Map::new(),
         }

@@ -10,9 +10,9 @@ import 'package:freezed_annotation/freezed_annotation.dart' hide protected;
 import 'package:uuid/uuid.dart';
 part 'effect.freezed.dart';
 
-// These functions are ignored because they are not marked as `pub`: `animation`, `param`, `presets_in`, `read_instance_info`, `read`, `read`, `read`, `read`, `write`, `write`, `write`
+// These functions are ignored because they are not marked as `pub`: `animation_at`, `param`, `presets_in`, `read_at`, `read_at`, `read_at`, `read_instance_info`, `read`, `write_at`, `write_at`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
-// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`
+// These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`, `new`
 
 /// Every built-in effect, in schema order — the Add-effect menu's source of
 /// truth ([`lumit_core::fx::BUILTINS`]), and the frb form of v0's `list_effects`.
@@ -84,12 +84,6 @@ abstract class BridgeEffectInstance implements RustOpaqueInterface {
 
   String name();
 
-  // HINT: Make it `#[frb(sync)]` to let it become the default constructor of Dart class.
-  static Future<BridgeEffectInstance> newInstance(
-          {required EffectInstance effect}) =>
-      BridgeLib.instance.api
-          .crateApiEffectBridgeEffectInstanceNew(effect: effect);
-
   String serialize();
 
   /// Overwrite a parameter on this staged copy. Nothing is committed — see the
@@ -99,9 +93,6 @@ abstract class BridgeEffectInstance implements RustOpaqueInterface {
   /// control can never quietly change what a parameter *is*.
   void setValue({required String id, required BridgeEffectValue value});
 }
-
-// Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<EffectInstance>>
-abstract class EffectInstance implements RustOpaqueInterface {}
 
 /// A bezier side's After Effects-compatible handle: `speed` in value-units per
 /// second, `influence` as a fraction of the gap to the neighbouring key.
