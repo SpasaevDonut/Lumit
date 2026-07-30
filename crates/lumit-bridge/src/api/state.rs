@@ -77,6 +77,15 @@ pub struct BridgeSharedFrameInfoLinux {
     pub drm_fourcc: u32,
     /// The DRM modifier (`DRM_FORMAT_MOD_LINEAR` = 0 on the linear-tiling path).
     pub modifier: u64,
+    /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+    /// 4 Quarter.
+    ///
+    /// Carried on the frame in place of being asked for. Two Viewer widgets
+    /// showed the tier, and each one asked the engine for it in its `build()` —
+    /// two calls across the boundary for each frame of playback, for a number
+    /// that only changes when a frame is made. The frame that changes it now
+    /// brings it.
+    pub tier: u32,
 }
 
 /// The Windows zero-copy Viewer frame (K-177): an NT handle to a shared D3D12
@@ -94,6 +103,15 @@ pub struct BridgeSharedFrameInfo {
     pub frame: u64,
     pub width: u32,
     pub height: u32,
+    /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+    /// 4 Quarter.
+    ///
+    /// Carried on the frame in place of being asked for. Two Viewer widgets
+    /// showed the tier, and each one asked the engine for it in its `build()` —
+    /// two calls across the boundary for each frame of playback, for a number
+    /// that only changes when a frame is made. The frame that changes it now
+    /// brings it.
+    pub tier: u32,
 }
 
 /// A small still picture as plain pixels — the thumbnail payload

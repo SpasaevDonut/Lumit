@@ -6765,11 +6765,13 @@ impl SseDecode for crate::api::state::BridgeSharedFrameInfo {
         let mut var_frame = <u64>::sse_decode(deserializer);
         let mut var_width = <u32>::sse_decode(deserializer);
         let mut var_height = <u32>::sse_decode(deserializer);
+        let mut var_tier = <u32>::sse_decode(deserializer);
         return crate::api::state::BridgeSharedFrameInfo {
             handle: var_handle,
             frame: var_frame,
             width: var_width,
             height: var_height,
+            tier: var_tier,
         };
     }
 }
@@ -6785,6 +6787,7 @@ impl SseDecode for crate::api::state::BridgeSharedFrameInfoLinux {
         let mut var_offset = <u32>::sse_decode(deserializer);
         let mut var_drmFourcc = <u32>::sse_decode(deserializer);
         let mut var_modifier = <u64>::sse_decode(deserializer);
+        let mut var_tier = <u32>::sse_decode(deserializer);
         return crate::api::state::BridgeSharedFrameInfoLinux {
             fd: var_fd,
             frame: var_frame,
@@ -6794,6 +6797,7 @@ impl SseDecode for crate::api::state::BridgeSharedFrameInfoLinux {
             offset: var_offset,
             drm_fourcc: var_drmFourcc,
             modifier: var_modifier,
+            tier: var_tier,
         };
     }
 }
@@ -9293,6 +9297,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeSharedFrameInfo 
             self.frame.into_into_dart().into_dart(),
             self.width.into_into_dart().into_dart(),
             self.height.into_into_dart().into_dart(),
+            self.tier.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -9320,6 +9325,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::state::BridgeSharedFrameInfoL
             self.offset.into_into_dart().into_dart(),
             self.drm_fourcc.into_into_dart().into_dart(),
             self.modifier.into_into_dart().into_dart(),
+            self.tier.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -10585,6 +10591,7 @@ impl SseEncode for crate::api::state::BridgeSharedFrameInfo {
         <u64>::sse_encode(self.frame, serializer);
         <u32>::sse_encode(self.width, serializer);
         <u32>::sse_encode(self.height, serializer);
+        <u32>::sse_encode(self.tier, serializer);
     }
 }
 
@@ -10599,6 +10606,7 @@ impl SseEncode for crate::api::state::BridgeSharedFrameInfoLinux {
         <u32>::sse_encode(self.offset, serializer);
         <u32>::sse_encode(self.drm_fourcc, serializer);
         <u64>::sse_encode(self.modifier, serializer);
+        <u32>::sse_encode(self.tier, serializer);
     }
 }
 

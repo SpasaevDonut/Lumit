@@ -4889,3 +4889,18 @@ else can be showing it. Only then is it used again. One more rule, which is abou
 what the card allows rather than about safety: a texture that a composite drew
 into cannot have bytes written into it, so only textures that a promotion made
 are kept.
+
+**And one more, which is not about the cache at all.** Showing a frame made the
+interface ask the engine three questions it did not need to ask. Two Viewer
+widgets show which preview tier playback has settled on, and each asked the
+engine for that number every time it redrew — which is every frame. A third
+asked which route frames take from the engine to the screen, and that one is
+decided when Lumit is built: the answer cannot change while it runs. At 24
+frames a second that is about 72 questions a second before playback does
+anything of use, and it grows with the frame rate.
+
+Each crossing between the interface and the engine is cheap, and none of these is
+free. So the frame now brings the tier with it — the only thing that can change
+it is a new frame — and the route is read once and kept. A redrawn Viewer bar
+now asks the engine nothing at all, and there is a test that counts the
+crossings and fails if that stops being true.

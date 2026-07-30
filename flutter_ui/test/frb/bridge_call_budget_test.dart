@@ -22,6 +22,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
+import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
@@ -312,6 +313,67 @@ void main() {
         lessThan(20),
         reason: 'a scrub re-read too much across the bridge:\n'
             '${counter.ranking()}',
+      );
+    });
+
+    /// **The Viewer must ask the engine nothing to show a frame it has.**
+    ///
+    /// A frame arriving moves the playhead and rebuilds the Viewer's bar. That
+    /// bar used to ask two questions on each rebuild: `playback_tier` (twice —
+    /// two widgets show the tier) and `viewer_transport`, which reports what
+    /// this build compiled to and is thus a constant. At 24 fps that was ~72
+    /// calls a second before playback did anything of use, and it grew with the
+    /// rate: a 60 fps composition paid 180.
+    ///
+    /// The tier rides in on the frame now, and the transport is read once.
+    /// Neither question crosses the boundary on a rebuild, thus the budget is
+    /// zero and not "a few".
+    testWidgets('a rebuilt Viewer bar asks the engine nothing', (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      p.uiState.setSelectedComp(comp);
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      counter
+        ..reset()
+        ..counting = true;
+      // What a frame arriving does: the playhead moves, and the tier the frame
+      // was made at is published. Ten of them, which is under half a second of
+      // playback.
+      for (var frame = 1; frame <= 10; frame++) {
+        p.uiState.playheadFrame.value = frame;
+        p.uiState.previewTier.value = frame.isEven ? 2 : 1;
+        await tester.pump();
+      }
+      counter.counting = false;
+
+      // ignore: avoid_print
+      print('VIEWER BAR COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.calls['composition_reference_playback_tier'] ?? 0,
+        0,
+        reason: 'the tier rides in on the frame; nobody asks for it',
+      );
+      expect(
+        counter.calls['viewer_transport'] ?? 0,
+        0,
+        reason: 'a compile-time constant is read once, not per frame',
+      );
+      // What is left is one `render_frame` for each move of the playhead —
+      // the request the move is for. Measured at 10 for 10 frames; the cap is
+      // two for each frame, so honest growth does not trip it.
+      expect(
+        counter.total,
+        lessThanOrEqualTo(20),
+        reason: 'a frame arriving re-read the engine:\n${counter.ranking()}',
       );
     });
   }, skip: !engineAvailable);

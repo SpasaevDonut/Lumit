@@ -1555,6 +1555,7 @@ fn present_ring_frame(
                     frame,
                     width: shared.width,
                     height: shared.height,
+                    tier: crate::realtime::tier(),
                 },
             ));
         }
@@ -1573,6 +1574,7 @@ fn present_ring_frame(
                 offset: shared.offset,
                 drm_fourcc: shared.drm_fourcc,
                 modifier: shared.modifier,
+                tier: crate::realtime::tier(),
             }));
         }
         Err(err) => eprintln!("Shared DMA-BUF present failed, dropping frame: {err}"),
@@ -2287,6 +2289,7 @@ fn publish_zero_copy(
         offset: shared.offset,
         drm_fourcc: shared.drm_fourcc,
         modifier: shared.modifier,
+        tier: crate::realtime::tier(),
     }));
 }
 
@@ -2346,6 +2349,7 @@ fn publish_zero_copy(
             frame,
             width: shared.width,
             height: shared.height,
+            tier: crate::realtime::tier(),
         },
     ));
 }

@@ -6249,13 +6249,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeSharedFrameInfo dco_decode_bridge_shared_frame_info(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 4)
-      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
+    if (arr.length != 5)
+      throw Exception('unexpected arr length: expect 5 but see ${arr.length}');
     return BridgeSharedFrameInfo(
       handle: dco_decode_u_64(arr[0]),
       frame: dco_decode_u_64(arr[1]),
       width: dco_decode_u_32(arr[2]),
       height: dco_decode_u_32(arr[3]),
+      tier: dco_decode_u_32(arr[4]),
     );
   }
 
@@ -6264,8 +6265,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 8)
-      throw Exception('unexpected arr length: expect 8 but see ${arr.length}');
+    if (arr.length != 9)
+      throw Exception('unexpected arr length: expect 9 but see ${arr.length}');
     return BridgeSharedFrameInfoLinux(
       fd: dco_decode_i_32(arr[0]),
       frame: dco_decode_u_64(arr[1]),
@@ -6275,6 +6276,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       offset: dco_decode_u_32(arr[5]),
       drmFourcc: dco_decode_u_32(arr[6]),
       modifier: dco_decode_u_64(arr[7]),
+      tier: dco_decode_u_32(arr[8]),
     );
   }
 
@@ -7893,11 +7895,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_frame = sse_decode_u_64(deserializer);
     var var_width = sse_decode_u_32(deserializer);
     var var_height = sse_decode_u_32(deserializer);
+    var var_tier = sse_decode_u_32(deserializer);
     return BridgeSharedFrameInfo(
         handle: var_handle,
         frame: var_frame,
         width: var_width,
-        height: var_height);
+        height: var_height,
+        tier: var_tier);
   }
 
   @protected
@@ -7912,6 +7916,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_offset = sse_decode_u_32(deserializer);
     var var_drmFourcc = sse_decode_u_32(deserializer);
     var var_modifier = sse_decode_u_64(deserializer);
+    var var_tier = sse_decode_u_32(deserializer);
     return BridgeSharedFrameInfoLinux(
         fd: var_fd,
         frame: var_frame,
@@ -7920,7 +7925,8 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         stride: var_stride,
         offset: var_offset,
         drmFourcc: var_drmFourcc,
-        modifier: var_modifier);
+        modifier: var_modifier,
+        tier: var_tier);
   }
 
   @protected
@@ -9631,6 +9637,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_u_64(self.frame, serializer);
     sse_encode_u_32(self.width, serializer);
     sse_encode_u_32(self.height, serializer);
+    sse_encode_u_32(self.tier, serializer);
   }
 
   @protected
@@ -9645,6 +9652,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_u_32(self.offset, serializer);
     sse_encode_u_32(self.drmFourcc, serializer);
     sse_encode_u_64(self.modifier, serializer);
+    sse_encode_u_32(self.tier, serializer);
   }
 
   @protected

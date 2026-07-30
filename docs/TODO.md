@@ -38,18 +38,14 @@ These sit above everything else: they are what the editor feels like in the hand
     finished with. Promotion from memory was already ahead of the playhead —
     renders run ahead into the ring — thus what was missing was the disk rung.
 
-- **Playback costs 3 bridge calls a frame before it costs anything useful**
-    (measured 2026-07-30 with `bridge_call_budget_test.dart`'s counting handler:
-    4 per playhead advance idle, 7 with layers twirled open — ~96/s and ~168/s at
-    24 fps). Two are `playback_tier`, asked by two Viewer widgets in their `build()`
-    on every rebuild; one is `viewer_transport`, which reports *what this build
-    compiled to* — a constant, asked 24 times a second. Read the transport once at
-    start-up; let the tier ride on the frame the worker already publishes, or cache
-    it Dart-side. That is ~72/s of the ~96 gone. The remainder scales with animated
-    rows on screen (one `sample_scalar` each, plus one `time_of_frame`), which are
-    honest questions asked one at a time — batch them per frame if they ever bite,
-    the way `time_of_frame` was already folded to one. A playback budget test
-    belongs beside the existing interaction ones.
+- **What is left of playback's bridge chatter scales with the rows on screen.**
+    The three constant questions are gone (2026-07-30): the preview tier rides
+    in on the frame the worker publishes, and the transport — which reports what
+    this build compiled to — is read once. A rebuilt Viewer bar now asks the
+    engine nothing, pinned by `bridge_call_budget_test.dart`. What remains is one
+    `sample_scalar` for each animated row on screen, plus one `time_of_frame`:
+    honest questions, asked one at a time. Batch them per frame if they ever
+    bite, the way `time_of_frame` was already folded to one.
 
 - **Multi-frame rendering is built; the worker pool is what is left.** Renders run
     ahead of the clock into a bounded ring sized by measured p95 cost, presents pace

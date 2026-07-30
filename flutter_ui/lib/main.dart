@@ -399,6 +399,15 @@ class LumitUiState extends ChangeNotifier {
   /// only the cache bar, which listens to both.
   final ValueNotifier<int> cacheChanged = ValueNotifier(0);
 
+  /// The preview tier the last frame was made at: 1 Full, 2 Half, 3 Third,
+  /// 4 Quarter (K-030/K-171).
+  ///
+  /// Carried on the frame rather than asked for. The Viewer shows the tier in
+  /// two places, and each of them asked the engine in its `build()` — two calls
+  /// across the boundary for each frame of playback, ~48 a second at 24 fps,
+  /// for a number that only a new frame can change.
+  final ValueNotifier<int> previewTier = ValueNotifier(1);
+
   /// Whether the engine is playing.
   ///
   /// Mirrored, not decided: it goes true when [play] is called and false when
@@ -657,8 +666,10 @@ class LumitUiState extends ChangeNotifier {
     sub = state.onWorkerResponse.listen((msg) {
       switch (msg) {
         case WorkerResponse_RenderedDMABuf frame:
+          previewTier.value = frame.field0.tier;
           _showDmabuf(frame.field0);
         case WorkerResponse_RenderedSharedTexture frame:
+          previewTier.value = frame.field0.tier;
           _showSharedTexture(frame.field0);
         // Scope traces ride the same stream; the Scopes panel subscribes to it
         // directly, so there is nothing for the Viewer to do with one.
@@ -719,6 +730,7 @@ class LumitUiState extends ChangeNotifier {
     _changes?.cancel();
     model.dispose();
     cacheChanged.dispose();
+    previewTier.dispose();
     viewerFrameid.dispose();
     selectedLayer.dispose();
     activePanel.dispose();
