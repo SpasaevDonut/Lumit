@@ -3248,3 +3248,47 @@ peaks. The rest — a precomp's duration, whether Retime is on, where the start 
 is worked out once per *document revision* and cached; `CompModel` now exposes that revision
 so a panel can cache anything derived from the model honestly. Frames come from exact
 integer arithmetic on the comp's rate rather than a `frame_at` call per layer per frame.
+
+**K-211 · DECIDED · Letting go of Retime re-hangs the layer on its source, and a
+trimmed layer shows how far its media reaches.** From the owner (2026-07-30), refining
+K-210. Two halves, both about the same thing: a layer's relationship with the material
+behind it should be visible, and should survive being switched about.
+
+**Switching Retime off re-anchors the layer.** While it is retimed a layer can be any
+length, because it chooses which source moment each of its own frames shows; when the map
+goes away it plays at source rate again and has to be given a length. Holding the stretched
+length (K-210's first answer) was wrong: it left the layer showing material the source does
+not have. The rule now is the frame already on screen. The layer keeps its **in point** and
+shows the **same frame** there — so if that was the source's first frame it simply starts
+from the beginning, and if it was some way in it carries on from there. From that anchor it
+runs at source rate until either the source runs out or its own out point arrives,
+**whichever comes first**. It never grows: a layer trimmed short stays short. One undo step
+covers the removal and the span together.
+
+The anchor is snapped to the **comp's** frame grid rather than kept at full precision. The
+start offset it produces is what every later trim measures from, and an offset sitting
+between two frames puts the layer's own zero between two frames for good; the timeline edits
+in whole frames, so the anchor does too. Both routes to a retime behave identically — the
+Retime property (K-197) and the Source card's speed map — because both make the same promise.
+
+`unretimed_span` is a pure function in `lumit-core::ops`, next to `edit_layer_span`: this is
+span arithmetic, and it is the kind of rule that must be provable rather than observed. The
+bridge supplies the two facts it cannot derive — the source moment showing at the in point,
+read through the map that is about to go, and the source's own length. No readable length
+(missing media, a build without the media feature) re-anchors and leaves the out point
+alone, the same "no length is never a guessed length" rule K-210 set.
+
+**A trimmed layer shows its source's reach.** A Footage, audio or Precomp layer that is not
+retimed and does not fill its source draws a **faint outlined rectangle spanning the whole
+source**, behind the bar, in the layer's own label colour. What shows past each end is
+exactly the material trimmed away, and because it is drawn behind, the layer reads as one
+clip with the middle solid rather than as three objects. It is absent when the bar already
+fills the source, absent on the kinds with no source, and absent under Retime, where "the
+source's reach" is not a fact about the layer at all. It sits with K-210's corner triangles
+in one vocabulary: a triangle says *this end can go no further*, the ghost says *this end
+could go further, and this is how far*.
+
+**Both marks travel with a move.** They are drawn from the source's reach, which moves with
+the layer: sliding a bar along the timeline carries its start offset, so the bounds slide
+with it. Drawn from the document's bounds alone, a bar being moved appeared to leave its
+limit behind — the fix is one shift applied to both marks while a move is in flight.

@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use flutter_rust_bridge::frb;
 use lumit_core::model::{EffectInstance, Layer};
+use lumit_core::time::{CompTime, Duration, Rational, SourceTime};
 
 use uuid::Uuid;
 
@@ -1148,6 +1149,12 @@ impl LayerReference {
     /// to key, exactly as AE's Time Remap does. Off removes the property
     /// rather than flattening it: "not retimed" and "retimed to exactly 1×" are
     /// different states in the file, and only the first skips the map.
+    ///
+    /// Off also re-hangs the layer on its source (K-211). A retimed layer can be
+    /// any length, so when the map goes away the layer has to be given one
+    /// again: it keeps its in point and the frame showing there, then plays at
+    /// source rate until the source runs out or its own out point arrives,
+    /// whichever comes first. It never grows. One undo step covers both.
     #[frb(sync)]
     pub fn toggle_retime_property(&self) -> Result<bool, BridgeError> {
         let layer = self.item()?;
@@ -1160,12 +1167,103 @@ impl LayerReference {
                 .unwrap_or(layer.out_point.0);
             Layer::identity_retime(duration)
         });
-        self.commit(lumit_core::Op::SetRetimeProperty {
+        let removal = lumit_core::Op::SetRetimeProperty {
             comp: self.comp_id,
             layer: self.layer_id,
             retime,
+        };
+        // Switching it off re-hangs the layer on its source (K-211); switching
+        // it on changes nothing but the map.
+        self.commit(if on {
+            removal
+        } else {
+            self.unretime_op(&layer, removal)
         })?;
         Ok(on)
+    }
+
+    /// One op that switches a Retime off: `removal` — whichever of the two
+    /// retime routes is being cleared — with the layer's span re-anchored on
+    /// the frame that was showing, as a single undo step (K-211).
+    ///
+    /// Plain `removal` when the new span cannot be worked out (unreadable
+    /// source time, or arithmetic that would overflow): switching Retime off
+    /// must always work, even when nothing can be said about the source.
+    #[frb(ignore)]
+    pub(crate) fn unretime_op(&self, layer: &Layer, removal: lumit_core::Op) -> lumit_core::Op {
+        let Some((in_point, out_point, start_offset)) = self.reanchored_span(layer) else {
+            return removal;
+        };
+        lumit_core::Op::Batch {
+            ops: vec![
+                removal,
+                lumit_core::Op::SetLayerSpan {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                    in_point,
+                    out_point,
+                    start_offset,
+                },
+            ],
+        }
+    }
+
+    /// Where this layer's span lands once its Retime goes away: anchored on the
+    /// source moment showing at its in point, running at source rate until the
+    /// source or its own out point ends it (`lumit_core::ops::unretimed_span`).
+    ///
+    /// The anchor is snapped to the **comp's** frame grid rather than kept at
+    /// full precision, because the start offset it produces is what every later
+    /// trim measures from: an offset sitting between two frames puts the
+    /// layer's own zero between two frames for good, and the timeline edits in
+    /// whole frames.
+    #[frb(ignore)]
+    fn reanchored_span(&self, layer: &Layer) -> Option<(CompTime, CompTime, CompTime)> {
+        let rate = self.composition().ok()?.frame_rate;
+        // The source moment showing at the in point, read through the map that
+        // is about to be removed.
+        let local = layer.in_point.0.checked_sub(layer.start_offset.0).ok()?;
+        let seconds = layer.source_time_at(local.to_f64());
+        let approximate = CompTime(Rational::from_f64_on_grid(seconds, Rational::FLICK_DEN).ok()?);
+        let anchor = SourceTime(rate.time_of_frame(rate.frame_at(approximate)).ok()?.0);
+        lumit_core::ops::unretimed_span(
+            layer.in_point,
+            layer.out_point,
+            anchor,
+            self.source_length(layer),
+        )
+    }
+
+    /// How long this layer's source runs, when it has one that can be measured:
+    /// a nested comp's duration, or a footage file's probed length. `None` for
+    /// every generated kind, for media that will not read, and in builds
+    /// without the `media` feature — "no length" is never a guessed length.
+    #[frb(ignore)]
+    fn source_length(&self, layer: &Layer) -> Option<Duration> {
+        let proj = self.project().ok()?;
+        let proj = proj.read().ok()?;
+        let doc = proj.store.snapshot();
+        match layer.kind {
+            lumit_core::model::LayerKind::Precomp { comp } => match doc.item(comp) {
+                Some(lumit_core::model::ProjectItem::Composition(inner)) => Some(inner.duration),
+                _ => None,
+            },
+            #[cfg(feature = "media")]
+            lumit_core::model::LayerKind::Footage { item, .. } => {
+                let Some(lumit_core::model::ProjectItem::Footage(footage)) = doc.item(item) else {
+                    return None;
+                };
+                let path = crate::api::footage::FootageReference::resolve_path(&proj, footage)?;
+                let info = lumit_media::probe::probe(&path).ok()?;
+                // The one sanctioned route back from the container's floating
+                // point duration is an explicit grid (docs/impl/rational-time.md
+                // §4) — the same millisecond grid `media_info` reports on.
+                Some(Duration(
+                    Rational::from_f64_on_grid(info.duration_seconds, 1000).ok()?,
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Replace the Retime property's whole animation, as one undoable step —

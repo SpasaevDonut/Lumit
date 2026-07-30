@@ -1238,6 +1238,52 @@ void main() {
           find.byKey(ValueKey<String>('tl-bar-ends-${layer.internallayerId}')));
       expect((marks.painter as BarEndMarksPainter).atIn, isFalse);
       expect((marks.painter as BarEndMarksPainter).atOut, isFalse);
+      expect(
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}')),
+          findsNothing,
+          reason: 'no source, nothing to show past the ends');
+    });
+
+    /// A trimmed source-backed layer shows where its media would reach — the
+    /// faint outline behind the bar (K-211) — and stops showing it once the bar
+    /// fills the source, or once Retime makes "the source's reach" meaningless.
+    testWidgets('a trimmed precomp shows how far its source reaches',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      final sourceFrames = inner.durationFrames().toInt();
+      final ghost =
+          find.byKey(ValueKey<String>('tl-bar-ghost-${layer.internallayerId}'));
+
+      await mount(tester, p);
+      expect(ghost, findsNothing,
+          reason: 'a layer filling its source has nothing left to show');
+
+      // Crop the tail: the outline now reaches past it, to the source's end.
+      layer.setSpan(
+        span: BridgeSpan(
+          inPoint: p.comp.timeOfFrame(frame: 0),
+          outPoint: p.comp.timeOfFrame(frame: sourceFrames - 300),
+          startOffset: p.comp.timeOfFrame(frame: 0),
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      expect(ghost, findsOneWidget);
+      final fill =
+          find.byKey(ValueKey<String>('tl-bar-fill-${layer.internallayerId}'));
+      expect(tester.getRect(ghost).right,
+          greaterThan(tester.getRect(fill).right),
+          reason: 'it reaches past the trimmed end');
+      expect(tester.getRect(ghost).left, closeTo(tester.getRect(fill).left, 0.5),
+          reason: 'and not past the end that is still at the source start');
+
+      // Retime on: the source has no reach worth drawing any more.
+      layer.toggleRetimeProperty();
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      expect(ghost, findsNothing);
     });
 
     /// A layer can start BEFORE the comp (docs/TODO: "re-introduce"): drag a

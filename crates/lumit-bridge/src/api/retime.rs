@@ -72,6 +72,11 @@ impl LayerReference {
     /// edit. Off removes the map entirely rather than setting 100%, because
     /// "not retimed" and "retimed to exactly 1×" are different states in the
     /// file and only the first skips the resampler.
+    ///
+    /// Off also re-hangs the layer on its source, exactly as the Retime property
+    /// does (K-211): it keeps its in point and the frame showing there, then
+    /// plays at source rate until the source runs out or its own out point
+    /// arrives, whichever comes first. It never grows. One undo step covers both.
     #[frb(sync)]
     pub fn set_retime_enabled(&self, on: bool) -> Result<(), BridgeError> {
         let layer = self.item()?;
@@ -87,10 +92,18 @@ impl LayerReference {
                 .unwrap_or(layer.out_point.0);
             Retime::identity(duration, Rational::ZERO)
         });
-        self.commit(lumit_core::Op::SetLayerRetime {
+        let removal = lumit_core::Op::SetLayerRetime {
             comp: self.comp_id,
             layer: self.layer_id,
             retime,
+        };
+        // Off re-hangs the layer on its source, exactly as the Retime property
+        // does (K-211): both routes make the same promise, so they let go of it
+        // the same way.
+        self.commit(if on {
+            removal
+        } else {
+            self.unretime_op(&layer, removal)
         })
     }
 

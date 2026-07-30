@@ -529,6 +529,22 @@ keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   a missing file must never silently crop a layer. Moving a bar is never limited: the
   start offset travels with it, so what fits its source keeps fitting it.
 
+  **A trimmed layer shows its source's reach (K-211).** A source-backed layer that is not
+  retimed and does not fill its source draws a faint outlined rectangle spanning the whole
+  source, behind the bar and in the layer's own label colour — so what shows past each end
+  is exactly the material trimmed away. Absent when the bar already fills its source, on
+  the kinds with no source, and under Retime. One vocabulary with the corner triangles: a
+  triangle says *this end can go no further*, the outline says *this end could, and this
+  is how far*. Both travel with a bar being moved, because the source's reach moves with it.
+
+  **Switching Retime off re-hangs the layer on its source (K-211).** A retimed layer may be
+  any length; when the map goes away it plays at source rate again and needs a length. It
+  keeps its in point and the frame showing there, then runs at source rate until either the
+  source runs out or its own out point arrives, whichever comes first — it never grows, so
+  a layer trimmed short stays short. One undo step covers the removal and the span. Both
+  routes to a retime behave the same way, and media with no readable length re-anchors and
+  leaves the out point alone.
+
   **Both halves move (K-208).** While the drag is in flight the stack shows where the drop
   would land: the lifted layer slides towards its slot and the layers it passes slide the
   other way — in the outline **and** in the lane area at once, from one drag state and one

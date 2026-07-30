@@ -1481,7 +1481,19 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   come off (and the triangles go): a retimed layer chooses which source moment each of its
   own frames shows, so it can be stretched to any length you like. Sliding a bar along the
   timeline is never limited — moving carries the content with it, so a clip that fits its
-  source still fits it wherever it lands. A layer twirled
+  source still fits it wherever it lands.
+  **Trim one back and you can see what you cut off**: a faint outline runs behind the bar
+  as far as the media reaches, so the trimmed-away head or tail shows as an empty extension
+  of the clip — drag the end back out and the bar fills it again. It appears only when there
+  is something to show, and never while Retime is on.
+  **Turning Retime off puts the layer back on its source.** A retimed layer can be any
+  length, so when you switch the retime off Lumit has to give it one again, and it does that
+  from the frame you are already looking at: the layer keeps its start, still shows that
+  same frame there, and plays at normal speed from there until the footage runs out (or
+  until where the layer already ended, if that came first — it never gets longer than it
+  was). So a clip that started on its first frame simply plays from the beginning again,
+  and one parked half-way in carries on from half-way in. It is one undo either way.
+  A layer twirled
   open shows its **keyframes as diamonds on the lanes**: drag a diamond to move that
   keyframe in time, or drag a box on empty lane space to select the diamonds inside it.
   Dragging never scrolls the timeline — the wheel and the scrollbars do: a plain wheel

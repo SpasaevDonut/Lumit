@@ -4550,6 +4550,22 @@ class _BarState extends State<_Bar> {
     final left = widget.axis.xOf(drawIn);
     final width = (widget.axis.xOf(drawOut) - left).clamp(2.0, 1e6);
 
+    // The source's reach travels with a move: sliding a layer along the
+    // timeline carries its start offset, so the media it can show moves with
+    // it. Without this the marks and the ghost stayed behind while the bar
+    // went, and a bar at its limit looked as though it had left the limit.
+    final shift = _grab == BarGrab.move ? _delta : 0;
+    final minIn = widget.bounds.minIn == null ? null : widget.bounds.minIn! + shift;
+    final maxOut =
+        widget.bounds.maxOut == null ? null : widget.bounds.maxOut! + shift;
+    // Where the untrimmed source would reach (K-211): drawn behind the bar, so
+    // what shows past each end is exactly the material trimmed away. Only when
+    // there is something to show — a bar filling its source draws no ghost.
+    final ghost = (minIn != null && maxOut != null) &&
+            (drawIn > minIn || drawOut < maxOut)
+        ? (widget.axis.xOf(minIn), widget.axis.xOf(maxOut))
+        : null;
+
     // The bar fills the row's whole height rather than floating inside an
     // inset, so a layer reads as a solid band; the lane area's own hairline
     // overlay draws the row seam over it (K-190).
@@ -4557,6 +4573,29 @@ class _BarState extends State<_Bar> {
       height: _rowHeight,
       child: Stack(
         children: [
+          if (ghost != null)
+            Positioned(
+              left: ghost.$1,
+              width: (ghost.$2 - ghost.$1).clamp(1.0, 1e6),
+              top: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                key: ValueKey<String>(
+                    'tl-bar-ghost-${widget.entry.layer.internallayerId}'),
+                child: Container(
+                  decoration: BoxDecoration(
+                    // The layer's own colour, faint: this is the same clip,
+                    // shown as far as it goes, not a second object.
+                    color: t.labelColour(info.label).withValues(alpha: 0.10),
+                    border: Border.all(
+                      color: t.labelColour(info.label).withValues(alpha: 0.45),
+                      width: 1,
+                    ),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+            ),
           Positioned(
             left: left,
             width: width,
@@ -4667,10 +4706,8 @@ class _BarState extends State<_Bar> {
                             key: ValueKey<String>(
                                 'tl-bar-ends-${widget.entry.layer.internallayerId}'),
                             painter: BarEndMarksPainter(
-                              atIn: widget.bounds.minIn != null &&
-                                  drawIn <= widget.bounds.minIn!,
-                              atOut: widget.bounds.maxOut != null &&
-                                  drawOut >= widget.bounds.maxOut!,
+                              atIn: minIn != null && drawIn <= minIn,
+                              atOut: maxOut != null && drawOut >= maxOut,
                               // The same ink the clip splits use, so the bar
                               // keeps one vocabulary of marks.
                               colour: t.surface0,

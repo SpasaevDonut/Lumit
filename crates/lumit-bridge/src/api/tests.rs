@@ -3165,3 +3165,98 @@ fn system_memory_bytes_reports_non_zero_on_supported_platforms() {
         );
     }
 }
+
+/// Switching Retime off re-hangs the layer on its source (K-211): it keeps its
+/// in point, shows the same frame there, and runs at source rate until the
+/// source runs out — never longer than it already was.
+#[test]
+fn switching_retime_off_re_hangs_the_layer_on_its_source() {
+    use crate::api::composition::BridgeCompSettings;
+    use crate::api::effect::BridgeRational;
+    use crate::api::layer::BridgeSpan;
+
+    let rational = |num: i64, den: i64| BridgeRational { num, den };
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    // A five-second source at 60 fps: 300 frames of material, and no file to
+    // probe — a nested comp's length is its own.
+    let inner = project
+        .new_composition(
+            "Inner".into(),
+            Some(BridgeCompSettings {
+                name: "Inner".into(),
+                width: 320,
+                height: 240,
+                fps_num: 60,
+                fps_den: 1,
+                duration: rational(5, 1),
+            }),
+        )
+        .expect("comp");
+    let outer = project.new_composition("Outer".into(), None).expect("comp");
+    let layer = outer.add_precomp_layer(&inner).expect("nested");
+
+    // Retimed, a layer is any length it likes: stretched to twenty seconds.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(20, 1),
+            start_offset: rational(0, 1),
+        })
+        .expect("stretched");
+
+    layer.toggle_retime_property().expect("off");
+    let span = layer.get_span().expect("span");
+    assert_eq!(
+        outer.frame_at_time(span.out_point).expect("frame"),
+        300,
+        "showing the source's first frame, it runs the source's whole length"
+    );
+    assert_eq!(
+        outer.frame_at_time(span.start_offset).expect("frame"),
+        0,
+        "and its own zero stays where that frame is"
+    );
+    assert_eq!(outer.frame_at_time(span.in_point).expect("frame"), 0);
+
+    // Anchored two seconds into the source instead: only the three seconds
+    // that are left of the source remain.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(20, 1),
+            start_offset: rational(-2, 1),
+        })
+        .expect("stretched");
+    layer.toggle_retime_property().expect("off");
+    let span = layer.get_span().expect("span");
+    assert_eq!(
+        outer.frame_at_time(span.out_point).expect("frame"),
+        180,
+        "three seconds of source were left to play"
+    );
+    assert_eq!(
+        outer.frame_at_time(span.start_offset).expect("frame"),
+        -120,
+        "the anchor frame still shows at the in point"
+    );
+
+    // And it never grows: a layer shorter than what is left keeps its length.
+    layer.toggle_retime_property().expect("on");
+    layer
+        .set_span(BridgeSpan {
+            in_point: rational(0, 1),
+            out_point: rational(1, 1),
+            start_offset: rational(0, 1),
+        })
+        .expect("trimmed");
+    layer.toggle_retime_property().expect("off");
+    assert_eq!(
+        outer
+            .frame_at_time(layer.get_span().expect("span").out_point)
+            .expect("frame"),
+        60,
+        "one second in, one second out"
+    );
+}
