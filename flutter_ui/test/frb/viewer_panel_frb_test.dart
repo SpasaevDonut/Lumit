@@ -20,12 +20,14 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/src/rust/api/audio.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
+import 'package:lumit_flutter/widgets/dropper_overlay.dart';
 
 import 'frb_test_support.dart';
 
@@ -57,6 +59,60 @@ void main() {
       ));
       await tester.pump();
     }
+
+    /// **The dropper's magnifier belongs to the pointer being over the
+    /// picture.** Two things it used to get wrong: it appeared the instant the
+    /// tool was armed, sitting where the *previous* pick had left the pointer,
+    /// and it stayed on once the pointer had gone.
+    testWidgets('the magnifier appears only while the pointer is on the picture',
+        (tester) async {
+      final p = withLayer();
+      await mount(tester, p);
+
+      DropperArm arm() => DropperArm(
+            id: 'test',
+            reads: DropperReads.colour,
+            label: 'Key colour',
+            onPick: (_) {},
+          );
+
+      p.uiState.armDropper(arm());
+      await tester.pump();
+      expect(find.byType(DropperViewfinder), findsNothing,
+          reason: 'armed, but the pointer has not been near the picture');
+
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+
+      final stage = find.byType(DropperLayer);
+      await gesture.moveTo(tester.getCenter(stage));
+      await tester.pump();
+      expect(find.byType(DropperViewfinder), findsOneWidget,
+          reason: 'the pointer is on the picture');
+
+      // The pasteboard around the picture is not the picture: a 16:9 comp in
+      // this panel leaves a band top and bottom.
+      await gesture.moveTo(tester.getTopLeft(stage) + const Offset(4, 4));
+      await tester.pump();
+      expect(find.byType(DropperViewfinder), findsNothing,
+          reason: 'off the picture, there is nothing to magnify');
+
+      // Back on, then disarmed and armed again: the new arm must not inherit
+      // the last one's pointer position.
+      await gesture.moveTo(tester.getCenter(stage));
+      await tester.pump();
+      expect(find.byType(DropperViewfinder), findsOneWidget);
+
+      p.uiState.disarmDropper();
+      await tester.pump();
+      expect(find.byType(DropperViewfinder), findsNothing);
+
+      p.uiState.armDropper(arm());
+      await tester.pump();
+      expect(find.byType(DropperViewfinder), findsNothing,
+          reason: 'a fresh arm starts with the pointer nowhere');
+    });
 
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();

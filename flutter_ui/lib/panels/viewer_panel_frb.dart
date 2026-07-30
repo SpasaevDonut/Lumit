@@ -459,9 +459,16 @@ class DropperLayer extends StatefulWidget {
 }
 
 class _DropperLayerState extends State<DropperLayer> {
-  /// Where the pointer is, in this layer's own coordinates, or null before it
-  /// has entered the panel.
+  /// Where the pointer is, in this layer's own coordinates, or null when it is
+  /// not over the picture — which is where every arm starts, whatever the
+  /// pointer did last time.
   Offset? _cursor;
+
+  /// The viewfinder, while it is on screen. It lives in the application's
+  /// overlay rather than in this panel's own stack, so it can hang over
+  /// whatever is beside the Viewer instead of being pushed back inside it near
+  /// a corner — the pointer keeps it at one fixed offset everywhere.
+  OverlayEntry? _viewfinderEntry;
 
   /// How many pixels a side are averaged. One — this pixel and no other —
   /// until Shift+scroll says otherwise, and remembered for as long as the tool
@@ -479,13 +486,28 @@ class _DropperLayerState extends State<DropperLayer> {
     // Escape puts the tool away wherever the focus happens to be — a tool armed
     // by accident must never need a click on the picture to get rid of.
     HardwareKeyboard.instance.addHandler(_onKey);
+    widget.uiState.dropper.addListener(_onArmChanged);
   }
 
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    widget.uiState.dropper.removeListener(_onArmChanged);
+    _hideViewfinder();
     _throttle.cancel();
     super.dispose();
+  }
+
+  /// Armed or disarmed: forget where the pointer was.
+  ///
+  /// Without this the *previous* pick's last pointer position survived, so
+  /// arming the tool again put the magnifier on screen straight away, sitting
+  /// wherever the last pick happened — before the pointer had gone anywhere
+  /// near the Viewer. The magnifier belongs to the pointer being over the
+  /// picture, and nothing else.
+  void _onArmChanged() {
+    _hideViewfinder();
+    if (mounted) setState(() => _cursor = null);
   }
 
   @override
@@ -495,7 +517,11 @@ class _DropperLayerState extends State<DropperLayer> {
     // old one is meaningless now.
     if (old.comp.internalid != widget.comp.internalid) {
       widget.uiState.dropperPatch.value = null;
+      _hideViewfinder();
     }
+    // The picture moved under the pointer (a zoom, a pan, the panel resized):
+    // the magnifier is placed against it, so it has to be placed again.
+    if (old.fitted != widget.fitted) _viewfinderEntry?.markNeedsBuild();
   }
 
   bool _onKey(KeyEvent event) {
@@ -519,7 +545,10 @@ class _DropperLayerState extends State<DropperLayer> {
     return Positioned.fill(
       child: MouseRegion(
         cursor: SystemMouseCursors.precise,
-        onExit: (_) => setState(() => _cursor = null),
+        onExit: (_) {
+          setState(() => _cursor = null);
+          _hideViewfinder();
+        },
         child: Listener(
           behavior: HitTestBehavior.opaque,
           onPointerHover: (e) => _moved(e.localPosition),
@@ -537,42 +566,72 @@ class _DropperLayerState extends State<DropperLayer> {
             // holds every pixel a wider region could want.
             setState(() =>
                 _region = nextDropperRegion(_region, scroll < 0 ? 1 : -1));
+            _viewfinderEntry?.markNeedsBuild();
           },
           onPointerDown: (e) => _pressed(arm, e.localPosition),
-          child: _viewfinder(arm),
+          child: const SizedBox.expand(),
         ),
       ),
     );
   }
 
-  /// The magnifier, placed beside the pointer. Nothing while the pointer is off
-  /// the picture: there is nothing under it to magnify.
-  Widget _viewfinder(DropperArm arm) {
+  /// Put the magnifier on screen, or take it off, and keep it beside the
+  /// pointer while it is there.
+  ///
+  /// On screen only while the pointer is over the picture — there is nothing
+  /// under it to magnify anywhere else — and in the application's overlay, so
+  /// it keeps one fixed offset from the pointer everywhere on the picture
+  /// instead of being pushed back inside the panel near an edge.
+  void _syncViewfinder(DropperArm arm) {
     final at = _cursor;
     if (at == null || !widget.fitted.contains(at)) {
-      return const SizedBox.expand();
+      _hideViewfinder();
+      return;
     }
-    final origin = dropperViewfinderOrigin(at, widget.fitted);
-    return Stack(
-      children: [
-        Positioned(
-          left: origin.dx,
-          top: origin.dy,
-          child: ValueListenableBuilder<BridgeSampledPixels?>(
-            valueListenable: widget.uiState.dropperPatch,
-            builder: (context, window, _) => DropperViewfinder(
-              arm: arm,
-              window: window,
-              // In the window's own raster, which the reply describes — the
-              // magnifier cannot be indexed in any other grid.
-              centre: window == null
-                  ? (0, 0)
-                  : windowPixelAt(window, _u(at), _v(at)),
-              region: _region,
-            ),
+    if (_viewfinderEntry != null) {
+      _viewfinderEntry!.markNeedsBuild();
+      return;
+    }
+    final overlay = Overlay.maybeOf(context);
+    if (overlay == null) return;
+    _viewfinderEntry = OverlayEntry(builder: (_) => _viewfinderAt(arm));
+    overlay.insert(_viewfinderEntry!);
+  }
+
+  void _hideViewfinder() {
+    _viewfinderEntry?.remove();
+    _viewfinderEntry = null;
+  }
+
+  /// The magnifier, placed at a fixed offset from the pointer in the overlay's
+  /// own coordinates (which the UI-scale transform sits above, so the pointer's
+  /// global position is carried across rather than assumed to match).
+  Widget _viewfinderAt(DropperArm arm) {
+    final at = _cursor;
+    final box = context.findRenderObject();
+    final overlayBox = Overlay.maybeOf(context)?.context.findRenderObject();
+    if (at == null || box is! RenderBox || overlayBox is! RenderBox) {
+      return const SizedBox.shrink();
+    }
+    final origin =
+        dropperViewfinderOrigin(overlayBox.globalToLocal(box.localToGlobal(at)));
+    return Positioned(
+      left: origin.dx,
+      top: origin.dy,
+      child: IgnorePointer(
+        child: ValueListenableBuilder<BridgeSampledPixels?>(
+          valueListenable: widget.uiState.dropperPatch,
+          builder: (context, window, _) => DropperViewfinder(
+            arm: arm,
+            window: window,
+            // In the window's own raster, which the reply describes — the
+            // magnifier cannot be indexed in any other grid.
+            centre:
+                window == null ? (0, 0) : windowPixelAt(window, _u(at), _v(at)),
+            region: _region,
           ),
         ),
-      ],
+      ),
     );
   }
 
@@ -581,6 +640,8 @@ class _DropperLayerState extends State<DropperLayer> {
   /// of pixels under the pointer.
   void _moved(Offset local) {
     setState(() => _cursor = local);
+    final arm = widget.uiState.dropper.value;
+    if (arm != null) _syncViewfinder(arm);
     if (!widget.fitted.contains(local)) return;
     if (_covered(local)) return;
     _throttle.request(() => _request(local));

@@ -330,15 +330,19 @@ void main() {
       expect(find.text('Reading…'), findsOneWidget);
     });
 
-    test('the viewfinder is kept inside the picture at every edge', () {
-      const bounds = Rect.fromLTWH(0, 0, 400, 300);
-      // Middle of the picture: below and right of the pointer.
-      expect(dropperViewfinderOrigin(const Offset(100, 100), bounds),
-          const Offset(118, 118));
-      // Bottom-right corner: pulled back so the whole of it stays on screen.
-      final corner = dropperViewfinderOrigin(const Offset(399, 299), bounds);
-      expect(corner.dx + dropperViewfinderSize.width, lessThanOrEqualTo(400));
-      expect(corner.dy + dropperViewfinderSize.height, lessThanOrEqualTo(300));
+    /// **The corner regression.** The viewfinder used to be pulled back to stay
+    /// inside the Viewer, so near the bottom-right corner it crept over the
+    /// very pixels being aimed at and stopped following the pointer. It keeps
+    /// one offset everywhere now — it is drawn in the application's overlay, so
+    /// it has nothing to be pushed back inside — and is simply not shown while
+    /// the pointer is off the picture.
+    test('the viewfinder keeps the same offset from the pointer everywhere',
+        () {
+      expect(dropperViewfinderOrigin(const Offset(100, 100)),
+          const Offset(100, 100) + dropperViewfinderOffset);
+      expect(dropperViewfinderOrigin(const Offset(399, 299)),
+          const Offset(399, 299) + dropperViewfinderOffset);
+      expect(dropperViewfinderOrigin(Offset.zero), dropperViewfinderOffset);
     });
   });
 }

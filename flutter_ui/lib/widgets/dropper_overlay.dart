@@ -40,26 +40,21 @@ const Size dropperViewfinderSize = Size(
   _cell * dropperGrid + (_pad + _border) * 2 + _barHeight + _pad,
 );
 
-/// Where the viewfinder goes for a pointer at [cursor], kept inside [bounds].
+/// How far below and right of the pointer the viewfinder sits, like the egui
+/// build, so the hand does not cover what is being read.
+const Offset dropperViewfinderOffset = Offset(18, 18);
+
+/// Where the viewfinder goes for a pointer at [cursor].
 ///
-/// Below and right of the pointer, like the egui build, so the hand does not
-/// cover what is being read — but pulled back on screen at the edges, where
-/// "below and right" would put it off the picture entirely.
-Offset dropperViewfinderOrigin(Offset cursor, Rect bounds) {
-  final wanted = cursor + const Offset(18, 18);
-  final maxX = (bounds.right - dropperViewfinderSize.width).clamp(
-    bounds.left,
-    double.infinity,
-  );
-  final maxY = (bounds.bottom - dropperViewfinderSize.height).clamp(
-    bounds.top,
-    double.infinity,
-  );
-  return Offset(
-    wanted.dx.clamp(bounds.left, maxX),
-    wanted.dy.clamp(bounds.top, maxY),
-  );
-}
+/// **The same offset wherever the pointer is, with nothing to push against.**
+/// It used to be pulled back to stay inside the Viewer, which meant that near
+/// the bottom-right corner — where a pick is as likely as anywhere else — the
+/// viewfinder crept over the very pixels being aimed at and then stopped
+/// following the pointer at all. It is drawn in the application's overlay
+/// instead of inside the panel, so it can hang over whatever is beside the
+/// Viewer and needs no clamp; it is simply not shown while the pointer is off
+/// the picture.
+Offset dropperViewfinderOrigin(Offset cursor) => cursor + dropperViewfinderOffset;
 
 /// The viewfinder itself: the grid, the region border, and the info strip.
 class DropperViewfinder extends StatelessWidget {

@@ -3221,6 +3221,17 @@ radius: rounded under the round shape, square under the sharp one, with no shape
 widget. Shift+scroll no longer also zooms the Viewer — sizing the sample while the picture
 moves out from under the pointer is not two features, it is one broken one.
 
+**The magnifier belongs to the pointer being over the picture, and to nothing else.** It is
+shown only while the pointer is over the drawn image — arming shows nothing until then, and a
+fresh arm forgets where the last pick left the pointer, which it did not: the magnifier
+appeared the instant the tool was armed, sitting where the previous pick had happened. And it
+keeps one fixed offset from the pointer everywhere. It used to be clamped inside the Viewer,
+so approaching the bottom-right corner it crept over the very pixels being aimed at and then
+stopped following the pointer at all — a pick there is as ordinary as a pick anywhere else.
+It is drawn in the application's overlay rather than in the panel's own stack, which is what
+lets it hang over whatever is beside the Viewer and so need no clamp. (Both reported by Mack
+on testing.)
+
 **The strip under the grid says what is about to be taken, in the terms of the thing being
 picked.** A colour pick shows the colour and its numbers. A pick reading something else shows
 **the layer the numbers come from and the value found there** — a swatch of the composite

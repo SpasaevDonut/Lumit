@@ -703,7 +703,13 @@ reads *depth*, not colour. Clicking it arms the tool; clicking it again, pressin
 pressing away from the picture puts it away. It lights while armed, so a dropper armed and
 forgotten is visible from across the panel.
 
-While armed, the Viewer grows a **magnifier** that follows the pointer:
+While armed, the Viewer grows a **magnifier** that follows the pointer. It is on screen only
+while the pointer is **over the picture** — arming the tool shows nothing until then, and a
+fresh arm never opens where the last pick left off — and it keeps **one fixed offset** from the
+pointer everywhere on the picture, drawn over whatever sits beside the Viewer rather than
+pushed back inside it near an edge (a pick in the bottom-right corner is as ordinary as any
+other, and the magnifier must not creep over the pixels being aimed at to make room for
+itself). It shows:
 
 - a **9×9 grid** of the pixels under the pointer, one enlarged square each, with **dashed
   rules between every pair** so pixel boundaries are legible;
