@@ -18,6 +18,49 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
+- **Playback from memory is not realtime, and it should be** (measured 2026-07-30).
+    A frame already on the graphics card is shown by a texture-handle clone and one
+    GPU copy. A frame held in *memory* pays all of this instead, in the frame's own
+    budget, at the moment it is due: an 8 MB clone out of the cache
+    (`framecache::held`), a fresh `create_texture` (`upload_display8` allocates per
+    call), the upload itself, and then the present's `device.poll(Maintain::Wait)`
+    — a full pipeline stall, on every platform (`shared.rs:242`,
+    `shared_linux.rs:235`, `shared_metal.rs:205`). VRAM playback has the slack to
+    hide the stall; memory playback does not. Four fixes, in this order:
+    1. **Promote ahead of the playhead** — the structural one, and what
+        [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §5.1 already asks for
+        ("promotes disk→RAM→VRAM *ahead of the playhead*"). K-210 promotes on
+        demand; the playback loop already prefetches source decodes into the coming
+        frames (`worker_thread.rs`, `prefetch_wants`) and should promote cached ones
+        the same way. Then a due frame is a VRAM hit and the three costs below never
+        arise on the critical path. Worker-side only.
+    2. **Hold cache bytes in an `Arc`** so a promotion is a refcount bump rather
+        than a per-frame memcpy. It clones today because the cache lock must not be
+        held across GPU work ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)),
+        which an `Arc` satisfies without the copy.
+    3. **Pool the upload textures** rather than creating one per promoted frame.
+    4. **Replace the present's `poll(Maintain::Wait)` with a keyed mutex** (the
+        entry under *Threading* below). The largest win and the most delicate: it is
+        surgery on the shared-texture chain, where the failure mode is tearing
+        rather than an error. Its own branch, and not until 1–3 are measured — they
+        may make it moot. **It does not mean reviving the read-back transport**
+        (deleted in K-183) and must not: the Viewer receives a GPU handle and
+        nothing else. The ladder's own read-back (K-210) copies finished frames into
+        the engine's cache and never crosses the bridge — same word, different
+        thing.
+- **Playback costs 3 bridge calls a frame before it costs anything useful**
+    (measured 2026-07-30 with `bridge_call_budget_test.dart`'s counting handler:
+    4 per playhead advance idle, 7 with layers twirled open — ~96/s and ~168/s at
+    24 fps). Two are `playback_tier`, asked by two Viewer widgets in their `build()`
+    on every rebuild; one is `viewer_transport`, which reports *what this build
+    compiled to* — a constant, asked 24 times a second. Read the transport once at
+    start-up; let the tier ride on the frame the worker already publishes, or cache
+    it Dart-side. That is ~72/s of the ~96 gone. The remainder scales with animated
+    rows on screen (one `sample_scalar` each, plus one `time_of_frame`), which are
+    honest questions asked one at a time — batch them per frame if they ever bite,
+    the way `time_of_frame` was already folded to one. A playback budget test
+    belongs beside the existing interaction ones.
+
 - **Multi-frame rendering is built; the worker pool is what is left.** Renders run
     ahead of the clock into a bounded ring sized by measured p95 cost, presents pace
     against the clock, decode runs on its own thread, and the sound waits out a
@@ -113,7 +156,9 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 - **The shared-texture chain has no keyed mutex** (a torn frame is possible in
     principle — see the fence entry under Threading), and the D3D12 → D3D11
     legacy-handle hop the Windows path rides is knowledge docs/06 does not yet
-    describe.
+    describe. It is also what forces the present's full pipeline stall, which is
+    what makes playback from memory miss realtime — see the first entry under
+    *Now*, which is where the ordering argument for doing this **last** lives.
 - **The Scopes' trace still crosses the bridge as pixels**, serialised a byte at
     a time like any other `Vec<u8>`, and is decoded into an image Dart-side. Small
     next to a full frame, but it is on the same per-frame path and could take the
