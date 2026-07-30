@@ -526,6 +526,10 @@ class _EffectSection extends StatelessWidget {
                 onWrite: onWrite,
                 onLive: onLive,
                 twoColumn: true,
+                // The effect's other values, for a control whose behaviour
+                // depends on a sibling (the depth-of-field dropper reads the
+                // effect's own `depth` layer).
+                siblings: values,
               ),
           ],
     );

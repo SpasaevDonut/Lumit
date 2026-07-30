@@ -159,6 +159,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeRetime dco_decode_box_autoadd_bridge_retime(dynamic raw);
 
   @protected
+  BridgeSampledPixels dco_decode_box_autoadd_bridge_sampled_pixels(dynamic raw);
+
+  @protected
   BridgeScalar dco_decode_box_autoadd_bridge_scalar(dynamic raw);
 
   @protected
@@ -349,6 +352,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRevealKind dco_decode_bridge_reveal_kind(dynamic raw);
+
+  @protected
+  BridgeSampledPixels dco_decode_bridge_sampled_pixels(dynamic raw);
 
   @protected
   BridgeScalar dco_decode_bridge_scalar(dynamic raw);
@@ -688,6 +694,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeSampledPixels sse_decode_box_autoadd_bridge_sampled_pixels(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeScalar sse_decode_box_autoadd_bridge_scalar(
       SseDeserializer deserializer);
 
@@ -905,6 +915,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeRevealKind sse_decode_bridge_reveal_kind(SseDeserializer deserializer);
+
+  @protected
+  BridgeSampledPixels sse_decode_bridge_sampled_pixels(
+      SseDeserializer deserializer);
 
   @protected
   BridgeScalar sse_decode_bridge_scalar(SseDeserializer deserializer);
@@ -1277,6 +1291,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeRetime self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_sampled_pixels(
+      BridgeSampledPixels self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_scalar(
       BridgeScalar self, SseSerializer serializer);
 
@@ -1519,6 +1537,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_reveal_kind(
       BridgeRevealKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_sampled_pixels(
+      BridgeSampledPixels self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_scalar(BridgeScalar self, SseSerializer serializer);

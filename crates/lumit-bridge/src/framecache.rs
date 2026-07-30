@@ -169,6 +169,42 @@ pub(crate) fn best_frame(comp: uuid::Uuid, frame: u64) -> Option<(u32, u32, Vec<
     })
 }
 
+/// Read from the finest held picture of `comp` at `frame` **without copying
+/// it**: `read` is handed the pixels, the width and the height, and whatever it
+/// returns is the answer.
+///
+/// The dropper's reason for existing. [`best_frame`] clones the whole frame —
+/// eight megabytes at 1080p — which is the right shape for the Scopes, who then
+/// bin every pixel of it, and exactly the wrong one for a reader that wants a
+/// few hundred pixels out of the middle. `read` runs under the cache lock, so
+/// it must stay what the dropper's is: bounded, pure-CPU, and nowhere near the
+/// GPU or the FFI boundary (docs/14 §"no locks across GPU").
+///
+/// Stamps most-recently-used, like `best_frame`, and counts as neither a hit
+/// nor a miss for the same reason: those numbers describe how well the Viewer
+/// is being served.
+pub(crate) fn with_best_frame<R>(
+    comp: uuid::Uuid,
+    frame: u64,
+    read: impl FnOnce(&[u8], u32, u32) -> R,
+) -> Option<R> {
+    let comp_low = comp.as_u128() as u64;
+    with_cache(|c| {
+        let key = c
+            .map
+            .keys()
+            .filter(|k| {
+                (*k >> 64) as u64 == comp_low && ((*k >> 16) & 0xFFFF_FFFF_FFFF) as u64 == frame
+            })
+            .max()
+            .copied()?;
+        let entry = c.map.get_mut(&key)?;
+        c.clock += 1;
+        entry.last_used = c.clock;
+        Some(read(&entry.rgba, entry.width, entry.height))
+    })
+}
+
 /// Drop every held frame, because the document changed.
 ///
 /// **Why all of them, and not just the composition that was edited.** Deciding

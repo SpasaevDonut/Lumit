@@ -289,12 +289,18 @@ class _Swatch extends StatelessWidget {
       onTap: () async {
         final box = context.findRenderObject()! as RenderBox;
         final origin = box.localToGlobal(Offset.zero);
-        final picked = await showColourPicker(
+        // Live: the editor's own preview repaints as the colour changes, so
+        // the theme is judged on the interface rather than in a swatch.
+        await showColourPicker(
           context: context,
           position: origin + Offset(0, box.size.height + 4),
-          initial: colour,
+          initial: PickedColour.of(colour),
+          // A theme colour is a display colour: eight bits a channel, and a
+          // hex is the same value said another way.
+          scale: ColourScale.bytes,
+          onCommit: (picked) => onPicked(picked.clipped),
+          onPreview: (picked) => onPicked(picked.clipped),
         );
-        if (picked != null) onPicked(picked);
       },
       child: Container(
         width: 56,

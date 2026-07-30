@@ -25,6 +25,7 @@ import 'package:lumit_flutter/src/rust/frb_generated.dart';
 import 'package:lumit_flutter/state/comp_model.dart';
 import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/dock.dart';
+import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/state/settings.dart';
@@ -554,6 +555,65 @@ class LumitUiState extends ChangeNotifier {
     viewerScale = scale > 1.0 ? 1.0 : scale;
   }
 
+  /// The armed dropper, or null when the tool is not armed (docs/07 §7).
+  ///
+  /// One at a time, and held at the session level rather than inside the Viewer:
+  /// the tool is armed from a parameter row in another panel entirely, and the
+  /// Viewer must not have to be mounted for that click to be harmless.
+  final ValueNotifier<DropperArm?> dropper = ValueNotifier(null);
+
+  /// The window of pixels the last [requestDropperSample] read back, or null
+  /// before the first reply. Cleared when the tool disarms, so a fresh arm
+  /// never opens on the previous pick's pixels.
+  ///
+  /// A window, not a pixel: the magnifier cuts its own nine-by-nine out of this
+  /// as the pointer moves, and only asks again when the pointer nears its edge
+  /// (see `windowCovers`). That is what keeps a sweep across the picture to a
+  /// handful of reads instead of one per mouse move.
+  final ValueNotifier<BridgeSampledPixels?> dropperPatch = ValueNotifier(null);
+
+  /// Arm the dropper. Replaces whatever was armed — two pending picks would
+  /// leave the next click ambiguous.
+  void armDropper(DropperArm arm) {
+    dropperPatch.value = null;
+    dropper.value = arm;
+  }
+
+  /// Put the dropper away, picked or not.
+  void disarmDropper() {
+    dropper.value = null;
+    dropperPatch.value = null;
+  }
+
+  /// Ask the engine for a window of pixels around the point `(u, v)` of the
+  /// picture, each a fraction from 0 to 1. The answer arrives on the worker
+  /// stream and lands in [dropperPatch]; nothing here waits for it.
+  ///
+  /// A fraction rather than a pixel because the frontend cannot know which
+  /// raster will be read — a reduced-resolution preview has its own grid, and
+  /// the reply is what says which one it used.
+  ///
+  /// Called only when the window in hand cannot answer — the caller checks
+  /// first — so this is a handful of calls per pick, not one per mouse move.
+  void requestDropperSample(double u, double v) {
+    final comp = selectedComp;
+    final arm = dropper.value;
+    if (comp == null || arm == null) return;
+    try {
+      comp.samplePixels(
+        frame: BigInt.from(playheadFrame.value),
+        u: u,
+        v: v,
+        window: dropperWindow,
+        scale: viewerScale,
+        layer: arm.sampleLayer,
+      );
+    } catch (_) {
+      // No worker, or a composition that has gone away. The next pointer move
+      // asks again; there is nothing to recover here.
+    }
+  }
+
   StreamSubscription? sub;
   StreamSubscription? _changes;
 
@@ -599,6 +659,11 @@ class LumitUiState extends ChangeNotifier {
           playing.value = false;
         case WorkerResponse_CacheFilled():
           cacheChanged.value++;
+        // The pixels under the dropper. Held rather than acted on: the
+        // magnifier draws whatever the last read said, and the click that
+        // picks reads it from here.
+        case WorkerResponse_Sampled(:final field0):
+          dropperPatch.value = field0;
       }
     });
   }

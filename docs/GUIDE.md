@@ -838,24 +838,70 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   knowing (unchanged): "Effects and masks" applies the layer's *look* effects (keys, blurs, colour)
   but not its *time-based* ones — an Echo or motion-blur-from-movement on the referenced layer is
   treated as a still frame; the everyday cases are exact.
-- **Colour picker and eyedropper.** Every effect **Colour** parameter — a Flash tint, a Colour
-  balance wheel, the Matte key's Key colour, and so on — now shows a **clickable swatch**. Click
-  it and Lumit's colour wheel and sliders open, so you can pick a colour by eye instead of typing
-  three numbers. Beside the swatch sits a small **eyedropper**: click it and the tool arms, then
-  move the pointer over the Viewer and a **magnifier** follows the cursor. The magnifier shows a
-  zoomed 9×9 grid of the pixels under the pointer, dotted lines between them and the centre pixel
-  ringed; click to lift that colour into the parameter, or press **Escape** (or click off the
-  Viewer) to cancel. **Shift+scroll** while it is up grows the sampled patch — 1×1, 2×2, 3×3, … —
-  so you can average over a grainy area instead of grabbing one noisy pixel; the current size
-  shows under the grid, and the committed colour is the average over that patch. Depth of field's
-  **Focus** carries the same eyedropper, except it lifts *depth* rather than colour: click the
-  part of the picture you want sharp and Focus jumps to it. The pixels are read straight from the
-  frame shown in the Viewer — the very frame the Scopes read — and a picked colour is converted
-  back into Lumit's internal light space so it matches what you sampled. Two honest notes: the
-  wheel edits ordinary 0–1 colours, so a rare "brighter than white" tint is clamped by the picker
-  (the number boxes still reach it); and the Focus pick uses the brightness of the clicked pixel
-  as a stand-in for depth, since the depth layer's own picture is not separately available to the
-  panel.
+- **Colour picker and dropper (K-210).** Every effect **Colour** parameter — a Flash tint, a
+  Colour balance wheel, the Matte key's Key colour, and so on — shows a **clickable swatch**.
+  Click it and Lumit's own picker opens: the **red, green and blue numbers across the top**,
+  each of which you can drag sideways or type into, then the big square (how vivid, how bright),
+  the rainbow strip (which hue), and a hex box. Change any one of them and the rest follow.
+
+  The picker **applies as you go**: whatever it is showing is what the composition shows, so
+  there is no button standing between choosing a colour and seeing it. Dragging inside it
+  previews continuously and settles into one undo step when you let go, exactly like dragging a
+  number in Effect controls. **Clicking anywhere outside the picker closes it and keeps the
+  colour**; **Apply** does the same from a button; **Cancel** puts back the colour you started
+  with and closes.
+
+  Beside the swatch sits the **dropper** — a small pipette. Click it and the tool arms (the
+  pipette lights up so you can see it is armed), then move the pointer over the Viewer and a
+  **magnifier** follows it. It appears only once the pointer is actually over the picture, and
+  it sits the same distance from the pointer wherever you go — including the corners, where it
+  simply hangs over whatever is next to the Viewer rather than shuffling out of your way and
+  covering the pixel you were aiming at. At the edge of the *window* it hops to the other side
+  of the pointer instead — above rather than below, or left rather than right — the way a
+  tooltip does, at the same distance, so it stays out of your way there too. The magnifier shows a **9×9 grid** of the pixels under the pointer,
+  each blown up to a square you can aim at, with **dashed lines between every pair** so you can
+  tell one pixel from the next. A **solid border** rings the pixels that will actually be taken:
+  **just the centre one** to begin with, and **Shift+scroll** grows it to 3×3, 5×5, 7×7 and 9×9
+  so a grainy area averages out instead of grabbing one noisy pixel. Click to lift the value;
+  press **Escape**, click the pipette again, or click away from the picture to put the tool away.
+  Under the grid a strip says what you are about to take — the colour and its numbers, and the
+  size of the patch.
+
+  **The dropper is not only for colour.** It means "the value at this pixel", whatever value the
+  thing you armed it from is after. Depth of field's **Focus** carries one: click the part of the
+  picture you want sharp and Focus jumps to it. There the strip does not show a colour swatch —
+  a colour would be meaningless — but **the name of the depth layer it is reading and the number
+  it found there**, so you can see where the value is coming from. That pick reads the depth
+  layer **rendered on its own**, not the composite: a depth pass is nearly always hidden, so what
+  the composite shows at that pixel is not the number the effect uses. If the effect's **Depth
+  invert** is ticked, the picked number is inverted to match, so what the strip says and what
+  lands in Focus are the same thing.
+
+  **The numbers are in the scale of what you are editing.** A theme colour or a solid's swatch
+  is an ordinary eight-bit display colour, so it reads **0–255** and its hex is exactly the same
+  value written another way. An effect's colour is not: Lumit works in **linear light at float
+  precision**, where **0–1 is black to white** and a channel is free to go *above* 1 — a tint
+  brighter than white, which is a real thing in this kind of maths and something several effects
+  explicitly allow (up to 4, and one goes down to −1 for a lift). So those read as decimals, and
+  you can drag or type a channel past 1 as far as that parameter allows. A hex is an eight-bit
+  notation and cannot say "1.8", so on that scale the box shows the colour **clipped** into
+  0–1, and a line under the swatches tells you when that is happening — rather than the box
+  quietly claiming to be the whole truth.
+
+  **How the pixels get there.** The Viewer's picture normally never leaves the graphics card
+  (that is what makes playback cheap), so the dropper cannot simply look at what is on screen.
+  Instead it asks the engine for a **window** of the picture — a 129-pixel square around where
+  you are pointing, about 66 KB — and then cuts the nine-by-nine it shows out of that window
+  itself. It asks by *where in the picture* you are pointing rather than by pixel number,
+  because when the Viewer is showing the picture smaller than full size the engine is working
+  on a smaller grid than the composition's, and only the engine knows which; its answer says
+  which grid it used. That is why moving the pointer feels free: it is reading pixels it already has, and
+  it only asks the engine again when you get near the edge of that window (or move the playhead,
+  or edit something). Sending a whole 1080p frame across that boundary would cost about eight
+  milliseconds every time, which is why nothing does it. The averaging is done in **light**, not
+  in screen values, which is why one white pixel among nine averages to a ninth of the light
+  rather than to mid-grey — and it means a picked colour matches what you sampled.
+
 - **LUT (K-114).** Drop this on a layer and press its **Select Cube LUT…** button to pick a
   `.cube` file — a colour recipe a colourist baked elsewhere (the loader below reads it) — and
   the whole picture is regraded through it; the **Mix** slider dials the look back toward the

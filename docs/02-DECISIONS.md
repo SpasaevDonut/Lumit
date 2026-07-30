@@ -3199,3 +3199,135 @@ applies to most of the geometry in an interface icon set. Not applied at even wi
 the stroke already covers whole pixels and the nudge is what would blur it. At fractional
 display scalings (150%) no offset makes a stroke whole; that is inherent and is stated in
 the note rather than papered over.
+
+
+**K-210 · DECIDED · The dropper reads a value at a pixel — not only a colour — and the
+picker applies live.** From Mack (2026-07-30), asking for the egui build's two tools back in
+Flutter, in the shape they had there.
+
+**The dropper is a pixel tool, not a colour tool.** It is armed from whatever wants a value
+at a point, and what it lifts is that thing's business: a colour for a Colour parameter, a
+*depth* for the depth-of-field focal point. The armed state therefore carries what is being
+read and a closure to write it, rather than naming a layer, an effect and a parameter index
+to be re-resolved on the far side of the picture — which is what the egui build did, and the
+source of its silent "the target has since moved" no-ops.
+
+**The magnifier is fixed at 9×9 with the region inside it.** Nine pixels a side, dashed rules
+between every pair, and a solid border round the pixels actually taken — the centre pixel
+alone by default, grown by Shift+scroll through 3×3, 5×5, 7×7, 9×9. The ladder is odd
+throughout so there is always one centre pixel, and never exceeds the grid, so the tool can
+never average over pixels it is not showing. The border's corners take the theme's control
+radius: rounded under the round shape, square under the sharp one, with no shape flag in the
+widget. Shift+scroll no longer also zooms the Viewer — sizing the sample while the picture
+moves out from under the pointer is not two features, it is one broken one.
+
+**The magnifier belongs to the pointer being over the picture, and to nothing else.** It is
+shown only while the pointer is over the drawn image — arming shows nothing until then, and a
+fresh arm forgets where the last pick left the pointer, which it did not: the magnifier
+appeared the instant the tool was armed, sitting where the previous pick had happened. And it
+keeps one fixed offset from the pointer everywhere. It used to be clamped inside the Viewer,
+so approaching the bottom-right corner it crept over the very pixels being aimed at and then
+stopped following the pointer at all — a pick there is as ordinary as a pick anywhere else.
+It is drawn in the application's overlay rather than in the panel's own stack, which is what
+lets it hang over whatever is beside the Viewer and so need no clamp. (Both reported by Mack
+on testing.)
+
+The **window's** edge is the one exception, and it is answered by flipping rather than sliding
+(Mack, asked for explicitly): the viewfinder goes to the other side of the pointer on whichever
+axis would run off — above instead of below, left instead of right, each axis independently —
+at the same distance, so it still never creeps over the pixel being read. Only a window with
+room for neither side clamps, because half a magnifier beats none. The bound is the **window's
+content area, not the display's**: an application cannot paint outside its own window, so a
+magnifier past the screen edge is one the window would have clipped anyway — and where the
+window sits on the display is not something Flutter reports without a windowing plugin, which
+would buy no extra room.
+
+**Living in the overlay means the panel's rebuilds are not the magnifier's.** Where it goes is
+worked out when the **pointer moves** — the one moment both trees are settled — and used
+afterwards as plain numbers. Asking render objects where they are from inside the overlay's own
+build, and marking that overlay dirty from inside the panel's build, are both wrong for the
+same reason, and an ordinary scroll over the Viewer did both: the wheel zooms the picture, the
+panel relays out, and the magnifier tried to place itself against a tree mid-rebuild — a red
+window and `'attached': is not true` (Mack, on testing). Nothing that places it touches a render
+object now, and a redraw asked for during a build is deferred to after the frame.
+
+**The strip under the grid says what is about to be taken, in the terms of the thing being
+picked.** A colour pick shows the colour and its numbers. A pick reading something else shows
+**the layer the numbers come from and the value found there** — a swatch of the composite
+would be a colour nobody is choosing.
+
+**A layer pick samples that layer rendered alone.** The egui build read the depth from the
+composite's luma, or from a stashed copy of the layer's decoded pixels; the composite is
+wrong (a depth pass is nearly always hidden, so it contributes nothing to it) and the stash
+was a second path to keep in step. The worker instead renders the composition with that layer
+soloed and visible, on a *patched copy* of the snapshot that never goes near `commit`, and
+holds one such render against `(comp, frame, layer, cache generation)` so dragging the pointer
+renders once rather than once per move. `depth_invert` is applied at the pick, so the caption
+and the committed number cannot disagree.
+
+**The pixels cross as a window, not a frame — and not a pixel.** A `sample_pixels` request
+answers with a **129×129 square** of the picture (66 KiB) on the same stream the frames and
+traces ride, and the frontend cuts the magnifier's own 9×9 out of it. Moving the pointer and
+changing the sample size then cost nothing at all; a read happens only when the pointer nears
+the window's edge, the playhead moves, an edit lands, or a different layer is being read. The
+first cut of this asked per mouse move — a request, a cache lookup and a stream message at
+pointer rate, each one cloning the whole eight-megabyte frame to copy 81 pixels out of the
+middle (Mack, on testing: "a crazy number of calls"). Two fixes, both kept: the window, and
+`framecache::with_best_frame`, which hands a reader the pixels **in place** under the cache
+lock instead of cloning them — bounded, pure-CPU, nowhere near the GPU or the FFI boundary.
+
+**A read is asked for as a fraction of the picture, never as a pixel.** The picture the engine
+reads is a reduced-resolution preview whenever the Viewer is showing one, so its pixel grid is
+neither the composition's nor anything the frontend can know in advance. The first cut of the
+window asked in composition pixels and then indexed the reply with them: with a fitted Viewer
+the two grids differ by the preview scale, every index fell outside the window, each one
+clamped to the nearest edge — and the magnifier showed nine by nine of the *same* pixel, which
+reads as a flat average of the area (Mack, on testing: "just an average of all the values in
+it… and it might not be aligned"). The request now carries `(u, v)` in 0–1, the reply says
+which raster it cut from, and every pixel either side names is in that raster; asking in the
+wrong grid is no longer expressible. The clamp went too: a position outside the window answers
+**nothing** rather than its nearest edge, so the next such mistake shows as blank cells instead
+of a plausible colour. (Beyond the *picture's* border nothing changes — the window carries the
+picture's own edge repeats, so those positions are inside it and answer normally.)
+
+The size is chosen to sit between the two failure modes. Whole-picture-once — the obvious
+answer — is 8 MiB at 1080p and 33 MiB at 4K, an 8.8 ms codec stall (35 ms at 4K) on arming and
+that much held while armed, which is the very transport K-183 deleted, reintroduced through a
+tool. A window is two orders of magnitude smaller, and one still lasts sixty pixels of pointer
+travel in any direction. The cap is enforced engine-side rather than trusted from the caller,
+so no request can turn this into a frame transport by the back door. It is a worker request
+rather than a synchronous call because the pixels only exist where the renderer does, and the
+renderer is owned outright by the worker thread — a sync call would have to render on Dart's
+UI isolate or take a lock across GPU work, both of which docs/14 forbids.
+
+**The picker's numbers are in the scale of the thing being edited, and a channel may exceed
+1.** A display colour — a theme colour, a solid's swatch — is eight bits, so it reads 0–255 and
+its hex is the same value said another way. A scene-linear colour in a float working depth
+(fp16 today, docs/06 §3.1) reads 0–1 for black to white, as decimals, and may go **above 1** or
+below 0 as far as the parameter's own declared range allows: several built-ins declare 0–4
+precisely because HDR tints are legal in linear light, and one declares −1 for a lift. A 0–255
+dial cannot express those at all, so the picker was silently clamping values the engine carries
+happily (Mack, on testing). The square and the strip stay 0–1 — they are a chromaticity
+picture — and an over-range colour is carried through them as a gain on its brightest channel,
+so dragging about on the square does not quietly throw the overshoot away.
+
+**The hex box stays, clipped, and says so.** Hex is an eight-bit display notation and cannot
+say 1.8. Hiding the box on the float scale loses the one notation people actually exchange
+colours in; showing a clipped hex silently would let it read as the truth. So it shows the
+colour clipped into 0–1, typing one sets exactly those values, and a line under the swatches
+appears whenever a channel is outside the range the swatch and the box can show. When the
+project depth switch lands (docs/06 §3.1, not built), an 8 bpc project is what puts an effect
+colour back on the 0–255 scale; nothing else needs to change.
+
+**The picker applies to the document as it changes.** R, G and B sit above the graph, each
+drag-scrubbable and typeable, and every edit — a number, the square, the strip, the hex box —
+previews live and settles into one undoable edit, the same staged-drag shape the effect rows
+use. Because the live value *is* the document's, closing the picker needs no decision:
+clicking away from it keeps what is applied, and so does Apply. **Cancel** is the one button
+that changes anything on the way out — it writes back the colour the picker opened with. A
+plain "Close" was considered and rejected: with live application it would be indistinguishable
+from Apply, so it would be a button that promises a choice it does not have.
+
+**Not done here:** the x/y position pick for coordinate-valued parameter pairs. The magnifier
+carries the mode, but no Flutter row pairs x and y into one control yet, so there is nothing
+to arm it from; recorded in docs/TODO.md rather than half-wired.
