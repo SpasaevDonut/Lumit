@@ -3958,3 +3958,62 @@ platform ships, and none of these are on it. The three tools that already needed
 Rotation, Anchor point and Razor — hide the system pointer over the picture and paint their
 own; these do the same, through one shared pointer widget rather than a fourth private
 painter.
+
+**K-225 · DECIDED · Painting is a list of strokes on a layer, stamped into its pixels before
+its masks gate them.** From the owner (2026-07-31): "please implement the brush stuff". K-224
+gave the three painting tools their pointers and an honest notice; this gives them something
+to do.
+
+**What is stored is the gesture, never the pixels.** A stroke is the path the pointer took in
+the layer's own coordinates, plus its colour, width, hardness, opacity and mode — and it is
+re-stamped at whatever resolution the frame is being rendered at. So painting at a quarter
+preview and exporting at full size gives a full-size stroke rather than a blurry quarter-size
+one, and every setting stays changeable afterwards. Storing a painted bitmap would have been
+less code and a dead end: it fixes the resolution, fixes the colour, and cannot be undone
+stroke by stroke.
+
+**A polyline, not a bezier.** Masks and shape layers are the bezier things; a stroke is a
+record of a gesture nobody edits vertex by vertex. It is thinned on the way out — samples
+closer than two screen pixels are dropped, first and last always kept — because a slow drag
+raises hundreds of events a second and a thousand-point path costs the renderer for nothing
+anyone can see.
+
+**Three modes, one shape of thing.** Paint lays the colour down, Erase takes alpha away, and
+Clone copies from elsewhere on the *same* layer by a fixed offset. Clone reads a copy of the
+raster taken **before any stroke in the pass is stamped**, so it never picks up paint laid
+down beside it — the alternative smears its own output across the picture. The clone stamp
+refuses to stamp until `Alt`-click has set its source, and says so, rather than stamping
+nothing.
+
+**Where it lands in the picture.** Strokes are stamped into the layer's own raster, before
+its masks gate it and before its effects run — so "mask off the part I painted" and "blur what
+I painted" both mean the obvious thing. Two consequences: a flat solid is no longer rasterised
+as an 8×8 tile once it has paint on it (a brush needs pixels to mark), and paint on a collapsed
+Precomp layer forces the nested intermediate, exactly as a mask does.
+
+**One drag is one stroke is one undo step.** `SetLayerPaint` replaces the whole list and is
+exactly invertible, the same shape as `SetLayerMasks`: an add, a delete, a rename and a
+recolour are one kind of edit. `Escape` abandons a stroke in flight; `Backspace` takes the last
+one back.
+
+**The brush gets its own three settings, and they are live.** Size, hardness and opacity sit
+on the toolbar beside the fill swatch whenever a painting tool is armed. They are *not* the
+shape tools' stroke pair — a brush is a different thing that happens to have a width, and
+K-223's stroke controls stay disabled because nothing still strokes a path. The brush colour
+**is** the fill: a fill is what a tool lays down.
+
+**Strokes list in the Timeline** under a Paint heading between Masks and Effects — the order
+the picture is built in — with each row named for the tool that made it, carrying its opacity
+and a menu that deletes it. The heading appears only once the layer has a stroke, exactly as
+Masks and Effects do.
+
+**CPU, and deliberately so for now.** The stamping is a scanline loop beside the mask
+rasteriser, which is where the layer's pixels already are. A GPU path (a stroke as a
+tessellated ribbon, or a compute stamp) is the right long-term answer for a stroke being
+painted live at 4K, and it changes nothing about what is stored — which is the point of
+deciding the storage first. Paint on a Precomp layer's *nested* pixels is not built for the
+same reason: those pixels never come back to the CPU.
+
+**Not built, and named so nobody assumes otherwise:** pressure and tilt, brush shapes other
+than round, spacing and scatter, write-on (a stroke's own start and end times), painting in
+Layer view rather than on the composite, and per-stroke blending modes.

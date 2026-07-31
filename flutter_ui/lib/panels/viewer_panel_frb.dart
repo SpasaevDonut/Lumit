@@ -60,7 +60,7 @@ import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 import 'viewer_rotate.dart';
 import 'viewer_shape_layer.dart';
-import 'viewer_tool_cursor.dart';
+import 'viewer_paint.dart';
 import 'viewer_type.dart';
 import 'viewer_zoom.dart';
 
@@ -683,16 +683,18 @@ class _Stage extends StatelessWidget {
                 accent: t.accent,
                 onChanged: onChanged,
               ),
-              // The painting tools: their own pointers, and a notice saying
-              // why nothing is painted (K-224).
-              ViewerPaintPointerLayer(
+              // The painting tools: a drag paints a stroke on the selected
+              // layer (K-225), under the brush ring K-224 gave them.
+              ViewerPaintLayer(
                 active: uiState.tools.tool.group == ToolGroup.paint,
                 tool: uiState.tools.tool,
                 state: Provider.of<LumitState>(context, listen: false),
                 uiState: uiState,
+                boxes: _boxes(),
                 viewScale: compSize.width == 0
                     ? 1.0
                     : fitted.width / compSize.width,
+                onChanged: onChanged,
               ),
               // The Anchor point tool: its own pointer, and a drag that slides
               // the pivot while the picture stays still (K-218).

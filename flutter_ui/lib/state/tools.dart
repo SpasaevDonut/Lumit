@@ -85,9 +85,12 @@ enum ToolMode {
       ready: true),
   typeVertical(ToolGroup.type, 'Vertical type', LumitIcon.textVertical),
 
-  brush(ToolGroup.paint, 'Brush', LumitIcon.brush),
-  cloneStamp(ToolGroup.paint, 'Clone stamp', LumitIcon.cloneStamp),
-  eraser(ToolGroup.paint, 'Eraser', LumitIcon.eraser),
+  // Painting on a layer (K-225): the brush lays the fill colour down, the
+  // eraser rubs through to transparent, and the clone stamp copies from an
+  // Alt-clicked source elsewhere on the same layer.
+  brush(ToolGroup.paint, 'Brush', LumitIcon.brush, ready: true),
+  cloneStamp(ToolGroup.paint, 'Clone stamp', LumitIcon.cloneStamp, ready: true),
+  eraser(ToolGroup.paint, 'Eraser', LumitIcon.eraser, ready: true),
 
   rotoBrush(ToolGroup.roto, 'Roto brush', LumitIcon.rotoBrush),
   refineEdge(ToolGroup.roto, 'Refine edge', LumitIcon.refineEdge),
@@ -235,6 +238,39 @@ class ToolsState extends ChangeNotifier {
     final next = value.clamp(0.0, 1000.0);
     if (_strokeWidth == next) return;
     _strokeWidth = next;
+    notifyListeners();
+  }
+
+  /// The **brush**: how wide a paint stroke is in layer pixels, how hard its
+  /// edge is and how opaque the mark it leaves (K-225). Its own settings rather
+  /// than the shape tools' stroke, because a brush is a different thing that
+  /// happens to have a width — and because these three are live while the
+  /// stroke pair is not.
+  double _brushSize = 20;
+  double get brushSize => _brushSize;
+  set brushSize(double value) {
+    final next = value.clamp(1.0, 2000.0);
+    if (_brushSize == next) return;
+    _brushSize = next;
+    notifyListeners();
+  }
+
+  /// 0 is a brush that fades all the way from its centre, 100 a hard edge.
+  double _brushHardness = 80;
+  double get brushHardness => _brushHardness;
+  set brushHardness(double value) {
+    final next = value.clamp(0.0, 100.0);
+    if (_brushHardness == next) return;
+    _brushHardness = next;
+    notifyListeners();
+  }
+
+  double _brushOpacity = 100;
+  double get brushOpacity => _brushOpacity;
+  set brushOpacity(double value) {
+    final next = value.clamp(0.0, 100.0);
+    if (_brushOpacity == next) return;
+    _brushOpacity = next;
     notifyListeners();
   }
 

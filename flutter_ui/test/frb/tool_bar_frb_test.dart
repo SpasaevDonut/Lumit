@@ -126,6 +126,16 @@ void main() {
       expect(find.text('Fill'), findsOneWidget);
       expect(find.text('Stroke'), findsOneWidget);
 
+      // A painting tool shows the brush's own three settings, all live
+      // (K-225) — no disabled stroke pair, because painting is built.
+      p.uiState.tools.select(ToolMode.brush);
+      await tester.pump();
+      expect(find.text('Fill'), findsOneWidget);
+      expect(find.text('Size'), findsOneWidget);
+      expect(find.text('Hardness'), findsOneWidget);
+      expect(find.text('Opacity'), findsOneWidget);
+      expect(find.text('Stroke'), findsNothing);
+
       p.uiState.tools.select(ToolMode.hand);
       await tester.pump();
       expect(find.text('Fill'), findsNothing);

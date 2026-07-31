@@ -87,6 +87,16 @@ pub enum Op {
         layer: Uuid,
         masks: Vec<crate::mask::Mask>,
     },
+    /// Replace a layer's whole paint stroke list (docs/03 §7.1, K-225).
+    ///
+    /// The whole list, exactly invertible, exactly as `SetLayerMasks` is: a
+    /// stroke added, deleted, recoloured or renamed is one shape of edit and one
+    /// undo step. A stroke is a gesture and gestures arrive whole.
+    SetLayerPaint {
+        comp: Uuid,
+        layer: Uuid,
+        strokes: Vec<crate::paint::PaintStroke>,
+    },
     /// Replace a layer's whole effect stack (docs/03 §8; coarse + exactly
     /// invertible like SetLayerMasks — add/remove/reorder/param edits all
     /// commit the new list).
@@ -423,6 +433,24 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 comp: *comp,
                 layer: *layer,
                 masks: previous,
+            })
+        }
+        Op::SetLayerPaint {
+            comp,
+            layer,
+            strokes,
+        } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let previous = std::mem::replace(&mut l.paint, strokes.clone());
+            Ok(Op::SetLayerPaint {
+                comp: *comp,
+                layer: *layer,
+                strokes: previous,
             })
         }
         Op::SetLayerEffects {

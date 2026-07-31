@@ -91,6 +91,13 @@ final class FoldMaskRow extends LayerFoldRow {
   const FoldMaskRow(this.mask, {required int depth}) : super(depth);
 }
 
+/// One paint stroke on the layer (K-225): its name, so a stroke can be found,
+/// renamed and deleted after it was painted.
+final class FoldStrokeRow extends LayerFoldRow {
+  final BridgeStroke stroke;
+  const FoldStrokeRow(this.stroke, {required int depth}) : super(depth);
+}
+
 /// The waveform lane (K-172): the outline names it, the lane side draws the
 /// layer's source peaks through its live in/out/offset.
 final class FoldWaveformRow extends LayerFoldRow {
@@ -246,6 +253,7 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldRetimeRow() => retimePath(layerId),
       FoldWaveformRow() => waveformPath(layerId),
       FoldMaskRow(:final mask) => '${masksPath(layerId)}/${mask.id}',
+      FoldStrokeRow(:final stroke) => '${paintPath(layerId)}/${stroke.id}',
     };
 
 /// Whether [path] sits under [ancestor] — a property under its group, a
@@ -268,6 +276,9 @@ String effectPath(String layerId, String effectId) =>
 
 /// The path of a layer's Masks group.
 String masksPath(String layerId) => '$layerId/masks';
+
+/// The path of a layer's Paint group.
+String paintPath(String layerId) => '$layerId/paint';
 
 /// The path of a layer's Audio group.
 String audioPath(String layerId) => '$layerId/audio';
@@ -325,6 +336,24 @@ List<LayerFoldRow> layerFoldRows({
     if (masksOpen) {
       for (final mask in info.masks) {
         rows.add(FoldMaskRow(mask, depth: 2));
+      }
+    }
+  }
+
+  // Paint, between Masks and Effects, because that is where it happens: strokes
+  // are stamped into the layer's own pixels, which the masks then gate and the
+  // effects then process (K-225, docs/06 render order).
+  if (info.paint.isNotEmpty) {
+    final paintOpen = open.contains(paintPath(id));
+    rows.add(FoldGroupRow(
+      path: paintPath(id),
+      label: 'Paint',
+      open: paintOpen,
+      depth: 1,
+    ));
+    if (paintOpen) {
+      for (final stroke in info.paint) {
+        rows.add(FoldStrokeRow(stroke, depth: 2));
       }
     }
   }

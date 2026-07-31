@@ -20,6 +20,7 @@ import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -222,6 +223,60 @@ void main() {
           find.byKey(ValueKey<String>('tl-mask-invert-${masks.single.id}')));
       await tester.pumpAndSettle();
       expect(layer.getMasks().single.inverted, isTrue);
+    });
+
+    /// Paint strokes list under their own heading, between Masks and Effects —
+    /// the order the picture is built in (K-225).
+    testWidgets('a painted layer grows a Paint heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final twirl =
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
+      await tester.tap(twirl);
+      await tester.pumpAndSettle();
+      expect(find.text('Paint'), findsNothing,
+          reason: 'an empty heading is a promise the row cannot keep');
+
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Paint'), findsOneWidget);
+      await tester.tap(find.byKey(
+          ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+      expect(find.text('Brush 1'), findsOneWidget);
+
+      // And the row's opacity writes through to the document.
+      final stroke = layer.getPaint().single;
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')), '40');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(layer.getPaint().single.opacity, 40);
     });
 
     testWidgets('without a composition it says so', (tester) async {

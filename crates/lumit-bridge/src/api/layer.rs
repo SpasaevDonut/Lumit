@@ -55,6 +55,105 @@ pub struct BridgeVertex {
     pub tan_out_y: f64,
 }
 
+/// What a paint stroke does to the pixels under it (K-225).
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BridgePaintMode {
+    /// Lay the stroke's colour down.
+    Paint,
+    /// Take alpha away.
+    Erase,
+    /// Copy from elsewhere on the same layer, by the stroke's clone offset.
+    Clone,
+}
+
+/// One point of a stroke's path, in layer pixels.
+///
+/// Named for the stroke rather than called `BridgePoint`, because that name is
+/// already an *animatable* point parameter on an effect — two quite different
+/// things, and the bridge's type names are flat across the whole seam.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BridgeStrokePoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// One paint stroke on a layer (K-225): the path the pointer took, and how it
+/// was painted.
+///
+/// A **polyline**, not a bezier — a stroke is a record of a gesture rather than
+/// a shape to be edited vertex by vertex, which is the difference between this
+/// and [`BridgeMask`]. Layer space, like everything else that travels with a
+/// layer's transform.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeStroke {
+    pub id: Uuid,
+    pub name: String,
+    pub points: Vec<BridgeStrokePoint>,
+    pub colour: crate::api::assets::BridgeColourRgba,
+    /// The brush's diameter in layer pixels.
+    pub width: f64,
+    /// 0 fully soft, 1 a hard edge.
+    pub hardness: f64,
+    /// 0..100.
+    pub opacity: f64,
+    pub mode: BridgePaintMode,
+    /// Where a clone's pixels are copied from, as an offset in layer pixels.
+    pub clone_offset_x: f64,
+    pub clone_offset_y: f64,
+}
+
+impl BridgeStroke {
+    #[frb(ignore)]
+    fn read(stroke: &lumit_core::paint::PaintStroke) -> Self {
+        Self {
+            id: stroke.id,
+            name: stroke.name.clone(),
+            points: stroke
+                .points
+                .iter()
+                .map(|&(x, y)| BridgeStrokePoint { x, y })
+                .collect(),
+            colour: crate::api::assets::colour_of(stroke.colour),
+            width: stroke.width,
+            hardness: stroke.hardness,
+            opacity: stroke.opacity,
+            mode: match stroke.mode {
+                lumit_core::paint::PaintMode::Paint => BridgePaintMode::Paint,
+                lumit_core::paint::PaintMode::Erase => BridgePaintMode::Erase,
+                lumit_core::paint::PaintMode::Clone => BridgePaintMode::Clone,
+            },
+            clone_offset_x: stroke.clone_offset.0,
+            clone_offset_y: stroke.clone_offset.1,
+        }
+    }
+
+    /// The engine's stroke this describes. Every number that would render
+    /// wrongly for ever after is clamped here rather than trusted, exactly as
+    /// a mask's opacity is.
+    #[frb(ignore)]
+    fn write(&self) -> lumit_core::paint::PaintStroke {
+        lumit_core::paint::PaintStroke {
+            id: self.id,
+            name: self.name.clone(),
+            points: self.points.iter().map(|p| (p.x, p.y)).collect(),
+            colour: crate::api::assets::linear_of(self.colour),
+            width: self.width.clamp(0.0, 10_000.0),
+            hardness: self.hardness.clamp(0.0, 1.0),
+            opacity: self.opacity.clamp(0.0, 100.0),
+            mode: match self.mode {
+                BridgePaintMode::Paint => lumit_core::paint::PaintMode::Paint,
+                BridgePaintMode::Erase => lumit_core::paint::PaintMode::Erase,
+                BridgePaintMode::Clone => lumit_core::paint::PaintMode::Clone,
+            },
+            clone_offset: (self.clone_offset_x, self.clone_offset_y),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// One mask on a layer: a bezier path that gates the layer's alpha before its
 /// effects and transform (docs/06 render order).
 ///
@@ -234,6 +333,10 @@ pub struct BridgeLayerInfo {
     /// twirl-down draws a row per mask, and asking per row per frame is the
     /// cost K-184 exists to remove. Edits still go through `set_mask`.
     pub masks: Vec<BridgeMask>,
+    /// The layer's paint strokes (K-225), oldest first — carried for the same
+    /// reason the masks are: the Timeline lists them, and the Viewer needs to
+    /// know a layer has some without asking per frame.
+    pub paint: Vec<BridgeStroke>,
 }
 
 /// Build one layer's [`BridgeLayerInfo`] from an already-fetched composition —
@@ -315,6 +418,7 @@ pub(crate) fn read_layer_info(
             .as_ref()
             .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)),
         masks: layer.masks.iter().map(BridgeMask::read).collect(),
+        paint: layer.paint.iter().map(BridgeStroke::read).collect(),
     }
 }
 
@@ -698,6 +802,82 @@ impl LayerReference {
             comp: self.comp_id,
             layer: self.layer_id,
             masks,
+        })
+    }
+
+    /// This layer's paint strokes, oldest first (K-225).
+    #[frb(sync)]
+    pub fn get_paint(&self) -> Result<Vec<BridgeStroke>, BridgeError> {
+        Ok(self.item()?.paint.iter().map(BridgeStroke::read).collect())
+    }
+
+    /// Add `stroke` on top of this layer's paint.
+    ///
+    /// The whole list is committed, because that is the op the engine has and
+    /// it is exactly invertible (`SetLayerPaint`): one stroke is one undo step,
+    /// which is what `Ctrl+Z` after a brush drag has to mean.
+    ///
+    /// A stroke with no points is refused — there is no gesture in it, and it
+    /// would be a Timeline row with nothing behind it.
+    #[frb(sync)]
+    pub fn add_stroke(&self, stroke: BridgeStroke) -> Result<(), BridgeError> {
+        if stroke.points.is_empty() {
+            return Err(BridgeError::EmptyStroke);
+        }
+        let mut strokes = self.item()?.paint;
+        strokes.push(stroke.write());
+        self.commit_paint(strokes)
+    }
+
+    /// Replace one stroke — its path, its colour, its width, its name. Named by
+    /// id, so a stale reference is a calm error rather than an edit landing on
+    /// whichever stroke happens to sit at that index now.
+    #[frb(sync)]
+    pub fn set_stroke(&self, stroke: BridgeStroke) -> Result<(), BridgeError> {
+        if stroke.points.is_empty() {
+            return Err(BridgeError::EmptyStroke);
+        }
+        let mut strokes = self.item()?.paint;
+        let at = strokes
+            .iter()
+            .position(|s| s.id == stroke.id)
+            .ok_or(BridgeError::NoSuchStroke)?;
+        strokes[at] = stroke.write();
+        self.commit_paint(strokes)
+    }
+
+    /// Remove a stroke by id.
+    #[frb(sync)]
+    pub fn delete_stroke(&self, id: Uuid) -> Result<(), BridgeError> {
+        let mut strokes = self.item()?.paint;
+        let before = strokes.len();
+        strokes.retain(|s| s.id != id);
+        if strokes.len() == before {
+            return Err(BridgeError::NoSuchStroke);
+        }
+        self.commit_paint(strokes)
+    }
+
+    /// Take the last stroke off — the undo inside the tool, for a brush drag
+    /// that went wrong. Errors when there is nothing painted.
+    #[frb(sync)]
+    pub fn delete_last_stroke(&self) -> Result<(), BridgeError> {
+        let mut strokes = self.item()?.paint;
+        if strokes.pop().is_none() {
+            return Err(BridgeError::NoSuchStroke);
+        }
+        self.commit_paint(strokes)
+    }
+
+    #[frb(ignore)]
+    fn commit_paint(
+        &self,
+        strokes: Vec<lumit_core::paint::PaintStroke>,
+    ) -> Result<(), BridgeError> {
+        self.commit(lumit_core::Op::SetLayerPaint {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            strokes,
         })
     }
 

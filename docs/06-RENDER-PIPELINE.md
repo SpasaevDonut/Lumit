@@ -47,6 +47,13 @@ For a visual layer at comp time `t`, the compiled subgraph is, in order:
    layer's frame-interpolation policy (nearest / blend / flow) synthesises non-integer source
    frames ([04-RETIMING.md](04-RETIMING.md)). Overrun holds the boundary frame. Retime affects
    only source fetch; keyframes on masks, effects, and transform remain in layer/comp time.
+2.5. **Paint** — the layer's paint strokes (K-225, [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.1)
+   are stamped into its raster in the order they were made: brush strokes lay colour down,
+   eraser strokes take alpha away, clone strokes copy from the raster **as it was before any
+   stroke in the pass** was stamped. Paint happens before masks, so a mask gates the painted
+   picture and effects see it. A layer with paint on it is rasterised at its real size (a flat
+   solid is otherwise an 8×8 tile), and paint on a Precomp layer forces the nested intermediate
+   exactly as a mask does. Stamping is on the CPU today; a GPU path changes nothing above it.
 3. **Masks** — bezier paths combined top-to-bottom by mode (add, subtract, intersect, lighten,
    darken, difference, none), each with feather, expansion, opacity, inversion. Masks gate the
    layer's alpha before any effect runs, so effects see the masked image.

@@ -147,7 +147,7 @@ impl SolidReference {
 }
 
 #[frb(ignore)]
-fn colour_of(c: lumit_core::model::LinearColour) -> BridgeColourRgba {
+pub(crate) fn colour_of(c: lumit_core::model::LinearColour) -> BridgeColourRgba {
     BridgeColourRgba {
         r: f64::from(c.0[0]),
         g: f64::from(c.0[1]),

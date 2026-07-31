@@ -168,7 +168,8 @@ empty for the tools that draw nothing:
 | Armed tool | Options |
 |---|---|
 | Type | **Fill** swatch, **size** in pixels |
-| Shape, Pen, Paint | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels |
+| Brush, Clone stamp, Eraser | **Fill** swatch, brush **size**, **hardness**, **opacity** (K-225) |
+| Shape, Pen | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels |
 
 Fill and size say what the next thing drawn is made with, and both are session state like the
 armed tool itself. Stroke and stroke width MUST be shown **disabled** until something strokes
@@ -198,9 +199,9 @@ that quietly did nothing would be the same lie an unbuilt tool without its toolt
 **Implementation status (2026-07-31).** The strip, the groups, the flyouts, the shortcuts,
 the tool options area, the snapping switch and the workspace strip are built. Built tools:
 Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), the five shape
-tools and the Pen (§2.3.1), and Horizontal type (§2.3.2). Not built, and changing only the
-pointer: vertical type, the Pen's four editing siblings, all of Paint, Roto, Puppet and
-Camera. Each tool's behaviour is tracked separately in [TODO.md](TODO.md); the snapping
+tools and the Pen (§2.3.1), Horizontal type (§2.3.2), and the three painting tools (§2.3.4).
+Not built, and changing only the pointer: vertical type, the Pen's four editing siblings, Roto,
+Puppet and Camera. Each tool's behaviour is tracked separately in [TODO.md](TODO.md); the snapping
 switch is likewise a switch nothing reads yet.
 
 ---
@@ -405,7 +406,7 @@ as the Rotation, Anchor point and Razor tools already do.
 | Tool | Pointer |
 |---|---|
 | Shape, Pen | The **crosshair** the eyedropper uses, badged with the tool's own icon down and to the right |
-| Brush, Clone stamp, Eraser | A **ring** the size of the stroke that would be left, a dot at its centre, badged with the tool's icon |
+| Brush, Clone stamp, Eraser | A **ring** the size of the stroke it would leave, a dot at its centre, badged with the tool's icon |
 | Horizontal type | The system **I-beam** |
 | Vertical type | A drawn I-beam, **turned a quarter turn** |
 | Rotation | A curved arrow leaning round the anchor (§2.3) |
@@ -417,8 +418,30 @@ as the Rotation, Anchor point and Razor tools already do.
   shape being dragged out.
 - The brush ring MUST follow the **magnification**: a width in picture pixels drawn at picture
   scale, clamped so a hairline is still visible and a very wide brush does not fill the window.
-- **Nothing is painted.** The painting tools have a pointer and a notice naming what is
-  missing; the engine has no paint strokes ([TODO.md](TODO.md)).
+- The brush ring MUST be the **brush size** (§2.3.4), so what is under the pointer is the mark
+  about to be made.
+
+### 2.3.4 The painting tools (K-225)
+
+- With a painting tool armed, a drag over the picture leaves a **stroke on the selected layer**.
+  With nothing selected the tool MUST say so rather than swallowing the press.
+- **Brush** lays down the toolbar's **fill** colour; **Eraser** takes the layer's alpha away;
+  **Clone stamp** copies from elsewhere on the same layer. The clone stamp MUST refuse to stamp
+  until `Alt`-click has set its source, and MUST mark that source on the picture.
+- One drag is **one stroke and one undo step**. The stroke is drawn on the overlay while the
+  pointer is down and committed once on release. `Escape` abandons a stroke in flight;
+  `Backspace` takes the last committed one back.
+- The brush's **size, hardness and opacity** sit on the toolbar beside the fill swatch (§1.7)
+  and are live. They are not the shape tools' stroke pair, which stays disabled.
+- A stroke is stored as the **gesture** in layer coordinates, so it re-stamps at whatever
+  resolution the frame is rendered at and every setting stays changeable
+  ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7.1).
+- Strokes list in the layer's Timeline twirl-down under a **Paint** heading, between Masks and
+  Effects — the order the picture is built in — each row named for the tool that made it, with
+  its opacity and a menu that deletes it. The heading appears only once there is a stroke.
+- Not built: pressure and tilt, non-round brushes, spacing and scatter, write-on (per-stroke
+  start and end times), per-stroke blending modes, and painting in Layer view rather than on the
+  composite.
 
 ### 2.4 Motion paths
 

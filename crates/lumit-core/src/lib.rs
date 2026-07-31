@@ -9,6 +9,7 @@ pub mod markers;
 pub mod mask;
 pub mod model;
 pub mod ops;
+pub mod paint;
 pub mod pixels;
 pub mod preset;
 pub mod retime;

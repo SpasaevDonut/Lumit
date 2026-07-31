@@ -23,11 +23,9 @@
 // every glyph.
 
 import 'package:flutter/widgets.dart';
-import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
 import '../icons/icons.dart';
-import '../widgets/controls.dart';
 
 /// How far the tool's badge sits from the pointer, and how big it is drawn.
 ///
@@ -236,78 +234,4 @@ class _BeamPainter extends CustomPainter {
   @override
   bool shouldRepaint(_BeamPainter old) =>
       old.at != at || old.mark != mark || old.outline != outline;
-}
-
-/// The painting tools over the picture: their pointers, and the notice that
-/// says why nothing happens (K-224).
-///
-/// **Nothing is painted.** The engine has no paint: no stroke in the document,
-/// no operation to add one, no renderer path to draw one — a feature the size of
-/// shape layers (docs/TODO.md). What this layer does is wear the right pointer
-/// for the tool in hand, so the toolbar's three painting tools are visibly
-/// distinct, and say what is missing rather than swallowing the press.
-class ViewerPaintPointerLayer extends StatefulWidget {
-  final bool active;
-  final ToolMode tool;
-  final LumitState state;
-  final LumitUiState uiState;
-
-  /// The picture's magnification, so a brush width in picture pixels draws the
-  /// ring it would really leave.
-  final double viewScale;
-
-  const ViewerPaintPointerLayer({
-    super.key,
-    required this.active,
-    required this.tool,
-    required this.state,
-    required this.uiState,
-    required this.viewScale,
-  });
-
-  @override
-  State<ViewerPaintPointerLayer> createState() =>
-      _ViewerPaintPointerLayerState();
-}
-
-class _ViewerPaintPointerLayerState extends State<ViewerPaintPointerLayer> {
-  Offset? _pointer;
-
-  @override
-  Widget build(BuildContext context) {
-    if (!widget.active) return const SizedBox.shrink();
-    final t = ThemeScope.of(context).theme;
-    return Positioned.fill(
-      child: MouseRegion(
-        // Hidden, because the ring below replaces it: a system arrow inside the
-        // brush ring would read as two pointers.
-        cursor: SystemMouseCursors.none,
-        onEnter: (e) => setState(() => _pointer = e.localPosition),
-        onHover: (e) => setState(() => _pointer = e.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: (_) => widget.state.postNotice(
-            '${widget.tool.label} is not built yet — the engine has no paint '
-            'strokes',
-          ),
-          child: Stack(
-            children: [
-              const Positioned.fill(child: SizedBox.expand()),
-              ToolPointer(
-                at: _pointer,
-                tool: widget.tool,
-                mark: t.textPrimary,
-                outline: t.surface0,
-                ringRadius: brushRingRadius(
-                  widget.uiState.tools.strokeWidth,
-                  widget.viewScale,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }

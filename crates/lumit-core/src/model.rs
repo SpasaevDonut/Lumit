@@ -757,6 +757,9 @@ pub fn collapse_state(doc: &Document, comp: &Composition, layer: &Layer, lt: f64
         })
     });
     let forced = !layer.masks.is_empty()
+        // Paint is stamped into the layer's own raster (K-225), which splicing
+        // a collapsed precomp never produces.
+        || !layer.paint.is_empty()
         // §1.4: any live effect on the Precomp layer itself — its stack runs
         // on the nested comp's raster, which splicing never produces.
         || (layer.switches.fx && layer.effects.iter().any(|e| e.enabled))
@@ -1036,6 +1039,10 @@ pub struct Layer {
     /// (docs/06-RENDER-PIPELINE.md render order).
     #[serde(default)]
     pub masks: Vec<crate::mask::Mask>,
+    /// Paint strokes stamped into the layer's own pixels, before its masks
+    /// gate them and before its effects run (docs/03 §7.1, K-225).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paint: Vec<crate::paint::PaintStroke>,
     /// The ordered effect stack (docs/03 §8; applied top-to-bottom after
     /// masks, before transform — docs/06 render order).
     #[serde(default)]
@@ -1619,6 +1626,7 @@ mod tests {
             retime: None,
             blend: BlendMode::Normal,
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: Vec::new(),
             switches: Switches {
                 visible,

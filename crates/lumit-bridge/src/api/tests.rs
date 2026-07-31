@@ -2260,6 +2260,188 @@ fn concurrent_project_creation_and_editing_does_not_deadlock() {
     }
 }
 
+// --- Paint: strokes on a layer (K-225) ------------------------------------
+
+fn stroke(name: &str, points: &[(f64, f64)]) -> crate::api::layer::BridgeStroke {
+    use crate::api::layer::{BridgePaintMode, BridgeStroke, BridgeStrokePoint};
+    BridgeStroke {
+        id: Uuid::now_v7(),
+        name: name.into(),
+        points: points
+            .iter()
+            .map(|&(x, y)| BridgeStrokePoint { x, y })
+            .collect(),
+        colour: crate::api::assets::BridgeColourRgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+        width: 12.0,
+        hardness: 0.8,
+        opacity: 100.0,
+        mode: BridgePaintMode::Paint,
+        clone_offset_x: 0.0,
+        clone_offset_y: 0.0,
+    }
+}
+
+/// A brush drag is one stroke, one op and one undo step — which is what
+/// `Ctrl+Z` after painting has to mean.
+#[test]
+fn a_stroke_is_added_read_back_and_undone_in_one_step() {
+    let (project, layer) = project_with_layer();
+    assert!(layer.get_paint().expect("paint").is_empty());
+
+    layer
+        .add_stroke(stroke("Brush 1", &[(10.0, 10.0), (40.0, 25.0)]))
+        .expect("added");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].name, "Brush 1");
+    assert_eq!(strokes[0].points.len(), 2);
+    assert_eq!(strokes[0].points[1].x, 40.0);
+    assert_eq!(strokes[0].width, 12.0);
+
+    project.undo().expect("undone");
+    assert!(
+        layer.get_paint().expect("paint").is_empty(),
+        "one stroke, one undo step"
+    );
+    project.redo().expect("redone");
+    assert_eq!(layer.get_paint().expect("paint").len(), 1);
+}
+
+/// Strokes are carried in the read model beside the masks (K-184), so the
+/// Timeline can list them without asking per row per frame.
+#[test]
+fn strokes_ride_the_read_model() {
+    let (project, layer) = project_with_layer();
+    layer
+        .add_stroke(stroke("Brush 1", &[(1.0, 2.0)]))
+        .expect("added");
+
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let model = comp.get_model().expect("model");
+    let entry = model
+        .layers
+        .iter()
+        .find(|l| l.layer.id() == layer.id())
+        .expect("the layer");
+    assert_eq!(entry.info.paint.len(), 1);
+    assert_eq!(entry.info.paint[0].name, "Brush 1");
+}
+
+#[test]
+fn a_stroke_is_edited_and_deleted_by_id() {
+    let (_project, layer) = project_with_layer();
+    let first = stroke("Brush 1", &[(0.0, 0.0)]);
+    let second = stroke("Brush 2", &[(5.0, 5.0)]);
+    layer.add_stroke(first.clone()).expect("added");
+    layer.add_stroke(second.clone()).expect("added");
+
+    let mut edited = first.clone();
+    edited.name = "Renamed".into();
+    edited.width = 40.0;
+    layer.set_stroke(edited).expect("set");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(
+        strokes[0].name, "Renamed",
+        "the one named, not the last one"
+    );
+    assert_eq!(strokes[0].width, 40.0);
+    assert_eq!(strokes[1].name, "Brush 2");
+
+    layer.delete_stroke(first.id).expect("deleted");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].id, second.id);
+
+    // A stale reference is a calm error, not an edit landing on whatever sits
+    // at that index now.
+    assert!(matches!(
+        layer.delete_stroke(first.id),
+        Err(BridgeError::NoSuchStroke)
+    ));
+    assert!(matches!(
+        layer.set_stroke(first),
+        Err(BridgeError::NoSuchStroke)
+    ));
+}
+
+#[test]
+fn the_last_stroke_can_be_taken_back() {
+    let (_project, layer) = project_with_layer();
+    assert!(
+        matches!(layer.delete_last_stroke(), Err(BridgeError::NoSuchStroke)),
+        "nothing painted, nothing to take back"
+    );
+    layer
+        .add_stroke(stroke("Brush 1", &[(0.0, 0.0)]))
+        .expect("added");
+    layer
+        .add_stroke(stroke("Brush 2", &[(1.0, 1.0)]))
+        .expect("added");
+    layer.delete_last_stroke().expect("taken back");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].name, "Brush 1");
+}
+
+/// A gesture with nothing in it is refused rather than stored: it would be a
+/// Timeline row with nothing behind it, exactly as an empty mask would be.
+#[test]
+fn a_stroke_with_no_points_is_refused() {
+    let (_project, layer) = project_with_layer();
+    assert!(matches!(
+        layer.add_stroke(stroke("Nothing", &[])),
+        Err(BridgeError::EmptyStroke)
+    ));
+    assert!(layer.get_paint().expect("paint").is_empty());
+}
+
+/// Numbers that would render wrongly for ever after are clamped at the seam,
+/// as a mask's opacity is.
+#[test]
+fn absurd_stroke_numbers_are_clamped_at_the_bridge() {
+    let (_project, layer) = project_with_layer();
+    let mut wild = stroke("Wild", &[(0.0, 0.0)]);
+    wild.opacity = 4000.0;
+    wild.hardness = -3.0;
+    wild.width = 1e9;
+    layer.add_stroke(wild).expect("added");
+    let got = &layer.get_paint().expect("paint")[0];
+    assert_eq!(got.opacity, 100.0);
+    assert_eq!(got.hardness, 0.0);
+    assert_eq!(got.width, 10_000.0);
+}
+
+/// The three modes and a clone's offset survive the crossing unchanged.
+#[test]
+fn every_paint_mode_round_trips() {
+    use crate::api::layer::BridgePaintMode;
+
+    let (_project, layer) = project_with_layer();
+    for mode in [
+        BridgePaintMode::Paint,
+        BridgePaintMode::Erase,
+        BridgePaintMode::Clone,
+    ] {
+        let mut s = stroke("Mark", &[(2.0, 2.0)]);
+        s.mode = mode;
+        s.clone_offset_x = -20.0;
+        s.clone_offset_y = 7.5;
+        layer.add_stroke(s).expect("added");
+    }
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 3);
+    assert_eq!(strokes[0].mode, BridgePaintMode::Paint);
+    assert_eq!(strokes[1].mode, BridgePaintMode::Erase);
+    assert_eq!(strokes[2].mode, BridgePaintMode::Clone);
+    assert_eq!(strokes[2].clone_offset_x, -20.0);
+    assert_eq!(strokes[2].clone_offset_y, 7.5);
+}
+
 // --- Assets: what a layer is made of --------------------------------------
 
 /// A text layer's words are editable and round-trip exactly. Before this the

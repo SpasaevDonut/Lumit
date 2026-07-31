@@ -24,7 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
-import 'package:lumit_flutter/panels/viewer_tool_cursor.dart';
+import 'package:lumit_flutter/panels/viewer_paint.dart';
 import 'package:lumit_flutter/panels/viewer_zoom.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/tools.dart';
@@ -1264,22 +1264,107 @@ void main() {
       expect(layer.getText()!.text, 'Retitled');
     });
 
-    /// The painting tools (K-224): each wears a brush ring with its own badge,
-    /// and a click says what is missing rather than being swallowed.
-    testWidgets('a paint tool wears a ring and says why nothing is painted',
+    /// Painting (K-225): a drag on the selected layer leaves a stroke, and one
+    /// drag is one stroke and one undo step.
+    testWidgets('a brush drag paints a stroke on the selected layer',
         (tester) async {
       final p = withLayer();
       p.uiState.tools.select(ToolMode.brush);
       await mount(tester, p);
 
-      expect(find.byType(ViewerPaintPointerLayer), findsOneWidget);
+      expect(find.byType(ViewerPaintLayer), findsOneWidget);
+      expect(p.layer.getPaint(), isEmpty);
 
-      await tester.tapAt(fittedRect(tester, p.comp).center);
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(10, 4));
+        await tester.pump();
+      }
+      await gesture.up();
       await tester.pumpAndSettle();
-      expect(p.state.notice.value?.message, contains('not built yet'),
-          reason: 'the engine has no paint strokes (docs/TODO.md)');
-      expect(p.state.notice.value?.message, contains('Brush'),
-          reason: 'and it names the tool in hand');
+
+      final strokes = p.layer.getPaint();
+      expect(strokes, hasLength(1), reason: 'one drag, one stroke');
+      expect(strokes.single.name, startsWith('Brush'));
+      expect(strokes.single.mode, BridgePaintMode.paint);
+      expect(strokes.single.points.length, greaterThan(1),
+          reason: 'the path the pointer took, not one dab');
+      expect(strokes.single.width, p.uiState.tools.brushSize);
+
+      // The stroke is in layer coordinates: the middle of the picture is the
+      // middle of a comp-sized layer.
+      final size = p.comp.getSize();
+      expect(strokes.single.points.first.x,
+          closeTo(size.width / 2, size.width * 0.02));
+
+      p.state.project!.undo();
+      p.uiState.model.refresh();
+      expect(p.layer.getPaint(), isEmpty, reason: 'one undo step');
+    });
+
+    testWidgets('the eraser and the clone stamp commit their own modes',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.eraser);
+      await mount(tester, p);
+      final fitted = fittedRect(tester, p.comp);
+
+      Future<void> paintAt(Offset from) async {
+        final gesture = await tester.startGesture(from);
+        await tester.pump();
+        for (var i = 0; i < 6; i++) {
+          await gesture.moveBy(const Offset(9, 0));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+      }
+
+      await paintAt(fitted.center);
+      expect(p.layer.getPaint().single.mode, BridgePaintMode.erase);
+
+      // The clone stamp refuses to stamp until it has been given a source.
+      p.uiState.tools.select(ToolMode.cloneStamp);
+      await tester.pump();
+      await paintAt(fitted.center + const Offset(0, 40));
+      expect(p.layer.getPaint(), hasLength(1),
+          reason: 'no source yet, so nothing was stamped');
+      expect(p.state.notice.value?.message, contains('clone source'));
+
+      // Alt-click sets it, and then the stroke lands with the offset it implies.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.tapAt(fitted.center - const Offset(80, 0));
+      await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await paintAt(fitted.center + const Offset(0, 40));
+
+      final strokes = p.layer.getPaint();
+      expect(strokes, hasLength(2));
+      expect(strokes.last.mode, BridgePaintMode.clone);
+      expect(strokes.last.cloneOffsetX, lessThan(0),
+          reason: 'the source was to the left of where the stroke began');
+    });
+
+    testWidgets('painting with nothing selected says what to do instead',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.brush);
+      await mount(tester, p);
+
+      final gesture = await tester.startGesture(fittedRect(tester, p.comp).center);
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(9, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(p.layer.getPaint(), isEmpty);
+      expect(p.state.notice.value?.message, contains('Select a layer to paint'));
     });
 
     testWidgets('a missing footage layer raises the badge', (tester) async {

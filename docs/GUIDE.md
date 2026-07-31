@@ -5170,3 +5170,58 @@ turned a quarter turn, which tells you which way the line will run before you
 type anything. And the point you click is now the *start* of the line rather
 than its middle: the new layer's anchor begins at the left end of the baseline,
 so the words run to the right of where you clicked and sit on it.
+
+### Painting: what a brush stroke actually is (K-225)
+
+Drag a brush over the picture and Lumit keeps **the drag, not the paint**. What
+goes into the project is the path your pointer took — in the layer's own
+coordinates — with the colour, the width, how hard the edge is, how opaque the
+mark is, and which tool made it. Every time that frame is drawn, the stroke is
+stamped again at whatever size the frame is being rendered at.
+
+That one decision buys three things. Painting on a quarter-size preview and
+exporting at full size gives a *full-size* stroke, not a blurry small one.
+Changing a stroke's colour next week is a number, not a repaint. And undo removes
+one stroke, because a stroke is one thing rather than a smear of changed pixels.
+
+**The three tools.** The brush lays down the toolbar's fill colour. The eraser
+takes the layer's transparency away — the colour underneath is untouched, which
+is why lowering an erase's opacity later brings the picture back. The clone stamp
+copies from somewhere else on the same layer: `Alt`-click sets the place it
+copies *from*, and then painting carries that offset along with you. It is how a
+boom mic or a blemish gets painted out.
+
+**The trap in cloning, and how it is avoided.** A clone that read the picture as
+it is being painted would sample its own output a few dabs back and smear it
+across the frame. So a clone reads a copy of the layer taken *before any stroke
+in that pass was stamped*. The copy is only made when something actually clones —
+copying a 4K layer is not free.
+
+**Why the brush is a chain of dabs.** A round brush is stamped along the path
+every quarter of its radius, and where two dabs overlap the coverage takes the
+*greater* of the two rather than adding them. Adding would make the middle of a
+slow stroke solid and its ends thin — the classic wobbly-line artefact. The
+stroke's own opacity is applied once, at the end, so a half-opaque stroke is
+evenly half-opaque all the way along.
+
+**Where paint sits in the picture.** Strokes go into the layer's own pixels
+*before* its masks gate them and before its effects run. So a mask can cut away
+part of what you painted, and a blur blurs it — both the obvious meanings. Two
+side effects fall out of that: a plain solid, which is normally stored as a tiny
+8×8 tile and stretched, gets rasterised at its real size once it has paint on it
+(a brush needs pixels to mark); and paint on a collapsed precomp layer forces the
+precomp to be rendered separately, exactly as a mask already does.
+
+**Where to find your strokes afterwards.** In the Timeline, a painted layer grows
+a **Paint** heading in its twirl-down, between Masks and Effects — the order the
+picture is built in. Each row is named for the tool that made it, carries its
+opacity, and its menu deletes it. `Backspace` while painting takes the last stroke
+back; `Escape` abandons one mid-drag.
+
+**What is not built.** Pressure and tilt from a tablet, brushes that are not
+round, spacing and scatter, write-on (a stroke that draws itself on over time),
+per-stroke blending modes, and painting in Layer view. There is also no GPU path
+yet — the stamping is a plain loop over pixels on the CPU, next door to the mask
+rasteriser. That last one is the only one that would change the code rather than
+add to it, and it changes how a stroke is *drawn*, not what a stroke *is*, which
+is why the storage was settled first.

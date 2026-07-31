@@ -247,6 +247,7 @@ mod tests {
             volume_db: lumit_core::anim::Property::zero(),
             retime: None,
             effects: Vec::new(),
+            paint: Vec::new(),
             blend: BlendMode::Normal,
             masks,
             switches: Switches::default(),

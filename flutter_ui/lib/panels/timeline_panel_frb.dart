@@ -1831,6 +1831,12 @@ class _FoldRow extends StatelessWidget {
           valueColumn: valueColumn,
           onChanged: onChanged,
         ),
+      FoldStrokeRow(:final stroke) => _StrokeRow(
+          layer: layer,
+          stroke: stroke,
+          valueColumn: valueColumn,
+          onChanged: onChanged,
+        ),
     };
   }
 }
@@ -2129,6 +2135,114 @@ class _MaskRow extends StatelessWidget {
             } catch (_) {}
           },
           child: const Text('Delete mask'),
+        ),
+      ),
+    );
+  }
+}
+
+/// One paint stroke in the Timeline (K-225): what it is called, how opaque it
+/// is, and the menu that deletes it.
+///
+/// The same shape as [_MaskRow], and for the same reason: the engine takes the
+/// whole stroke, so every edit is "this stroke, with one field changed".
+class _StrokeRow extends StatelessWidget {
+  final LayerReference layer;
+  final BridgeStroke stroke;
+  final ValueColumn valueColumn;
+  final VoidCallback onChanged;
+
+  const _StrokeRow({
+    required this.layer,
+    required this.stroke,
+    required this.valueColumn,
+    required this.onChanged,
+  });
+
+  void _write({double? opacity}) {
+    try {
+      layer.setStroke(
+        stroke: BridgeStroke(
+          id: stroke.id,
+          name: stroke.name,
+          points: stroke.points,
+          colour: stroke.colour,
+          width: stroke.width,
+          hardness: stroke.hardness,
+          opacity: opacity ?? stroke.opacity,
+          mode: stroke.mode,
+          cloneOffsetX: stroke.cloneOffsetX,
+          cloneOffsetY: stroke.cloneOffsetY,
+        ),
+      );
+      onChanged();
+    } catch (_) {
+      // The stroke or its layer went away between the draw and the click.
+    }
+  }
+
+  /// The icon says which of the three tools made it, so a list of marks can be
+  /// read at a glance.
+  LumitIcon get _icon => switch (stroke.mode) {
+        BridgePaintMode.erase => LumitIcon.eraser,
+        BridgePaintMode.clone => LumitIcon.cloneStamp,
+        BridgePaintMode.paint => LumitIcon.brush,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
+      child: Row(
+        children: [
+          lumitIcon(_icon, size: iconSize, color: t.textSecondary),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(stroke.name,
+                style: t.body, overflow: TextOverflow.ellipsis),
+          ),
+          SizedBox(
+            width: valueColumn.width,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                SizedBox(
+                  width: 56,
+                  child: DragValueField(
+                    key: ValueKey<String>('tl-stroke-opacity-${stroke.id}'),
+                    value: stroke.opacity,
+                    min: 0,
+                    max: 100,
+                    suffix: '%',
+                    onChanged: (v) => _write(opacity: v.toDouble()),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _menu(BuildContext context, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 160,
+        child: MenuRow(
+          key: ValueKey<String>('tl-stroke-delete-${stroke.id}'),
+          onPressed: () {
+            close(null);
+            try {
+              layer.deleteStroke(id: stroke.id);
+              onChanged();
+            } catch (_) {}
+          },
+          child: const Text('Delete stroke'),
         ),
       ),
     );

@@ -287,7 +287,10 @@ pub fn build_comp_draws_at(
             }
             LayerKind::Solid { def } => doc.solid(*def).filter(|_| in_span(layer)).map(|sd| {
                 let px = solid_rgba(sd.colour);
-                let (tw, th) = if layer.masks.is_empty() {
+                // A flat colour is normally an 8×8 tile stretched to size —
+                // but a mask gates *pixels* and a stroke paints them, so both
+                // want the solid at its real size to work on (K-225).
+                let (tw, th) = if layer.masks.is_empty() && layer.paint.is_empty() {
                     (8, 8)
                 } else {
                     (sd.width, sd.height)
@@ -312,6 +315,18 @@ pub fn build_comp_draws_at(
             LayerKind::Camera { .. } => None,  // shapes the view, draws nothing
         };
         raw.map(|(mut rgba, w, h, natural)| {
+            // Paint first, masks second: a stroke is part of the layer's
+            // picture, and a mask gates the picture (K-225, docs/06 render
+            // order). Painting after the mask would let a brush draw outside
+            // the shape the mask cut.
+            lumit_core::paint::apply_strokes(
+                &mut rgba,
+                w,
+                h,
+                f64::from(natural.0),
+                f64::from(natural.1),
+                &layer.paint,
+            );
             lumit_core::mask::apply_masks(
                 &mut rgba,
                 w,
@@ -1088,6 +1103,7 @@ mod parent_placement_tests {
             retime: None,
             blend: BlendMode::Normal,
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: Vec::new(),
             switches: Switches::default(),
             extra: serde_json::Map::new(),
@@ -1198,6 +1214,7 @@ mod render_below_at_tests {
             retime: None,
             blend: Default::default(),
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: Vec::new(),
             switches: Switches::default(),
             extra: serde_json::Map::new(),
@@ -1324,6 +1341,7 @@ mod render_below_at_tests {
             retime: None,
             blend: Default::default(),
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: vec![post],
             switches: Switches::default(),
             extra: serde_json::Map::new(),
@@ -1605,6 +1623,7 @@ mod render_below_at_tests {
             retime: None,
             blend: Default::default(),
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: vec![e],
             switches: Switches::default(),
             extra: serde_json::Map::new(),

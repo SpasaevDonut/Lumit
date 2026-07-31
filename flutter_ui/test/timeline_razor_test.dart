@@ -65,6 +65,7 @@ void main() {
         effects: const [],
         label: 0,
         masks: const [],
+        paint: const [],
       ),
     );
   }

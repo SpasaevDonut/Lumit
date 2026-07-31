@@ -149,13 +149,23 @@ armed is a *tool*; what each tool then does is the backlog:
     - **Per-character and per-word text animators**, the feature the owner named as later.
     - Clicking a text layer to edit it needs the layer to have a box, so a text layer with a
       keyframed position cannot be clicked into (the same rule the gizmo follows).
-- **Paint** (brush/clone stamp/eraser) - **nothing at all in the engine**: there is no stroke
-    model in the document, no op to add one, and no renderer path to draw one. It is a
-    feature of the same size as shape layers, and belongs with them on the engine branch. The
-    toolbar's stroke colour and width are held and shown disabled until it exists; the three
-    tools wear their proper brush-ring pointers (K-224) and say what is missing when clicked.
-    The ring is drawn from the stroke width because there is no separate brush size yet — a
-    real paint feature would bring its own brush settings (size, hardness, opacity, flow).
+- **Paint** (brush/clone stamp/eraser) - built (K-225, docs/impl/paint.md): strokes are stored
+    as the gesture in layer space and stamped into the layer's pixels before its masks, with
+    the brush's size, hardness and opacity on the toolbar, a Paint heading in the Timeline, and
+    one undo step per stroke. Still owed:
+    - **Pressure and tilt** from a tablet, **brush shapes** other than round, **spacing** and
+      **scatter**.
+    - **Write-on**: a stroke's own start and end times, which is what makes paint animate in
+      After Effects. Nothing in the model yet.
+    - **Per-stroke blending modes**, and painting in **Layer view** rather than on the
+      composite (which is also where AE puts painting proper).
+    - **A GPU stamping path.** The rasteriser is a CPU loop beside the mask one; a stroke
+      painted live at 4K wants tessellation or a compute stamp. It changes the rasteriser, not
+      the stored stroke.
+    - **Paint on a Precomp layer's nested pixels** — those never come back to the CPU, so a
+      stroke on one currently marks nothing.
+    - The shape tools' **stroke colour and width** are still held and shown disabled: they need
+      shape layers, not paint.
 - **Roto** (roto brush/refine edge), **Puppet**, **Camera** - no engine side yet; these are
     roadmap features ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
 - **Snapping** is a switch nothing reads (docs/07 §4.5 specifies the behaviour).

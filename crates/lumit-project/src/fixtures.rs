@@ -169,6 +169,7 @@ pub fn stress_document(p: &StressParams) -> Document {
                 retime: None,
                 blend: Default::default(),
                 masks: Vec::new(),
+                paint: Vec::new(),
                 effects: Vec::new(),
                 switches: Switches::default(),
                 extra: serde_json::Map::new(),

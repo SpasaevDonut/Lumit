@@ -82,7 +82,9 @@ class LumitToolBarFrb extends StatelessWidget {
             const SizedBox(width: 4),
             // Scrolls rather than overflowing: a narrow window has less width
             // than thirteen tools want, and an overflow stripe is not a design.
-            Expanded(
+            // Flexible rather than Expanded so the options beside it get their
+            // share of the room instead of being squeezed to nothing (K-225).
+            Flexible(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: Row(
@@ -98,7 +100,15 @@ class LumitToolBarFrb extends StatelessWidget {
             // that draw nothing.
             if (toolOptionsFor(ui.tools.tool) != ToolOptions.none) ...[
               const _ToolBarDivider(),
-              _ToolOptions(tools: ui.tools, shows: toolOptionsFor(ui.tools.tool)),
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: _ToolOptions(
+                    tools: ui.tools,
+                    shows: toolOptionsFor(ui.tools.tool),
+                  ),
+                ),
+              ),
             ],
             const _ToolBarDivider(),
             _SnapButton(tools: ui.tools),
@@ -124,12 +134,17 @@ enum ToolOptions {
   /// would make the pair look like it only half exists — but the stroke half is
   /// drawn disabled, since nothing in the engine strokes anything yet.
   shape,
+
+  /// The brush: the colour it lays down, and its size, hardness and opacity
+  /// (K-225). All four live — painting is built.
+  paint,
 }
 
 /// The options [tool] shows on the toolbar.
 ToolOptions toolOptionsFor(ToolMode tool) => switch (tool.group) {
       ToolGroup.type => ToolOptions.type,
-      ToolGroup.shape || ToolGroup.pen || ToolGroup.paint => ToolOptions.shape,
+      ToolGroup.paint => ToolOptions.paint,
+      ToolGroup.shape || ToolGroup.pen => ToolOptions.shape,
       _ => ToolOptions.none,
     };
 
@@ -150,7 +165,35 @@ class _ToolOptions extends StatelessWidget {
           onPicked: (colour) => tools.fill = colour,
         ),
         const SizedBox(width: 6),
-        if (shows == ToolOptions.type)
+        if (shows == ToolOptions.paint) ...[
+          _Number(
+            label: 'Size',
+            tip: 'Brush size, in layer pixels',
+            value: tools.brushSize,
+            min: 1,
+            max: 2000,
+            suffix: ' px',
+            onChanged: (v) => tools.brushSize = v,
+          ),
+          _Number(
+            label: 'Hardness',
+            tip: 'How hard the brush\'s edge is',
+            value: tools.brushHardness,
+            min: 0,
+            max: 100,
+            suffix: '%',
+            onChanged: (v) => tools.brushHardness = v,
+          ),
+          _Number(
+            label: 'Opacity',
+            tip: 'How opaque the mark it leaves is',
+            value: tools.brushOpacity,
+            min: 0,
+            max: 100,
+            suffix: '%',
+            onChanged: (v) => tools.brushOpacity = v,
+          ),
+        ] else if (shows == ToolOptions.type)
           SizedBox(
             width: 62,
             child: LumitTooltip(
@@ -199,6 +242,54 @@ class _ToolOptions extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+/// A labelled number on the options strip.
+class _Number extends StatelessWidget {
+  final String label;
+  final String tip;
+  final double value;
+  final double min;
+  final double max;
+  final String suffix;
+  final ValueChanged<double> onChanged;
+
+  const _Number({
+    required this.label,
+    required this.tip,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.suffix,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: LumitTooltip(
+        message: tip,
+        child: Row(
+          children: [
+            Text(label, style: t.small.copyWith(color: t.textSecondary)),
+            const SizedBox(width: 5),
+            SizedBox(
+              width: 58,
+              child: DragValueField(
+                value: value,
+                min: min,
+                max: max,
+                suffix: suffix,
+                onChanged: (v) => onChanged(v.toDouble()),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
