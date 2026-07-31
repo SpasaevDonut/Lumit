@@ -11,7 +11,7 @@ import 'package:uuid/uuid.dart';
 import 'state.dart';
 
 // These functions are ignored because they are not marked as `pub`: `project`, `resolve_path`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `eq`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `eq`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
 /// A footage file's own vital statistics, as the container declares them.
