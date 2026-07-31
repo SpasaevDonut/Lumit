@@ -11,6 +11,7 @@
 // or a file edited by hand, must open rather than hang the interface. Ten levels
 // is far past any real nesting and cheap to enforce.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
@@ -96,11 +97,28 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
         name: info.name,
         kind: kind,
         depth: depth,
-        selected:
+        selected: ui.selectedLayers.value
+                .any((l) => l.internallayerId == layer.internallayerId) ||
             ui.selectedLayer.value?.internallayerId == layer.internallayerId,
         expandable: nested != null,
         open: open,
-        onTap: () => setState(() => ui.selectedLayer.value = layer),
+        onTap: () => setState(() {
+          final ctrl = HardwareKeyboard.instance.isControlPressed ||
+              HardwareKeyboard.instance.isMetaPressed;
+          if (ctrl) {
+            final list = List<LayerReference>.from(ui.selectedLayers.value);
+            if (list.any((l) => l.internallayerId == layer.internallayerId)) {
+              list.removeWhere((l) => l.internallayerId == layer.internallayerId);
+            } else {
+              list.add(layer);
+            }
+            ui.selectedLayers.value = list;
+            ui.selectedLayer.value = list.isNotEmpty ? list.last : null;
+          } else {
+            ui.selectedLayers.value = [layer];
+            ui.selectedLayer.value = layer;
+          }
+        }),
         onToggle: nested == null
             ? null
             : () => setState(() {

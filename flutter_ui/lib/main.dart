@@ -537,6 +537,7 @@ class LumitUiState extends ChangeNotifier {
   ValueNotifier<int?> viewerFrameid = ValueNotifier(null);
 
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
+  ValueNotifier<List<LayerReference>> selectedLayers = ValueNotifier([]);
 
   /// The frame every panel renders and previews at.
   ///
@@ -1021,16 +1022,21 @@ class _LumitAppViewState extends State<LumitAppView> {
           ui.maximizedPanel.value = ui.activePanel.value ?? Panel.viewer;
         }
       case 'layer.precompose':
-        final layer = ui.selectedLayer.value;
-        if (layer == null || comp == null || project == null) {
+        final layers = ui.selectedLayers.value.isNotEmpty
+            ? ui.selectedLayers.value
+            : (ui.selectedLayer.value != null
+                ? [ui.selectedLayer.value!]
+                : <LayerReference>[]);
+        if (layers.isEmpty || comp == null) {
           handled = false;
         } else {
-          final dup = comp.precomposeLayer(
-              project: project, layer: layer, name: null);
-          if (dup != null) {
-            ui.selectedLayer.value = dup;
-            state.notifyDocumentChanged();
-          }
+          final precomp = comp.precomposeLayers(
+            layers: layers,
+            name: null,
+          );
+          ui.selectedLayer.value = precomp;
+          ui.selectedLayers.value = [precomp];
+          state.notifyDocumentChanged();
         }
       case 'palette.open':
         openCommandPaletteFrb(context, state);

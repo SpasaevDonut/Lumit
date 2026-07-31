@@ -431,8 +431,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// editor with no way *out* of a selection makes every following command
   /// ambiguous — Delete, U and the Retime chord all read the selection first,
   /// and until now the only way to change it was to pick something else.
+  LayerReference? _anchorLayer;
+
   void _deselectAll(LumitUiState ui) {
     if (ui.selectedLayer.value == null &&
+        ui.selectedLayers.value.isEmpty &&
         _selectedProperties.isEmpty &&
         _laneKeySelection.isEmpty &&
         _graphKeySelection.isEmpty &&
@@ -440,7 +443,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       return;
     }
     setState(() {
+      _anchorLayer = null;
       ui.selectedLayer.value = null;
+      ui.selectedLayers.value = [];
       _selectedProperties.clear();
       _laneKeySelection.clear();
       _graphKeySelection.clear();
@@ -448,22 +453,62 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     });
   }
 
-  /// Select a layer by click. Its properties are not selected with it: a click
-  /// on a layer's name means "this layer", and leaving a property of the layer
-  /// before it lit is the highlight belonging to nothing on screen that K-203
-  /// went looking for.
-  void _selectLayer(LumitUiState ui, LayerReference? layer) => setState(() {
-        if (ui.selectedLayer.value?.internallayerId != layer?.internallayerId) {
-          _selectedProperties.clear();
-          _graphKeySelection.clear();
-          // The highlight belongs to the property selection just cleared, so
-          // it goes with it. Left behind, the previous layer's row stayed lit
-          // after a click on a different layer — two layers appearing chosen
-          // at once, which is the ambiguity K-203 set out to remove.
-          _highlighted = null;
+  void _selectLayer(LumitUiState ui, LayerReference? layer, {List<BridgeLayerEntry>? allLayers}) {
+    void update() {
+      if (layer == null) {
+        _anchorLayer = null;
+        ui.selectedLayer.value = null;
+        ui.selectedLayers.value = [];
+        return;
+      }
+
+      final ctrl = HardwareKeyboard.instance.isControlPressed ||
+          HardwareKeyboard.instance.isMetaPressed;
+      final shift = HardwareKeyboard.instance.isShiftPressed;
+
+      final currentList = List<LayerReference>.from(ui.selectedLayers.value);
+
+      if (ctrl) {
+        final exists = currentList.any((l) => l.internallayerId == layer.internallayerId);
+        if (exists) {
+          currentList.removeWhere((l) => l.internallayerId == layer.internallayerId);
+        } else {
+          currentList.add(layer);
         }
+        _anchorLayer = layer;
+        ui.selectedLayers.value = currentList;
+        ui.selectedLayer.value = currentList.isNotEmpty ? currentList.last : null;
+      } else if (shift && allLayers != null) {
+        final anchor = _anchorLayer ?? (currentList.isNotEmpty ? currentList.first : layer);
+        final anchorId = anchor.internallayerId;
+        final targetId = layer.internallayerId;
+        int idx1 = allLayers.indexWhere((e) => e.layer.internallayerId == anchorId);
+        int idx2 = allLayers.indexWhere((e) => e.layer.internallayerId == targetId);
+
+        if (idx1 != -1 && idx2 != -1) {
+          final start = idx1 < idx2 ? idx1 : idx2;
+          final end = idx1 < idx2 ? idx2 : idx1;
+          final range = allLayers.sublist(start, end + 1).map((e) => e.layer).toList();
+          ui.selectedLayers.value = range;
+          ui.selectedLayer.value = layer;
+        } else {
+          _anchorLayer = layer;
+          ui.selectedLayers.value = [layer];
+          ui.selectedLayer.value = layer;
+        }
+      } else {
+        _anchorLayer = layer;
+        ui.selectedLayers.value = [layer];
         ui.selectedLayer.value = layer;
-      });
+      }
+    }
+
+    if (mounted) {
+      setState(update);
+    } else {
+      update();
+    }
+  }
 
   /// Fill in any layer's has-audio answer we do not have, off the build.
   void _refreshAudio(List<BridgeLayerEntry> layers) {
@@ -1267,7 +1312,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                         .playheadFrame
                                                         .value = f,
                                                     onSelect: (l) =>
-                                                        _selectLayer(ui, l),
+                                                        _selectLayer(ui, l, allLayers: layers),
                                                     onHighlight: (id) =>
                                                         setState(() =>
                                                             _highlighted = id),
@@ -3060,7 +3105,10 @@ class _Outline extends StatelessWidget {
             index: i,
             count: layers.length,
             // A local compare, not a bridge call: both ids already sit here.
-            selected:
+            selected: Provider.of<LumitUiState>(context)
+                    .selectedLayers
+                    .value
+                    .any((l) => l.internallayerId == layers[i].layer.internallayerId) ||
                 selected?.internallayerId == layers[i].layer.internallayerId,
             // A layer marks itself when its fold was last touched, and when
             // a selected property is one of its own (docs/07 §4.3).
@@ -3227,14 +3275,19 @@ class _OutlineRowState extends State<_OutlineRow> {
     final info = widget.entry.info;
 
     return Builder(
-      builder: (context) => GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: widget.onSelect,
-        onSecondaryTapDown: (d) => _showRowMenu(context, d.globalPosition),
-        child: Container(
-          // No drop line: the rows themselves move to where they would land,
-          // so a line marking the same slot said it twice.
-          child: _rowBody(context, t, info),
+      builder: (context) => Listener(
+        onPointerDown: (event) {
+          if (event.buttons == kPrimaryButton) widget.onSelect();
+        },
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () {},
+          onSecondaryTapDown: (d) => _showRowMenu(context, d.globalPosition),
+          child: Container(
+            // No drop line: the rows themselves move to where they would land,
+            // so a line marking the same slot said it twice.
+            child: _rowBody(context, t, info),
+          ),
         ),
       ),
     );
@@ -3370,22 +3423,9 @@ class _OutlineRowState extends State<_OutlineRow> {
         // reach the Effect controls a third of a second late — the same lag
         // the Project panel's rows cure the same way.
         Expanded(
-          child: Listener(
-            onPointerDown: (event) {
-              if (event.buttons == kPrimaryButton) widget.onSelect();
-            },
-            // The drag itself: a plain vertical gesture, not a `Draggable`.
-            //
-            // A `Draggable` carries a floating copy of the thing being moved,
-            // which is why this used to show a little name label under the
-            // pointer while the real row stayed behind. Both halves of the
-            // table already slide (K-208), so the stack shows the move
-            // truthfully on its own — the label was a second, worse answer to
-            // a question already answered, and the row it named did not move.
-            // The row travels; nothing floats.
-            child: info.switches.locked
-                ? _name(t, id, info)
-                : GestureDetector(
+          child: info.switches.locked
+              ? _name(t, id, info)
+              : GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onVerticalDragStart: (_) {
                       _dragTravel = 0;
@@ -3404,7 +3444,6 @@ class _OutlineRowState extends State<_OutlineRow> {
                         widget.layerDrag.value = null,
                     child: _name(t, id, info),
                   ),
-          ),
         ),
         const SizedBox(width: 4),
       ],
@@ -3934,60 +3973,61 @@ class _LayerArea extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.stretch,
                                   children: [
                                     for (var i = 0; i < layers.length; i++)
-                                      // The block slides by the same rule and
-                                      // the same heights the outline's does, so
-                                      // a layer dragged up the stack takes its
-                                      // bar and its lanes with it (K-208).
                                       LayerDragSlide(
                                         drag: layerDrag,
                                         heights: blockHeights,
                                         index: i,
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.stretch,
-                                          children: [
-                                            _Bar(
-                                              key: ValueKey<String>(
-                                                  'tl-bar-${layers[i].layer.internallayerId}'),
-                                              comp: comp,
-                                              entry: layers[i],
-                                              axis: axis,
-                                              razor: razor,
-                                              playheadFrame: () =>
-                                                  playhead.value,
-                                              onSelect: () =>
-                                                  onSelect(layers[i].layer),
-                                              onChanged: onChanged,
-                                              dragPreview: dragPreview,
-                                              bounds: bounds[layers[i]
-                                                      .layer
-                                                      .internallayerId
-                                                      .toString()] ??
-                                                  BarBounds.free,
+                                        child: Builder(builder: (context) {
+                                          final uiState = Provider.of<LumitUiState>(context);
+                                          final isSel = uiState.selectedLayers.value.any((l) => l.internallayerId == layers[i].layer.internallayerId) ||
+                                              uiState.selectedLayer.value?.internallayerId == layers[i].layer.internallayerId;
+                                          return Container(
+                                            color: isSel ? t.selectionFill : null,
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.stretch,
+                                              children: [
+                                                _Bar(
+                                                  key: ValueKey<String>(
+                                                      'tl-bar-${layers[i].layer.internallayerId}'),
+                                                  comp: comp,
+                                                  entry: layers[i],
+                                                  axis: axis,
+                                                  razor: razor,
+                                                  selected: isSel,
+                                                  playheadFrame: () =>
+                                                      playhead.value,
+                                                  onSelect: () =>
+                                                      onSelect(layers[i].layer),
+                                                  onChanged: onChanged,
+                                                  dragPreview: dragPreview,
+                                                  bounds: bounds[layers[i]
+                                                          .layer
+                                                          .internallayerId
+                                                          .toString()] ??
+                                                      BarBounds.free,
+                                                ),
+                                                if (open.contains(layers[i]
+                                                    .layer
+                                                    .internallayerId
+                                                    .toString()))
+                                                  Column(
+                                                    key: ValueKey<String>(
+                                                        'tl-lanes-${layers[i].layer.internallayerId}'),
+                                                    children: [
+                                                      for (final row
+                                                          in _rowsOf(layers[i]))
+                                                        SizedBox(
+                                                          height: _rowHeight,
+                                                          child: _lane(
+                                                              t, layers[i], row),
+                                                        ),
+                                                    ],
+                                                  ),
+                                              ],
                                             ),
-                                            // One lane per fold-out row the outline shows,
-                                            // from the same list it builds: keyframe rows
-                                            // draw their diamonds, the waveform row its
-                                            // peaks (K-172), the rest leave their room.
-                                            if (open.contains(layers[i]
-                                                .layer
-                                                .internallayerId
-                                                .toString()))
-                                              Column(
-                                                key: ValueKey<String>(
-                                                    'tl-lanes-${layers[i].layer.internallayerId}'),
-                                                children: [
-                                                  for (final row
-                                                      in _rowsOf(layers[i]))
-                                                    SizedBox(
-                                                      height: _rowHeight,
-                                                      child: _lane(
-                                                          t, layers[i], row),
-                                                    ),
-                                                ],
-                                              ),
-                                          ],
-                                        ),
+                                          );
+                                        }),
                                       ),
                                   ],
                                 ),
@@ -4574,12 +4614,15 @@ class _Bar extends StatefulWidget {
   /// every kind that has no source to run out of.
   final BarBounds bounds;
 
+  final bool selected;
+
   const _Bar({
     super.key,
     required this.comp,
     required this.entry,
     required this.axis,
     required this.razor,
+    required this.selected,
     required this.playheadFrame,
     required this.onSelect,
     required this.onChanged,
@@ -4772,6 +4815,9 @@ class _BarState extends State<_Bar> {
                     // outline swatch shows, so recolouring a layer recolours
                     // its bar — and each kind starts on its own colour.
                     color: t.labelColour(info.label),
+                    border: widget.selected
+                        ? Border.all(color: t.accent, width: 2.0)
+                        : null,
                     borderRadius: BorderRadius.circular(2),
                   ),
                   // A Sequence layer draws its clip splits, so the razor has
