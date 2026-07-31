@@ -12,6 +12,8 @@ import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 
+import 'package:lumit_flutter/state/tools.dart';
+
 import 'frb_test_support.dart';
 
 void main() {
@@ -275,7 +277,7 @@ void main() {
       await tester.pumpAndSettle();
     });
 
-    testWidgets('the razor cuts a sequence clip and leaves other bars alone',
+    testWidgets('the razor cuts a sequence clip where it is clicked',
         (tester) async {
       final p = withComp();
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
@@ -286,25 +288,35 @@ void main() {
       expect(sequenced.getClips(), hasLength(1));
 
       await mount(tester, p);
-      p.uiState.playheadFrame.value = 12;
       await tester.pump();
 
       // Unarmed, a click on the bar does not cut.
-      final bar =
-          find.byKey(ValueKey<String>('tl-bar-${sequenced.internallayerId}'));
-      await tester.tapAt(tester.getCenter(bar));
+      final bar = find.byKey(
+          ValueKey<String>('tl-bar-body-${sequenced.internallayerId}'));
+      expect(bar, findsOneWidget);
+      final box = tester.getRect(bar);
+      // Near the start of the bar: a Sequence layer's own span is the comp's,
+      // but the clip inside it is only as long as its (unreadable) media makes
+      // it, so a point a third of the way along the *bar* can be past the end
+      // of the clip — where there is nothing to cut.
+      final inside = Offset(box.left + 8, box.center.dy);
+      await tester.tapAt(inside);
       await tester.pump();
       expect(p.comp.getLayers().single.getClips(), hasLength(1),
           reason: 'the razor is a mode, not the default click');
 
+      // The Timeline's menu item arms the toolbar's Razor tool (K-218) —
+      // one razor, two doors.
       await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-razor')));
       await tester.pumpAndSettle();
-      await tester.tapAt(tester.getCenter(bar));
+      expect(p.uiState.tools.tool, ToolMode.razor);
+
+      await tester.tapAt(inside);
       await tester.pumpAndSettle();
 
       expect(p.comp.getLayers().single.getClips(), hasLength(2),
-          reason: 'the armed razor cut the clip at the playhead');
+          reason: 'the armed razor cut the clip under the pointer');
     });
 
     testWidgets('the cache meter reads the engine and clears on click',

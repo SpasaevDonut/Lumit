@@ -53,8 +53,8 @@ enum ToolMode {
   hand(ToolGroup.hand, 'Hand', LumitIcon.move, ready: true),
   zoom(ToolGroup.zoom, 'Zoom', LumitIcon.zoomIn, ready: true),
   rotate(ToolGroup.rotate, 'Rotation', LumitIcon.rotate, ready: true),
-  anchor(ToolGroup.anchor, 'Anchor point', LumitIcon.anchorPoint),
-  razor(ToolGroup.razor, 'Razor', LumitIcon.razor),
+  anchor(ToolGroup.anchor, 'Anchor point', LumitIcon.anchorPoint, ready: true),
+  razor(ToolGroup.razor, 'Razor', LumitIcon.razor, ready: true),
 
   // The shape tools draw a mask on the selected layer, or a shape layer with
   // nothing selected — AE's rule, and the reason they are one group.

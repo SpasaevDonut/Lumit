@@ -19,6 +19,7 @@ import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
+import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -58,6 +59,80 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tl-more')));
       await tester.pumpAndSettle();
     }
+
+    /// The Razor tool (K-218). Clicking a bar cuts that layer **where the
+    /// pointer is**, not at the playhead — the difference between a razor and
+    /// the Cut-at-playhead command.
+    testWidgets('the razor splits a layer in two where it is clicked',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      expect(p.comp.getLayers().length, 1);
+      final span = layer.getSpan();
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      expect(bar, findsOneWidget);
+      final box = tester.getRect(bar);
+      // A third of the way along the bar, well inside it.
+      await tester.tapAt(Offset(box.left + box.width / 3, box.center.dy));
+      await tester.pumpAndSettle();
+
+      final after = p.comp.getLayers();
+      expect(after.length, 2, reason: 'one layer became two');
+      // The halves meet: the first ends where the second begins, and together
+      // they cover exactly what the layer covered.
+      final spans = [for (final l in after) l.getSpan()];
+      final ins = [for (final s in spans) s.inPoint.num / s.inPoint.den];
+      final outs = [for (final s in spans) s.outPoint.num / s.outPoint.den];
+      ins.sort();
+      outs.sort();
+      expect(ins.first, closeTo(span.inPoint.num / span.inPoint.den, 1e-9));
+      expect(outs.last, closeTo(span.outPoint.num / span.outPoint.den, 1e-9));
+      expect(outs.first, closeTo(ins.last, 1e-9),
+          reason: 'no gap and no overlap at the cut');
+    });
+
+    testWidgets('the razor is the toolbar tool, and undoes as one step',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 3, box.center.dy));
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().length, 2);
+
+      p.state.project!.undo();
+      expect(p.comp.getLayers().length, 1,
+          reason: 'a razor cut is one undo step (docs/07 §4.7)');
+    });
+
+    testWidgets('with the Selection tool a click on a bar selects rather than'
+        ' cutting', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      await tester.tap(bar);
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getLayers().length, 1, reason: 'nothing was cut');
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          layer.internallayerId);
+    });
 
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();
@@ -1563,41 +1638,43 @@ void main() {
       expect(inner.getLayers(), isEmpty);
     });
 
-    /// The layer rows deliberately do *not* rebuild when the playhead moves —
-    /// they used to, sixty times a second during playback, re-asking the engine
-    /// for every layer's name and span each time, and the cost grew with the
-    /// layer count. Only the playhead line redraws now.
+    /// **The cut lands under the blade, not under the playhead (K-218).**
     ///
-    /// The razor is what makes that observable: it reads the playhead when it is
-    /// clicked rather than when its bar was built. If someone reverts to
-    /// capturing the value at build time, the bar has not rebuilt since the
-    /// playhead moved, so the cut lands on the old frame and this fails.
-    testWidgets('the razor cuts where the playhead is now, not where it was',
+    /// The razor used to cut at the playhead wherever the bar was clicked,
+    /// which made it a slower way of pressing Ctrl+Shift+D. docs/07 §4.4 has
+    /// always said "click a clip to cut it at that time"; this is that,
+    /// asserted by putting the playhead somewhere the cut must *not* land.
+    testWidgets('the razor cuts under the pointer, not under the playhead',
         (tester) async {
       final p = withComp();
-      final layer = p.comp.addSequenceLayer();
-      p.uiState.selectedLayer.value = layer;
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
       await mount(tester, p);
 
-      // Turn the razor on, then move the playhead — without touching anything
-      // that would rebuild the bar.
-      await openMore(tester);
-      await tester.tap(find.byKey(const ValueKey('tl-razor')));
-      await tester.pumpAndSettle();
-      p.uiState.playheadFrame.value = 30;
+      // The playhead sits at the very start; the click lands well past it.
+      p.uiState.playheadFrame.value = 0;
       await tester.pump();
 
       final bar =
-          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
-      expect(bar, findsOneWidget);
-      await tester.tap(bar, warnIfMissed: false);
-      await tester.pump();
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy));
+      await tester.pumpAndSettle();
 
-      // A Sequence layer with no clips has nothing to cut, so what is asserted
-      // is the frame the razor asked for rather than the resulting clips: the
-      // playhead must still be at 30, and nothing may have thrown.
       expect(tester.takeException(), isNull);
-      expect(p.uiState.playheadFrame.value, 30);
+      final after = p.comp.getLayers();
+      expect(after.length, 2);
+      // The seam is around the middle of the layer, nowhere near frame 0 —
+      // which a cut at the playhead could not have produced at all (it would
+      // have been refused as outside the span, leaving one layer).
+      final seam = [
+        for (final l in after)
+          l.getSpan().inPoint.num / l.getSpan().inPoint.den,
+      ].reduce((a, b) => a > b ? a : b);
+      expect(seam, greaterThan(0.0));
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'and the razor did not move the playhead to do it');
     });
 
     /// The twirl-down the port dropped. A layer opens onto its *section

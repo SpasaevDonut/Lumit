@@ -17,7 +17,7 @@ import 'retime.dart';
 import 'solid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -925,6 +925,25 @@ class LayerReference {
   /// a transform property, and for the same invertibility reason.
   void setVolumeDb({required BridgeScalar value}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetVolumeDb(that: this, value: value);
+
+  /// Razor: split this layer in two at `frame` (docs/07 §4.4).
+  ///
+  /// After Effects' split, not a clip cut: the layer keeps everything it has —
+  /// its source, effects, masks, parent, label and keyframes — and the copy
+  /// takes the tail. Both halves keep the **same `start_offset`**, which is
+  /// what makes the cut invisible: layer time is measured from that offset
+  /// (K-213), so each half shows exactly the frames it showed before and every
+  /// keyframe stays where it was on the comp's clock.
+  ///
+  /// One `Batch`, so it is one undo step — docs/07 §4.7 requires that of every
+  /// destructive-feeling action, and a razor that took two would be two.
+  ///
+  /// The copy goes directly above the original, where a duplicate goes.
+  /// `frame` must land strictly inside the layer's span: cutting at either end
+  /// would make a layer of no length, so it is a calm error rather than a
+  /// zero-length layer nobody asked for.
+  void splitAt({required PlatformInt64 frame}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSplitAt(that: this, frame: frame);
 
   /// Turn Retime on or off (Ctrl+Alt+T), returning whether it is now on.
   ///

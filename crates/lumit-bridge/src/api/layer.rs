@@ -573,6 +573,66 @@ impl LayerReference {
         self.commit_clips(clips)
     }
 
+    /// Razor: split this layer in two at `frame` (docs/07 §4.4).
+    ///
+    /// After Effects' split, not a clip cut: the layer keeps everything it has —
+    /// its source, effects, masks, parent, label and keyframes — and the copy
+    /// takes the tail. Both halves keep the **same `start_offset`**, which is
+    /// what makes the cut invisible: layer time is measured from that offset
+    /// (K-213), so each half shows exactly the frames it showed before and every
+    /// keyframe stays where it was on the comp's clock.
+    ///
+    /// One `Batch`, so it is one undo step — docs/07 §4.7 requires that of every
+    /// destructive-feeling action, and a razor that took two would be two.
+    ///
+    /// The copy goes directly above the original, where a duplicate goes.
+    /// `frame` must land strictly inside the layer's span: cutting at either end
+    /// would make a layer of no length, so it is a calm error rather than a
+    /// zero-length layer nobody asked for.
+    #[frb(sync)]
+    pub fn split_at(&self, frame: i64) -> Result<(), BridgeError> {
+        let comp = self.composition()?;
+        let layer = self.item()?;
+        let t = comp
+            .frame_rate
+            .time_of_frame(frame)
+            .map_err(|_| BridgeError::InvalidTime)?;
+        if t.0 <= layer.in_point.0 || t.0 >= layer.out_point.0 {
+            return Err(BridgeError::NothingToSplit);
+        }
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| l.id == self.layer_id)
+            .ok_or(BridgeError::InvalidLayer)?;
+
+        let mut tail = layer.clone();
+        tail.id = Uuid::now_v7();
+        for effect in &mut tail.effects {
+            effect.id = Uuid::now_v7();
+        }
+        tail.in_point = t;
+
+        self.commit(lumit_core::Op::Batch {
+            ops: vec![
+                lumit_core::Op::SetLayerSpan {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                    in_point: layer.in_point,
+                    out_point: t,
+                    // Untouched: the offset is what makes both halves show the
+                    // frames they showed before the cut.
+                    start_offset: layer.start_offset,
+                },
+                lumit_core::Op::AddLayer {
+                    comp: self.comp_id,
+                    index,
+                    layer: Box::new(tail),
+                },
+            ],
+        })
+    }
+
     /// Delete the clip under `frame`, leaving a gap.
     ///
     /// A gap is legal on the Vegas surface (K-071), so the clips after it stay

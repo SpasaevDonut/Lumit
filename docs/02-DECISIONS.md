@@ -3663,3 +3663,53 @@ went *down*, not from where the framework recognised the drag: recognition happe
 pixels, and measuring from there took a fixed bite out of every turn — a quarter-turn drag
 committed 45° instead of 90°. Recorded twice now because it will keep coming: any gesture
 whose *meaning* depends on its start point has to record that start point itself.
+
+**K-218 · DECIDED · The Anchor point tool pans behind, and the Razor cuts under the blade.**
+From the owner (2026-07-31), asking what After Effects does with these two and for the same
+behaviour here. The answers differ, because only one of them is an After Effects tool at all.
+
+**Anchor point is AE's Pan Behind, and the name is the behaviour.** Dragging a layer's anchor
+naively moves the layer, because Position places the anchor: change the anchor and the same
+Position means somewhere else. The tool moves the anchor *and* compensates Position by
+exactly the amount that cancels the jump, so the pivot slides while the picture stays still.
+The maths is `pan_behind_position`, ported from the egui frontend's anchor overlay and
+already unit-tested — this branch supplies the gesture round it, not new geometry.
+
+Two modifiers, both AE's. `Shift` locks the drag to one **screen** axis (the lock is about
+the hand's gesture, not the layer's axes, so it stays straight across the screen on a turned
+layer). `Ctrl`/`Cmd` snaps the anchor to the layer's nine key points — corners, edge
+midpoints, centre — measured in **screen** pixels, because a layer at 10% would otherwise
+snap from half a screen away and one at 1000% would never snap at all. That is the same rule
+docs/07 §4.5 sets for the Timeline: the distance a user can see is the distance that counts.
+
+**One op for four properties.** The anchor pair and the position pair are only meaningful
+together here — committing half of this edit *moves the picture*, which is the one thing the
+tool promises not to do — so it goes through `set_transforms`, which exists for exactly this
+and makes the drag one undo step.
+
+**The Razor is not an After Effects tool, and copying Premiere is right.** AE has no razor:
+it splits layers with `Ctrl+Shift+D` at the playhead, and the toolbar key `C` is its camera
+cycle. Lumit has a razor because it has Sequence layers — the Vegas-style cutting surface
+(K-071) — so the tool is Premiere's, and Premiere's razor cuts **where you click**, not where
+the playhead is. The old behaviour (click a bar, cut at the playhead) made the tool a slower
+way of pressing the shortcut; docs/07 §4.4 has always said "click a clip to cut it at that
+time", and now it does. `Shift`-click cuts every layer that spans that moment, which is
+Premiere's cut-all-tracks.
+
+**Two kinds of cut, because there are two kinds of layer.** A Sequence layer holds clips, so
+a cut makes an **edit point** inside it. Everything else **splits into two layers**, which is
+what AE's `Ctrl+Shift+D` does — a new bridge op (`split_at`), one `Batch`, one undo step. The
+halves keep everything (source, effects, masks, parent, label, keyframes) and — this is the
+part that matters — the **same `start_offset`**, so each half shows exactly the frames it
+showed before and every keyframe stays on the same comp frame (K-213). A cut at either end is
+refused rather than making a layer of no length.
+
+**One razor, two doors.** The Timeline's own "Arm razor" menu item now arms the *toolbar's*
+tool rather than a flag of its own. Two pieces of state that both mean "the razor is armed"
+is one too many: they would disagree the first time someone used the other door.
+
+**Both pointers are drawn, for K-217's reason.** No platform ships a pan-behind cursor or a
+razor. The anchor's pointer is the anchor's own ring-and-cross with a small arrow at its tail
+(AE's pairing, and it says what the tool moves); the razor's is a blade with a full-height
+line down the lanes marking where the cut will land — the line is the useful half, because a
+cut you cannot aim is a cut you undo.

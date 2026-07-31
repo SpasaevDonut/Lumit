@@ -55,6 +55,7 @@ import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/dropper_overlay.dart';
 import 'placeholder.dart';
+import 'viewer_anchor.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 import 'viewer_rotate.dart';
@@ -641,6 +642,18 @@ class _Stage extends StatelessWidget {
                   showAnchors: uiState.tools.tool.group == ToolGroup.rotate,
                   onChanged: onChanged,
                 ),
+              ),
+              // The Anchor point tool: its own pointer, and a drag that slides
+              // the pivot while the picture stays still (K-218).
+              ViewerAnchorLayer(
+                active: uiState.tools.tool.group == ToolGroup.anchor,
+                comp: comp,
+                uiState: uiState,
+                boxes: _boxes(),
+                mark: t.textPrimary,
+                outline: t.surface0,
+                accent: t.accent,
+                onChanged: onChanged,
               ),
               // The Rotation tool: its own pointer, and a drag that turns the
               // selection about each layer's anchor (K-217).

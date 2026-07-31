@@ -106,10 +106,13 @@ armed is a *tool*; what each tool then does is the backlog:
 - **Rotation** - built (K-217): the drawn curved pointer (tighter at a corner, leaning
     round the anchor), a drag that turns the whole selection about each layer's own anchor,
     `Shift` locking to 45 degrees, and the anchor marked while it is armed.
-- **Anchor point** - the tool changes nothing yet; the anchor can be seen (K-217 marks it
-    under the Rotation tool) but not dragged.
-- **Razor** - `Ctrl+Shift+D` and Composition ▸ Cut clip at playhead exist; clicking a clip
-    with the tool to cut it there does not.
+- **Anchor point** - built (K-218): pan behind, with `Shift` locking an axis and `Ctrl`
+    snapping to the layer's nine key points, as one undo step.
+- **Razor** - built (K-218): the blade pointer and cut line over the lanes, a click that
+    cuts under the pointer (splitting a layer in two, or making an edit point inside a
+    Sequence layer), and `Shift` cutting every layer that spans that moment. Still owed:
+    the razor only works in the **Timeline** — clicking a clip in the *Viewer* does
+    nothing — and a Sequence layer's eased ramps still refuse a cut (`UncuttableClip`).
 - **Shape tools** - a rubber-band drag committing mask geometry (the egui build had
     rectangle/ellipse/star; the rounded rectangle and polygon are new).
 - **Pen tools** - click-to-place mask drawing, and the four vertex/feather variants.
@@ -134,8 +137,9 @@ one that matters most: it is zoomed constantly while cutting.
 **Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3, K-215):** the
 wireframe, selection on the picture, the marquee, the move/scale/rotate gizmo and the bar's
 switch landed 2026-07-31. What that section still owes:
-- **The anchor-point centre handle** - the origin is drawn while the Rotation tool is armed
-    (K-217) but cannot be dragged; the `Y` tool has nothing behind it.
+- **The anchor-point centre handle** - the anchor can be dragged with the Anchor point tool
+    (K-218) and is drawn while that tool or the Rotation tool is armed, but the *Selection*
+    tool's gizmo still has no centre handle to drag it by (docs/07 §2.3).
 - **Scale and rotation of a multiple selection** - several layers move together, but each
     keeps its own box and only a lone selection grows handles. AE scales a set about one
     shared box.

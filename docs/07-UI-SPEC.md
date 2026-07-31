@@ -283,6 +283,16 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   rotation about an unseen point is a rotation nobody can predict. A set turns as one gesture
   — the angle is swept about the first selected layer's anchor and applied to all of them —
   rather than each layer chasing its own angle from the same pointer.
+- The **Anchor point tool** (After Effects' Pan Behind, K-218) drags a layer's anchor while
+  **Position compensates**, so the pivot slides and the picture does not move at all. It acts
+  on the layer under the pointer (selecting it, as the Selection tool does), or on the
+  selection when the pointer is elsewhere. `Shift` locks the drag to one screen axis;
+  `Ctrl` (`Cmd`) snaps the anchor to the layer's own key points — its four corners, four edge
+  midpoints and centre — with the snap distance measured in **screen** pixels, so it is as
+  precise as the magnification allows (§4.5's rule for every snap). The whole drag MUST be
+  one undo step: half of it would move the picture, which is the one thing pan-behind
+  promises not to do. Its pointer is the anchor's own ring-and-cross with a small arrow at
+  its tail, and the layer's live anchor is marked while the tool is armed.
 - The Rotation tool's **pointer is a curved arrow**, drawn rather than a system cursor
   (no platform ships one). It MUST lean round the anchor — the curve faces the way the layer
   would turn from where the pointer is — and MUST be tighter towards a corner than along an
@@ -569,9 +579,20 @@ A Sequence layer's row renders its clips back-to-back (glossary §2):
 - **Overrun hatching**: when a clip's Retime requests source beyond the media (glossary §4),
   the affected span renders with a hatched overlay and the boundary frame holds. Overrun
   MUST never move edit points (K-022). Context menu offers *Trim to source end* explicitly.
-- **Razor**: with the razor tool (`C`) click a clip to cut it at that time; `Ctrl+Shift+D`
-  cuts the selected layer/clip at the playhead. Cutting a Footage layer converts nothing —
-  it splits the layer (AE behaviour); cutting inside a Sequence layer creates an edit point.
+- **Razor** (K-218): with the razor tool (`C`) click a layer to cut it **at the time under
+  the pointer** — not at the playhead, which is what `Ctrl+Shift+D` is for. `Shift`-clicking
+  cuts **every layer whose span contains that moment**, the way Premiere's razor cuts all
+  tracks. Cutting a Footage (or any non-Sequence) layer converts nothing — it **splits the
+  layer** in two (AE behaviour): both halves keep the source, effects, masks, parent, label
+  and keyframes, they meet exactly at the cut with no gap and no overlap, and each keeps the
+  same start offset so neither half's content or keyframes move. Cutting inside a Sequence
+  layer creates an **edit point** instead and the layer stays one layer. Each cut is one undo
+  step (§4.7).
+  The razor is armed from the **toolbar** (§1.7); the Timeline's own menu item is a second
+  door into the same state, never a second razor. While it is armed the pointer over the
+  lanes is a drawn blade and a vertical line MUST follow it across every row, so the cut can
+  be aimed before it is made. A cut at a layer's own end MUST be refused — there is no
+  second half there — rather than making a layer of no length.
 - Per-clip context menu: frame interpolation mode (nearest / blend / flow), Retime reset,
   reveal in Project panel, replace source (preserves trim and Retime where durations allow).
 

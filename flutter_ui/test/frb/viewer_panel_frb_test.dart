@@ -873,6 +873,55 @@ void main() {
       expect((p.layer.getTransform().rotation as BridgeScalar_Static).field0, 0);
     });
 
+    testWidgets('the Anchor point tool slides the pivot and leaves the picture'
+        ' where it was', (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.anchor);
+      await mount(tester, p);
+
+      final before = p.layer.getTransform();
+      double at(BridgeScalar s) => (s as BridgeScalar_Static).field0;
+      final anchorBefore = (at(before.anchorX), at(before.anchorY));
+      final positionBefore = (at(before.positionX), at(before.positionY));
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(10, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final after = p.layer.getTransform();
+      expect(at(after.anchorX), isNot(anchorBefore.$1),
+          reason: 'the pivot moved');
+      // Pan behind: the anchor moved right, so Position moved right by exactly
+      // as much (the layer is unscaled and unturned), and the picture did not
+      // move at all.
+      final anchorDelta = at(after.anchorX) - anchorBefore.$1;
+      final positionDelta = at(after.positionX) - positionBefore.$1;
+      expect(positionDelta, closeTo(anchorDelta, 0.001),
+          reason: 'Position compensated exactly, so nothing appeared to move');
+      expect(at(after.anchorY), closeTo(anchorBefore.$2, 0.001),
+          reason: 'a sideways drag does not move the pivot vertically');
+    });
+
+    testWidgets('the Anchor point tool picks a layer when you click one',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.anchor);
+      await mount(tester, p);
+
+      await tester.tapAt(fittedRect(tester, p.comp).center);
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          p.layer.internallayerId);
+    });
+
     testWidgets('a missing footage layer raises the badge', (tester) async {
       final p = withLayer();
       final gone = p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');

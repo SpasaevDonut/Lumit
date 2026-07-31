@@ -4857,3 +4857,70 @@ drag came out as 45° instead of 90°. The fix is the same one the scale handles
 needed — record where the pointer actually went down and measure from that. Worth
 remembering as a rule: any gesture whose *meaning* depends on where it began has
 to remember where it began.
+
+### Pan behind, and a razor that cuts where you point (K-218)
+
+Two more tools, and they are less alike than their neighbours on the strip: one
+is an After Effects tool copied faithfully, the other is a tool After Effects
+does not have at all.
+
+**The Anchor point tool moves the pivot without moving the picture.** The anchor
+is the spot a layer spins and scales about, and it is also the spot Position
+places. So moving the anchor on its own makes the layer jump: the same Position
+now means somewhere else. This tool moves the anchor *and* shifts Position by
+exactly the amount that cancels the jump — the pivot slides, the picture sits
+still. After Effects calls that **pan behind**, and the name is the whole idea:
+you are sliding the layer behind its own pivot.
+
+Two modifiers, both borrowed from AE:
+
+- **Shift** locks the drag to one axis — measured on the *screen*, not on the
+  layer, because it is about the gesture your hand is making. A sideways drag
+  stays sideways even on a layer that is lying at an angle.
+- **Ctrl** (Cmd on a Mac) snaps the pivot to the layer's own key points: the four
+  corners, the four edge midpoints, and the centre. That is how you put a pivot
+  *exactly* on a corner rather than nearly on one. The snap distance is measured
+  in screen pixels, so it is as fussy as your current zoom allows — a layer shown
+  tiny snaps from further away in its own coordinates, which is right, because
+  what you can see is what you can aim at.
+
+The whole drag commits as **one** edit, not four. The anchor pair and the
+position pair only mean anything together here: land half of it and the picture
+moves, which is the one thing this tool promises not to do.
+
+**The Razor is Premiere's tool, not After Effects'.** AE has no razor at all — it
+splits layers with a keyboard shortcut at the playhead, and its `C` key cycles
+camera tools. Lumit has one because Lumit has Sequence layers, the strip where
+clips sit end to end, and cutting those is a mouse job. So the razor behaves the
+way Premiere's does: **it cuts where you click**, and Shift-clicking cuts every
+layer that is under that moment, not just the one you clicked.
+
+That is a change: the razor used to cut at the playhead wherever you clicked,
+which made it a slow way of pressing Ctrl+Shift+D. The specification always said
+"click a clip to cut it at that time"; now it does.
+
+**What a cut actually does depends on the layer.** A Sequence layer holds clips,
+so cutting it puts an **edit point** inside it and it stays one layer. Anything
+else **splits into two layers** — both keep the source, the effects, the masks,
+the parent and the keyframes, and they meet exactly at the cut. The trick that
+makes that invisible is a field called `start_offset`: it says where the layer's
+own time zero sits on the comp's clock, and both halves keep the same one. So
+each half shows exactly the frames it showed before, and every keyframe stays on
+the comp frame it was on. Without that, the second half would rewind to its own
+beginning and the whole thing would be useless.
+
+**And there is only one razor.** The Timeline's menu still has "Arm razor", but
+it now arms the toolbar's tool rather than a flag of its own. Two bits of state
+that both mean the same thing will disagree the first time somebody uses the
+other one.
+
+**One bug this shook out, worth remembering.** The Timeline's "Arm razor" menu
+item stopped working the moment the razor moved onto the toolbar — you could
+click it, the tool armed, and the lanes carried on as though nothing had
+happened. The reason is a Flutter habit worth knowing: watching an object only
+tells you about *that* object. The panel watches the shell's UI state, but the
+armed tool lives on its own little notifier hanging off it, so nothing told the
+panel to redraw. It looked right again the instant anything else happened to
+rebuild the panel, which is the worst kind of bug — it works while you are
+testing it and fails while you are using it. The panel subscribes to the tool
+directly now.
