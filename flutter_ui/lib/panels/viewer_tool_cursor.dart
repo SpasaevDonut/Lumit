@@ -123,37 +123,41 @@ class ToolPointer extends StatelessWidget {
     final at = this.at;
     if (at == null) return const SizedBox.shrink();
     return Positioned.fill(
-      child: IgnorePointer(
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: CustomPaint(
-                painter: _ToolPointerPainter(
-                  at: at,
-                  mark: mark,
-                  outline: outline,
-                  ringRadius: ringRadius,
+      // Its own layer, so moving the pointer repaints the pointer and not the
+      // picture or the shape being dragged out under it (K-233).
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _ToolPointerPainter(
+                    at: at,
+                    mark: mark,
+                    outline: outline,
+                    ringRadius: ringRadius,
+                  ),
                 ),
               ),
-            ),
-            Positioned(
-              left: at.dx + toolBadgeOffset.dx,
-              top: at.dy + toolBadgeOffset.dy,
-              // The icon twice: the halo copy a pixel down and across, then the
-              // ink one over it. Cheaper than an outlined glyph and legible on
-              // any picture, which is the whole requirement.
-              child: Stack(
-                children: [
-                  Transform.translate(
-                    offset: const Offset(1, 1),
-                    child: lumitIcon(tool.icon,
-                        size: toolBadgeSize, color: outline),
-                  ),
-                  lumitIcon(tool.icon, size: toolBadgeSize, color: mark),
-                ],
+              Positioned(
+                left: at.dx + toolBadgeOffset.dx,
+                top: at.dy + toolBadgeOffset.dy,
+                // The icon twice: the halo copy a pixel down and across, then the
+                // ink one over it. Cheaper than an outlined glyph and legible on
+                // any picture, which is the whole requirement.
+                child: Stack(
+                  children: [
+                    Transform.translate(
+                      offset: const Offset(1, 1),
+                      child: lumitIcon(tool.icon,
+                          size: toolBadgeSize, color: outline),
+                    ),
+                    lumitIcon(tool.icon, size: toolBadgeSize, color: mark),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -251,13 +255,17 @@ class HandPointer extends StatelessWidget {
     final at = this.at;
     if (at == null) return const SizedBox.shrink();
     return Positioned.fill(
-      child: IgnorePointer(
-        child: CustomPaint(
-          painter: _HandPainter(
-            at: at,
-            holding: holding,
-            mark: mark,
-            outline: outline,
+      // Its own layer, so moving the pointer repaints the pointer and not the
+      // picture, the wireframes or the tool's own preview under it (K-233).
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: CustomPaint(
+            painter: _HandPainter(
+              at: at,
+              holding: holding,
+              mark: mark,
+              outline: outline,
+            ),
           ),
         ),
       ),
@@ -443,13 +451,15 @@ class MagnifierPointer extends StatelessWidget {
     final at = this.at;
     if (at == null) return const SizedBox.shrink();
     return Positioned.fill(
-      child: IgnorePointer(
-        child: CustomPaint(
-          painter: _MagnifierPainter(
-            at: at,
-            out: out,
-            mark: mark,
-            outline: outline,
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: CustomPaint(
+            painter: _MagnifierPainter(
+              at: at,
+              out: out,
+              mark: mark,
+              outline: outline,
+            ),
           ),
         ),
       ),
@@ -538,9 +548,11 @@ class TextPointer extends StatelessWidget {
     final at = this.at;
     if (at == null) return const SizedBox.shrink();
     return Positioned.fill(
-      child: IgnorePointer(
-        child: CustomPaint(
-          painter: _BeamPainter(at: at, mark: mark, outline: outline),
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: CustomPaint(
+            painter: _BeamPainter(at: at, mark: mark, outline: outline),
+          ),
         ),
       ),
     );
