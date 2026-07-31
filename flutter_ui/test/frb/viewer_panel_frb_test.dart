@@ -970,6 +970,91 @@ void main() {
       expect(at(moved.positionX), greaterThan(positionNow));
     });
 
+    /// The shape tools (K-220). With a layer selected a drag draws a **mask** on
+    /// it; with nothing selected there is nothing to mask, and the status line
+    /// says so rather than the drag vanishing into silence.
+    testWidgets('a shape drag adds a mask to the selected layer',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.shapeEllipse);
+      await mount(tester, p);
+      expect(p.layer.getMasks(), isEmpty);
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(
+          fitted.center - const Offset(60, 40));
+      await tester.pump();
+      await gesture.moveTo(fitted.center);
+      await tester.pump();
+      await gesture.moveTo(fitted.center + const Offset(60, 40));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final masks = p.layer.getMasks();
+      expect(masks, hasLength(1));
+      expect(masks.single.name, 'Ellipse');
+      expect(masks.single.closed, isTrue);
+      expect(masks.single.vertices, hasLength(4),
+          reason: 'an ellipse is four cubics');
+      // Drawn in layer space, so the mask sits where the drag was: the comp is
+      // 1920x1080 and the drag was about its middle.
+      final xs = [for (final v in masks.single.vertices) v.x];
+      expect(xs.reduce((a, b) => a < b ? a : b), greaterThan(0));
+      expect(xs.reduce((a, b) => a > b ? a : b), lessThan(1920));
+    });
+
+    testWidgets('a shape drag with nothing selected says what to do instead',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.shapeRectangle);
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      await gesture.moveBy(const Offset(40, 30));
+      await tester.pump();
+      await gesture.moveBy(const Offset(40, 30));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(p.layer.getMasks(), isEmpty);
+      expect(p.state.notice.value?.message, contains('Select a layer'),
+          reason: 'silence would look like a broken tool (shape layers are '
+              'not built — docs/TODO.md)');
+    });
+
+    testWidgets('the polygon tool places points and closes on the first one',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.shapePolygon);
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      final first = fitted.center - const Offset(80, 60);
+      await tester.tapAt(first);
+      await tester.pumpAndSettle();
+      await tester.tapAt(fitted.center + const Offset(80, -60));
+      await tester.pumpAndSettle();
+      await tester.tapAt(fitted.center + const Offset(0, 70));
+      await tester.pumpAndSettle();
+      expect(p.layer.getMasks(), isEmpty,
+          reason: 'an open path is a shape being drawn, not a mask yet');
+
+      // Clicking the first point again closes it, and that is what applies it.
+      await tester.tapAt(first);
+      await tester.pumpAndSettle();
+
+      final masks = p.layer.getMasks();
+      expect(masks, hasLength(1));
+      expect(masks.single.name, 'Polygon');
+      expect(masks.single.vertices, hasLength(3));
+      expect(masks.single.closed, isTrue);
+    });
+
     testWidgets('a missing footage layer raises the badge', (tester) async {
       final p = withLayer();
       final gone = p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');

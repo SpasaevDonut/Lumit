@@ -172,6 +172,58 @@ void main() {
       }
     });
 
+    /// Masks appear in the fold-out under their own heading, and only once the
+    /// layer has one — the same rule Effects follows (K-220).
+    testWidgets('a masked layer grows a Masks heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final twirl =
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
+      await tester.tap(twirl);
+      await tester.pumpAndSettle();
+      expect(find.text('Transform'), findsOneWidget);
+      expect(find.text('Masks'), findsNothing,
+          reason: 'an empty heading is a promise the row cannot keep');
+
+      layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Ellipse',
+          vertices: const [
+            BridgeVertex(
+                x: 0, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 80, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Masks'), findsOneWidget);
+      // And it opens onto the mask itself.
+      await tester.tap(find.byKey(ValueKey<String>(
+          'tl-group-${layer.internallayerId}/masks')));
+      await tester.pumpAndSettle();
+      expect(find.text('Ellipse'), findsOneWidget);
+
+      // The invert switch writes through to the document.
+      final masks = layer.getMasks();
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-mask-invert-${masks.single.id}')));
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.inverted, isTrue);
+    });
+
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();
       await tester.pumpWidget(hostPanel(

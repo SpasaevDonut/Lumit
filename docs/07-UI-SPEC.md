@@ -151,6 +151,7 @@ strip whatever workspace is active.
 | Anchor point | Anchor point | `Y` |
 | Razor | Razor | `C` |
 | Shape | Rectangle, Rounded rectangle, Ellipse, Polygon, Star | `Q` |
+| | *(with a layer selected these draw a **mask** on it; §2.3)* | |
 | Pen | Pen, Add vertex, Delete vertex, Convert vertex, Mask feather | `G` |
 | Type | Horizontal type, Vertical type | `Ctrl+T` |
 | Paint | Brush, Clone stamp, Eraser | `Ctrl+B` |
@@ -310,13 +311,35 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   other layers' anchors/edges. Snapping is on by default; holding `Ctrl` suspends it during
   a drag. Snap matches MUST be indicated visually at the moment of snap.
 
+### 2.3.1 The shape tools and masks (K-220)
+
+- With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected
+  After Effects makes a *shape layer*; Lumit's engine has no such layer kind yet, so the tool
+  MUST say what to do instead rather than doing nothing quietly (TODO.md tracks the kind).
+- **Rectangle, rounded rectangle, ellipse and star** drag out between two opposite corners of
+  the shape's box — whichever way round the drag went — with `Shift` keeping the box square.
+- **The polygon tool builds a path point by point**: a click places a corner; a click-and-drag
+  places a vertex and pulls a **mirrored** pair of bezier handles out of it, the dragged
+  handle leaving the vertex and its reflection entering; holding `Alt` during that drag breaks
+  the pair so the entering handle stays where it was. Clicking the **first** vertex closes the
+  path, and closing is what applies it. `Escape` abandons the path; `Backspace` takes back the
+  last point.
+- A mask's path is stored in **layer space**, so it travels with the layer's transform.
+- Every selected layer's masks MUST be outlined on the picture, with a mark on each vertex.
+- Masks appear in the layer's Timeline twirl-down under a **Masks** heading — above Effects,
+  because a mask gates the layer's alpha before its effects run (docs/06 render order) — and
+  the heading appears only once the layer has one, exactly as Effects does. Each row carries
+  the mask's name, its invert switch and its opacity, and its context menu deletes it.
+
 **Implementation status (2026-07-31).** Built: the wireframe, hover, click and Shift-click
 selection, the marquee, body-drag move (of a whole multiple selection), the eight scale
 handles with `Shift` for uniform, the rotation bar with `Shift` snapping to 45°, and the
 bar's switch. Not built: the anchor-point centre handle, snapping of any kind, parent-aware
 and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (a multiple
 selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
-is keyframed draws no box: there is no single value for a drag to add to.
+is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
+drawn, listed, inverted, faded and deleted, but not yet edited** — no vertex or handle on a
+finished mask can be dragged, and mask paths cannot be keyframed.
 
 ### 2.4 Motion paths
 

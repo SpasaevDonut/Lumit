@@ -1825,6 +1825,12 @@ class _FoldRow extends StatelessWidget {
           onSeek: onSeek,
           onChanged: onChanged,
         ),
+      FoldMaskRow(:final mask) => _MaskRow(
+          layer: layer,
+          mask: mask,
+          valueColumn: valueColumn,
+          onChanged: onChanged,
+        ),
     };
   }
 }
@@ -2014,6 +2020,121 @@ class _VolumeRowState extends State<_VolumeRow> {
 /// and only exists while the layer has been given a Retime (Ctrl+Alt+T), so
 /// unlike Volume its scalar arrives on the fold row rather than being read here
 /// (K-184: no bridge calls while drawing).
+/// One mask's row in the fold-out (K-220): its name, its invert switch and its
+/// opacity.
+///
+/// Read from the model, written through the layer's own handle — the same shape
+/// as every other row here. Deleting a mask is on its right-click menu rather
+/// than a button, because a row of buttons on every mask is a row of ways to
+/// lose work by mistake.
+class _MaskRow extends StatelessWidget {
+  final LayerReference layer;
+  final BridgeMask mask;
+  final ValueColumn valueColumn;
+  final VoidCallback onChanged;
+
+  const _MaskRow({
+    required this.layer,
+    required this.mask,
+    required this.valueColumn,
+    required this.onChanged,
+  });
+
+  /// Write the mask back with one field changed. The engine takes the whole
+  /// mask, so this is the only shape an edit has.
+  void _write({bool? inverted, double? opacity}) {
+    try {
+      layer.setMask(
+        mask: BridgeMask(
+          id: mask.id,
+          name: mask.name,
+          vertices: mask.vertices,
+          closed: mask.closed,
+          inverted: inverted ?? mask.inverted,
+          opacity: opacity ?? mask.opacity,
+        ),
+      );
+      onChanged();
+    } catch (_) {
+      // The mask or its layer went away between the draw and the click.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
+      child: Row(
+        children: [
+          lumitIcon(LumitIcon.rectangle, size: iconSize, color: t.textSecondary),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(mask.name,
+                style: t.body, overflow: TextOverflow.ellipsis),
+          ),
+          SizedBox(
+            width: valueColumn.width,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                LumitTooltip(
+                  message: 'Invert this mask',
+                  child: HouseButton(
+                    key: ValueKey<String>('tl-mask-invert-${mask.id}'),
+                    small: true,
+                    frameless: true,
+                    onPressed: () => _write(inverted: !mask.inverted),
+                    child: Text(
+                      'Inv',
+                      style: t.small.copyWith(
+                          color: mask.inverted ? t.accent : t.textMuted),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 56,
+                  child: DragValueField(
+                    key: ValueKey<String>('tl-mask-opacity-${mask.id}'),
+                    value: mask.opacity,
+                    min: 0,
+                    max: 100,
+                    suffix: '%',
+                    onChanged: (v) => _write(opacity: v.toDouble()),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _menu(BuildContext context, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 160,
+        child: MenuRow(
+          key: ValueKey<String>('tl-mask-delete-${mask.id}'),
+          onPressed: () {
+            close(null);
+            try {
+              layer.deleteMask(id: mask.id);
+              onChanged();
+            } catch (_) {}
+          },
+          child: const Text('Delete mask'),
+        ),
+      ),
+    );
+  }
+}
+
 class _RetimeRow extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;

@@ -84,6 +84,13 @@ final class FoldRetimeRow extends LayerFoldRow {
   const FoldRetimeRow(this.scalar, {required int depth}) : super(depth);
 }
 
+/// One mask on the layer (K-220): its name, and the switches that decide how it
+/// gates the picture.
+final class FoldMaskRow extends LayerFoldRow {
+  final BridgeMask mask;
+  const FoldMaskRow(this.mask, {required int depth}) : super(depth);
+}
+
 /// The waveform lane (K-172): the outline names it, the lane side draws the
 /// layer's source peaks through its live in/out/offset.
 final class FoldWaveformRow extends LayerFoldRow {
@@ -238,6 +245,7 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldVolumeRow() => '${audioPath(layerId)}/volume',
       FoldRetimeRow() => retimePath(layerId),
       FoldWaveformRow() => waveformPath(layerId),
+      FoldMaskRow(:final mask) => '${masksPath(layerId)}/${mask.id}',
     };
 
 /// Whether [path] sits under [ancestor] — a property under its group, a
@@ -257,6 +265,9 @@ String effectsPath(String layerId) => '$layerId/effects';
 /// The path of one effect within the Effects group.
 String effectPath(String layerId, String effectId) =>
     '$layerId/effects/$effectId';
+
+/// The path of a layer's Masks group.
+String masksPath(String layerId) => '$layerId/masks';
 
 /// The path of a layer's Audio group.
 String audioPath(String layerId) => '$layerId/audio';
@@ -295,6 +306,26 @@ List<LayerFoldRow> layerFoldRows({
   if (transformOpen) {
     for (final group in transformGroups(threeD: info.switches.threeD)) {
       rows.add(FoldTransformRow(group, info.transform, depth: 2));
+    }
+  }
+
+  // Masks, above Effects because that is the order they are applied in: a mask
+  // gates the layer's alpha *before* its effects run (docs/06 render order), so
+  // the fold-out reads top to bottom the way the picture is built. Like
+  // Effects, the heading appears only once there is something under it — an
+  // empty heading is a promise the row cannot keep.
+  if (info.masks.isNotEmpty) {
+    final masksOpen = open.contains(masksPath(id));
+    rows.add(FoldGroupRow(
+      path: masksPath(id),
+      label: 'Masks',
+      open: masksOpen,
+      depth: 1,
+    ));
+    if (masksOpen) {
+      for (final mask in info.masks) {
+        rows.add(FoldMaskRow(mask, depth: 2));
+      }
     }
   }
 

@@ -59,6 +59,7 @@ import 'viewer_anchor.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 import 'viewer_rotate.dart';
+import 'viewer_shape_layer.dart';
 import 'viewer_zoom.dart';
 
 /// The magnifications the picker offers. `null` means fit-to-panel, which is
@@ -578,6 +579,7 @@ class _Stage extends StatelessWidget {
         draggable: true,
         scalable: sx != null && sy != null && rotation != null,
         rotationDegrees: rotation ?? 0,
+        masks: entry.info.masks,
       ));
     }
     return out;
@@ -642,6 +644,17 @@ class _Stage extends StatelessWidget {
                   showAnchors: uiState.tools.tool.group == ToolGroup.rotate,
                   onChanged: onChanged,
                 ),
+              ),
+              // The shape tools: a drag draws a mask on the selected layer, and
+              // the polygon tool builds one point by point (K-220).
+              ViewerShapeLayer(
+                active: uiState.tools.tool.group == ToolGroup.shape,
+                tool: uiState.tools.tool,
+                state: Provider.of<LumitState>(context, listen: false),
+                uiState: uiState,
+                boxes: _boxes(),
+                accent: t.accent,
+                onChanged: onChanged,
               ),
               // The Anchor point tool: its own pointer, and a drag that slides
               // the pivot while the picture stays still (K-218).

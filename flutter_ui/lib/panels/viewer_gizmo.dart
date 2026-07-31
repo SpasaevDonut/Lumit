@@ -137,6 +137,10 @@ class LayerBox {
   /// with a keyframed scale still moves; it just grows no handles.
   final bool scalable;
 
+  /// The layer's masks (K-220), so the Viewer can outline them. Read from the
+  /// model with everything else, so drawing them costs no bridge calls.
+  final List<BridgeMask> masks;
+
   /// The layer's rotation in degrees, as the document holds it.
   ///
   /// Carried rather than recovered from [map]'s sine and cosine, which only
@@ -152,6 +156,7 @@ class LayerBox {
     required this.draggable,
     required this.scalable,
     required this.rotationDegrees,
+    this.masks = const [],
   });
 
   /// The box's four corners in screen space, clockwise from the layer's own
@@ -418,6 +423,10 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
             ? _hoverBox()
             : null,
         handlesFor: widget.showControls && _selectionTool ? soleHandles : null,
+        // The masks of what is selected: a mask you cannot see is a mask you
+        // cannot judge, and until mask editing exists this outline is the only
+        // sight of one on the picture (K-220).
+        maskedBoxes: widget.showControls ? selected : const [],
         anchors: widget.showControls && widget.showAnchors
             ? [for (final box in selected) box.anchorScreen]
             : const [],
@@ -892,6 +901,9 @@ BridgeTransform transformWithRotation(BridgeTransform tf, double degrees) =>
 /// handles, and the marquee.
 class _GizmoPainter extends CustomPainter {
   final List<LayerBox> selected;
+
+  /// The boxes whose masks are outlined.
+  final List<LayerBox> maskedBoxes;
   final LayerBox? hover;
   final LayerBox? handlesFor;
 
@@ -905,6 +917,7 @@ class _GizmoPainter extends CustomPainter {
 
   const _GizmoPainter({
     required this.selected,
+    required this.maskedBoxes,
     required this.hover,
     required this.handlesFor,
     required this.anchors,
@@ -951,6 +964,12 @@ class _GizmoPainter extends CustomPainter {
       _anchor(canvas, handles.handleAt(GizmoHandle.anchor) + moved);
     }
 
+    for (final box in maskedBoxes) {
+      for (final mask in box.masks) {
+        _maskOutline(canvas, box, mask);
+      }
+    }
+
     for (final anchor in anchors) {
       _anchor(canvas, anchor + moved);
     }
@@ -994,6 +1013,46 @@ class _GizmoPainter extends CustomPainter {
         ..strokeWidth = 1
         ..style = PaintingStyle.stroke,
     );
+  }
+
+  /// One mask's path over the picture, in the layer's own space put through its
+  /// transform — so the outline sits on the pixels it gates however the layer
+  /// is moved or turned.
+  void _maskOutline(Canvas canvas, LayerBox box, BridgeMask mask) {
+    if (mask.vertices.length < 2) return;
+    Offset at(BridgeVertex v) => box.map.toScreen(v.x, v.y) + moved;
+    Offset out(BridgeVertex v) =>
+        box.map.toScreen(v.x + v.tanOutX, v.y + v.tanOutY) + moved;
+    Offset into(BridgeVertex v) =>
+        box.map.toScreen(v.x + v.tanInX, v.y + v.tanInY) + moved;
+
+    final path = Path()..moveTo(at(mask.vertices.first).dx, at(mask.vertices.first).dy);
+    for (var i = 1; i < mask.vertices.length; i++) {
+      final a = mask.vertices[i - 1];
+      final b = mask.vertices[i];
+      path.cubicTo(out(a).dx, out(a).dy, into(b).dx, into(b).dy, at(b).dx, at(b).dy);
+    }
+    if (mask.closed && mask.vertices.length > 2) {
+      final a = mask.vertices.last;
+      final b = mask.vertices.first;
+      path.cubicTo(out(a).dx, out(a).dy, into(b).dx, into(b).dy, at(b).dx, at(b).dy);
+      path.close();
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = accent
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1,
+    );
+    // A small square on every vertex, the mark mask editing will grab when it
+    // is built (docs/TODO.md).
+    for (final v in mask.vertices) {
+      canvas.drawRect(
+        Rect.fromCenter(center: at(v), width: 5, height: 5),
+        Paint()..color = accent,
+      );
+    }
   }
 
   /// The anchor point: a small ring with a cross through it — the same mark the

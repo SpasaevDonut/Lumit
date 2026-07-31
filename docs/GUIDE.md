@@ -4963,3 +4963,57 @@ generous target as the corners and every attempt to move a layer would pan behin
 instead — the pivot sliding away while the layer sat still, which reads as the
 drag being broken rather than as a different gesture. So the pivot has to be
 aimed at.
+
+### Masks, and the seam that was missing (K-220)
+
+A **mask** is a shape drawn on a layer that decides which of its pixels show.
+The engine has had them all along — the shape model, the maths for rectangles
+and ellipses and stars, and a renderer that applies them. What it did not have
+was a way for the *interface* to see them: no call to read a layer's masks, none
+to add one, none to change one. So the first half of this work was building that
+seam, and the second half was the tools that use it.
+
+**A mask crosses the bridge as its path.** A path is a list of vertices, and each
+vertex is a position plus two "handles" — one for the curve arriving, one for the
+curve leaving. A corner is a vertex whose handles are both zero; a smooth curve is
+one whose handles point opposite ways. That is exactly how the engine stores it,
+so the numbers cross unchanged rather than being translated into some frontend
+shape and back.
+
+**The coordinates are the layer's own.** A mask is written in the same pixel grid
+the layer's content uses, not in the composition's. That is what makes a mask
+travel with its layer: move the layer, rotate it, scale it, and the mask goes
+along without anything having to recalculate it, because the mask was never
+described in comp coordinates in the first place. The tool takes where you
+clicked on screen and runs it *backwards* through the layer's transform — the
+same inverse the wireframe uses to answer "is the pointer inside this layer?".
+
+**Two kinds of drawing gesture.** Rectangle, rounded rectangle, ellipse and star
+are *boxes*: you drag two opposite corners and the shape is built to fit, with
+Shift keeping the box square. The polygon is a *path*: each click plants a corner,
+and a click-and-drag plants a point and pulls a pair of curve handles out of it —
+mirrored, so the curve runs smoothly through, unless you hold Alt, which breaks
+the pair and leaves the incoming handle where it was. Clicking the first point
+again closes the shape, and closing it is what applies it. Escape throws the path
+away; Backspace takes back the last point.
+
+**Every edit is the whole list.** The engine's operation for masks replaces a
+layer's entire mask list at once. That sounds wasteful and is exactly right:
+adding, deleting, renaming, inverting and reordering are then all *the same
+operation*, each is trivially reversible (the old list is the undo), and each is
+one undo step. It is the same choice the effect stack makes.
+
+**Where they show up.** In the Timeline, a layer with masks grows a **Masks**
+heading in its twirl-down — above Effects, because masks are applied before
+effects are, so the list reads top-to-bottom in the order the picture is actually
+built. The heading only appears once there is a mask, exactly like Effects. And on
+the picture, the selected layer's masks are outlined with a mark on each vertex.
+
+**One thing it will not do yet, and says so.** In After Effects, drawing a shape
+with *nothing* selected makes a **shape layer** — a layer that is nothing but
+vector art. Lumit's engine has no such layer kind: the list of what a layer can be
+(footage, solid, precomp, text, camera, sequence, adjustment, null) has no "shape"
+in it. Rather than quietly doing nothing, the tool posts a line in the status bar
+telling you to select a layer. The alternative — making a solid and putting a mask
+on it, and calling that a shape layer — would be a lie in the layer list, and one
+that would have to be untold the day the real thing arrives.

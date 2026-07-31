@@ -3745,3 +3745,45 @@ against the other handles' 32, and that asymmetry is the whole design: the ancho
 sits in the middle of the box, which is also the easiest place to grab a layer to move it, so
 a generous slop there would turn every body drag into a pan-behind — the pivot sliding while
 the layer stayed put, which reads as the drag being broken. The pivot has to be aimed at.
+
+**K-220 · DECIDED · The shape tools draw masks, and a mask crosses the bridge as its path.**
+From the owner (2026-07-31), choosing to build masks now and shape layers on a branch of
+their own.
+
+**The seam that did not exist.** `lumit-core` has had masks all along — bezier paths,
+rectangle/ellipse/star constructors, and a renderer that applies them — and *no bridge API
+exposed any of it*. The Flutter frontend could not see a mask, let alone make one. So the
+first half of this is the seam: `get_masks`, `add_mask`, `set_mask`, `delete_mask`, and the
+masks carried in the read model (K-184) so the Timeline's twirl-down draws a row per mask
+without asking per frame.
+
+**A mask crosses as its path, in layer space.** `BridgeVertex` is the engine's vertex — a
+position and two tangent handles, each an offset from it — carried across unchanged, so a
+path never changes meaning by crossing. Layer space, not comp space, because that is what
+makes a mask travel with its layer's transform for free; the tool takes the pointer's screen
+position and runs it backwards through the layer's map, the same inverse the wireframe
+hit-tests with.
+
+**Every edit is the whole mask.** The engine's op is `SetLayerMasks` — the whole list,
+exactly invertible — so an add, a delete, a rename and an invert are all one shape of edit
+and each is one undo step. The bridge refuses a path of fewer than two vertices: that is not
+a shape, and a mask that gates nothing would be a Timeline row with nothing behind it.
+
+**Two gestures, because there are two kinds of shape.** Rectangle, rounded rectangle, ellipse
+and star are *boxes*: drag two opposite corners, `Shift` for square, and the drag reads the
+same in all four directions because the box is normalised before the path is built. The
+polygon is a *path*: click for a corner, click-drag for a vertex whose bezier handles mirror
+each other as they grow, `Alt` to break that mirror, and a click on the first vertex closes
+it — closing being what applies it. Escape abandons, Backspace takes back a point. (After
+Effects calls this its Pen tool and gives its polygon tool a regular n-gon; the owner asked
+for it on the polygon, and one path-building tool is better than two.)
+
+**Masks sit above Effects in the fold-out**, because that is the order they are applied in: a
+mask gates the layer's alpha *before* its effects run (docs/06 render order), so the
+twirl-down reads top to bottom the way the picture is built.
+
+**Nothing selected says so.** After Effects would make a shape layer; Lumit's `LayerKind` has
+no Shape variant, so there is nothing honest to make. The tool posts a notice naming what to
+do instead. Silence would read as a broken tool, and a solid-with-a-mask dressed as a shape
+layer would be a lie in the layer list — one that would have to be untold when the real kind
+lands.

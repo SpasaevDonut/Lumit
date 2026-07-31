@@ -114,21 +114,21 @@ armed is a *tool*; what each tool then does is the backlog:
     keyframe at the cut on both halves of a retimed layer (K-219). Still owed: a Sequence
     layer's eased ramps refuse a cut (`UncuttableClip`), and its **clips'** own speed maps get
     no key at the cut the way a layer's Retime does. (The razor is Timeline-only by design.)
-- **Shape tools** - the next piece, and the largest so far. Wanted (owner, 2026-07-31): with
-    a layer selected a drag adds a **mask** to it; with nothing selected it makes a **shape
-    layer** at the top of the comp. Masks appear in the layer's twirl-down under a **Masks**
-    heading, hidden until the layer has one, exactly as Effects is. The polygon tool builds a
-    path point by point — click to place a corner, click-drag to place a bezier one whose
-    handles grow with the pointer, `Alt`-drag a handle to break the pair and `Alt`-drag again
-    to re-link, click the first point to close — while rectangle/rounded/ellipse/star drag out
-    from corner to corner with `Shift` keeping their proportions.
-    **What is in the way.** `lumit-core` has the mask model (`mask.rs`: bezier paths,
-    rectangle/ellipse/star constructors) and the renderer applies masks, but **no bridge API
-    exposes any of it** — no read, no add, no edit — so the frontend cannot see or make a mask
-    today. That seam is the first job. **Shape layers do not exist at all**: `LayerKind` has
-    no Shape variant, so a shape layer needs a new layer kind, a geometry model with fill and
-    stroke, renderer support and its own Timeline rows — an engine feature in its own right,
-    not a frontend one.
+- **Shape tools** - built for masks (K-220): rectangle, rounded rectangle, ellipse and star
+    drag out corner to corner with `Shift` for square, and the polygon tool builds a path
+    point by point (click for a corner, click-drag for mirrored bezier handles, `Alt` to break
+    the pair, click the first point to close). Masks list in the layer's twirl-down under a
+    Masks heading, invert, fade and delete, and are outlined on the picture. What is owed:
+    - **Shape layers.** With nothing selected the tool says "select a layer" instead of making
+      one, because `LayerKind` has no Shape variant. A shape layer needs a new layer kind, a
+      geometry model with fill and stroke, renderer support and its own Timeline rows — an
+      engine feature in its own right, being done on a branch off this one.
+    - **Mask editing.** A finished mask's vertices and handles cannot be dragged, so the
+      `Alt`-drag that re-links a broken tangent pair only exists while a point is being
+      *placed*. The Pen tools' add/delete/convert vertex variants are the same piece of work.
+    - **Mask paths cannot be keyframed** (docs/03 has them as animatable), and there is no
+      mask **mode** (add/subtract/intersect) — every mask adds.
+    - **Mask feather** has neither a control nor a renderer path.
 - **Pen tools** - click-to-place mask drawing, and the four vertex/feather variants.
 - **Type**, **Paint** (brush/clone stamp/eraser), **Roto** (roto brush/refine edge),
     **Puppet**, **Camera** - no engine side yet; these are roadmap features
