@@ -47,6 +47,7 @@ import 'package:uuid/uuid.dart';
 import '../icons/icons.dart';
 import '../shell/tool_bar_frb.dart';
 import '../state/dropper.dart';
+import '../state/layer_bounds.dart' show textLayerBounds;
 import '../state/preview_throttle.dart';
 import '../state/settings.dart';
 import '../state/tools.dart';
@@ -637,6 +638,7 @@ class _Stage extends StatelessWidget {
       final sx = still(tf.scaleX);
       final sy = still(tf.scaleY);
       final rotation = still(tf.rotation);
+      final live = uiState.liveText.value[entry.layer.internallayerId];
       out.add(LayerBox(
         layer: entry.layer,
         id: entry.layer.internallayerId,
@@ -651,8 +653,13 @@ class _Stage extends StatelessWidget {
           origin: fitted.topLeft,
           viewScale: viewScale,
         ),
-        bounds: uiState.layerBounds
-            .boundsOf(entry, compSize: compSize, revision: revision),
+        // A line being typed measures what is being typed (K-232): the
+        // document holds the old one until the edit ends, so a box measured
+        // from it would not grow with the words.
+        bounds: live == null
+            ? uiState.layerBounds
+                .boundsOf(entry, compSize: compSize, revision: revision)
+            : textLayerBounds(live.text, live.size),
         draggable: true,
         scalable: sx != null && sy != null && rotation != null,
         rotationDegrees: rotation ?? 0,
@@ -724,6 +731,7 @@ class _Stage extends StatelessWidget {
                   uiState.layerBounds,
                   uiState.model,
                   uiState.liveRotations,
+                  uiState.liveText,
                 ]),
                 builder: (context, _) => ViewerGizmoLayer(
                   comp: comp,

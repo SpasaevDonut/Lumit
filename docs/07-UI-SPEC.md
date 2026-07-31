@@ -355,7 +355,11 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   selection when the pointer is elsewhere. `Shift` locks the drag to one screen axis;
   `Ctrl` (`Cmd`) snaps the anchor to the layer's own key points — its four corners, four edge
   midpoints and centre — with the snap distance measured in **screen** pixels, so it is as
-  precise as the magnification allows (§4.5's rule for every snap). The whole drag MUST be
+  precise as the magnification allows (§4.5's rule for every snap).
+  **The pivot goes where the pointer is** (K-233): a click places it there and a drag keeps it
+  under the pointer. It MUST NOT be a nudge from where the anchor already was — that lets a
+  pivot be pushed towards a place but never put at one. `Shift`+click stays a selection gesture
+  and moves nothing. The whole drag MUST be
   one undo step: half of it would move the picture, which is the one thing pan-behind
   promises not to do. Its pointer is the anchor's own ring-and-cross with a small arrow at
   its tail, and the layer's live anchor is marked while the tool is armed.
@@ -395,7 +399,15 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   edit a *finished* path and are not built.
   **The edge to the pointer MUST be previewed as the curve it would be** (K-230), bent by the
   placed vertex's handles: drawing it straight promised one shape and delivered another the
-  moment the next point landed.
+  moment the next point landed. While the *next* vertex's handles are being dragged out, that
+  edge MUST run to where that vertex was placed and bend into it by its own incoming handle
+  (K-233) — the shape that will exist when the button comes up, drawn as it is aimed.
+  **A click that would close the path MUST say so before it is made** (K-233): the first vertex
+  and the pointer both take a ring, so "how close do I need to be" is answered on the picture
+  rather than by trying.
+  **`Ctrl+Z` takes back one point while a path is being built** (K-233), and returns to the
+  document's own undo once the path is empty. This is the one place undo means something
+  narrower than the last edit, and it must: the points are not in the document yet.
 - A mask's path is stored in **layer space**, so it travels with the layer's transform.
 - Every selected layer's masks MUST be outlined on the picture, with a mark on each vertex.
 - **A mask's points can be edited with the Selection tool** while the layer controls are shown
@@ -448,6 +460,8 @@ bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
   line when the edit ends, with Position compensating so the words do not move (§2.3's
   pan-behind sum).
 - New text takes the toolbar's **fill** and **size** (§1.7).
+- **The box grows with the words** (K-233): what is being typed is what the wireframe measures,
+  even though the document does not hold it until the edit ends.
 - **The click is where the words start**: a new layer's anchor begins at the left end of its
   line's baseline, so what is typed runs to the right of the pointer and sits on it rather
   than straddling it — the same relationship the caret is drawn with.

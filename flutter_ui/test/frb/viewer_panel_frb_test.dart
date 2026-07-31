@@ -1079,6 +1079,105 @@ void main() {
           reason: 'a sideways drag does not move the pivot vertically');
     });
 
+    /// **The pivot goes where you point (K-232).** It used to be a *nudge*:
+    /// the drag was measured from the press and added to the anchor the layer
+    /// already had, so you could push a pivot towards somewhere but never put
+    /// it anywhere. A click now places it, and a drag keeps it under the
+    /// pointer the whole way.
+    testWidgets('the Anchor point tool puts the pivot where you click',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.anchor);
+      await mount(tester, p);
+
+      double at(BridgeScalar s) => (s as BridgeScalar_Static).field0;
+      final fitted = fittedRect(tester, p.comp);
+      // A quarter of the way in from the layer's top-left, which for a
+      // comp-sized layer is a quarter of the comp.
+      final target = fitted.topLeft + Offset(fitted.width / 4, fitted.height / 4);
+      await tester.tapAt(target);
+      await tester.pumpAndSettle();
+
+      final size = p.comp.getSize();
+      final scale = fitted.width / size.width;
+      final after = p.layer.getTransform();
+      expect(at(after.anchorX), closeTo((target.dx - fitted.left) / scale, 1),
+          reason: 'the pivot is where the pointer was, not a nudge from where '
+              'it started');
+      expect(at(after.anchorY), closeTo((target.dy - fitted.top) / scale, 1));
+    });
+
+    /// **And the edit reaches the panels that show it.** The Timeline's
+    /// Anchor Point rows and the Effect controls both draw from the read model
+    /// (K-184), so an edit the Viewer commits has to refresh it — the tool's
+    /// own picture updating is not the same thing as the numbers updating.
+    testWidgets('an anchor edit reaches the read model the panels draw from',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.anchor);
+      await mount(tester, p);
+
+      double? modelAnchorX() {
+        final entry = p.uiState.model.byId(p.layer.internallayerId);
+        final x = entry?.info.transform.anchorX;
+        return x is BridgeScalar_Static ? x.field0 : null;
+      }
+
+      final before = modelAnchorX();
+      final fitted = fittedRect(tester, p.comp);
+      await tester.tapAt(fitted.center + const Offset(60, 0));
+      await tester.pumpAndSettle();
+
+      expect(modelAnchorX(), isNot(before),
+          reason: 'the model the Timeline rows read is the one that moved');
+    });
+
+    /// **Every tool's edit, not just the anchor's.** A drag with the Selection
+    /// tool and a turn with the Rotation tool go the same way: the Viewer
+    /// commits, and the read model the Timeline's rows and the Effect controls
+    /// draw from has to be refreshed, or the numbers sit still while the
+    /// picture moves.
+    testWidgets('a move and a turn reach the read model too', (tester) async {
+      double? modelValue(LumitUiState ui, LayerReference layer,
+          BridgeScalar Function(BridgeTransform) pick) {
+        final entry = ui.model.byId(layer.internallayerId);
+        final tf = entry?.info.transform;
+        if (tf == null) return null;
+        final v = pick(tf);
+        return v is BridgeScalar_Static ? v.field0 : null;
+      }
+
+      for (final (tool, pick, what) in <(
+        ToolMode,
+        BridgeScalar Function(BridgeTransform),
+        String
+      )>[
+        (ToolMode.select, (tf) => tf.positionX, 'a move'),
+        (ToolMode.rotate, (tf) => tf.rotation, 'a turn'),
+      ]) {
+        final p = withLayer();
+        p.uiState.setSelection([p.layer]);
+        p.uiState.tools.select(tool);
+        p.uiState.model.refresh();
+        await mount(tester, p);
+
+        final before = modelValue(p.uiState, p.layer, pick);
+        final fitted = fittedRect(tester, p.comp);
+        final gesture = await tester.startGesture(
+            Offset(fitted.center.dx, fitted.center.dy - 80));
+        await tester.pump();
+        for (var i = 0; i < 6; i++) {
+          await gesture.moveBy(const Offset(12, 6));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+
+        expect(modelValue(p.uiState, p.layer, pick), isNot(before),
+            reason: '$what must reach the model the panels draw from');
+      }
+    });
+
     testWidgets('the Anchor point tool picks a layer when you click one',
         (tester) async {
       final p = withLayer();

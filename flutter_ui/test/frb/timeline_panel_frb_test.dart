@@ -97,6 +97,65 @@ void main() {
           reason: 'no gap and no overlap at the cut');
     });
 
+    /// **Cut at playhead is a command, not a tool (docs/07 §4.4).** The chord
+    /// went nowhere: `layer.split` was bound in the Timeline context but no
+    /// handler answered it, so the only way to cut was to arm the razor.
+    testWidgets('Ctrl+Shift+D cuts the selected layer at the playhead',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      final span = layer.getSpan();
+      p.uiState.setSelection([layer]);
+      p.uiState.playheadFrame.value = 12;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      expect(p.uiState.tools.tool.group, isNot(ToolGroup.razor),
+          reason: 'no razor armed: this is a command');
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      final after = p.comp.getLayers();
+      expect(after.length, 2, reason: 'one layer became two');
+      final spans = [for (final l in after) l.getSpan()];
+      final ins = [for (final s in spans) s.inPoint.num / s.inPoint.den];
+      final outs = [for (final s in spans) s.outPoint.num / s.outPoint.den];
+      ins.sort();
+      outs.sort();
+      expect(ins.first, closeTo(span.inPoint.num / span.inPoint.den, 1e-9));
+      expect(outs.last, closeTo(span.outPoint.num / span.outPoint.den, 1e-9));
+      expect(outs.first, closeTo(ins.last, 1e-9),
+          reason: 'the halves meet at the cut');
+      // The playhead is where they meet: this cut is at the playhead, not
+      // wherever a pointer happened to be.
+      expect(outs.first,
+          closeTo(p.comp.timeOfFrame(frame: 12).num /
+              p.comp.timeOfFrame(frame: 12).den, 1e-9));
+    });
+
+    /// A cut with nothing selected, or one the engine refuses, is silence.
+    testWidgets('Ctrl+Shift+D with nothing selected cuts nothing',
+        (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      p.uiState.playheadFrame.value = 12;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getLayers().length, 1);
+    });
+
     testWidgets('the razor is the toolbar tool, and undoes as one step',
         (tester) async {
       final p = withComp();

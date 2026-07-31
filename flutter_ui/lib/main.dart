@@ -602,6 +602,15 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<Map<UuidValue, double>> liveRotations =
       ValueNotifier(const {});
 
+  /// The line a Type edit is part way through, by layer id (K-232).
+  ///
+  /// Published for the same reason as [liveRotations]: what is being typed is
+  /// previewed on the picture while the document still holds the old document,
+  /// so a box measured from the document does not grow as the words do. Empty
+  /// whenever nothing is being typed.
+  final ValueNotifier<Map<UuidValue, ({String text, double size})>> liveText =
+      ValueNotifier(const {});
+
   /// Keep the list honest when something sets the primary on its own.
   void _syncSelection() {
     final primary = selectedLayer.value;

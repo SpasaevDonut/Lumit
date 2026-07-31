@@ -190,16 +190,51 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
     );
   }
 
+  /// A click **puts the pivot where you clicked** (K-232), on the layer it
+  /// lands on — and picks that layer, as every tool's click does.
+  ///
+  /// Shift is the exception and stays a selection gesture: it adds to or takes
+  /// away from the selection without moving anything, because a click that both
+  /// changed what was selected and moved that layer's pivot would be two edits
+  /// nobody asked for at once.
   void _onTapUp(TapUpDetails details) {
-    final hit = layerAtPoint(widget.boxes, details.localPosition);
+    final at = details.localPosition;
+    final hit = layerAtPoint(widget.boxes, at);
     if (hit == null) {
       widget.uiState.clearSelection();
       return;
     }
     if (HardwareKeyboard.instance.isShiftPressed) {
       widget.uiState.toggleSelected(hit.layer);
-    } else {
-      widget.uiState.setSelection([hit.layer]);
+      return;
+    }
+    widget.uiState.setSelection([hit.layer]);
+    _place(hit, at);
+  }
+
+  /// Move [box]'s anchor to the pointer at [at], with Position compensating so
+  /// the picture does not move. One op, so one undo step.
+  void _place(LayerBox box, Offset at) {
+    final anchor = _wantedAnchor(box, at);
+    final position = _panBehind(box, anchor);
+    try {
+      box.layer.setTransforms(
+        props: const [
+          BridgeTransformProp.anchorX,
+          BridgeTransformProp.anchorY,
+          BridgeTransformProp.positionX,
+          BridgeTransformProp.positionY,
+        ],
+        values: [
+          BridgeScalar.static_(anchor.dx),
+          BridgeScalar.static_(anchor.dy),
+          BridgeScalar.static_(position.dx),
+          BridgeScalar.static_(position.dy),
+        ],
+      );
+      widget.onChanged();
+    } catch (_) {
+      // The layer went away between the press and the release.
     }
   }
 
@@ -220,18 +255,23 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
 
   /// Where the anchor should sit, in layer space, for the pointer at [at].
   ///
-  /// The drag is measured from the press to the pointer and applied to the
-  /// anchor the layer started with, rather than the pointer's own position
-  /// being taken as the anchor: grabbing anywhere and *nudging* is what a
-  /// pan-behind drag is, and it lets a pivot be moved a few pixels without the
-  /// pointer having to be exactly on it.
+  /// **The pointer's own position, not a nudge** (K-232). The tool used to
+  /// measure the drag from the press and add it to the anchor the layer already
+  /// had, so grabbing anywhere and pushing moved the pivot by that much. That
+  /// makes placing a pivot a matter of aim-then-correct: you cannot put it
+  /// somewhere, only push it towards somewhere. Now the pivot goes where the
+  /// pointer is — a click puts it there, and a drag keeps it under the pointer
+  /// the whole way.
+  ///
+  /// Shift still locks to one screen axis, measured from where the press
+  /// landed; Ctrl (Cmd) still snaps to the layer's own key points.
   Offset _wantedAnchor(LayerBox box, Offset at) {
-    var delta = at - (_downAt ?? at);
+    var wantedScreen = at;
     if (HardwareKeyboard.instance.isShiftPressed) {
-      delta = constrainToAxis(delta);
+      final from = _downAt ?? at;
+      wantedScreen = from + constrainToAxis(at - from);
     }
-    final started = box.map.toScreen(box.map.ax, box.map.ay);
-    final wanted = box.map.layerOf(started + delta);
+    final wanted = box.map.layerOf(wantedScreen);
     return _isPrimaryModifierHeld ? snapAnchor(wanted, box) : wanted;
   }
 
@@ -292,33 +332,11 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
     final box = _acting;
     final at = _pointer;
     _throttle.cancel();
-    if (box != null && at != null && at != _downAt) {
-      final anchor = _wantedAnchor(box, at);
-      final position = _panBehind(box, anchor);
-      try {
-        // One op for all four properties, so one drag is one undo step: the
-        // anchor and the position are only meaningful together here — half of
-        // this edit would move the picture, which is the one thing pan-behind
-        // promises not to do.
-        box.layer.setTransforms(
-          props: const [
-            BridgeTransformProp.anchorX,
-            BridgeTransformProp.anchorY,
-            BridgeTransformProp.positionX,
-            BridgeTransformProp.positionY,
-          ],
-          values: [
-            BridgeScalar.static_(anchor.dx),
-            BridgeScalar.static_(anchor.dy),
-            BridgeScalar.static_(position.dx),
-            BridgeScalar.static_(position.dy),
-          ],
-        );
-        widget.onChanged();
-      } catch (_) {
-        // The layer went away mid-drag.
-      }
-    }
+    // One op for all four properties, so one drag is one undo step: the anchor
+    // and the position are only meaningful together here — half of this edit
+    // would move the picture, which is the one thing pan-behind promises not to
+    // do.
+    if (box != null && at != null && at != _downAt) _place(box, at);
     setState(() {
       _acting = null;
       _downAt = null;

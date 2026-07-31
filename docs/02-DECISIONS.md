@@ -4270,3 +4270,48 @@ button came up. The position comes from pointer *move* events now, through one s
 by the operating system; ours is painted by the application, so it arrives with the frame. The
 cost is kept to a repaint rather than a rebuild, and a tool that can wear a system pointer
 still does — which is why only the tools with no platform cursor draw their own.
+
+**K-233 · DECIDED · The third pass over the tools, from using them (2026-07-31).** Follows
+K-230 and K-231. (K-232 is the cache bar's own entry.)
+
+**The Anchor point tool puts the pivot where you point.** It was a *nudge*: the drag was
+measured from the press and added to the anchor the layer already had, so grabbing anywhere and
+pushing moved the pivot by that much. That makes placing a pivot a matter of aim-then-correct —
+you can push it towards somewhere, never put it anywhere. A **click** now places it, and a drag
+keeps it under the pointer the whole way. Shift still locks to one screen axis, measured from
+the press; Ctrl (Cmd) still snaps to the layer's own key points. Shift+click stays a *selection*
+gesture and moves nothing: a click that both changed the selection and moved that layer's pivot
+would be two edits nobody asked for at once.
+
+**The Pen tells you when a click would close the path.** The closing tolerance is a fixed number
+of screen pixels and nothing said how near "near enough" was — you clicked, and either the path
+closed or it grew a point you did not want. The first vertex grows a ring and the pointer wears
+a smaller one, so the question's two halves are both answered: *which* point closes it, and
+whether the click about to be made is that one.
+
+**The Pen previews the edge it is actually aiming at.** While the next vertex's handles are
+being pulled out, that vertex is already placed — it is where the press landed — so the
+preview runs to *there* and bends into it by the handle facing back along the path, which is
+the mirror of the one under the pointer (or the vertex itself, when Alt has broken the pair).
+
+**`Ctrl+Z` takes back one point while a path is being built.** The one place in the application
+where undo means something narrower than "undo the last edit", and it has to be: the points are
+not in the document — the path is applied in one op when it closes — so an undo pressed
+mid-path sailed straight past every point placed and undid whatever the user had done *before*
+picking up the Pen. It goes back to the document's own undo the moment the path is empty.
+
+**A text box grows with the words.** The document holds the old line until the edit ends
+(K-230's one-op rule), so a box measured from the document did not grow as the words did. What
+is being typed is published for the boxes to measure, the same way a turn in flight is (K-230).
+
+**The camera tools' chatter, finally.** K-230 cached the active camera and K-231 gave the paint
+path an *unchecked* read of the model, but the camera layer's own cache key was still the
+checking one — so it asked the engine for the document's revision on every frame of every mouse
+movement, which is what it had been reported doing twice. It reads the held revision now.
+
+**And the test that should have caught that could not see it.** `bridge_call_budget_test.dart`
+pumped frames with `tester.pump()`, which does not advance the clock — so every frame carried
+the same timestamp, the read model's own "once per frame" grouping saw *one* frame for a whole
+gesture, and the budget measured zero while the running application was making a call per
+frame. The budgets pump with time on the clock now. **A performance test that cannot reproduce
+the conditions it is guarding is worse than no test: it certifies the bug.**

@@ -415,7 +415,11 @@ void main() {
         ..counting = true;
       for (var i = 0; i < 20; i++) {
         await gesture.moveBy(const Offset(3, 2));
-        await tester.pump();
+        // **With time on the clock.** A bare `pump()` does not advance it, so
+        // every frame carries the same timestamp — and code that groups its
+        // work "once per frame" then sees one frame for the whole gesture and
+        // this test sees a cost that does not exist in a running application.
+        await tester.pump(const Duration(milliseconds: 16));
       }
       counter.counting = false;
       await gesture.up();
@@ -484,7 +488,10 @@ void main() {
         ..counting = true;
       for (var i = 0; i < 20; i++) {
         await mouse.moveTo(centre + Offset(i * 3.0, i * 2.0));
-        await tester.pump();
+        // Real frames, with time between them — see the note in the pan test
+        // above. Without it this test measured zero while the tool was asking
+        // the engine for the document's revision on every single frame.
+        await tester.pump(const Duration(milliseconds: 16));
       }
       counter.counting = false;
 

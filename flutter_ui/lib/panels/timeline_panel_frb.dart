@@ -625,6 +625,28 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     if (razorCut(targets, frame)) onChanged();
   }
 
+  /// `Ctrl+Shift+D`: cut every selected layer at the playhead (docs/07 §4.4).
+  ///
+  /// A command, not a tool — it does not care which tool is armed, and it cuts
+  /// where the playhead is rather than where the pointer is. The rules are the
+  /// razor's, and they are read from the razor rather than written a second
+  /// time: [razorTargets] says what a cut at that frame can land on (strictly
+  /// inside the layer), [razorCut] makes it, and a cut the engine refuses is
+  /// silence.
+  bool _splitSelectionAtPlayhead(LumitUiState ui) {
+    final frame = ui.playheadFrame.value;
+    final selected = ui.selectedLayerIds;
+    final targets = [
+      for (final entry
+          in razorTargets(ui.model.layers, frame,
+              clicked: null, allLayers: true))
+        if (selected.contains(entry.layer.internallayerId)) entry,
+    ];
+    if (targets.isEmpty) return false;
+    if (razorCut(targets, frame)) ui.model.refresh();
+    return true;
+  }
+
   /// The bar drag in flight, if any — a notifier rather than panel state so
   /// only the waveform lanes redraw as the pointer moves, not the whole table.
   final ValueNotifier<BarDragPreview?> _barDrag = ValueNotifier(null);
@@ -718,7 +740,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   }
 
   /// The Timeline's keyboard commands: `Shift+F3` toggles the graph, the F9
-  /// family sets easing, `F` re-frames the graph, `Ctrl+C`/`Ctrl+V` copy and
+  /// family sets easing, `Ctrl+Shift+D` cuts the selection at the playhead,
+  /// `F` re-frames the graph, `Ctrl+C`/`Ctrl+V` copy and
   /// paste keyframes, Delete removes the graph's selected keys. Registered on
   /// the hardware keyboard (panels do not hold focus); a focused text field
   /// keeps its keys.
@@ -760,6 +783,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
     if (action == 'reveal.animated') {
       return _revealTap();
+    }
+    if (action == 'layer.split') {
+      return _splitSelectionAtPlayhead(ui);
     }
     if (action == 'graph.ease' ||
         action == 'graph.ease.in' ||

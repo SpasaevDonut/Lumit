@@ -308,7 +308,11 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   /// The active camera layer: the topmost visible Camera whose span covers the
   /// playhead, which is the one the renderer looks through.
   ({LayerReference layer, CameraPose pose})? get _camera {
-    final revision = widget.uiState.model.revision;
+    // The **held** revision, not a checked one (K-232). Reading the checking
+    // getter asks the engine whether the document has moved — and this runs on
+    // every rebuild, which for a tool that draws its own pointer means every
+    // movement of the mouse. That was the whole of the camera tools' chatter.
+    final revision = widget.uiState.model.heldRevision;
     final frame = widget.uiState.playheadFrame.value;
     if (_heldRevision != revision || _heldFrame != frame) {
       _heldRevision = revision;
@@ -321,7 +325,7 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   /// The walk itself. Everything but the two reads noted above comes off the
   /// read model (K-184).
   ({LayerReference layer, CameraPose pose})? _findCamera(int frame) {
-    for (final entry in widget.uiState.model.layers) {
+    for (final entry in widget.uiState.model.heldLayers) {
       final info = entry.info;
       if (info.kind != BridgeLayerKind.camera) continue;
       if (!info.switches.visible) continue;

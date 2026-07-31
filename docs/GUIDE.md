@@ -5657,3 +5657,27 @@ covering for something else: a panel that commits its own edit and then draws
 would see its own edit only because the check happened to notice. Every panel
 that commits now refreshes the model itself, which is what the Timeline and
 Effect controls were already doing. **Tell the model; do not make drawing ask.**
+
+
+### A performance test that cannot see the bug (K-233)
+
+Worth knowing on its own, because it wasted two rounds of the owner reporting
+the same thing.
+
+The frontend has *budget tests*: they count how many calls cross to the engine
+during one interaction, and fail if the number jumps. One of them hovered the
+mouse over the Viewer with a camera tool in hand and asserted the count was
+zero. It passed. The application was making a call on every single frame.
+
+The reason is a detail of how Flutter's test harness works. `await tester.pump()`
+draws a frame but does **not** move the clock, so every frame in the test carries
+the same timestamp. The read model groups its work "once per frame" by comparing
+that timestamp — so as far as it was concerned the whole twenty-move gesture was
+one frame, and it did its work once. In a running application every frame has a
+new timestamp, and the work happened sixty times a second.
+
+The fix is one argument — `tester.pump(const Duration(milliseconds: 16))` — and
+the lesson is bigger than the argument: **a performance test that cannot
+reproduce the conditions it is guarding does not merely fail to catch the bug,
+it certifies that the bug is not there.** When a budget reads zero, check that
+it can read non-zero: break the thing on purpose and watch the number move.

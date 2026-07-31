@@ -166,6 +166,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    _clearLive();
     _throttle.cancel();
     _controller.dispose();
     _focus.dispose();
@@ -336,6 +337,21 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
           TextSelection.collapsed(offset: document.text.length);
     });
     _focus.requestFocus();
+    _publishLive(layer);
+  }
+
+  /// Tell the Viewer's boxes what is being typed, and stop telling it when the
+  /// edit ends — the document is the only truth from then on.
+  void _publishLive(LayerReference layer) {
+    widget.uiState.liveText.value = {
+      layer.internallayerId: (text: _controller.text, size: _size),
+    };
+  }
+
+  void _clearLive() {
+    if (widget.uiState.liveText.value.isNotEmpty) {
+      widget.uiState.liveText.value = const {};
+    }
   }
 
   /// Every keystroke: the picture keeps up through the preview path, and the
@@ -344,6 +360,11 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
     if (!_editingNow) return;
     setState(() {});
     final layer = _editing!;
+    // What the box round the words should be measured from while they are
+    // being typed (K-232). The document still holds the old line — it is
+    // written once, when the edit ends — so a box measured from the document
+    // does not grow as the words do.
+    _publishLive(layer);
     _throttle.request(() {
       try {
         widget.comp.renderFrameWithTextPreview(
@@ -369,6 +390,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
     if (layer == null) return;
     final text = _controller.text;
     _throttle.cancel();
+    _clearLive();
     setState(() {
       _editing = null;
       _controller.clear();
