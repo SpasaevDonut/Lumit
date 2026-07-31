@@ -60,6 +60,15 @@ double sampleScalarWithContext(
     BridgeLib.instance.api.crateApiEffectSampleScalarWithContext(
         scalar: scalar, time: time, layer: layer);
 
+Float64List sampleScalarRangeWithContext(
+        {required BridgeScalar scalar,
+        required LayerReference layer,
+        required BridgeRational start,
+        required BridgeRational end,
+        required PlatformInt64 samples}) =>
+    BridgeLib.instance.api.crateApiEffectSampleScalarRangeWithContext(
+        scalar: scalar, layer: layer, start: start, end: end, samples: samples);
+
 /// Every parameter `effect` declares, in schema order — what the panel draws a
 /// row per.
 ///

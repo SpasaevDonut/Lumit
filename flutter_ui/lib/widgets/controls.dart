@@ -942,7 +942,6 @@ class HouseContextMenu extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
-        cursor: SystemMouseCursors.resizeLeftRight,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
           onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),

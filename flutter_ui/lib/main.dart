@@ -54,6 +54,7 @@ class StackTraceEntry {
 class FunctionCallStats {
   int numCalls = 0;
   Duration totalTime = Duration.zero;
+  Duration lastTime = Duration.zero;
 
   double get averageMs =>
       totalTime.inMilliseconds.toDouble() / numCalls.toDouble();
@@ -77,6 +78,7 @@ class LumitDebugUI {
 
     stat.numCalls += 1;
     stat.totalTime += trace.duration;
+    stat.lastTime = trace.duration;
 
     if (rustCalls.length > maxLen) {
       rustCalls = rustCalls.sublist(0, maxLen);

@@ -114,6 +114,11 @@ class _DebugPanelState extends State<DebugPanel> {
                             .copyWith(color: msToColor(item.value.averageMs)),
                       ),
                       Text(
+                        "last: ${item.value.lastTime.inMilliseconds}ms",
+                        style: theme.body
+                            .copyWith(color: msToColor(item.value.lastTime.inMilliseconds.toDouble())),
+                      ),
+                      Text(
                         "total: ${item.value.totalTime.inMilliseconds}ms",
                         style: theme.body,
                       ),

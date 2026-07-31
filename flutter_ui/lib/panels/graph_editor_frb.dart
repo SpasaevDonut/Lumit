@@ -20,10 +20,13 @@
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/shell.dart';
+import 'package:lumit_flutter/state/comp_model.dart';
+import 'package:provider/provider.dart';
 
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -1446,20 +1449,24 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
               Positioned.fill(
                 child: AnimatedBuilder(
                   animation: widget.hScroll ?? const AlwaysStoppedAnimation(0),
-                  builder: (context, _) => CustomPaint(
-                    painter: _GraphPainter(
-                      channels: widget.channels,
-                      shownKeys: [
-                        for (final c in widget.channels) _shownKeys(c)
-                      ],
-                      lens: widget.lens,
-                      axis: widget.axis,
-                      fps: widget.fps,
-                      range: range,
-                      palette: t.curve,
-                      grid: t.hairline,
-                      label: t.small.copyWith(color: t.textMuted),
-                      viewportLeft: _viewportLeft,
+                  builder: (context, _) => ClipRect(
+                    child: CustomPaint(
+                      painter: _GraphPainter(
+                        channels: widget.channels,
+                        shownKeys: [
+                          for (final c in widget.channels) _shownKeys(c)
+                        ],
+                        lens: widget.lens,
+                        axis: widget.axis,
+                        fps: widget.fps,
+                        range: range,
+                        palette: t.curve,
+                        comp: Provider.of<LumitUiState>(context, listen: false)
+                            .model,
+                        grid: t.hairline,
+                        label: t.small.copyWith(color: t.textMuted),
+                        viewportLeft: _viewportLeft,
+                      ),
                     ),
                   ),
                 ),
@@ -1736,6 +1743,7 @@ class _GraphPainter extends CustomPainter {
   final List<Color> palette;
   final Color grid;
   final TextStyle label;
+  final CompModel comp;
 
   /// Where the viewport's left edge sits in the canvas's own coordinates.
   ///
@@ -1757,6 +1765,7 @@ class _GraphPainter extends CustomPainter {
     required this.palette,
     required this.grid,
     required this.label,
+    required this.comp,
     required this.viewportLeft,
   });
 
@@ -1796,30 +1805,53 @@ class _GraphPainter extends CustomPainter {
       final path = Path();
       const step = 2.5;
       var first = true;
-      for (var x = 0.0; x <= size.width; x += step) {
-        final seconds = axis.perFrame <= 0 ? 0.0 : x / axis.perFrame / f;
 
-        var v = 0.0;
-        if(channel.scalar case BridgeScalar_Expression _) {
-           // TODO: see if there is a way to make this fast enough
-           // so we can render the expression values in the graph
-           // Probably would need to be an async task handled on the worker thread
-           // Sending a range of time for it to evaluate and send back
-           //v = evaluateScalar(channel.scalar, seconds);
-            v = 0.0;
-        } else {
+      if (channel.scalar case BridgeScalar_Expression _) {
+        var startSeconds = 0 / axis.perFrame / f;
+        var endSeconds = size.width / axis.perFrame / f;
+        var start =
+            timeOfSubframe(startSeconds * f, comp.fpsExact.$1, comp.fpsExact.$2);
+        var end =
+            timeOfSubframe(endSeconds * f, comp.fpsExact.$1, comp.fpsExact.$2);
 
-        v = lens == GraphLens.value
-            ? evaluateKeys(keys, seconds)
-            : evaluateKeysSpeed(keys, seconds);
+        int samples = 500;
+        final result = sampleScalarRangeWithContext(
+            scalar: channel.scalar,
+            layer: channel.entry.layer,
+            start: start,
+            end: end,
+            samples: samples);
+
+        for (int i = 0; i < result.length; i++) {
+          var v = result[i];
+          var alpha = i.toDouble() / samples.toDouble();
+          var x = size.width * alpha;
+
+          final point = Offset(x, _yOf(v, size));
+          if (first) {
+            path.moveTo(point.dx, point.dy);
+            first = false;
+          } else {
+            path.lineTo(point.dx, point.dy);
+          }
         }
-        
-        final point = Offset(x, _yOf(v, size));
-        if (first) {
-          path.moveTo(point.dx, point.dy);
-          first = false;
-        } else {
-          path.lineTo(point.dx, point.dy);
+      } else {
+        for (var x = 0.0; x <= size.width; x += step) {
+          final seconds = axis.perFrame <= 0 ? 0.0 : x / axis.perFrame / f;
+
+          var v = 0.0;
+
+          v = lens == GraphLens.value
+              ? evaluateKeys(keys, seconds)
+              : evaluateKeysSpeed(keys, seconds);
+
+          final point = Offset(x, _yOf(v, size));
+          if (first) {
+            path.moveTo(point.dx, point.dy);
+            first = false;
+          } else {
+            path.lineTo(point.dx, point.dy);
+          }
         }
       }
       canvas.drawPath(path, paint);
