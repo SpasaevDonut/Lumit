@@ -103,8 +103,11 @@ armed is a *tool*; what each tool then does is the backlog:
 - **Zoom** - built (K-216): the lens pointer (and its zoom-out twin under `Alt`), click
     to zoom about the point, and a dragged box that fits that area to the panel — `Alt`
     inverting both.
-- **Rotation**, **Anchor point** - the gizmo rotates a layer from its bar (K-215) and the
-    anchor's own centre handle is not built; neither tool changes what a drag does yet.
+- **Rotation** - built (K-217): the drawn curved pointer (tighter at a corner, leaning
+    round the anchor), a drag that turns the whole selection about each layer's own anchor,
+    `Shift` locking to 45 degrees, and the anchor marked while it is armed.
+- **Anchor point** - the tool changes nothing yet; the anchor can be seen (K-217 marks it
+    under the Rotation tool) but not dragged.
 - **Razor** - `Ctrl+Shift+D` and Composition ▸ Cut clip at playhead exist; clicking a clip
     with the tool to cut it there does not.
 - **Shape tools** - a rubber-band drag committing mask geometry (the egui build had
@@ -131,8 +134,8 @@ one that matters most: it is zoomed constantly while cutting.
 **Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3, K-215):** the
 wireframe, selection on the picture, the marquee, the move/scale/rotate gizmo and the bar's
 switch landed 2026-07-31. What that section still owes:
-- **The anchor-point centre handle** - the origin can be seen but not dragged; the `Y` tool
-    has nothing behind it.
+- **The anchor-point centre handle** - the origin is drawn while the Rotation tool is armed
+    (K-217) but cannot be dragged; the `Y` tool has nothing behind it.
 - **Scale and rotation of a multiple selection** - several layers move together, but each
     keeps its own box and only a lone selection grows handles. AE scales a set about one
     shared box.

@@ -276,6 +276,18 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   3D orientation when the layer is 3D.
 - The **Hand tool** never edits on the picture: with it armed the wireframe is a read-out of
   what is selected — no handles, no hover highlight — and every drag pans the view.
+- The **Rotation tool** (K-217) turns the **selection** — every selected layer, each about
+  **its own anchor point** — from a drag anywhere over the picture; `Shift` locks the turn to
+  45° steps, and clicking picks a layer as the Selection tool does. Each selected layer's
+  anchor MUST be marked while the tool is armed: it is the pin the layer spins on, and a
+  rotation about an unseen point is a rotation nobody can predict. A set turns as one gesture
+  — the angle is swept about the first selected layer's anchor and applied to all of them —
+  rather than each layer chasing its own angle from the same pointer.
+- The Rotation tool's **pointer is a curved arrow**, drawn rather than a system cursor
+  (no platform ships one). It MUST lean round the anchor — the curve faces the way the layer
+  would turn from where the pointer is — and MUST be tighter towards a corner than along an
+  edge, measured in the layer's own space so it follows the layer's rotation. The system
+  pointer is hidden over the picture while it is armed and nowhere else.
 - A **layer-controls switch** in the Viewer bar (§2.2) hides and shows the boxes, the
   handles and the hover highlight, for judging the picture itself. It governs *drawing* only:
   clicks and drags still select and move, exactly as After Effects' Show Layer Controls does.

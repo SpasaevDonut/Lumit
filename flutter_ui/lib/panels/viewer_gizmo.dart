@@ -300,6 +300,11 @@ class ViewerGizmoLayer extends StatefulWidget {
   /// The armed tool. Selection edits; Hand only ever draws.
   final ToolMode tool;
 
+  /// Whether each selected layer's anchor point is marked — the pin it turns
+  /// on. Drawn while the Rotation tool is armed (K-217), where "about what?" is
+  /// the question the picture has to answer.
+  final bool showAnchors;
+
   final VoidCallback onChanged;
 
   const ViewerGizmoLayer({
@@ -310,6 +315,7 @@ class ViewerGizmoLayer extends StatefulWidget {
     required this.showControls,
     required this.tool,
     required this.onChanged,
+    this.showAnchors = false,
   });
 
   @override
@@ -382,6 +388,9 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
             ? _hoverBox()
             : null,
         handlesFor: widget.showControls && _selectionTool ? soleHandles : null,
+        anchors: widget.showControls && widget.showAnchors
+            ? [for (final box in selected) box.anchorScreen]
+            : const [],
         marquee: _drag == _GizmoDrag.marquee ? _marqueeRect() : null,
         moved: _drag == _GizmoDrag.move ? _delta : Offset.zero,
         accent: t.accent,
@@ -571,7 +580,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
 
   void _sendMovePreview(LayerBox box) {
     final (x, y) = _movedPosition(box);
-    _sendPreview(box, (tf) => _withPosition(tf, x, y));
+    _sendPreview(box, (tf) => transformWithPosition(tf, x, y));
   }
 
   /// Ask for the provisional picture, and never let a refusal end the gesture.
@@ -643,7 +652,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final scale = _scaleNow();
     if (box == null || scale == null) return;
     _throttle
-        .request(() => _sendPreview(box, (tf) => _withScale(tf, scale.$1, scale.$2)));
+        .request(() => _sendPreview(box, (tf) => transformWithScale(tf, scale.$1, scale.$2)));
   }
 
   void _commitScale() {
@@ -678,7 +687,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final rotation = _rotationNow();
     if (box == null || rotation == null) return;
     _throttle
-        .request(() => _sendPreview(box, (tf) => _withRotation(tf, rotation)));
+        .request(() => _sendPreview(box, (tf) => transformWithRotation(tf, rotation)));
   }
 
   void _commitRotate() {
@@ -713,7 +722,10 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
 
 /// The transform with one property replaced — the shape the preview call wants,
 /// spelled out three times because the generated struct has no copy-with.
-BridgeTransform _withPosition(BridgeTransform tf, double x, double y) =>
+///
+/// Public because the Rotation tool (viewer_rotate.dart) writes through the same
+/// preview path: one copy of "the transform, but turned" for both.
+BridgeTransform transformWithPosition(BridgeTransform tf, double x, double y) =>
     BridgeTransform(
       anchorX: tf.anchorX,
       anchorY: tf.anchorY,
@@ -728,7 +740,7 @@ BridgeTransform _withPosition(BridgeTransform tf, double x, double y) =>
       opacity: tf.opacity,
     );
 
-BridgeTransform _withScale(BridgeTransform tf, double sx, double sy) =>
+BridgeTransform transformWithScale(BridgeTransform tf, double sx, double sy) =>
     BridgeTransform(
       anchorX: tf.anchorX,
       anchorY: tf.anchorY,
@@ -743,7 +755,7 @@ BridgeTransform _withScale(BridgeTransform tf, double sx, double sy) =>
       opacity: tf.opacity,
     );
 
-BridgeTransform _withRotation(BridgeTransform tf, double degrees) =>
+BridgeTransform transformWithRotation(BridgeTransform tf, double degrees) =>
     BridgeTransform(
       anchorX: tf.anchorX,
       anchorY: tf.anchorY,
@@ -764,6 +776,9 @@ class _GizmoPainter extends CustomPainter {
   final List<LayerBox> selected;
   final LayerBox? hover;
   final LayerBox? handlesFor;
+
+  /// Where to mark an anchor point, in screen space.
+  final List<Offset> anchors;
   final Rect? marquee;
   final Offset moved;
   final Color accent;
@@ -774,6 +789,7 @@ class _GizmoPainter extends CustomPainter {
     required this.selected,
     required this.hover,
     required this.handlesFor,
+    required this.anchors,
     required this.marquee,
     required this.moved,
     required this.accent,
@@ -811,6 +827,10 @@ class _GizmoPainter extends CustomPainter {
       for (final handle in GizmoHandle.scaling) {
         _handle(canvas, handles.handleAt(handle) + moved);
       }
+    }
+
+    for (final anchor in anchors) {
+      _anchor(canvas, anchor + moved);
     }
 
     final band = marquee;
@@ -852,6 +872,18 @@ class _GizmoPainter extends CustomPainter {
         ..strokeWidth = 1
         ..style = PaintingStyle.stroke,
     );
+  }
+
+  /// The anchor point: a small ring with a cross through it — the same mark the
+  /// anchor-point tool's icon carries, so the two read as one idea.
+  void _anchor(Canvas canvas, Offset at) {
+    final paint = Paint()
+      ..color = accent
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    canvas.drawCircle(at, 4, paint);
+    canvas.drawLine(at - const Offset(8, 0), at + const Offset(8, 0), paint);
+    canvas.drawLine(at - const Offset(0, 8), at + const Offset(0, 8), paint);
   }
 
   void _knob(Canvas canvas, Offset at) {

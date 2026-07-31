@@ -3623,3 +3623,43 @@ editor's, and the Project panel's thumbnail scaling all still jump. They want th
 pattern — a target, a controller, a geometric interpolation, and the animation level deciding
 whether it runs — and it should be lifted into one shared piece rather than written three
 more times. Recorded in docs/TODO.md.
+
+**K-217 · DECIDED · The Rotation tool turns the selection about each layer's own anchor, and
+its pointer is drawn rather than picked.** From the owner (2026-07-31), specifying the fourth
+toolbar tool: the cursor should be a curved arrow like After Effects', sharper at a corner
+than along an edge, leaning the way the layer would turn — and the drag should turn only what
+is selected, about the anchor, with `Shift` locking to 45°.
+
+**The pointer is painted, and the system one is hidden under it.** No desktop platform ships
+a rotate cursor, and Flutter can only ask for cursors the platform has — so this draws its
+own over the picture. Hiding the real pointer is not a thing to do lightly, and it is worth
+it here for one reason: a drawn pointer can *turn*. The arc faces away from the layer's
+anchor, so it always curves round the pin the layer spins on, and it closes up towards a
+corner and opens out along an edge — so the pointer says where you are on the layer without
+your looking away from the picture. A cursor that could only sit there in one orientation
+would not have been worth hiding anything for.
+
+**Corner-ness is measured in the layer's own space.** The arc's width comes from how equally
+far out the two axes are from the middle: equal is the diagonal, which is a corner; one alone
+is square out from an edge. Measured through the layer's inverse map, so "the top-right
+corner" stays the top-right corner of the *layer* when the layer is upside down — the same
+reasoning as the wireframe's hit-testing (K-215), and the same one line of maths.
+
+**A set turns as one gesture.** The angle is swept about the *first* selected layer's anchor
+and applied to every selected layer, each of which still turns about its own anchor. The
+alternative — each layer measuring its own angle from the same pointer — makes a multiple
+selection fly apart the moment the anchors differ, which is not a rotation of anything.
+
+**Clicking selects, as it does with the Selection tool.** After Effects' behaviour, and
+without it every turn would mean a trip back to the toolbar to choose the next layer.
+
+**The anchor is marked while the tool is armed.** A rotation about a point you cannot see is
+a rotation you cannot predict, and the anchor is exactly the thing this tool is *about*. It
+is drawn as the ring-and-cross the anchor-point tool's icon carries, so the two read as one
+idea.
+
+**The same slop trap as K-215, in a new place.** The turn is measured from where the pointer
+went *down*, not from where the framework recognised the drag: recognition happens after ~18
+pixels, and measuring from there took a fixed bite out of every turn — a quarter-turn drag
+committed 45° instead of 90°. Recorded twice now because it will keep coming: any gesture
+whose *meaning* depends on its start point has to record that start point itself.

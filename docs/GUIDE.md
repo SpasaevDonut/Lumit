@@ -4815,3 +4815,45 @@ size it is actually shown at, so once the magnification has changed the frame in
 hand is the wrong resolution. A fresh one is asked for when the flight *lands*,
 not on every frame of it — a render per animation frame would cost a great deal
 to show something for 8 milliseconds.
+
+### The Rotation tool, and a cursor we had to draw ourselves (K-217)
+
+Pick the Rotation tool and drag anywhere over the picture: the selected layer
+turns. It turns about its **anchor point** — the little cross that appears while
+the tool is in hand — because that is what an anchor is *for*: the pin the layer
+spins on. Hold Shift and the turn locks to 45° steps. Nothing that is not
+selected moves, and clicking picks a layer the same way the Selection tool does.
+
+**Why the pointer is painted by hand.** Operating systems ship a fixed set of
+cursors — an arrow, a hand, a text bar, a couple of magnifiers — and "a curved
+rotation arrow" is not among them. Flutter can only ask for one the platform
+already has, so the only way to get After Effects' curved arrow is to hide the
+real pointer while you are over the picture and draw our own in its place.
+
+That sounds like a lot of trouble for an icon, and it would be, except for the
+thing it buys: a drawn pointer can *change*. Ours does two things a system cursor
+never could.
+
+- **It leans round the anchor.** The arc is always drawn square to the line from
+  the anchor out to your pointer, so wherever you are on the layer the curve
+  reads as "round the pivot" rather than pointing off in some fixed screen
+  direction.
+- **It tightens at the corners.** Out along an edge the arc is long and lazy;
+  out towards a corner it closes up. The measurement is simple — how equally far
+  out the two axes are from the middle of the layer — and it is done in the
+  *layer's* own coordinates, so a layer lying on its side still has its corners
+  where its corners are.
+
+**Turning several at once.** The angle is measured about the first selected
+layer's anchor and then given to all of them, each turning about its own anchor.
+The obvious alternative — every layer measuring its own angle from the same
+pointer — makes a group fly apart as soon as their anchors are in different
+places, which is not a rotation of anything.
+
+**And the same trap as last time, in a new place.** Flutter reports a drag as
+starting *after* the pointer has travelled about eighteen pixels. Measure the
+angle from there and every turn is short by however far that was: a quarter-turn
+drag came out as 45° instead of 90°. The fix is the same one the scale handles
+needed — record where the pointer actually went down and measure from that. Worth
+remembering as a rule: any gesture whose *meaning* depends on where it began has
+to remember where it began.

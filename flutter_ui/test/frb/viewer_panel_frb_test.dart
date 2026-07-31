@@ -778,6 +778,101 @@ void main() {
           reason: 'no animation means the hard cut, immediately');
     });
 
+    testWidgets('the Rotation tool turns the selection about its anchor, and'
+        ' leaves unselected layers alone', (tester) async {
+      final p = withLayer();
+      final other = p.comp.addSolidLayer();
+      // Only the adjustment layer is selected.
+      p.uiState.setSelection([p.layer]);
+      p.uiState.tools.select(ToolMode.rotate);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      // A quarter-turn about the middle: straight up, round to the right.
+      final gesture = await tester.startGesture(
+          Offset(fitted.center.dx, fitted.center.dy - 100));
+      await tester.pump();
+      await gesture.moveTo(
+          Offset(fitted.center.dx + 70, fitted.center.dy - 70));
+      await tester.pump();
+      await gesture.moveTo(Offset(fitted.center.dx + 100, fitted.center.dy));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final turned =
+          (p.layer.getTransform().rotation as BridgeScalar_Static).field0;
+      expect(turned, closeTo(90, 0.5),
+          reason: 'the angle swept about the anchor is the angle written');
+      expect((other.getTransform().rotation as BridgeScalar_Static).field0, 0,
+          reason: 'a layer that was not selected does not turn');
+    });
+
+    testWidgets('Shift locks the turn to 45 degrees', (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.rotate);
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      final gesture = await tester.startGesture(
+          Offset(fitted.center.dx, fitted.center.dy - 100));
+      await tester.pump();
+      // A little over 30 degrees round: without the lock it would write ~34.
+      await gesture.moveTo(
+          Offset(fitted.center.dx + 56, fitted.center.dy - 83));
+      await tester.pump();
+      await gesture.moveTo(
+          Offset(fitted.center.dx + 58, fitted.center.dy - 81));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+      final turned =
+          (p.layer.getTransform().rotation as BridgeScalar_Static).field0;
+      expect(turned % 45, closeTo(0, 1e-6),
+          reason: 'held Shift, so it lands on a 45-degree step');
+    });
+
+    testWidgets('the Rotation tool picks a layer when you click one',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.rotate);
+      await mount(tester, p);
+
+      await tester.tapAt(fittedRect(tester, p.comp).center);
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          p.layer.internallayerId,
+          reason: 'a rotation tool you cannot choose a layer with is a trip'
+              ' back to the toolbar between every turn');
+    });
+
+    testWidgets('with nothing selected the Rotation tool turns nothing',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.rotate);
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(
+          Offset(fitted.center.dx, fitted.center.dy - 100));
+      await tester.pump();
+      await gesture.moveTo(Offset(fitted.center.dx + 60, fitted.center.dy));
+      await tester.pump();
+      await gesture.moveTo(Offset(fitted.center.dx + 100, fitted.center.dy));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect((p.layer.getTransform().rotation as BridgeScalar_Static).field0, 0);
+    });
+
     testWidgets('a missing footage layer raises the badge', (tester) async {
       final p = withLayer();
       final gone = p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');

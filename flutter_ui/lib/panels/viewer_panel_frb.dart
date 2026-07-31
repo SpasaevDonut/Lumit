@@ -57,6 +57,7 @@ import '../widgets/dropper_overlay.dart';
 import 'placeholder.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
+import 'viewer_rotate.dart';
 import 'viewer_zoom.dart';
 
 /// The magnifications the picker offers. `null` means fit-to-panel, which is
@@ -636,8 +637,21 @@ class _Stage extends StatelessWidget {
                   boxes: _boxes(),
                   showControls: wireframes,
                   tool: uiState.tools.tool,
+                  // The pivot, while the tool that turns about it is in hand.
+                  showAnchors: uiState.tools.tool.group == ToolGroup.rotate,
                   onChanged: onChanged,
                 ),
+              ),
+              // The Rotation tool: its own pointer, and a drag that turns the
+              // selection about each layer's anchor (K-217).
+              ViewerRotateLayer(
+                active: uiState.tools.tool.group == ToolGroup.rotate,
+                comp: comp,
+                uiState: uiState,
+                boxes: _boxes(),
+                mark: t.textPrimary,
+                outline: t.surface0,
+                onChanged: onChanged,
               ),
               // Over the layer controls, and inert unless the Zoom tool is
               // armed: while it is, the whole picture is its target and no
