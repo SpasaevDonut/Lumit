@@ -136,9 +136,25 @@ armed is a *tool*; what each tool then does is the backlog:
     - **Mask paths cannot be keyframed** (docs/03 has them as animatable), and there is no
       mask **mode** (add/subtract/intersect) — every mask adds.
     - **Mask feather** has neither a control nor a renderer path.
-- **Type**, **Paint** (brush/clone stamp/eraser), **Roto** (roto brush/refine edge),
-    **Puppet**, **Camera** - no engine side yet; these are roadmap features
-    ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
+- **Type** - horizontal type is built (K-223): a click makes a text layer where you point or
+    edits the one you clicked, typing previews rather than writing, and the document lands as
+    one undo step when the edit ends. Still owed:
+    - **Vertical type**, which needs `lumit-text` to lay a line out downwards.
+    - **True glyph metrics across the bridge.** The caret is placed by the same half-an-em-per
+      -character estimate the bridge anchors a text layer with, so the two agree with each
+      other and neither agrees with the rasteriser. A measured advance width would replace
+      both sums at once.
+    - **Multiple lines, and a character panel** — font, tracking, leading, alignment: the
+      document is one styled run (docs/03 §9.1) and the renderer draws one line.
+    - **Per-character and per-word text animators**, the feature the owner named as later.
+    - Clicking a text layer to edit it needs the layer to have a box, so a text layer with a
+      keyframed position cannot be clicked into (the same rule the gizmo follows).
+- **Paint** (brush/clone stamp/eraser) - **nothing at all in the engine**: there is no stroke
+    model in the document, no op to add one, and no renderer path to draw one. It is a
+    feature of the same size as shape layers, and belongs with them on the engine branch. The
+    toolbar's stroke colour and width are held and shown disabled until it exists.
+- **Roto** (roto brush/refine edge), **Puppet**, **Camera** - no engine side yet; these are
+    roadmap features ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
 - **Snapping** is a switch nothing reads (docs/07 §4.5 specifies the behaviour).
 - **The workspace strip shows no preset after a restart** - `Workspace.activePreset` is
     session-only, because the stored layout is the user's own by then and may no longer

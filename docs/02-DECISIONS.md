@@ -3858,3 +3858,62 @@ to aim with.
 **Handles are not points.** A vertex's two bezier handles cannot be dragged yet, and neither
 can a mask path be keyframed. Both are in TODO.md. This decision is about the *positions* of
 the points, which is the half that makes a drawn mask correctable.
+
+**K-223 · DECIDED · The Type tool makes and edits text layers on the picture, and the
+toolbar grows the options the drawing tools use.** From the owner (2026-07-31): "Now add
+typing. These should also be their own layer type… along with this there should be the
+options for fills/border colour pickers and pixel widths etc just like AE."
+
+**Text is already its own layer kind**, so this is the interface catching up with the
+engine: `LayerKind::Text` holds a document (one styled run, docs/03 §9.1), the renderer
+rasterises it, and the only way to make one was a menu item that dropped "Text" in the middle
+of the composition. The tool puts it where the user points.
+
+**One click, two meanings.** On empty picture the tool makes a text layer *where the pointer
+is* and starts typing into it; on an existing text layer it edits that one. Clicking
+somewhere else ends the edit and begins the next, which is After Effects' behaviour and the
+only one that lets a caption be typed without a trip to the Timeline.
+
+**A stray click leaves nothing behind.** A layer this tool made that ends its edit with no
+text is deleted. An empty line renders nothing, so what a stray click would otherwise leave
+is an invisible row in the Timeline — the same reasoning as the bridge refusing a mask of one
+vertex.
+
+**The document is written once, and the picture keeps up through a preview.** Every document
+edit is an undo step, so a `set_text` per keystroke would make undo walk back through a
+sentence one letter at a time. So typing sends `render_frame_with_text_preview` — a third
+member of K-183's preview family, beside the effects and transform ones, patching a document
+into a *clone* the same way — and the layer is written when the edit ends. One typing
+session, one undo step.
+
+**The caret is drawn; the text is the engine's.** The keyboard is a real Flutter text field,
+so arrows, selection, backspace, paste and IME all work — but it is invisible, because the
+text the user should see is the engine's own rendering. What is drawn is the caret, placed by
+the same rough estimate of a line's width the bridge uses to anchor a new text layer (half
+the point size per character). Being wrong the same way on both sides is what keeps the caret
+and the picture agreeing about where a line ends; the true advance widths live in the
+rasteriser and are not on the bridge. When they are, both sums change together.
+
+**A new layer's anchor is recentred when the edit ends, pan-behind.** It starts on the left
+end of an empty line, because an empty line has no middle; once there is a line, the anchor
+moves to its middle and Position compensates by exactly the amount that keeps the words where
+they were (K-218's sum). So a typed layer scales and turns about itself without ever having
+appeared to move.
+
+**Vertical type is not built.** `lumit-text` lays out one horizontal line; the member stays
+on the strip, marked unbuilt like every other, and says so if it is clicked.
+
+**The toolbar grows a tool options area**, where After Effects has one: the fill swatch and
+the point size while a type tool is armed, the fill and stroke swatches and the stroke width
+while a drawing tool is. Fill and size are live — they set what the next text layer is made
+with. **Stroke and stroke width are drawn disabled**, because nothing in the engine strokes
+anything: a shape layer's outline and a paint stroke are both engine features that do not
+exist. They are shown rather than hidden for the same reason unbuilt tools are shown (K-214):
+the tool set is the specified one, and a control that is visibly not working yet says more
+than a gap does.
+
+**And a bug the Type tool found: arming a tool did not rebuild the Viewer's overlays.** The
+panel listened to the tool only to change the *pointer*, handing the whole stage in as a
+cached child — so every tool layer under it stayed armed for whichever tool was in hand when
+the panel last rebuilt, and only happened to work because a tool is usually picked before
+anything else redraws. The stage is now built inside the listener.

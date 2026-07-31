@@ -159,8 +159,21 @@ strip whatever workspace is active.
 | Puppet | Puppet position pin, Puppet starch pin, Puppet overlap pin, Puppet bend pin | `Ctrl+P` |
 | Camera | Orbit camera, Pan camera, Dolly camera | `Shift+C` |
 
-The right-hand end carries the **snapping** switch (§4.5) and the **workspace strip** §1.4
-requires in the window chrome.
+The right-hand end carries the **tool options** area (below), the **snapping** switch (§4.5)
+and the **workspace strip** §1.4 requires in the window chrome.
+
+**Tool options** (K-223). The armed tool's own settings, where After Effects puts them, and
+empty for the tools that draw nothing:
+
+| Armed tool | Options |
+|---|---|
+| Type | **Fill** swatch, **size** in pixels |
+| Shape, Pen, Paint | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels |
+
+Fill and size say what the next thing drawn is made with, and both are session state like the
+armed tool itself. Stroke and stroke width MUST be shown **disabled** until something strokes
+a path: neither a shape layer's outline nor a paint stroke exists in the engine, and a control
+that quietly did nothing would be the same lie an unbuilt tool without its tooltip would be.
 
 **Behaviour.**
 
@@ -183,10 +196,12 @@ requires in the window chrome.
   of the application.
 
 **Implementation status (2026-07-31).** The strip, the groups, the flyouts, the shortcuts,
-the snapping switch and the workspace strip are built. Of the tools themselves only Selection
-and Hand do anything — both pan the picture, as they did before there was a toolbar — and the
-rest change the Viewer's pointer and nothing else. Each tool's behaviour is tracked
-separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
+the tool options area, the snapping switch and the workspace strip are built. Built tools:
+Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), the five shape
+tools and the Pen (§2.3.1), and Horizontal type (§2.3.2). Not built, and changing only the
+pointer: vertical type, the Pen's four editing siblings, all of Paint, Roto, Puppet and
+Camera. Each tool's behaviour is tracked separately in [TODO.md](TODO.md); the snapping
+switch is likewise a switch nothing reads yet.
 
 ---
 
@@ -355,6 +370,28 @@ selection moves, and shows a box per layer), and motion paths (§2.4). A layer w
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
 drawn, listed, inverted, faded, deleted, and their points selected and moved** (K-222); their
 bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
+
+### 2.3.2 The Type tool (K-223)
+
+- With a type tool armed, clicking **empty picture** MUST make a **text layer** where the
+  pointer is and begin typing into it; clicking an **existing text layer** MUST edit that one.
+  Clicking elsewhere ends the edit and begins the next.
+- A layer the tool made that ends its edit with **no text** MUST be deleted: an empty line
+  renders nothing, and what would be left is an invisible row in the Timeline.
+- The document MUST be written **once**, when the edit ends — one typing session, one undo
+  step — with the picture kept in step meanwhile by the text preview path (K-183's family).
+  Ending an edit means `Enter`, clicking elsewhere, or putting the tool down.
+- The **caret** is drawn by the tool; the text on screen is the engine's own rendering. The
+  caret is placed by the same estimate of a line's width the bridge anchors a text layer with
+  (half the point size per character), so the two never disagree about where a line ends.
+  When true glyph metrics cross the bridge, both sums change together.
+- A new layer's **anchor** starts at the left end of its empty line and is recentred on the
+  line when the edit ends, with Position compensating so the words do not move (§2.3's
+  pan-behind sum).
+- New text takes the toolbar's **fill** and **size** (§1.7).
+- **Vertical type is not built**: the engine lays out one horizontal line. The member stays on
+  the strip and says so.
+- Per-character and per-word text animators are a later feature ([TODO.md](TODO.md)).
 
 ### 2.4 Motion paths
 

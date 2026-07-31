@@ -107,6 +107,30 @@ void main() {
       expect(p.uiState.workspace.activePreset, WorkspacePreset.effects);
     });
 
+    /// The tool options area (K-223): After Effects shows the settings the
+    /// armed tool draws with, and nothing at all for the tools that draw
+    /// nothing.
+    testWidgets('the options area follows the armed tool', (tester) async {
+      final p = await mount(tester);
+      expect(find.text('Fill'), findsNothing,
+          reason: 'the Selection tool draws nothing');
+
+      p.uiState.tools.select(ToolMode.typeHorizontal);
+      await tester.pump();
+      expect(find.text('Fill'), findsOneWidget);
+      expect(find.text('Stroke'), findsNothing,
+          reason: 'type has a fill and a size, not a stroke');
+
+      p.uiState.tools.select(ToolMode.shapeRectangle);
+      await tester.pump();
+      expect(find.text('Fill'), findsOneWidget);
+      expect(find.text('Stroke'), findsOneWidget);
+
+      p.uiState.tools.select(ToolMode.hand);
+      await tester.pump();
+      expect(find.text('Fill'), findsNothing);
+    });
+
     testWidgets('every tool group names a chord the engine knows',
         (tester) async {
       final p = await mount(tester);

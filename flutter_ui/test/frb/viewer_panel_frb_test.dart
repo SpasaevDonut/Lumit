@@ -1153,6 +1153,116 @@ void main() {
           reason: 'the points the sweep missed stayed put');
     });
 
+    /// The Type tool (K-223): a click on empty picture makes a text layer where
+    /// it landed, typing previews rather than writing, and ending the edit
+    /// writes the document once.
+    testWidgets('the Type tool makes a text layer where you click',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      p.uiState
+        ..setSelectedComp(comp)
+        ..tools.select(ToolMode.typeHorizontal);
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      final fitted = fittedRect(tester, comp);
+      final at = fitted.center + const Offset(40, 20);
+      await tester.tapAt(at);
+      await tester.pumpAndSettle();
+
+      final layers = comp.getLayers();
+      expect(layers, hasLength(1), reason: 'the click made one');
+      final layer = layers.single;
+      expect(layer.getText(), isNotNull, reason: 'and it is a text layer');
+      expect(layer.getText()!.text, isEmpty,
+          reason: 'an empty line, waiting to be typed into');
+
+      // Where it landed, in comp pixels.
+      final size = comp.getSize();
+      final scale = fitted.width / size.width;
+      final tf = layer.getTransform();
+      double still(dynamic s) => (s as dynamic).field0 as double;
+      expect(still(tf.positionX),
+          closeTo((at.dx - fitted.left) / scale, 0.5));
+      expect(still(tf.positionY), closeTo((at.dy - fitted.top) / scale, 0.5));
+
+      // Typing does not touch the document — that is what the preview path is
+      // for — and ending the edit writes it once.
+      await tester.enterText(find.byType(EditableText), 'Hello');
+      await tester.pump();
+      expect(layer.getText()!.text, isEmpty,
+          reason: 'still previewing; the document is untouched');
+
+      p.uiState.tools.select(ToolMode.select);
+      await tester.pumpAndSettle();
+      expect(layer.getText()!.text, 'Hello',
+          reason: 'putting the tool down ends the edit and writes it');
+    });
+
+    testWidgets('a Type click with nothing typed leaves no layer behind',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      p.uiState
+        ..setSelectedComp(comp)
+        ..tools.select(ToolMode.typeHorizontal);
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      await tester.tapAt(fittedRect(tester, comp).center);
+      await tester.pumpAndSettle();
+      expect(comp.getLayers(), hasLength(1));
+
+      p.uiState.tools.select(ToolMode.select);
+      await tester.pumpAndSettle();
+      expect(comp.getLayers(), isEmpty,
+          reason: 'a stray click must not leave an empty text layer');
+    });
+
+    testWidgets('the Type tool edits the text layer you click on',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final layer = comp.addTextLayer();
+      p.uiState
+        ..setSelectedComp(comp)
+        ..tools.select(ToolMode.typeHorizontal);
+      p.uiState.model.refresh();
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      await tester.tapAt(fittedRect(tester, comp).center);
+      await tester.pumpAndSettle();
+      expect(comp.getLayers(), hasLength(1),
+          reason: 'clicking an existing text layer edits it rather than '
+              'making another');
+      expect(find.byType(EditableText), findsOneWidget);
+      expect(tester.widget<EditableText>(find.byType(EditableText))
+          .controller.text, 'Text', reason: 'seeded with what it says');
+
+      await tester.enterText(find.byType(EditableText), 'Retitled');
+      await tester.pump();
+      p.uiState.tools.select(ToolMode.select);
+      await tester.pumpAndSettle();
+      expect(layer.getText()!.text, 'Retitled');
+    });
+
     testWidgets('a missing footage layer raises the badge', (tester) async {
       final p = withLayer();
       final gone = p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');

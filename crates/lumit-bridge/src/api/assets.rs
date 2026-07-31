@@ -157,6 +157,6 @@ fn colour_of(c: lumit_core::model::LinearColour) -> BridgeColourRgba {
 }
 
 #[frb(ignore)]
-fn linear_of(c: BridgeColourRgba) -> lumit_core::model::LinearColour {
+pub(crate) fn linear_of(c: BridgeColourRgba) -> lumit_core::model::LinearColour {
     lumit_core::model::LinearColour([c.r as f32, c.g as f32, c.b as f32, c.a as f32])
 }

@@ -5073,3 +5073,69 @@ live-preview path patches a layer's *transform* into a copy of the document, and
 a mask path does not fit through it. The marks moving is enough to aim by. What
 is still owed: a vertex's two **bezier handles** cannot be dragged, and mask paths
 cannot be keyframed.
+
+### Typing on the picture (K-223)
+
+Text has been its own kind of layer in the engine for a long time — the
+renderer draws it, the document holds the words, the size and the colour — but
+the only way to make one was a menu item that dropped the word "Text" in the
+middle of the composition. The **Type tool** puts one where you point: click
+empty picture and a text layer is made there with a caret in it; click an
+existing text layer and you are editing that one instead. Click somewhere else
+and the first edit ends and the next begins.
+
+**A click you did not mean leaves nothing behind.** A layer the tool made that
+you never typed into is removed when the edit ends. An empty line draws no
+pixels, so all a stray click would otherwise leave is an invisible row in the
+Timeline.
+
+**Why the words appear before the layer changes.** Every edit to a document is
+an undo step. If the layer were written on each keystroke, pressing undo after
+typing a sentence would take the sentence apart one letter at a time. So while
+you type, the Viewer is shown a *preview* — the same trick a dragged layer uses,
+where the engine renders a copy of the project with one value changed and the
+project itself is never touched — and the layer is written once, when you stop.
+One session of typing is one undo step.
+
+**The caret is ours, the text is the engine's.** Underneath the tool is a real
+text field, invisible, which is why arrows, selection, backspace, paste and
+accented characters all behave the way they do everywhere else. What you see on
+the picture is the engine's own rendering of the layer; what the tool draws over
+it is the caret. Its position is a guess — half the point size per character —
+and it is *the same guess the engine makes* when it decides where a text layer's
+anchor point goes. Two guesses that agree keep the caret at the end of the line;
+the real widths of the letters live inside the rasteriser and have never crossed
+the bridge. When they do, both guesses get replaced together.
+
+**The anchor trick.** A brand-new layer holds an empty line, which has no middle
+to be anchored in, so its anchor sits at the line's left end. When the edit ends
+the anchor moves to the middle of whatever you typed — and Position moves by
+exactly the amount that cancels it, the same pan-behind sum the Anchor point
+tool commits. So the words never appear to shift, and afterwards the layer
+scales and turns about itself.
+
+**Vertical type is not built.** The text engine lays out one horizontal line.
+The tool stays on the strip and says so, like every other unbuilt tool.
+
+### Tool options: fill, size, and the stroke that is not there yet (K-223)
+
+The toolbar now shows the settings the armed tool draws with, where After
+Effects shows them: a fill swatch and a size while a type tool is in hand, a
+fill swatch, a stroke swatch and a stroke width while a shape tool, the Pen or a
+paint tool is.
+
+Fill and size are live — they say what the next text layer is made with. The two
+stroke controls are **deliberately disabled**. Nothing in the engine strokes
+anything: an outline round a shape and a paint stroke are both engine features
+that do not exist yet. They are shown rather than hidden for the same reason the
+unbuilt tools are shown — the strip is the specification, and a control that is
+visibly not working yet tells you more than a gap does.
+
+**A bug this turned up.** The Viewer listened for the tool being changed only so
+it could change the mouse pointer, and handed the rest of the panel to that
+listener as a *cached* subtree — the standard Flutter trick for not rebuilding
+something that has not changed. But it had: every tool overlay lives in that
+subtree, so picking a tool changed the pointer while the overlays underneath
+stayed armed for whatever had been in hand when the panel last redrew. It only
+ever worked because a tool is usually picked before anything else makes the
+Viewer redraw. The stage is now built inside the listener.

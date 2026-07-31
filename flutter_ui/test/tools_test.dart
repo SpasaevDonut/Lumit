@@ -116,8 +116,9 @@ void main() {
       // armed tool and does the work. Selection selects and drags (K-215),
       // Hand pans, Zoom magnifies (K-216), Rotation turns (K-217), Anchor
       // point pans behind and the Razor cuts (K-218), the five shape tools
-      // draw masks and the Pen builds one (K-220, K-221); everything else is a
-      // cursor and a place to build into.
+      // draw masks and the Pen builds one (K-220, K-221), and horizontal type
+      // makes and edits text layers (K-223); everything else is a cursor and a
+      // place to build into.
       expect(ToolMode.values.where((t) => t.ready).toSet(), {
         ToolMode.select,
         ToolMode.hand,
@@ -131,7 +132,46 @@ void main() {
         ToolMode.shapePolygon,
         ToolMode.shapeStar,
         ToolMode.pen,
+        ToolMode.typeHorizontal,
       });
+    });
+  });
+
+  /// The toolbar's tool options (K-223): the fill and size the drawing tools
+  /// set things in, held here because they belong to the tool and not to any
+  /// one panel.
+  group('Tool options', () {
+    test('the fill starts white and changes once per real change', () {
+      final tools = ToolsState();
+      var notices = 0;
+      tools.addListener(() => notices++);
+
+      expect(tools.fill, ToolColour.white);
+      expect(tools.fillRgba.r, 1);
+      expect(tools.fillRgba.a, 1, reason: 'a fill is opaque; Opacity is a '
+          'transform property, not a fourth number in a swatch');
+
+      tools.fill = const ToolColour(1, 0, 0);
+      tools.fill = const ToolColour(1, 0, 0);
+      expect(tools.fillRgba.g, 0);
+      expect(notices, 1);
+    });
+
+    test('the text size is held within sane bounds', () {
+      final tools = ToolsState();
+      expect(tools.textSize, 72);
+      tools.textSize = 0;
+      expect(tools.textSize, 1, reason: 'text of no size is not text');
+      tools.textSize = 100000;
+      expect(tools.textSize, 2000);
+    });
+
+    test('the stroke is held even though nothing draws one yet', () {
+      final tools = ToolsState();
+      expect(tools.stroke, ToolColour.black);
+      expect(tools.strokeWidth, 2);
+      tools.strokeWidth = -4;
+      expect(tools.strokeWidth, 0);
     });
   });
 

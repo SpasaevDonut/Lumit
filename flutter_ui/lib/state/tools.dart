@@ -16,6 +16,7 @@
 // tooltip rather than hiding the button).
 
 import 'package:flutter/foundation.dart';
+import 'package:lumit_flutter/src/rust/api/assets.dart';
 
 import '../icons/icons.dart';
 
@@ -77,7 +78,11 @@ enum ToolMode {
   penConvertVertex(ToolGroup.pen, 'Convert vertex', LumitIcon.vertexConvert),
   penMaskFeather(ToolGroup.pen, 'Mask feather', LumitIcon.maskFeather),
 
-  typeHorizontal(ToolGroup.type, 'Horizontal type', LumitIcon.text),
+  // Making and editing text layers on the picture (K-223). Vertical type would
+  // need the engine to lay a line out downwards; it lays out one horizontal
+  // line, so that member stays unbuilt.
+  typeHorizontal(ToolGroup.type, 'Horizontal type', LumitIcon.text,
+      ready: true),
   typeVertical(ToolGroup.type, 'Vertical type', LumitIcon.textVertical),
 
   brush(ToolGroup.paint, 'Brush', LumitIcon.brush),
@@ -133,6 +138,28 @@ const Map<String, ToolGroup> toolActions = {
   'tool.camera': ToolGroup.camera,
 };
 
+/// A colour the toolbar holds, in the document's own scene-linear channels — the
+/// same numbers a fill crosses the bridge as, so nothing is converted twice
+/// (K-223).
+@immutable
+class ToolColour {
+  final double r;
+  final double g;
+  final double b;
+
+  const ToolColour(this.r, this.g, this.b);
+
+  static const ToolColour white = ToolColour(1, 1, 1);
+  static const ToolColour black = ToolColour(0, 0, 0);
+
+  @override
+  bool operator ==(Object other) =>
+      other is ToolColour && other.r == r && other.g == g && other.b == b;
+
+  @override
+  int get hashCode => Object.hash(r, g, b);
+}
+
 /// Which tool is armed, which member each group would arm, and the toolbar's
 /// own switches.
 ///
@@ -158,6 +185,56 @@ class ToolsState extends ChangeNotifier {
   set snapping(bool value) {
     if (_snapping == value) return;
     _snapping = value;
+    notifyListeners();
+  }
+
+  /// The **fill** the drawing tools use: the colour new text is set in (K-223),
+  /// and the colour a shape layer's fill will take once there are shape layers.
+  ToolColour _fill = ToolColour.white;
+  ToolColour get fill => _fill;
+  set fill(ToolColour value) {
+    if (_fill == value) return;
+    _fill = value;
+    notifyListeners();
+  }
+
+  /// The fill as the bridge wants it. Opaque: a fill's transparency is the
+  /// layer's Opacity, which is a transform property and animatable, rather than
+  /// a fourth number hidden in a swatch.
+  BridgeColourRgba get fillRgba =>
+      BridgeColourRgba(r: _fill.r, g: _fill.g, b: _fill.b, a: 1);
+
+  /// The point size new text is set at.
+  double _textSize = 72;
+  double get textSize => _textSize;
+  set textSize(double value) {
+    final next = value.clamp(1.0, 2000.0);
+    if (_textSize == next) return;
+    _textSize = next;
+    notifyListeners();
+  }
+
+  /// The **stroke** the drawing tools would use, and its width in pixels.
+  ///
+  /// Held, shown and remembered — and nothing reads them yet. A stroke needs
+  /// something to draw it round: a shape layer's outline or a paint stroke,
+  /// neither of which the engine has (docs/TODO.md). The toolbar draws both
+  /// controls disabled rather than pretending, for the same reason
+  /// [ToolMode.ready] exists.
+  ToolColour _stroke = ToolColour.black;
+  ToolColour get stroke => _stroke;
+  set stroke(ToolColour value) {
+    if (_stroke == value) return;
+    _stroke = value;
+    notifyListeners();
+  }
+
+  double _strokeWidth = 2;
+  double get strokeWidth => _strokeWidth;
+  set strokeWidth(double value) {
+    final next = value.clamp(0.0, 1000.0);
+    if (_strokeWidth == next) return;
+    _strokeWidth = next;
     notifyListeners();
   }
 

@@ -27,6 +27,7 @@ import '../main.dart';
 import '../state/dock.dart';
 import '../state/tools.dart';
 import '../theme/theme.dart';
+import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 
 /// How tall the strip is, and how big one tool button is.
@@ -92,12 +93,165 @@ class LumitToolBarFrb extends StatelessWidget {
                 ),
               ),
             ),
+            // The armed tool's own options, when it has any (K-223): After
+            // Effects puts them here, and the strip is empty for the tools
+            // that draw nothing.
+            if (toolOptionsFor(ui.tools.tool) != ToolOptions.none) ...[
+              const _ToolBarDivider(),
+              _ToolOptions(tools: ui.tools, shows: toolOptionsFor(ui.tools.tool)),
+            ],
             const _ToolBarDivider(),
             _SnapButton(tools: ui.tools),
             const _ToolBarDivider(),
             const _WorkspaceStrip(),
             const SizedBox(width: 6),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Which options the armed tool puts on the strip.
+enum ToolOptions {
+  none,
+
+  /// Fill and size: what the Type tool sets a new line in (K-223).
+  type,
+
+  /// Fill and stroke: what a shape tool *would* draw with. Held and shown,
+  /// because they are the same two settings the Type tool uses and hiding them
+  /// would make the pair look like it only half exists — but the stroke half is
+  /// drawn disabled, since nothing in the engine strokes anything yet.
+  shape,
+}
+
+/// The options [tool] shows on the toolbar.
+ToolOptions toolOptionsFor(ToolMode tool) => switch (tool.group) {
+      ToolGroup.type => ToolOptions.type,
+      ToolGroup.shape || ToolGroup.pen || ToolGroup.paint => ToolOptions.shape,
+      _ => ToolOptions.none,
+    };
+
+/// The fill, size and stroke controls: After Effects' tool options area.
+class _ToolOptions extends StatelessWidget {
+  final ToolsState tools;
+  final ToolOptions shows;
+
+  const _ToolOptions({required this.tools, required this.shows});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _Swatch(
+          label: 'Fill',
+          colour: tools.fill,
+          onPicked: (colour) => tools.fill = colour,
+        ),
+        const SizedBox(width: 6),
+        if (shows == ToolOptions.type)
+          SizedBox(
+            width: 62,
+            child: LumitTooltip(
+              message: 'Size of new text, in pixels',
+              child: DragValueField(
+                value: tools.textSize,
+                min: 1,
+                max: 2000,
+                suffix: ' px',
+                onChanged: (v) => tools.textSize = v.toDouble(),
+              ),
+            ),
+          )
+        else ...[
+          // Disabled rather than absent: the tools that would use a stroke are
+          // on the strip, so the setting they would use should be visible and
+          // visibly not working yet (docs/TODO.md).
+          LumitTooltip(
+            message: 'Stroke — not built yet: nothing in the engine strokes a '
+                'path',
+            child: Opacity(
+              opacity: 0.4,
+              child: _Swatch(
+                label: 'Stroke',
+                colour: tools.stroke,
+                onPicked: null,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          LumitTooltip(
+            message: 'Stroke width — not built yet',
+            child: Opacity(
+              opacity: 0.4,
+              child: SizedBox(
+                width: 58,
+                child: DragValueField(
+                  value: tools.strokeWidth,
+                  min: 0,
+                  max: 1000,
+                  suffix: ' px',
+                  onChanged: (_) {},
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+/// A colour well that opens the picker. [onPicked] null draws it inert.
+class _Swatch extends StatelessWidget {
+  final String label;
+  final ToolColour colour;
+  final ValueChanged<ToolColour>? onPicked;
+
+  const _Swatch({
+    required this.label,
+    required this.colour,
+    required this.onPicked,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final swatch = Container(
+      width: 20,
+      height: 20,
+      decoration: BoxDecoration(
+        color: PickedColour(colour.r, colour.g, colour.b).clipped,
+        border: Border.all(color: t.hairlineStrong),
+        borderRadius: BorderRadius.circular(3),
+      ),
+    );
+    final row = Row(
+      children: [
+        Text(label, style: t.small.copyWith(color: t.textSecondary)),
+        const SizedBox(width: 5),
+        swatch,
+      ],
+    );
+    if (onPicked == null) return row;
+    return LumitTooltip(
+      message: '$label colour',
+      child: Builder(
+        builder: (context) => MouseRegion(
+          cursor: SystemMouseCursors.click,
+          child: GestureDetector(
+            onTapUp: (details) => showColourPicker(
+              context: context,
+              position: details.globalPosition,
+              initial: PickedColour(colour.r, colour.g, colour.b),
+              scale: ColourScale.bytes,
+              onCommit: (picked) => onPicked!(
+                ToolColour(picked.r, picked.g, picked.b),
+              ),
+            ),
+            child: row,
+          ),
         ),
       ),
     );

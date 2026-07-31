@@ -590,6 +590,10 @@ pub struct RenderCompRequestWithPreview {
     pub layer: LayerReference,
     pub effects: Option<Vec<EffectInstance>>,
     pub transform: Option<crate::api::layer::BridgeTransform>,
+    /// A text layer's document, while it is being typed (K-223). The Type tool
+    /// writes the layer once, when the edit ends; this is what keeps the
+    /// picture in step in the meantime without an undo step per keystroke.
+    pub text: Option<crate::api::assets::BridgeTextDocument>,
 }
 
 #[frb(ignore)]
@@ -1194,6 +1198,26 @@ fn render_comp(
     Ok(())
 }
 
+/// Replace a text layer's document with the one being typed (K-223).
+///
+/// Only a text layer has a document to replace; anything else is a preview from
+/// a layer that changed kind under the tool, and is ignored rather than failing
+/// the frame — a provisional picture is never worth taking the worker down for.
+#[frb(ignore)]
+fn apply_text_preview(
+    kind: &mut lumit_core::model::LayerKind,
+    document: crate::api::assets::BridgeTextDocument,
+) {
+    if let lumit_core::model::LayerKind::Text { document: existing } = kind {
+        *existing = lumit_core::model::TextDocument {
+            text: document.text,
+            size: document.size,
+            fill: crate::api::assets::linear_of(document.fill),
+            extra: serde_json::Map::new(),
+        };
+    }
+}
+
 /// Render a frame under effect values the user is still dragging.
 ///
 /// The effect stack is patched on a *clone* of the snapshot, so a drag never
@@ -1227,6 +1251,9 @@ fn render_comp_with_preview(
 
     if let Some(effects) = req.effects {
         comp.layers[index].effects = effects;
+    }
+    if let Some(document) = req.text {
+        apply_text_preview(&mut comp.layers[index].kind, document);
     }
     if let Some(transform) = &req.transform {
         // The preview's keys arrive on the composition's clock like every other
@@ -2127,5 +2154,46 @@ mod tests {
         // past the end of.
         assert!(super::cut_patch(&[0, 0, 0, 255], 2, 2, 0.0, 0.0, 1).is_none());
         assert!(super::cut_patch(&rgba, 0, 0, 0.0, 0.0, 1).is_none());
+    }
+
+    /// The Type tool's live preview (K-223): the picture keeps up with what is
+    /// being typed, and the document is not touched until the edit ends.
+    #[test]
+    fn a_text_preview_replaces_only_a_text_layer() {
+        use crate::api::assets::{BridgeColourRgba, BridgeTextDocument};
+        use lumit_core::model::{LayerKind, LinearColour, TextDocument};
+
+        let typed = BridgeTextDocument {
+            text: "Hello".into(),
+            size: 48.0,
+            fill: BridgeColourRgba {
+                r: 1.0,
+                g: 0.5,
+                b: 0.0,
+                a: 1.0,
+            },
+        };
+
+        let mut text = LayerKind::Text {
+            document: TextDocument {
+                text: "Text".into(),
+                size: 72.0,
+                fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
+                extra: serde_json::Map::new(),
+            },
+        };
+        super::apply_text_preview(&mut text, typed.clone());
+        let LayerKind::Text { document } = &text else {
+            panic!("still a text layer");
+        };
+        assert_eq!(document.text, "Hello");
+        assert_eq!(document.size, 48.0);
+        assert_eq!(document.fill.0[1], 0.5);
+
+        // A layer that is not text takes the preview without changing: a stale
+        // request must never fail a frame.
+        let mut other = LayerKind::Adjustment;
+        super::apply_text_preview(&mut other, typed);
+        assert!(matches!(other, LayerKind::Adjustment));
     }
 }
