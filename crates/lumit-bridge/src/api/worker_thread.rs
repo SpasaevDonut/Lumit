@@ -1244,35 +1244,44 @@ fn clock_seconds() -> Option<f64> {
     None
 }
 
-/// Hold the sound when the picture falls behind it, and start it again when the
-/// picture arrives — every-frame playback's half of A/V sync (K-171).
+/// Hold the sound when the picture falls behind it, and start it again — level
+/// with the picture — once the picture is running freely. Every-frame
+/// playback's half of A/V sync (K-171).
 ///
 /// # Why it stops at all
 ///
 /// Every-frame mode shows every frame however long each one takes, thus the
 /// picture can fall behind the clock. Two answers were possible and only one is
-/// correct: let the sound run on and drift away from the picture, or hold the
-/// sound until the picture is level again. Lumit holds it.
+/// correct: let the sound run on and drift away from the picture, or stop the
+/// sound. Lumit stops it.
 ///
-/// # Why it must start again by itself
+/// # Why it must start again by itself, and why the picture is not what it waits
+/// for
 ///
-/// It did not. The sound stopped, and the clock stops reporting when the sound
+/// It did not start again at all. The clock stops reporting when the sound
 /// stops, thus the test that stopped it could never run a second time and
-/// nothing ever started it. One slow frame therefore took the sound away for the
-/// rest of the run, and the only way back was to stop playback and press play
-/// again — a fault the user had to work around, and one that looked like the
-/// sound was broken rather than waiting.
+/// nothing started it. One slow frame took the sound away for the rest of the
+/// run, and the only way back was to stop playback and press play again.
 ///
-/// The clock holds its position while it is stopped, so the position is exactly
-/// what says when the picture has arrived: the sound waits at the moment it
-/// reached, and the picture walks forward to meet it.
+/// The obvious repair is wrong, and was tried: wait for the picture to reach the
+/// moment the sound had got to. The sound stops where it is, thus that moment is
+/// **in front of** the picture by however long the slow frame took — thirty
+/// seconds of rendering puts it thirty seconds in front. The picture then needs
+/// thirty seconds of playing to arrive, and if the composition ends first it
+/// never arrives at all. The sound stays off for the rest of the run, which is
+/// the fault this exists to repair.
 ///
-/// # The two limits, and why they are not the same number
+/// So the sound comes back to the **picture**. When the renders are in front of
+/// the presents again — the same measure the pre-roll uses to decide the sound
+/// may start at all — the sound is moved to the frame on screen and started
+/// there. The two are level by construction, at a moment the picture is
+/// certainly at, because it is the frame being shown.
 ///
-/// It stops at [`AUDIO_HOLD_BEHIND`] of lag and starts again only when the
-/// picture is level or in front. A single limit would start and stop the sound
-/// at every frame near it, which is worse than either answer. The gap between
-/// the two is what makes the decision stable.
+/// # The two tests are different on purpose
+///
+/// It stops on a *distance* ([`AUDIO_HOLD_BEHIND`]) and starts on *banked
+/// frames*. Neither is the other's negation, thus a picture that wavers at the
+/// edge of one cannot start and stop the sound at every frame.
 #[frb(ignore)]
 fn chase_audio(playback: &mut Playback, frame: u64) {
     let shown = frame as f64 / playback.fps;
@@ -1281,13 +1290,18 @@ fn chase_audio(playback: &mut Playback, frame: u64) {
         playback.audio_held_for_picture = false;
         return;
     };
-    match audio_chase(playback.audio_held_for_picture, clock - shown) {
+    let banked = playback.ring.len();
+    match audio_chase(playback.audio_held_for_picture, clock - shown, banked) {
         AudioChase::Hold => {
             playback.audio_held_for_picture = true;
             crate::api::audio::audio_pause();
         }
         AudioChase::Start => {
             playback.audio_held_for_picture = false;
+            // To the frame on screen, then run. The sound stopped ahead of the
+            // picture, thus starting it where it stopped would play a moment
+            // the picture has not reached.
+            crate::api::audio::audio_seek(shown);
             resume_audio();
         }
         AudioChase::Leave => {}
@@ -1310,14 +1324,16 @@ enum AudioChase {
 /// be tested on its own.
 ///
 /// `behind` is how far the sound is in front of the picture, in seconds.
+/// `banked` is how many finished frames are waiting to be shown.
 #[frb(ignore)]
-fn audio_chase(held: bool, behind: f64) -> AudioChase {
+fn audio_chase(held: bool, behind: f64, banked: usize) -> AudioChase {
     if held {
-        // Level or in front: the picture has met the sound where it waited.
-        // Only this ends the wait, and it is a different number from the one
-        // that began it — one number would start and stop the sound at every
-        // frame near it.
-        if behind <= 0.0 {
+        // Frames waiting to be shown means the renders are in front of the
+        // presents again, thus the picture is running freely and the sound can
+        // rejoin it. Deliberately NOT "the picture reached the sound": the sound
+        // stopped ahead of the picture, at a moment the picture may never get
+        // to, and does not get to at all if the composition ends first.
+        if banked >= PRE_ROLL_FRAMES {
             AudioChase::Start
         } else {
             AudioChase::Leave
@@ -3137,44 +3153,58 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod bar_strip_tests {
-    use super::{audio_chase, refine_bar_strip, sample_bar_strip, wants_disk_lead, AudioChase};
+    use super::{
+        audio_chase, refine_bar_strip, sample_bar_strip, wants_disk_lead, AudioChase,
+        PRE_ROLL_FRAMES,
+    };
 
-    /// **The sound waits for the picture, and then it starts again by itself.**
+    /// **The sound stops when the picture falls behind, and comes back to the
+    /// picture when the picture is running freely again.**
     ///
     /// Every-frame playback shows every frame however long each takes, thus the
-    /// picture can fall behind. Lumit stops the sound and lets it wait, rather
-    /// than let it run on and drift away from the picture (K-171).
+    /// picture can fall behind. Lumit stops the sound rather than let it drift
+    /// away from a picture that cannot keep up (K-171).
     ///
-    /// The regression: it never started again. The clock stops reporting when
-    /// the sound stops, thus the test that stopped it could not run a second
-    /// time and nothing started it. One slow frame took the sound away for the
-    /// rest of the run, and the only way back was to stop playback and press
-    /// play again.
+    /// The first regression: it never started again. The clock stops reporting
+    /// when the sound stops, thus the test that stopped it could not run a
+    /// second time. One slow frame took the sound away for the whole run.
     ///
-    /// The two limits are deliberately different numbers. One limit would start
-    /// and stop the sound at every frame near it.
+    /// The second, which the first repair caused: waiting for the picture to
+    /// reach the moment the sound had got to. The sound stops **in front of**
+    /// the picture, by however long the slow frame took, thus a thirty-second
+    /// frame leaves it thirty seconds in front — and if the composition ends
+    /// before the picture gets there, it never comes back. The sound must
+    /// return to the picture, not the picture to the sound.
     #[test]
-    fn the_sound_waits_for_the_picture_and_then_starts_again() {
+    fn the_sound_stops_for_the_picture_and_comes_back_to_it() {
+        let full = PRE_ROLL_FRAMES;
         // Running, and the picture keeps up: nothing happens.
-        assert_eq!(audio_chase(false, 0.0), AudioChase::Leave);
-        assert_eq!(audio_chase(false, 0.4), AudioChase::Leave, "inside jitter");
-        // Running, and the picture falls well behind: the sound waits.
-        assert_eq!(audio_chase(false, 0.6), AudioChase::Hold);
+        assert_eq!(audio_chase(false, 0.0, full), AudioChase::Leave);
+        assert_eq!(
+            audio_chase(false, 0.4, full),
+            AudioChase::Leave,
+            "inside the unevenness the ring absorbs"
+        );
+        // Running, and the picture falls well behind: the sound stops.
+        assert_eq!(audio_chase(false, 0.6, 0), AudioChase::Hold);
 
-        // Waiting, and the picture is still behind: it goes on waiting. This is
-        // the case that used to be unreachable, because the clock reported
-        // nothing once the sound had stopped.
-        assert_eq!(audio_chase(true, 0.4), AudioChase::Leave);
-        assert_eq!(audio_chase(true, 0.6), AudioChase::Leave);
-        // Waiting, and the picture arrives: the sound starts itself.
-        assert_eq!(audio_chase(true, 0.0), AudioChase::Start);
-        assert_eq!(audio_chase(true, -0.2), AudioChase::Start, "or overtakes");
+        // Stopped, and the renders are still not keeping up: it stays stopped.
+        assert_eq!(audio_chase(true, 30.0, 0), AudioChase::Leave);
+        assert_eq!(audio_chase(true, 30.0, full - 1), AudioChase::Leave);
 
-        // The gap between the two limits is what makes the decision stable: a
-        // picture 0.4 s behind neither stops a running sound nor starts a
-        // waiting one, thus it cannot flap.
-        assert_eq!(audio_chase(false, 0.4), AudioChase::Leave);
-        assert_eq!(audio_chase(true, 0.4), AudioChase::Leave);
+        // Stopped, and frames are banked again: the sound comes back — and it
+        // does so however far in front it stopped, because what it returns to
+        // is the frame on screen. Thirty seconds in front is the case the
+        // picture could never have caught up with.
+        assert_eq!(audio_chase(true, 30.0, full), AudioChase::Start);
+        assert_eq!(audio_chase(true, 0.6, full), AudioChase::Start);
+
+        // The two tests are not each other's negation, thus a picture at the
+        // edge of one cannot start and stop the sound at every frame: 0.4 s
+        // behind neither stops a running sound nor, on its own, starts a
+        // stopped one.
+        assert_eq!(audio_chase(false, 0.4, full), AudioChase::Leave);
+        assert_eq!(audio_chase(true, 0.4, 0), AudioChase::Leave);
     }
 
     /// Playback asks the disk tier for a frame in advance, and only when the

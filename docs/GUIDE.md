@@ -5797,11 +5797,22 @@ it. One slow frame took the sound away for the rest of the run, even after the
 picture returned to full speed, and the only way to get it back was to stop
 playback and press play again.
 
-The position the clock holds while it waits is exactly what was needed: the
-sound waits at the moment it reached, and the picture walks forward to meet it.
-When the frame being shown catches up to that moment, the sound starts itself.
+The obvious repair is wrong, and I tried it first: wait for the picture to reach
+the moment the sound had got to. But the sound stops *where it is*, which is
+ahead of the picture by however long the slow frame took. A frame that took
+thirty seconds leaves the sound thirty seconds in front, so the picture needs
+thirty seconds of playing to arrive — and if the composition ends before then, it
+never arrives, and the sound stays off. That is the same fault wearing a
+different hat.
 
-The two limits are deliberately different numbers — it waits when the picture is
-half a second behind, and starts again only when the picture is level. A single
-limit would start and stop the sound at every frame near it, which is worse than
-either answer on its own.
+So the sound comes back to the *picture*, not the picture to the sound. The
+moment the renders are running ahead of the presents again — the same measure
+that decides the sound may start at the beginning of a run — the sound is moved
+to the frame on screen and started there. The two are together by construction,
+at a moment the picture is definitely at, because it is the frame you are
+looking at.
+
+The two tests are deliberately unalike: it stops on a *distance* (half a second
+behind) and starts on *frames in hand*. Neither is the other's opposite, so a
+picture wavering at the edge of one cannot start and stop the sound over and
+over.
