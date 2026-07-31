@@ -100,8 +100,9 @@ armed is a *tool*; what each tool then does is the backlog:
     see the layer-controls list below.
 - **Hand** - built (K-215): the grab pointer, and a drag that pans the view and never
     the layer.
-- **Zoom** - click to zoom in about the pointer, `Alt` to zoom out. The wheel already
-    does this; the tool does not.
+- **Zoom** - built (K-216): the lens pointer (and its zoom-out twin under `Alt`), click
+    to zoom about the point, and a dragged box that fits that area to the panel — `Alt`
+    inverting both.
 - **Rotation**, **Anchor point** - the gizmo rotates a layer from its bar (K-215) and the
     anchor's own centre handle is not built; neither tool changes what a drag does yet.
 - **Razor** - `Ctrl+Shift+D` and Composition ▸ Cut clip at playhead exist; clicking a clip
@@ -116,6 +117,16 @@ armed is a *tool*; what each tool then does is the backlog:
 - **The workspace strip shows no preset after a restart** - `Workspace.activePreset` is
     session-only, because the stored layout is the user's own by then and may no longer
     match any preset.
+
+**Smooth zooming everywhere else (K-216).** The Viewer's magnification now flies to its
+target — geometric interpolation, magnification and pan on one controller, instant under
+*No animation* (`_goToZoom` in `viewer_panel_frb.dart`). Nothing else does: the **Timeline's
+time zoom** (`=`/`-`, `Ctrl+wheel`, the full-comp `\` toggle), the **graph editor's** zoom
+and auto-fit, and the **Project panel's** thumbnail scaling all still cut. They want the
+same shape — a target, one controller, a geometric interpolation, the animation level
+deciding whether it runs — and it should be lifted into one shared piece (a small
+`AnimatedViewport`-style helper) rather than written three more times. The Timeline is the
+one that matters most: it is zoomed constantly while cutting.
 
 **Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3, K-215):** the
 wireframe, selection on the picture, the marquee, the move/scale/rotate gizmo and the bar's

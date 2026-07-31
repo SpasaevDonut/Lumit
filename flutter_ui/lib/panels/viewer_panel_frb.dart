@@ -49,6 +49,7 @@ import '../shell/tool_bar_frb.dart';
 import '../state/dropper.dart';
 import '../state/preview_throttle.dart';
 import '../state/settings.dart';
+import '../state/tools.dart';
 import '../state/timecode.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
@@ -56,6 +57,7 @@ import '../widgets/dropper_overlay.dart';
 import 'placeholder.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
+import 'viewer_zoom.dart';
 
 /// The magnifications the picker offers. `null` means fit-to-panel, which is
 /// the default and the only one that changes as the panel is resized.
@@ -71,7 +73,11 @@ class ViewerPanelFrb extends StatefulWidget {
   State<ViewerPanelFrb> createState() => _ViewerPanelFrbState();
 }
 
-class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
+class _ViewerPanelFrbState extends State<ViewerPanelFrb>
+    with SingleTickerProviderStateMixin {
+  /// The magnification the Viewer is *heading for*: a multiple of comp
+  /// resolution, or null for fit-to-panel, which is the only mode that follows
+  /// the panel as it is resized.
   double? _zoom;
   ViewerChannel _channel = ViewerChannel.rgb;
   bool _grid = true;
@@ -92,11 +98,72 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
   /// picture has to be asked for again.
   StreamSubscription<ScopedChange>? _changes;
 
+  /// The zoom's own motion (K-216).
+  ///
+  /// A magnification change is a *place* changing, not a value being nudged, so
+  /// it is worth animating: jumping the picture from one magnification to
+  /// another loses the reader's place, and the whole point of anchored zooming
+  /// is that the place is kept. Held here rather than in an implicitly animated
+  /// widget because the two things being animated — the magnification and the
+  /// pan — have to move together or the anchor point drifts mid-flight.
+  late final AnimationController _zoomMotion;
+
+  @override
+  void initState() {
+    super.initState();
+    // Built here rather than lazily on first use: a `late final` field is
+    // constructed the first time it is *read*, and the first read on a Viewer
+    // that was never zoomed is `dispose` — which builds a ticker against a
+    // widget that has already left the tree, and throws.
+    _zoomMotion = AnimationController(vsync: this)
+      ..addListener(() => setState(() {}))
+      ..addStatusListener((status) {
+        // The picture is rendered at the size it is *shown* at, so the frame in
+        // hand is the wrong resolution once the magnification has changed.
+        // Asked for at the end rather than per tick: a render per frame of a
+        // 120 ms animation is a render per frame for no visible gain.
+        if (status == AnimationStatus.completed) _boundUi?.requestFrame();
+      });
+  }
+
+  /// Where the animation started from, resolved to real numbers: the target may
+  /// be "fit", which is a rule rather than a number, and a lerp needs both ends.
+  double? _zoomFrom;
+  Offset _panFrom = Offset.zero;
+
+  /// How much motion the shell is set to show, read in [build] because that is
+  /// where the theme scope is in reach.
+  AnimationLevel _animationLevel = AnimationLevel.all;
+
   @override
   void dispose() {
     _unbind();
     _changes?.cancel();
+    _zoomMotion.dispose();
     super.dispose();
+  }
+
+  /// Take the Viewer to [scale] (null = fit) and [pan], smoothly when the shell
+  /// animates at all.
+  ///
+  /// [from] is the magnification being left, which the caller already knows
+  /// from the rectangle it measured — asking for it again here would need the
+  /// constraints, which live in the layout builder.
+  void _goToZoom(double? scale, Offset pan, {required double from}) {
+    setState(() {
+      _zoomFrom = from;
+      _panFrom = _pan;
+      _zoom = scale;
+      _pan = pan;
+    });
+    final duration = animationDuration(_animationLevel);
+    if (duration == Duration.zero) {
+      _zoomMotion.value = 1;
+      _boundUi?.requestFrame();
+      return;
+    }
+    _zoomMotion.duration = duration;
+    _zoomMotion.forward(from: 0);
   }
 
   /// Something changed the document: tell the engine, which decides what to do
@@ -158,7 +225,9 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
     }
 
     final settings = comp.getSettings();
-    final t = ThemeScope.of(context).theme;
+    final scope = ThemeScope.of(context);
+    final t = scope.theme;
+    _animationLevel = scope.animationLevel;
     final round = t.shape == ThemeShape.round;
 
     // Both notifiers, because the transport shows two things the engine owns:
@@ -176,10 +245,11 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
           frame: frame,
           settings: settings,
           comp: comp,
-          onZoom: (z) => setState(() {
-            _zoom = z;
-            _pan = Offset.zero;
-          }),
+          // The magnification menu is a jump to a named place, so it flies
+          // there like every other zoom (K-216) — from whatever is on screen,
+          // which is what the measured rectangle in the layout builder knows.
+          onZoom: (z) => _goToZoom(z, Offset.zero,
+              from: _currentScale(comp.getSize())),
           onChannel: (c) => setState(() => _channel = c),
           onGrid: () => setState(() => _grid = !_grid),
           onWireframes: () => setState(() => _wireframes = !_wireframes),
@@ -210,6 +280,12 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
                 field0,
           ];
 
+          void applyZoom(ViewerZoom next) => _goToZoom(
+                next.scale,
+                next.pan,
+                from: size.width == 0 ? 1 : fitted.width / size.width,
+              );
+
           return Listener(
             // The wheel zooms about the cursor (docs/07 §2.2): the comp point
             // under the pointer stays under the pointer, which is what makes
@@ -238,8 +314,32 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
                 channel: _channel,
                 compSize: size,
                 footage: footage,
-                onPan: (delta) => setState(() => _pan += delta),
+                onPan: (delta) => setState(() {
+                  // A pan during a zoom flight would be fighting it, so the
+                  // flight ends where it is and the drag takes over.
+                  _zoomFrom = null;
+                  _zoomMotion.value = 1;
+                  _pan += delta;
+                }),
                 onChanged: () => setState(() {}),
+                onZoomAt: (at, {required bool out}) => applyZoom(zoomAboutPoint(
+                      cursor: at,
+                      factor: out ? 1 / zoomToolStep : zoomToolStep,
+                      fitted: fitted,
+                      compSize:
+                          Size(size.width.toDouble(), size.height.toDouble()),
+                      panel:
+                          Size(constraints.maxWidth, constraints.maxHeight),
+                    )),
+                onZoomBox: (box, {required bool out}) => applyZoom(zoomToBox(
+                      box: box,
+                      out: out,
+                      fitted: fitted,
+                      compSize:
+                          Size(size.width.toDouble(), size.height.toDouble()),
+                      panel:
+                          Size(constraints.maxWidth, constraints.maxHeight),
+                    )),
               ),
             ),
           );
@@ -285,37 +385,54 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
     final h = size.height.toDouble();
     if (w <= 0 || h <= 0) return Rect.zero;
 
-    final scale = _zoom ??
+    // The target, resolved: "fit" is re-resolved every frame rather than
+    // captured, so a panel resized mid-animation still lands on its own fit.
+    final target = _zoom ??
         (constraints.maxWidth / w < constraints.maxHeight / h
             ? constraints.maxWidth / w
             : constraints.maxHeight / h);
+    var scale = target;
+    var pan = _pan;
+    final from = _zoomFrom;
+    if (from != null && _zoomMotion.value < 1) {
+      final t = Curves.easeOutCubic.transform(_zoomMotion.value);
+      // Geometric, not linear: magnification is a *ratio*, and lerping the
+      // number itself makes the second half of a big zoom crawl while the
+      // first half bolts. Interpolating the logarithm is what makes a 1x → 8x
+      // flight look like one steady move.
+      scale = from * math.pow(target / from, t);
+      pan = Offset.lerp(_panFrom, _pan, t) ?? _pan;
+    }
     final drawn = Size(w * scale, h * scale);
     final centre = Offset(
       (constraints.maxWidth - drawn.width) / 2,
       (constraints.maxHeight - drawn.height) / 2,
     );
-    return (centre + _pan) & drawn;
+    return (centre + pan) & drawn;
   }
 
   /// One wheel notch is ~12 % in or out, smooth on a trackpad (the delta is
   /// per-pixel there), anchored so the comp point under the cursor does not
-  /// move: solve the new pan from `cursor = topLeft' + u·s'` where `u` is the
-  /// comp point currently under the cursor.
+  /// move. The anchoring itself is [zoomAboutPoint], shared with the Zoom tool
+  /// so the wheel and the tool cannot drift apart.
+  ///
+  /// Not animated: the wheel already arrives as a stream of small steps, and
+  /// animating each of them would make the picture lag the fingers.
   void _scrollZoom(Offset cursor, double dy, BoxConstraints constraints,
       BridgeCompSize size, Rect fitted) {
     if (size.width == 0 || fitted.width <= 0) return;
-    final s1 = fitted.width / size.width;
-    final s2 = (s1 * math.pow(1.0012, -dy)).clamp(0.02, 32.0).toDouble();
-    if (s2 == s1) return;
-    final u = (cursor - fitted.topLeft) / s1;
-    final topLeft = cursor - u * s2;
-    final centre = Offset(
-      (constraints.maxWidth - size.width * s2) / 2,
-      (constraints.maxHeight - size.height * s2) / 2,
+    final next = zoomAboutPoint(
+      cursor: cursor,
+      factor: math.pow(1.0012, -dy).toDouble(),
+      fitted: fitted,
+      compSize: Size(size.width.toDouble(), size.height.toDouble()),
+      panel: Size(constraints.maxWidth, constraints.maxHeight),
     );
     setState(() {
-      _zoom = s2;
-      _pan = topLeft - centre;
+      _zoomFrom = null;
+      _zoomMotion.value = 1;
+      _zoom = next.scale;
+      _pan = next.pan;
     });
   }
 
@@ -323,8 +440,17 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
   /// render asks for that much and no more.
   void _reportScale(LumitUiState state, Rect fitted, BridgeCompSize size) {
     if (size.width == 0) return;
-    state.reportViewerScale(fitted.width / size.width);
+    _shownScale = fitted.width / size.width;
+    state.reportViewerScale(_shownScale);
   }
+
+  /// The magnification actually on screen, last time the picture was laid out.
+  ///
+  /// Kept because the bar is built outside the layout builder that measures it,
+  /// and a zoom has to know where it is flying *from*.
+  double _shownScale = 1;
+
+  double _currentScale(BridgeCompSize size) => _shownScale;
 
   /// The playhead moved — from anywhere. The Timeline ruler, an arrow key and
   /// the transport all just set it, and this is what tells the engine.
@@ -385,6 +511,11 @@ class _Stage extends StatelessWidget {
   final ValueChanged<Offset> onPan;
   final VoidCallback onChanged;
 
+  /// The Zoom tool's two gestures (K-216), applied by the panel because only it
+  /// holds the magnification.
+  final void Function(Offset at, {required bool out}) onZoomAt;
+  final void Function(Rect box, {required bool out}) onZoomBox;
+
   const _Stage({
     required this.comp,
     required this.uiState,
@@ -396,6 +527,8 @@ class _Stage extends StatelessWidget {
     required this.footage,
     required this.onPan,
     required this.onChanged,
+    required this.onZoomAt,
+    required this.onZoomBox,
   });
 
   /// Every layer of the comp with its box, top of the stack first — what the
@@ -506,7 +639,16 @@ class _Stage extends StatelessWidget {
                   onChanged: onChanged,
                 ),
               ),
-              // Above the overlay, because while the dropper is armed the whole
+              // Over the layer controls, and inert unless the Zoom tool is
+              // armed: while it is, the whole picture is its target and no
+              // handle underneath may take a click meant for a magnification.
+              ViewerZoomLayer(
+                active: uiState.tools.tool.group == ToolGroup.zoom,
+                onZoomAt: onZoomAt,
+                onZoomBox: onZoomBox,
+                accent: t.accent,
+              ),
+              // Above both, because while the dropper is armed the whole
               // picture is a target: a drag handle under the pointer must not
               // take the click that was meant to pick a pixel.
               DropperLayer(comp: comp, uiState: uiState, fitted: fitted),

@@ -108,6 +108,10 @@ Widget hostPanel({
   required LumitState state,
   required LumitUiState uiState,
   Size size = const Size(480, 760),
+  /// How much motion the panel under test is allowed. None by default, so a
+  /// test asserts a finished state rather than racing an animation; a test
+  /// that is *about* the motion (the Viewer's zoom flight, K-216) asks for it.
+  AnimationLevel animationLevel = AnimationLevel.none,
 }) =>
     Directionality(
       textDirection: TextDirection.ltr,
@@ -122,7 +126,7 @@ Widget hostPanel({
                 LumitColorScheme.dark,
                 ThemeShape.sharp,
               ),
-              animationLevel: AnimationLevel.none,
+              animationLevel: animationLevel,
               showTooltips: false,
               child: Overlay(
                 initialEntries: [OverlayEntry(builder: (_) => child)],

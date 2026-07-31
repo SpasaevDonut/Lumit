@@ -51,7 +51,7 @@ enum ToolGroup {
 enum ToolMode {
   select(ToolGroup.select, 'Selection', LumitIcon.pointer, ready: true),
   hand(ToolGroup.hand, 'Hand', LumitIcon.move, ready: true),
-  zoom(ToolGroup.zoom, 'Zoom', LumitIcon.zoomIn),
+  zoom(ToolGroup.zoom, 'Zoom', LumitIcon.zoomIn, ready: true),
   rotate(ToolGroup.rotate, 'Rotation', LumitIcon.rotate),
   anchor(ToolGroup.anchor, 'Anchor point', LumitIcon.anchorPoint),
   razor(ToolGroup.razor, 'Razor', LumitIcon.razor),

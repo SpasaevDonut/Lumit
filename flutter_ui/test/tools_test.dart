@@ -113,10 +113,11 @@ void main() {
     test('the tools that claim to be built are the ones that are', () {
       // A guard on honesty rather than on behaviour: `ready` is what the
       // tooltip promises, so it may only be true where something reads the
-      // armed tool and does the work. Selection and Hand both pan the picture
-      // today; everything else is a cursor and a place to build into.
+      // armed tool and does the work. Selection selects and drags (K-215),
+      // Hand pans, Zoom magnifies (K-216); everything else is a cursor and a
+      // place to build into.
       expect(ToolMode.values.where((t) => t.ready).toSet(),
-          {ToolMode.select, ToolMode.hand});
+          {ToolMode.select, ToolMode.hand, ToolMode.zoom});
     });
   });
 

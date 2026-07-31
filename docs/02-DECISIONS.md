@@ -3580,3 +3580,46 @@ keyframed position draws no box at all, because the read model carries the curve
 its value at the playhead, and a box in the wrong place is worse than none. The anchor
 handle, snapping, parent-aware and 3D gizmos, and motion paths are unchanged from before
 this entry: still specified, still absent, now listed in docs/TODO.md against §2.3.
+
+**K-216 · DECIDED · Every zoom is anchored, and — except the wheel — every zoom is a
+flight.** From the owner (2026-07-31), specifying the Zoom tool and asking for zooming across
+the interface to stop jumping.
+
+**One piece of arithmetic, three gestures.** The wheel, a click of the Zoom tool and a
+dragged box are the same question — what magnification and pan put *this* where I want it —
+so they go through the same two pure functions rather than each growing its own version. The
+click doubles about the point clicked (`Alt` halves), which is After Effects' step and the
+one the magnification menu's own list walks; the box fits its rectangle to the panel and
+centres it, and `Alt`+box is the exact inverse, shrinking the whole view into the box's
+footprint. Being an exact inverse is the point: `Alt` undoes the sweep you have just made
+rather than being a differently-sized guess at it.
+
+**Anchoring is the property worth testing.** "The comp point you aimed at does not move" is
+what makes zooming feel like leaning in rather than teleporting, and it is a property a unit
+test can state in one line for all three gestures. The tests assert exactly that, not a
+table of expected numbers.
+
+**Zooming animates, and the interpolation is geometric.** A magnification change is a *place*
+changing, not a value being nudged: cutting from one magnification to another loses the
+reader's place, which is the very thing anchoring exists to keep. So it travels, over the
+shell's own motion duration (15-DESIGN §7), and cuts instantly under *No animation* — the
+setting means what it says. The interpolation is on the logarithm of the magnification,
+because magnification is a ratio: lerping the number itself makes the first half of a 1× → 8×
+flight bolt and the second half crawl. The magnification and the pan are animated together
+from one controller, because animating them separately lets the anchor point drift mid-flight
+— which is the whole promise, broken in the middle where it is most visible.
+
+**The wheel stays instant.** It already arrives as a stream of small steps; animating each of
+them puts the picture behind the fingers. A gesture that is itself continuous does not want a
+second continuity laid over it.
+
+**The frame is re-asked for at the end of the flight, not during it.** The engine renders at
+the size the picture is *shown* at, so the frame in hand is the wrong resolution once the
+magnification has changed — but a render per frame of a 120 ms animation is a render per
+frame for nothing, since the intermediate ones are stretched by less than the eye can hold.
+
+**Not done: the same treatment everywhere else.** The Timeline's time zoom, the graph
+editor's, and the Project panel's thumbnail scaling all still jump. They want the same
+pattern — a target, a controller, a geometric interpolation, and the animation level deciding
+whether it runs — and it should be lifted into one shared piece rather than written three
+more times. Recorded in docs/TODO.md.

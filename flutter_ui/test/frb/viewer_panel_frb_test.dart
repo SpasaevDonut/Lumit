@@ -24,9 +24,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/panels/viewer_zoom.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/state/settings.dart';
+import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/src/rust/api/audio.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
@@ -636,6 +638,144 @@ void main() {
       // Hiding the controls must not disturb the selection or the picture: it
       // is a drawing switch, nothing more.
       expect(p.uiState.selectedLayers.value, isNotEmpty);
+    });
+
+    /// The Zoom tool armed, on a comp bigger than the panel so there is room
+    /// to zoom in before the clamp.
+    Future<({LumitState state, LumitUiState uiState, CompositionReference comp,
+        LayerReference layer})> withZoomTool(
+      WidgetTester tester, {
+      AnimationLevel motion = AnimationLevel.none,
+    }) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.zoom);
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+        animationLevel: motion,
+      ));
+      await tester.pumpAndSettle();
+      return p;
+    }
+
+    testWidgets('the Zoom tool zooms in where it is clicked, and out with Alt',
+        (tester) async {
+      final p = await withZoomTool(tester);
+      final fitted = fittedRect(tester, p.comp);
+      final before = p.uiState.viewerScale;
+
+      await tester.tapAt(fitted.center + const Offset(60, 20));
+      await tester.pumpAndSettle();
+      final zoomedIn = p.uiState.viewerScale;
+      expect(zoomedIn, greaterThan(before),
+          reason: 'a click magnifies about the point it landed on');
+      expect(zoomedIn, closeTo(before * zoomToolStep, 1e-6));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.tapAt(fitted.center + const Offset(60, 20));
+      await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+
+      expect(p.uiState.viewerScale, closeTo(before, 1e-6),
+          reason: 'Alt+click undoes the click before it');
+    });
+
+    testWidgets('dragging a box with the Zoom tool fits that box to the panel',
+        (tester) async {
+      final p = await withZoomTool(tester);
+      final fitted = fittedRect(tester, p.comp);
+      final before = p.uiState.viewerScale;
+
+      // A quarter-width sweep in the middle of the picture.
+      final from = fitted.center - Offset(fitted.width / 8, fitted.height / 8);
+      final to = fitted.center + Offset(fitted.width / 8, fitted.height / 8);
+      final gesture = await tester.startGesture(from);
+      await tester.pump();
+      await gesture.moveTo(Offset(to.dx, from.dy));
+      await tester.pump();
+      await gesture.moveTo(to);
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.viewerScale, greaterThan(before * 2),
+          reason: 'a quarter of the picture fills the panel');
+    });
+
+    testWidgets('a box drag with Alt zooms out instead', (tester) async {
+      final p = await withZoomTool(tester);
+      final fitted = fittedRect(tester, p.comp);
+      final before = p.uiState.viewerScale;
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      final from = fitted.center - Offset(fitted.width / 8, fitted.height / 8);
+      final to = fitted.center + Offset(fitted.width / 8, fitted.height / 8);
+      final gesture = await tester.startGesture(from);
+      await tester.pump();
+      // In steps: a single jump gives the recogniser a start and an end with
+      // no update between them, so the box would be the width of the slop.
+      await gesture.moveTo(Offset(to.dx, from.dy));
+      await tester.pump();
+      await gesture.moveTo(to);
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+
+      expect(p.uiState.viewerScale, lessThan(before));
+    });
+
+    testWidgets('a tiny wobble of a drag is a click, not a box', (tester) async {
+      final p = await withZoomTool(tester);
+      final fitted = fittedRect(tester, p.comp);
+      final before = p.uiState.viewerScale;
+
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      await gesture.moveBy(const Offset(3, 2));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      // A few pixels of travel is a hand, not an intention: fitting a
+      // three-pixel box to the panel would throw the picture into orbit. It
+      // takes the click's own step instead.
+      expect(p.uiState.viewerScale, closeTo(before * zoomToolStep, 1e-6));
+    });
+
+    testWidgets('the zoom flies rather than jumping when the shell animates',
+        (tester) async {
+      final p = await withZoomTool(tester, motion: AnimationLevel.all);
+      final fitted = fittedRect(tester, p.comp);
+      final before = p.uiState.viewerScale;
+
+      await tester.tapAt(fitted.center);
+      // Part-way through the flight the magnification is between the two.
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 40));
+      final midway = p.uiState.viewerScale;
+      expect(midway, greaterThan(before));
+      expect(midway, lessThan(before * zoomToolStep),
+          reason: 'it is on its way, not there yet');
+
+      await tester.pumpAndSettle();
+      expect(p.uiState.viewerScale, closeTo(before * zoomToolStep, 1e-6),
+          reason: 'and it lands exactly where it was sent');
+    });
+
+    testWidgets('with motion off the zoom lands on the first frame',
+        (tester) async {
+      final p = await withZoomTool(tester);
+      final fitted = fittedRect(tester, p.comp);
+      final before = p.uiState.viewerScale;
+
+      await tester.tapAt(fitted.center);
+      await tester.pump();
+
+      expect(p.uiState.viewerScale, closeTo(before * zoomToolStep, 1e-6),
+          reason: 'no animation means the hard cut, immediately');
     });
 
     testWidgets('a missing footage layer raises the badge', (tester) async {

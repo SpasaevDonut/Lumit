@@ -4765,3 +4765,53 @@ the boxes of whatever is selected, draws no handles, highlights nothing under th
 pointer, and every drag moves the *view* instead of the layer. That is the entire
 difference between the two tools, and it is why the tool lives in one value the
 whole application reads (see the toolbar section above).
+
+### The Zoom tool, and why zooming now flies (K-216)
+
+Three gestures change how big the picture is drawn: the wheel, a click with the
+Zoom tool, and dragging a box with it. They are all the same question in
+different clothes — *what magnification, and what pan, put this where I want
+it?* — so they all go through the same two small functions.
+
+**Anchoring.** The rule every zoom obeys: the point you aimed at does not move.
+Zoom about the cursor and the pixel under it stays under it; sweep a box and its
+middle lands in the middle of the panel. The arithmetic is short — work out
+which comp point is currently under the cursor, then solve the pan that puts
+that same comp point back under the cursor at the new magnification. It is the
+difference between leaning in and teleporting, and it is what the unit tests
+check, one line each, rather than checking a table of expected numbers.
+
+**The tool.** Click to zoom in about where you clicked; hold Alt and the pointer
+changes to the zoom-out lens and the click halves instead. Drag a box and the
+picture flies so that box fills the panel; hold Alt and it does the exact
+opposite — everything you can see shrinks into the box you drew, still centred
+on it. That last one is deliberately the *inverse* rather than "some amount of
+zooming out", so Alt-dragging the same box undoes the zoom you have just done. A
+drag of only a few pixels is treated as a click, because otherwise a hand that
+wobbled would fit a three-pixel box to the panel and throw the picture into
+orbit.
+
+**Why it moves instead of jumping.** Changing magnification changes *where you
+are*, and cutting straight there loses your place — the very thing anchoring
+exists to preserve. So the picture travels, over the same short duration the rest
+of the interface uses for motion, and cuts instantly when the shell is set to *No
+animation*. Two details are worth knowing:
+
+- **The travel is geometric, not linear.** Magnification is a ratio: going from
+  1× to 8× is three doublings, not "seven units". If you interpolate the number
+  itself, the first half of the flight bolts and the second half crawls.
+  Interpolating the *logarithm* makes it one steady move — the same reason
+  volume sliders are in decibels.
+- **The magnification and the pan travel together, from one clock.** Animate
+  them separately and the anchor point drifts in the middle of the flight, which
+  is exactly where it is most visible.
+
+**The wheel is left alone.** It already arrives as a stream of small steps; laying
+an animation over each one puts the picture behind your fingers. A gesture that is
+already continuous does not want a second continuity on top.
+
+**One more thing that happens at the end.** The engine renders the picture at the
+size it is actually shown at, so once the magnification has changed the frame in
+hand is the wrong resolution. A fresh one is asked for when the flight *lands*,
+not on every frame of it — a render per animation frame would cost a great deal
+to show something for 8 milliseconds.

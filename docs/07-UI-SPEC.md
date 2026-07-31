@@ -211,6 +211,21 @@ A single compact bar at the bottom of the Viewer holds, left to right:
 1. **Magnification** dropdown: Fit, Fit up to 100%, then 25 / 33.3 / 50 / 100 / 200 / 400 /
    800 %. Magnification is display scaling only; it MUST NOT change render resolution.
    `Ctrl+scroll` zooms about the pointer; `Shift+/` fits.
+   **Every magnification change is anchored** (K-216): the comp point the gesture names —
+   under the pointer for a wheel notch or a click, the middle of the box for a sweep — MUST
+   still be under that point afterwards. A magnification MUST be clamped to a sane range
+   rather than running to zero or infinity.
+   **Zooming is animated** where the shell animates at all: the picture travels to the new
+   magnification over the shell's motion duration (15-DESIGN §7) and cuts instantly under
+   *No animation*. The interpolation MUST be geometric — magnification is a ratio, so a
+   1× → 8× flight moves at a constant *rate*, not a constant number per frame. The wheel is
+   the exception and MUST stay instant: it already arrives as a stream of small steps, and
+   animating each one makes the picture lag the hand.
+   **The Zoom tool** (§1.7): clicking zooms in about the point clicked, `Alt`-clicking zooms
+   out about it, and dragging a box zooms so that box fits the panel and is centred;
+   `Alt`+box is the exact inverse — the whole view shrinks into the box, still centred on it.
+   The pointer MUST show which way the click will go before it is clicked, changing as `Alt`
+   is pressed and released. A drag of only a few pixels MUST be treated as a click.
 2. **Preview resolution** dropdown: Full / Half / Third / Quarter / Auto (glossary §5).
    True raster downsampling — Half renders a quarter of the pixels. **Auto** renders only
    the pixels the current magnification can display. The setting is **stored per comp** in
