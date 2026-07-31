@@ -38,6 +38,30 @@ These sit above everything else: they are what the editor feels like in the hand
     finished with. Promotion from memory was already ahead of the playhead —
     renders run ahead into the ring — thus what was missing was the disk rung.
 
+- **A frame gives the card one command buffer for each layer, where one would
+    do.** Measured 2026-07-31: submits per frame = layers + 2 (3 at one layer, 10
+    at eight, 34 at thirty-two). Every pass in `lumit-gpu` makes its own encoder
+    and submits it — `composite.rs`, `fx/*`, and the display pass. All of a
+    frame's passes are in order on one queue, thus they can be encoded into a
+    single command buffer and given to the card once.
+
+    Each submit is a round trip to the driver, and that cost does not depend on
+    which card you have — which is why this is worth doing even though it cannot
+    be *timed* on a machine with only a software rasteriser. It does not conflict
+    with the one-submit-thread rule in
+    [impl/playback-scheduler.md](impl/playback-scheduler.md) §2; it is that rule
+    taken further.
+
+    The shape: pass a `&mut wgpu::CommandEncoder` down the realise walk in place
+    of each pass making its own, and submit once at the top. The read-backs
+    (`start_readback8`) and the shared-texture copies must stay as they are —
+    both need their own submission to be waited on or polled.
+
+    **Re-measure on real hardware before and after.** The stopwatch that found
+    this (`headless::tests::where_the_frame_goes`, plus a counted `lumit_gpu::
+    submit`) was on the worker-pool branch, which was dropped; port it back with
+    the work, because a change made for a number needs the number.
+
 - **What is left of playback's bridge chatter scales with the rows on screen.**
     The three constant questions are gone (2026-07-30): the preview tier rides
     in on the frame the worker publishes, and the transport — which reports what
@@ -494,10 +518,21 @@ thread landed the same day (`lumit-bridge/src/prefetch.rs`): playback posts the
 coming frames' source decodes to a thread with its own decoders, results file
 into the renderer's decoded-frame cache under the decode's own key, so decode
 runs alongside compositing (§5's decode ∥ evaluate). Still not built from the
-note: the worker pool and in-render epoch tokens (composites are serial on the
-one worker thread, so cancellation latency is one frame's render, not §1's
-15 ms — the tokens only mean something once renders leave that thread); and §6's
-real-window benches (A/V drift over 10 minutes, the underrun ladder). The
+note: in-render epoch tokens (composites are serial on the one worker thread, so
+cancellation latency is one frame's render, not §1's 15 ms), and §6's real-window
+benches (A/V drift over 10 minutes, the underrun ladder).
+
+**The worker pool is measured and deliberately not built (2026-07-31.)** §2 of
+the note reserves GPU submits to one thread, thus the only work a pool could take
+is the processor half of a frame: naming it, planning the decode, building the
+draw list. That half measured **0.03 ms at 32 animated layers**, against 200 ms
+for the whole frame — 0.015%. Spreading it over threads saves nothing at any
+layer count, and the number is an absolute CPU cost that does not shrink on a
+faster card, so its share only falls further on real hardware. What the same
+measurement did find is the item under *Now*: a frame gives the card one command
+buffer per layer. Anyone reaching for the pool again should re-run the stopwatch
+first and check whether the processor half has grown; if it has not, this entry
+still stands. The
 **pre-roll landed 2026-07-29**: the sound starts when the ring holds three frames
 or 150 ms have passed, whichever is first, and the clock's baseline is taken then
 rather than when the request arrived. Re-run
