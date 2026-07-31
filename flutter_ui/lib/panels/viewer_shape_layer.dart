@@ -199,6 +199,11 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
   void _onPanStart(DragStartDetails details) {
     final at = _downAt ?? details.localPosition;
+    // The drawn pointer follows the pressed button too (K-230). A MouseRegion
+    // reports *hover*, which stops the moment a button goes down — so the
+    // crosshair used to stick where the press landed and sit inside the shape
+    // being dragged out, which reads as the pointer having frozen.
+    _pointer = details.localPosition;
     if (_isPen) {
       // A click that became a drag: the vertex lands where the press was, and
       // the drag pulls its handles out.
@@ -216,6 +221,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
   void _onPanUpdate(DragUpdateDetails details) {
     setState(() {
+      _pointer = details.localPosition;
       if (_isPen) {
         _handleTo = details.localPosition;
         _penPointer = details.localPosition;
@@ -397,15 +403,27 @@ class _ShapePreviewPainter extends CustomPainter {
         final at = layer.map.toScreen(v.x, v.y);
         canvas.drawCircle(at, i == 0 ? 5 : 3, Paint()..color = accent);
       }
-      // The edge that would be drawn if the pointer clicked now.
+      // The edge that would be drawn if the pointer clicked now — as the curve
+      // it would actually be, not as a straight line (K-230).
+      //
+      // The last point placed may have handles pulled out of it, and those
+      // handles bend the edge *leaving* it. Drawing that edge straight promised
+      // one shape and delivered another the moment the next point landed. The
+      // curve is the same cubic the committed path uses, with the pointer
+      // standing in for a vertex that has no handles yet.
       final pointer = penPointer;
       if (pointer != null) {
         final last = draft.vertices.last;
-        canvas.drawLine(
-          layer.map.toScreen(last.x, last.y),
-          pointer,
+        final from = layer.map.toScreen(last.x, last.y);
+        final out = layer.map.toScreen(last.x + last.tanOutX, last.y + last.tanOutY);
+        canvas.drawPath(
+          Path()
+            ..moveTo(from.dx, from.dy)
+            ..cubicTo(out.dx, out.dy, pointer.dx, pointer.dy, pointer.dx,
+                pointer.dy),
           Paint()
             ..color = accent.withValues(alpha: 0.5)
+            ..style = PaintingStyle.stroke
             ..strokeWidth = 1,
         );
       }

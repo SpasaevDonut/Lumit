@@ -93,6 +93,27 @@ class ViewerLayerMap {
     );
   }
 
+  /// The same map with the layer turned to [rotationDegrees] instead.
+  ///
+  /// What a turn *in flight* looks like: the picture is previewed at the new
+  /// angle, so the wireframe over it has to be too, and rebuilding the whole
+  /// map from the document would only give back the angle the drag is leaving.
+  ViewerLayerMap turnedTo(double rotationDegrees) {
+    final rot = rotationDegrees * math.pi / 180.0;
+    return ViewerLayerMap(
+      px: px,
+      py: py,
+      ax: ax,
+      ay: ay,
+      sx: sx,
+      sy: sy,
+      sin: math.sin(rot),
+      cos: math.cos(rot),
+      origin: origin,
+      viewScale: viewScale,
+    );
+  }
+
   /// Layer space → screen (local) coordinate.
   Offset toScreen(double x, double y) {
     final dx = (x - ax) * sx;

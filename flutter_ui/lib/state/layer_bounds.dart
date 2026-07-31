@@ -33,6 +33,33 @@ import 'package:uuid/uuid.dart';
 /// the same square.
 const Size nullLayerBounds = Size(100, 100);
 
+/// How wide a line of text is, roughly, in layer pixels.
+///
+/// **This is the engine's own estimate**, mirrored here on purpose: the bridge
+/// anchors a text layer at half of `characters × size × 0.5`, and the caret and
+/// the box are placed by the same sum. None of them is the true advance width
+/// of the glyphs — that is known only to the rasteriser — but all of them being
+/// wrong the same way is what keeps the caret, the box and the picture from
+/// disagreeing about where the line ends.
+double estimatedTextWidth(String text, double size) =>
+    text.runes.length * size * 0.5;
+
+/// A text layer's box, in layer pixels (K-230).
+///
+/// **The height is the point size and nothing more.** It used to be the whole
+/// composition — text had no measured bounds on this frontend, and the comp was
+/// the fallback — so a click with the Type tool put a box the size of the frame
+/// round a line of 12-pixel text, and the wireframe said nothing about where the
+/// words were.
+///
+/// An empty line still gets a box: one character's worth of width, so a layer
+/// waiting to be typed into is visible and the box says what size it will be
+/// set at rather than vanishing.
+Size textLayerBounds(String text, double size) => Size(
+      text.isEmpty ? size * 0.5 : estimatedTextWidth(text, size),
+      size,
+    );
+
 /// Every layer's own size, answered from the document and remembered.
 class LayerBoundsCache extends ChangeNotifier {
   /// Sizes by layer id, good for as long as [_revision] is.
@@ -87,6 +114,20 @@ class LayerBoundsCache extends ChangeNotifier {
     // A Null never draws, so its box is the convention above rather than
     // anything read from the document.
     if (entry.info.kind == BridgeLayerKind.nullLayer) return nullLayerBounds;
+
+    // Text measures its own line (K-230): the point size tall, and as wide as
+    // the engine's estimate of the glyphs makes it.
+    if (entry.info.kind == BridgeLayerKind.text) {
+      try {
+        final document = entry.layer.getText();
+        if (document != null) {
+          return textLayerBounds(document.text, document.size);
+        }
+      } catch (_) {
+        // The layer went away between the model being read and this call.
+      }
+      return _compSize(compSize);
+    }
 
     final ItemReference? source;
     try {

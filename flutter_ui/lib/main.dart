@@ -591,6 +591,17 @@ class LumitUiState extends ChangeNotifier {
 
   void clearSelection() => setSelection(const []);
 
+  /// The turn a Rotation-tool drag is part way through, by layer id (K-230).
+  ///
+  /// The picture is previewed at the new angle while the drag is in flight, but
+  /// the document still holds the old one — so the wireframe drawn from the
+  /// document lagged the picture and only caught up on release. The tool that
+  /// is turning publishes here and the gizmo that draws the boxes reads it; the
+  /// two are different widgets in different layers of the Viewer's stack, and
+  /// this is the one value they share. Empty whenever nothing is turning.
+  final ValueNotifier<Map<UuidValue, double>> liveRotations =
+      ValueNotifier(const {});
+
   /// Keep the list honest when something sets the primary on its own.
   void _syncSelection() {
     final primary = selectedLayer.value;

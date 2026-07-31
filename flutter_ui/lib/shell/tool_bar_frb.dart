@@ -17,7 +17,13 @@
 // changes nothing yet says so in its tooltip.
 //
 // The right-hand end carries what the shell has nowhere else to put: the
-// snapping switch (docs/07 §4.5) and the workspace strip §1.4 asks for.
+// workspace strip §1.4 asks for.
+//
+// **What is deliberately not here.** A snapping switch used to sit beside it —
+// docs/07 §4.5's switch — and nothing in the application read it (K-230). A
+// toggle that changes nothing is worse than a missing one: it makes the reader
+// doubt what snapping *is* here rather than what it is set to. It comes back
+// when there is snapping for it to govern.
 
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
@@ -30,14 +36,18 @@ import '../theme/theme.dart';
 import '../widgets/colour_picker.dart';
 import '../widgets/controls.dart';
 
-/// How tall the strip is, and how big one tool button is.
+/// How tall the strip is, and how wide and tall one tool button is.
 ///
 /// 15-DESIGN §7.2 puts toolbar controls on the household's full ≥44px hit
-/// extent — this is chrome, not a dense surface, so it takes the gate rather
-/// than KD-2's dense-surface compensation. The icon inside still draws at the
-/// 16px §5 floor; the button is padding around it.
-const double toolBarHeight = 44;
-const double _toolButtonSize = 44;
+/// extent. A button keeps that **across** — 44 wide, which is what makes the
+/// row easy to hit along its length and is the spacing the strip is read by —
+/// and gives it up down the page (K-230): the strip runs the full width of the
+/// window, so a 44px-tall band of mostly empty space is a stripe of chrome
+/// taken off the panels underneath for nothing. 28 keeps the 16px icon at its
+/// §5 floor with room to breathe.
+const double toolBarHeight = 30;
+const double _toolButtonWidth = 44;
+const double _toolButtonHeight = 28;
 
 /// The tool groups in the order the strip lists them: the pointer tools first,
 /// then the ones that draw, then the ones that paint, then the camera — After
@@ -100,8 +110,6 @@ class LumitToolBarFrb extends StatelessWidget {
               const _ToolBarDivider(),
               _ToolOptions(tools: ui.tools, shows: toolOptionsFor(ui.tools.tool)),
             ],
-            const _ToolBarDivider(),
-            _SnapButton(tools: ui.tools),
             const _ToolBarDivider(),
             const _WorkspaceStrip(),
             const SizedBox(width: 6),
@@ -332,8 +340,8 @@ class _ToolButtonState extends State<_ToolButton> {
           child: AnimatedContainer(
             key: ValueKey<String>('tool-${widget.group.name}'),
             duration: animationDuration(scope.animationLevel),
-            width: _toolButtonSize,
-            height: _toolButtonSize,
+            width: _toolButtonWidth,
+            height: _toolButtonHeight,
             decoration: BoxDecoration(
               color: active
                   ? t.accent.withValues(alpha: 0.16)
@@ -477,51 +485,6 @@ class _FlyoutMarkPainter extends CustomPainter {
   bool shouldRepaint(_FlyoutMarkPainter old) => old.colour != colour;
 }
 
-/// Snapping, on the toolbar because that is where the switch that applies
-/// everywhere goes (docs/07 §4.5).
-class _SnapButton extends StatefulWidget {
-  final ToolsState tools;
-  const _SnapButton({required this.tools});
-
-  @override
-  State<_SnapButton> createState() => _SnapButtonState();
-}
-
-class _SnapButtonState extends State<_SnapButton> {
-  bool _hover = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    final on = widget.tools.snapping;
-    final colour = on
-        ? t.accent
-        : _hover
-            ? t.textPrimary
-            : t.textSecondary;
-    return LumitTooltip(
-      message: on ? 'Snapping on' : 'Snapping off',
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
-        onExit: (_) => setState(() => _hover = false),
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () => widget.tools.snapping = !on,
-          child: SizedBox(
-            key: const ValueKey('tool-snapping'),
-            width: _toolButtonSize,
-            height: _toolButtonSize,
-            child: Center(
-              child: lumitIcon(LumitIcon.magnet, size: iconSize, color: colour),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 /// The workspace switcher docs/07 §1.4 requires in the window chrome: the four
 /// shipped presets by name, the current one ticked in the accent.
 class _WorkspaceStrip extends StatelessWidget {
@@ -562,9 +525,15 @@ class _WorkspaceStrip extends StatelessWidget {
 /// on its own: a cursor is how a toolbar tells you it is listening, and it
 /// costs nothing to be honest about which tools are only a cursor so far.
 MouseCursor viewerCursorFor(ToolMode tool) => switch (tool) {
-      ToolMode.hand => SystemMouseCursors.grab,
-      ToolMode.zoom => SystemMouseCursors.zoomIn,
-      ToolMode.razor => SystemMouseCursors.precise,
+      // The Hand and the Zoom draw their own over the picture (K-230): Windows
+      // has no grab or magnifier pointer, and Flutter's names for them fall
+      // back to the plain arrow there. Their own layers hide the system one and
+      // paint it; this is what shows underneath.
+      ToolMode.hand || ToolMode.zoom => SystemMouseCursors.none,
+      // Nothing over the *picture*: the razor cuts in the Timeline, where it
+      // draws its own blade. A crosshair here promised a precision the Viewer
+      // has no razor gesture to spend (K-230).
+      ToolMode.razor => SystemMouseCursors.basic,
       ToolMode.anchor => SystemMouseCursors.move,
       // Type points at where the words will start; horizontal takes the
       // system's I-beam, and vertical has one drawn for it over the picture

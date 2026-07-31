@@ -503,7 +503,10 @@ class RoundedRectanglePainter extends CustomPainter {
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         Rect.fromLTRB(4 * s, 4 * s, 20 * s, 20 * s),
-        Radius.circular(6 * s),
+        // A quarter of the side, not three-eighths: at 6 the corners ate so
+        // much of each edge that the mark read as a circle with flats on it
+        // rather than as a square with its corners taken off.
+        Radius.circular(4 * s),
       ),
       paint,
     );

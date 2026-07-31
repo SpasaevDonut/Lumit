@@ -5492,3 +5492,120 @@ What is missing: a separate **point of interest** (After Effects' two-node
 camera, where the pivot is a thing you can move on its own), the **Unified
 Camera** tool that puts all three gestures on the three mouse buttons, and
 depth-of-field handles on the picture.
+
+### Pointers we have to draw ourselves, and why (K-230)
+
+A mouse pointer on a desktop is not a picture the application supplies — it names
+one from a list the operating system ships, and the system draws it. That list is
+short and it is not the same list everywhere. Flutter offers names for a
+*hand-that-grabs* and a *magnifier*, but Windows has neither; ask for one there
+and the embedder quietly hands back the ordinary arrow. Nothing errors, nothing
+warns: the tool simply looks like no tool at all, which is exactly what the Hand
+and Zoom tools were doing.
+
+So they join the Rotation, Anchor point and Razor tools in the other approach:
+hide the system pointer over the Viewer and **paint our own** on top of the
+picture. An open hand that closes while it drags, and a magnifier whose sign
+follows the `Alt` key. It costs a small painter each and it is the only way to
+have them.
+
+Drawn pointers have one trap worth knowing. The thing that reports "the mouse is
+here" as it moves over a region is a `MouseRegion`, and it reports *hovering* —
+which by definition stops the moment a button goes down. A pointer drawn from
+hover alone therefore freezes where you pressed and sits inside the very shape
+you are dragging out. Every drawn pointer here takes its position from the drag
+as well, which is why the Hand tool owns its own pan gesture instead of letting
+the panel underneath have it.
+
+### One gesture, one undo step (K-230)
+
+The document is a stack of small, exactly reversible edits called **ops**, and
+`Ctrl+Z` undoes one of them. That is a good design with one obligation: *an op
+has to be what a person would call an action*. A layer's Position is two separate
+numbers in the model — x and y, which is what makes it possible to animate them
+apart — so writing them as two ops meant one drag became two undo steps, and the
+first `Ctrl+Z` put the layer back along one axis only. It reads as broken undo
+rather than as two honest edits.
+
+The engine has an op that carries several edits and undoes them together
+(`Op::Batch`), and the fix everywhere is to reach for it. A drag writes both
+axes at once. A scale writes both axes at once. Making a text layer used to be
+*three* ops — a layer saying "Text" in the middle of the composition, an empty
+line written into it, and a move to where you clicked — so undoing walked back
+through two states nobody had ever seen; it is one op now, and the layer arrives
+already saying what it should say, where it should be. Finishing a typing session
+is one more. So the first undo takes back the words and the very next removes the
+layer, which is the whole of what a person means by "undo the text I just made".
+
+### Holding the pointer still (K-230)
+
+Some drags aim at a place — you are moving *this* handle to *that* point — and
+some are pure movement. Turning a camera is the second kind: nothing on the
+picture is being aimed at, only the direction and distance you drag. For those,
+letting the pointer travel is pure loss. It wanders out of the panel, and
+eventually into the corner of the screen, where it stops moving and the drag
+stops with it while your hand is still going.
+
+Every 3D application answers this the same way, and there is no "lock the
+pointer" call on Windows to do it with. So: remember where the pointer was when
+the button went down (`GetCursorPos`), and after each movement put it straight
+back (`SetCursorPos`). It never appears to move, and the movements still arrive.
+
+The one subtlety is that *putting it back is itself a movement*, and the system
+reports it like any other — with a delta that exactly cancels the real one. So
+the drag measures each event against the anchor it is pinned to rather than
+against the previous event; the put-back then reads as no movement at all, which
+is the truth of it. Where the platform cannot do this at all, the freeze reports
+that it failed and the drag falls back to reading movements between events, as it
+always did.
+
+### Why zooming in used to freeze the window (K-230)
+
+Behind a transparent picture there is a checkerboard, so you can tell "black" from
+"nothing". It is drawn the obvious way: a loop over the area, one small rectangle
+per light square. That is fine when the area is a panel — a few thousand squares
+— and a disaster when the area is the *picture*, because a picture at 800% on an
+HD composition is 15360 pixels across. Half a million rectangles, every frame,
+for the few thousand actually on screen. The window stops responding, and it
+looks as though the *rendering* has become slow when nothing is being rendered
+differently at all.
+
+The board is bounded by the panel now and clipped to the picture, with the
+pattern still pinned to the picture's own corner so panning slides the board with
+the picture rather than the picture swimming over a fixed grid. Its cost is the
+same at every magnification. The general lesson is worth keeping: **anything
+drawn per-unit-of-area must be bounded by what is on screen, not by what is being
+looked at.**
+
+### Magnification is not resolution (K-230)
+
+Two different numbers are easy to confuse. **Magnification** is how big the
+picture is drawn — a display setting, changing nothing about the frame itself.
+**Resolution** is how many pixels the engine is asked to make, which costs real
+time and fills the cache.
+
+The Viewer tells the engine what fraction of full resolution to render, and that
+number follows the *panel*: a Viewer docked into a corner is genuinely cheap,
+which is the point. It must not follow the zoom inside the panel. Zooming out
+used to lower it, which threw away every cached frame and made the picture
+coarser — for a gesture that only meant "let me see more of it". Zooming in
+cannot raise it either: above the composition's own resolution there is nothing
+left to render.
+
+### Asking the engine nothing (K-230)
+
+There is a standing rule in this frontend that a rebuild must not re-read the
+world (see the bridge-call budget tests). Two tools broke it in the same way and
+it is a useful shape to recognise.
+
+Both the Hand tool and the camera tools redraw on **every movement of the
+pointer** — they have to; something is following your mouse. Redrawing then runs
+the panel's build method again, and if that method asks the engine anything, the
+question is asked at the rate a mouse reports, which is a hundred times a second
+or more. Panning re-read the composition's settings, its size, and every layer's
+source item. Hovering with a camera tool re-found the active camera, which reads
+a focal distance and a frame rate across the bridge.
+
+Neither answer can change without an edit landing, so both are worked out once
+and held until one does. The rule generalises: **if a rebuild can be caused by
+moving the mouse, nothing in it may cross the bridge.**

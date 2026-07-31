@@ -19,3 +19,16 @@ BigInt systemMemoryBytes() =>
 /// which errs the safe way for a budget.
 BigInt videoMemoryBytes() =>
     BridgeLib.instance.api.crateApiSystemVideoMemoryBytes();
+
+/// Remember where the pointer is, and say whether it could be — a platform
+/// with no implementation answers `false`, and the frontend then simply lets
+/// the pointer travel as it always did.
+bool freezeCursor() => BridgeLib.instance.api.crateApiSystemFreezeCursor();
+
+/// Put the pointer back where [freeze_cursor] left it. Nothing at all when
+/// nothing is frozen, so an extra call is harmless.
+void restoreFrozenCursor() =>
+    BridgeLib.instance.api.crateApiSystemRestoreFrozenCursor();
+
+/// Let the pointer go again, at the end of the drag.
+void thawCursor() => BridgeLib.instance.api.crateApiSystemThawCursor();

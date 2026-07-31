@@ -4144,3 +4144,92 @@ there is no single value for a drag to add to.
 **No point of interest, and no unified camera tool.** After Effects' two-node camera has a
 separate point of interest, and its Unified Camera tool switches between the three by mouse
 button. Both are in TODO.md; neither changes the three tools above.
+
+**K-230 · DECIDED · What the toolbar's tools were getting wrong, in one pass.** From the owner
+(2026-07-31), on using the tools for the first time. Every item here is a correction to K-216 →
+K-229 rather than a new capability, so they are recorded together.
+
+**One gesture is one undo step.** Dragging a layer on the picture wrote Position x and Position
+y as two ops, so `Ctrl+Z` put the layer back along one axis and left it half moved; scaling did
+the same. Both write through `set_transforms` now — the batch op the Anchor point tool already
+used — so a drag is one step. The Type tool was worse: making a layer was three ops (a layer
+saying "Text" in the middle of the composition, an empty line written into it, a move to the
+click) and finishing the edit was two more, so undo walked back through states nobody had ever
+seen. Making a text layer is now one op (`add_text_layer_at`) and finishing a typing session is
+one more (`set_text_placed`), so the first undo takes back the words and the very next removes
+the layer. **The rule, stated once: an op is what the user would call an action, and a gesture
+that writes several properties writes them in one `Op::Batch`.**
+
+**A drag takes what is selected, whatever is on top of it.** A press inside an already-selected
+layer moves *that* layer, even where a higher one overlaps the same spot; only a plain click
+still takes the topmost, because that is how a layer underneath gets chosen with the mouse at
+all. Without the rule, a layer chosen in the Timeline could not be dragged wherever anything
+covered it — the press silently swapped the selection and moved the wrong thing.
+
+**Windows ships neither a grab nor a magnifier, so the Hand and the Zoom draw their own.**
+Flutter accepts `grab`, `grabbing`, `zoomIn` and `zoomOut`; the Windows embedder's table has
+none of them and quietly answers with the ordinary arrow, which is why arming those two tools
+looked like arming nothing. They join the Rotation, Anchor point and Razor tools in hiding the
+system pointer and painting their own (K-219, K-226): an open hand that closes while it pans,
+and a magnifier whose sign follows the Alt key. The Razor gives up its crosshair over the
+*picture* — it cuts in the Timeline, and a precise pointer promised a gesture the Viewer does
+not have — and its Timeline blade gains a marked hot spot, because the point where a leaning
+blade actually bites is otherwise an unmarked corner of a drawing.
+
+**The Rotation pointer settles on eight positions** — the four edges and four corners of the
+layer's own box — rather than leaning by a continuously varying angle. The continuum was true
+to the geometry and worse to read: a mark that is never twice the same shape is one the eye
+re-reads every time. Eight shapes are eight things to recognise.
+
+**A preview in flight is drawn in flight.** The wireframe is built from the document, so while
+a turn was being dragged the picture rotated under a box that sat still until the button came
+up. The angle in flight is published on the interface state and the layer that draws the boxes
+reads it. The same rule covers the drawing tools' own pointers: a `MouseRegion` stops reporting
+a hovering pointer the moment a button goes down, so every drawn pointer follows the *drag* as
+well, and the Pen previews its next edge as the curve the placed vertex's handles make it,
+not as a straight line that changes shape once the point lands.
+
+**Zooming in must not cost the window.** The transparency board behind the picture was a widget
+the size of the *picture*: at 800 % on an HD composition that is 15360 pixels across, and an
+8-pixel grid over it is half a million rectangles a paint for the few thousand on screen. It is
+bounded by the panel now, clipped to the picture and pinned to the picture's own grid, so it
+costs the same at every magnification.
+
+**Magnification is not resolution.** The scale reported to the engine follows the *panel* — a
+Viewer docked small is cheap, which is the point of reporting anything — and not the zoom
+inside it. Zooming out used to lower the preview resolution, which threw away every cached
+frame and made the picture coarser for a gesture that only meant "let me see more of it".
+Zooming in cannot raise it either: above composition resolution there is nothing to render.
+
+**Panning, and hovering with a camera tool, must ask the engine nothing.** Both rebuilt their
+panel on every movement of the pointer, and both re-read the document to do it — the Viewer
+asked for the composition's settings, its size and every layer's source item; the camera layer
+re-found the active camera, which reads a focal distance and a frame rate across the bridge.
+Both answers are held until an edit lands. Budgets in `bridge_call_budget_test.dart`.
+
+**The camera tools hold the pointer still while they drag.** Moving a camera is a gesture with
+no place — nothing on the picture is being aimed at — so a pointer that wanders out of the
+Viewer and finally into the corner of the screen is a drag that ends before the user does. The
+pointer is pinned where it was pressed and only its movement is read (`freeze_cursor` /
+`restore_frozen_cursor`, Windows-only; elsewhere the drag reads movement between events exactly
+as before). Putting the pointer back is itself a movement, so the drag measures against the
+anchor rather than against the last event, and the put-back reads as no movement at all.
+
+**A text layer is as big as its line.** Text had no measured bounds on the frontend and fell
+back to the composition's size, so a click with the Type tool drew a box the size of the frame
+round twelve-pixel text. It measures the point size tall and the engine's own width estimate
+wide; an empty line keeps one character's worth so a layer waiting to be typed into is still
+visible and still says what size it will be set at.
+
+**Escape ends a typing session, and so does `Ctrl+Z`.** The text field swallowed the undo
+chord, so undo appeared to have stopped working while typing. The edit is written first and the
+chord handed on, so there is one undo path in the application rather than two.
+
+**The toolbar is 30px tall, and keeps its 44px buttons across.** 15-DESIGN §7.2's hit extent is
+kept along the row — which is what the strip is read by — and given up down the page: the strip
+runs the full width of the window, so a 44px band of mostly empty chrome is height taken from
+the panels underneath for nothing.
+
+**The snapping switch is removed.** Nothing in the application read it (docs/07 §1.7 said so
+outright). A toggle that governs nothing is worse than a missing one: it makes the reader doubt
+what snapping *is* here rather than what it is set to. It returns with the snapping it governs.

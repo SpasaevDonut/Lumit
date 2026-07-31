@@ -42,17 +42,32 @@ import 'viewer_gizmo.dart';
 const double rotateCursorEdgeSweep = 1.1; // ~63°
 const double rotateCursorCornerSweep = 2.1; // ~120°
 
+/// How many positions the pointer takes: the four edges and the four corners,
+/// and nothing between (K-230).
+///
+/// It used to lean by a continuously varying angle, which was true to the
+/// geometry and worse to read — a mark that is never twice the same shape is a
+/// mark the eye has to re-read every time. Eight settled shapes are eight things
+/// to recognise, and the one that is showing says which quarter of the layer the
+/// pointer is in, which is all it was ever telling you.
+const int rotateCursorPositions = 8;
+
 /// The radius the arc is drawn at, in screen pixels. A cursor, so a fixed size
 /// on screen at any magnification.
 const double rotateCursorRadius = 9;
 
 /// How the rotation pointer is drawn at [pointer] for [box].
 ///
-/// [angle] is the direction from the layer's anchor out to the pointer, in
-/// radians — the arc is drawn square to it, so the pointer always curves *round*
-/// the anchor rather than in some fixed screen direction. [sweep] is how much of
-/// a circle the arc covers, from [rotateCursorEdgeSweep] to
-/// [rotateCursorCornerSweep] by how corner-ish the pointer's position is.
+/// [angle] is the direction the arc faces, in radians, **snapped to one of the
+/// eight compass points of the layer's own box** — north, north-east, east and
+/// round. [sweep] follows from which of the eight it landed on: the four edges
+/// take the long lazy arc, the four corners the tight one. So the pointer has
+/// eight settled shapes rather than a continuum, and which one is showing says
+/// which part of the layer you are over.
+///
+/// The compass is the *layer's*, not the screen's: it is measured in layer
+/// space, so "the top-right corner" stays the top-right corner of the layer when
+/// the layer is turned upside down, and the drawn arc turns with it.
 ///
 /// With no box — nothing selected — there is nothing to lean round, so the arc
 /// takes the edge shape and points up: a pointer that says "rotate" without
@@ -61,37 +76,39 @@ const double rotateCursorRadius = 9;
   required Offset pointer,
   LayerBox? box,
 }) {
-  if (box == null) return (angle: -math.pi / 2, sweep: rotateCursorEdgeSweep);
-  final anchor = box.anchorScreen;
-  final radial = pointer - anchor;
-  final angle = radial.distance < 1e-6
-      ? -math.pi / 2
-      : math.atan2(radial.dy, radial.dx);
-  return (angle: angle, sweep: _sweepFor(pointer, box));
-}
-
-/// How corner-ish [pointer] is over [box], from 0 (straight out from an edge)
-/// to 1 (straight out towards a corner), turned into an arc width.
-///
-/// Measured in the layer's own space, so it follows the layer's rotation for
-/// free: "the top-right corner" stays the top-right corner of the *layer* when
-/// the layer is upside down.
-double _sweepFor(Offset pointer, LayerBox box) {
+  const up = (angle: -math.pi / 2, sweep: rotateCursorEdgeSweep);
+  if (box == null) return up;
   final w = box.bounds.width;
   final h = box.bounds.height;
-  if (w <= 0 || h <= 0) return rotateCursorEdgeSweep;
+  if (w <= 0 || h <= 0) return up;
+
+  // Where the pointer is over the box, in halves-of-the-box from its middle:
+  // (0, 0) dead centre, (1, 1) the bottom-right corner. Normalising by the
+  // box's own size is what makes "corner" mean the corner rather than 45° on
+  // screen, which on a wide layer is nowhere near one.
   final p = box.map.layerOf(pointer);
-  // How far out each axis is from the middle, as a fraction of half the box:
-  // 0 in the middle, 1 on the edge, more outside it.
-  final a = ((p.dx / w) - 0.5).abs() * 2;
-  final b = ((p.dy / h) - 0.5).abs() * 2;
-  final major = math.max(a, b);
-  if (major < 1e-6) return rotateCursorEdgeSweep;
-  // 1 where both axes are equally far out (the diagonal, i.e. a corner), 0
-  // where only one is (square out from an edge).
-  final cornerness = (math.min(a, b) / major).clamp(0.0, 1.0);
-  return rotateCursorEdgeSweep +
-      (rotateCursorCornerSweep - rotateCursorEdgeSweep) * cornerness;
+  final a = (p.dx / w - 0.5) * 2;
+  final b = (p.dy / h - 0.5) * 2;
+  if (a.abs() < 1e-9 && b.abs() < 1e-9) return up;
+
+  // The nearest of the eight, as a number of eighths of a turn.
+  final step =
+      (math.atan2(b, a) / (2 * math.pi / rotateCursorPositions)).round();
+  final settled = step * 2 * math.pi / rotateCursorPositions;
+  // An odd eighth is a diagonal, which is a corner; an even one is square out
+  // from an edge.
+  final sweep = step.isOdd ? rotateCursorCornerSweep : rotateCursorEdgeSweep;
+
+  // Back out to a screen direction through the box's own map, so the settled
+  // direction is drawn where that part of the layer actually is.
+  final centre = box.map.toScreen(w / 2, h / 2);
+  final outward = box.map.toScreen(
+    w / 2 * (1 + math.cos(settled)),
+    h / 2 * (1 + math.sin(settled)),
+  );
+  final radial = outward - centre;
+  if (radial.distance < 1e-6) return (angle: up.angle, sweep: sweep);
+  return (angle: math.atan2(radial.dy, radial.dx), sweep: sweep);
 }
 
 /// The Rotation tool over the picture.
@@ -153,6 +170,9 @@ class _ViewerRotateLayerState extends State<ViewerRotateLayer> {
   @override
   void dispose() {
     _throttle.cancel();
+    // A drag interrupted by the panel going away must not leave the boxes
+    // turned to an angle nothing is committing.
+    widget.uiState.liveRotations.value = const {};
     super.dispose();
   }
 
@@ -241,6 +261,13 @@ class _ViewerRotateLayerState extends State<ViewerRotateLayer> {
   void _onPanUpdate(DragUpdateDetails details) {
     setState(() => _pointer = details.localPosition);
     final turned = _rotations();
+    // What the boxes over the picture are drawn at while the turn is in flight
+    // (K-230). Published for every selected layer, not only the one that
+    // previews: the wireframe follows the pointer whether or not the picture
+    // underneath can.
+    widget.uiState.liveRotations.value = {
+      for (final (box, degrees) in turned) box.id: degrees,
+    };
     if (turned.length != 1) return;
     // One layer previews live, as everywhere else: the engine patches a single
     // layer's transform into its clone of the document, so a set being turned
@@ -263,6 +290,9 @@ class _ViewerRotateLayerState extends State<ViewerRotateLayer> {
   void _onPanEnd() {
     final turned = _rotations();
     _throttle.cancel();
+    // The document is about to hold the angle itself, so the in-flight one has
+    // to go — a stale entry here would keep the box turned past the commit.
+    widget.uiState.liveRotations.value = const {};
     for (final (box, degrees) in turned) {
       try {
         box.layer.setTransform(

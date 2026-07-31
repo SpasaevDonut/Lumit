@@ -8,11 +8,35 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/viewer_tool_cursor.dart';
+import 'package:lumit_flutter/shell/tool_bar_frb.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 
 void main() {
+  /// **Which pointers the Viewer asks the platform for, and which it draws
+  /// itself (K-230).** Windows has no grab and no magnifier; Flutter will
+  /// happily be asked for them and the embedder quietly hands back the ordinary
+  /// arrow, which is how the Hand and Zoom tools came to look like no tool at
+  /// all. Anything drawn must therefore hide the system pointer rather than
+  /// name one.
+  group('The pointer a tool wears over the picture', () {
+    test('the Hand and the Zoom draw their own, so they hide the system one',
+        () {
+      expect(viewerCursorFor(ToolMode.hand), SystemMouseCursors.none);
+      expect(viewerCursorFor(ToolMode.zoom), SystemMouseCursors.none);
+    });
+
+    test('the Razor takes the ordinary arrow: it cuts in the Timeline', () {
+      expect(viewerCursorFor(ToolMode.razor), SystemMouseCursors.basic);
+    });
+
+    test('the tools that aim at a pixel keep the crosshair', () {
+      expect(viewerCursorFor(ToolMode.shapeEllipse), SystemMouseCursors.precise);
+      expect(viewerCursorFor(ToolMode.pen), SystemMouseCursors.precise);
+    });
+  });
+
   group('The brush ring', () {
     test('is the stroke it would leave, at this magnification', () {
       // A 40px brush at 1:1 is a 20px radius; at half size, 10.

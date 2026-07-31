@@ -60,6 +60,7 @@ import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 import 'viewer_rotate.dart';
 import 'viewer_shape_layer.dart';
+import 'viewer_tool_cursor.dart';
 import 'viewer_camera.dart';
 import 'viewer_type.dart';
 import 'viewer_zoom.dart';
@@ -174,7 +175,46 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
   /// Something changed the document: tell the engine, which decides what to do
   /// about it. Every commit comes through here — this panel makes no edits
   /// itself, so there is no local shortcut to take.
-  void _onDocumentChanged() => _boundUi?.requestFrame();
+  void _onDocumentChanged() {
+    _facts = null;
+    _boundUi?.requestFrame();
+  }
+
+  /// What this panel has to ask the *engine* about the composition, as against
+  /// what it reads from the model: its settings, its pixel size, and which of
+  /// its layers have a file behind them.
+  ///
+  /// Asked once and held until an edit lands (K-230). None of the three can
+  /// change without one, and they were being re-asked on every rebuild — which
+  /// meant every pointer movement of a Hand-tool pan crossed the bridge four
+  /// times and more, one of them walking every layer in the composition. A pan
+  /// changes where the picture is drawn and nothing else; it must ask the
+  /// engine nothing at all.
+  ({
+    BridgeCompSettings settings,
+    BridgeCompSize size,
+    List<FootageReference> footage,
+  })? _facts;
+
+  ({
+    BridgeCompSettings settings,
+    BridgeCompSize size,
+    List<FootageReference> footage,
+  }) _factsOf(CompositionReference comp) {
+    final held = _facts;
+    if (held != null) return held;
+    final next = (
+      settings: comp.getSettings(),
+      size: comp.getSize(),
+      footage: <FootageReference>[
+        for (final layer in comp.getLayers())
+          if (layer.getSourceItem() case ItemReference_Footage(:final field0))
+            field0,
+      ],
+    );
+    _facts = next;
+    return next;
+  }
 
   /// The shell's transport intent (the space bar). Subscribed here rather than
   /// exposed as a callback so the key is a quiet no-op when no Viewer is
@@ -224,12 +264,15 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     // ahead of the playhead until the first edit happened to ask for a frame.
     if (_askedFor != comp.internalid) {
       _askedFor = comp.internalid;
+      // Another composition is another set of facts.
+      _facts = null;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _onPlayheadChanged();
       });
     }
 
-    final settings = comp.getSettings();
+    final facts = _factsOf(comp);
+    final settings = facts.settings;
     final scope = ThemeScope.of(context);
     final t = scope.theme;
     _animationLevel = scope.animationLevel;
@@ -272,22 +315,16 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     final stage = Expanded(
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final size = comp.getSize();
+          final size = facts.size;
           final fitted = _fittedRect(constraints, size);
-          _reportScale(ui, fitted, size);
+          _reportScale(ui, fitted, size, _fitScale(constraints, size));
 
-          // Which layers might be missing their file — read here, once per
-          // panel rebuild, NOT inside the playhead builder below. It used to
-          // live in the stage, which rebuilds per frame during playback, so
-          // `getLayers` plus a `getSourceItem` per layer crossed the bridge
-          // sixty times a second to re-answer a question edits change and
-          // playback never does.
-          final footage = <FootageReference>[
-            for (final layer in comp.getLayers())
-              if (layer.getSourceItem()
-                  case ItemReference_Footage(:final field0))
-                field0,
-          ];
+          // Which layers might be missing their file. Off the held facts, not
+          // re-asked here: this used to live in the stage, which rebuilds per
+          // frame during playback, so `getLayers` plus a `getSourceItem` per
+          // layer crossed the bridge sixty times a second to re-answer a
+          // question edits change and playback never does.
+          final footage = facts.footage;
 
           void applyZoom(ViewerZoom next) => _goToZoom(
                 next.scale,
@@ -396,10 +433,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
 
     // The target, resolved: "fit" is re-resolved every frame rather than
     // captured, so a panel resized mid-animation still lands on its own fit.
-    final target = _zoom ??
-        (constraints.maxWidth / w < constraints.maxHeight / h
-            ? constraints.maxWidth / w
-            : constraints.maxHeight / h);
+    final target = _zoom ?? _fitScale(constraints, size);
     var scale = target;
     var pan = _pan;
     final from = _zoomFrom;
@@ -445,12 +479,32 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     });
   }
 
-  /// Tell the engine what fraction of comp resolution is on screen, so the next
-  /// render asks for that much and no more.
-  void _reportScale(LumitUiState state, Rect fitted, BridgeCompSize size) {
+  /// The magnification "Fit" means here: the whole picture in the panel.
+  double _fitScale(BoxConstraints constraints, BridgeCompSize size) {
+    final w = size.width.toDouble();
+    final h = size.height.toDouble();
+    if (w <= 0 || h <= 0) return 1;
+    return constraints.maxWidth / w < constraints.maxHeight / h
+        ? constraints.maxWidth / w
+        : constraints.maxHeight / h;
+  }
+
+  /// Tell the engine what fraction of comp resolution the next render should be
+  /// made at.
+  ///
+  /// **Not simply what is on screen** (K-230). The magnification the *panel*
+  /// implies is what governs it — a Viewer docked small is cheap, which is the
+  /// whole point of reporting anything — but zooming inside that panel does
+  /// not: zooming out used to lower the preview resolution, which threw away
+  /// every cached frame and made the picture visibly coarser for a gesture that
+  /// only meant "let me see more of it". Zooming in cannot raise it either;
+  /// above comp resolution there is nothing left to render (the clamp lives in
+  /// [LumitUiState.reportViewerScale]).
+  void _reportScale(
+      LumitUiState state, Rect fitted, BridgeCompSize size, double fit) {
     if (size.width == 0) return;
     _shownScale = fitted.width / size.width;
-    state.reportViewerScale(_shownScale);
+    state.reportViewerScale(_shownScale > fit ? _shownScale : fit);
   }
 
   /// The magnification actually on screen, last time the picture was laid out.
@@ -624,10 +678,16 @@ class _Stage extends StatelessWidget {
           ),
           child: Stack(
             children: [
+              // The checkerboard covers the panel and is clipped to the
+              // picture, rather than being a widget the size of the picture
+              // (K-230): at 800 % on an HD composition that widget was 15360
+              // pixels across, and painting an 8-pixel grid over it meant half
+              // a million rectangles for the few thousand actually on screen.
+              // That, and not the rendering, is what made zooming in seize the
+              // whole window.
               if (grid)
-                Positioned.fromRect(
-                  rect: fitted,
-                  child: CustomPaint(painter: _CheckerPainter(t)),
+                Positioned.fill(
+                  child: CustomPaint(painter: _CheckerPainter(t, fitted)),
                 ),
               Positioned.fromRect(
                 rect: fitted,
@@ -638,13 +698,15 @@ class _Stage extends StatelessWidget {
               // it lets every gesture through to the pan above, which is the
               // whole difference between the two tools over the picture.
               ListenableBuilder(
-                // Three things move the boxes without the panel being rebuilt:
+                // Four things move the boxes without the panel being rebuilt:
                 // the selection (a Timeline click), a probe landing with a
-                // clip's real size, and an edit changing a transform.
+                // clip's real size, an edit changing a transform, and a turn
+                // in flight from the Rotation tool (K-230).
                 listenable: Listenable.merge([
                   uiState.selectedLayers,
                   uiState.layerBounds,
                   uiState.model,
+                  uiState.liveRotations,
                 ]),
                 builder: (context, _) => ViewerGizmoLayer(
                   comp: comp,
@@ -736,6 +798,18 @@ class _Stage extends StatelessWidget {
                 onZoomAt: onZoomAt,
                 onZoomBox: onZoomBox,
                 accent: t.accent,
+                mark: t.textPrimary,
+                outline: t.surface0,
+              ),
+              // The Hand tool: the drawn hand, and the drag that pans (K-230).
+              // It takes the drag rather than leaving it to the stage beneath,
+              // so the hand keeps following the pointer while the button is
+              // down — which is when it matters most.
+              ViewerHandLayer(
+                active: uiState.tools.tool.group == ToolGroup.hand,
+                onPan: onPan,
+                mark: t.textPrimary,
+                outline: t.surface0,
               ),
               // Above both, because while the dropper is armed the whole
               // picture is a target: a drag handle under the pointer must not
@@ -1196,29 +1270,60 @@ ColorFilter? channelFilterFor(ViewerChannel channel) => switch (channel) {
     };
 
 
+/// The part of the transparency board worth painting: what is both picture and
+/// panel (K-230).
+///
+/// The board used to be a widget the size of the *picture*, which at 800 % on an
+/// HD composition is 15360 pixels across — an 8-pixel grid over that is half a
+/// million rectangles a paint, for the few thousand that are on screen. Bounding
+/// it by the panel is what keeps the cost of the board the same at every
+/// magnification.
+Rect checkerArea(Rect picture, Size panel) =>
+    picture.intersect(Offset.zero & panel);
+
 /// The transparency checkerboard behind the picture.
+///
+/// [picture] is where the picture is drawn in the panel; the board fills that
+/// and no more, and only the part of it that is on screen is ever painted. The
+/// squares stay pinned to the picture's own top-left, so panning slides the
+/// board with the picture instead of the picture swimming over a fixed grid.
 class _CheckerPainter extends CustomPainter {
   final LumitTheme theme;
-  const _CheckerPainter(this.theme);
+  final Rect picture;
+  const _CheckerPainter(this.theme, this.picture);
 
   static const double _square = 8;
 
   @override
   void paint(Canvas canvas, Size size) {
+    final area = checkerArea(picture, size);
+    if (area.isEmpty) return;
     final light = Paint()..color = theme.surface2;
     final dark = Paint()..color = theme.surface1;
-    canvas.drawRect(Offset.zero & size, dark);
-    for (var y = 0.0; y < size.height; y += _square) {
-      for (var x = 0.0; x < size.width; x += _square) {
-        final odd = ((x / _square).floor() + (y / _square).floor()).isOdd;
+    canvas.save();
+    canvas.clipRect(area);
+    canvas.drawRect(area, dark);
+    // Start on the square the picture's own grid has at this corner, so the
+    // pattern does not shift as the picture is panned across the panel.
+    double alignedStart(double edge, double origin) =>
+        origin + ((edge - origin) / _square).floorToDouble() * _square;
+    final startX = alignedStart(area.left, picture.left);
+    final startY = alignedStart(area.top, picture.top);
+    for (var y = startY; y < area.bottom; y += _square) {
+      for (var x = startX; x < area.right; x += _square) {
+        final odd = (((x - picture.left) / _square).round() +
+                ((y - picture.top) / _square).round())
+            .isOdd;
         if (odd) continue;
         canvas.drawRect(Rect.fromLTWH(x, y, _square, _square), light);
       }
     }
+    canvas.restore();
   }
 
   @override
-  bool shouldRepaint(_CheckerPainter old) => old.theme != theme;
+  bool shouldRepaint(_CheckerPainter old) =>
+      old.theme != theme || old.picture != picture;
 }
 
 /// Magnification, channel, grid, transport and timecode.

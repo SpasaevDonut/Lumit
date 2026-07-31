@@ -161,8 +161,9 @@ armed is a *tool*; what each tool then does is the backlog:
       buttons.
     - **Depth-of-field controls on the picture** (focus distance, aperture), and a camera whose
       placement is **keyframed** cannot be dragged (no single value to add to).
-    - A camera drag writes five properties, so it is five undo steps: there is no batched
-      transform op (see the gizmo's note above).
+    - A camera drag already writes its five properties as one batched op, so it is one undo
+      step; a drag that spans **several layers** is still one step per layer, because no op
+      carries edits to more than one.
 - **Roto** (roto brush/refine edge) and **Puppet** - **disabled on the strip** (K-228) until
     there is an engine behind them; both are roadmap features of their own size
     ([16-ROADMAP.md](16-ROADMAP.md)). Roto wants a segmentation model and a per-frame stroke
@@ -191,16 +192,16 @@ switch landed 2026-07-31. What that section still owes:
 - **Scale and rotation of a multiple selection** - several layers move together, but each
     keeps its own box and only a lone selection grows handles. AE scales a set about one
     shared box.
-- **Snapping** - nothing snaps to anything, and the toolbar's switch is read by nothing
-    (docs/07 §4.5, §1.7).
+- **Snapping** - nothing outside the Timeline's keyframe magnet snaps to anything. The
+    toolbar's switch, which nothing read, is **gone** (K-230); a global one comes back with
+    the snapping it would govern (docs/07 §4.5, §1.7).
 - **Parent-aware and 3D gizmos** - the box is built from the layer's own transform, so a
     parented layer's box ignores its parent's placement and a 3D layer's ignores the camera.
 - **A keyframed position draws no box at all**, so an animated layer cannot be picked on the
     picture. It wants the value *at the playhead*, which the read model does not carry.
-- **Text layers measure the comp, not their glyphs**, so a text layer's box is the whole
-    frame. Waiting on glyph bounds crossing the bridge.
-- **A move is still two ops** (x and y are separate properties), so one drag is two undo
-    steps.
+- **Text layers measure the engine's own estimate, not their glyphs** (K-230): the point size
+    tall and half an em per character wide, which is the same sum the caret and the anchor use.
+    True glyph bounds crossing the bridge would replace all three at once.
 
 **Pixel pickers ([07-UI-SPEC.md](07-UI-SPEC.md) §6.1):**
 - **The x/y position pick is not built.** The colour pick and the depth-of-field focal

@@ -17,6 +17,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'viewer_tool_cursor.dart';
+
 /// The magnification a Viewer can be taken to. Below the floor the picture is
 /// a speck; above the ceiling a comp pixel is a tile and every further step
 /// costs texture memory for nothing.
@@ -105,12 +107,18 @@ class ViewerZoomLayer extends StatefulWidget {
 
   final Color accent;
 
+  /// The drawn pointer's own colours (K-230).
+  final Color mark;
+  final Color outline;
+
   const ViewerZoomLayer({
     super.key,
     required this.active,
     required this.onZoomAt,
     required this.onZoomBox,
     required this.accent,
+    required this.mark,
+    required this.outline,
   });
 
   @override
@@ -120,6 +128,10 @@ class ViewerZoomLayer extends StatefulWidget {
 class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
   Offset? _from;
   Offset? _to;
+
+  /// Where the pointer is, for the drawn magnifier. Null when it is not over
+  /// the picture, which is where a drawn pointer should draw nothing.
+  Offset? _pointer;
 
   /// Whether Alt is held, tracked rather than read at the moment of the click.
   ///
@@ -160,8 +172,15 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
     if (!widget.active) return const SizedBox.shrink();
     return Positioned.fill(
       child: MouseRegion(
-        cursor:
-            _alt ? SystemMouseCursors.zoomOut : SystemMouseCursors.zoomIn,
+        // Hidden and replaced below (K-230): `zoomIn` and `zoomOut` are in
+        // Flutter's list of pointers but not in the Windows embedder's, where
+        // an unknown one silently becomes the ordinary arrow — so the Zoom tool
+        // looked like no tool at all. A drawn magnifier is the only one there
+        // is.
+        cursor: SystemMouseCursors.none,
+        onEnter: (e) => setState(() => _pointer = e.localPosition),
+        onHover: (e) => setState(() => _pointer = e.localPosition),
+        onExit: (_) => setState(() => _pointer = null),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (details) => widget.onZoomAt(details.localPosition,
@@ -169,9 +188,12 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
           onPanStart: (details) => setState(() {
             _from = details.localPosition;
             _to = details.localPosition;
+            _pointer = details.localPosition;
           }),
-          onPanUpdate: (details) =>
-              setState(() => _to = details.localPosition),
+          onPanUpdate: (details) => setState(() {
+            _to = details.localPosition;
+            _pointer = details.localPosition;
+          }),
           onPanEnd: (_) {
             final box = _box;
             setState(() {
@@ -188,9 +210,19 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
             _from = null;
             _to = null;
           }),
-          child: CustomPaint(
-            painter: _ZoomBoxPainter(box: _box, accent: widget.accent),
-          ),
+          child: Stack(children: [
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _ZoomBoxPainter(box: _box, accent: widget.accent),
+              ),
+            ),
+            MagnifierPointer(
+              at: _pointer,
+              out: _alt,
+              mark: widget.mark,
+              outline: widget.outline,
+            ),
+          ]),
         ),
       ),
     );

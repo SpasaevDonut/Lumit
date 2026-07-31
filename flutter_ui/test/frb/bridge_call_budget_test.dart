@@ -26,6 +26,7 @@ import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
+import 'package:lumit_flutter/state/tools.dart';
 
 import 'frb_test_support.dart';
 
@@ -374,6 +375,125 @@ void main() {
         counter.total,
         lessThanOrEqualTo(20),
         reason: 'a frame arriving re-read the engine:\n${counter.ranking()}',
+      );
+    });
+    /// **Panning the picture must ask the engine nothing (K-230).**
+    ///
+    /// A pan moves where the picture is drawn and changes nothing else, but it
+    /// rebuilt the whole panel — which re-read the composition's settings, its
+    /// size, and every layer's source item, once per movement of the pointer.
+    /// At the rate a mouse reports that was hundreds of calls a second, one of
+    /// them walking the whole layer list, to re-answer questions only an edit
+    /// can change.
+    testWidgets('panning with the Hand tool asks the engine nothing',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      for (var i = 0; i < 3; i++) {
+        comp.addSolidLayer();
+      }
+      p.uiState.setSelectedComp(comp);
+      p.uiState.tools.select(ToolMode.hand);
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      final centre = tester.getCenter(find.byType(ViewerPanelFrb));
+      final gesture = await tester.startGesture(centre);
+      // Let the mount's own traffic finish before the count starts: what is
+      // being measured is the cost of the *movement*, not of what the panel was
+      // still doing when the pointer went down.
+      await settleFrb(tester, minRounds: 4);
+
+      counter
+        ..reset()
+        ..counting = true;
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(3, 2));
+        await tester.pump();
+      }
+      counter.counting = false;
+      await gesture.up();
+      await tester.pump();
+
+      // ignore: avoid_print
+      print('PAN COST ${counter.total} calls\n${counter.ranking()}');
+      // Twenty movements, and the composition is read **at most once** in all
+      // of them — the once being an edit event arriving mid-gesture and
+      // dropping the held answers, which is exactly what should drop them.
+      // Before this it was one read per movement, and the layer walk with it.
+      expect(
+        counter.calls['composition_reference_get_settings'] ?? 0,
+        lessThanOrEqualTo(1),
+        reason: 'the panel re-read the composition as the pointer moved:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.calls['composition_reference_get_layers'] ?? 0,
+        lessThanOrEqualTo(1),
+        reason: 'the panel walked the layers as the pointer moved:\n'
+            '${counter.ranking()}',
+      );
+      // Measured at 7 for twenty movements. The cap is what one invalidation
+      // costs on a three-layer composition, with room for a fourth layer.
+      expect(
+        counter.total,
+        lessThan(12),
+        reason: 'a pan re-read the composition:\n${counter.ranking()}',
+      );
+    });
+
+    /// **Nor must moving the pointer with a camera tool in hand (K-230).**
+    ///
+    /// That layer redraws on every movement — its pointer is drawn, so it has
+    /// to — and finding the active camera reads the layer's focal distance and
+    /// the composition's rate across the bridge. Hovering the picture was
+    /// making both, dozens of times a second, without a button being pressed.
+    testWidgets('hovering with a camera tool armed asks the engine nothing',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      comp.addCameraLayer();
+      p.uiState.setSelectedComp(comp);
+      p.uiState.tools.select(ToolMode.cameraOrbit);
+      p.uiState.model.refresh();
+
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(900, 600),
+        child: const ViewerPanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await mouse.addPointer(location: Offset.zero);
+      addTearDown(mouse.removePointer);
+      final centre = tester.getCenter(find.byType(ViewerPanelFrb));
+      await mouse.moveTo(centre);
+      await tester.pump();
+
+      counter
+        ..reset()
+        ..counting = true;
+      for (var i = 0; i < 20; i++) {
+        await mouse.moveTo(centre + Offset(i * 3.0, i * 2.0));
+        await tester.pump();
+      }
+      counter.counting = false;
+
+      // ignore: avoid_print
+      print('CAMERA HOVER COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.total,
+        0,
+        reason: 'hovering re-found the camera:\n${counter.ranking()}',
       );
     });
   }, skip: !engineAvailable);

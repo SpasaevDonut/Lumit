@@ -1030,6 +1030,29 @@ class LayerReference {
   void setText({required BridgeTextDocument document}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetText(that: this, document: document);
 
+  /// Replace a text layer's document **and its anchor and position
+  /// together**, as one op (K-230).
+  ///
+  /// For the end of a typing session, which is one action to the user and has
+  /// to be one undo step. It is two edits underneath — what the line says, and
+  /// the pivot moving to the middle of the line it turned out to be, with
+  /// Position compensating so the line does not shift — and committing them
+  /// separately made `Ctrl+Z` undo a pivot nobody had moved before it undid
+  /// the typing.
+  void setTextPlaced(
+          {required BridgeTextDocument document,
+          required double anchorX,
+          required double anchorY,
+          required double positionX,
+          required double positionY}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetTextPlaced(
+          that: this,
+          document: document,
+          anchorX: anchorX,
+          anchorY: anchorY,
+          positionX: positionX,
+          positionY: positionY);
+
   /// Replace one transform property's whole animation, as one
   /// [`lumit_core::Op::SetTransformProperty`].
   ///

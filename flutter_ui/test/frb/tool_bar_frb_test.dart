@@ -86,14 +86,12 @@ void main() {
       expect(find.byKey(const ValueKey('tool-flyout-hand')), findsNothing);
     });
 
-    testWidgets('the snapping switch toggles', (tester) async {
-      final p = await mount(tester);
-      expect(p.uiState.tools.snapping, isTrue);
-
-      await tester.tap(find.byKey(const ValueKey('tool-snapping')));
-      await tester.pump();
-
-      expect(p.uiState.tools.snapping, isFalse);
+    // The switch that used to sit here governed nothing (K-230), so it is not
+    // on the strip. This is the guard against it drifting back on before there
+    // is snapping for it to govern.
+    testWidgets('there is no snapping switch', (tester) async {
+      await mount(tester);
+      expect(find.byKey(const ValueKey('tool-snapping')), findsNothing);
     });
 
     testWidgets('the workspace strip rearranges the panels', (tester) async {

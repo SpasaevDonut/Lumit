@@ -159,6 +159,19 @@ class LayerBox {
     this.masks = const [],
   });
 
+  /// The same box with the layer turned to [degrees] — the shape a rotation in
+  /// flight has, before it is committed (K-230).
+  LayerBox turnedTo(double degrees) => LayerBox(
+        layer: layer,
+        id: id,
+        map: map.turnedTo(degrees),
+        bounds: bounds,
+        draggable: draggable,
+        scalable: scalable,
+        rotationDegrees: degrees,
+        masks: masks,
+      );
+
   /// The box's four corners in screen space, clockwise from the layer's own
   /// top-left. A rotated layer therefore gives a rotated quad, not an
   /// axis-aligned rectangle — the box turns with the layer.
@@ -305,6 +318,27 @@ LayerBox? layerAtPoint(List<LayerBox> boxes, Offset point) {
     if (box.contains(point)) return box;
   }
   return null;
+}
+
+/// Which layer a *drag* at [point] picks up (K-230).
+///
+/// A press inside something already selected grabs **that**, even when a layer
+/// higher in the stack overlaps the same spot. Without this rule a layer chosen
+/// in the Timeline could not be dragged wherever anything covered it: the press
+/// silently swapped the selection for whatever was on top and moved that
+/// instead, which is the drag doing something the user never asked for.
+///
+/// A plain click still takes the topmost ([layerAtPoint]) — that is how a layer
+/// underneath gets chosen with the mouse in the first place.
+LayerBox? layerToDragAt(
+  List<LayerBox> boxes,
+  Offset point,
+  Set<UuidValue> selectedIds,
+) {
+  for (final box in boxes) {
+    if (selectedIds.contains(box.id) && box.contains(point)) return box;
+  }
+  return layerAtPoint(boxes, point);
 }
 
 /// Every layer wholly inside [rect] — what a released marquee selects.
@@ -473,7 +507,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final selected = _selected;
+    final selected = [for (final box in _selected) _live(box)];
     // The single-selection case is the one that gets handles: scaling and
     // rotating a set about a shared box is a different gesture with its own
     // maths, and is not built (docs/TODO.md).
@@ -529,6 +563,21 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         ),
       ),
     );
+  }
+
+  /// [box] as the turn in flight would have it (K-230).
+  ///
+  /// Two turns can be in flight, never at once: the Rotation tool's, published
+  /// on [LumitUiState.liveRotations], and this gizmo's own rotation knob, which
+  /// is local. Both end up here, so the box a paint draws is the box the
+  /// picture underneath is being previewed as.
+  LayerBox _live(LayerBox box) {
+    if (_drag == _GizmoDrag.rotate && _acting?.id == box.id) {
+      final degrees = _rotationNow();
+      if (degrees != null) return box.turnedTo(degrees);
+    }
+    final degrees = widget.uiState.liveRotations.value[box.id];
+    return degrees == null ? box : box.turnedTo(degrees);
   }
 
   LayerBox? _hoverBox() {
@@ -640,7 +689,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
       return;
     }
 
-    final hit = layerAtPoint(widget.boxes, at);
+    final hit =
+        layerToDragAt(widget.boxes, at, widget.uiState.selectedLayerIds);
     if (hit == null) {
       // Empty picture: rubber-band. The selection is left alone until the band
       // is let go — partly so the boxes stay on screen while it is drawn, and
@@ -773,15 +823,18 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     for (final box in _selected) {
       if (!box.draggable) continue;
       final (x, y) = _movedPosition(box);
-      // Two ops, because x and y are separate properties in the model — the
-      // same unavoidable pair the move handle always committed (docs/TODO.md).
+      // One op for both axes (K-230). x and y are separate properties in the
+      // model, and writing them separately made one drag cost two undo steps —
+      // Ctrl+Z put the layer back half way, along one axis, which reads as the
+      // undo being broken rather than as two honest edits.
       try {
-        box.layer.setTransform(
-            prop: BridgeTransformProp.positionX,
-            value: BridgeScalar.static_(x));
-        box.layer.setTransform(
-            prop: BridgeTransformProp.positionY,
-            value: BridgeScalar.static_(y));
+        box.layer.setTransforms(
+          props: const [
+            BridgeTransformProp.positionX,
+            BridgeTransformProp.positionY,
+          ],
+          values: [BridgeScalar.static_(x), BridgeScalar.static_(y)],
+        );
         landed = true;
       } catch (_) {
         // A layer deleted while the drag was in flight. The rest still move.
@@ -816,12 +869,17 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final box = _acting;
     final scale = _scaleNow();
     if (box == null || scale == null || _delta == Offset.zero) return;
-    box.layer.setTransform(
-        prop: BridgeTransformProp.scaleX,
-        value: BridgeScalar.static_(scale.$1));
-    box.layer.setTransform(
-        prop: BridgeTransformProp.scaleY,
-        value: BridgeScalar.static_(scale.$2));
+    // One op for both axes, for the same reason a move is (K-230).
+    box.layer.setTransforms(
+      props: const [
+        BridgeTransformProp.scaleX,
+        BridgeTransformProp.scaleY,
+      ],
+      values: [
+        BridgeScalar.static_(scale.$1),
+        BridgeScalar.static_(scale.$2),
+      ],
+    );
     widget.onChanged();
   }
 

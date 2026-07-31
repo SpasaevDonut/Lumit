@@ -26,6 +26,7 @@
 // estimate, and it is the same estimate on both sides, which is what keeps the
 // caret and the picture from disagreeing about where the line ends.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
@@ -34,21 +35,12 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
+import '../state/layer_bounds.dart' show estimatedTextWidth;
 import '../state/preview_throttle.dart';
 import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_tool_cursor.dart';
 import 'viewer_layer_map.dart';
-
-/// How wide a line of text is, roughly, in layer pixels.
-///
-/// **This is the engine's own estimate**, mirrored here on purpose: the bridge
-/// anchors a new text layer at half of `characters × size × 0.5`, and the caret
-/// is placed by the same sum. Neither is the true advance width of the glyphs —
-/// that is known only to the rasteriser — but both being wrong the same way is
-/// what matters for the caret sitting at the end of the line.
-double estimatedTextWidth(String text, double size) =>
-    text.runes.length * size * 0.5;
 
 /// Where a point on screen falls in the composition's own pixels.
 ///
@@ -135,6 +127,32 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
   void initState() {
     super.initState();
     _controller.addListener(_onTyped);
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  /// The two keys a typing session has to answer while the text field has the
+  /// keyboard (K-230).
+  ///
+  /// **Escape** ends the edit, which the tool always promised and never did.
+  /// **Ctrl+Z** ends it as well and then lets go: an undo pressed mid-sentence
+  /// used to be swallowed by the text field, so the document did not move and
+  /// the application looked as though undo had stopped working. Ending the edit
+  /// first is what makes the next `Ctrl+Z` undo the thing the user means — the
+  /// line they just typed, and after that the layer itself.
+  bool _onKey(KeyEvent event) {
+    if (!_editingNow || event is! KeyDownEvent) return false;
+    if (event.logicalKey == LogicalKeyboardKey.escape) {
+      _finish();
+      return true;
+    }
+    final undo = event.logicalKey == LogicalKeyboardKey.keyZ &&
+        (HardwareKeyboard.instance.isControlPressed ||
+            HardwareKeyboard.instance.isMetaPressed);
+    if (!undo) return false;
+    // Written, then handed on: the shell's own undo takes it from here, so
+    // there is one undo path in the application rather than two.
+    _finish();
+    return false;
   }
 
   @override
@@ -147,6 +165,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
     _throttle.cancel();
     _controller.dispose();
     _focus.dispose();
@@ -273,35 +292,24 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
     final options = widget.uiState.tools;
     final (cx, cy) = compPointOf(at, widget.fitted, widget.compSize);
     try {
-      final layer = widget.comp.addTextLayer();
-      // The starter document is "Text" at the middle of the comp; the tool
-      // wants an empty line where the user clicked, in the toolbar's colour
-      // and size.
-      layer.setText(
+      // One op, so one undo step, and undoing it takes the layer away (K-230).
+      // This used to be three — a layer saying "Text" in the middle of the
+      // composition, then an empty line written into it, then a move to the
+      // click — so `Ctrl+Z` walked back through two states nobody had ever
+      // seen before the layer finally went.
+      //
+      // The anchor the engine gives it sits on the left end of the baseline, so
+      // what is typed runs to the right of the pointer and sits on it rather
+      // than straddling it; it is recentred on the finished line when the edit
+      // ends.
+      final layer = widget.comp.addTextLayerAt(
         document: BridgeTextDocument(
           text: '',
           size: options.textSize,
           fill: options.fillRgba,
         ),
-      );
-      layer.setTransforms(
-        props: const [
-          BridgeTransformProp.anchorX,
-          BridgeTransformProp.anchorY,
-          BridgeTransformProp.positionX,
-          BridgeTransformProp.positionY,
-        ],
-        values: [
-          // The click is where the text goes (K-226): the anchor starts on the
-          // left end of the line's baseline, so what is typed runs to the right
-          // of the pointer and sits on it rather than straddling it. An empty
-          // line has no width to be anchored in the middle of anyway; the
-          // anchor is recentred when the edit ends.
-          BridgeScalar.static_(0),
-          BridgeScalar.static_(options.textSize),
-          BridgeScalar.static_(cx),
-          BridgeScalar.static_(cy),
-        ],
+        x: cx,
+        y: cy,
       );
       widget.uiState.setSelection([layer]);
       _begin(layer, at, created: true);
@@ -381,50 +389,62 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
         }
         return;
       }
-      layer.setText(
-        document: BridgeTextDocument(text: text, size: _size, fill: _fill),
-      );
-      if (_created) _recentreAnchor(layer, text);
+      _write(layer, text);
       widget.onChanged();
     } catch (_) {
       // The layer was deleted while it was being typed into.
     }
   }
 
-  /// Put a new layer's anchor in the middle of the line it turned out to hold,
-  /// **without the line moving**: the pivot slides and Position compensates,
-  /// the same pan-behind sum the Anchor point tool commits (K-220).
-  void _recentreAnchor(LayerReference layer, String text) {
+  /// Write what was typed, as **one** undo step (K-230).
+  ///
+  /// For a layer this tool made that means the document and the recentred
+  /// anchor together: they are one action to the user — "I typed a line" — and
+  /// committing them separately made the first `Ctrl+Z` undo a pivot the user
+  /// had never moved, leaving the words exactly where they were and the undo
+  /// looking broken.
+  void _write(LayerReference layer, String text) {
+    final document = BridgeTextDocument(text: text, size: _size, fill: _fill);
+    if (!_created) {
+      layer.setText(document: document);
+      return;
+    }
+    final placed = _recentredAnchor(layer, text);
+    layer.setTextPlaced(
+      document: document,
+      anchorX: placed.anchor.dx,
+      anchorY: placed.anchor.dy,
+      positionX: placed.position.dx,
+      positionY: placed.position.dy,
+    );
+  }
+
+  /// Where a new layer's anchor and position want to be once the line is known:
+  /// the pivot in the middle of the text, **without the line moving** — the
+  /// pivot slides and Position compensates, the same pan-behind sum the Anchor
+  /// point tool commits (K-220).
+  ({Offset anchor, Offset position}) _recentredAnchor(
+      LayerReference layer, String text) {
     final transform = layer.getTransform();
     final old = Offset(
       staticValueOf(transform.anchorX) ?? 0,
       staticValueOf(transform.anchorY) ?? 0,
     );
-    final wanted = textAnchor(text, _size);
-    final position = panBehindPosition(
-      oldAnchor: old,
-      newAnchor: wanted,
-      position: Offset(
-        staticValueOf(transform.positionX) ?? 0,
-        staticValueOf(transform.positionY) ?? 0,
-      ),
-      scaleXPercent: staticValueOf(transform.scaleX) ?? 100,
-      scaleYPercent: staticValueOf(transform.scaleY) ?? 100,
-      rotationDegrees: staticValueOf(transform.rotation) ?? 0,
+    final here = Offset(
+      staticValueOf(transform.positionX) ?? 0,
+      staticValueOf(transform.positionY) ?? 0,
     );
-    layer.setTransforms(
-      props: const [
-        BridgeTransformProp.anchorX,
-        BridgeTransformProp.anchorY,
-        BridgeTransformProp.positionX,
-        BridgeTransformProp.positionY,
-      ],
-      values: [
-        BridgeScalar.static_(wanted.dx),
-        BridgeScalar.static_(wanted.dy),
-        BridgeScalar.static_(position.dx),
-        BridgeScalar.static_(position.dy),
-      ],
+    final wanted = textAnchor(text, _size);
+    return (
+      anchor: wanted,
+      position: panBehindPosition(
+        oldAnchor: old,
+        newAnchor: wanted,
+        position: here,
+        scaleXPercent: staticValueOf(transform.scaleX) ?? 100,
+        scaleYPercent: staticValueOf(transform.scaleY) ?? 100,
+        rotationDegrees: staticValueOf(transform.rotation) ?? 0,
+      ),
     );
   }
 }

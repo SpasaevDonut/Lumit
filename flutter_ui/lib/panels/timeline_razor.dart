@@ -167,7 +167,29 @@ class _RazorCursorPainter extends CustomPainter {
     canvas.translate(point.dx, point.dy);
     _blade(canvas, outline, 3.2);
     _blade(canvas, mark, 1.4);
+    _hotSpot(canvas);
     canvas.restore();
+  }
+
+  /// The point the cut actually lands on (K-230).
+  ///
+  /// The blade leans up and to the right of it, which is how a razor is held —
+  /// and which left the one thing that matters, *where the edge bites*, as an
+  /// unmarked corner of a drawn shape. So the corner is marked: two short arms
+  /// and a dot, the same crosshair every precise pointer on this machine uses.
+  void _hotSpot(Canvas canvas) {
+    const reach = 5.0;
+    for (final (colour, width) in [(outline, 3.0), (mark, 1.0)]) {
+      final paint = Paint()
+        ..color = colour
+        ..strokeWidth = width
+        ..strokeCap = StrokeCap.round;
+      canvas.drawLine(
+          const Offset(-reach, 0), const Offset(reach, 0), paint);
+      canvas.drawLine(
+          const Offset(0, -reach), const Offset(0, reach), paint);
+    }
+    canvas.drawCircle(Offset.zero, 1.2, Paint()..color = mark);
   }
 
   /// A blade on its handle, leaning the way a razor is held: the edge runs down

@@ -357,4 +357,38 @@ void main() {
       expect(result % 45, closeTo(0, 0.001));
     });
   });
+
+  /// **A turn in flight (K-230).** The picture is previewed at the new angle
+  /// while the drag is happening, so the box over it has to be drawn at that
+  /// angle too — the document still holds the old one, and drawing from the
+  /// document is what made the wireframe sit still until the button came up.
+  group('A box turned to an angle it has not been committed at', () {
+    test('its corners are where the turned layer would put them', () {
+      final upright = box(size: const Size(200, 100));
+      final turned = upright.turnedTo(90);
+      // The layer is anchored on its own middle at (300, 200), so a quarter
+      // turn takes the top-left corner from (200, 150) to (350, 100).
+      expect(turned.corners.first.dx, closeTo(350, 1e-6));
+      expect(turned.corners.first.dy, closeTo(100, 1e-6));
+      expect(turned.rotationDegrees, 90);
+    });
+
+    test('it is the same box in every other respect', () {
+      final upright = box();
+      final turned = upright.turnedTo(37);
+      expect(turned.id, upright.id);
+      expect(turned.bounds, upright.bounds);
+      expect(turned.anchorScreen, upright.anchorScreen,
+          reason: 'a layer turns about its anchor, so the anchor does not move');
+    });
+
+    test('turning it to where it already is changes nothing', () {
+      final at30 = box(rotation: 30);
+      final again = at30.turnedTo(30);
+      for (var i = 0; i < 4; i++) {
+        expect(again.corners[i].dx, closeTo(at30.corners[i].dx, 1e-9));
+        expect(again.corners[i].dy, closeTo(at30.corners[i].dy, 1e-9));
+      }
+    });
+  });
 }

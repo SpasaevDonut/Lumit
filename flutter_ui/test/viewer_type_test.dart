@@ -9,6 +9,9 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/viewer_type.dart';
+// The width estimate lives with the other "how big is a layer" answers now
+// (K-230): the same sum places the caret, the anchor and the wireframe.
+import 'package:lumit_flutter/state/layer_bounds.dart';
 
 void main() {
   group('Where a click lands', () {
@@ -44,6 +47,28 @@ void main() {
       // A single non-Latin character is one character wide, not its byte count
       // — the caret would otherwise run away on any accented word.
       expect(estimatedTextWidth('é', 40), estimatedTextWidth('e', 40));
+    });
+  });
+
+  /// The box the Viewer draws round a line of text (K-230). It used to be the
+  /// whole composition — text had no measured bounds and the comp was the
+  /// fallback — so a click with the Type tool put a box the size of the frame
+  /// round twelve-pixel text.
+  group('How big a text layer is', () {
+    test('as tall as the point size, and no taller', () {
+      expect(textLayerBounds('Text', 72).height, 72);
+      expect(textLayerBounds('Text', 12).height, 12);
+    });
+
+    test('as wide as the line is reckoned to be', () {
+      expect(textLayerBounds('Text', 72).width, estimatedTextWidth('Text', 72));
+    });
+
+    test('an empty line still has a box, one character wide', () {
+      final empty = textLayerBounds('', 12);
+      expect(empty.height, 12, reason: 'it says what size it will be set at');
+      expect(empty.width, greaterThan(0),
+          reason: 'a layer waiting to be typed into must still be visible');
     });
   });
 

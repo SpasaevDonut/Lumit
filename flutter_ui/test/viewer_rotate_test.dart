@@ -52,9 +52,29 @@ void main() {
       final down = rotateCursorFor(pointer: const Offset(300, 400), box: b);
       expect(down.angle, closeTo(math.pi / 2, 1e-9));
 
-      // Up and to the left.
+      // Up and to the left: it settles on the layer's own top-left corner, so
+      // it faces where that corner actually is on screen — which on a 2:1 box
+      // is not 45°, and should not be (K-230).
       final upLeft = rotateCursorFor(pointer: const Offset(200, 100), box: b);
-      expect(upLeft.angle, closeTo(-3 * math.pi / 4, 1e-9));
+      final corner = b.map.toScreen(0, 0) - b.map.toScreen(100, 50);
+      expect(upLeft.angle, closeTo(math.atan2(corner.dy, corner.dx), 1e-9));
+    });
+
+    test('it takes one of eight positions and nothing between them', () {
+      final b = box();
+      // A sweep right round the layer: every angle it produces has to be one
+      // the box's own eight compass points can account for.
+      final settled = <double>{};
+      for (var degrees = 0; degrees < 360; degrees += 3) {
+        final radians = degrees * math.pi / 180;
+        final shape = rotateCursorFor(
+          pointer: Offset(300 + 400 * math.cos(radians),
+              200 + 400 * math.sin(radians)),
+          box: b,
+        );
+        settled.add((shape.angle * 1e6).roundToDouble());
+      }
+      expect(settled.length, rotateCursorPositions);
     });
 
     test('the pointer exactly on the anchor has no direction to take, and does'
@@ -89,11 +109,15 @@ void main() {
       expect(corner.sweep, closeTo(rotateCursorCornerSweep, 1e-9));
     });
 
-    test('between the two it is between the two', () {
+    // It used to slide between the two, which was true to the geometry and
+    // harder to read than eight settled shapes (K-230).
+    test('between the two it is still one of the two', () {
       final b = box();
       final between = rotateCursorFor(pointer: const Offset(500, 225), box: b);
-      expect(between.sweep, greaterThan(rotateCursorEdgeSweep));
-      expect(between.sweep, lessThan(rotateCursorCornerSweep));
+      expect(
+        between.sweep,
+        anyOf(rotateCursorEdgeSweep, rotateCursorCornerSweep),
+      );
     });
 
     test('a corner stays a corner when the layer is turned', () {
