@@ -4315,3 +4315,30 @@ the same timestamp, the read model's own "once per frame" grouping saw *one* fra
 gesture, and the budget measured zero while the running application was making a call per
 frame. The budgets pump with time on the clock now. **A performance test that cannot reproduce
 the conditions it is guarding is worse than no test: it certifies the bug.**
+
+**K-234 · DECIDED · Mask rows in the Timeline: selectable, undoable, deletable (2026-07-31).**
+Three faults reported by the owner against the mask rows K-222 added, fixed together because
+they are one story: you pick a mask, you change it, you take the change back, you delete it.
+
+**A mask's opacity is one undo step for the whole drag.** The row's opacity field wrote
+straight through on every drag tick, so a drag across twenty ticks left twenty
+`SetLayerMasks` ops on the undo stack and one `Ctrl+Z` took back one percent — which reads as
+undo doing nothing. The op was invertible all along; the fault was the *rate* of committing.
+The field stages its value in the row and commits once on release, exactly as the Volume,
+transform and effect-parameter rows already do. **Any control that writes while a gesture is
+running must stage: an undo step is a gesture, not a tick.**
+
+**A mask row is a property row.** It carries a fold path already, so it joins
+`_selectedProperties` through the same click that selects Position — plain, Ctrl and Shift all
+behave as they do everywhere else, the row lights up, its Masks heading marks itself, and
+closing the fold drops the selection inside it (K-203). No parallel mask-selection state:
+a second selection model is a second thing to keep honest.
+
+**A panel with a finer selection is asked before Delete deletes a layer.** Every keyboard
+shortcut in the shell is a `HardwareKeyboard` handler, and Flutter runs *all* of them on every
+key — so a panel cannot claim a chord merely by handling it and returning true. With a mask row
+selected, the Timeline's Delete and the shell's Delete would both have fired, and the layer the
+mask sits on would have gone with it. The shell asks `LumitUiState.deleteClaim` first and stands
+down when the answer is yes; the Timeline sets that claim while it is mounted and answers with
+"I deleted the selected masks" or "not mine". Deleting a mask is the same call the row's
+right-click menu makes, so there is one path a mask is deleted by.

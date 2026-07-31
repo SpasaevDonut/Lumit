@@ -5681,3 +5681,29 @@ the lesson is bigger than the argument: **a performance test that cannot
 reproduce the conditions it is guarding does not merely fail to catch the bug,
 it certifies that the bug is not there.** When a budget reads zero, check that
 it can read non-zero: break the thing on purpose and watch the number move.
+### Who gets the Delete key (K-234)
+
+Every keyboard shortcut in Lumit is registered the same way: the panel (or the
+shell) hands Flutter a function and says "call me on every key press". The catch
+is in *every*. Flutter calls **all** of them, in the order they registered, and
+it does not stop at the first one that says "I dealt with that". So a panel
+cannot claim a key simply by handling it — the shell's own handler for the same
+key has already run, or is about to.
+
+That was harmless while the handlers disagreed about *which* keys they cared
+about, and became a bug the moment two of them wanted the same one. `Delete` in
+the shell means "remove the selected layers". `Delete` in the Timeline, with a
+mask row picked, means "remove that mask". Both fired: the mask went, and so did
+the layer it was drawn on.
+
+The fix is a single question the shell asks before it acts. `LumitUiState` holds
+one nullable function called `deleteClaim`; the Timeline points it at its own
+"delete the selected masks" while it is on screen, and the shell's `Delete` calls
+it first. `true` means "that key was mine, I have dealt with it" and the shell
+stands down; `false` means "nothing of mine was selected" and the shell deletes
+the layers as it always did. One place decides, so the two answers cannot both
+happen.
+
+The general shape is worth keeping: **when two parts of the application want the
+same key, do not race them — have the broader one ask the narrower one first.**
+A selection inside a layer is narrower than the layer, so it is asked first.

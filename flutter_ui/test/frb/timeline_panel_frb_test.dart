@@ -283,6 +283,123 @@ void main() {
       expect(layer.getMasks().single.inverted, isTrue);
     });
 
+    /// Give [layer] a mask, mount, and open the twirls that show its row.
+    Future<void> openMaskRow(
+        WidgetTester tester, dynamic p, LayerReference layer, String name) async {
+      layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: name,
+          vertices: const [
+            BridgeVertex(
+                x: 0, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 80, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      (p.uiState as LumitUiState).model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/masks')));
+      await tester.pumpAndSettle();
+      expect(find.text(name), findsOneWidget);
+    }
+
+    /// **A mask's opacity was not undoable (K-234).** Its field wrote on every
+    /// drag tick, so a drag left a stack of near-identical steps and one Ctrl+Z
+    /// backed out a single percent — which looks like nothing happening. The
+    /// drag is staged now, exactly as every other value row here stages its.
+    testWidgets('dragging a mask opacity is ONE undo step', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      final field = find.byKey(ValueKey<String>('tl-mask-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks().single.opacity, lessThan(100),
+          reason: 'the drag reached the mask');
+
+      p.state.project!.undo();
+      expect(layer.getMasks().single.opacity, 100,
+          reason: 'ONE undo returns the opacity it had before the drag');
+    });
+
+    /// **A mask row is a property row (K-234).** It joins the same selection
+    /// every other row is in, so it lights up, the heading holding it marks
+    /// itself, and Delete has something to act on.
+    testWidgets('clicking a mask selects its row', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+
+      expect(fillOver('Ellipse'), isNull, reason: 'nothing picked to start');
+
+      await tester.tap(find.text('Ellipse'));
+      await tester.pump();
+
+      expect(fillOver('Ellipse'), t.selectionFill,
+          reason: 'the mask row is the one selected');
+      expect(fillOver('Masks'), t.selectionFill.withValues(alpha: 0.45),
+          reason: 'the heading holding it marks itself, a shade dimmer');
+    });
+
+    /// **Delete removes the selected mask (K-234).** The shell's Delete deletes
+    /// the selected *layers*; with a mask row picked it stands down and this
+    /// claim runs instead, so the key acts on what is actually selected rather
+    /// than on the layer the mask sits on.
+    testWidgets('Delete removes a selected mask and leaves its layer',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      // The layer is selected too, which is the case that used to delete it.
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+
+      final claim = p.uiState.deleteClaim;
+      expect(claim, isNotNull, reason: 'the Timeline claims Delete');
+      expect(claim!(), isFalse,
+          reason: 'with no mask picked the shell keeps the key');
+
+      await tester.tap(find.text('Ellipse'));
+      await tester.pump();
+      expect(p.uiState.deleteClaim!(), isTrue,
+          reason: 'with a mask picked the Timeline takes it');
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks(), isEmpty, reason: 'the mask is gone');
+      expect(p.comp.getLayers(), hasLength(1),
+          reason: 'and its layer is still there');
+      expect(find.text('Masks'), findsNothing,
+          reason: 'the heading goes with the last mask under it');
+    });
+
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();
       await tester.pumpWidget(hostPanel(

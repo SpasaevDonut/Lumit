@@ -686,7 +686,16 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     _vOutline.addListener(() => _followScroll(_vOutline, _vLane));
     _vLane.addListener(() => _followScroll(_vLane, _vOutline));
     HardwareKeyboard.instance.addHandler(_onKey);
+    // Claim Delete for the finer selection this panel holds (K-234). The state
+    // is kept, not looked up again: `dispose` runs after the element is
+    // deactivated, where an ancestor lookup is no longer safe.
+    _ui = Provider.of<LumitUiState>(context, listen: false);
+    _ui!.deleteClaim = _deleteSelectedMasks;
   }
+
+  /// The shell state this panel claimed Delete on, so the claim can be dropped
+  /// again when the panel goes.
+  LumitUiState? _ui;
 
   /// The graph editor's channels right now, resolved from the read model.
   List<GraphChannel> _channelsNow() {
@@ -832,6 +841,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       return true;
     }
 
+    // Delete with a mask row selected is not handled here: every one of these
+    // handlers runs, in registration order, so a `true` from this one would not
+    // stop the shell's Delete removing the layer as well. The Timeline claims
+    // the key through [LumitUiState.deleteClaim] instead, which the shell asks
+    // *before* it deletes anything (K-234).
+
     if (!_graph) return false;
 
     if (action == 'graph.fit') {
@@ -843,6 +858,55 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       return true;
     }
     return false;
+  }
+
+  /// Delete every selected mask row, returning whether there was one (K-234).
+  ///
+  /// The shell's Delete calls this before it deletes the selected layers, so a
+  /// picked mask row is what the key acts on — the mask sits *on* the selected
+  /// layer, and deleting the layer instead is the opposite of what was asked.
+  ///
+  /// The same call the row's own context menu makes, so there is one way a mask
+  /// is deleted. One op per mask, as deleting several layers is one op each.
+  bool _deleteSelectedMasks() {
+    if (!mounted) return false;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    // Mask paths are `<layer>/masks/<mask>`, so the layer and the mask are both
+    // read straight off the selection — no lookup table to keep in step.
+    final wanted = <String, Set<String>>{};
+    for (final path in _selectedProperties) {
+      final cut = path.indexOf('/');
+      if (cut <= 0) continue;
+      final layerId = path.substring(0, cut);
+      if (!isUnderPath(masksPath(layerId), path)) continue;
+      (wanted[layerId] ??= {})
+          .add(path.substring(masksPath(layerId).length + 1));
+    }
+    if (wanted.isEmpty) return false;
+
+    var deleted = false;
+    for (final entry in ui.model.layers) {
+      final ids = wanted[entry.layer.internallayerId.toString()];
+      if (ids == null) continue;
+      for (final mask in entry.info.masks) {
+        if (!ids.contains(mask.id.toString())) continue;
+        try {
+          entry.layer.deleteMask(id: mask.id);
+          deleted = true;
+        } catch (_) {
+          // Gone between the draw and the press; nothing left to delete.
+        }
+      }
+    }
+    if (!deleted) return false;
+    // The rows are gone, so the highlight that pointed at them goes too.
+    setState(() => _selectedProperties.removeWhere((path) {
+          final cut = path.indexOf('/');
+          return cut > 0 &&
+              isUnderPath(masksPath(path.substring(0, cut)), path);
+        }));
+    ui.model.refresh();
+    return true;
   }
 
   /// When the last `U` was pressed, and how many times in a row — the AE reveal
@@ -932,6 +996,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
     _boundTools?.removeListener(_onToolChanged);
     _barDrag.dispose();
     _layerDrag.dispose();
@@ -1855,7 +1920,11 @@ class _FoldRow extends StatelessWidget {
           layer: layer,
           mask: mask,
           valueColumn: valueColumn,
-          onChanged: onChanged,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
+          onLabelTap: () => onSelectProperty(path),
         ),
     };
   }
@@ -2050,27 +2119,44 @@ class _VolumeRowState extends State<_VolumeRow> {
 /// opacity.
 ///
 /// Read from the model, written through the layer's own handle — the same shape
-/// as every other row here. Deleting a mask is on its right-click menu rather
-/// than a button, because a row of buttons on every mask is a row of ways to
-/// lose work by mistake.
-class _MaskRow extends StatelessWidget {
+/// as every other row here. Deleting a mask is on its right-click menu, and on
+/// the Delete key once the row is selected; a button per mask on every row is a
+/// row of ways to lose work by mistake.
+///
+/// The row is selectable like any other property (K-234): tapping its name
+/// calls [onLabelTap], the outline highlights it, and Delete acts on it.
+class _MaskRow extends StatefulWidget {
   final LayerReference layer;
   final BridgeMask mask;
   final ValueColumn valueColumn;
   final VoidCallback onChanged;
+  final VoidCallback? onLabelTap;
 
   const _MaskRow({
     required this.layer,
     required this.mask,
     required this.valueColumn,
     required this.onChanged,
+    this.onLabelTap,
   });
+
+  @override
+  State<_MaskRow> createState() => _MaskRowState();
+}
+
+class _MaskRowState extends State<_MaskRow> {
+  /// The opacity a drag in flight is showing, before it commits. Held here so
+  /// the whole gesture is **one** op and so one Ctrl+Z undoes the whole drag:
+  /// writing on every tick filled the undo stack with near-identical steps,
+  /// and one undo backed out a single percent — which looked like nothing.
+  double? _staged;
 
   /// Write the mask back with one field changed. The engine takes the whole
   /// mask, so this is the only shape an edit has.
   void _write({bool? inverted, double? opacity}) {
+    final mask = widget.mask;
     try {
-      layer.setMask(
+      widget.layer.setMask(
         mask: BridgeMask(
           id: mask.id,
           name: mask.name,
@@ -2080,14 +2166,21 @@ class _MaskRow extends StatelessWidget {
           opacity: opacity ?? mask.opacity,
         ),
       );
-      onChanged();
+      widget.onChanged();
     } catch (_) {
       // The mask or its layer went away between the draw and the click.
     }
   }
 
+  void _commitOpacity(num v) {
+    setState(() => _staged = null);
+    _write(opacity: v.toDouble());
+  }
+
   @override
   Widget build(BuildContext context) {
+    final mask = widget.mask;
+    final valueColumn = widget.valueColumn;
     final t = ThemeScope.of(context).theme;
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
@@ -2096,9 +2189,16 @@ class _MaskRow extends StatelessWidget {
         children: [
           lumitIcon(LumitIcon.rectangle, size: iconSize, color: t.textSecondary),
           const SizedBox(width: 4),
+          // The name is the row's handle, exactly as it is on a transform row:
+          // tapping it selects the mask, and Delete then acts on it.
           Expanded(
-            child: Text(mask.name,
-                style: t.body, overflow: TextOverflow.ellipsis),
+            child: GestureDetector(
+              key: ValueKey<String>('tl-mask-name-${mask.id}'),
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onLabelTap,
+              child: Text(mask.name,
+                  style: t.body, overflow: TextOverflow.ellipsis),
+            ),
           ),
           SizedBox(
             width: valueColumn.width,
@@ -2122,13 +2222,19 @@ class _MaskRow extends StatelessWidget {
                 const SizedBox(width: 6),
                 SizedBox(
                   width: 56,
+                  // Staged like every other dragged value here: the drag shows
+                  // live and commits once on release, so it is one op and one
+                  // undo step.
                   child: DragValueField(
                     key: ValueKey<String>('tl-mask-opacity-${mask.id}'),
-                    value: mask.opacity,
+                    value: _staged ?? mask.opacity,
                     min: 0,
                     max: 100,
                     suffix: '%',
-                    onChanged: (v) => _write(opacity: v.toDouble()),
+                    onChanged: _commitOpacity,
+                    onChangeLive: (v) => setState(() => _staged = v.toDouble()),
+                    onChangeEnd: _commitOpacity,
+                    onDragCancel: () => setState(() => _staged = null),
                   ),
                 ),
               ],
@@ -2146,12 +2252,12 @@ class _MaskRow extends StatelessWidget {
       builder: (close) => FloatSurface(
         width: 160,
         child: MenuRow(
-          key: ValueKey<String>('tl-mask-delete-${mask.id}'),
+          key: ValueKey<String>('tl-mask-delete-${widget.mask.id}'),
           onPressed: () {
             close(null);
             try {
-              layer.deleteMask(id: mask.id);
-              onChanged();
+              widget.layer.deleteMask(id: widget.mask.id);
+              widget.onChanged();
             } catch (_) {}
           },
           child: const Text('Delete mask'),

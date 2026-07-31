@@ -426,6 +426,11 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   because a mask gates the layer's alpha before its effects run (docs/06 render order) — and
   the heading appears only once the layer has one, exactly as Effects does. Each row carries
   the mask's name, its invert switch and its opacity, and its context menu deletes it.
+- **A mask row is an ordinary property row (K-234).** Clicking its name selects it, with the
+  same plain / `Ctrl` / `Shift` gestures every other property row takes (§4.3), and the row and
+  the heading over it light up the same way. A **whole opacity drag is one undo step**, not one
+  per tick. With a mask row selected, **`Delete` deletes that mask** rather than the layer it
+  sits on.
 
 **Implementation status (2026-07-31).** Built: the wireframe, hover, click and Shift-click
 selection, the marquee, body-drag move (of a whole multiple selection), the eight scale
@@ -434,8 +439,9 @@ bar's switch. Not built: the anchor-point centre handle, snapping of any kind, p
 and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (a multiple
 selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
-drawn, listed, inverted, faded, deleted, and their points selected and moved** (K-224); their
-bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
+drawn, listed, selected, inverted, faded, deleted (by menu or `Delete`), and their points
+selected and moved** (K-224, K-234); their bezier **handles** cannot be dragged, and mask
+paths cannot be keyframed.
 
 ### 2.3.2 The Type tool (K-225)
 
@@ -797,8 +803,10 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
   property selection, and a click on empty ground in either half of the table selects
   nothing at all — no layer, no properties, no keys. `U`/`UU`/`UUU` reveal what is
   animated / what has been modified / nothing, on the selected layer or — with nothing
-  selected — on every layer in the comp. Still to build here: moving/deleting a whole
-  *lane* selection, the Masks group, and the expression toggle.
+  selected — on every layer in the comp. Mask rows are in that same selection (K-234), and
+  `Delete` with one picked deletes the mask rather than its layer: a panel holding a finer
+  selection than the layer one is asked before the shell's `Delete` removes anything. Still to
+  build here: moving/deleting a whole *lane* selection, and the expression toggle.
 
 ### 4.4 Sequence layers
 

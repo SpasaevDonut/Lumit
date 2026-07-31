@@ -141,6 +141,34 @@ void main() {
           reason: 'the selection cannot outlive the layer');
     });
 
+    /// **A finer selection gets Delete first (K-234).** A selected mask row is
+    /// what the key is about, not the layer it sits on — and every key handler
+    /// runs on every key, so the Timeline cannot claim the chord merely by
+    /// handling it. The shell asks, and stands down when the answer is yes.
+    testWidgets('Delete stands down when a panel claims it', (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+      comp.addSolidLayer();
+      p.uiState.selectedLayer.value = comp.getLayers().single;
+
+      var claimed = 0;
+      p.uiState.deleteClaim = () {
+        claimed++;
+        return true;
+      };
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+      expect(claimed, 1, reason: 'the shell asked before deleting');
+      expect(comp.getLayers(), hasLength(1),
+          reason: 'and left the layer alone');
+
+      // A claim that declines gives the key back.
+      p.uiState.deleteClaim = () => false;
+      await tester.sendKeyEvent(LogicalKeyboardKey.delete);
+      await tester.pump();
+      expect(comp.getLayers(), isEmpty);
+    });
+
     /// Alt+Shift+T does nothing now (K-200): it was a misremembering of AE's
     /// chord, and on Windows the OS steals it for the input-language switch
     /// anyway. It is unbound rather than kept as a second chord — Retime is
