@@ -2807,6 +2807,31 @@ shared red-green-blue-alpha. The proving colour in the test is orange on
 purpose — with the channels swapped it would show blue, where the earlier
 magenta (whose red and blue are equal) would have hidden the mistake.
 
+*"Submitted" is not "finished", and what a fence is.* Telling a graphics card to
+do something is like handing a note through a hatch. The moment the note is
+accepted, your side is free to carry on — the work itself happens later, out of
+sight, at the card's own pace. This is the whole reason graphics are fast, and
+it is also a trap: the call that copies the picture into the shared texture
+returns long before a single pixel has moved. If you announce the frame at that
+moment, whoever opens the texture next may be looking at it *while* it is still
+being filled, or before it has been touched at all.
+
+A **fence** (Direct3D calls the small one used here an *event query*) is the
+answer: a marker dropped into the queue of work behind the copy. Because the card
+does the queued work in order, when the card reports that it has reached the
+marker, everything before the marker — the copy — is genuinely done. So the
+engine drops a marker after the copy and then asks, over and over, "reached it
+yet?" until the answer is yes. That is the only honest way to turn "I have asked"
+into "it has happened".
+
+Not waiting was a real bug, and a nasty kind: the test that opens the texture the
+way Flutter does passed almost always and failed perhaps one run in fifty, with
+every pixel reading as empty — the reader simply won the race that time. It broke
+a build that had nothing to do with it. The wait is bounded: if the card has not
+reported the copy finished after a quarter of a second, the engine gives up,
+prints a line saying so, and shows the frame regardless. One stale frame is a
+blink; a render thread waiting for ever on a wedged card is a frozen application.
+
 *Every-frame playback now keeps two frames in motion.* One frame used to be
 requested, rendered, delivered, shown — and only then the next requested, so the
 renderer sat idle while the interface caught up, and the interface sat idle
