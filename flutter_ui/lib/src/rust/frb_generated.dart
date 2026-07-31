@@ -381,6 +381,11 @@ abstract class BridgeLibApi extends BaseApi {
   LayerReference crateApiLayerLayerReferenceDuplicate(
       {required LayerReference that});
 
+  LayerReference crateApiCompositionCompositionReferencePrecomposeLayers(
+      {required CompositionReference that,
+      required List<LayerReference> layers,
+      String? name});
+
   LayerReference? crateApiLayerLayerReferenceSplitAt(
       {required LayerReference that, required PlatformInt64 frame});
 
@@ -3190,6 +3195,38 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
         debugName: "layer_reference_trim_out_to",
         argNames: ["that", "frame"],
       );
+
+  @override
+  LayerReference crateApiCompositionCompositionReferencePrecomposeLayers(
+      {required CompositionReference that,
+      required List<LayerReference> layers,
+      String? name}) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_composition_reference(that, serializer);
+        sse_encode_list_layer_reference(layers, serializer);
+        sse_encode_opt_String(name, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 171)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_layer_reference,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta:
+          kCrateApiCompositionCompositionReferencePrecomposeLayersConstMeta,
+      argValues: [that, layers, name],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiCompositionCompositionReferencePrecomposeLayersConstMeta =>
+          const TaskConstMeta(
+            debugName: "composition_reference_precompose_layers",
+            argNames: ["that", "layers", "name"],
+          );
 
   @override
   bool crateApiLayerLayerReferenceEquals(

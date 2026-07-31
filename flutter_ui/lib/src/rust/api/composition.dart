@@ -295,18 +295,22 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceAddPrecompLayer(
               that: this, comp: comp);
 
-  LayerReference? precomposeLayer(
-      {required ProjectReference project,
-      required LayerReference layer,
-      String? name}) {
-    try {
-      final compName = name ?? 'Precomp 1';
-      final inner = project.newComposition(name: compName);
-      return addPrecompLayer(comp: inner);
-    } catch (_) {
-      return null;
-    }
-  }
+  LayerReference precomposeLayers({
+    required List<LayerReference> layers,
+    String? name,
+  }) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferencePrecomposeLayers(
+        that: this,
+        layers: layers,
+        name: name,
+      );
+
+  LayerReference? precomposeLayer({
+    required LayerReference layer,
+    String? name,
+  }) =>
+      precomposeLayers(layers: [layer], name: name);
 
   /// Add an empty Sequence layer — a clip row spanning the comp.
   LayerReference addSequenceLayer() => BridgeLib.instance.api
