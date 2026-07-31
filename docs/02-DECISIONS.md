@@ -3521,3 +3521,62 @@ and not workspace state either, so it is not written to the layout file; every s
 on Selection, as AE does. It lives on the shell's UI state beside the dropper's arm, for the
 same reason: it is set in one place and read in another, and no panel should have to be
 mounted for either.
+
+**K-215 · DECIDED · A layer is something you can see the edges of, point at, and take hold
+of.** From the owner (2026-07-31), specifying the first two toolbar tools: the Selection tool
+should drag the layer under the pointer, hovering one should say so before the click lands,
+several should be selectable at once, and the Hand tool should move the picture and never
+the layer. Everything here follows from that.
+
+**The wireframe is the layer's own rectangle, put through its transform.** Not the comp's:
+the box the Viewer drew before this was the comp rectangle for every kind, which is only
+right when the layer happens to fill the frame. A layer's rectangle comes from what it is
+made of — a clip's frame size, a solid's dimensions, a nested comp's size — and is
+comp-sized for the kinds with no content of their own. A Null gets a 100×100 box of its own,
+because "no pixels" must not mean "cannot be selected": rigging is exactly the job that
+needs to grab one.
+
+**Content sizes are the frontend's to cache, not the read model's to carry.** A clip's size
+is a question about a *file*, and the honest answer needs FFmpeg — which is disk work and
+asynchronous, so it cannot sit in `get_model`, which runs on every document change. So the
+Viewer holds a small cache: cheap kinds are read from the document and dropped whenever the
+revision moves; a clip is probed once per session, and the layer falls back to the comp's
+size until the answer lands. This is the same fallback the engine itself uses when it places
+a clip it cannot probe, so a missing file is a full-frame box rather than a box of nothing.
+
+**Selection is a list, and `selectedLayer` is its first entry.** Almost everything in the
+application acts on one layer and reads that notifier directly; teaching forty call sites to
+take the head of a list would have been a large change with nothing to show for it. So the
+list lives beside it, and setting the single one — which the Timeline and every test do —
+makes that layer the whole selection. Delete now takes the whole selection: with several
+boxes on the picture, deleting one of them would be a surprise every time.
+
+**What a press means is decided by where it went down, not where the drag was recognised.**
+Flutter reports a drag's start position *after* the pointer has travelled its slop, which is
+already further than a 9px handle is wide — every handle drag would have been read as a drag
+of the layer's body, and the first version of this was. The press point is recorded
+separately, and the slop's travel is folded into the drag so a move does not lag the pointer
+by it for the rest of the gesture.
+
+**The marquee takes only what it wholly contains.** After Effects' rule, and the one that
+makes a sloppy sweep predictable: a rectangle that merely clips a corner of a layer is far
+more likely to be an accident than an intention.
+
+**The layer-controls switch hides the marks, not the mouse.** The Viewer bar's new switch
+governs drawing only — clicks and drags still select and move with it off. It exists because
+a grade cannot be judged with a box and eight handles over the picture, which is the same
+reason the surround is neutral (K-203); it is not a way of putting the tools down, and After
+Effects' Show Layer Controls behaves the same.
+
+**A preview may fail; a gesture may not.** The provisional picture during a drag is a
+courtesy, and asking for it crosses the bridge, where anything can throw (a stopped worker,
+a machine with no adapter). It threw out of the pointer handler and killed the drag
+mid-stroke, commit and all. Every preview and every commit in the gizmo is guarded now: the
+boxes follow the pointer and the edit lands whatever the renderer is doing.
+
+**What is deliberately not built yet.** A multiple selection moves but grows no handles —
+scaling a set about one shared box is different maths, not a smaller version of this one. A
+keyframed position draws no box at all, because the read model carries the curve rather than
+its value at the playhead, and a box in the wrong place is worse than none. The anchor
+handle, snapping, parent-aware and 3D gizmos, and motion paths are unchanged from before
+this entry: still specified, still absent, now listed in docs/TODO.md against §2.3.

@@ -4698,3 +4698,70 @@ Edit, Effects, Colour, Audio. Neither is a tool; both had nowhere else sensible
 to live, and the UI spec has always asked for the workspace names to be visible
 in the window chrome rather than buried in a menu. Snapping is, for now, a
 switch nothing reads: same rule as the tools, and the same reason.
+
+### Wireframes, and what "selected" means on the picture (K-215)
+
+Before this, the Viewer could show you one box round one layer and give you one
+small square to drag it by. Now the picture behaves the way an editor expects:
+you point at a layer and it lights up, you click and it is selected, you drag it
+and it moves, you drag from empty space and you sweep up everything inside the
+rectangle. This section is what is underneath that.
+
+**A wireframe is a rectangle that knows what it is round.** Every layer has a
+size of its own — a clip is as big as its video, a solid is whatever it was made
+at, a nested comp is the size of the comp inside it — and the box is that
+rectangle pushed through the layer's transform. So it moves, stretches and
+*turns* with the layer rather than staying square to the screen, which is the
+whole reason it is useful: a rotated layer's box tells you which way up it is. A
+Null layer has no picture at all, so it is given a 100×100 box by convention;
+without one you could never grab the very layers rigs are built out of.
+
+**Where those sizes come from, and why they arrive late.** Asking how big a
+video file is means opening the file, and opening files is slow and cannot be
+done in the middle of drawing a frame. So the Viewer keeps a small notebook: the
+easy answers (a solid, a precomp) are read straight from the document and thrown
+away whenever the document changes, and a clip is measured once and remembered
+for the whole session. Until that measurement comes back the layer is treated as
+comp-sized — the same guess the engine itself makes when it cannot read a file —
+and the box quietly corrects itself when the real answer lands.
+
+**Hit-testing runs backwards through the transform.** "Is the pointer inside this
+layer?" sounds like a question about a shape on screen, and it would be a fiddly
+one: the shape is a rotated, scaled, possibly very squashed quadrilateral. It is
+much easier asked the other way round — take the pointer, run it *backwards*
+through the layer's transform into the layer's own coordinates, and ask whether
+it is between 0 and the width. That is one subtraction and one rotation, it is
+exact at any zoom, and it is why the code has no polygon geometry in it at all.
+
+**The handles.** Eight small squares sit on the box's corners and edge midpoints;
+dragging one asks "what scale would put this corner under the pointer?" and
+writes that. Hold Shift and both directions take the same factor, so the layer
+keeps its proportions. A short bar stands off the top edge with a knob on the
+end: dragging it measures the angle swept about the layer's anchor point and adds
+it to the rotation the layer already had — Shift snaps to 45°. Both are the
+gestures After Effects has, and the bar is deliberately the same shape as AE's,
+because that is where people's hands go.
+
+**One trap worth knowing, because it cost a working gesture.** Flutter does not
+tell you a drag has started until the pointer has moved a certain distance —
+about 18 pixels. If you ask "what did they grab?" at *that* moment, the pointer
+has already left the handle, which is nine pixels across, and every handle drag
+gets treated as a drag of the layer's body. The fix is to remember where the
+pointer went *down*, separately, and decide from that; the distance already
+travelled is then added into the drag so the layer does not lag behind the
+pointer for the rest of the stroke.
+
+**Selecting several.** Shift-click adds a layer to the selection or takes it out
+again; dragging from empty space rubber-bands a rectangle and, when you let go,
+takes every layer *wholly* inside it — a layer the sweep merely clipped is far
+more likely to be an accident than an intention. Under the hood there is now a
+list of selected layers, with the old single "selected layer" kept as its first
+entry, because nearly everything else in the application works on one layer and
+had no reason to change. Deleting now deletes all of them, which is the only
+sensible reading once several boxes are on screen.
+
+**And the Hand tool is the same picture with the editing taken out.** It shows
+the boxes of whatever is selected, draws no handles, highlights nothing under the
+pointer, and every drag moves the *view* instead of the layer. That is the entire
+difference between the two tools, and it is why the tool lives in one value the
+whole application reads (see the toolbar section above).

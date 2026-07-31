@@ -84,7 +84,7 @@ the live in/out/offset); Sequence layers' clips still draw none.
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):** magnification, channel view,
 the transparency grid and wheel zoom about the cursor have landed. Still missing:
-- wireframe/overlay menu
+- the wireframe/overlay *menu* (the layer-controls switch itself landed with K-215)
 - guides menu
 - region-of-interest
 - colour-management indicator
@@ -95,13 +95,15 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7, K-214):** the strip, its groups,
 flyouts, shortcuts and the two switches at its right-hand end landed 2026-07-31. What is
 armed is a *tool*; what each tool then does is the backlog:
-- **Selection** - a drag on the picture pans it; picking a layer by clicking it, and
-    marquee-selecting several, is not built (the transform gizmo already drags a
-    selected layer, docs/07 §2.3).
+- **Selection** - built (K-215): click, Shift-click, marquee, body drag, the scale
+    handles and the rotation bar. What is left is on the gizmo rather than the tool —
+    see the layer-controls list below.
+- **Hand** - built (K-215): the grab pointer, and a drag that pans the view and never
+    the layer.
 - **Zoom** - click to zoom in about the pointer, `Alt` to zoom out. The wheel already
     does this; the tool does not.
-- **Rotation**, **Anchor point** - the gizmo drags a layer and its origin already; neither
-    is reachable through its tool.
+- **Rotation**, **Anchor point** - the gizmo rotates a layer from its bar (K-215) and the
+    anchor's own centre handle is not built; neither tool changes what a drag does yet.
 - **Razor** - `Ctrl+Shift+D` and Composition ▸ Cut clip at playhead exist; clicking a clip
     with the tool to cut it there does not.
 - **Shape tools** - a rubber-band drag committing mask geometry (the egui build had
@@ -114,6 +116,25 @@ armed is a *tool*; what each tool then does is the backlog:
 - **The workspace strip shows no preset after a restart** - `Workspace.activePreset` is
     session-only, because the stored layout is the user's own by then and may no longer
     match any preset.
+
+**Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3, K-215):** the
+wireframe, selection on the picture, the marquee, the move/scale/rotate gizmo and the bar's
+switch landed 2026-07-31. What that section still owes:
+- **The anchor-point centre handle** - the origin can be seen but not dragged; the `Y` tool
+    has nothing behind it.
+- **Scale and rotation of a multiple selection** - several layers move together, but each
+    keeps its own box and only a lone selection grows handles. AE scales a set about one
+    shared box.
+- **Snapping** - nothing snaps to anything, and the toolbar's switch is read by nothing
+    (docs/07 §4.5, §1.7).
+- **Parent-aware and 3D gizmos** - the box is built from the layer's own transform, so a
+    parented layer's box ignores its parent's placement and a 3D layer's ignores the camera.
+- **A keyframed position draws no box at all**, so an animated layer cannot be picked on the
+    picture. It wants the value *at the playhead*, which the read model does not carry.
+- **Text layers measure the comp, not their glyphs**, so a text layer's box is the whole
+    frame. Waiting on glyph bounds crossing the bridge.
+- **A move is still two ops** (x and y are separate properties), so one drag is two undo
+    steps.
 
 **Pixel pickers ([07-UI-SPEC.md](07-UI-SPEC.md) §6.1):**
 - **The x/y position pick is not built.** The colour pick and the depth-of-field focal

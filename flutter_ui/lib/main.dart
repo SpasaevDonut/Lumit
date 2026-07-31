@@ -29,6 +29,7 @@ import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
+import 'package:lumit_flutter/state/layer_bounds.dart';
 import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/state/workspace.dart';
@@ -366,6 +367,12 @@ class LumitUiState extends ChangeNotifier {
   /// The keyboard map every shortcut is looked up in (docs/07 §15, K-199).
   late final KeymapState keymap;
 
+  /// How big each layer's content is, for the Viewer's boxes and hit-testing
+  /// (K-215). Held here because the answer is the document's, not a panel's,
+  /// and probing a clip is disk work that must happen once rather than per
+  /// Viewer rebuild.
+  final LayerBoundsCache layerBounds = LayerBoundsCache();
+
   /// Which tool the toolbar has armed (docs/07 §1.7, K-214).
   ///
   /// Session state at the shell level, like the dropper below it and for the
@@ -535,7 +542,56 @@ class LumitUiState extends ChangeNotifier {
   /// first registration.
   ValueNotifier<int?> viewerFrameid = ValueNotifier(null);
 
+  /// The layer everything single-layer works on: Effect controls, the keyboard
+  /// commands, the Timeline's fold-out. The *primary* of the selection below.
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
+
+  /// The whole selection, primary first (K-215).
+  ///
+  /// Kept beside [selectedLayer] rather than replacing it, because almost
+  /// everything in the application acts on one layer and reads it directly —
+  /// and a second notifier is cheaper than teaching forty call sites to take
+  /// the first element of a list. The two are held in step by [_syncSelection]:
+  /// setting [selectedLayer] on its own (which the Timeline and the tests do)
+  /// makes that layer the entire selection, which is exactly what clicking one
+  /// row means.
+  final ValueNotifier<List<LayerReference>> selectedLayers =
+      ValueNotifier(const []);
+
+  /// The selection as ids, for a "is this one selected?" test that does not
+  /// walk the list per layer per paint.
+  Set<UuidValue> get selectedLayerIds =>
+      {for (final layer in selectedLayers.value) layer.internallayerId};
+
+  /// Replace the selection. The first entry becomes [selectedLayer].
+  void setSelection(List<LayerReference> layers) {
+    selectedLayers.value = List.unmodifiable(layers);
+    selectedLayer.value = layers.isEmpty ? null : layers.first;
+  }
+
+  /// Add [layer] to the selection, or take it out again — Shift-click.
+  void toggleSelected(LayerReference layer) {
+    final id = layer.internallayerId;
+    final next = [
+      for (final held in selectedLayers.value)
+        if (held.internallayerId != id) held,
+    ];
+    if (next.length == selectedLayers.value.length) next.add(layer);
+    setSelection(next);
+  }
+
+  void clearSelection() => setSelection(const []);
+
+  /// Keep the list honest when something sets the primary on its own.
+  void _syncSelection() {
+    final primary = selectedLayer.value;
+    if (primary == null) {
+      if (selectedLayers.value.isNotEmpty) selectedLayers.value = const [];
+      return;
+    }
+    if (selectedLayerIds.contains(primary.internallayerId)) return;
+    selectedLayers.value = List.unmodifiable([primary]);
+  }
 
   /// The frame every panel renders and previews at.
   ///
@@ -631,6 +687,7 @@ class LumitUiState extends ChangeNotifier {
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
+    selectedLayer.addListener(_syncSelection);
     // The keymap: restored from the workspace if the user has changed one,
     // otherwise the engine's shipped defaults (K-199). Held here because
     // every keypress goes through it and the settings page edits it, so it
@@ -716,10 +773,13 @@ class LumitUiState extends ChangeNotifier {
     sub?.cancel();
     _changes?.cancel();
     tools.dispose();
+    layerBounds.dispose();
     model.dispose();
     cacheChanged.dispose();
     viewerFrameid.dispose();
+    selectedLayer.removeListener(_syncSelection);
     selectedLayer.dispose();
+    selectedLayers.dispose();
     activePanel.dispose();
     super.dispose();
   }
@@ -990,12 +1050,17 @@ class _LumitAppViewState extends State<LumitAppView> {
           state.notifyDocumentChanged();
         }
       case 'edit.delete.selection':
-        final layer = ui.selectedLayer.value;
-        if (layer == null) {
+        // The whole selection, not just the primary (K-215): with several
+        // layers boxed in the Viewer, Delete taking one of them would be a
+        // surprise every time.
+        final layers = ui.selectedLayers.value;
+        if (layers.isEmpty) {
           handled = false;
         } else {
-          layer.delete();
-          ui.selectedLayer.value = null;
+          for (final layer in layers) {
+            layer.delete();
+          }
+          ui.clearSelection();
           state.notifyDocumentChanged();
         }
       // A bound action this shell has no call for yet — the menus carry those.

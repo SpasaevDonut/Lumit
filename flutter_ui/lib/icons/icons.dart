@@ -171,6 +171,12 @@ enum LumitIcon {
   cameraOrbit,
   cameraPan,
   cameraDolly,
+
+  /// The Viewer bar's layer-controls switch (K-215): a box with a handle on
+  /// each corner — the mark it governs, drawn small. Painter-drawn, because
+  /// what it depicts is Lumit's own gizmo rather than anything a general icon
+  /// set has a glyph for.
+  wireframe,
 }
 
 /// The size an icon draws at (15-DESIGN §5: 16px for panels, 20px for the
@@ -206,6 +212,7 @@ Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
     LumitIcon.nullLayer => NullLayerPainter(color),
     LumitIcon.anchorPoint => AnchorPointPainter(color),
     LumitIcon.roundedRectangle => RoundedRectanglePainter(color),
+    LumitIcon.wireframe => WireframePainter(color),
     _ => null,
   };
   if (painter != null) {
@@ -330,7 +337,8 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.circleFilled ||
       LumitIcon.nullLayer ||
       LumitIcon.anchorPoint ||
-      LumitIcon.roundedRectangle =>
+      LumitIcon.roundedRectangle ||
+      LumitIcon.wireframe =>
         const SizedBox.shrink(),
     };
 
@@ -503,4 +511,34 @@ class RoundedRectanglePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(RoundedRectanglePainter old) => old.color != color;
+}
+
+/// The layer-controls switch: a box with a small filled square at each corner —
+/// the gizmo the switch shows and hides, on the same 24×24 grid.
+class WireframePainter extends CustomPainter {
+  final Color color;
+  const WireframePainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide / _iconGridUnits;
+    Offset at(double x, double y) => Offset(x * s, y * s);
+    canvas.drawRect(
+      Rect.fromPoints(at(5, 5), at(19, 19)),
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _iconStrokeUnits * s,
+    );
+    final handle = Paint()..color = color;
+    for (final (x, y) in const [(5.0, 5.0), (19.0, 5.0), (19.0, 19.0), (5.0, 19.0)]) {
+      canvas.drawRect(
+        Rect.fromCenter(center: at(x, y), width: 4 * s, height: 4 * s),
+        handle,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(WireframePainter old) => old.color != color;
 }

@@ -54,6 +54,7 @@ import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/dropper_overlay.dart';
 import 'placeholder.dart';
+import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 
 /// The magnifications the picker offers. `null` means fit-to-panel, which is
@@ -74,6 +75,13 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
   double? _zoom;
   ViewerChannel _channel = ViewerChannel.rgb;
   bool _grid = true;
+
+  /// Whether the layer controls — the wireframe boxes, the handles and the
+  /// hover highlight — are drawn over the picture (K-215). On by default,
+  /// because a selected layer with no box is a layer you cannot see the extent
+  /// of; the switch exists for judging the picture itself, where any mark over
+  /// it is in the way.
+  bool _wireframes = true;
   Offset _pan = Offset.zero;
 
   /// The composition this Viewer has already asked for a frame of — so
@@ -163,6 +171,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
           zoom: _zoom,
           channel: _channel,
           grid: _grid,
+          wireframes: _wireframes,
           playing: playing,
           frame: frame,
           settings: settings,
@@ -173,6 +182,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
           }),
           onChannel: (c) => setState(() => _channel = c),
           onGrid: () => setState(() => _grid = !_grid),
+          onWireframes: () => setState(() => _wireframes = !_wireframes),
           onPlayPause: _togglePlay,
           onSeek: (f) => _seek(comp, ui, f),
           floating: round,
@@ -224,7 +234,9 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
                 uiState: ui,
                 fitted: fitted,
                 grid: _grid,
+                wireframes: _wireframes,
                 channel: _channel,
+                compSize: size,
                 footage: footage,
                 onPan: (delta) => setState(() => _pan += delta),
                 onChanged: () => setState(() {}),
@@ -353,13 +365,19 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
 Color viewerSurroundFor(LumitTheme t, {bool themed = false}) =>
     themed ? t.surface0 : t.viewerSurround;
 
-/// The picture, its checkerboard, and the selection overlay.
+/// The picture, its checkerboard, and the layer controls.
 class _Stage extends StatelessWidget {
   final CompositionReference comp;
   final LumitUiState uiState;
   final Rect fitted;
   final bool grid;
+
+  /// Whether the layer controls are drawn (the bar's wireframe switch).
+  final bool wireframes;
   final ViewerChannel channel;
+
+  /// The comp's own pixel size, measured once by the panel.
+  final BridgeCompSize compSize;
 
   /// The comp's footage layers' sources, read by the panel once per rebuild —
   /// not here, where playback would re-read them per frame.
@@ -372,11 +390,63 @@ class _Stage extends StatelessWidget {
     required this.uiState,
     required this.fitted,
     required this.grid,
+    required this.wireframes,
     required this.channel,
+    required this.compSize,
     required this.footage,
     required this.onPan,
     required this.onChanged,
   });
+
+  /// Every layer of the comp with its box, top of the stack first — what the
+  /// gizmo hit-tests, outlines and drags (K-215).
+  ///
+  /// Built from the read model (K-184), so this costs no bridge calls per
+  /// paint. Two kinds are left out on purpose: a Camera has no picture to put a
+  /// box round, and a layer whose position is a curve has no single point a
+  /// drag could add to — it would be a box drawn in the wrong place, which is
+  /// worse than none.
+  List<LayerBox> _boxes() {
+    if (fitted.isEmpty) return const [];
+    final model = uiState.model;
+    final revision = model.revision;
+    final viewScale =
+        compSize.width == 0 ? 1.0 : fitted.width / compSize.width;
+    double? still(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : null;
+
+    final out = <LayerBox>[];
+    for (final entry in model.layers) {
+      if (entry.info.kind == BridgeLayerKind.camera) continue;
+      final tf = entry.info.transform;
+      final px = still(tf.positionX);
+      final py = still(tf.positionY);
+      if (px == null || py == null) continue;
+      final sx = still(tf.scaleX);
+      final sy = still(tf.scaleY);
+      final rotation = still(tf.rotation);
+      out.add(LayerBox(
+        layer: entry.layer,
+        id: entry.layer.internallayerId,
+        map: ViewerLayerMap.of(
+          positionX: px,
+          positionY: py,
+          anchorX: still(tf.anchorX) ?? 0,
+          anchorY: still(tf.anchorY) ?? 0,
+          scaleXPercent: sx ?? 100,
+          scaleYPercent: sy ?? 100,
+          rotationDegrees: rotation ?? 0,
+          origin: fitted.topLeft,
+          viewScale: viewScale,
+        ),
+        bounds: uiState.layerBounds
+            .boundsOf(entry, compSize: compSize, revision: revision),
+        draggable: true,
+        scalable: sx != null && sy != null && rotation != null,
+        rotationDegrees: rotation ?? 0,
+      ));
+    }
+    return out;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -415,11 +485,26 @@ class _Stage extends StatelessWidget {
                 child: _Picture(uiState: uiState, channel: channel),
               ),
               _missingSlate(context, t),
-              _SelectionOverlay(
-                comp: comp,
-                uiState: uiState,
-                fitted: fitted,
-                onChanged: onChanged,
+              // The layer controls. With the Hand tool armed this only draws —
+              // it lets every gesture through to the pan above, which is the
+              // whole difference between the two tools over the picture.
+              ListenableBuilder(
+                // Three things move the boxes without the panel being rebuilt:
+                // the selection (a Timeline click), a probe landing with a
+                // clip's real size, and an edit changing a transform.
+                listenable: Listenable.merge([
+                  uiState.selectedLayers,
+                  uiState.layerBounds,
+                  uiState.model,
+                ]),
+                builder: (context, _) => ViewerGizmoLayer(
+                  comp: comp,
+                  uiState: uiState,
+                  boxes: _boxes(),
+                  showControls: wireframes,
+                  tool: uiState.tools.tool,
+                  onChanged: onChanged,
+                ),
               ),
               // Above the overlay, because while the dropper is armed the whole
               // picture is a target: a drag handle under the pointer must not
@@ -880,234 +965,6 @@ ColorFilter? channelFilterFor(ViewerChannel channel) => switch (channel) {
         ]),
     };
 
-/// The selected layer's bounding box, and the handle that moves it.
-class _SelectionOverlay extends StatefulWidget {
-  final CompositionReference comp;
-  final LumitUiState uiState;
-  final Rect fitted;
-  final VoidCallback onChanged;
-
-  const _SelectionOverlay({
-    required this.comp,
-    required this.uiState,
-    required this.fitted,
-    required this.onChanged,
-  });
-
-  @override
-  State<_SelectionOverlay> createState() => _SelectionOverlayState();
-}
-
-class _SelectionOverlayState extends State<_SelectionOverlay> {
-  Offset _drag = Offset.zero;
-
-  /// Bounded preview rate for the move handle, holding the newest tick rather
-  /// than dropping it, so the picture ends the drag where the pointer did.
-  final PreviewThrottle _throttle = PreviewThrottle();
-
-  @override
-  void dispose() {
-    _throttle.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final t = ThemeScope.of(context).theme;
-    final layer = widget.uiState.selectedLayer.value;
-    if (layer == null || widget.fitted.isEmpty) {
-      return const SizedBox.shrink();
-    }
-
-    final size = widget.comp.getSize();
-    final map = _mapFor(layer, size);
-    if (map == null) return const SizedBox.shrink();
-
-    // The handle sits on the layer's position — the point a move actually
-    // moves — rather than on the box's middle, which is the anchor's business.
-    final centre = map.toScreen(map.ax, map.ay) + _drag;
-
-    return Stack(
-      children: [
-        Positioned.fromRect(
-          rect: widget.fitted,
-          child: IgnorePointer(
-            child: CustomPaint(
-              painter: _BoxPainter(
-                map: map,
-                size: size,
-                origin: widget.fitted.topLeft,
-                colour: t.accent,
-                nudge: _drag,
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          left: centre.dx - 7,
-          top: centre.dy - 7,
-          child: GestureDetector(
-            key: const ValueKey('viewer-move-handle'),
-            behavior: HitTestBehavior.opaque,
-            onPanStart: (_) => setState(() => _drag = Offset.zero),
-            onPanUpdate: (d) {
-              setState(() => _drag += d.delta);
-              _preview(layer, map);
-            },
-            onPanEnd: (_) => _commit(layer, map),
-            onPanCancel: () {
-              _throttle.cancel();
-              setState(() => _drag = Offset.zero);
-            },
-            child: SizedBox(
-              width: 14,
-              height: 14,
-              child: CustomPaint(painter: _HandlePainter(t.accent)),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// The layer↔screen map, or null when the layer's transform is animated in a
-  /// way this overlay cannot represent as a single position.
-  ViewerLayerMap? _mapFor(LayerReference layer, BridgeCompSize size) {
-    final tf = layer.getTransform();
-    double? still(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : null;
-
-    final px = still(tf.positionX);
-    final py = still(tf.positionY);
-    if (px == null || py == null) return null;
-
-    return ViewerLayerMap.of(
-      positionX: px,
-      positionY: py,
-      anchorX: still(tf.anchorX) ?? 0,
-      anchorY: still(tf.anchorY) ?? 0,
-      scaleXPercent: still(tf.scaleX) ?? 100,
-      scaleYPercent: still(tf.scaleY) ?? 100,
-      rotationDegrees: still(tf.rotation) ?? 0,
-      origin: widget.fitted.topLeft,
-      viewScale: size.width == 0 ? 1 : widget.fitted.width / size.width,
-    );
-  }
-
-  /// Comp-pixel position for the current drag.
-  (double, double) _moved(ViewerLayerMap map) => (
-        map.px + _drag.dx / map.viewScale,
-        map.py + _drag.dy / map.viewScale,
-      );
-
-  void _preview(LayerReference layer, ViewerLayerMap map) =>
-      _throttle.request(() => _sendPreview(layer, map));
-
-  void _sendPreview(LayerReference layer, ViewerLayerMap map) {
-    final (x, y) = _moved(map);
-    final tf = layer.getTransform();
-    widget.comp.renderFrameWithTransformPreview(
-      frame: BigInt.from(widget.uiState.playheadFrame.value),
-      scale: widget.uiState.viewerScale,
-      layer: layer,
-      transform: BridgeTransform(
-        anchorX: tf.anchorX,
-        anchorY: tf.anchorY,
-        positionX: BridgeScalar.static_(x),
-        positionY: BridgeScalar.static_(y),
-        positionZ: tf.positionZ,
-        scaleX: tf.scaleX,
-        scaleY: tf.scaleY,
-        rotation: tf.rotation,
-        rotationX: tf.rotationX,
-        rotationY: tf.rotationY,
-        opacity: tf.opacity,
-      ),
-    );
-  }
-
-  /// Two ops, because x and y are separate properties in the model — an
-  /// unavoidable pair, and the one place in this port where a single gesture is
-  /// not a single undo step. Recorded in docs/TODO.md.
-  void _commit(LayerReference layer, ViewerLayerMap map) {
-    final (x, y) = _moved(map);
-    final moved = _drag != Offset.zero;
-    // The commit is the last word: a held preview tick would land after it and
-    // put the provisional picture back.
-    _throttle.cancel();
-    setState(() => _drag = Offset.zero);
-    if (!moved) return;
-
-    layer.setTransform(
-        prop: BridgeTransformProp.positionX, value: BridgeScalar.static_(x));
-    layer.setTransform(
-        prop: BridgeTransformProp.positionY, value: BridgeScalar.static_(y));
-    widget.onChanged();
-  }
-}
-
-/// The selected layer's outline, at comp size through its own transform.
-class _BoxPainter extends CustomPainter {
-  final ViewerLayerMap map;
-  final BridgeCompSize size;
-  final Offset origin;
-  final Color colour;
-  final Offset nudge;
-
-  const _BoxPainter({
-    required this.map,
-    required this.size,
-    required this.origin,
-    required this.colour,
-    required this.nudge,
-  });
-
-  @override
-  void paint(Canvas canvas, Size canvasSize) {
-    // Layer space is the comp's own pixel grid for every kind the Viewer can
-    // outline today, so the box is the comp rectangle put through the layer's
-    // transform.
-    final w = size.width.toDouble();
-    final h = size.height.toDouble();
-    final corners = [
-      map.toScreen(0, 0),
-      map.toScreen(w, 0),
-      map.toScreen(w, h),
-      map.toScreen(0, h),
-    ].map((p) => p - origin + nudge).toList();
-
-    final path = Path()..addPolygon(corners, true);
-    canvas.drawPath(
-      path,
-      Paint()
-        ..color = colour
-        ..strokeWidth = 1
-        ..style = PaintingStyle.stroke,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_BoxPainter old) => true;
-}
-
-class _HandlePainter extends CustomPainter {
-  final Color colour;
-  const _HandlePainter(this.colour);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawCircle(
-      size.center(Offset.zero),
-      size.width / 2 - 1,
-      Paint()
-        ..color = colour
-        ..strokeWidth = 1.5
-        ..style = PaintingStyle.stroke,
-    );
-  }
-
-  @override
-  bool shouldRepaint(_HandlePainter old) => old.colour != colour;
-}
 
 /// The transparency checkerboard behind the picture.
 class _CheckerPainter extends CustomPainter {
@@ -1139,6 +996,7 @@ class _Toolbar extends StatelessWidget {
   final double? zoom;
   final ViewerChannel channel;
   final bool grid;
+  final bool wireframes;
   final bool playing;
   final int frame;
   final BridgeCompSettings settings;
@@ -1146,6 +1004,7 @@ class _Toolbar extends StatelessWidget {
   final ValueChanged<double?> onZoom;
   final ValueChanged<ViewerChannel> onChannel;
   final VoidCallback onGrid;
+  final VoidCallback onWireframes;
   final VoidCallback onPlayPause;
   final ValueChanged<int> onSeek;
 
@@ -1157,6 +1016,7 @@ class _Toolbar extends StatelessWidget {
     required this.zoom,
     required this.channel,
     required this.grid,
+    required this.wireframes,
     required this.playing,
     required this.frame,
     required this.settings,
@@ -1164,6 +1024,7 @@ class _Toolbar extends StatelessWidget {
     required this.onZoom,
     required this.onChannel,
     required this.onGrid,
+    required this.onWireframes,
     required this.onPlayPause,
     required this.onSeek,
     this.floating = false,
@@ -1226,6 +1087,26 @@ class _Toolbar extends StatelessWidget {
                 onPressed: onGrid,
                 child: Text('Grid',
                     style: t.small.copyWith(color: grid ? t.accent : null)),
+              ),
+            ),
+            const SizedBox(width: 6),
+            // The layer controls switch (K-215): the boxes, handles and hover
+            // highlight over the picture. An icon rather than a word, because
+            // what it governs is a *mark* — and the mark is what it draws.
+            LumitTooltip(
+              message: wireframes
+                  ? 'Hide the layer controls over the picture'
+                  : 'Show the layer controls over the picture',
+              child: HouseButton(
+                key: const ValueKey('viewer-wireframes'),
+                small: true,
+                frameless: true,
+                onPressed: onWireframes,
+                child: lumitIcon(
+                  LumitIcon.wireframe,
+                  size: iconSize,
+                  color: wireframes ? t.accent : t.textSecondary,
+                ),
               ),
             ),
             const SizedBox(width: 6),

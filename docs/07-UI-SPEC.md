@@ -237,16 +237,44 @@ A single compact bar at the bottom of the Viewer holds, left to right:
 
 The bar MUST remain one row; overflow collapses from the right into a chevron menu.
 
-### 2.3 Transform gizmo
+### 2.3 Layer controls: the wireframe and the transform gizmo (K-215)
 
 - Selecting a visual layer shows a combined gizmo in comp space: move (body drag), scale
-  (corner/edge handles, `Shift` for uniform), rotate (just outside corners), and anchor
-  point (distinct centre handle, `Y` tool to drag anchor without moving the layer).
+  (corner/edge handles, `Shift` for uniform), rotate (a bar standing off the top edge), and
+  anchor point (distinct centre handle, `Y` tool to drag anchor without moving the layer).
+- The **wireframe** is the box itself: the layer's own content rectangle put through its
+  transform, so it turns and stretches with the layer rather than staying axis-aligned. A
+  layer's rectangle is its content's — a clip's frame size, a solid's dimensions, a nested
+  comp's size — and comp-sized for the kinds that have no content of their own (adjustment,
+  text until it measures its glyphs). A Null draws its own 100×100 box, so a layer with no
+  picture can still be selected and dragged.
+- **Selecting on the picture** (Selection tool): clicking takes the topmost layer whose box
+  contains the pointer; `Shift`-clicking adds to or removes from the selection; clicking
+  empty space clears it. Hovering a layer that is not selected MUST draw its box faintly, so
+  a click never selects something the user could not see coming.
+- **The marquee**: dragging from a point inside no layer rubber-bands a rectangle and, on
+  release, selects every layer **wholly** inside it. `Shift` adds the catch to the current
+  selection instead of replacing it.
+- **Dragging** a layer's body moves it; dragging one that is not selected selects it first,
+  and dragging one that is already part of a selection moves the whole selection together.
 - The gizmo MUST operate in the layer's transformed space (including parents) and respect
   3D orientation when the layer is 3D.
+- The **Hand tool** never edits on the picture: with it armed the wireframe is a read-out of
+  what is selected — no handles, no hover highlight — and every drag pans the view.
+- A **layer-controls switch** in the Viewer bar (§2.2) hides and shows the boxes, the
+  handles and the hover highlight, for judging the picture itself. It governs *drawing* only:
+  clicks and drags still select and move, exactly as After Effects' Show Layer Controls does.
 - Snapping while dragging: layer edges/centres to comp edges/centres, guides, grid, and
   other layers' anchors/edges. Snapping is on by default; holding `Ctrl` suspends it during
   a drag. Snap matches MUST be indicated visually at the moment of snap.
+
+**Implementation status (2026-07-31).** Built: the wireframe, hover, click and Shift-click
+selection, the marquee, body-drag move (of a whole multiple selection), the eight scale
+handles with `Shift` for uniform, the rotation bar with `Shift` snapping to 45°, and the
+bar's switch. Not built: the anchor-point centre handle, snapping of any kind, parent-aware
+and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (a multiple
+selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
+is keyframed draws no box: there is no single value for a drag to add to.
 
 ### 2.4 Motion paths
 
