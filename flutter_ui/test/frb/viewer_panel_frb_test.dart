@@ -545,6 +545,32 @@ void main() {
       return null;
     }
 
+    /// **A layer switched off is not on the picture at all (K-230).** Its eye
+    /// being off is how you get it out of the way; a box round something
+    /// invisible, and a click that selected it, put it right back in the way.
+    testWidgets('a hidden layer is neither drawn nor clickable, and the one'
+        ' under it takes the click', (tester) async {
+      final p = withLayer();
+      // A second comp-sized layer on top of the first, then switched off.
+      final above = p.comp.addSolidLayer();
+      above.setSwitch(switch_: BridgeLayerSwitch.visible, on_: false);
+      p.uiState.clearSelection();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.tapAt(fittedRect(tester, p.comp).center);
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          p.layer.internallayerId,
+          reason: 'the click fell through the hidden layer to the one below');
+      expect(
+          p.uiState.selectedLayers.value
+              .any((l) => l.internallayerId == above.internallayerId),
+          isFalse,
+          reason: 'and the hidden layer was never a target');
+    });
+
     /// **A drag takes what is selected, whatever is on top of it (K-230).**
     /// A layer chosen in the Timeline could not be dragged wherever anything
     /// covered it: the press swapped the selection for the topmost layer and

@@ -5513,9 +5513,14 @@ Drawn pointers have one trap worth knowing. The thing that reports "the mouse is
 here" as it moves over a region is a `MouseRegion`, and it reports *hovering* —
 which by definition stops the moment a button goes down. A pointer drawn from
 hover alone therefore freezes where you pressed and sits inside the very shape
-you are dragging out. Every drawn pointer here takes its position from the drag
-as well, which is why the Hand tool owns its own pan gesture instead of letting
-the panel underneath have it.
+you are dragging out — and it stops for *any* button, including the right one,
+which none of these tools do anything with. Taking the position from each tool's
+own drag was only half a fix: left-drag followed, right-click still pinned the
+pointer until the button came up. So they all share one small wrapper,
+`DrawnPointerRegion`, which listens for pointer *movement* rather than hovering.
+Movement is reported whatever the button is doing, so the drawn pointer keeps up
+either way — and it is only about where the mark is painted: no tool has gained a
+gesture on a button it did not already answer to.
 
 ### One gesture, one undo step (K-230)
 
@@ -5609,3 +5614,21 @@ a focal distance and a frame rate across the bridge.
 Neither answer can change without an edit landing, so both are worked out once
 and held until one does. The rule generalises: **if a rebuild can be caused by
 moving the mouse, nothing in it may cross the bridge.**
+
+There was one more layer of this, and it is the subtle one (K-231). The held
+copy of the document — the read model — used to *check* with the engine that the
+document had not moved before answering any question about it. Cheap-sounding,
+and it grouped those checks to one per frame while a frame was being built. But
+outside a frame it checked every single time, and "outside a frame" is exactly
+where mouse handlers run. So the cheapest question in the application was being
+asked hundreds of times a second, to be told nothing had changed, because moving
+a mouse changes no document.
+
+Drawing does not need the check at all: when the document does change, the model
+is refreshed and everything drawing from it is repainted anyway. So the paint
+path reads the copy in hand and asks nothing. The catch — and it is worth
+knowing, because it bit during this change — is that the check was quietly
+covering for something else: a panel that commits its own edit and then draws
+would see its own edit only because the check happened to notice. Every panel
+that commits now refreshes the model itself, which is what the Timeline and
+Effect controls were already doing. **Tell the model; do not make drawing ask.**

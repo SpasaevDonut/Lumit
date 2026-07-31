@@ -310,8 +310,11 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   typed into is still visible. It was comp-sized, which drew a box the size of the frame round
   twelve-pixel text. A Null draws its own 100×100 box, so a layer with no
   picture can still be selected and dragged.
-- **Selecting on the picture** (Selection tool): clicking takes the topmost layer whose box
-  contains the pointer; `Shift`-clicking adds to or removes from the selection; clicking
+- **A layer switched off is not on the picture** (K-231): it gets no wireframe, no hover
+  highlight and no handles, and a click over it MUST fall through to whatever is under it. Its
+  eye being off is how a layer is got out of the way.
+- **Selecting on the picture** (Selection tool): clicking takes the topmost *visible* layer
+  whose box contains the pointer; `Shift`-clicking adds to or removes from the selection; clicking
   empty space clears it. Hovering a layer that is not selected MUST draw its box faintly, so
   a click never selects something the user could not see coming.
 - **The marquee**: dragging from a point inside no layer rubber-bands a rectangle and, on
@@ -326,6 +329,10 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
 - **One gesture is one undo step** (K-230). A drag writes Position x and y, and a scale writes
   both axes, in a single batched op: an undo that put the layer back along one axis only reads
   as the undo being broken rather than as two honest edits.
+- **Scale may be negative** (K-231). A handle dragged past the anchor turns the layer over,
+  which is how a layer is mirrored; only a scale of exactly zero is barred, because the
+  layer↔screen map inverts it. The box MUST follow a scale drag as it happens, the same rule a
+  turn follows.
 - The gizmo's **centre handle is the anchor point** (K-221), and dragging it pans behind —
   the pivot moves, the picture does not — with the same `Shift` axis lock and `Ctrl`/`Cmd`
   key-point snapping the Anchor point tool has. Its grab radius MUST be much tighter than a
@@ -459,9 +466,15 @@ as the Rotation, Anchor point and Razor tools already do.
 with the ordinary arrow — which is why the Hand and Zoom tools looked like no tool at all. Any
 pointer this application needs and a platform lacks MUST be drawn rather than named.
 
-**A drawn pointer MUST follow the drag, not only the hover** (K-230). A `MouseRegion` stops
-reporting a hovering pointer the moment a button goes down, so a pointer drawn from hover alone
-freezes where the press landed — inside the very shape being dragged out.
+**A drawn pointer MUST follow the pointer whichever button is held, not only the hover**
+(K-230). A `MouseRegion` stops reporting a hovering pointer the moment a button goes down, so a
+pointer drawn from hover alone freezes where the press landed — inside the very shape being
+dragged out. Hover stops for **any** button, including ones the tool does nothing with: taking
+the position from the tool's own drag callbacks fixes the left button only, and a right-click
+over the Viewer still pins the drawn pointer until the button comes up. The position MUST
+therefore come from pointer *move* events, which arrive whatever the button, and the drawn
+pointer MUST clear when the pointer leaves the panel. Following the pointer is a drawing rule
+only: no tool gains a gesture on a button it did not already handle.
 
 | Tool | Pointer |
 |---|---|

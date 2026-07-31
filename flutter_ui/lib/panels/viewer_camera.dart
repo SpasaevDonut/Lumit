@@ -385,12 +385,10 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   Widget build(BuildContext context) {
     if (!widget.active) return const SizedBox.shrink();
     return Positioned.fill(
-      child: MouseRegion(
-        // Hidden, because the drawn pointer below replaces it (K-226).
-        cursor: SystemMouseCursors.none,
-        onEnter: (e) => setState(() => _pointer = e.localPosition),
-        onHover: (e) => setState(() => _pointer = e.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      // The system pointer is hidden, because the drawn pointer below replaces
+      // it (K-226).
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (_) {

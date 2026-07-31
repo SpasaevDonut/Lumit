@@ -35,6 +35,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import '../state/preview_throttle.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
+import 'viewer_tool_cursor.dart';
 
 /// How close, in screen pixels, a snapped anchor has to be to a key point.
 const double anchorSnapDistance = 12;
@@ -154,11 +155,8 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
     final at = _pointer;
     final target = _acting ?? (at == null ? null : _targetAt(at));
     return Positioned.fill(
-      child: MouseRegion(
-        cursor: SystemMouseCursors.none,
-        onEnter: (event) => setState(() => _pointer = event.localPosition),
-        onHover: (event) => setState(() => _pointer = event.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
         child: Listener(
           onPointerDown: (event) => _downAt = event.localPosition,
           child: GestureDetector(

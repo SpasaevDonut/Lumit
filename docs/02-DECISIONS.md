@@ -4233,3 +4233,40 @@ the panels underneath for nothing.
 **The snapping switch is removed.** Nothing in the application read it (docs/07 §1.7 said so
 outright). A toggle that governs nothing is worse than a missing one: it makes the reader doubt
 what snapping *is* here rather than what it is set to. It returns with the snapping it governs.
+
+**K-231 · DECIDED · The second pass over the tools, from using them (2026-07-31).** Follows
+K-230 in the same shape: corrections found by the owner in a working build, recorded together.
+
+**A layer switched off is not on the picture at all.** It gets no wireframe and takes no click,
+and a click over it falls through to whatever is underneath. Switching a layer's eye off is how
+you get it out of the way; a box round something invisible, and a click that selected it, put
+it straight back in the way.
+
+**A scale in flight is drawn in flight, and a scale may be negative.** The wireframe follows a
+scale drag exactly as K-230 made it follow a turn — one shared "the box as the gesture in
+flight would have it" in the gizmo, which the rotation knob, the scale handles and the Rotation
+tool all pass through. And the layer↔screen map no longer floors the factor just above zero: a
+handle dragged past the anchor turns the layer over, which is how every editor mirrors a layer.
+Only *zero* is barred, because the inverse map divides by it; the sign is kept.
+
+**Drawing reads the copy in hand; only editing checks.** The read model (K-184) asked the
+engine whether the document had moved before answering — once per frame while a frame was being
+built, and *every time* outside one, which is where every pointer handler runs. So a tool that
+redraws as the mouse moves asked that question at the rate a mouse reports, and the answer was
+always no: moving a mouse changes no document. The paint path now reads `heldLayers` /
+`heldRevision`, which ask nothing. That is safe precisely because a change refreshes the model
+and notifies, and everything that draws is listening — but it means **a panel that commits an
+edit must refresh the model itself**, which the Timeline and Effect controls already did and
+the Viewer now does too. Checking-as-you-draw was covering for that, invisibly.
+
+**The pointer a tool draws follows the mouse whichever button is held.** Recorded under K-230's
+pointer rules in docs/07 §2.3.3, and worth naming here for the shape of the bug: `MouseRegion`
+reports *hover*, which stops the moment any button goes down — including buttons the tool does
+not answer to at all. So right-clicking froze the drawn pointer where it was pressed until the
+button came up. The position comes from pointer *move* events now, through one shared
+`DrawnPointerRegion` rather than seven copies of the tracking.
+
+**A drawn pointer is one frame behind, and that is inherent.** The system pointer is composited
+by the operating system; ours is painted by the application, so it arrives with the frame. The
+cost is kept to a repaint rather than a rebuild, and a tool that can wear a system pointer
+still does — which is why only the tools with no platform cursor draw their own.

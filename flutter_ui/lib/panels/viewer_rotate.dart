@@ -30,6 +30,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 
 import '../state/preview_throttle.dart';
 import 'viewer_gizmo.dart';
+import 'viewer_tool_cursor.dart';
 
 /// How wide the drawn pointer's arc is, in radians: shallow when the pointer is
 /// out along an edge, tight when it is out towards a corner.
@@ -200,13 +201,11 @@ class _ViewerRotateLayerState extends State<ViewerRotateLayer> {
         : rotateCursorFor(pointer: at, box: _shapeBox(at));
 
     return Positioned.fill(
-      child: MouseRegion(
-        // Hidden, because what replaces it is drawn below — and a system arrow
-        // sitting inside the curved mark would read as two pointers.
-        cursor: SystemMouseCursors.none,
-        onEnter: (event) => setState(() => _pointer = event.localPosition),
-        onHover: (event) => setState(() => _pointer = event.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      // The system pointer is hidden, because what replaces it is drawn below —
+      // and a system arrow sitting inside the curved mark would read as two
+      // pointers.
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
         child: Listener(
           onPointerDown: (event) => _downAt = event.localPosition,
           child: GestureDetector(

@@ -367,7 +367,16 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
                   _zoomMotion.value = 1;
                   _pan += delta;
                 }),
-                onChanged: () => setState(() {}),
+                // The model is *told* an edit landed, rather than the boxes
+                // checking for themselves as they draw (K-230): the Viewer
+                // commits its own edits, and the drawing path reads the held
+                // copy now, so this is what puts the new document on screen
+                // without waiting for the change stream's round trip. The same
+                // thing every other panel does after committing.
+                onChanged: () {
+                  ui.model.refresh();
+                  setState(() {});
+                },
                 onZoomAt: (at, {required bool out}) => applyZoom(zoomAboutPoint(
                       cursor: at,
                       factor: out ? 1 / zoomToolStep : zoomToolStep,
@@ -598,21 +607,29 @@ class _Stage extends StatelessWidget {
   /// gizmo hit-tests, outlines and drags (K-217).
   ///
   /// Built from the read model (K-184), so this costs no bridge calls per
-  /// paint. Two kinds are left out on purpose: a Camera has no picture to put a
-  /// box round, and a layer whose position is a curve has no single point a
-  /// drag could add to — it would be a box drawn in the wrong place, which is
-  /// worse than none.
+  /// paint. Three kinds are left out on purpose: a Camera has no picture to put
+  /// a box round; a layer whose position is a curve has no single point a drag
+  /// could add to — it would be a box drawn in the wrong place, which is worse
+  /// than none; and **a layer switched off is not on the picture at all**
+  /// (K-230), so it gets no wireframe and takes no click. Switching a layer's
+  /// eye off is how you get it out of the way; a box round something invisible,
+  /// and a click that selected it, put it right back in the way.
   List<LayerBox> _boxes() {
     if (fitted.isEmpty) return const [];
     final model = uiState.model;
-    final revision = model.revision;
+    // The held copy, not a checked one (K-230): this runs on every rebuild, and
+    // a pan rebuilds on every movement of the pointer. A change to the document
+    // refreshes the model and repaints this from the new one, so checking here
+    // only asked the engine a question the answer to which was always no.
+    final revision = model.heldRevision;
     final viewScale =
         compSize.width == 0 ? 1.0 : fitted.width / compSize.width;
     double? still(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : null;
 
     final out = <LayerBox>[];
-    for (final entry in model.layers) {
+    for (final entry in model.heldLayers) {
       if (entry.info.kind == BridgeLayerKind.camera) continue;
+      if (!entry.info.switches.visible) continue;
       final tf = entry.info.transform;
       final px = still(tf.positionX);
       final py = still(tf.positionY);

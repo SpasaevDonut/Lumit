@@ -27,6 +27,53 @@ import 'package:lumit_flutter/state/tools.dart';
 
 import '../icons/icons.dart';
 
+/// Where the pointer is, for a tool that draws its own, and the hidden system
+/// cursor that goes with it (K-230).
+///
+/// **Why a `Listener` and not the `MouseRegion` alone.** A `MouseRegion` reports
+/// *hover*, and hovering stops the instant any mouse button is held — including
+/// the secondary one, which none of these tools do anything with. Taken from
+/// hover alone, a drawn pointer freezes where the press landed and stays frozen
+/// until the button comes up or the pointer leaves the panel: a right-click over
+/// the picture pinned the hand, the magnifier and the rest in place.
+/// `onPointerMove` fires whichever button is down, so the drawn pointer keeps
+/// following the real one. Nothing here handles a *gesture*; this only says
+/// where to draw.
+///
+/// [onPointer] is given the position in this widget's own coordinates, and null
+/// when the pointer has left — which is what a drawn pointer should draw
+/// nothing for.
+class DrawnPointerRegion extends StatelessWidget {
+  final ValueChanged<Offset?> onPointer;
+
+  /// The system cursor underneath. Hidden for everything that draws its own,
+  /// but the Type tool's horizontal member keeps the platform's I-beam.
+  final MouseCursor cursor;
+
+  final Widget child;
+
+  const DrawnPointerRegion({
+    super.key,
+    required this.onPointer,
+    required this.child,
+    this.cursor = SystemMouseCursors.none,
+  });
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+        cursor: cursor,
+        // The enter is the `MouseRegion`'s alone: it fires when the panel
+        // appears under a pointer that is not moving, which no move event would.
+        onEnter: (event) => onPointer(event.localPosition),
+        onExit: (_) => onPointer(null),
+        child: Listener(
+          onPointerHover: (event) => onPointer(event.localPosition),
+          onPointerMove: (event) => onPointer(event.localPosition),
+          child: child,
+        ),
+      );
+}
+
 /// How far the tool's badge sits from the pointer, and how big it is drawn.
 ///
 /// Down and to the right, out of the way of what is being drawn: a badge above
@@ -303,10 +350,9 @@ class _HandPainter extends CustomPainter {
 /// The Hand tool over the picture: the drawn hand, and the drag that pans.
 ///
 /// It takes the drag itself rather than letting it fall through to the panel,
-/// for one reason: a `MouseRegion` stops reporting the pointer the moment a
-/// button goes down, and a hand that freezes where you pressed is worse than no
-/// hand at all. Owning the gesture means the pointer's position keeps arriving
-/// for as long as the pan lasts.
+/// so the pan is this layer's own gesture. Where the hand is *drawn* comes from
+/// [DrawnPointerRegion], which is what keeps it following the pointer while a
+/// button — any button — is held.
 class ViewerHandLayer extends StatefulWidget {
   /// Whether the Hand tool is armed. Inert otherwise — no pointer taken, no
   /// system cursor hidden.
@@ -338,13 +384,11 @@ class _ViewerHandLayerState extends State<ViewerHandLayer> {
   Widget build(BuildContext context) {
     if (!widget.active) return const SizedBox.shrink();
     return Positioned.fill(
-      child: MouseRegion(
-        // Hidden, because the hand below replaces it: an arrow sitting inside
-        // the drawn hand would read as two pointers (K-219's rule).
-        cursor: SystemMouseCursors.none,
-        onEnter: (e) => setState(() => _pointer = e.localPosition),
-        onHover: (e) => setState(() => _pointer = e.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      // The system pointer is hidden, because the hand below replaces it: an
+      // arrow sitting inside the drawn hand would read as two pointers (K-219's
+      // rule).
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onPanStart: (d) => setState(() {

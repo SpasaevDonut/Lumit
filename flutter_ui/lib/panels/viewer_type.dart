@@ -183,12 +183,9 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
     final vertical = widget.tool == ToolMode.typeVertical;
     final t = ThemeScope.of(context).theme;
     return Positioned.fill(
-      child: MouseRegion(
-        cursor:
-            vertical ? SystemMouseCursors.none : SystemMouseCursors.text,
-        onEnter: (e) => setState(() => _pointer = e.localPosition),
-        onHover: (e) => setState(() => _pointer = e.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      child: DrawnPointerRegion(
+        cursor: vertical ? SystemMouseCursors.none : SystemMouseCursors.text,
+        onPointer: (at) => setState(() => _pointer = at),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: _onTapUp,

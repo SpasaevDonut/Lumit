@@ -159,6 +159,20 @@ class LayerBox {
     this.masks = const [],
   });
 
+  /// The same box with the layer scaled to [sxPercent] / [syPercent] — the
+  /// shape a scale in flight has, before it is committed (K-230). Negative is
+  /// allowed and means what it says: the layer is turned over.
+  LayerBox scaledTo(double sxPercent, double syPercent) => LayerBox(
+        layer: layer,
+        id: id,
+        map: map.scaledTo(sxPercent, syPercent),
+        bounds: bounds,
+        draggable: draggable,
+        scalable: scalable,
+        rotationDegrees: rotationDegrees,
+        masks: masks,
+      );
+
   /// The same box with the layer turned to [degrees] — the shape a rotation in
   /// flight has, before it is committed (K-230).
   LayerBox turnedTo(double degrees) => LayerBox(
@@ -565,16 +579,26 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     );
   }
 
-  /// [box] as the turn in flight would have it (K-230).
+  /// [box] as the gesture in flight would have it (K-230).
   ///
-  /// Two turns can be in flight, never at once: the Rotation tool's, published
-  /// on [LumitUiState.liveRotations], and this gizmo's own rotation knob, which
-  /// is local. Both end up here, so the box a paint draws is the box the
-  /// picture underneath is being previewed as.
+  /// The picture underneath is previewed at the value being dragged towards
+  /// while the document still holds the old one, so a box built from the
+  /// document lags the picture and only catches up on release. Three gestures
+  /// can be in flight, never at once: this gizmo's own rotation knob and its
+  /// scale handles, both local, and the Rotation tool's turn, which arrives on
+  /// [LumitUiState.liveRotations] from another layer of the Viewer's stack.
   LayerBox _live(LayerBox box) {
-    if (_drag == _GizmoDrag.rotate && _acting?.id == box.id) {
-      final degrees = _rotationNow();
-      if (degrees != null) return box.turnedTo(degrees);
+    if (_acting?.id == box.id) {
+      switch (_drag) {
+        case _GizmoDrag.rotate:
+          final degrees = _rotationNow();
+          if (degrees != null) return box.turnedTo(degrees);
+        case _GizmoDrag.scale:
+          final scale = _scaleNow();
+          if (scale != null) return box.scaledTo(scale.$1, scale.$2);
+        default:
+          break;
+      }
     }
     final degrees = widget.uiState.liveRotations.value[box.id];
     return degrees == null ? box : box.turnedTo(degrees);

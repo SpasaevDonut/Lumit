@@ -171,16 +171,13 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
   Widget build(BuildContext context) {
     if (!widget.active) return const SizedBox.shrink();
     return Positioned.fill(
-      child: MouseRegion(
-        // Hidden and replaced below (K-230): `zoomIn` and `zoomOut` are in
-        // Flutter's list of pointers but not in the Windows embedder's, where
-        // an unknown one silently becomes the ordinary arrow — so the Zoom tool
-        // looked like no tool at all. A drawn magnifier is the only one there
-        // is.
-        cursor: SystemMouseCursors.none,
-        onEnter: (e) => setState(() => _pointer = e.localPosition),
-        onHover: (e) => setState(() => _pointer = e.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      // The system pointer is hidden and replaced below (K-230): `zoomIn` and
+      // `zoomOut` are in Flutter's list of pointers but not in the Windows
+      // embedder's, where an unknown one silently becomes the ordinary arrow —
+      // so the Zoom tool looked like no tool at all. A drawn magnifier is the
+      // only one there is.
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (details) => widget.onZoomAt(details.localPosition,

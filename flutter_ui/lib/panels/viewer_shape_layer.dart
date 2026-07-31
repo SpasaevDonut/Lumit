@@ -141,20 +141,15 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final t = ThemeScope.of(context).theme;
     final target = _target;
     return Positioned.fill(
-      child: MouseRegion(
-        // Hidden, because the drawn pointer below replaces it (K-226): the
-        // eyedropper's crosshair, badged with this tool's own icon.
-        cursor: SystemMouseCursors.none,
-        onEnter: (event) => setState(() => _pointer = event.localPosition),
-        onHover: (event) => setState(() {
-          _pointer = event.localPosition;
+      // The system pointer is hidden, because the drawn pointer below replaces
+      // it (K-226): the eyedropper's crosshair, badged with this tool's own
+      // icon.
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() {
+          _pointer = at;
           // The Pen also draws the edge it would place next, from the last
           // point placed to here.
-          if (_isPen) _penPointer = event.localPosition;
-        }),
-        onExit: (_) => setState(() {
-          _pointer = null;
-          _penPointer = null;
+          _penPointer = _isPen ? at : null;
         }),
         child: Listener(
           onPointerDown: (event) => _downAt = event.localPosition,
@@ -199,11 +194,8 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
   void _onPanStart(DragStartDetails details) {
     final at = _downAt ?? details.localPosition;
-    // The drawn pointer follows the pressed button too (K-230). A MouseRegion
-    // reports *hover*, which stops the moment a button goes down — so the
-    // crosshair used to stick where the press landed and sit inside the shape
-    // being dragged out, which reads as the pointer having frozen.
-    _pointer = details.localPosition;
+    // Where the crosshair is drawn is [DrawnPointerRegion]'s business, whichever
+    // button is down (K-230).
     if (_isPen) {
       // A click that became a drag: the vertex lands where the press was, and
       // the drag pulls its handles out.

@@ -391,4 +391,46 @@ void main() {
       }
     });
   });
+
+  /// **A scale in flight (K-230), and a scale that flips.** The same rule the
+  /// turn follows: the picture is previewed at the value being dragged towards,
+  /// so the box has to be drawn there too. And a handle dragged *past* the
+  /// anchor turns the layer over — which the map used to make impossible by
+  /// flooring the factor just above zero, so a layer could be squashed to
+  /// nothing and never mirrored.
+  group('A box scaled to a size it has not been committed at', () {
+    test('its corners are where the scaled layer would put them', () {
+      final full = box(size: const Size(200, 100));
+      final half = full.scaledTo(50, 50);
+      // Anchored on its own middle at (300, 200): at half size the box runs
+      // from (250, 175) to (350, 225).
+      expect(half.corners.first.dx, closeTo(250, 1e-6));
+      expect(half.corners.first.dy, closeTo(175, 1e-6));
+      expect(half.corners[2].dx, closeTo(350, 1e-6));
+      expect(half.corners[2].dy, closeTo(225, 1e-6));
+    });
+
+    test('a negative scale turns the layer over rather than collapsing it', () {
+      final flipped = box(size: const Size(200, 100)).scaledTo(-100, 100);
+      // The layer's own top-left corner is now on the right of the anchor.
+      expect(flipped.corners.first.dx, closeTo(400, 1e-6));
+      expect(flipped.corners[1].dx, closeTo(200, 1e-6));
+      expect(flipped.corners.first.dy, closeTo(150, 1e-6),
+          reason: 'the axis that was not flipped is untouched');
+    });
+
+    test('a mirrored layer still hit-tests where it is drawn', () {
+      final flipped = box(size: const Size(200, 100)).scaledTo(-100, 100);
+      expect(flipped.contains(const Offset(350, 200)), isTrue);
+      expect(flipped.contains(const Offset(450, 200)), isFalse);
+    });
+
+    test('zero is the one factor barred, because the map inverts it', () {
+      expect(nonZeroScale(0), isNot(0));
+      expect(nonZeroScale(-0.0), isNot(0));
+      expect(nonZeroScale(-2), -2, reason: 'a real factor is left alone');
+      final collapsed = box().scaledTo(0, 0);
+      expect(collapsed.map.layerOf(const Offset(300, 200)).dx.isFinite, isTrue);
+    });
+  });
 }
