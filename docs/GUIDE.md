@@ -4924,3 +4924,42 @@ panel to redraw. It looked right again the instant anything else happened to
 rebuild the panel, which is the worst kind of bug — it works while you are
 testing it and fails while you are using it. The panel subscribes to the tool
 directly now.
+
+### Cutting a speed ramp without bending it (K-219)
+
+When the razor cuts a layer, both halves keep *everything* — same source, same
+effects, same speed map. That is what makes the cut invisible. It is also a
+problem the moment the layer is retimed: the two halves' speed ramps are not
+two curves that happen to look alike, they are literally the same curve. Bend
+the first half's speed afterwards and the second half bends with it.
+
+So the razor leaves a keyframe behind, at the cut, on both halves. Now each half
+has an end of its own to hold and can be reshaped without disturbing its
+neighbour. Premiere does the same thing to a speed ramp it cuts.
+
+**The interesting part is that the key changes nothing.** A cut that altered the
+ramp it was cutting would be worse than no cut at all. The trick is a piece of
+old, exact geometry called **de Casteljau's algorithm**: the curve between two
+keyframes is a cubic bezier, and a cubic can be split at any point into *two
+cubics whose union is the original curve*. Not a close approximation — the same
+curve, exactly. So the shape survives by construction; all the code has to do is
+convert the split pieces back into the speed-and-influence numbers a keyframe
+stores, which is just running the usual conversion backwards.
+
+The test for it is the honest kind: sample the curve two hundred times across
+the span, insert the key, sample again, and demand the two lists agree.
+
+### The pivot is a handle now
+
+The Selection tool's box grew a ninth handle: the anchor point in the middle.
+Dragging it pans behind — the pivot moves, the picture stays put — exactly as the
+Anchor point tool does, with the same Shift and Ctrl behaviour.
+
+One number in there is worth explaining, because it looks like a mistake. The
+scale handles grab from 16 pixels away; the anchor grabs from 8. That asymmetry
+*is* the design. The anchor usually sits in the middle of the layer, which is
+also the most natural place to grab a layer to drag it about. Give it the same
+generous target as the corners and every attempt to move a layer would pan behind
+instead — the pivot sliding away while the layer sat still, which reads as the
+drag being broken rather than as a different gesture. So the pivot has to be
+aimed at.

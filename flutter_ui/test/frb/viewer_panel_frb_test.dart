@@ -922,6 +922,54 @@ void main() {
           p.layer.internallayerId);
     });
 
+    testWidgets('the gizmo\'s centre handle pans behind, and a drag beside it'
+        ' still moves the layer', (tester) async {
+      final p = withLayer();
+      halveIt(p.layer);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      double at(BridgeScalar s) => (s as BridgeScalar_Static).field0;
+      final before = p.layer.getTransform();
+      final anchorBefore = at(before.anchorX);
+      final positionBefore = at(before.positionX);
+
+      // Dead on the pivot — the middle of a layer anchored on its own centre.
+      final box = boxRect(tester, p.comp, 50);
+      var gesture = await tester.startGesture(box.center);
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(8, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final panned = p.layer.getTransform();
+      expect(at(panned.anchorX), isNot(anchorBefore), reason: 'the pivot moved');
+      expect(at(panned.positionX) - positionBefore,
+          closeTo((at(panned.anchorX) - anchorBefore) / 2, 0.001),
+          reason: 'Position compensated (at 50%, half the layer-pixel delta), '
+              'so the picture did not move');
+
+      // A press a little way off the pivot is an ordinary move again.
+      final anchorNow = at(p.layer.getTransform().anchorX);
+      final positionNow = at(p.layer.getTransform().positionX);
+      gesture = await tester.startGesture(box.center + const Offset(40, 0));
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(8, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final moved = p.layer.getTransform();
+      expect(at(moved.anchorX), closeTo(anchorNow, 0.001),
+          reason: 'a body drag leaves the pivot alone');
+      expect(at(moved.positionX), greaterThan(positionNow));
+    });
+
     testWidgets('a missing footage layer raises the badge', (tester) async {
       final p = withLayer();
       final gone = p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');

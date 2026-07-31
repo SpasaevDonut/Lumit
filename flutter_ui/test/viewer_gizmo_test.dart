@@ -130,8 +130,51 @@ void main() {
     test('a press near a handle finds it, and one far from any finds none', () {
       final b = box();
       expect(b.handleHit(const Offset(202, 152)), GizmoHandle.topLeft);
-      expect(b.handleHit(const Offset(300, 200)), isNull,
-          reason: 'the middle of the layer is not a handle');
+      expect(b.handleHit(const Offset(290, 180)), isNull,
+          reason: 'open ground inside the layer is not a handle');
+    });
+
+    /// The anchor became a handle with K-219, and it sits where a body drag
+    /// begins — so it has to be *aimed at* rather than fallen into, or every
+    /// drag of a layer would pan behind instead of moving it.
+    test('the anchor is a handle, but only within a tight radius', () {
+      final b = box();
+      expect(b.handleHit(const Offset(300, 200)), GizmoHandle.anchor,
+          reason: 'dead on the pivot');
+      expect(b.handleHit(const Offset(304, 202)), GizmoHandle.anchor);
+      expect(b.handleHit(const Offset(316, 200)), isNull,
+          reason: 'a shade further out is a move, not a pan-behind');
+    });
+
+    test('the anchor handle follows the anchor, not the middle of the box', () {
+      // A layer whose pivot is its top-left corner.
+      final b = LayerBox(
+        layer: LayerReference(
+          internalprojectId: UuidValue.fromString(const Uuid().v4()),
+          internalcompId: UuidValue.fromString(const Uuid().v4()),
+          internallayerId: UuidValue.fromString(const Uuid().v4()),
+        ),
+        id: UuidValue.fromString(const Uuid().v4()),
+        map: ViewerLayerMap.of(
+          positionX: 300,
+          positionY: 200,
+          anchorX: 0,
+          anchorY: 0,
+          scaleXPercent: 100,
+          scaleYPercent: 100,
+          rotationDegrees: 0,
+          origin: Offset.zero,
+          viewScale: 1,
+        ),
+        bounds: const Size(200, 100),
+        draggable: true,
+        scalable: true,
+        rotationDegrees: 0,
+      );
+      expect(b.handleAt(GizmoHandle.anchor), const Offset(300, 200));
+      expect(b.handleAt(GizmoHandle.topLeft), const Offset(300, 200),
+          reason: 'which is also the corner, here');
+      expect(b.handleAt(GizmoHandle.bottomRight), const Offset(500, 300));
     });
   });
 

@@ -134,6 +134,44 @@ void main() {
           layer.internallayerId);
     });
 
+    /// **Cutting a retimed layer gives each half an end of its own (K-219).**
+    ///
+    /// Both halves keep the whole speed map, so without a key at the cut the
+    /// two ramps stay welded: bending one half's speed would bend the other's,
+    /// because they are the same curve. The key goes in preserving the curve's
+    /// shape, so the cut itself changes nothing that plays.
+    testWidgets('cutting a retimed layer puts a keyframe at the cut, on both'
+        ' halves', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      expect(layer.toggleRetimeProperty(), isTrue,
+          reason: 'the identity map goes on');
+      final before = layer.getRetimeProperty();
+      expect(before, isA<BridgeScalar_Keyframed>());
+      final keysBefore = (before as BridgeScalar_Keyframed).field0.length;
+
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy));
+      await tester.pumpAndSettle();
+
+      final after = p.comp.getLayers();
+      expect(after.length, 2);
+      for (final half in after) {
+        final retime = half.getRetimeProperty();
+        expect(retime, isA<BridgeScalar_Keyframed>(),
+            reason: 'both halves are still retimed');
+        expect((retime as BridgeScalar_Keyframed).field0.length,
+            keysBefore + 1,
+            reason: 'and both carry the key the cut added');
+      }
+    });
+
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();
       await tester.pumpWidget(hostPanel(

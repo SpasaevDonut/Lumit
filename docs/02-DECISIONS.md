@@ -3713,3 +3713,35 @@ razor. The anchor's pointer is the anchor's own ring-and-cross with a small arro
 (AE's pairing, and it says what the tool moves); the razor's is a blade with a full-height
 line down the lanes marking where the cut will land — the line is the useful half, because a
 cut you cannot aim is a cut you undo.
+
+**K-219 · DECIDED · A cut through a retimed layer leaves a keyframe behind, and the gizmo's
+centre handle pans behind.** From the owner (2026-07-31), two refinements to the tools that
+landed with K-218.
+
+**Why a cut needs a key.** Splitting a layer gives both halves the whole document — the same
+source, the same effects, and the same Retime map. That is what makes the cut invisible, and
+it is also what makes the two halves' speed ramps *one curve*: bend the first half's speed
+afterwards and the second half bends with it, which is not what anyone means by cutting. So
+the razor puts a keyframe at the cut, on both halves, giving each an end of its own to hold.
+Premiere does the same to a speed ramp it cuts, for the same reason.
+
+**And why the key must not change anything.** A cut that altered the speed ramp it was
+cutting would be worse than no cut at all, so the insertion preserves the curve exactly. A
+span is one cubic bezier (docs/impl/keyframe-eval.md §1); de Casteljau splits a cubic into
+two cubics whose union *is* the original — not an approximation of it — so all that is left
+is converting the control points back into the AE speed/influence pair each keyframe side
+stores, which is the exact inverse of `CubicSpan::from_ae`. The test samples the span two
+hundred times before and after and demands agreement to 1e-6. A held span is inserted flat,
+because a hold has no shape to keep; a key outside the keyed range takes the held end value.
+
+`Property::insert_key_preserving_shape` lives in `lumit-core::anim`, not in the bridge: it is
+curve arithmetic, and the kind of rule that has to be provable rather than observed. The
+razor calls it before cloning the layer, which is what puts the key on both halves.
+
+**The centre handle.** The Selection tool's gizmo now has a ninth handle at the layer's
+anchor, and dragging it pans behind exactly as the Anchor point tool does (K-218) — same
+`Shift` axis lock, same `Ctrl`/`Cmd` snapping, same one-op commit. Its grab radius is 16px
+against the other handles' 32, and that asymmetry is the whole design: the anchor usually
+sits in the middle of the box, which is also the easiest place to grab a layer to move it, so
+a generous slop there would turn every body drag into a pan-behind — the pivot sliding while
+the layer stayed put, which reads as the drag being broken. The pivot has to be aimed at.

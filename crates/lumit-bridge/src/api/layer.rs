@@ -606,31 +606,57 @@ impl LayerReference {
             .position(|l| l.id == self.layer_id)
             .ok_or(BridgeError::InvalidLayer)?;
 
-        let mut tail = layer.clone();
+        // A retimed layer gets a keyframe *at the cut*, on both halves (K-219).
+        //
+        // Both halves keep the whole map, so without this the two speed ramps
+        // stay welded together: editing one half's speed would bend the other
+        // half's curve, because they are the same curve. A key at the cut gives
+        // each half an end of its own to hold. It is inserted preserving the
+        // shape, so the cut itself changes nothing that plays — and it goes in
+        // *before* the clone, which is what puts it on both halves.
+        let mut head = layer.clone();
+        if let Some(retime) = head.retime.as_mut() {
+            // Layer time, not comp time: keyframes live in the layer's own
+            // clock, measured from its start offset (K-213).
+            // A subtraction that cannot overflow is still a subtraction that
+            // can: an unrepresentable time leaves the map alone rather than
+            // taking the cut down with it.
+            if let Ok(local) = t.0.checked_sub(head.start_offset.0) {
+                retime.insert_key_preserving_shape(local);
+            }
+        }
+
+        let mut tail = head.clone();
         tail.id = Uuid::now_v7();
         for effect in &mut tail.effects {
             effect.id = Uuid::now_v7();
         }
         tail.in_point = t;
 
-        self.commit(lumit_core::Op::Batch {
-            ops: vec![
-                lumit_core::Op::SetLayerSpan {
-                    comp: self.comp_id,
-                    layer: self.layer_id,
-                    in_point: layer.in_point,
-                    out_point: t,
-                    // Untouched: the offset is what makes both halves show the
-                    // frames they showed before the cut.
-                    start_offset: layer.start_offset,
-                },
-                lumit_core::Op::AddLayer {
-                    comp: self.comp_id,
-                    index,
-                    layer: Box::new(tail),
-                },
-            ],
-        })
+        let mut ops = vec![lumit_core::Op::SetLayerSpan {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            in_point: layer.in_point,
+            out_point: t,
+            // Untouched: the offset is what makes both halves show the frames
+            // they showed before the cut.
+            start_offset: layer.start_offset,
+        }];
+        // The head keeps its id, so its new map is written to it by name; the
+        // tail carries its copy of the map in the layer being added.
+        if head.retime != layer.retime {
+            ops.push(lumit_core::Op::SetRetimeProperty {
+                comp: self.comp_id,
+                layer: self.layer_id,
+                retime: head.retime.clone(),
+            });
+        }
+        ops.push(lumit_core::Op::AddLayer {
+            comp: self.comp_id,
+            index,
+            layer: Box::new(tail),
+        });
+        self.commit(lumit_core::Op::Batch { ops })
     }
 
     /// Delete the clip under `frame`, leaving a gap.

@@ -110,11 +110,25 @@ armed is a *tool*; what each tool then does is the backlog:
     snapping to the layer's nine key points, as one undo step.
 - **Razor** - built (K-218): the blade pointer and cut line over the lanes, a click that
     cuts under the pointer (splitting a layer in two, or making an edit point inside a
-    Sequence layer), and `Shift` cutting every layer that spans that moment. Still owed:
-    the razor only works in the **Timeline** — clicking a clip in the *Viewer* does
-    nothing — and a Sequence layer's eased ramps still refuse a cut (`UncuttableClip`).
-- **Shape tools** - a rubber-band drag committing mask geometry (the egui build had
-    rectangle/ellipse/star; the rounded rectangle and polygon are new).
+    Sequence layer), `Shift` cutting every layer that spans that moment, and a curve-preserving
+    keyframe at the cut on both halves of a retimed layer (K-219). Still owed: a Sequence
+    layer's eased ramps refuse a cut (`UncuttableClip`), and its **clips'** own speed maps get
+    no key at the cut the way a layer's Retime does. (The razor is Timeline-only by design.)
+- **Shape tools** - the next piece, and the largest so far. Wanted (owner, 2026-07-31): with
+    a layer selected a drag adds a **mask** to it; with nothing selected it makes a **shape
+    layer** at the top of the comp. Masks appear in the layer's twirl-down under a **Masks**
+    heading, hidden until the layer has one, exactly as Effects is. The polygon tool builds a
+    path point by point — click to place a corner, click-drag to place a bezier one whose
+    handles grow with the pointer, `Alt`-drag a handle to break the pair and `Alt`-drag again
+    to re-link, click the first point to close — while rectangle/rounded/ellipse/star drag out
+    from corner to corner with `Shift` keeping their proportions.
+    **What is in the way.** `lumit-core` has the mask model (`mask.rs`: bezier paths,
+    rectangle/ellipse/star constructors) and the renderer applies masks, but **no bridge API
+    exposes any of it** — no read, no add, no edit — so the frontend cannot see or make a mask
+    today. That seam is the first job. **Shape layers do not exist at all**: `LayerKind` has
+    no Shape variant, so a shape layer needs a new layer kind, a geometry model with fill and
+    stroke, renderer support and its own Timeline rows — an engine feature in its own right,
+    not a frontend one.
 - **Pen tools** - click-to-place mask drawing, and the four vertex/feather variants.
 - **Type**, **Paint** (brush/clone stamp/eraser), **Roto** (roto brush/refine edge),
     **Puppet**, **Camera** - no engine side yet; these are roadmap features
@@ -137,9 +151,8 @@ one that matters most: it is zoomed constantly while cutting.
 **Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3, K-215):** the
 wireframe, selection on the picture, the marquee, the move/scale/rotate gizmo and the bar's
 switch landed 2026-07-31. What that section still owes:
-- **The anchor-point centre handle** - the anchor can be dragged with the Anchor point tool
-    (K-218) and is drawn while that tool or the Rotation tool is armed, but the *Selection*
-    tool's gizmo still has no centre handle to drag it by (docs/07 §2.3).
+- **Motion paths** (§2.4) - a keyed position draws no path in the Viewer, and its keys
+    cannot be dragged there.
 - **Scale and rotation of a multiple selection** - several layers move together, but each
     keeps its own box and only a lone selection grows handles. AE scales a set about one
     shared box.

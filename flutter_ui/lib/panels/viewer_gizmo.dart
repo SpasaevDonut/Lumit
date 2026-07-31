@@ -25,6 +25,7 @@
 
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -37,6 +38,7 @@ import 'package:uuid/uuid.dart';
 
 import '../state/preview_throttle.dart';
 import '../widgets/controls.dart';
+import 'viewer_anchor.dart';
 import 'viewer_layer_map.dart';
 
 /// How big a scale handle is drawn, and how far from it a press still counts.
@@ -49,6 +51,16 @@ const double gizmoHandleSlop = 32;
 
 /// How far the rotation bar stands off the top of the box, in screen pixels.
 const double gizmoRotateReach = 28;
+
+/// How close a press has to be to the **anchor** handle to grab it, rather than
+/// starting a move of the layer (K-219).
+///
+/// Much tighter than [gizmoHandleSlop], and deliberately: the anchor usually
+/// sits in the middle of the box, which is also the easiest place to grab a
+/// layer to move it. A generous slop there would turn every body drag into a
+/// pan-behind — the pivot would slide and the layer would not, which reads as
+/// the drag being broken. So the pivot has to be *aimed at*.
+const double gizmoAnchorSlop = 16;
 
 /// The eight scale handles and the rotation knob.
 ///
@@ -65,7 +77,13 @@ enum GizmoHandle {
   bottom,
   bottomLeft,
   left,
-  rotate;
+  rotate,
+
+  /// The anchor point itself (K-219): dragging it pans behind — the pivot moves
+  /// and the picture stays put, exactly as the Anchor point tool does (K-218).
+  /// It sits wherever the layer's anchor is, which is usually but not always
+  /// the middle of the box.
+  anchor;
 
   /// Where this handle sits on the unit box (0..1 in each axis). The rotation
   /// knob shares the top edge's midpoint and is pushed off the box in screen
@@ -80,6 +98,9 @@ enum GizmoHandle {
         GizmoHandle.bottom => (0.5, 1),
         GizmoHandle.bottomLeft => (0, 1),
         GizmoHandle.left => (0, 0.5),
+        // Not a corner of the box at all — [LayerBox.handleAt] answers this one
+        // from the layer's own anchor.
+        GizmoHandle.anchor => (0.5, 0.5),
       };
 
   /// The eight that scale, in the order they are drawn.
@@ -168,6 +189,7 @@ class LayerBox {
 
   /// Where [handle] is drawn, in screen space.
   Offset handleAt(GizmoHandle handle) {
+    if (handle == GizmoHandle.anchor) return anchorScreen;
     final (ux, uy) = handle.unit;
     final point = map.toScreen(ux * bounds.width, uy * bounds.height);
     if (handle != GizmoHandle.rotate) return point;
@@ -193,9 +215,17 @@ class LayerBox {
   GizmoHandle? handleHit(Offset point) {
     GizmoHandle? best;
     var bestDistance = gizmoHandleSlop / 2;
-    for (final handle in [...GizmoHandle.scaling, GizmoHandle.rotate]) {
+    // The anchor first in the list only matters for ties; nearest still wins.
+    for (final handle in [
+      GizmoHandle.anchor,
+      ...GizmoHandle.scaling,
+      GizmoHandle.rotate,
+    ]) {
+      final slop = handle == GizmoHandle.anchor
+          ? gizmoAnchorSlop / 2
+          : gizmoHandleSlop / 2;
       final d = (handleAt(handle) - point).distance;
-      if (d <= bestDistance) {
+      if (d <= slop && d <= bestDistance) {
         bestDistance = d;
         best = handle;
       }
@@ -281,7 +311,7 @@ double rotationForDrag({
 }
 
 /// What the pointer is doing to the picture right now.
-enum _GizmoDrag { none, move, scale, rotate, marquee }
+enum _GizmoDrag { none, move, scale, rotate, anchor, marquee }
 
 /// The layer controls over the picture.
 class ViewerGizmoLayer extends StatefulWidget {
@@ -486,8 +516,11 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         setState(() {
           _acting = selected.single;
           _handle = handle;
-          _drag =
-              handle == GizmoHandle.rotate ? _GizmoDrag.rotate : _GizmoDrag.scale;
+          _drag = switch (handle) {
+            GizmoHandle.rotate => _GizmoDrag.rotate,
+            GizmoHandle.anchor => _GizmoDrag.anchor,
+            _ => _GizmoDrag.scale,
+          };
         });
         return;
       }
@@ -528,6 +561,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         _previewScale();
       case _GizmoDrag.rotate:
         _previewRotate();
+      case _GizmoDrag.anchor:
+        _previewAnchor();
       case _GizmoDrag.marquee || _GizmoDrag.none:
         break;
     }
@@ -541,6 +576,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         _commitScale();
       case _GizmoDrag.rotate:
         _commitRotate();
+      case _GizmoDrag.anchor:
+        _commitAnchor();
       case _GizmoDrag.marquee:
         _commitMarquee();
       case _GizmoDrag.none:
@@ -700,6 +737,87 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     widget.onChanged();
   }
 
+  // --- Anchor (pan behind) --------------------------------------------------
+
+  /// Where the anchor is being dragged to, in layer space, with the same two
+  /// modifiers the Anchor point tool has (K-218): Shift locks the drag to one
+  /// screen axis, Ctrl/Cmd snaps to the layer's own key points.
+  Offset? _anchorNow() {
+    final box = _acting;
+    if (box == null) return null;
+    var delta = _pointer - _origin;
+    if (HardwareKeyboard.instance.isShiftPressed) {
+      delta = constrainToAxis(delta);
+    }
+    final started = box.map.toScreen(box.map.ax, box.map.ay);
+    final wanted = box.map.layerOf(started + delta);
+    final snapping = defaultTargetPlatform == TargetPlatform.macOS
+        ? HardwareKeyboard.instance.isMetaPressed
+        : HardwareKeyboard.instance.isControlPressed;
+    return snapping ? snapAnchor(wanted, box) : wanted;
+  }
+
+  /// The Position that keeps the picture still while the anchor moves.
+  Offset _panBehindFor(LayerBox box, Offset anchor) => panBehindPosition(
+        oldAnchor: Offset(box.map.ax, box.map.ay),
+        newAnchor: anchor,
+        position: Offset(box.map.px, box.map.py),
+        scaleXPercent: box.map.sx * 100,
+        scaleYPercent: box.map.sy * 100,
+        rotationDegrees: box.rotationDegrees,
+      );
+
+  void _previewAnchor() {
+    final box = _acting;
+    final anchor = _anchorNow();
+    if (box == null || anchor == null) return;
+    final position = _panBehindFor(box, anchor);
+    _throttle.request(() => _sendPreview(
+          box,
+          (tf) => BridgeTransform(
+            anchorX: BridgeScalar.static_(anchor.dx),
+            anchorY: BridgeScalar.static_(anchor.dy),
+            positionX: BridgeScalar.static_(position.dx),
+            positionY: BridgeScalar.static_(position.dy),
+            positionZ: tf.positionZ,
+            scaleX: tf.scaleX,
+            scaleY: tf.scaleY,
+            rotation: tf.rotation,
+            rotationX: tf.rotationX,
+            rotationY: tf.rotationY,
+            opacity: tf.opacity,
+          ),
+        ));
+  }
+
+  void _commitAnchor() {
+    final box = _acting;
+    final anchor = _anchorNow();
+    if (box == null || anchor == null || _delta == Offset.zero) return;
+    final position = _panBehindFor(box, anchor);
+    try {
+      // One op for the four properties: half of this edit moves the picture,
+      // which is the one thing panning behind promises not to do (K-218).
+      box.layer.setTransforms(
+        props: const [
+          BridgeTransformProp.anchorX,
+          BridgeTransformProp.anchorY,
+          BridgeTransformProp.positionX,
+          BridgeTransformProp.positionY,
+        ],
+        values: [
+          BridgeScalar.static_(anchor.dx),
+          BridgeScalar.static_(anchor.dy),
+          BridgeScalar.static_(position.dx),
+          BridgeScalar.static_(position.dy),
+        ],
+      );
+      widget.onChanged();
+    } catch (_) {
+      // The layer went away mid-drag.
+    }
+  }
+
   // --- Marquee --------------------------------------------------------------
 
   void _commitMarquee() {
@@ -827,6 +945,10 @@ class _GizmoPainter extends CustomPainter {
       for (final handle in GizmoHandle.scaling) {
         _handle(canvas, handles.handleAt(handle) + moved);
       }
+      // The pivot, which is now a handle in its own right (K-219): drawn as
+      // the anchor's ring-and-cross rather than a square, so it never reads as
+      // a ninth scale handle.
+      _anchor(canvas, handles.handleAt(GizmoHandle.anchor) + moved);
     }
 
     for (final anchor in anchors) {

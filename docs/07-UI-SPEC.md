@@ -272,6 +272,11 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   selection instead of replacing it.
 - **Dragging** a layer's body moves it; dragging one that is not selected selects it first,
   and dragging one that is already part of a selection moves the whole selection together.
+- The gizmo's **centre handle is the anchor point** (K-219), and dragging it pans behind —
+  the pivot moves, the picture does not — with the same `Shift` axis lock and `Ctrl`/`Cmd`
+  key-point snapping the Anchor point tool has. Its grab radius MUST be much tighter than a
+  scale handle's: it sits where a body drag naturally begins, and a generous one would turn
+  every move into a pan-behind.
 - The gizmo MUST operate in the layer's transformed space (including parents) and respect
   3D orientation when the layer is 3D.
 - The **Hand tool** never edits on the picture: with it armed the wireframe is a read-out of

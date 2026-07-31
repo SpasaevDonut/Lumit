@@ -260,6 +260,62 @@ impl CubicSpan {
         Self::bezier(&self.y, self.solve_u(t))
     }
 
+    /// De Casteljau: the two cubics that together *are* this one, meeting at
+    /// parameter `u` (K-219). Exact, not an approximation — which is the whole
+    /// reason a key can be inserted mid-span without the picture changing.
+    #[must_use]
+    pub fn split_at(&self, u: f64) -> (Self, Self) {
+        fn split(p: &[f64; 4], u: f64) -> ([f64; 4], [f64; 4]) {
+            let lerp = |a: f64, b: f64| a + (b - a) * u;
+            let (q0, q1, q2) = (lerp(p[0], p[1]), lerp(p[1], p[2]), lerp(p[2], p[3]));
+            let (r0, r1) = (lerp(q0, q1), lerp(q1, q2));
+            let s = lerp(r0, r1);
+            ([p[0], q0, r0, s], [s, r1, q2, p[3]])
+        }
+        let (lx, rx) = split(&self.x, u);
+        let (ly, ry) = split(&self.y, u);
+        (Self { x: lx, y: ly }, Self { x: rx, y: ry })
+    }
+
+    /// This span's leaving side, as the AE speed/influence pair a keyframe
+    /// stores — the exact inverse of [`Self::from_ae`]'s first handle.
+    ///
+    /// Influence is clamped into the range [`side_params`] allows, so a handle
+    /// that came out of a split at a very small parameter still describes a
+    /// side the evaluator will accept.
+    #[must_use]
+    pub fn out_side(&self) -> SideInterp {
+        let dt = self.x[3] - self.x[0];
+        let dx = self.x[1] - self.x[0];
+        if dt <= 0.0 || dx.abs() < 1e-12 {
+            return SideInterp::Bezier {
+                speed: 0.0,
+                influence: 1e-3,
+            };
+        }
+        SideInterp::Bezier {
+            speed: (self.y[1] - self.y[0]) / dx,
+            influence: (dx / dt).clamp(1e-3, 1.0),
+        }
+    }
+
+    /// The same for the side approaching this span's end.
+    #[must_use]
+    pub fn in_side(&self) -> SideInterp {
+        let dt = self.x[3] - self.x[0];
+        let dx = self.x[3] - self.x[2];
+        if dt <= 0.0 || dx.abs() < 1e-12 {
+            return SideInterp::Bezier {
+                speed: 0.0,
+                influence: 1e-3,
+            };
+        }
+        SideInterp::Bezier {
+            speed: (self.y[3] - self.y[2]) / dx,
+            influence: (dx / dt).clamp(1e-3, 1.0),
+        }
+    }
+
     /// The instantaneous slope dv/dt at time `t` — the value curve's derivative,
     /// `y′(u)/x′(u)` at the parameter with `x(u) = t`. `x′` can touch zero at a
     /// 100%-influence handle, so it is floored to keep the speed finite (the
@@ -313,6 +369,114 @@ impl Property {
 
     pub fn is_animated(&self) -> bool {
         matches!(&self.animation, Animation::Keyframed(keys) if !keys.is_empty())
+    }
+
+    /// Put a keyframe at `t` **without changing the curve** (K-219).
+    ///
+    /// The new key takes the value the curve already had there, and the two
+    /// halves of the span it lands in are re-described so that every value
+    /// before and after it is exactly what it was. That is what makes this safe
+    /// to do behind the user's back — the razor does it on every cut of a
+    /// retimed layer (docs/07 §4.4), and a cut that changed the speed ramp it
+    /// was cutting would be worse than no cut at all.
+    ///
+    /// **How the shape survives.** A span is one cubic bezier
+    /// (docs/impl/keyframe-eval.md §1). Splitting a cubic at a parameter with de
+    /// Casteljau gives two cubics whose union *is* the original curve — not an
+    /// approximation of it, the same curve — so all that is left is converting
+    /// the four control points back into the AE speed/influence pair each side
+    /// is stored as. Those conversions are the exact inverse of
+    /// [`CubicSpan::from_ae`].
+    ///
+    /// A no-op when: the property is not keyframed (there is no curve to keep),
+    /// a key already sits at `t`, or the span is a Hold — a held span has no
+    /// shape to preserve, so the key is inserted flat and the hold continues.
+    ///
+    /// Returns whether a key was added.
+    pub fn insert_key_preserving_shape(&mut self, t: Rational) -> bool {
+        let Animation::Keyframed(keys) = &mut self.animation else {
+            return false;
+        };
+        if keys.is_empty() {
+            return false;
+        }
+        let tf = t.to_f64();
+        if keys.iter().any(|k| (k.time.to_f64() - tf).abs() < 1e-12) {
+            return false;
+        }
+
+        // Outside the keyed range the property holds its end value, so a key
+        // there needs no shape work: it takes that value and the same sides.
+        let first = keys[0];
+        if tf < first.time.to_f64() {
+            keys.insert(
+                0,
+                Keyframe {
+                    time: t,
+                    value: first.value,
+                    interp_in: first.interp_in,
+                    interp_out: SideInterp::Linear,
+                },
+            );
+            return true;
+        }
+        let last = keys[keys.len() - 1];
+        if tf > last.time.to_f64() {
+            keys.push(Keyframe {
+                time: t,
+                value: last.value,
+                interp_in: SideInterp::Linear,
+                interp_out: last.interp_out,
+            });
+            return true;
+        }
+
+        let Some(i) = keys.windows(2).position(|w| {
+            let (a, b) = (w[0].time.to_f64(), w[1].time.to_f64());
+            tf > a && tf < b
+        }) else {
+            return false;
+        };
+        let (a, b) = (keys[i], keys[i + 1]);
+        let (t1, t2) = (a.time.to_f64(), b.time.to_f64());
+
+        // A held span is flat by definition: the key takes the held value and
+        // holds on, and neither neighbour needs touching.
+        if matches!(a.interp_out, SideInterp::Hold) {
+            keys.insert(
+                i + 1,
+                Keyframe {
+                    time: t,
+                    value: a.value,
+                    interp_in: SideInterp::Hold,
+                    interp_out: SideInterp::Hold,
+                },
+            );
+            return true;
+        }
+
+        let chord = (b.value - a.value) / (t2 - t1);
+        let (s1, b1) = side_params(a.interp_out, chord);
+        let (s2, b2) = side_params(b.interp_in, chord);
+        let cubic = CubicSpan::from_ae(t1, a.value, t2, b.value, s1, b1, s2, b2);
+        let u = cubic.solve_u(tf);
+        let (left, right) = cubic.split_at(u);
+
+        // The split point is the curve's own value there, taken from the split
+        // rather than re-evaluated, so the two halves meet exactly.
+        let value = left.y[3];
+        keys[i].interp_out = left.out_side();
+        keys[i + 1].interp_in = right.in_side();
+        keys.insert(
+            i + 1,
+            Keyframe {
+                time: t,
+                value,
+                interp_in: left.in_side(),
+                interp_out: right.out_side(),
+            },
+        );
+        true
     }
 }
 
@@ -471,6 +635,114 @@ mod tests {
             assert!((-1e-9..=1.0 + 1e-9).contains(&v), "t={t} v={v}");
         }
         assert!((evaluate(&keys, 0.5).unwrap() - 0.5).abs() < 1e-9);
+    }
+
+    /// **A key inserted mid-span must not move the curve** (K-219). Sampled
+    /// densely across the whole span, before and after, and compared: the razor
+    /// puts one of these on every retimed layer it cuts, and a cut that changed
+    /// the speed ramp would be a cut nobody could trust.
+    #[test]
+    fn inserting_a_key_preserves_the_curve() {
+        for (out_side, in_side) in [
+            (EASY_EASE, EASY_EASE),
+            (
+                SideInterp::Bezier {
+                    speed: 4.0,
+                    influence: 0.75,
+                },
+                SideInterp::Bezier {
+                    speed: -2.0,
+                    influence: 0.1,
+                },
+            ),
+            (SideInterp::Linear, EASY_EASE),
+            (SideInterp::Linear, SideInterp::Linear),
+        ] {
+            let mut p = Property {
+                animation: Animation::Keyframed(vec![
+                    Keyframe {
+                        time: rat(0, 1),
+                        value: 0.0,
+                        interp_in: SideInterp::Linear,
+                        interp_out: out_side,
+                    },
+                    Keyframe {
+                        time: rat(2, 1),
+                        value: 10.0,
+                        interp_in: in_side,
+                        interp_out: SideInterp::Linear,
+                    },
+                ]),
+                extra: serde_json::Map::new(),
+            };
+            let before: Vec<f64> = (0..=200)
+                .map(|i| p.value_at(f64::from(i) / 100.0))
+                .collect();
+
+            assert!(p.insert_key_preserving_shape(rat(3, 4)), "a key landed");
+            let Animation::Keyframed(keys) = &p.animation else {
+                panic!("still keyframed");
+            };
+            assert_eq!(keys.len(), 3, "one key added, in the middle");
+            assert!((keys[1].time.to_f64() - 0.75).abs() < 1e-12);
+
+            for (i, was) in before.iter().enumerate() {
+                let t = f64::from(i as u32) / 100.0;
+                let now = p.value_at(t);
+                assert!(
+                    (now - was).abs() < 1e-6,
+                    "at t={t} the curve moved: {was} -> {now}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_key_on_a_held_span_holds_and_one_on_an_existing_key_is_refused() {
+        let mut p = Property {
+            animation: Animation::Keyframed(vec![
+                Keyframe {
+                    time: rat(0, 1),
+                    value: 3.0,
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Hold,
+                },
+                Keyframe {
+                    time: rat(2, 1),
+                    value: 9.0,
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                },
+            ]),
+            extra: serde_json::Map::new(),
+        };
+        assert!(p.insert_key_preserving_shape(rat(1, 1)));
+        assert_eq!(p.value_at(0.5), 3.0);
+        assert_eq!(p.value_at(1.5), 3.0, "the hold still holds");
+
+        // A second key at the same time would be two keys at one moment, which
+        // the ops layer forbids and the evaluator cannot read.
+        assert!(!p.insert_key_preserving_shape(rat(1, 1)));
+    }
+
+    #[test]
+    fn a_key_outside_the_keyed_range_takes_the_held_end_value() {
+        let mut p = Property {
+            animation: Animation::Keyframed(vec![Keyframe {
+                time: rat(1, 1),
+                value: 5.0,
+                interp_in: SideInterp::Linear,
+                interp_out: SideInterp::Linear,
+            }]),
+            extra: serde_json::Map::new(),
+        };
+        assert!(p.insert_key_preserving_shape(rat(3, 1)));
+        assert_eq!(p.value_at(2.0), 5.0);
+        assert_eq!(p.value_at(9.0), 5.0);
+
+        // And a static property has no curve to keep, so nothing happens.
+        let mut fixed = Property::fixed(2.0);
+        assert!(!fixed.insert_key_preserving_shape(rat(1, 1)));
     }
 
     proptest! {
