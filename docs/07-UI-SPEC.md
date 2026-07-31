@@ -1392,7 +1392,24 @@ fold-out already shows them), and **Performance** (playback mode, quality tier a
 and the RAM and VRAM frame-cache budgets with their readouts and Clear buttons). The two
 budgets are **typed and draggable numbers capped at what the machine has** — installed RAM
 and the adapter's dedicated video memory, asked of the engine — rather than a pick from a
-fixed list of sizes (K-194). The egui build's
+fixed list of sizes (K-194).
+
+**The disk tier's controls landed with K-214**, as a third section on the same page: its
+budget (the same typed-and-draggable row), a readout of what is parked and where, and a
+**Where** row choosing between *With Lumit* — the application's own cache folder, the default
+and the only one that works before a project has been saved — *Beside the project*, which is
+the per-project choice, and *A folder I choose*, which offers a folder picker beside the
+dropdown. An **Applies to** row beside it chooses the scope (K-215): *Everything*, kept in the settings
+file, or *This project*, kept inside the `.lum` so it travels with a copy of the project —
+a project's own answer overriding the application's. Switching back to Everything clears the
+project's answer rather than copying the application's into it, so the project follows along
+afterwards; and because it is an ordinary op, giving a project its own location undoes like any
+other edit. Changing any of this moves nothing, so the old folder can be deleted by hand
+whenever the user likes. Its **Clear** asks before deleting,
+unlike the other two tiers': RAM and VRAM cost a re-render each, while this one destroys files
+that may be a night's work and there is nothing to undo. With nothing parked it does not ask —
+a question about deleting nothing is only noise. The status line's cache meter grew a matching
+third bar (Disk), which asks the same question when clicked. The egui build's
 **Export** and **Autosave** groups are *not* rebuilt yet: neither has anything behind it on
 this frontend (docs/TODO.md), and an empty page is a promise the window cannot keep.
 

@@ -264,6 +264,16 @@ pub enum Op {
         kind: AutoFolderKind,
         folder: Option<Uuid>,
     },
+    /// Set (or clear) this project's own cache location — where *its* rendered
+    /// frames are parked, overriding the application-wide choice (docs/06 §5.4).
+    ///
+    /// An op like any other, so it is undoable, journalled and saved with the
+    /// project. It changes no pixel: the frames a cache holds are named by their
+    /// content, and where they are kept is not part of that name, so moving the
+    /// folder costs nothing already cached elsewhere.
+    SetCacheLocation {
+        location: Option<crate::model::CacheLocation>,
+    },
     /// Edit a composition's settings after creation (AE: Composition
     /// Settings). Layers keep their spans; a shorter duration simply clips
     /// what plays.
@@ -882,6 +892,10 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 folder: *folder,
                 children: previous,
             })
+        }
+        Op::SetCacheLocation { location } => {
+            let previous = std::mem::replace(&mut doc.cache_location, location.clone());
+            Ok(Op::SetCacheLocation { location: previous })
         }
         Op::SetAutoFolder { kind, folder } => {
             let slot = match kind {

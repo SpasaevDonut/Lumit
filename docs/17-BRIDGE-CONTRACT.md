@@ -249,6 +249,12 @@ that read-back is gone.
     `lumit-eval`'s realtime controller (K-171); the frontend reads the current tier
     and scale back through `api::shell::playback_tier` to drive the Auto
     resolution setting.
+    **The Viewer does not ask.** Each published frame carries the tier it was made
+    at (`BridgeSharedFrameInfo::tier`), thus the two places that show the tier are
+    given it. They asked for it in their `build()` before, which is one call across
+    the boundary for each of them for each frame of playback. The transport is the
+    same shape of question and gets the same answer: it reports what the build
+    compiled to, thus the frontend reads it once and keeps it.
 - **Known synchronous seams** (probing on import, beat detection) still run on the
 calling thread and are honest follow-ups in [TODO.md](TODO.md); they function
 today, the conversion is a threading refactor, not a missing capability.

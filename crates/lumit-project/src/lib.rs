@@ -244,6 +244,42 @@ pub fn journal_path(doc_id: Uuid) -> Option<PathBuf> {
     )
 }
 
+/// Where a document's parked frames live when the disk frame cache is kept in
+/// the application's own data area rather than beside the project file
+/// (docs/06-RENDER-PIPELINE.md §5.4, Settings → Performance → Cache).
+///
+/// In plain terms: the frames the cache parks have to go *somewhere*, and beside
+/// the project file only works once the project HAS a file. Keyed by the
+/// document's own id, which is written into the `.lum` and survives every save
+/// and reopen, so a project caches from the moment it is created and still finds
+/// its frames tomorrow.
+///
+/// The platform's own cache directory, through the same `ProjectDirs` call the
+/// journal and the media index make, so there is one Lumit folder rather than
+/// three:
+///
+/// | | |
+/// |---|---|
+/// | Windows | `%LOCALAPPDATA%\Lumit\Lumit\cache\frames\<id>\` |
+/// | macOS | `~/Library/Caches/dev.Lumit.Lumit/frames/<id>/` |
+/// | Linux | `$XDG_CACHE_HOME/lumit/frames/<id>/` (default `~/.cache/lumit`) |
+///
+/// On Windows that is **local** app data, never roaming: a roaming profile would
+/// try to copy the cache to a network share at logoff, and this one can be tens
+/// of gigabytes.
+///
+/// The *cache* directory, not the temp directory — temp is emptied on reboot, so
+/// every project would come back cold. These survive a reboot, and the operating
+/// system may reclaim them under disk pressure, which is exactly right for a
+/// folder deletable at any time with no correctness effect.
+///
+/// `None` only when the platform has no home directory; the caller then runs
+/// with no disk tier rather than failing.
+pub fn frame_cache_dir(doc_id: Uuid) -> Option<PathBuf> {
+    let dirs = directories::ProjectDirs::from("dev", "Lumit", "Lumit")?;
+    Some(dirs.cache_dir().join("frames").join(doc_id.to_string()))
+}
+
 /// Media frame-index cache directory (docs/10-FILE-FORMAT.md §3) — global,
 /// keyed by content fingerprint, so shared across projects and machines-safe.
 pub fn media_index_dir() -> Option<PathBuf> {
@@ -693,6 +729,68 @@ mod tests {
                 extra: serde_json::Map::new(),
             },
         }
+    }
+
+    /// **Where a document's parked frames go, pinned per platform.**
+    ///
+    /// Not a restatement of `directories`' documentation: what is checked is that
+    /// the frame cache lands in the *same* Lumit folder as the journal and the
+    /// media index (one folder, not three), under the platform's **cache**
+    /// directory rather than its data or config directory, and keyed by the
+    /// document id. Each of those is a one-word edit away from being wrong — and
+    /// two of the ways it can be wrong are quiet: parking tens of gigabytes under
+    /// Windows' *roaming* app data makes a work machine copy the lot to a network
+    /// share at logoff, and parking them under the temp directory makes every
+    /// project come back cold after a reboot, which reads as "the cache is
+    /// broken" rather than as a wrong path.
+    #[test]
+    fn the_frame_cache_sits_in_lumits_own_cache_folder() {
+        let id = Uuid::now_v7();
+        let (Some(frames), Some(index), Some(journal), Some(presets)) = (
+            frame_cache_dir(id),
+            media_index_dir(),
+            journal_path(id),
+            presets_dir(),
+        ) else {
+            // No home directory at all (a bare container): the disk tier is off
+            // rather than misplaced, which is the documented answer.
+            eprintln!("skipping: this platform has no home directory");
+            return;
+        };
+
+        // One Lumit folder: the frame cache shares the cache root with the media
+        // index and the journal, both of which pre-date it.
+        let cache_root = index.parent().expect("media-index has a parent");
+        assert!(
+            frames.starts_with(cache_root),
+            "frames at {frames:?} left the cache root {cache_root:?}"
+        );
+        assert!(journal.starts_with(cache_root));
+        assert!(
+            frames.to_string_lossy().contains(&id.to_string()),
+            "the document id is what makes a project find its frames again"
+        );
+
+        // The cache directory, not the data or config one: presets and settings
+        // are kilobytes that should be backed up, and this is gigabytes that
+        // should not.
+        assert!(
+            !frames.starts_with(presets.parent().expect("presets has a parent")),
+            "the frame cache must not sit with the presets in app data"
+        );
+
+        // Never roaming (Windows), and never temp (all three).
+        let shown = frames.to_string_lossy().to_lowercase();
+        assert!(
+            !shown.contains("roaming"),
+            "a cache this size must not follow a roaming profile over the \
+             network: {frames:?}"
+        );
+        assert!(
+            !frames.starts_with(std::env::temp_dir()),
+            "temp is emptied on reboot, so every project would come back cold: \
+             {frames:?}"
+        );
     }
 
     fn doc_with_item() -> Document {
@@ -1239,6 +1337,42 @@ mod tests {
         assert_eq!(back.absolute_path, "");
         assert_eq!(back.relative_path, m.relative_path);
         assert_eq!(back.fingerprint, m.fingerprint);
+    }
+
+    /// **A project's own cache location travels with it.** The whole reason it
+    /// lives in the document rather than in the settings file: copy the project
+    /// to another machine, or hand it to someone else, and the folder it caches
+    /// to comes along. A project that has not been given one saves nothing at
+    /// all — an absent field, so an older build reads the file unchanged and a
+    /// project's file does not grow a line for a choice nobody made.
+    #[test]
+    fn a_projects_own_cache_location_survives_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("edit.lum");
+
+        let mut doc = doc_with_item();
+        assert!(doc.cache_location.is_none(), "no override by default");
+        save(&doc, &path).unwrap();
+        assert!(open(&path).unwrap().0.cache_location.is_none());
+
+        doc.cache_location = Some(lumit_core::model::CacheLocation::Custom {
+            folder: "E:/scratch".into(),
+        });
+        save(&doc, &path).unwrap();
+        assert_eq!(
+            open(&path).unwrap().0.cache_location,
+            Some(lumit_core::model::CacheLocation::Custom {
+                folder: "E:/scratch".into()
+            })
+        );
+
+        // The other two carry no folder, and still round-trip as themselves.
+        doc.cache_location = Some(lumit_core::model::CacheLocation::BesideProject);
+        save(&doc, &path).unwrap();
+        assert_eq!(
+            open(&path).unwrap().0.cache_location,
+            Some(lumit_core::model::CacheLocation::BesideProject)
+        );
     }
 
     #[test]

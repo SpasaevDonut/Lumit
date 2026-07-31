@@ -7,7 +7,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `read`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 /// The cache's live numbers.
 ///
@@ -46,10 +46,55 @@ BridgeVramCacheStats setVramCacheBudget({required BigInt bytes}) =>
 BridgeVramCacheStats clearVramCache() =>
     BridgeLib.instance.api.crateApiCacheClearVramCache();
 
+/// The disk tier's live numbers. `used`/`entries` are as the IO thread last
+/// accounted them; the budget is the asked-for value, applied on the worker's
+/// next turn.
+BridgeDiskCacheStats diskCacheStats() =>
+    BridgeLib.instance.api.crateApiCacheDiskCacheStats();
+
+/// Resize the disk tier. Shrinking evicts oldest-first on the IO thread.
+BridgeDiskCacheStats setDiskCacheBudget({required BigInt bytes}) =>
+    BridgeLib.instance.api.crateApiCacheSetDiskCacheBudget(bytes: bytes);
+
+/// Choose where parked frames live. `folder` is used only for
+/// [`BridgeCacheLocation::Custom`] and ignored otherwise.
+///
+/// The worker re-opens the cache on its next turn: frames already parked
+/// elsewhere are not moved or deleted — they are simply not addressed from the
+/// new folder, and the old one can be deleted by hand at any time with no
+/// correctness effect.
+BridgeDiskCacheStats setDiskCacheLocation(
+        {required BridgeCacheLocation location, required String folder}) =>
+    BridgeLib.instance.api
+        .crateApiCacheSetDiskCacheLocation(location: location, folder: folder);
+
+/// Delete every parked frame, on the IO thread. Unlike the other two tiers this
+/// destroys files that may represent hours of rendering and cannot be undone, so
+/// the interface asks first (docs/07-UI-SPEC.md §15).
+BridgeDiskCacheStats clearDiskCache() =>
+    BridgeLib.instance.api.crateApiCacheClearDiskCache();
+
 /// What this build compiles to. It reports the *build*, not the run — a machine
 /// that cannot provide a shared texture still falls back at runtime.
 BridgeViewerTransport viewerTransport() =>
     BridgeLib.instance.api.crateApiCacheViewerTransport();
+
+/// Where the disk tier keeps its frames (docs/07-UI-SPEC.md §15).
+enum BridgeCacheLocation {
+  /// Under the application's own cache folder, keyed by document id — the
+  /// default, and the only one that works before a project has been saved.
+  appData,
+
+  /// In a `<project>.lum-cache/` folder beside the project file, so a project
+  /// carries its cache with it. An unsaved project has nowhere to put one and
+  /// falls back to [`Self::AppData`] until it is saved.
+  besideProject,
+
+  /// Under a folder the user picked — to park the cache on a faster or roomier
+  /// drive. Application-wide.
+  custom,
+  ;
+}
 
 /// What the cache currently holds, for the Timeline's cache bar and the
 /// Settings window's budget control.
@@ -70,11 +115,6 @@ class BridgeCacheStats {
   /// rather than merely slow.
   final BigInt compDecodes;
 
-  /// Renders served from caches a committed edit had already retired. Always
-  /// zero; a non-zero value is the "the Viewer shows the picture from before
-  /// my edit" bug ([`crate::framecache::stale_serves`]).
-  final BigInt staleServes;
-
   const BridgeCacheStats({
     required this.usedBytes,
     required this.budgetBytes,
@@ -82,7 +122,6 @@ class BridgeCacheStats {
     required this.hits,
     required this.misses,
     required this.compDecodes,
-    required this.staleServes,
   });
 
   @override
@@ -92,8 +131,7 @@ class BridgeCacheStats {
       entries.hashCode ^
       hits.hashCode ^
       misses.hashCode ^
-      compDecodes.hashCode ^
-      staleServes.hashCode;
+      compDecodes.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -105,8 +143,73 @@ class BridgeCacheStats {
           entries == other.entries &&
           hits == other.hits &&
           misses == other.misses &&
-          compDecodes == other.compDecodes &&
-          staleServes == other.staleServes;
+          compDecodes == other.compDecodes;
+}
+
+/// What the disk tier holds — the bottom of the three-tier cache
+/// (docs/06-RENDER-PIPELINE.md §5.4), and the only one that outlives the session.
+class BridgeDiskCacheStats {
+  final BigInt usedBytes;
+  final BigInt budgetBytes;
+  final BigInt entries;
+
+  /// The folder the frames are actually going to, for Settings to show. Empty
+  /// when the tier is off — which, since an unsaved project falls back to the
+  /// application's own cache folder, means only a platform with no home
+  /// directory at all.
+  final String root;
+
+  const BridgeDiskCacheStats({
+    required this.usedBytes,
+    required this.budgetBytes,
+    required this.entries,
+    required this.root,
+  });
+
+  @override
+  int get hashCode =>
+      usedBytes.hashCode ^
+      budgetBytes.hashCode ^
+      entries.hashCode ^
+      root.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeDiskCacheStats &&
+          runtimeType == other.runtimeType &&
+          usedBytes == other.usedBytes &&
+          budgetBytes == other.budgetBytes &&
+          entries == other.entries &&
+          root == other.root;
+}
+
+/// A cache location as a pair: which of the three, and the folder that goes with
+/// `Custom` (empty for the other two).
+///
+/// The same shape whether it is being set for the application
+/// ([`set_disk_cache_location`]) or for one project
+/// (`ProjectReference::set_cache_location`), so the interface has one control and
+/// one type for both, and the only difference is where the answer is stored.
+class BridgeProjectCacheLocation {
+  final BridgeCacheLocation location;
+  final String folder;
+
+  const BridgeProjectCacheLocation({
+    required this.location,
+    required this.folder,
+  });
+
+  @override
+  int get hashCode => location.hashCode ^ folder.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeProjectCacheLocation &&
+          runtimeType == other.runtimeType &&
+          location == other.location &&
+          folder == other.folder;
 }
 
 /// Which route a rendered frame takes from the engine to the Viewer.

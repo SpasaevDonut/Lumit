@@ -415,6 +415,15 @@ class LumitUiState extends ChangeNotifier {
   /// only the cache bar, which listens to both.
   final ValueNotifier<int> cacheChanged = ValueNotifier(0);
 
+  /// The preview tier the last frame was made at: 1 Full, 2 Half, 3 Third,
+  /// 4 Quarter (K-030/K-171).
+  ///
+  /// Carried on the frame rather than asked for. The Viewer shows the tier in
+  /// two places, and each of them asked the engine in its `build()` — two calls
+  /// across the boundary for each frame of playback, ~48 a second at 24 fps,
+  /// for a number that only a new frame can change.
+  final ValueNotifier<int> previewTier = ValueNotifier(1);
+
   /// Whether the engine is playing.
   ///
   /// Mirrored, not decided: it goes true when [play] is called and false when
@@ -703,6 +712,17 @@ class LumitUiState extends ChangeNotifier {
     if (ramBudget != null) setCacheBudget(bytes: BigInt.from(ramBudget));
     final vramBudget = perf.vramBudgetBytes;
     if (vramBudget != null) setVramCacheBudget(bytes: BigInt.from(vramBudget));
+    final diskBudget = perf.diskBudgetBytes;
+    if (diskBudget != null) setDiskCacheBudget(bytes: BigInt.from(diskBudget));
+    // Where the parked frames go. Restored the same way, and by name rather
+    // than by index so a reordered enum cannot silently move a user's cache.
+    final where = perf.diskCacheLocation;
+    if (where != null) {
+      setDiskCacheLocation(
+        location: cacheLocationFromName(where),
+        folder: perf.diskCacheFolder ?? '',
+      );
+    }
     // The read model re-reads on every committed change — one bridge call —
     // and every panel that draws layers repaints from it (K-184).
     _changes = state.onChange.listen((_) {
@@ -712,8 +732,10 @@ class LumitUiState extends ChangeNotifier {
     sub = state.onWorkerResponse.listen((msg) {
       switch (msg) {
         case WorkerResponse_RenderedDMABuf frame:
+          previewTier.value = frame.field0.tier;
           _showDmabuf(frame.field0);
         case WorkerResponse_RenderedSharedTexture frame:
+          previewTier.value = frame.field0.tier;
           _showSharedTexture(frame.field0);
         // Scope traces ride the same stream; the Scopes panel subscribes to it
         // directly, so there is nothing for the Viewer to do with one.
@@ -776,6 +798,7 @@ class LumitUiState extends ChangeNotifier {
     layerBounds.dispose();
     model.dispose();
     cacheChanged.dispose();
+    previewTier.dispose();
     viewerFrameid.dispose();
     selectedLayer.removeListener(_syncSelection);
     selectedLayer.dispose();

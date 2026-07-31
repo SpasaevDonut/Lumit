@@ -241,26 +241,30 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       valueListenable: ui.playing,
       builder: (context, playing, _) => ValueListenableBuilder<int>(
         valueListenable: ui.playheadFrame,
-        builder: (context, frame, _) => _Toolbar(
-          zoom: _zoom,
-          channel: _channel,
-          grid: _grid,
-          wireframes: _wireframes,
-          playing: playing,
-          frame: frame,
-          settings: settings,
-          comp: comp,
-          // The magnification menu is a jump to a named place, so it flies
-          // there like every other zoom (K-218) — from whatever is on screen,
-          // which is what the measured rectangle in the layout builder knows.
-          onZoom: (z) => _goToZoom(z, Offset.zero,
-              from: _currentScale(comp.getSize())),
-          onChannel: (c) => setState(() => _channel = c),
-          onGrid: () => setState(() => _grid = !_grid),
-          onWireframes: () => setState(() => _wireframes = !_wireframes),
-          onPlayPause: _togglePlay,
-          onSeek: (f) => _seek(comp, ui, f),
-          floating: round,
+        builder: (context, frame, _) => ValueListenableBuilder<int>(
+          valueListenable: ui.previewTier,
+          builder: (context, tier, _) => _Toolbar(
+            zoom: _zoom,
+            channel: _channel,
+            grid: _grid,
+            wireframes: _wireframes,
+            playing: playing,
+            frame: frame,
+            settings: settings,
+            comp: comp,
+            tier: tier,
+            // The magnification menu is a jump to a named place, so it flies
+            // there like every other zoom (K-218) — from whatever is on screen,
+            // which is what the measured rectangle in the layout builder knows.
+            onZoom: (z) => _goToZoom(z, Offset.zero,
+                from: _currentScale(comp.getSize())),
+            onChannel: (c) => setState(() => _channel = c),
+            onGrid: () => setState(() => _grid = !_grid),
+            onWireframes: () => setState(() => _wireframes = !_wireframes),
+            onPlayPause: _togglePlay,
+            onSeek: (f) => _seek(comp, ui, f),
+            floating: round,
+          ),
         ),
       ),
     );
@@ -1238,6 +1242,12 @@ class _Toolbar extends StatelessWidget {
   /// filling the panel's width (sharp mode).
   final bool floating;
 
+  /// The preview tier the last frame was made at, off the frame itself
+  /// ([LumitUiState.previewTier]). Given rather than asked for: this bar
+  /// rebuilds for each shown frame, and asking the engine here cost one call
+  /// across the boundary for each of them.
+  final int tier;
+
   const _Toolbar({
     required this.zoom,
     required this.channel,
@@ -1247,6 +1257,7 @@ class _Toolbar extends StatelessWidget {
     required this.frame,
     required this.settings,
     required this.comp,
+    required this.tier,
     required this.onZoom,
     required this.onChannel,
     required this.onGrid,
@@ -1259,7 +1270,6 @@ class _Toolbar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final tier = comp.playbackTier();
     return Container(
       height: 26,
       decoration: BoxDecoration(
@@ -1336,7 +1346,7 @@ class _Toolbar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 6),
-            _PlaybackModeButton(comp: comp),
+            _PlaybackModeButton(comp: comp, tier: tier),
             // A fixed gap, not a Spacer: the bar scrolls when the panel is
             // narrow, and a flex child cannot live inside a scroll view.
             const SizedBox(width: 24),
@@ -1385,8 +1395,8 @@ class _Toolbar extends StatelessWidget {
             ),
             // The degradation badge (docs/13 §B5, docs/07 §2.2): when adaptive
             // playback has dropped below Full, say so on the bar — a softer
-            // picture must never be a mystery. Reading the tier is one atomic;
-            // this bar already rebuilds per shown frame.
+            // picture must never be a mystery. The tier rides in on the frame,
+            // so the bar draws it without asking anything.
             if (playing && tier > 1) ...[
               const SizedBox(width: 8),
               Container(
@@ -1431,11 +1441,26 @@ String timecodeOf(int frame, BridgeCompSettings settings) =>
 /// one you are in. Being unable to see that from the Viewer is what makes it
 /// feel broken rather than chosen.
 ///
+/// Which route frames take from the engine to the Viewer, in words.
+///
+/// Read once and kept. It reports what this build compiled to, thus it is a
+/// constant — and it was asked for in a `build()` that runs for each frame of
+/// playback, which made a compile-time constant the most frequent question the
+/// frontend asked.
+final String _transportName = switch (viewerTransport()) {
+  BridgeViewerTransport.sharedTexture => 'shared texture, no copy',
+  BridgeViewerTransport.dmaBuf => 'DMA-BUF, no copy',
+  BridgeViewerTransport.readBack => 'read-back (pixels copied)',
+};
+
 /// In adaptive mode the tier it has settled on is shown beside the name, so
 /// "why is it soft?" is answered on screen: Full, Half, Third or Quarter.
 class _PlaybackModeButton extends StatelessWidget {
   final CompositionReference comp;
-  const _PlaybackModeButton({required this.comp});
+
+  /// The tier off the last frame, given by the bar above (see [_Toolbar.tier]).
+  final int tier;
+  const _PlaybackModeButton({required this.comp, required this.tier});
 
   static const _tierNames = ['Full', 'Full', 'Half', 'Third', 'Quarter'];
 
@@ -1444,7 +1469,6 @@ class _PlaybackModeButton extends StatelessWidget {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context);
     final adaptive = ui.workspace.performance.playback == PlaybackMode.adaptive;
-    final tier = comp.playbackTier();
     final label = adaptive
         ? 'Adaptive · ${_tierNames[tier.clamp(0, _tierNames.length - 1)]}'
         : 'Every frame';
@@ -1453,11 +1477,7 @@ class _PlaybackModeButton extends StatelessWidget {
     // copies every pixel down, serialises it a byte at a time and uploads it
     // again, which is the difference between playback feeling immediate and
     // feeling heavy — so it is worth being able to read off the screen.
-    final transport = switch (viewerTransport()) {
-      BridgeViewerTransport.sharedTexture => 'shared texture, no copy',
-      BridgeViewerTransport.dmaBuf => 'DMA-BUF, no copy',
-      BridgeViewerTransport.readBack => 'read-back (pixels copied)',
-    };
+    final transport = _transportName;
 
     return LumitTooltip(
       message: adaptive

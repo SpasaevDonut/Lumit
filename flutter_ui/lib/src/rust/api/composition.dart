@@ -330,19 +330,29 @@ class CompositionReference {
         that: this,
       );
 
-  /// Which frames of this composition are held in the cache, one byte each:
-  /// `0` nothing, `1` held only at a coarser resolution than `scale`, `2` held
-  /// at `scale` or finer and ready to show now.
+  /// Which frames of this composition are held, one byte each:
+  ///
+  /// * `0` — nothing held.
+  /// * `1` — held in memory or on the graphics card, but only at a coarser
+  ///   preview resolution than `scale`.
+  /// * `2` — held at `scale` or finer: plays now.
+  /// * `3` — parked on disk only, at a coarser resolution.
+  /// * `4` — parked on disk only, at this resolution: promotable, not yet
+  ///   playable.
   ///
   /// This is what the Timeline's cache bar draws (docs/07-UI-SPEC.md §3.2,
-  /// docs/06-RENDER-PIPELINE.md §5.6). It is a snapshot, not a subscription:
-  /// the caller redraws when it has reason to, rather than the cache pushing.
+  /// docs/06-RENDER-PIPELINE.md §5.6): green for the first two, steel blue for
+  /// the disk pair, dimmed for the coarser one of each.
   ///
-  /// The answer merges the RAM tier and the VRAM tier (the worker's
-  /// final-frame textures, as last published) — a frame on the card plays
-  /// without rendering, so it is as green as one in RAM. There is no disk
-  /// tier yet, so the "on disk only" state the design language reserves
-  /// blue for cannot occur, and is not reported.
+  /// **A mirror read, not a query.** Frames are named by a hash of their
+  /// content (docs/06 §5.2), so answering "is frame 12 held?" means *naming*
+  /// frame 12 — hashing the whole composition at that time, which needs the
+  /// renderer's probe results. So the worker builds this strip and publishes
+  /// it, and this reads what was published: §5.6's lock-free snapshot, where
+  /// the interface never touches a cache itself. Asking also tells the worker
+  /// what to compute, so a bar that starts drawing a different composition is
+  /// answered within a turn or two — all zeros until then, which is the honest
+  /// answer rather than another composition's frames.
   Uint8List cachedFrames({required BigInt frames, required double scale}) =>
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceCachedFrames(

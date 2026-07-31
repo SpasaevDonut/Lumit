@@ -105,13 +105,28 @@ pub struct HeadlessRenderer {
     /// at all. Replaced whenever a render genuinely needs different pixels.
     retained: Option<Retained>,
     /// The VRAM final-frame cache (docs/06 §5.1's top tier, "cache on the
-    /// card"): finished display textures keyed by (comp, frame, preview
-    /// scale in thousandths, channel order). This is what makes a revisited
-    /// frame free on the zero-copy Viewer, which keeps no CPU bytes to cache
-    /// (K-183). Keyed by position, like the bridge's RAM cache, so the owner
-    /// must drop it on a committed edit ([`Self::clear_frame_textures`]) and
-    /// a provisional drag render must pass `cacheable: false`.
-    frame_textures: lumit_cache::ByteLru<(Uuid, u64, u16, bool), FrameTexture>,
+    /// card"): finished display textures keyed by their **content hash**
+    /// ([`crate::cache::frame_key`]) and channel order. This is what makes a
+    /// revisited frame free on the zero-copy Viewer, which keeps no CPU bytes to
+    /// cache (K-183).
+    ///
+    /// Content-keyed, not keyed by position (docs/06 §5.2, K-178). That is what
+    /// lets an edit which cannot change a pixel — a rename, a work-area nudge,
+    /// an opacity keyframe on a hidden layer — keep every held frame, and what
+    /// makes an undo instantly valid again: the restored document asks for the
+    /// names it asked for before, and they are still here. A provisional drag
+    /// render still passes `cacheable: false`, because its values were never
+    /// committed and its pixels must not be filed under a name the document does
+    /// not describe.
+    frame_textures: lumit_cache::ByteLru<FrameTextureKey, FrameTexture>,
+    /// Read-backs of evicted frames still in flight — the VRAM→RAM rung of the
+    /// demotion ladder (docs/06 §5.3). Bounded by
+    /// [`MAX_DEMOTIONS_IN_FLIGHT`]; drained by [`Self::poll_demotions`].
+    demotions: Vec<Demotion>,
+    /// Display textures that left the cache and can hold the next promoted
+    /// frame — see [`Self::upload_frame_texture`]. Bounded by
+    /// [`MAX_POOLED_TEXTURES`].
+    upload_pool: Vec<std::sync::Arc<wgpu::Texture>>,
     /// How many `render_prepared` calls were served from [`Self::frame_textures`].
     frame_texture_hits: u64,
     /// Bumped whenever the held set changes — see [`Self::frame_texture_version`].
@@ -204,25 +219,152 @@ pub struct ExportInputs {
 /// Performance overrides it through the bridge.
 pub const DEFAULT_VRAM_CACHE_BYTES: usize = 512 * 1024 * 1024;
 
+/// The preview scale as a small integer: thousandths of the scale the composite
+/// actually ran at. Not part of any cache key any more (the content hash covers
+/// quality) — it travels with a frame as *provenance*, so a consumer that thinks
+/// in positions rather than hashes can still say "the finest held picture of
+/// this frame" (the Scopes panel, which needs the numbers in a frame at any
+/// size).
+#[must_use]
+pub fn preview_scale_q(quality: Quality) -> u16 {
+    (composite_scale(quality) * 1000.0)
+        .round()
+        .clamp(0.0, 65535.0) as u16
+}
+
+/// Where a cached frame came from: the position and preview scale it was made
+/// for. Deliberately NOT part of its name — two positions with identical content
+/// share one entry, and this then records whichever asked for it first — but kept
+/// because a hash alone cannot answer "is there any picture of frame 12?".
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FrameProvenance {
+    pub comp: Uuid,
+    pub frame: u64,
+    /// Preview scale in thousandths — see [`preview_scale_q`].
+    pub scale_q: u16,
+}
+
+/// A frame's name in the VRAM cache: its content hash, plus the channel order
+/// the display encode ran in (a BGRA frame cannot stand in for an RGBA one, and
+/// one build uses one order, so this only ever holds one value in practice).
+type FrameTextureKey = (u128, bool);
+
+/// How many demotion read-backs may be in flight at once. Each holds a staging
+/// buffer the size of one frame, so this is the ladder's memory ceiling (four
+/// 1080p frames ≈ 32 MB). A burst of evictions beyond it simply drops the extra
+/// frames, which costs a re-render and nothing else.
+///
+/// **This cap, rather than a cost threshold, is what bounds the ladder's
+/// traffic — a deliberate deviation from docs/06 §5.3.** The spec says to demote
+/// only when a frame's recompute cost exceeds the cost of reading it back, and
+/// that is the right idea; the trouble is that the number available to compare is
+/// not the frame's cost. A composite is *submitted* to the graphics card and the
+/// call returns, so the wall-clock the renderer can measure around it is the
+/// submit, not the work — a frame that takes the card 8 ms can measure under one.
+/// A threshold on that would gate the ladder on noise. The read-back costs the
+/// worker no waiting at all now (it is encoded and collected later), so the real
+/// cost is bus traffic, and a hard ceiling on how much of it can be in flight
+/// bounds that directly and honestly. The cost hint is still measured and still
+/// used — for eviction *ordering*, which is comparative and where a noisy number
+/// is good enough.
+const MAX_DEMOTIONS_IN_FLIGHT: usize = 4;
+
+/// How many display textures are kept for re-use after they leave the VRAM
+/// cache ([`HeadlessRenderer::upload_frame_texture`]).
+///
+/// Four, because these textures are not counted against the VRAM budget: they
+/// are memory on the card that the meter does not show. Four frames is 32 MB at
+/// 1080p, which is small beside the default budget, and it is more than enough
+/// for the promotions of one playback pass — a pass promotes one frame at a
+/// time, and the texture of the frame before it is usually free again.
+const MAX_POOLED_TEXTURES: usize = 4;
+
+/// One frame on its way out of VRAM and down to the tiers below: the read-back
+/// is already running on the card and nobody is waiting for it.
+struct Demotion {
+    key: u128,
+    bgra: bool,
+    /// The cost that earned it the trip, carried on so the tier below can rank
+    /// it against its own contents.
+    cost_ms: u32,
+    provenance: FrameProvenance,
+    pending: lumit_gpu::PendingReadback,
+}
+
+/// A frame that has finished coming down off the graphics card — the payload the
+/// owner files into the RAM tier and parks on disk (docs/06 §5.1's ladder).
+pub struct DemotedFrame {
+    /// The frame's content hash: the same name every tier files it under, which
+    /// is what lets a frame come back up without anyone knowing where it went.
+    pub key: u128,
+    pub width: u32,
+    pub height: u32,
+    /// Display-encoded bytes in the channel order they were composited in — see
+    /// [`Self::bgra`].
+    pub rgba: Vec<u8>,
+    /// True when `rgba` is really BGRA (the Windows/macOS zero-copy order). The
+    /// bytes are kept in the order they came down so the trip back up needs no
+    /// swizzle; anything that wants one canonical order (the disk tier's file
+    /// format) converts on its own thread.
+    pub bgra: bool,
+    /// What the frame cost to render, in milliseconds.
+    pub cost_ms: u32,
+    /// The position and scale it was made for, so the tier below can be asked
+    /// positional questions (see [`FrameProvenance`]).
+    pub provenance: FrameProvenance,
+}
+
+/// One frame on its way back UP the ladder: bytes held below, and everything
+/// needed to file the texture they become
+/// ([`HeadlessRenderer::upload_frame_texture`]).
+pub struct Promotion<'a> {
+    /// The frame's content hash — the name every tier files it under.
+    pub key: u128,
+    /// The channel order `bytes` are in (see [`DemotedFrame::bgra`]).
+    pub bgra: bool,
+    pub width: u32,
+    pub height: u32,
+    /// Display-encoded bytes, exactly `width * height * 4` of them.
+    pub bytes: &'a [u8],
+    /// What the frame cost to make, so it keeps its place in the cost-aware
+    /// eviction order up here.
+    pub cost_ms: u32,
+    pub provenance: FrameProvenance,
+}
+
+impl DemotedFrame {
+    /// This frame as a promotion, for putting it straight back on the card.
+    #[must_use]
+    pub fn promotion(&self) -> Promotion<'_> {
+        Promotion {
+            key: self.key,
+            bgra: self.bgra,
+            width: self.width,
+            height: self.height,
+            bytes: &self.rgba,
+            cost_ms: self.cost_ms,
+            provenance: self.provenance,
+        }
+    }
+}
+
 /// One cached display texture. Costed by its pixel footprint — display
 /// textures are 4 bytes per pixel in either channel order.
 struct FrameTexture {
-    texture: wgpu::Texture,
+    texture: std::sync::Arc<wgpu::Texture>,
+    provenance: FrameProvenance,
+    /// True when this frame arrived by being promoted UP the ladder rather than
+    /// composited here ([`HeadlessRenderer::upload_frame_texture`]). It is
+    /// therefore already held below, so evicting it needs no read-back — which
+    /// is what stops a scrub over a span larger than the cache from reading the
+    /// same frames back off the card again and again.
+    from_lower_tier: bool,
 }
 
 impl lumit_cache::ByteSized for FrameTexture {
     fn byte_size(&self) -> usize {
         (self.texture.width() as usize) * (self.texture.height() as usize) * 4 + 64
     }
-}
-
-/// The preview scale as it appears in a VRAM cache key: thousandths of the
-/// scale the composite actually ran at, mirroring the bridge cache's
-/// quantisation so the Timeline's cache bar can compare the two directly.
-fn scale_key(quality: Quality) -> u16 {
-    (composite_scale(quality) * 1000.0)
-        .round()
-        .clamp(0.0, 65535.0) as u16
 }
 
 /// One source decode a prefetcher should perform ahead of the playhead:
@@ -244,7 +386,10 @@ pub struct PrefetchWant {
 /// Holding one costs its texture's VRAM and nothing else; dropping it frees
 /// that. It is only valid on the renderer that made it.
 pub struct PreparedFrame {
-    texture: wgpu::Texture,
+    /// A share of the cached texture, not a texture of its own. The share is
+    /// what tells the pool of textures for re-use that a present still needs
+    /// this one ([`HeadlessRenderer::upload_frame_texture`]).
+    texture: std::sync::Arc<wgpu::Texture>,
 }
 
 impl PreparedFrame {
@@ -285,7 +430,15 @@ impl HeadlessRenderer {
             audio_jobs: AudioJobsBuilder::new(),
             pool: DecodePool::new(),
             retained: None,
-            frame_textures: lumit_cache::ByteLru::new(DEFAULT_VRAM_CACHE_BYTES),
+            frame_textures: {
+                let mut lru = lumit_cache::ByteLru::new(DEFAULT_VRAM_CACHE_BYTES);
+                // Evictions have to be visible, or the tiers below never hear
+                // that a frame exists and the ladder is a drop (docs/06 §5.3).
+                lru.collect_evictions();
+                lru
+            },
+            demotions: Vec::new(),
+            upload_pool: Vec::new(),
             frame_texture_version: 0,
             frame_texture_hits: 0,
             #[cfg(all(windows, feature = "shared-texture"))]
@@ -678,6 +831,10 @@ impl HeadlessRenderer {
     /// kept for next time. Pass false for any render of a document the store
     /// has not committed (a live drag's provisional values) — those pixels
     /// must neither be served stale nor poison the cache.
+    ///
+    /// The name a cacheable frame is filed under is its content hash, so a frame
+    /// whose footage is not yet probed has no name and is simply rendered live
+    /// (see [`Self::frame_key`]) — never filed under a promise it cannot keep.
     pub fn render_prepared(
         &mut self,
         doc: &Document,
@@ -687,8 +844,31 @@ impl HeadlessRenderer {
         bgra: bool,
         cacheable: bool,
     ) -> Result<PreparedFrame, String> {
-        let key = (comp_id, frame, scale_key(quality), bgra);
-        if cacheable {
+        let name = cacheable
+            .then(|| self.frame_key(doc, comp_id, frame, quality))
+            .flatten();
+        self.render_prepared_named(doc, comp_id, frame, quality, bgra, name)
+    }
+
+    /// [`Self::render_prepared`] with the frame's content name already computed.
+    ///
+    /// A caller that has looked in the tiers below before deciding to composite
+    /// has necessarily named the frame already, and naming one means hashing the
+    /// whole composition at that time — cheap beside a composite, but not free,
+    /// and not worth paying twice per frame. `None` means "do not cache this
+    /// one", which is both what a provisional drag render wants and what an
+    /// unnameable frame (footage still being probed) gets.
+    pub fn render_prepared_named(
+        &mut self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+        bgra: bool,
+        name: Option<u128>,
+    ) -> Result<PreparedFrame, String> {
+        let key = name.map(|k| (k, bgra));
+        if let Some(key) = key {
             if let Some(held) = self.frame_textures.get(&key) {
                 self.frame_texture_hits += 1;
                 return Ok(PreparedFrame {
@@ -696,18 +876,190 @@ impl HeadlessRenderer {
                 });
             }
         }
+        let started = std::time::Instant::now();
         let (texture, _, _) =
             self.preview_display_texture_fmt(doc, comp_id, frame, quality, None, bgra)?;
-        if cacheable {
-            self.frame_textures.insert(
+        let texture = std::sync::Arc::new(texture);
+        if let Some(key) = key {
+            // What it actually cost, so the store's cost-aware eviction has
+            // something true to weigh (docs §5.3: stale × cheap × large) and the
+            // demotion below can tell a dear frame from a trivial one. Rounded up
+            // to at least 1: a cost of zero would divide the eviction score by
+            // nothing at all.
+            let cost_ms = started.elapsed().as_millis().clamp(1, u128::from(u32::MAX)) as u32;
+            self.frame_textures.insert_with_cost(
                 key,
                 FrameTexture {
                     texture: texture.clone(),
+                    provenance: FrameProvenance {
+                        comp: comp_id,
+                        frame,
+                        scale_q: preview_scale_q(quality),
+                    },
+                    from_lower_tier: false,
                 },
+                cost_ms,
             );
             self.frame_texture_version += 1;
+            self.start_demotions();
         }
         Ok(PreparedFrame { texture })
+    }
+
+    /// Start reading back whatever that insert pushed out of VRAM, so it can
+    /// fall to the tiers below instead of being lost (docs/06 §5.3's demotion).
+    ///
+    /// Nothing here waits: each read-back is *encoded* and left running on the
+    /// graphics card, which is what keeps an eviction off the preview's critical
+    /// path. A frame too cheap to be worth moving is dropped, as is any beyond
+    /// the in-flight ceiling.
+    fn start_demotions(&mut self) {
+        for ((key, bgra), evicted, cost_ms) in self.frame_textures.take_evicted() {
+            // Already downstairs, or no room in flight: both mean this frame is
+            // not read back, and neither loses anything but a possible re-render.
+            let read_back = !evicted.from_lower_tier
+                && self.demotions.len() < MAX_DEMOTIONS_IN_FLIGHT
+                && self.parts.is_some();
+            if read_back {
+                // No engines means an earlier render faulted; there is nothing to
+                // encode with, and a lost demotion only costs a re-render.
+                if let Some(parts) = self.parts.as_ref() {
+                    self.demotions.push(Demotion {
+                        key,
+                        bgra,
+                        cost_ms,
+                        provenance: evicted.provenance,
+                        pending: parts.colour.start_readback8(&self.gpu, &evicted.texture),
+                    });
+                }
+            }
+            // The texture itself can serve the next promoted frame, whether or
+            // not its pixels went downstairs. Only a texture that a promotion
+            // made can: a composited frame is a render target, and the card does
+            // not let you write bytes into one. A present may still hold the
+            // texture; the pool tests for that before it hands one out.
+            if self.upload_pool.len() < MAX_POOLED_TEXTURES
+                && evicted
+                    .texture
+                    .usage()
+                    .contains(wgpu::TextureUsages::COPY_DST)
+            {
+                self.upload_pool.push(evicted.texture);
+            }
+        }
+    }
+
+    /// Take a texture from the pool that the next promoted frame can use, if
+    /// there is one.
+    ///
+    /// A texture is only free when this pool holds the last share of it. A
+    /// present holds a share for as long as it can show the frame, and a write
+    /// into a texture that is still on screen would show the wrong picture. The
+    /// share count is thus the test, and it needs no bookkeeping of its own.
+    fn take_pooled(
+        &mut self,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Option<std::sync::Arc<wgpu::Texture>> {
+        let at = self.upload_pool.iter().position(|t| {
+            std::sync::Arc::strong_count(t) == 1
+                && t.width() == width
+                && t.height() == height
+                && t.format() == format
+                && t.usage().contains(wgpu::TextureUsages::COPY_DST)
+        })?;
+        Some(self.upload_pool.swap_remove(at))
+    }
+
+    /// Collect any demotion read-backs the graphics card has finished — the
+    /// frames that just left VRAM, ready for the RAM and disk tiers.
+    ///
+    /// Called once per worker loop turn. Cheap when nothing is in flight (an
+    /// empty vector), and it never waits: a read-back still running is simply
+    /// asked again next turn. A failed one is dropped without a word beyond the
+    /// count — the frame is re-rendered if it is wanted, which is what a cache
+    /// miss always costs.
+    pub fn poll_demotions(&mut self) -> Vec<DemotedFrame> {
+        let mut done = Vec::new();
+        let mut still_running = Vec::with_capacity(self.demotions.len());
+        for mut demotion in std::mem::take(&mut self.demotions) {
+            let (width, height) = demotion.pending.size();
+            match demotion.pending.poll(&self.gpu) {
+                None => still_running.push(demotion),
+                Some(Ok(rgba)) => done.push(DemotedFrame {
+                    key: demotion.key,
+                    width,
+                    height,
+                    rgba,
+                    bgra: demotion.bgra,
+                    cost_ms: demotion.cost_ms,
+                    provenance: demotion.provenance,
+                }),
+                Some(Err(_)) => {}
+            }
+        }
+        self.demotions = still_running;
+        done
+    }
+
+    /// Put a frame held as bytes back on the graphics card — the way UP the
+    /// ladder (docs/06 §5.1: "promotes RAM→VRAM, and disk→RAM→VRAM ahead of the
+    /// playhead").
+    ///
+    /// **This is the piece that makes the lower tiers worth having.** Until it
+    /// existed nothing could turn held bytes into a texture the Viewer shows, so
+    /// a frame demoted out of VRAM — or read back off disk — would have been
+    /// composited again anyway, and the tiers below were bookkeeping with no
+    /// payoff. Now a promoted frame is presented exactly like a freshly rendered
+    /// one, and lands in the VRAM cache so the next visit is free too.
+    ///
+    /// `None` when the payload is not exactly one frame of the stated size — a
+    /// corrupt or truncated entry is refused rather than shown as garbage.
+    pub fn upload_frame_texture(&mut self, frame: Promotion<'_>) -> Option<PreparedFrame> {
+        // A texture that the cache has finished with, and that nothing shows any
+        // more, holds the next frame as well as a new one does. Playback goes
+        // past a promoted frame each time it comes round, so a new texture for
+        // each of them is an allocation on the card for each frame.
+        let format = lumit_gpu::ColourEngine::display8_format(frame.bgra);
+        let pooled = self.take_pooled(frame.width, frame.height, format);
+        let parts = self.parts.as_ref()?;
+        let texture = match pooled {
+            Some(free)
+                if parts.colour.write_display8(
+                    &self.gpu,
+                    &free,
+                    frame.bytes,
+                    frame.width,
+                    frame.height,
+                ) =>
+            {
+                free
+            }
+            // Nothing free of the correct size, or a payload the write refused:
+            // make one, which also refuses a payload that is not one frame.
+            _ => std::sync::Arc::new(parts.colour.upload_display8(
+                &self.gpu,
+                frame.bytes,
+                frame.width,
+                frame.height,
+                frame.bgra,
+            )?),
+        };
+        self.frame_textures.insert_with_cost(
+            (frame.key, frame.bgra),
+            FrameTexture {
+                texture: texture.clone(),
+                provenance: frame.provenance,
+                from_lower_tier: true,
+            },
+            frame.cost_ms.max(1),
+        );
+        self.frame_texture_version += 1;
+        // An upload can displace something, exactly as a render can; the frame it
+        // displaces has the same right to fall downstairs.
+        self.start_demotions();
+        Some(PreparedFrame { texture })
     }
 
     /// How many times the held set has changed — bumped by every insert, every
@@ -734,6 +1086,9 @@ impl HeadlessRenderer {
     /// and these are keyed by position, or the user asked (Clear cache).
     pub fn clear_frame_textures(&mut self) {
         self.frame_textures.clear();
+        // Give the memory on the card back as well: the pool exists to make
+        // promotions cheap, and after a clear there is nothing to promote.
+        self.upload_pool.clear();
         self.frame_texture_version += 1;
     }
 
@@ -747,23 +1102,24 @@ impl HeadlessRenderer {
         )
     }
 
-    /// Every held frame as `(comp, frame, scale in thousandths)` — the
-    /// snapshot the Timeline's cache bar merges. Channel order is dropped:
-    /// one platform only ever uses one.
+    /// Every held frame's content hash. Channel order is dropped: one platform
+    /// only ever uses one.
+    ///
+    /// For counting and for tests. The cache bar does NOT read this: under
+    /// content keying a hash does not say where its frame sits, so the bar is
+    /// built by asking [`Self::has_frame_texture`] for each frame's own name (the
+    /// worker does it and publishes the strip, docs/06 §5.6).
     #[must_use]
-    pub fn frame_texture_keys(&self) -> Vec<(Uuid, u64, u16)> {
-        self.frame_textures
-            .keys()
-            .map(|&(comp, frame, scale, _)| (comp, frame, scale))
-            .collect()
+    pub fn frame_texture_keys(&self) -> Vec<u128> {
+        self.frame_textures.keys().map(|&(hash, _)| hash).collect()
     }
 
-    /// Whether a frame is already held at this quality, without touching its
-    /// eviction recency — what the idle fill asks before rendering.
+    /// Whether the frame named `key` is already held, without touching its
+    /// eviction recency — what the idle fill and the cache bar ask before
+    /// rendering or drawing.
     #[must_use]
-    pub fn has_frame_texture(&self, comp: Uuid, frame: u64, quality: Quality, bgra: bool) -> bool {
-        self.frame_textures
-            .contains_key(&(comp, frame, scale_key(quality), bgra))
+    pub fn has_frame_texture(&self, key: u128, bgra: bool) -> bool {
+        self.frame_textures.contains_key(&(key, bgra))
     }
 
     /// How many renders the VRAM cache has answered. Test observability.
@@ -1764,7 +2120,9 @@ mod tests {
     /// (the hit counter proves it). A drag's provisional render must neither
     /// read the cache (it would show the pre-drag picture) nor store into it
     /// (it would poison later reads), and an owner-driven clear empties it —
-    /// the hook a committed edit pulls, since the keys are positional.
+    /// the hook Settings → Clear cache pulls. Note what is NOT here any more: a
+    /// committed edit no longer clears anything, because the names are content
+    /// hashes and an edit simply asks for different ones.
     #[test]
     fn a_cacheable_frame_is_served_from_vram_and_a_drag_never_is() {
         let mut r = match HeadlessRenderer::new() {
@@ -1785,12 +2143,16 @@ mod tests {
             .expect("second render");
         assert_eq!(r.frame_texture_hits(), 1, "the revisit is served from VRAM");
 
-        // A drag render of another frame: not banked, and a repeat of it does
-        // not read the cache either.
+        // A drag render: nothing is banked, and a repeat of it does not read the
+        // cache either. Counted rather than looked up by name, because in a comp
+        // this static every frame has the SAME name — a constant span hashes
+        // identically (docs/06 §5.2), which is the content key doing its job.
+        let held = r.frame_texture_stats().2;
         r.render_prepared(&doc, comp_id, 1, q, false, false)
             .expect("drag render");
-        assert!(
-            !r.has_frame_texture(comp_id, 1, q, false),
+        assert_eq!(
+            r.frame_texture_stats().2,
+            held,
             "provisional pixels are never banked"
         );
         r.render_prepared(&doc, comp_id, 1, q, false, false)
@@ -1802,7 +2164,229 @@ mod tests {
         );
 
         r.clear_frame_textures();
-        assert_eq!(r.frame_texture_stats().2, 0, "a committed edit drops all");
+        assert_eq!(r.frame_texture_stats().2, 0, "Clear cache drops all");
+    }
+
+    /// **The content-keying promise, on the VRAM tier.** An edit that cannot
+    /// change a pixel must not cost a render: the frame's name is a hash of what
+    /// is in it, so renaming a layer or moving the work area asks for exactly the
+    /// name already on the card. This is the behaviour the whole tier stack is
+    /// judged on in the hand — before it, every committed edit emptied the cache
+    /// and the bar went blank.
+    #[test]
+    fn a_picture_free_edit_still_hits_the_vram_cache() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([0.2, 0.4, 0.8, 1.0]), 8, 8);
+        let mut doc = (*store.snapshot()).clone();
+        let q = crate::plan::Quality::default();
+
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("first render");
+        let hits = r.frame_texture_hits();
+
+        // Rename the layer and nudge the work area: neither is in the picture.
+        if let Some(comp) = doc.comp_mut(comp_id) {
+            comp.name = "renamed".into();
+            comp.layers[0].name = "also renamed".into();
+            comp.work_area = Some((
+                lumit_core::time::CompTime(lumit_core::time::Rational::ZERO),
+                lumit_core::time::CompTime(lumit_core::time::Rational::new(1, 2).unwrap()),
+            ));
+        }
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("render after the picture-free edit");
+        assert_eq!(
+            r.frame_texture_hits(),
+            hits + 1,
+            "an edit that cannot change a pixel must be served from the card"
+        );
+
+        // And an edit that DOES change the picture misses, with no invalidation
+        // step anywhere: the name is simply different.
+        if let Some(comp) = doc.comp_mut(comp_id) {
+            comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(40.0);
+        }
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("render after a real edit");
+        assert_eq!(
+            r.frame_texture_hits(),
+            hits + 1,
+            "a changed picture has a different name, so it renders"
+        );
+        assert_eq!(
+            r.frame_texture_stats().2,
+            2,
+            "and the pre-edit frame is still held, so an undo is free"
+        );
+    }
+
+    /// **The demotion ladder** (docs/06 §5.3, §5.1): a frame squeezed out of
+    /// VRAM is read back off the card rather than dropped, and can go straight
+    /// back up as a texture without being composited again. The read-back is
+    /// started at eviction time and collected later, so it never makes the
+    /// preview wait — this test polls until it lands.
+    #[test]
+    fn an_evicted_frame_comes_back_down_and_can_go_back_up() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        // A composited frame, not one put in by hand: only a frame the renderer
+        // actually made is read back when it goes (one promoted UP the ladder is
+        // already held below, so demoting it again would be pure traffic — the
+        // rule that stops a long scrub reading the same frames off the card over
+        // and over).
+        let (store, comp_id) = doc_with_solid(LinearColour([1.0, 0.0, 0.0, 1.0]), 8, 8);
+        let mut doc = (*store.snapshot()).clone();
+        let q = crate::plan::Quality::default();
+        // A budget that holds exactly one 8×8 frame, so the second picture
+        // evicts the first.
+        r.set_frame_texture_budget(8 * 8 * 4 + 64);
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("composite the frame the ladder will demote");
+        let first = r
+            .frame_key(&doc, comp_id, 0, q)
+            .expect("a solid-only comp is nameable");
+        assert!(r.has_frame_texture(first, false));
+
+        // A different picture of the same frame — a dimmed solid — so the name
+        // differs and the first entry is evicted rather than replaced.
+        if let Some(comp) = doc.comp_mut(comp_id) {
+            comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(30.0);
+        }
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("composite a second picture, evicting the first");
+        assert!(!r.has_frame_texture(first, false), "the first was evicted");
+
+        // The read-back lands within a few polls; it is running on the card.
+        let mut demoted = Vec::new();
+        for _ in 0..200 {
+            demoted = r.poll_demotions();
+            if !demoted.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(demoted.len(), 1, "the evicted frame came back down");
+        assert_eq!(demoted[0].key, first, "under the name it was held by");
+        assert_eq!((demoted[0].width, demoted[0].height), (8, 8));
+        assert_eq!(demoted[0].rgba.len(), 8 * 8 * 4, "a whole frame of bytes");
+
+        // And back up: the bytes become a texture again, so a demoted frame is
+        // shown without re-compositing anything.
+        let back = r
+            .upload_frame_texture(demoted[0].promotion())
+            .expect("a demoted frame can be promoted again");
+        assert_eq!(back.size(), (8, 8));
+        assert!(r.has_frame_texture(first, false), "held on the card again");
+
+        // A truncated payload is refused rather than shown as garbage.
+        assert!(
+            r.upload_frame_texture(Promotion {
+                bytes: &demoted[0].rgba[..16],
+                ..demoted[0].promotion()
+            })
+            .is_none(),
+            "a short entry is refused, never uploaded"
+        );
+
+        // And a frame that came back UP is not sent down again when it goes: it
+        // is already held below, so a re-eviction costs no read-back at all.
+        // (Other frames may well come down in the meantime — the one thing that
+        // must not appear again is this key.)
+        if let Some(comp) = doc.comp_mut(comp_id) {
+            comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(70.0);
+        }
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("a third picture takes the promoted frame's place");
+        assert!(
+            !r.has_frame_texture(first, false),
+            "the promoted frame went"
+        );
+        let mut came_down = Vec::new();
+        for _ in 0..40 {
+            came_down.extend(r.poll_demotions().into_iter().map(|d| d.key));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            !came_down.contains(&first),
+            "a promoted frame is not read back a second time"
+        );
+    }
+
+    /// A promotion uses a texture that the cache has finished with, in place of
+    /// a new one — but only when nothing shows that texture any more.
+    ///
+    /// Playback goes past a promoted frame each time it comes round, and a new
+    /// texture for each of them is an allocation on the card for each frame.
+    /// The share count is the test of whether a texture is free, and it has to
+    /// be: a write into a texture that a present still shows would put the wrong
+    /// picture on the screen.
+    #[test]
+    fn a_free_texture_holds_the_next_promoted_frame() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let comp = Uuid::now_v7();
+        let bytes = vec![0u8; 8 * 8 * 4];
+        let promote = |key: u128| Promotion {
+            key,
+            bgra: false,
+            width: 8,
+            height: 8,
+            bytes: &bytes,
+            cost_ms: 4,
+            provenance: FrameProvenance {
+                comp,
+                frame: key as u64,
+                scale_q: 1000,
+            },
+        };
+        // Room for exactly one 8×8 frame, so each promotion evicts the one
+        // before it.
+        r.set_frame_texture_budget(8 * 8 * 4 + 64);
+
+        let first = r.upload_frame_texture(promote(1)).expect("first promotion");
+        let first_texture = std::sync::Arc::as_ptr(&first.texture);
+
+        // The first frame is evicted here, but `first` is still held — as a
+        // present holds a frame it is showing. Its texture must not be written
+        // over.
+        let second = r
+            .upload_frame_texture(promote(2))
+            .expect("second promotion");
+        assert!(
+            !std::ptr::eq(std::sync::Arc::as_ptr(&second.texture), first_texture),
+            "a texture that something still shows is never written over"
+        );
+
+        // Nothing shows the first frame now, thus the next promotion takes its
+        // texture in place of making one.
+        drop(first);
+        let third = r.upload_frame_texture(promote(3)).expect("third promotion");
+        assert!(
+            std::ptr::eq(std::sync::Arc::as_ptr(&third.texture), first_texture),
+            "a free texture is used again"
+        );
+        assert_eq!(third.size(), (8, 8));
+        // And Clear cache gives the memory on the card back.
+        drop(second);
+        drop(third);
+        r.clear_frame_textures();
+        assert!(r.upload_pool.is_empty(), "a clear empties the pool as well");
     }
 
     /// The interactive path renders the same picture the export path does — the

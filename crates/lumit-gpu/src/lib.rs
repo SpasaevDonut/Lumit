@@ -165,6 +165,77 @@ pub const WORKING_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float
 /// Source/display byte format: sRGB-encoded, hardware-converted at the edges.
 pub const SRGB_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
+/// A read-back in flight: the copy is already on the graphics card's queue and
+/// the buffer is being mapped, with nobody waiting. Started by
+/// [`ColourEngine::start_readback8`]; drained by [`Self::poll`], which never
+/// blocks. Dropping one abandons the read-back harmlessly.
+pub struct PendingReadback {
+    buffer: wgpu::Buffer,
+    width: u32,
+    height: u32,
+    /// The buffer's row stride, which alignment may have padded past `width * 4`.
+    padded: u32,
+    done: std::sync::mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
+    taken: bool,
+}
+
+impl PendingReadback {
+    /// The frame's dimensions, known from the moment the copy is encoded.
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        (self.width, self.height)
+    }
+
+    /// The bytes, once the card has finished — `None` while it has not, so the
+    /// caller simply asks again next turn.
+    ///
+    /// `Some(Err(_))` means the read-back failed and will not arrive: the caller
+    /// drops it and the frame is re-rendered if it is wanted again, which is all
+    /// a cache miss ever costs. After either answer this yields `None` for ever
+    /// (the buffer is unmapped), so a caller cannot double-take.
+    pub fn poll(&mut self, ctx: &GpuContext) -> Option<Result<Vec<u8>, GpuError>> {
+        if self.taken {
+            return None;
+        }
+        // Progress the queue without waiting on it: `Poll` returns whatever has
+        // already completed. `Wait` here would defeat the whole point.
+        ctx.device.poll(wgpu::Maintain::Poll);
+        match self.done.try_recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                self.taken = true;
+                return Some(Err(GpuError::Readback(e.to_string())));
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => return None,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.taken = true;
+                return Some(Err(GpuError::Readback("mapping abandoned".into())));
+            }
+        }
+        self.taken = true;
+        let slice = self.buffer.slice(..);
+        let data = slice.get_mapped_range();
+        let row = (self.width * 4) as usize;
+        let mut out = Vec::with_capacity(row * self.height as usize);
+        for r in 0..self.height as usize {
+            let start = r * self.padded as usize;
+            match data.get(start..start + row) {
+                Some(bytes) => out.extend_from_slice(bytes),
+                // A buffer shorter than its own stride promises cannot happen,
+                // but an engine crate answers rather than indexes off the end.
+                None => {
+                    drop(data);
+                    self.buffer.unmap();
+                    return Some(Err(GpuError::Readback("short read-back buffer".into())));
+                }
+            }
+        }
+        drop(data);
+        self.buffer.unmap();
+        Some(Ok(out))
+    }
+}
+
 impl ColourEngine {
     pub fn new(ctx: &GpuContext) -> Self {
         let shader = ctx
@@ -445,6 +516,175 @@ impl ColourEngine {
             wgpu::TextureUsages::COPY_SRC,
             "display-scaled",
         )
+    }
+
+    /// Upload display-encoded bytes back into a display texture — the way UP the
+    /// cache ladder (docs/06 §5.1: "promotes RAM→VRAM").
+    ///
+    /// **Why this has to exist.** Every other path here makes pixels *from* a
+    /// composite. A frame held as bytes in the RAM tier, or read back off disk,
+    /// has no way to reach the screen without one of these: the zero-copy Viewer
+    /// presents by copying one texture into another, so bytes alone cannot be
+    /// shown and a demoted frame would simply be composited again — which makes
+    /// the tiers below VRAM worth nothing.
+    ///
+    /// `bgra` picks the channel order the bytes are in, matching
+    /// [`Self::display`] / [`Self::display_bgra`], so a frame goes back up in the
+    /// order it came down and no per-frame swizzle is needed. The usages are the
+    /// ones a present and a further read-back need (`COPY_SRC`), so an uploaded
+    /// frame behaves exactly like a freshly composited one.
+    pub fn upload_display8(
+        &self,
+        ctx: &GpuContext,
+        bytes: &[u8],
+        width: u32,
+        height: u32,
+        bgra: bool,
+    ) -> Option<wgpu::Texture> {
+        // A payload that is not exactly one frame is refused before anything is
+        // made: a texture of no width stops the program, and an engine crate
+        // does not stop the program (docs/14).
+        let want = (width as usize)
+            .checked_mul(height as usize)?
+            .checked_mul(4)?;
+        if want == 0 || bytes.len() != want {
+            return None;
+        }
+        let texture = ctx.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("frame-display8-upload"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::display8_format(bgra),
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        self.write_display8(ctx, &texture, bytes, width, height)
+            .then_some(texture)
+    }
+
+    /// The pixel format [`Self::upload_display8`] gives a frame of each channel
+    /// order. A pool of textures for re-use must compare formats, thus the
+    /// choice is stated once here and not in each caller.
+    #[must_use]
+    pub fn display8_format(bgra: bool) -> wgpu::TextureFormat {
+        if bgra {
+            wgpu::TextureFormat::Bgra8UnormSrgb
+        } else {
+            SRGB_FORMAT
+        }
+    }
+
+    /// Write display-encoded bytes into a texture that already exists — the
+    /// re-use path for [`Self::upload_display8`].
+    ///
+    /// A new texture for each promoted frame means one allocation on the
+    /// graphics card for each frame that playback goes past, and each one is
+    /// 8 MB at 1080p. A texture that came out of the cache has the correct size
+    /// and format for the next frame, thus the caller keeps it and writes over
+    /// it. The queue keeps the two operations in order: a write always occurs
+    /// after the copies that were sent before it.
+    ///
+    /// `false` when the payload is not exactly one frame of the given size, or
+    /// when the texture is a different size. The caller must then make a new
+    /// texture. A short payload is refused because `write_texture` stops the
+    /// program if you give it too few bytes, and an engine crate does not stop
+    /// the program (docs/14).
+    #[must_use]
+    pub fn write_display8(
+        &self,
+        ctx: &GpuContext,
+        texture: &wgpu::Texture,
+        bytes: &[u8],
+        width: u32,
+        height: u32,
+    ) -> bool {
+        let Some(want) = (width as usize)
+            .checked_mul(height as usize)
+            .and_then(|px| px.checked_mul(4))
+        else {
+            return false;
+        };
+        if want == 0
+            || bytes.len() != want
+            || texture.width() != width
+            || texture.height() != height
+        {
+            return false;
+        }
+        ctx.queue.write_texture(
+            texture.as_image_copy(),
+            bytes,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(width * 4),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+        true
+    }
+
+    /// Begin reading a display texture back WITHOUT waiting for it — the
+    /// non-blocking sibling of [`Self::readback8`].
+    ///
+    /// **Why the split matters.** [`Self::readback8`] ends in
+    /// `poll(Maintain::Wait)`: the calling thread sits there until the graphics
+    /// card has finished. That is right for export and for tests, and quite
+    /// wrong for demoting a frame out of the VRAM cache — that happens *during*
+    /// a render, on the worker thread the preview is waiting on, so paying a
+    /// full read-back there would make every eviction a stutter. This encodes
+    /// the copy, submits it, and returns; the copy runs on the card alongside
+    /// the next composite and the caller collects the bytes a loop turn or two
+    /// later ([`PendingReadback::poll`]).
+    pub fn start_readback8(&self, ctx: &GpuContext, tex: &wgpu::Texture) -> PendingReadback {
+        let size = tex.size();
+        let row = size.width * 4;
+        let padded =
+            row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let buffer = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("readback-async"),
+            size: u64::from(padded) * u64::from(size.height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = ctx.device.create_command_encoder(&Default::default());
+        encoder.copy_texture_to_buffer(
+            tex.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded),
+                    rows_per_image: Some(size.height),
+                },
+            },
+            size,
+        );
+        ctx.queue.submit([encoder.finish()]);
+        let (tx, rx) = std::sync::mpsc::channel();
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |r| _ = tx.send(r));
+        PendingReadback {
+            buffer,
+            width: size.width,
+            height: size.height,
+            padded,
+            done: rx,
+            taken: false,
+        }
     }
 
     /// Read a display texture back as tight RGBA8 bytes (tests, export).
