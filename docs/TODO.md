@@ -136,7 +136,7 @@ armed is a *tool*; what each tool then does is the backlog:
     - **Mask paths cannot be keyframed** (docs/03 has them as animatable), and there is no
       mask **mode** (add/subtract/intersect) — every mask adds.
     - **Mask feather** has neither a control nor a renderer path.
-- **Type** - horizontal type is built (K-223): a click makes a text layer where you point or
+- **Type** - horizontal type is built (K-223, K-224): a click makes a text layer where you point or
     edits the one you clicked, typing previews rather than writing, and the document lands as
     one undo step when the edit ends. Still owed:
     - **Vertical type**, which needs `lumit-text` to lay a line out downwards.
@@ -152,7 +152,10 @@ armed is a *tool*; what each tool then does is the backlog:
 - **Paint** (brush/clone stamp/eraser) - **nothing at all in the engine**: there is no stroke
     model in the document, no op to add one, and no renderer path to draw one. It is a
     feature of the same size as shape layers, and belongs with them on the engine branch. The
-    toolbar's stroke colour and width are held and shown disabled until it exists.
+    toolbar's stroke colour and width are held and shown disabled until it exists; the three
+    tools wear their proper brush-ring pointers (K-224) and say what is missing when clicked.
+    The ring is drawn from the stroke width because there is no separate brush size yet — a
+    real paint feature would bring its own brush settings (size, hardness, opacity, flow).
 - **Roto** (roto brush/refine edge), **Puppet**, **Camera** - no engine side yet; these are
     roadmap features ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
 - **Snapping** is a switch nothing reads (docs/07 §4.5 specifies the behaviour).

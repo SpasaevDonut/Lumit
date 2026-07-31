@@ -389,9 +389,36 @@ bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
   line when the edit ends, with Position compensating so the words do not move (§2.3's
   pan-behind sum).
 - New text takes the toolbar's **fill** and **size** (§1.7).
+- **The click is where the words start**: a new layer's anchor begins at the left end of its
+  line's baseline, so what is typed runs to the right of the pointer and sits on it rather
+  than straddling it — the same relationship the caret is drawn with.
 - **Vertical type is not built**: the engine lays out one horizontal line. The member stays on
   the strip and says so.
 - Per-character and per-word text animators are a later feature ([TODO.md](TODO.md)).
+
+### 2.3.3 The tools' pointers (K-224)
+
+Every tool MUST say what it is through the pointer, and the ones no platform ships a cursor
+for are **drawn**: the system pointer is hidden over the Viewer and the tool paints its own,
+as the Rotation, Anchor point and Razor tools already do.
+
+| Tool | Pointer |
+|---|---|
+| Shape, Pen | The **crosshair** the eyedropper uses, badged with the tool's own icon down and to the right |
+| Brush, Clone stamp, Eraser | A **ring** the size of the stroke that would be left, a dot at its centre, badged with the tool's icon |
+| Horizontal type | The system **I-beam** |
+| Vertical type | A drawn I-beam, **turned a quarter turn** |
+| Rotation | A curved arrow leaning round the anchor (§2.3) |
+| Anchor point | The anchor's ring-and-cross (§2.3) |
+| Razor | The blade and its cut line (§4.4) |
+
+- A badge MUST be drawn with a halo behind it, so it is legible on a white picture and a black
+  one alike, and MUST sit **down and to the right** — above or to the left would cover the
+  shape being dragged out.
+- The brush ring MUST follow the **magnification**: a width in picture pixels drawn at picture
+  scale, clamped so a hairline is still visible and a very wide brush does not fill the window.
+- **Nothing is painted.** The painting tools have a pointer and a notice naming what is
+  missing; the engine has no paint strokes ([TODO.md](TODO.md)).
 
 ### 2.4 Motion paths
 

@@ -3917,3 +3917,44 @@ panel listened to the tool only to change the *pointer*, handing the whole stage
 cached child — so every tool layer under it stayed armed for whichever tool was in hand when
 the panel last rebuilt, and only happened to work because a tool is usually picked before
 anything else redraws. The stage is now built inside the listener.
+
+**K-224 · DECIDED · The tools that draw wear a drawn pointer: the eyedropper's crosshair
+badged with the tool's own icon, a brush ring for the painting tools, and an I-beam for
+type.** From the owner (2026-07-31): "for the shape and pen tools, they should use the same
+cursor as the dropper has? And maybe have the icon for the shape or pen in use just slightly
+offset to the bottom right of the cursor… For text I think it should use a text select type
+cursor and rotate this depending on if the text is horizontal or vertical… make sure the
+different brush options all have correct cursor icons for their function."
+
+**Shape and Pen: crosshair plus badge.** The crosshair is the eyedropper's — the pointer that
+means *this exact pixel* — because that is exactly what the first corner of a shape or the
+first point of a path is. The tool's own icon sits down and to the right of it, out of the
+way of the shape being dragged out, drawn twice: a halo copy a pixel across, then the ink one,
+so it is legible on a white picture and a black one alike. This is After Effects' own badging
+and it is what makes five shape tools that share a gesture tell each other apart.
+
+**The painting tools get a ring, not a crosshair.** A brush is not a point, it is a *width*,
+so its pointer is a circle the size of the stroke it would leave, with a dot at the centre for
+where that stroke starts. The ring is drawn from the toolbar's stroke width through the
+current magnification — a picture-pixel width shown at picture scale — clamped so a hairline
+still has a visible pointer and a very wide brush does not fill the window. The badge under it
+says which of brush, clone stamp and eraser is in hand. **Nothing is painted**: the layer
+exists to wear the pointer and to say what is missing when clicked, since the engine has no
+paint at all (docs/TODO.md).
+
+**Type: the I-beam, turned when the type is.** Horizontal type takes the system's own I-beam
+— every platform ships one and everybody already reads it as "you can type here". No platform
+ships a *sideways* one, so vertical type has one drawn: the same beam a quarter turn round, so
+the pointer says which way the line will run before a single letter is typed.
+
+**And the click is where the words start.** A new text layer's anchor now begins at the left
+end of its line's baseline rather than in the middle of an empty box, so what is typed runs to
+the right of the pointer and sits on it instead of straddling it — the same relationship the
+caret is drawn with. The anchor is still recentred on the finished line pan-behind (K-223), so
+nothing appears to move.
+
+**Why drawn rather than chosen.** A system cursor is a small fixed picture from the list the
+platform ships, and none of these are on it. The three tools that already needed this —
+Rotation, Anchor point and Razor — hide the system pointer over the picture and paint their
+own; these do the same, through one shared pointer widget rather than a fourth private
+painter.

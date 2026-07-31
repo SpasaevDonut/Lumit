@@ -5139,3 +5139,34 @@ subtree, so picking a tool changed the pointer while the overlays underneath
 stayed armed for whatever had been in hand when the panel last redrew. It only
 ever worked because a tool is usually picked before anything else makes the
 Viewer redraw. The stage is now built inside the listener.
+
+### What the pointer tells you (K-224)
+
+An operating system ships a short list of mouse pointers — an arrow, a hand, a
+crosshair, an I-beam — and "rounded rectangle tool" is not on it. So the tools
+that draw hide the system pointer while they are over the picture and paint
+their own. Three tools already did this (Rotation, Anchor point, Razor); now
+they all share one piece of code.
+
+**Shape tools and the Pen** wear the same crosshair the eyedropper does — the
+pointer that means *this exact pixel*, which is precisely what the first corner
+of a shape or the first point of a path is — with the tool's own icon tucked
+down and to the right. The icon is drawn twice, a dark copy a pixel across and
+the bright one over it, so it stays readable whether the picture under it is
+white or black. Down and to the right because a badge above or to the left would
+sit on top of the shape you are dragging out.
+
+**The painting tools get a ring instead.** A brush is not a point, it is a
+width, so the pointer is a circle the size of the stroke it would leave, with a
+dot in the middle for where that stroke starts. The ring follows the
+magnification — zoom in and it grows with the picture — and is kept between a
+visible minimum and a sane maximum, because it is a *pointer*, not the paint.
+Nothing is actually painted: the engine has no paint strokes at all, so clicking
+says so.
+
+**Type points where the words will start.** Horizontal type takes the system's
+own I-beam. Nobody ships a sideways one, so vertical type has a drawn beam,
+turned a quarter turn, which tells you which way the line will run before you
+type anything. And the point you click is now the *start* of the line rather
+than its middle: the new layer's anchor begins at the left end of the baseline,
+so the words run to the right of where you clicked and sit on it.

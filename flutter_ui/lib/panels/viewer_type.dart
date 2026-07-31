@@ -35,7 +35,9 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
 import '../state/preview_throttle.dart';
+import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
+import 'viewer_tool_cursor.dart';
 import 'viewer_layer_map.dart';
 
 /// How wide a line of text is, roughly, in layer pixels.
@@ -122,6 +124,9 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
   BridgeColourRgba _fill =
       const BridgeColourRgba(r: 1, g: 1, b: 1, a: 1);
 
+  /// Where the pointer is, for the drawn beam vertical type wears (K-224).
+  Offset? _pointer;
+
   final TextEditingController _controller = TextEditingController();
   final FocusNode _focus = FocusNode(debugLabel: 'Type tool');
   final PreviewThrottle _throttle = PreviewThrottle();
@@ -154,14 +159,28 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
   Widget build(BuildContext context) {
     if (!widget.active) return const SizedBox.shrink();
     final viewScale = widget.fitted.width / widget.compSize.width;
+    // Horizontal type wears the system's own I-beam; vertical type has one
+    // drawn for it, because no platform ships a sideways beam (K-224).
+    final vertical = widget.tool == ToolMode.typeVertical;
+    final t = ThemeScope.of(context).theme;
     return Positioned.fill(
       child: MouseRegion(
-        cursor: SystemMouseCursors.text,
+        cursor:
+            vertical ? SystemMouseCursors.none : SystemMouseCursors.text,
+        onEnter: (e) => setState(() => _pointer = e.localPosition),
+        onHover: (e) => setState(() => _pointer = e.localPosition),
+        onExit: (_) => setState(() => _pointer = null),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: _onTapUp,
           child: Stack(
             children: [
+              if (vertical)
+                TextPointer(
+                  at: _pointer,
+                  mark: t.textPrimary,
+                  outline: t.surface0,
+                ),
               if (_editingNow)
                 Positioned(
                   left: _origin.dx,
@@ -273,11 +292,13 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
           BridgeTransformProp.positionY,
         ],
         values: [
-          // An empty line has no width to be anchored in the middle of, so the
-          // anchor starts on the baseline's left end and is recentred when the
-          // edit ends.
+          // The click is where the text goes (K-224): the anchor starts on the
+          // left end of the line's baseline, so what is typed runs to the right
+          // of the pointer and sits on it rather than straddling it. An empty
+          // line has no width to be anchored in the middle of anyway; the
+          // anchor is recentred when the edit ends.
           BridgeScalar.static_(0),
-          BridgeScalar.static_(options.textSize * 0.5),
+          BridgeScalar.static_(options.textSize),
           BridgeScalar.static_(cx),
           BridgeScalar.static_(cy),
         ],

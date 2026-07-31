@@ -24,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/panels/viewer_tool_cursor.dart';
 import 'package:lumit_flutter/panels/viewer_zoom.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/tools.dart';
@@ -1261,6 +1262,24 @@ void main() {
       p.uiState.tools.select(ToolMode.select);
       await tester.pumpAndSettle();
       expect(layer.getText()!.text, 'Retitled');
+    });
+
+    /// The painting tools (K-224): each wears a brush ring with its own badge,
+    /// and a click says what is missing rather than being swallowed.
+    testWidgets('a paint tool wears a ring and says why nothing is painted',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.brush);
+      await mount(tester, p);
+
+      expect(find.byType(ViewerPaintPointerLayer), findsOneWidget);
+
+      await tester.tapAt(fittedRect(tester, p.comp).center);
+      await tester.pumpAndSettle();
+      expect(p.state.notice.value?.message, contains('not built yet'),
+          reason: 'the engine has no paint strokes (docs/TODO.md)');
+      expect(p.state.notice.value?.message, contains('Brush'),
+          reason: 'and it names the tool in hand');
     });
 
     testWidgets('a missing footage layer raises the badge', (tester) async {

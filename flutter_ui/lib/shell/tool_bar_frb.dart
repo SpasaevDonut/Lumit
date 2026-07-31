@@ -541,9 +541,18 @@ MouseCursor viewerCursorFor(ToolMode tool) => switch (tool) {
       ToolMode.zoom => SystemMouseCursors.zoomIn,
       ToolMode.razor => SystemMouseCursors.precise,
       ToolMode.anchor => SystemMouseCursors.move,
+      // Type points at where the words will start; horizontal takes the
+      // system's I-beam, and vertical has one drawn for it over the picture
+      // (K-224) because no platform ships a sideways beam.
+      ToolMode.typeHorizontal => SystemMouseCursors.text,
+      ToolMode.typeVertical => SystemMouseCursors.none,
+      // The tools that draw and the tools that paint wear a *drawn* pointer —
+      // the eyedropper's crosshair, or a brush ring, badged with the tool's own
+      // icon (K-224). Their own overlay hides the system pointer and paints it;
+      // this is the fallback underneath, and the nearest system pointer to it.
       _ => tool.group == ToolGroup.shape ||
               tool.group == ToolGroup.pen ||
-              tool.group == ToolGroup.type
+              tool.group == ToolGroup.paint
           ? SystemMouseCursors.precise
           : SystemMouseCursors.basic,
     };

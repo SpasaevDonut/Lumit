@@ -25,7 +25,9 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
+import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
+import 'viewer_tool_cursor.dart';
 import 'viewer_shapes.dart';
 
 /// The shape tools over the picture.
@@ -74,6 +76,10 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   /// The path being built with the Pen, and the pointer drawing its next edge.
   PathDraft _draft = const PathDraft();
   Offset? _penPointer;
+
+  /// Where the pointer is, for the drawn cursor (K-224). Tracked for every
+  /// shape tool, not only the Pen, because every one of them wears one.
+  Offset? _pointer;
 
   /// The handle being pulled out of the vertex just placed, if the click that
   /// placed it turned into a drag.
@@ -132,14 +138,24 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   @override
   Widget build(BuildContext context) {
     if (!widget.active) return const SizedBox.shrink();
+    final t = ThemeScope.of(context).theme;
     final target = _target;
     return Positioned.fill(
       child: MouseRegion(
-        cursor: SystemMouseCursors.precise,
-        onHover: _isPen
-            ? (event) => setState(() => _penPointer = event.localPosition)
-            : null,
-        onExit: _isPen ? (_) => setState(() => _penPointer = null) : null,
+        // Hidden, because the drawn pointer below replaces it (K-224): the
+        // eyedropper's crosshair, badged with this tool's own icon.
+        cursor: SystemMouseCursors.none,
+        onEnter: (event) => setState(() => _pointer = event.localPosition),
+        onHover: (event) => setState(() {
+          _pointer = event.localPosition;
+          // The Pen also draws the edge it would place next, from the last
+          // point placed to here.
+          if (_isPen) _penPointer = event.localPosition;
+        }),
+        onExit: (_) => setState(() {
+          _pointer = null;
+          _penPointer = null;
+        }),
         child: Listener(
           onPointerDown: (event) => _downAt = event.localPosition,
           child: GestureDetector(
@@ -149,20 +165,30 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
             onPanUpdate: _onPanUpdate,
             onPanEnd: (_) => _onPanEnd(),
             onPanCancel: _onPanCancel,
-            child: CustomPaint(
-              painter: _ShapePreviewPainter(
-                tool: widget.tool,
-                box: target,
-                from: _from,
-                to: _to,
-                square: HardwareKeyboard.instance.isShiftPressed,
-                draft: _draft,
-                penPointer: _penPointer,
-                handleFrom: _handleFrom,
-                handleTo: _handleTo,
-                accent: widget.accent,
+            child: Stack(children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _ShapePreviewPainter(
+                    tool: widget.tool,
+                    box: target,
+                    from: _from,
+                    to: _to,
+                    square: HardwareKeyboard.instance.isShiftPressed,
+                    draft: _draft,
+                    penPointer: _penPointer,
+                    handleFrom: _handleFrom,
+                    handleTo: _handleTo,
+                    accent: widget.accent,
+                  ),
+                ),
               ),
-            ),
+              ToolPointer(
+                at: _pointer,
+                tool: widget.tool,
+                mark: t.textPrimary,
+                outline: t.surface0,
+              ),
+            ]),
           ),
         ),
       ),
