@@ -2147,7 +2147,7 @@ class _MaskRow extends StatelessWidget {
   }
 }
 
-/// One piece of a shape layer's art in the Timeline (K-230): what it is called,
+/// One piece of a shape layer's art in the Timeline (K-237): what it is called,
 /// how opaque it is, and the menu that deletes it.
 ///
 /// The same shape as the mask and stroke rows: the engine takes the whole

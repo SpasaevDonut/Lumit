@@ -280,7 +280,7 @@ void main() {
     });
 
     /// A shape layer lists its art under a Contents heading, above Masks and
-    /// Effects — the order the picture is built in (K-230).
+    /// Effects — the order the picture is built in (K-237).
     testWidgets('a shape layer grows a Contents heading in its twirl-down',
         (tester) async {
       final p = withComp();

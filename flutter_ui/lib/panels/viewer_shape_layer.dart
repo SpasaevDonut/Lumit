@@ -46,7 +46,7 @@ class ViewerShapeLayer extends StatefulWidget {
   final List<LayerBox> boxes;
 
   /// The composition, for the shape layer a drag makes when nothing is
-  /// selected (K-230).
+  /// selected (K-237).
   final CompositionReference comp;
 
   /// Where the picture sits on screen, and the comp's own size — the two that
@@ -144,7 +144,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   }
 
   /// A point on screen in the composition's own pixels — what a shape layer's
-  /// art is built in when there is no layer to ask (K-230).
+  /// art is built in when there is no layer to ask (K-237).
   (double, double) _compPoint(Offset at) {
     final scale = widget.compSize.width == 0
         ? 1.0
@@ -263,7 +263,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final box = _target;
     if (box == null) {
       // Nothing selected: After Effects' other half of this gesture — a new
-      // shape layer at the top of the composition (K-230).
+      // shape layer at the top of the composition (K-237).
       _commitShapeLayer(shapePath(
         tool: widget.tool,
         from: _compPoint(from),
@@ -298,7 +298,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final box = _target;
     // The path is built in the layer's coordinates when there is a layer, and
     // in the composition's when there is not — the same path either way, and
-    // the difference is only which thing it will belong to (K-230).
+    // the difference is only which thing it will belong to (K-237).
     final at = box == null
         ? _compPoint(details.localPosition)
         : () {
@@ -365,7 +365,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   // --- Committing -----------------------------------------------------------
 
   /// A new shape layer holding this art, at the top of the composition — what a
-  /// shape tool or the Pen does with nothing selected (K-230).
+  /// shape tool or the Pen does with nothing selected (K-237).
   ///
   /// The art takes the toolbar's fill, and its stroke when one has a width: the
   /// two swatches that had nothing to paint until there were shape layers.

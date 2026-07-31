@@ -132,7 +132,7 @@ class BridgeLayerInfo {
   /// know a layer has some without asking per frame.
   final List<BridgeStroke> paint;
 
-  /// A shape layer's art (K-230), bottom first; empty on every other kind.
+  /// A shape layer's art (K-237), bottom first; empty on every other kind.
   /// Carried for the same reason again — and for one more: the art *is* the
   /// layer's size, so the Viewer's wireframe reads it here.
   final List<BridgeShapeItem> shapeContents;
@@ -214,7 +214,7 @@ enum BridgeLayerKind {
   precomp,
   text,
 
-  /// Vector art as the layer's own picture (K-230).
+  /// Vector art as the layer's own picture (K-237).
   shape,
   camera,
   sequence,
@@ -452,7 +452,7 @@ enum BridgeRevealKind {
   ;
 }
 
-/// One piece of vector art on a shape layer (K-230): a path, and how it is
+/// One piece of vector art on a shape layer (K-237): a path, and how it is
 /// painted.
 ///
 /// The path is `BridgeVertex`, the same vertices a mask crosses with: one path
@@ -998,7 +998,7 @@ class LayerReference {
         that: this,
       );
 
-  /// This shape layer's contents, bottom of the stack first (K-230).
+  /// This shape layer's contents, bottom of the stack first (K-237).
   ///
   /// Empty on a layer that is not a shape, rather than an error: the Timeline
   /// asks every row what it has to list, exactly as it asks about masks.

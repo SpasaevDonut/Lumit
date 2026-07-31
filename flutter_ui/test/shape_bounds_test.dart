@@ -1,4 +1,4 @@
-// A shape layer's size (K-230): the box its art fills.
+// A shape layer's size (K-237): the box its art fills.
 //
 // This is the one number a shape layer shares with the engine — the renderer
 // sizes the raster with `shape::ShapeItem::bounds` and the Viewer draws the

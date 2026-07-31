@@ -169,11 +169,11 @@ empty for the tools that draw nothing:
 |---|---|
 | Type | **Fill** swatch, **size** in pixels |
 | Brush, Clone stamp, Eraser | **Fill** swatch, brush **size**, **hardness**, **opacity** (K-227) |
-| Shape, Pen | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels — all live (K-230) |
+| Shape, Pen | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels — all live (K-237) |
 
 Every option is session state, like the armed tool itself, and every one is live: fill and size
 say what the next thing drawn is made with, and the stroke pair outlines a new shape layer's art
-(K-230 — a width of zero draws no outline).
+(K-237 — a width of zero draws no outline).
 
 **Behaviour.**
 
@@ -336,7 +336,7 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
 ### 2.3.1 The shape tools and masks (K-222)
 
 - With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected it
-  makes a **shape layer** at the top of the composition (K-230), holding the art it drew, in the
+  makes a **shape layer** at the top of the composition (K-237), holding the art it drew, in the
   toolbar's fill and — when the width is not zero — its stroke. The new layer MUST land where
   the art was drawn and MUST become the selection, so the next drag masks it.
 - A shape layer's art lists in its Timeline twirl-down under a **Contents** heading, above Masks

@@ -5546,7 +5546,7 @@ camera, where the pivot is a thing you can move on its own), the **Unified
 Camera** tool that puts all three gestures on the three mouse buttons, and
 depth-of-field handles on the picture.
 
-### Shape layers: art that is numbers, not pixels (K-230)
+### Shape layers: art that is numbers, not pixels (K-237)
 
 Until now the shape tools could only draw a **mask** — a path *on* another
 layer, deciding which of its pixels show. Drag one with nothing selected and it

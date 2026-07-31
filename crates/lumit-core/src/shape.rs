@@ -180,7 +180,7 @@ pub fn rasterise_contents(
         if let (Some(stroke), true) = (item.stroke, item.stroke_width > 0.0) {
             // A stroke is a brush run along the path, which is exactly what the
             // paint rasteriser already does — one widened-path implementation
-            // for both, rather than two that can disagree (K-230).
+            // for both, rather than two that can disagree (K-237).
             let points = flatten_path(&shifted);
             if points.len() >= 2 {
                 let brush = crate::paint::PaintStroke {

@@ -55,7 +55,7 @@ pub struct BridgeVertex {
     pub tan_out_y: f64,
 }
 
-/// One piece of vector art on a shape layer (K-230): a path, and how it is
+/// One piece of vector art on a shape layer (K-237): a path, and how it is
 /// painted.
 ///
 /// The path is `BridgeVertex`, the same vertices a mask crosses with: one path
@@ -345,7 +345,7 @@ pub enum BridgeLayerKind {
     Solid,
     Precomp,
     Text,
-    /// Vector art as the layer's own picture (K-230).
+    /// Vector art as the layer's own picture (K-237).
     Shape,
     Camera,
     Sequence,
@@ -416,7 +416,7 @@ pub struct BridgeLayerInfo {
     /// reason the masks are: the Timeline lists them, and the Viewer needs to
     /// know a layer has some without asking per frame.
     pub paint: Vec<BridgeStroke>,
-    /// A shape layer's art (K-230), bottom first; empty on every other kind.
+    /// A shape layer's art (K-237), bottom first; empty on every other kind.
     /// Carried for the same reason again — and for one more: the art *is* the
     /// layer's size, so the Viewer's wireframe reads it here.
     pub shape_contents: Vec<BridgeShapeItem>,
@@ -971,7 +971,7 @@ impl LayerReference {
         })
     }
 
-    /// This shape layer's contents, bottom of the stack first (K-230).
+    /// This shape layer's contents, bottom of the stack first (K-237).
     ///
     /// Empty on a layer that is not a shape, rather than an error: the Timeline
     /// asks every row what it has to list, exactly as it asks about masks.

@@ -2260,7 +2260,7 @@ fn concurrent_project_creation_and_editing_does_not_deadlock() {
     }
 }
 
-// --- Shape layers (K-230) -------------------------------------------------
+// --- Shape layers (K-237) -------------------------------------------------
 
 use crate::api::layer::BridgeLayerKind;
 

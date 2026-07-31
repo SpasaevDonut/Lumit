@@ -813,7 +813,7 @@ pub enum LayerKind {
     /// beneath it, within its span. A comp-sized container for effects.
     Adjustment,
     /// Vector art as the layer's own picture (docs/03-DATA-MODEL.md §7.2,
-    /// K-230): one or more paths, each with a fill and a stroke, drawn at
+    /// K-237): one or more paths, each with a fill and a stroke, drawn at
     /// whatever resolution the frame is rendered at.
     ///
     /// The paths are `mask::BezierPath` — the same path type a mask uses, and

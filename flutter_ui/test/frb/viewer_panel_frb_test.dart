@@ -1006,7 +1006,7 @@ void main() {
       expect(xs.reduce((a, b) => a > b ? a : b), lessThan(1920));
     });
 
-    /// The Pen with nothing selected makes a shape layer too (K-230): the same
+    /// The Pen with nothing selected makes a shape layer too (K-237): the same
     /// path, and the only difference is what it will belong to.
     testWidgets('the Pen with nothing selected closes onto a shape layer',
         (tester) async {
@@ -1375,7 +1375,7 @@ void main() {
       expect(p.state.notice.value?.message, contains('Select a layer to paint'));
     });
 
-    /// The other half of the shape tools' gesture (K-230): with nothing
+    /// The other half of the shape tools' gesture (K-237): with nothing
     /// selected they make a **shape layer** rather than saying they cannot.
     testWidgets('a shape drag with nothing selected makes a shape layer',
         (tester) async {

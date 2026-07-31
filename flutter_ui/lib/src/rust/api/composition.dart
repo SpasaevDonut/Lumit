@@ -301,7 +301,7 @@ class CompositionReference {
         that: this,
       );
 
-  /// Add a Shape layer holding `contents`, at the top of the stack (K-230).
+  /// Add a Shape layer holding `contents`, at the top of the stack (K-237).
   ///
   /// The art is in the layer's own coordinates, and the layer is placed so
   /// that art lands where it was drawn: the anchor sits on the art's own

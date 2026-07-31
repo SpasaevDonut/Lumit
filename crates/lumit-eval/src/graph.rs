@@ -24,7 +24,7 @@ pub enum SourceRef {
     Solid(Uuid),
     Precomp(Uuid),
     Text,
-    /// Vector art rasterised from the layer's own contents (K-230). Like Text,
+    /// Vector art rasterised from the layer's own contents (K-237). Like Text,
     /// it has no asset behind it: the art *is* the layer.
     Shape,
     Sequence,

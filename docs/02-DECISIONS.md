@@ -4202,7 +4202,7 @@ there is no single value for a drag to add to.
 separate point of interest, and its Unified Camera tool switches between the three by mouse
 button. Both are in TODO.md; neither changes the three tools above.
 
-**K-230 · DECIDED · A shape layer is a list of paths with a fill and a stroke, and its size is
+**K-237 · DECIDED · A shape layer is a list of paths with a fill and a stroke, and its size is
 the box its art fills.** The other half of K-222's gesture: with nothing selected the shape
 tools now make a layer instead of saying they cannot, which is what the owner asked for when
 the shape tools were specified.

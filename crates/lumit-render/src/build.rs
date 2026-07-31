@@ -313,7 +313,7 @@ pub fn build_comp_draws_at(
             }),
             // Vector art: rasterised at the size the frame is being drawn at,
             // into its own bounding box, which is also the layer's natural size
-            // (K-230). Unlike every other kind, that size moves when the art is
+            // (K-237). Unlike every other kind, that size moves when the art is
             // edited.
             LayerKind::Shape { contents } => in_span(layer)
                 .then(|| lumit_core::shape::contents_bounds(contents))

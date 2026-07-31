@@ -120,7 +120,7 @@ armed is a *tool*; what each tool then does is the backlog:
     four siblings (add/delete/convert vertex, mask feather) edit a finished path; see mask
     editing below.
     What the two owe between them:
-    - **Shape layers** are built (K-230, docs/impl/shape-layers.md): with nothing selected a
+    - **Shape layers** are built (K-237, docs/impl/shape-layers.md): with nothing selected a
       shape tool or the Pen makes a layer holding the art, in the toolbar's fill and stroke,
       listed in the Timeline under Contents. Still owed: nested groups and the shape
       **modifiers** (repeater, trim paths, wiggle, offset paths), gradient fills, dashed

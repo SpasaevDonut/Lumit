@@ -130,7 +130,7 @@ enum ToolOptions {
   type,
 
   /// Fill and stroke: what a shape tool draws with. Both live since shape
-  /// layers landed (K-230) — a shape layer's art carries a fill colour, a
+  /// layers landed (K-237) — a shape layer's art carries a fill colour, a
   /// stroke colour and a stroke width, and a width of zero draws no outline.
   shape,
 

@@ -227,7 +227,7 @@ class ToolsState extends ChangeNotifier {
   }
 
   /// The **stroke** a shape layer's art is outlined in, and how wide that
-  /// outline is in layer pixels (K-230).
+  /// outline is in layer pixels (K-237).
   ///
   /// Live since shape layers landed: a width of zero draws no outline, which is
   /// how a fill-only shape is made.
@@ -239,7 +239,7 @@ class ToolsState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The stroke as the bridge wants it, for a shape layer's outline (K-230).
+  /// The stroke as the bridge wants it, for a shape layer's outline (K-237).
   BridgeColourRgba get strokeRgba =>
       BridgeColourRgba(r: _stroke.r, g: _stroke.g, b: _stroke.b, a: 1);
 

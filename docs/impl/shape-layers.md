@@ -1,6 +1,6 @@
 # Shape layers — the plan before the code
 
-**Status: built (K-230), first cut.** The durable parts now live in
+**Status: built (K-237), first cut.** The durable parts now live in
 [../03-DATA-MODEL.md](../03-DATA-MODEL.md) §7.2, [../06-RENDER-PIPELINE.md](../06-RENDER-PIPELINE.md)
 §1.2 and [../07-UI-SPEC.md](../07-UI-SPEC.md) §2.3.1; what is left here is the reasoning behind
 the choices and the record of how the plan turned out. Two things went differently

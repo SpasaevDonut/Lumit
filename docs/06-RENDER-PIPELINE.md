@@ -42,7 +42,7 @@ For a visual layer at comp time `t`, the compiled subgraph is, in order:
 
 1. **Source** — fetch or rasterise the layer source at the resolved source time. For footage:
    decode, colour-interpret, linearise, premultiply (§3). For text/shape/solid: rasterise
-   vectors at the working raster size. A **shape layer** (K-230,
+   vectors at the working raster size. A **shape layer** (K-237,
    [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.2) has no asset at all: its contents are rasterised
    into their own bounding box, which is also the layer's natural size — the one kind whose size
    moves when it is edited. Each item is filled through the mask rasteriser and then outlined

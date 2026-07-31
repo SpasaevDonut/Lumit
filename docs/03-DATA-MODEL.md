@@ -378,7 +378,7 @@ it. The op is `SetLayerPaint` — the whole list, exactly invertible, like `SetL
 start and end times), per-stroke blending modes, and a GPU stamping path. None of them changes
 the shape above.
 
-### 7.2 Shape layers (K-230)
+### 7.2 Shape layers (K-237)
 
 ```rust
 LayerKind::Shape { contents: Vec<ShapeItem> }

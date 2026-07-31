@@ -99,7 +99,7 @@ pub enum BridgeError {
     EmptyStroke,
     /// No stroke of that id on this layer.
     NoSuchStroke,
-    /// The layer is not a shape layer (K-230).
+    /// The layer is not a shape layer (K-237).
     NotShape,
     /// The razor was pointed at a time outside the layer's span, or at one of
     /// its ends — either way there is no second layer to make.

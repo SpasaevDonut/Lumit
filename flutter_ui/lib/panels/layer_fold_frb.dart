@@ -91,7 +91,7 @@ final class FoldMaskRow extends LayerFoldRow {
   const FoldMaskRow(this.mask, {required int depth}) : super(depth);
 }
 
-/// One piece of a shape layer's art (K-230): its name, its fill and its
+/// One piece of a shape layer's art (K-237): its name, its fill and its
 /// outline — the row that makes a drawn shape editable after the fact.
 final class FoldShapeRow extends LayerFoldRow {
   final BridgeShapeItem item;
@@ -333,7 +333,7 @@ List<LayerFoldRow> layerFoldRows({
 
   // Contents first of the three: a shape layer's art *is* its picture, so it
   // comes before the masks that gate that picture and the effects that process
-  // it (K-230, docs/06 render order).
+  // it (K-237, docs/06 render order).
   if (info.shapeContents.isNotEmpty) {
     final contentsOpen = open.contains(contentsPath(id));
     rows.add(FoldGroupRow(
