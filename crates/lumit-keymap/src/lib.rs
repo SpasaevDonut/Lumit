@@ -551,7 +551,7 @@ pub fn default_keymap() -> Keymap {
         row(Tools, "C", "tool.razor"),
         row(Tools, "Q", "tool.shape"),
         row(Tools, "G", "tool.pen"),
-        // The rest of the toolbar (K-214). After Effects' own chords wherever
+        // The rest of the toolbar (K-216). After Effects' own chords wherever
         // Lumit has not already spent the key: W rotates and Alt+W is the roto
         // brush there too. Its camera cycle is `C`, which docs/07 §15 gave to
         // the razor long before there was a camera tool, so the camera group

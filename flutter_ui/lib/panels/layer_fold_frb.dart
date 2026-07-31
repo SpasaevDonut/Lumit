@@ -84,7 +84,7 @@ final class FoldRetimeRow extends LayerFoldRow {
   const FoldRetimeRow(this.scalar, {required int depth}) : super(depth);
 }
 
-/// One mask on the layer (K-220): its name, and the switches that decide how it
+/// One mask on the layer (K-222): its name, and the switches that decide how it
 /// gates the picture.
 final class FoldMaskRow extends LayerFoldRow {
   final BridgeMask mask;

@@ -1053,7 +1053,7 @@ impl CompositionReference {
     }
 
     /// Ask for `frame` with `layer`'s text document replaced by `document` —
-    /// the same live path as the two above, for the Type tool (K-223).
+    /// the same live path as the two above, for the Type tool (K-225).
     ///
     /// Typing is the one edit where the provisional value changes many times a
     /// second and the document must *not*: a `set_text` per keystroke would be

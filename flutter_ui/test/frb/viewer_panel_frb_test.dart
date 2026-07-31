@@ -355,7 +355,7 @@ void main() {
       final beforeX = (before.positionX as BridgeScalar_Static).field0;
 
       // The layer fills the comp, so the middle of the picture is inside it —
-      // there is no handle to find any more: the body is the handle (K-215).
+      // there is no handle to find any more: the body is the handle (K-217).
       final stage = find.byType(ViewerPanelFrb);
       final gesture = await tester.startGesture(tester.getCenter(stage));
       await tester.pump();
@@ -971,7 +971,7 @@ void main() {
       expect(at(moved.positionX), greaterThan(positionNow));
     });
 
-    /// The shape tools (K-220). With a layer selected a drag draws a **mask** on
+    /// The shape tools (K-222). With a layer selected a drag draws a **mask** on
     /// it; with nothing selected there is nothing to mask, and the status line
     /// says so rather than the drag vanishing into silence.
     testWidgets('a shape drag adds a mask to the selected layer',
@@ -1077,10 +1077,10 @@ void main() {
       expect(masks.single.name, 'Polygon');
       expect(masks.single.vertices, hasLength(5),
           reason: 'a polygon is a shape you drag out, not a path you build '
-              '(K-221)');
+              '(K-223)');
     });
 
-    /// Mask points are editable on the picture (K-222): they draw as squares on
+    /// Mask points are editable on the picture (K-224): they draw as squares on
     /// the path, a marquee gathers them, and dragging moves them.
     testWidgets('a mask\'s points can be swept up and dragged', (tester) async {
       final p = withLayer();
@@ -1119,7 +1119,7 @@ void main() {
 
       // Sweep the top two points only, starting from empty space *outside* the
       // picture: a press inside a selected layer moves that layer, which is
-      // what the Selection tool has always done (K-215) and what After Effects
+      // what the Selection tool has always done (K-217) and what After Effects
       // does. The surround is the empty part a marquee starts from.
       final panel = tester.getRect(find.byType(ViewerPanelFrb));
       final gesture = await tester.startGesture(panel.topLeft + const Offset(2, 2));
@@ -1153,7 +1153,7 @@ void main() {
           reason: 'the points the sweep missed stayed put');
     });
 
-    /// The Type tool (K-223): a click on empty picture makes a text layer where
+    /// The Type tool (K-225): a click on empty picture makes a text layer where
     /// it landed, typing previews rather than writing, and ending the edit
     /// writes the document once.
     testWidgets('the Type tool makes a text layer where you click',
@@ -1263,7 +1263,7 @@ void main() {
       expect(layer.getText()!.text, 'Retitled');
     });
 
-    /// The painting tools are on the strip and cannot be armed (K-226): there
+    /// The painting tools are on the strip and cannot be armed (K-228): there
     /// are no paint strokes in the engine yet, and a tool that arms and then
     /// does nothing reads as a broken application.
     testWidgets('a painting tool cannot be armed while nothing paints',
@@ -1274,7 +1274,7 @@ void main() {
       expect(p.uiState.tools.tool, ToolMode.select);
     });
 
-    /// The camera tools (K-227): a drag moves the composition's active camera,
+    /// The camera tools (K-229): a drag moves the composition's active camera,
     /// and with no camera the tool says so rather than swallowing the gesture.
     testWidgets('the camera tools orbit, track and dolly the active camera',
         (tester) async {

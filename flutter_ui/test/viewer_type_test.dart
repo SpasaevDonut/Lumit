@@ -1,4 +1,4 @@
-// The Type tool's arithmetic (K-223): where a click falls in the composition,
+// The Type tool's arithmetic (K-225): where a click falls in the composition,
 // how wide a line is reckoned to be, and where that puts a new layer's anchor.
 //
 // All three are estimates the *engine* also makes — a text layer's anchor is

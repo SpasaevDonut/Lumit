@@ -110,7 +110,7 @@ Widget hostPanel({
   Size size = const Size(480, 760),
   /// How much motion the panel under test is allowed. None by default, so a
   /// test asserts a finished state rather than racing an animation; a test
-  /// that is *about* the motion (the Viewer's zoom flight, K-216) asks for it.
+  /// that is *about* the motion (the Viewer's zoom flight, K-218) asks for it.
   AnimationLevel animationLevel = AnimationLevel.none,
 }) =>
     Directionality(

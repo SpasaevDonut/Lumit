@@ -1,5 +1,5 @@
 // How big a layer is, in its own pixels — the rectangle the Viewer draws a
-// wireframe round and hit-tests a click against (K-215).
+// wireframe round and hit-tests a click against (K-217).
 //
 // **In plain terms.** A layer's transform says where it sits, how big it is
 // drawn and which way up. It does not say how big the *thing* is: that comes

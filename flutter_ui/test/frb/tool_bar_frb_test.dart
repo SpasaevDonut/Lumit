@@ -1,4 +1,4 @@
-// The toolbar as it is mounted in the shell (K-214, docs/07 §1.7).
+// The toolbar as it is mounted in the shell (K-216, docs/07 §1.7).
 //
 // It draws from `LumitUiState` — the armed tool, the keymap the tooltips quote,
 // the workspace it rearranges — so it runs against the real engine like every
@@ -107,7 +107,7 @@ void main() {
       expect(p.uiState.workspace.activePreset, WorkspacePreset.effects);
     });
 
-    /// The tool options area (K-223): After Effects shows the settings the
+    /// The tool options area (K-225): After Effects shows the settings the
     /// armed tool draws with, and nothing at all for the tools that draw
     /// nothing.
     testWidgets('the options area follows the armed tool', (tester) async {
@@ -132,7 +132,7 @@ void main() {
     });
 
     /// A group with nothing built in it is on the strip and cannot be pressed
-    /// (K-226): the gap should be visible rather than remembered.
+    /// (K-228): the gap should be visible rather than remembered.
     testWidgets('a group with nothing built cannot be armed', (tester) async {
       final p = await mount(tester);
 

@@ -72,7 +72,7 @@ import 'package:iconoir_flutter/solid/keyframe.dart' as ics;
 /// One icon.
 ///
 /// The first 44 variants are the Rust `Icon` enum's, name for name. The tool
-/// marks after them (K-214) are this frontend's own: the archived egui shell has
+/// marks after them (K-216) are this frontend's own: the archived egui shell has
 /// no toolbar to draw them, so there is no Rust counterpart to keep in step.
 enum LumitIcon {
   pointer,
@@ -139,7 +139,7 @@ enum LumitIcon {
   /// and deliberately unlike [rectangle] and [solid], which are plain squares.
   nullLayer,
 
-  // --- The toolbar's tools (K-214, docs/07 §1.7). ---
+  // --- The toolbar's tools (K-216, docs/07 §1.7). ---
   zoomIn,
   rotate,
 
@@ -172,7 +172,7 @@ enum LumitIcon {
   cameraPan,
   cameraDolly,
 
-  /// The Viewer bar's layer-controls switch (K-215): a box with a handle on
+  /// The Viewer bar's layer-controls switch (K-217): a box with a handle on
   /// each corner — the mark it governs, drawn small. Painter-drawn, because
   /// what it depicts is Lumit's own gizmo rather than anything a general icon
   /// set has a glyph for.

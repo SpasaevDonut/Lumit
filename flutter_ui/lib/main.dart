@@ -368,12 +368,12 @@ class LumitUiState extends ChangeNotifier {
   late final KeymapState keymap;
 
   /// How big each layer's content is, for the Viewer's boxes and hit-testing
-  /// (K-215). Held here because the answer is the document's, not a panel's,
+  /// (K-217). Held here because the answer is the document's, not a panel's,
   /// and probing a clip is disk work that must happen once rather than per
   /// Viewer rebuild.
   final LayerBoundsCache layerBounds = LayerBoundsCache();
 
-  /// Which tool the toolbar has armed (docs/07 §1.7, K-214).
+  /// Which tool the toolbar has armed (docs/07 §1.7, K-216).
   ///
   /// Session state at the shell level, like the dropper below it and for the
   /// same reason: the tool is picked in one place and read in another, and no
@@ -546,7 +546,7 @@ class LumitUiState extends ChangeNotifier {
   /// commands, the Timeline's fold-out. The *primary* of the selection below.
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
 
-  /// The whole selection, primary first (K-215).
+  /// The whole selection, primary first (K-217).
   ///
   /// Kept beside [selectedLayer] rather than replacing it, because almost
   /// everything in the application acts on one layer and reads it directly —
@@ -1050,7 +1050,7 @@ class _LumitAppViewState extends State<LumitAppView> {
           state.notifyDocumentChanged();
         }
       case 'edit.delete.selection':
-        // The whole selection, not just the primary (K-215): with several
+        // The whole selection, not just the primary (K-217): with several
         // layers boxed in the Viewer, Delete taking one of them would be a
         // surprise every time.
         final layers = ui.selectedLayers.value;

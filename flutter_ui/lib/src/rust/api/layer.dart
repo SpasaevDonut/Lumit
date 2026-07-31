@@ -121,7 +121,7 @@ class BridgeLayerInfo {
   /// which is exactly what decides whether the fold-out shows a Retime row.
   final BridgeScalar? retime;
 
-  /// The layer's masks (K-220), bottom of the stack first. Carried in the
+  /// The layer's masks (K-222), bottom of the stack first. Carried in the
   /// read model for the same reason the effects are: the Timeline's
   /// twirl-down draws a row per mask, and asking per row per frame is the
   /// cost K-184 exists to remove. Edits still go through `set_mask`.
@@ -543,7 +543,7 @@ enum BridgeTransformProp {
   ;
 }
 
-/// One vertex of a mask's path (K-220): where it sits in **layer space**, and
+/// One vertex of a mask's path (K-222): where it sits in **layer space**, and
 /// the two tangent handles that shape the curve either side of it.
 ///
 /// Tangents are offsets *from* the vertex, in the same layer pixels — the shape
@@ -739,7 +739,7 @@ class LayerReference {
         that: this,
       );
 
-  /// This layer's masks, bottom of the stack first (K-220).
+  /// This layer's masks, bottom of the stack first (K-222).
   ///
   /// Empty on a layer with none, which is most layers — the Timeline asks
   /// every row whether it has masks to list, exactly as it asks about clips.

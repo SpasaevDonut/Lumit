@@ -88,7 +88,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
   bool _grid = true;
 
   /// Whether the layer controls — the wireframe boxes, the handles and the
-  /// hover highlight — are drawn over the picture (K-215). On by default,
+  /// hover highlight — are drawn over the picture (K-217). On by default,
   /// because a selected layer with no box is a layer you cannot see the extent
   /// of; the switch exists for judging the picture itself, where any mark over
   /// it is in the way.
@@ -103,7 +103,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
   /// picture has to be asked for again.
   StreamSubscription<ScopedChange>? _changes;
 
-  /// The zoom's own motion (K-216).
+  /// The zoom's own motion (K-218).
   ///
   /// A magnification change is a *place* changing, not a value being nudged, so
   /// it is worth animating: jumping the picture from one magnification to
@@ -251,7 +251,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
           settings: settings,
           comp: comp,
           // The magnification menu is a jump to a named place, so it flies
-          // there like every other zoom (K-216) — from whatever is on screen,
+          // there like every other zoom (K-218) — from whatever is on screen,
           // which is what the measured rectangle in the layout builder knows.
           onZoom: (z) => _goToZoom(z, Offset.zero,
               from: _currentScale(comp.getSize())),
@@ -516,7 +516,7 @@ class _Stage extends StatelessWidget {
   final ValueChanged<Offset> onPan;
   final VoidCallback onChanged;
 
-  /// The Zoom tool's two gestures (K-216), applied by the panel because only it
+  /// The Zoom tool's two gestures (K-218), applied by the panel because only it
   /// holds the magnification.
   final void Function(Offset at, {required bool out}) onZoomAt;
   final void Function(Rect box, {required bool out}) onZoomBox;
@@ -537,7 +537,7 @@ class _Stage extends StatelessWidget {
   });
 
   /// Every layer of the comp with its box, top of the stack first — what the
-  /// gizmo hit-tests, outlines and drags (K-215).
+  /// gizmo hit-tests, outlines and drags (K-217).
   ///
   /// Built from the read model (K-184), so this costs no bridge calls per
   /// paint. Two kinds are left out on purpose: a Camera has no picture to put a
@@ -596,7 +596,7 @@ class _Stage extends StatelessWidget {
     // Viewer. The whole stage is inside the builder for that reason — handing
     // it in as a cached `child` kept the *pointer* current while every tool
     // layer under it stayed armed for whichever tool was in hand when the panel
-    // last rebuilt (K-223).
+    // last rebuilt (K-225).
     return ListenableBuilder(
       listenable: uiState.tools,
       builder: (context, _) => MouseRegion(
@@ -654,8 +654,8 @@ class _Stage extends StatelessWidget {
                 ),
               ),
               // The shape tools and the Pen: a drag draws a mask on the
-              // selected layer, and the Pen builds one point by point (K-220,
-              // K-221).
+              // selected layer, and the Pen builds one point by point (K-222,
+              // K-223).
               ViewerShapeLayer(
                 active: uiState.tools.tool.group == ToolGroup.shape ||
                     uiState.tools.tool == ToolMode.pen,
@@ -667,7 +667,7 @@ class _Stage extends StatelessWidget {
                 onChanged: onChanged,
               ),
               // The Type tool: a click makes or edits a text layer, and what
-              // is typed is previewed until the edit ends (K-223).
+              // is typed is previewed until the edit ends (K-225).
               ViewerTypeLayer(
                 active: uiState.tools.tool.group == ToolGroup.type,
                 tool: uiState.tools.tool,
@@ -684,7 +684,7 @@ class _Stage extends StatelessWidget {
                 onChanged: onChanged,
               ),
               // The Anchor point tool: its own pointer, and a drag that slides
-              // the pivot while the picture stays still (K-218).
+              // the pivot while the picture stays still (K-220).
               ViewerAnchorLayer(
                 active: uiState.tools.tool.group == ToolGroup.anchor,
                 comp: comp,
@@ -696,7 +696,7 @@ class _Stage extends StatelessWidget {
                 onChanged: onChanged,
               ),
               // The Rotation tool: its own pointer, and a drag that turns the
-              // selection about each layer's anchor (K-217).
+              // selection about each layer's anchor (K-219).
               ViewerRotateLayer(
                 active: uiState.tools.tool.group == ToolGroup.rotate,
                 comp: comp,
@@ -707,7 +707,7 @@ class _Stage extends StatelessWidget {
                 onChanged: onChanged,
               ),
               // The camera tools: a drag orbits, tracks or dollies the comp's
-              // active camera (K-227).
+              // active camera (K-229).
               ViewerCameraLayer(
                 active: uiState.tools.tool.group == ToolGroup.camera,
                 tool: uiState.tools.tool,
@@ -1316,7 +1316,7 @@ class _Toolbar extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 6),
-            // The layer controls switch (K-215): the boxes, handles and hover
+            // The layer controls switch (K-217): the boxes, handles and hover
             // highlight over the picture. An icon rather than a word, because
             // what it governs is a *mark* — and the mark is what it draws.
             LumitTooltip(

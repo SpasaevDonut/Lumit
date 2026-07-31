@@ -1,4 +1,4 @@
-// The toolbar's state machine (K-214): which tool is armed, what a group button
+// The toolbar's state machine (K-216): which tool is armed, what a group button
 // stands for, and what pressing a tool's key twice does.
 //
 // Pure state, so this needs no engine and no widgets — the parts of a toolbar
@@ -39,7 +39,7 @@ void main() {
     });
 
     test('the memory survives arming another group and coming back', () {
-      // A built member, because an unbuilt one cannot be armed at all (K-226).
+      // A built member, because an unbuilt one cannot be armed at all (K-228).
       final tools = ToolsState()..select(ToolMode.shapeStar);
       tools.select(ToolMode.hand);
 
@@ -114,13 +114,13 @@ void main() {
     test('the tools that claim to be built are the ones that are', () {
       // A guard on honesty rather than on behaviour: `ready` is what the
       // tooltip promises, so it may only be true where something reads the
-      // armed tool and does the work. Selection selects and drags (K-215),
-      // Hand pans, Zoom magnifies (K-216), Rotation turns (K-217), Anchor
-      // point pans behind and the Razor cuts (K-218), the five shape tools
-      // draw masks and the Pen builds one (K-220, K-221), horizontal type makes
-      // and edits text layers (K-223), and the three camera tools move the
-      // active camera (K-227); everything else is on the strip and disabled
-      // (K-226).
+      // armed tool and does the work. Selection selects and drags (K-217),
+      // Hand pans, Zoom magnifies (K-218), Rotation turns (K-219), Anchor
+      // point pans behind and the Razor cuts (K-220), the five shape tools
+      // draw masks and the Pen builds one (K-222, K-223), horizontal type makes
+      // and edits text layers (K-225), and the three camera tools move the
+      // active camera (K-229); everything else is on the strip and disabled
+      // (K-228).
       expect(ToolMode.values.where((t) => t.ready).toSet(), {
         ToolMode.select,
         ToolMode.hand,
@@ -142,7 +142,7 @@ void main() {
     });
   });
 
-  /// The toolbar's tool options (K-223): the fill and size the drawing tools
+  /// The toolbar's tool options (K-225): the fill and size the drawing tools
   /// set things in, held here because they belong to the tool and not to any
   /// one panel.
   group('Tool options', () {
@@ -180,7 +180,7 @@ void main() {
     });
   });
 
-  /// A tool that is not built cannot be armed (K-226) — by click, by flyout or
+  /// A tool that is not built cannot be armed (K-228) — by click, by flyout or
   /// by chord. The refusal lives here rather than in the button because there
   /// are three ways in and only one of them is a button.
   group('What cannot be armed', () {

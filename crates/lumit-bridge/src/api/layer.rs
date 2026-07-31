@@ -37,7 +37,7 @@ pub struct BridgeLayerSwitches {
     pub shy: bool,
 }
 
-/// One vertex of a mask's path (K-220): where it sits in **layer space**, and
+/// One vertex of a mask's path (K-222): where it sits in **layer space**, and
 /// the two tangent handles that shape the curve either side of it.
 ///
 /// Tangents are offsets *from* the vertex, in the same layer pixels — the shape
@@ -229,7 +229,7 @@ pub struct BridgeLayerInfo {
     /// The Retime property (K-197), or None when the layer is not retimed —
     /// which is exactly what decides whether the fold-out shows a Retime row.
     pub retime: Option<BridgeScalar>,
-    /// The layer's masks (K-220), bottom of the stack first. Carried in the
+    /// The layer's masks (K-222), bottom of the stack first. Carried in the
     /// read model for the same reason the effects are: the Timeline's
     /// twirl-down draws a row per mask, and asking per row per frame is the
     /// cost K-184 exists to remove. Edits still go through `set_mask`.
@@ -635,7 +635,7 @@ impl LayerReference {
         })
     }
 
-    /// This layer's masks, bottom of the stack first (K-220).
+    /// This layer's masks, bottom of the stack first (K-222).
     ///
     /// Empty on a layer with none, which is most layers — the Timeline asks
     /// every row whether it has masks to list, exactly as it asks about clips.
@@ -769,7 +769,7 @@ impl LayerReference {
             .position(|l| l.id == self.layer_id)
             .ok_or(BridgeError::InvalidLayer)?;
 
-        // A retimed layer gets a keyframe *at the cut*, on both halves (K-219).
+        // A retimed layer gets a keyframe *at the cut*, on both halves (K-221).
         //
         // Both halves keep the whole map, so without this the two speed ramps
         // stay welded together: editing one half's speed would bend the other

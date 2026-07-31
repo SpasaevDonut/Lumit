@@ -1,5 +1,5 @@
 // The toolbar's tools: what they are, which of them is armed, and how a
-// keyboard chord picks one (docs/07 §1.7, K-214).
+// keyboard chord picks one (docs/07 §1.7, K-216).
 //
 // **In plain terms.** A tool is the answer to "what does dragging in the Viewer
 // do?" — nudge a layer about, pan the picture, draw a mask, cut a clip. Every
@@ -59,7 +59,7 @@ enum ToolMode {
 
   // The shape tools draw a mask on the selected layer, or a shape layer with
   // nothing selected — AE's rule, and the reason they are one group. The shape
-  // layer half needs an engine layer kind that does not exist (K-220), so with
+  // layer half needs an engine layer kind that does not exist (K-222), so with
   // nothing selected they say so rather than acting.
   shapeRectangle(ToolGroup.shape, 'Rectangle', LumitIcon.rectangle,
       ready: true),
@@ -70,7 +70,7 @@ enum ToolMode {
   shapePolygon(ToolGroup.shape, 'Polygon', LumitIcon.polygon, ready: true),
   shapeStar(ToolGroup.shape, 'Star', LumitIcon.star, ready: true),
 
-  // The Pen builds a mask path point by point (K-221). Its four siblings edit a
+  // The Pen builds a mask path point by point (K-223). Its four siblings edit a
   // *finished* path, which is not built.
   pen(ToolGroup.pen, 'Pen', LumitIcon.pen, ready: true),
   penAddVertex(ToolGroup.pen, 'Add vertex', LumitIcon.vertexAdd),
@@ -78,7 +78,7 @@ enum ToolMode {
   penConvertVertex(ToolGroup.pen, 'Convert vertex', LumitIcon.vertexConvert),
   penMaskFeather(ToolGroup.pen, 'Mask feather', LumitIcon.maskFeather),
 
-  // Making and editing text layers on the picture (K-223). Vertical type would
+  // Making and editing text layers on the picture (K-225). Vertical type would
   // need the engine to lay a line out downwards; it lays out one horizontal
   // line, so that member stays unbuilt.
   typeHorizontal(ToolGroup.type, 'Horizontal type', LumitIcon.text,
@@ -98,7 +98,7 @@ enum ToolMode {
   puppetBend(ToolGroup.puppet, 'Puppet bend pin', LumitIcon.puppetBend),
 
   // Moving the composition's active camera by dragging on the picture
-  // (K-227): orbit round what it is looking at, track across, dolly in.
+  // (K-229): orbit round what it is looking at, track across, dolly in.
   cameraOrbit(ToolGroup.camera, 'Orbit camera', LumitIcon.cameraOrbit,
       ready: true),
   cameraPan(ToolGroup.camera, 'Track camera', LumitIcon.cameraPan, ready: true),
@@ -122,7 +122,7 @@ enum ToolMode {
   static List<ToolMode> membersOf(ToolGroup group) =>
       ToolMode.values.where((m) => m.group == group).toList(growable: false);
 
-  /// The members of [group] that do something today (K-226). Empty for a group
+  /// The members of [group] that do something today (K-228). Empty for a group
   /// nothing in which is built, which is what makes its button disabled.
   static List<ToolMode> builtMembersOf(ToolGroup group) =>
       membersOf(group).where((m) => m.ready).toList(growable: false);
@@ -149,7 +149,7 @@ const Map<String, ToolGroup> toolActions = {
 
 /// A colour the toolbar holds, in the document's own scene-linear channels — the
 /// same numbers a fill crosses the bridge as, so nothing is converted twice
-/// (K-223).
+/// (K-225).
 @immutable
 class ToolColour {
   final double r;
@@ -197,7 +197,7 @@ class ToolsState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The **fill** the drawing tools use: the colour new text is set in (K-223),
+  /// The **fill** the drawing tools use: the colour new text is set in (K-225),
   /// and the colour a shape layer's fill will take once there are shape layers.
   ToolColour _fill = ToolColour.white;
   ToolColour get fill => _fill;
@@ -257,7 +257,7 @@ class ToolsState extends ChangeNotifier {
       (ToolMode.builtMembersOf(group).firstOrNull ??
           ToolMode.membersOf(group).first);
 
-  /// Arm [tool], if it is a tool that does anything (K-226).
+  /// Arm [tool], if it is a tool that does anything (K-228).
   ///
   /// A tool whose behaviour is not built cannot be armed — by click, by flyout
   /// or by chord. It stays on the strip, drawn disabled, because the tool set
@@ -283,7 +283,7 @@ class ToolsState extends ChangeNotifier {
   /// walks rectangle → rounded rectangle → ellipse → polygon → star → rectangle
   /// without ever opening the flyout.
   void cycleGroup(ToolGroup group) {
-    // Only the built ones are in the walk (K-226): a chord that stepped onto a
+    // Only the built ones are in the walk (K-228): a chord that stepped onto a
     // tool that does nothing would be a chord that appears to do nothing.
     final members = ToolMode.builtMembersOf(group);
     if (members.isEmpty) return;

@@ -1,5 +1,5 @@
 // The shape tools and the Pen: the paths they draw, in the layer's own
-// coordinates (K-220, K-221, docs/07 §1.7, §2.3.1).
+// coordinates (K-222, K-223, docs/07 §1.7, §2.3.1).
 //
 // **In plain terms.** A mask is a shape drawn on a layer that decides which of
 // its pixels show. The shape tools draw one: rectangle, rounded rectangle,
@@ -232,7 +232,7 @@ List<BridgeVertex> shapePath({
       // A regular polygon inscribed in the box, first point at the top — the
       // star without its notches, and the same tool After Effects has. (The
       // *path-building* gesture that was briefly on this tool belongs to the
-      // Pen, where After Effects puts it — K-221.)
+      // Pen, where After Effects puts it — K-223.)
       final rx = w / 2;
       final ry = h / 2;
       final cx = left + rx;
@@ -279,7 +279,7 @@ String shapeMaskName(ToolMode tool) => switch (tool) {
       _ => 'Mask',
     };
 
-/// A path being drawn with the **Pen** (K-221): the vertices placed so far.
+/// A path being drawn with the **Pen** (K-223): the vertices placed so far.
 ///
 /// **The gesture this models.** A click places a corner. A click *and drag*
 /// places a vertex and pulls a pair of bezier handles out of it, mirrored so
@@ -348,7 +348,7 @@ class PathDraft {
 ///
 /// [screenScale] converts layer pixels to screen ones, so the tolerance is a
 /// fixed number of *screen* pixels however far the picture is zoomed — the same
-/// rule the anchor's snapping follows (K-218).
+/// rule the anchor's snapping follows (K-220).
 bool withinClosingDistance(
   (double, double) at,
   (double, double) target, {

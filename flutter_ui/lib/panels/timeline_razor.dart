@@ -1,4 +1,4 @@
-// The Razor tool over the Timeline's lanes (K-218, docs/07 §4.4): the blade
+// The Razor tool over the Timeline's lanes (K-220, docs/07 §4.4): the blade
 // pointer, the line that shows where the cut lands, and which layers a click
 // actually cuts.
 //
@@ -110,7 +110,7 @@ class _RazorOverlayState extends State<RazorOverlay> {
     if (!widget.active) return widget.child;
     return MouseRegion(
       // Hidden and replaced, for the same reason the Rotation tool's is
-      // (K-217): no platform ships a razor, and a system arrow inside the drawn
+      // (K-219): no platform ships a razor, and a system arrow inside the drawn
       // blade would read as two pointers.
       cursor: SystemMouseCursors.none,
       onEnter: (event) => setState(() => _pointer = event.localPosition),

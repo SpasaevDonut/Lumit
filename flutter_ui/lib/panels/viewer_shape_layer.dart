@@ -1,5 +1,5 @@
 // The shape tools and the Pen over the picture: the drag that draws a mask, and
-// the Pen's point-by-point path (K-220, K-221, docs/07 §2.3).
+// the Pen's point-by-point path (K-222, K-223, docs/07 §2.3).
 //
 // **In plain terms.** With a shape tool in hand and a layer selected, dragging
 // over the picture draws a mask on that layer — a rectangle, a rounded
@@ -7,7 +7,7 @@
 // dragged, with Shift keeping it square. The **Pen** is different: it builds a
 // path a point at a time, and clicking its first point again closes and applies
 // it. (That gesture was briefly on the polygon tool; it is After Effects' pen,
-// and it belongs on the Pen — K-221.)
+// and it belongs on the Pen — K-223.)
 //
 // **What it does with nothing selected.** Nothing — and it says so. After
 // Effects would make a *shape layer* there, which Lumit's engine has no such
@@ -68,7 +68,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   Offset? _to;
 
   /// Where the pointer went down, for the same reason every other tool records
-  /// it (K-215): the framework only reports a drag once it has travelled its
+  /// it (K-217): the framework only reports a drag once it has travelled its
   /// slop, and a shape that started 18px from where you pressed is the wrong
   /// shape.
   Offset? _downAt;
@@ -77,7 +77,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   PathDraft _draft = const PathDraft();
   Offset? _penPointer;
 
-  /// Where the pointer is, for the drawn cursor (K-224). Tracked for every
+  /// Where the pointer is, for the drawn cursor (K-226). Tracked for every
   /// shape tool, not only the Pen, because every one of them wears one.
   Offset? _pointer;
 
@@ -142,7 +142,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final target = _target;
     return Positioned.fill(
       child: MouseRegion(
-        // Hidden, because the drawn pointer below replaces it (K-224): the
+        // Hidden, because the drawn pointer below replaces it (K-226): the
         // eyedropper's crosshair, badged with this tool's own icon.
         cursor: SystemMouseCursors.none,
         onEnter: (event) => setState(() => _pointer = event.localPosition),

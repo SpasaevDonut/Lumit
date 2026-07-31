@@ -1,5 +1,5 @@
 // The drawn pointers the drawing and painting tools wear over the picture
-// (K-224, docs/07 §2.3.3).
+// (K-226, docs/07 §2.3.3).
 //
 // **In plain terms.** A tool should say what it is without you looking away
 // from the picture, and no operating system ships a "rectangle tool" pointer.
@@ -167,13 +167,13 @@ class _ToolPointerPainter extends CustomPainter {
 /// The ring a brush of [width] layer pixels draws at this magnification, kept
 /// within sight either way.
 ///
-/// The painting tools are disabled on this branch (K-226) — the engine has no
+/// The painting tools are disabled on this branch (K-228) — the engine has no
 /// paint strokes — so nothing calls this yet; it is the pointer they wear the
 /// moment they do, and it is tested so it will be right when they arrive.
 double brushRingRadius(double width, double viewScale) =>
     (width * viewScale / 2).clamp(minBrushRingRadius, maxBrushRingRadius);
 
-/// The text pointer, for the Type tool's vertical member (K-224).
+/// The text pointer, for the Type tool's vertical member (K-226).
 ///
 /// Horizontal type wears the system's own I-beam — every platform has one and
 /// it is the pointer everybody already reads as "you can type here". Nobody
