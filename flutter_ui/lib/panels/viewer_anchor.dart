@@ -388,6 +388,17 @@ class _AnchorCursorPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// A **reticle**, centred on the point it acts at (K-235).
+  ///
+  /// It used to carry a small arrow off its tail, down and to the right, so the
+  /// mark would read as a pointer rather than as an overlay. That was a lie
+  /// about the one thing a pointer must be honest about: the arrow's tip is not
+  /// where the pivot lands — the middle of the ring is — so the mark pointed at
+  /// somewhere the tool was not going to act.
+  ///
+  /// The arms stop short of the middle. A reticle's gap is what leaves the
+  /// exact point visible instead of covering it with the mark that is supposed
+  /// to be aiming at it.
   void _cursor(Canvas canvas, Color colour, double width) {
     final paint = Paint()
       ..color = colour
@@ -395,22 +406,15 @@ class _AnchorCursorPainter extends CustomPainter {
       ..strokeWidth = width
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
-    // The crosshair-in-a-ring: the anchor's own mark, so the pointer and the
-    // thing it moves are plainly the same idea.
     const r = anchorCursorSize / 2;
     canvas.drawCircle(Offset.zero, r, paint);
-    canvas.drawLine(const Offset(-r * 1.9, 0), const Offset(r * 1.9, 0), paint);
-    canvas.drawLine(const Offset(0, -r * 1.9), const Offset(0, r * 1.9), paint);
-    // The little arrow at the tail, down and right, so the mark reads as a
-    // pointer rather than as an overlay that happens to sit under the mouse.
-    final arrow = Path()
-      ..moveTo(r * 1.4, r * 1.4)
-      ..lineTo(r * 3.2, r * 3.2)
-      ..moveTo(r * 3.2, r * 3.2)
-      ..lineTo(r * 3.2, r * 1.9)
-      ..moveTo(r * 3.2, r * 3.2)
-      ..lineTo(r * 1.9, r * 3.2);
-    canvas.drawPath(arrow, paint);
+    for (final (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]) {
+      canvas.drawLine(
+        Offset(dx * r * 0.55, dy * r * 0.55),
+        Offset(dx * r * 2.0, dy * r * 2.0),
+        paint,
+      );
+    }
   }
 
   @override

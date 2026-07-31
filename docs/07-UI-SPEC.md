@@ -334,7 +334,8 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   layer↔screen map inverts it. The box MUST follow a scale drag as it happens, the same rule a
   turn follows.
 - The gizmo's **centre handle is the anchor point** (K-221), and dragging it pans behind —
-  the pivot moves, the picture does not — with the same `Shift` axis lock and `Ctrl`/`Cmd`
+  the pivot moves, the picture does not, and the **mark moves as it is dragged** rather than on
+  release (K-235) — with the same `Shift` axis lock and `Ctrl`/`Cmd`
   key-point snapping the Anchor point tool has. Its grab radius MUST be much tighter than a
   scale handle's: it sits where a body drag naturally begins, and a generous one would turn
   every move into a pan-behind.
@@ -361,8 +362,10 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   pivot be pushed towards a place but never put at one. `Shift`+click stays a selection gesture
   and moves nothing. The whole drag MUST be
   one undo step: half of it would move the picture, which is the one thing pan-behind
-  promises not to do. Its pointer is the anchor's own ring-and-cross with a small arrow at
-  its tail, and the layer's live anchor is marked while the tool is armed.
+  promises not to do. Its pointer is a **reticle** — the anchor's own ring with gapped crosshair
+  arms, centred on the point the pivot will land at (K-235). It MUST NOT carry an arrow or any
+  other tip: the pivot lands in the middle of the ring, and a tip elsewhere claims a place the
+  tool does not act at. The layer's live anchor is marked while the tool is armed.
 - The Rotation tool's **pointer is a curved arrow**, drawn rather than a system cursor
   (no platform ships one). It MUST lean round the anchor — the curve faces the way the layer
   would turn from where the pointer is — and MUST be tighter towards a corner than along an
@@ -505,7 +508,7 @@ only: no tool gains a gesture on a button it did not already handle.
 | Orbit, Track, Dolly camera | The crosshair badged with the tool's icon (§2.3.5) |
 | Rotation | A curved arrow leaning round the anchor (§2.3) |
 | Anchor point | The anchor's ring-and-cross (§2.3) |
-| Razor (Timeline) | The blade and its cut line, with its **hot spot marked** (§4.4, K-230) |
+| Razor (Timeline) | The scissors icon, with the cut line doing the aiming (§4.4, K-235) |
 | Razor (Viewer) | The ordinary arrow: it cuts in the Timeline, and a precise pointer here promised a gesture the Viewer does not have (K-230) |
 | Hand | A drawn **open hand**, closing while it pans (K-230) |
 | Zoom | A drawn **magnifier**, its sign following `Alt` (K-230) |
@@ -830,10 +833,11 @@ A Sequence layer's row renders its clips back-to-back (glossary §2):
   step (§4.7).
   The razor is armed from the **toolbar** (§1.7); the Timeline's own menu item is a second
   door into the same state, never a second razor. While it is armed the pointer over the
-  lanes is a drawn blade and a vertical line MUST follow it across every row, so the cut can
-  be aimed before it is made. **The blade's hot spot MUST be marked** (K-230): the blade leans
-  up and away from the point it actually cuts at, which otherwise leaves that point an unmarked
-  corner of a drawing. A cut at a layer's own end MUST be refused — there is no
+  lanes is the **scissors icon** and a vertical line MUST follow it across every row at the
+  frame it would cut, so the cut can be aimed before it is made. The line does the aiming and
+  the pointer only says which tool is in hand (K-235, replacing K-230's hot-spot rule): a drawn
+  blade leaning away from the point it cuts at needed a second mark to say where the edge
+  actually bit, and the icon on the toolbar says "razor" better than a bespoke drawing of one. A cut at a layer's own end MUST be refused — there is no
   second half there — rather than making a layer of no length.
 - Per-clip context menu: frame interpolation mode (nearest / blend / flow), Retime reset,
   reveal in Project panel, replace source (preserves trim and Retime where durations allow).

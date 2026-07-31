@@ -173,6 +173,20 @@ class LayerBox {
         masks: masks,
       );
 
+  /// The same box with the pivot moved and Position compensating — the shape a
+  /// pan-behind in flight has (K-235). The box does not move; the anchor mark
+  /// on it does, which is the whole of what panning behind looks like.
+  LayerBox pivotedAt(Offset anchor, Offset position) => LayerBox(
+        layer: layer,
+        id: id,
+        map: map.pivotedAt(anchor.dx, anchor.dy, position: position),
+        bounds: bounds,
+        draggable: draggable,
+        scalable: scalable,
+        rotationDegrees: rotationDegrees,
+        masks: masks,
+      );
+
   /// The same box with the layer turned to [degrees] — the shape a rotation in
   /// flight has, before it is committed (K-230).
   LayerBox turnedTo(double degrees) => LayerBox(
@@ -596,6 +610,11 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         case _GizmoDrag.scale:
           final scale = _scaleNow();
           if (scale != null) return box.scaledTo(scale.$1, scale.$2);
+        case _GizmoDrag.anchor:
+          final anchor = _anchorNow();
+          if (anchor != null) {
+            return box.pivotedAt(anchor, _panBehindFor(box, anchor));
+          }
         default:
           break;
       }

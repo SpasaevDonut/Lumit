@@ -4342,3 +4342,39 @@ mask sits on would have gone with it. The shell asks `LumitUiState.deleteClaim` 
 down when the answer is yes; the Timeline sets that claim while it is mounted and answers with
 "I deleted the selected masks" or "not mine". Deleting a mask is the same call the row's
 right-click menu makes, so there is one path a mask is deleted by.
+
+**K-235 · DECIDED · Two pointers that were pointing at the wrong thing (2026-07-31).**
+
+**The Anchor point tool's pointer is a reticle.** It carried a small arrow off its tail, down
+and to the right, so the mark would read as a pointer rather than as an overlay that happened
+to sit under the mouse. That was a lie about the one thing a pointer must be honest about: the
+arrow's tip is not where the pivot lands — the middle of the ring is. A ring with gapped
+crosshair arms says "this exact point" and has no tip to mislead with. The gap is not
+decoration: it leaves the point itself visible instead of covering it with the mark that is
+supposed to be aiming at it.
+
+**The Razor's pointer is the application's own scissors, and the line does the aiming.** The
+tool drew a bespoke blade leaning up and away from the point it cuts at, which needed a second
+mark (K-230's hot spot) to say where the edge actually bit. Once the cut line says *where*, the
+pointer only has to say *which tool is in hand* — and the icon already on the toolbar says that
+better than a hand-drawn one, at no cost in code. The blade and its hot spot are deleted; the
+full-height line at the pointer's frame stays, because that is the mark that answers the
+question the razor asks.
+
+**The general rule these two share.** A drawn pointer must have exactly one point it claims,
+and everything else it draws must be recognisable rather than aiming. Where a mark cannot be
+both, the aiming belongs to a separate mark that can be put exactly where the action lands.
+
+**Alt brings the system pointer back, and it has to be sent away again.** Alt is the key
+Windows reserves for the window menu, and pressing it takes the pointer's own state with it —
+so the arrow reappeared beside the Zoom tool's drawn magnifier, which is two pointers, exactly
+what hiding the system one is for. Flutter will not re-apply a cursor by itself: it only does
+so when the answer *changes*, and hidden-to-hidden is no change. The request is made directly
+for the device the pointer events arrive from. **Not** by giving the region a new identity to
+force the question — that was tried, and it rebuilt the gesture detector underneath and dropped
+any drag in flight, which the Alt-box-zoom test caught.
+
+**A pivot dragged on the gizmo moves as it is dragged.** The last of the in-flight previews
+(K-230's turn, K-231's scale): the anchor handle wrote on release only, so the mark sat still
+while the picture behind it was already being previewed. The box deliberately does not move —
+that is what panning behind means — but the pivot on it does.

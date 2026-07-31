@@ -144,6 +144,29 @@ class ViewerLayerMap {
         viewScale: viewScale,
       );
 
+  /// The same map with the layer's pivot moved to ([anchorX], [anchorY]) and
+  /// its position set to [position] — the pair a pan-behind writes together.
+  ///
+  /// What a pivot drag in flight looks like (K-235): the anchor mark moves and
+  /// the picture, box and all, deliberately does not.
+  ViewerLayerMap pivotedAt(
+    double anchorX,
+    double anchorY, {
+    required Offset position,
+  }) =>
+      ViewerLayerMap(
+        px: position.dx,
+        py: position.dy,
+        ax: anchorX,
+        ay: anchorY,
+        sx: sx,
+        sy: sy,
+        sin: sin,
+        cos: cos,
+        origin: origin,
+        viewScale: viewScale,
+      );
+
   /// Layer space → screen (local) coordinate.
   Offset toScreen(double x, double y) {
     final dx = (x - ax) * sx;
