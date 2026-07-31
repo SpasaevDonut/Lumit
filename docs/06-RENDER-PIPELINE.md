@@ -433,6 +433,16 @@ moved the picture while leaving every name alone, and the children served frames
 move. K-206 makes that the common case rather than a corner: a Null is the layer a user hides
 most readily, having nothing to look at.
 
+**The quality axis is one number, and everything that reads it must round the same way.**
+Auto resolution keys at 1% steps, thus two scales inside one step are one quality. Footage also
+folds in the width it decodes at, and that width came from the raw scale — so 0.4235 and 0.4240
+were one quality by the tag and two names by the width. The cache bar asks by a scale rounded to
+a thousandth, which is nearly never the float the render used, thus it named every frame
+differently from the way it was banked and drew nothing over a composition that was full and
+playing. A composition of solids was correct throughout, because a solid folds in the tag alone.
+The decode width now comes from the same rounded scale the tag does (`Quality::keyed_scale`),
+thus the width in the name is the width the pixels were decoded at.
+
 A frame is only nameable once its footage is probed. Until then it renders live and is banked
 nowhere, so an entry can never be a promise the renderer did not keep.
 

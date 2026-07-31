@@ -5760,3 +5760,27 @@ somewhere.** It has no deadline — that is the whole point of it — so a frame
 memory or in a file is fetched, not made. Without that rule, opening yesterday's
 project would walk a full disk cache and render every frame of it again, which is
 precisely what the cache exists to prevent.
+
+**The cache bar that went blank over video.** Worth recording, because the
+symptom pointed away from the cause.
+
+A frame's name includes how coarsely it was made. For Auto resolution that is
+kept to 1% steps — zoom the Viewer by a hair and you get the same frame back
+rather than an identical one under a new name. But footage has a second thing in
+its name: the width it was decoded at. And that width was worked out from the
+exact scale rather than the rounded one. At 1920 wide, 0.4235 gave 813 pixels
+and 0.4240 gave 814 — one step by the first rule, two names by the second.
+
+The bar is where it showed. It asks the engine by a scale rounded to a
+thousandth, which is almost never the exact number the render used, so it worked
+out a different name for every frame than the one it had been filed under, found
+none of them, and drew an empty stripe over a composition that was entirely
+cached and playing perfectly.
+
+A composition of solids was fine the whole time, because a solid's name has no
+decode width in it. That is why it looked like a fault in video footage, and why
+every test of the bar passed: they were all built from solids.
+
+Both rules now round the same way, so the width in the name is the width the
+pixels really were. A footnote worth having: resizing the window by less than a
+percent no longer re-decodes the footage either.
