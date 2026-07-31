@@ -1122,36 +1122,6 @@ class LayerReference {
         that: this,
       );
 
-  LayerReference? splitAt({required PlatformInt64 frame}) =>
-      BridgeLib.instance.api.crateApiLayerLayerReferenceSplitAt(
-        that: this,
-        frame: frame,
-      );
-
-  void moveInTo({required PlatformInt64 frame}) =>
-      BridgeLib.instance.api.crateApiLayerLayerReferenceMoveInTo(
-        that: this,
-        frame: frame,
-      );
-
-  void moveOutTo({required PlatformInt64 frame}) =>
-      BridgeLib.instance.api.crateApiLayerLayerReferenceMoveOutTo(
-        that: this,
-        frame: frame,
-      );
-
-  void trimInTo({required PlatformInt64 frame}) =>
-      BridgeLib.instance.api.crateApiLayerLayerReferenceTrimInTo(
-        that: this,
-        frame: frame,
-      );
-
-  void trimOutTo({required PlatformInt64 frame}) =>
-      BridgeLib.instance.api.crateApiLayerLayerReferenceTrimOutTo(
-        that: this,
-        frame: frame,
-      );
-
   @override
   int get hashCode =>
       internalprojectId.hashCode ^

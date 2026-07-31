@@ -567,7 +567,6 @@ class LumitUiState extends ChangeNotifier {
   /// The layer everything single-layer works on: Effect controls, the keyboard
   /// commands, the Timeline's fold-out. The *primary* of the selection below.
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
-  ValueNotifier<List<LayerReference>> selectedLayers = ValueNotifier([]);
 
   /// The whole selection, primary first (K-217).
   ///
@@ -1139,10 +1138,7 @@ class _LumitAppViewState extends State<LumitAppView> {
         if (layer == null) {
           handled = false;
         } else {
-          final dup = layer.splitAt(frame: ui.playheadFrame.value);
-          if (dup != null) {
-            ui.selectedLayer.value = dup;
-          }
+          layer.splitAt(frame: ui.playheadFrame.value);
           state.notifyDocumentChanged();
         }
       case 'panel.maximise':
@@ -1152,57 +1148,8 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           ui.maximizedPanel.value = ui.activePanel.value ?? Panel.viewer;
         }
-      case 'layer.precompose':
-        final layers = ui.selectedLayers.value.isNotEmpty
-            ? ui.selectedLayers.value
-            : (ui.selectedLayer.value != null
-                ? [ui.selectedLayer.value!]
-                : <LayerReference>[]);
-        if (layers.isEmpty || comp == null) {
-          handled = false;
-        } else {
-          final precomp = comp.precomposeLayers(
-            layers: layers,
-            name: null,
-          );
-          ui.selectedLayer.value = precomp;
-          ui.selectedLayers.value = [precomp];
-          state.notifyDocumentChanged();
-        }
       case 'palette.open':
         openCommandPaletteFrb(context, state);
-      case 'layer.move.in':
-        final layer = ui.selectedLayer.value;
-        if (layer == null) {
-          handled = false;
-        } else {
-          layer.moveInTo(frame: ui.playheadFrame.value);
-          state.notifyDocumentChanged();
-        }
-      case 'layer.move.out':
-        final layer = ui.selectedLayer.value;
-        if (layer == null) {
-          handled = false;
-        } else {
-          layer.moveOutTo(frame: ui.playheadFrame.value);
-          state.notifyDocumentChanged();
-        }
-      case 'layer.trim.in':
-        final layer = ui.selectedLayer.value;
-        if (layer == null) {
-          handled = false;
-        } else {
-          layer.trimInTo(frame: ui.playheadFrame.value);
-          state.notifyDocumentChanged();
-        }
-      case 'layer.trim.out':
-        final layer = ui.selectedLayer.value;
-        if (layer == null) {
-          handled = false;
-        } else {
-          layer.trimOutTo(frame: ui.playheadFrame.value);
-          state.notifyDocumentChanged();
-        }
       // A bound action this shell has no call for yet — the menus carry those.
       // Ignored rather than swallowed, so the key still reaches whatever else
       // wants it.

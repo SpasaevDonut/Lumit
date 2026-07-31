@@ -10,7 +10,6 @@ import 'effect.dart';
 import 'export.dart';
 import 'footage.dart';
 import 'layer.dart';
-import 'project.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
@@ -295,23 +294,6 @@ class CompositionReference {
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceAddPrecompLayer(
               that: this, comp: comp);
-
-  LayerReference precomposeLayers({
-    required List<LayerReference> layers,
-    String? name,
-  }) =>
-      BridgeLib.instance.api
-          .crateApiCompositionCompositionReferencePrecomposeLayers(
-        that: this,
-        layers: layers,
-        name: name,
-      );
-
-  LayerReference? precomposeLayer({
-    required LayerReference layer,
-    String? name,
-  }) =>
-      precomposeLayers(layers: [layer], name: name);
 
   /// Add an empty Sequence layer — a clip row spanning the comp.
   LayerReference addSequenceLayer() => BridgeLib.instance.api
