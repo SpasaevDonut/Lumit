@@ -14,6 +14,7 @@ import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
+import 'package:lumit_flutter/shell/tool_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
@@ -29,6 +30,7 @@ import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/state/settings.dart';
+import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -363,6 +365,13 @@ class LumitUiState extends ChangeNotifier {
 
   /// The keyboard map every shortcut is looked up in (docs/07 §15, K-199).
   late final KeymapState keymap;
+
+  /// Which tool the toolbar has armed (docs/07 §1.7, K-214).
+  ///
+  /// Session state at the shell level, like the dropper below it and for the
+  /// same reason: the tool is picked in one place and read in another, and no
+  /// panel should have to be mounted for either.
+  final ToolsState tools = ToolsState();
 
   DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
@@ -706,6 +715,7 @@ class LumitUiState extends ChangeNotifier {
   void dispose() {
     sub?.cancel();
     _changes?.cancel();
+    tools.dispose();
     model.dispose();
     cacheChanged.dispose();
     viewerFrameid.dispose();
@@ -835,6 +845,9 @@ class _LumitAppViewState extends State<LumitAppView> {
       child: Column(
         children: [
           LumitMenuBarFrb(app: state),
+          // The tools, under the menu and above everything else — where a
+          // toolbar goes, and where docs/07 §1.7 puts it.
+          const LumitToolBarFrb(),
           Expanded(
             child: DockWidget(
               root: uiState.split,
@@ -893,7 +906,22 @@ class _LumitAppViewState extends State<LumitAppView> {
     // answers both. (This handler runs wherever focus is; the active panel is
     // what the dock last fronted, which is what a user would call "where I am".)
     final action = ui.keymap.actionFor(_contextOf(ui.activePanel.value), event);
-    if (action == null) return KeyEventResult.ignored;
+    if (action == null) {
+      // The Tools context is the one context no panel *is* (docs/07 §15 scopes
+      // it to the toolbar, not to a pane), so it is asked for separately and
+      // only once the focused panel and the app-wide table have both declined.
+      // That ordering is what keeps a panel free to claim a letter a tool also
+      // uses — `C` cuts a clip in the Timeline and arms the razor everywhere
+      // else — without either binding having to know about the other.
+      final tool = ui.keymap.actionFor(BridgeKeyContext.tools, event);
+      if (tool != null && ui.tools.handleAction(tool)) {
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    // A tool action can also arrive from the primary lookup, if someone rebinds
+    // one into a context a panel is. Same handler either way.
+    if (ui.tools.handleAction(action)) return KeyEventResult.handled;
 
     var handled = true;
     switch (action) {

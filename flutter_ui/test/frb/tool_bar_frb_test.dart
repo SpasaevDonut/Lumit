@@ -1,0 +1,122 @@
+// The toolbar as it is mounted in the shell (K-214, docs/07 §1.7).
+//
+// It draws from `LumitUiState` — the armed tool, the keymap the tooltips quote,
+// the workspace it rearranges — so it runs against the real engine like every
+// other shell surface here. What is asserted is the gestures a toolbar lives or
+// dies by: a click arms, a right-click reaches the hidden tools, and the button
+// then shows the one that was picked.
+
+import 'package:flutter/gestures.dart';
+import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/shell/tool_bar_frb.dart';
+import 'package:lumit_flutter/state/dock.dart';
+import 'package:lumit_flutter/state/tools.dart';
+
+import 'frb_test_support.dart';
+
+void main() {
+  setUpAll(initEngineForTests);
+
+  group('Toolbar (frb)', () {
+    Future<({LumitState state, LumitUiState uiState})> mount(
+        WidgetTester tester) async {
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: const Align(
+          alignment: Alignment.topLeft,
+          child: LumitToolBarFrb(),
+        ),
+        state: p.state,
+        uiState: p.uiState,
+        // Wide enough that the strip is not scrolled off: the buttons are
+        // pressed by key, and a widget scrolled out of view cannot be tapped.
+        size: const Size(1400, 300),
+      ));
+      await tester.pump();
+      return p;
+    }
+
+    testWidgets('every tool group has a button', (tester) async {
+      await mount(tester);
+      for (final group in toolBarOrder) {
+        expect(find.byKey(ValueKey<String>('tool-${group.name}')), findsOneWidget,
+            reason: '$group has no way to be armed');
+      }
+      expect(toolBarOrder.toSet(), ToolGroup.values.toSet(),
+          reason: 'a tool group missing from the strip is a tool nobody can reach');
+    });
+
+    testWidgets('clicking a button arms that group', (tester) async {
+      final p = await mount(tester);
+      expect(p.uiState.tools.tool, ToolMode.select);
+
+      await tester.tap(find.byKey(const ValueKey('tool-pen')));
+      await tester.pump();
+
+      expect(p.uiState.tools.tool, ToolMode.pen);
+    });
+
+    testWidgets('right-clicking opens the hidden tools, and picking one arms it'
+        ' and sticks to the button', (tester) async {
+      final p = await mount(tester);
+      final shape = find.byKey(const ValueKey('tool-shape'));
+
+      await tester.tapAt(tester.getCenter(shape), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      final star = find.byKey(const ValueKey('tool-flyout-shapeStar'));
+      expect(star, findsOneWidget, reason: 'the flyout lists the whole group');
+
+      await tester.tap(star);
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.tools.tool, ToolMode.shapeStar);
+      expect(p.uiState.tools.memberOf(ToolGroup.shape), ToolMode.shapeStar,
+          reason: 'the button now stands for the star, as AE does');
+    });
+
+    testWidgets('a single-tool group offers no flyout', (tester) async {
+      await mount(tester);
+      final hand = find.byKey(const ValueKey('tool-hand'));
+      await tester.tapAt(tester.getCenter(hand), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('tool-flyout-hand')), findsNothing);
+    });
+
+    testWidgets('the snapping switch toggles', (tester) async {
+      final p = await mount(tester);
+      expect(p.uiState.tools.snapping, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('tool-snapping')));
+      await tester.pump();
+
+      expect(p.uiState.tools.snapping, isFalse);
+    });
+
+    testWidgets('the workspace strip rearranges the panels', (tester) async {
+      final p = await mount(tester);
+      expect(p.uiState.workspace.activePreset, isNull,
+          reason: 'nothing is ticked until a preset is chosen');
+
+      await tester.tap(find.byKey(const ValueKey('workspace-effects')));
+      await tester.pump();
+
+      expect(p.uiState.workspace.activePreset, WorkspacePreset.effects);
+    });
+
+    testWidgets('every tool group names a chord the engine knows',
+        (tester) async {
+      final p = await mount(tester);
+      // The tooltips teach the shortcut (docs/07 §14), and they can only teach
+      // one the keymap actually carries — this is the check that the ids in
+      // `toolActions` match the ones the engine ships.
+      for (final entry in toolActions.entries) {
+        expect(p.uiState.keymap.chordFor(entry.key), isNotNull,
+            reason: '${entry.key} has no binding in the shipped keymap');
+      }
+    });
+  }, skip: !engineAvailable);
+}

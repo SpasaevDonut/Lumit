@@ -4645,3 +4645,56 @@ range as an empty one. A guard against something the layer above now prevents
 sounds like belt and braces, but the rule in docs/14 is not "validate at the
 edges", it is *no panics in engine crates* — and a document from disk is not
 something the ops layer has vetted.
+
+### The toolbar, and why it shows tools that do nothing yet (K-214)
+
+Every editor has a strip of tools under its menus, and the Flutter frontend did
+not: the row the old shell had never made it across the port, so the arrow, the
+hand and the pen simply did not exist as things you could pick. That strip is
+back, spanning the window under the menu bar, and this section is what it is
+and what it is not.
+
+**A tool is an answer to one question: what does dragging do?** Not what does
+the *button* do — the button only arms it. With the Selection tool in your hand
+a drag in the Viewer nudges things about; with the Hand tool it slides the
+picture; with the Pen it would drop a mask vertex. One tool is armed at a time
+for the whole application, so there is never a question of which panel thinks
+it is holding what.
+
+**Groups, and the little triangle.** Thirteen buttons cover about thirty tools,
+because tools that do the same sort of job share a button the way After Effects
+shares them — all five shape tools sit under one, all five pen tools under
+another. The button shows the one you last used and wears a small triangle in
+its corner to say there is more underneath; hold it, or right-click it, and the
+rest of the group appears. The keyboard does the same without the flyout: `Q`
+arms the shape tool you last had, and pressing `Q` again while a shape tool is
+armed steps to the next one and comes round again. That "press again to cycle"
+rule is the one bit of a toolbar people notice immediately when it is missing.
+
+**Where the chords come from.** Not from this file, and not from the strip. The
+engine keeps the keymap (see "The keyboard, and why the engine owns it" above),
+and the toolbar only knows which *action name* arms which group —
+`tool.select`, `tool.pen`, and so on. So rebinding a tool in Settings → Keymap
+moves the shortcut and nothing in the toolbar changes or needs to. The tools sit
+in a keymap context of their own called `Tools`, which is not a panel, so no
+panel is ever "in" it: a keypress is offered to the focused panel first, then to
+the app-wide table, and only then to the tools. That ordering is what lets `C`
+cut a clip when the Timeline has focus and arm the razor everywhere else,
+without either binding having to know the other exists.
+
+**Why most of them do nothing.** Only Selection and Hand do any work today —
+both pan the picture, as they did before there was a toolbar — and every other
+tool changes the shape of the pointer over the Viewer and stops there. That is
+deliberate, and it is a decision (K-214) rather than an oversight. The tool set
+is specified: shipping the strip with only the two working tools on it would
+teach a wrong idea of what the application is, and would leave nowhere agreed
+for the rest to appear as they are built. So the whole set is drawn, and each
+unbuilt tool's tooltip says in as many words that arming it changes nothing
+yet — a toolbar that quietly does nothing is far worse than one that tells you
+which of its buttons are still waiting on their behaviour.
+
+**The two switches at the right-hand end.** Snapping, and the workspace strip —
+Edit, Effects, Colour, Audio. Neither is a tool; both had nowhere else sensible
+to live, and the UI spec has always asked for the workspace names to be visible
+in the window chrome rather than buried in a menu. Snapping is, for now, a
+switch nothing reads: same rule as the tools, and the same reason.

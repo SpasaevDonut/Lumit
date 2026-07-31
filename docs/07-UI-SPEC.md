@@ -134,6 +134,59 @@ Structure only; every preset uses the same panel inventory.
   future Composer workspace is specified in [09-AUDIO.md](09-AUDIO.md) and deliberately not
   here.
 
+### 1.7 The toolbar (K-214)
+
+A single **toolbar** spans the window immediately below the menu bar and above the dock. It
+is chrome, not a panel: it cannot be closed, moved, tabbed or floated, and it is the same
+strip whatever workspace is active.
+
+**What it holds, left to right.**
+
+| Group | Tools, in flyout order | Shortcut |
+|---|---|---|
+| Selection | Selection | `V` |
+| Hand | Hand | `H` |
+| Zoom | Zoom | `Z` |
+| Rotation | Rotation | `W` |
+| Anchor point | Anchor point | `Y` |
+| Razor | Razor | `C` |
+| Shape | Rectangle, Rounded rectangle, Ellipse, Polygon, Star | `Q` |
+| Pen | Pen, Add vertex, Delete vertex, Convert vertex, Mask feather | `G` |
+| Type | Horizontal type, Vertical type | `Ctrl+T` |
+| Paint | Brush, Clone stamp, Eraser | `Ctrl+B` |
+| Roto | Roto brush, Refine edge | `Alt+W` |
+| Puppet | Puppet position pin, Puppet starch pin, Puppet overlap pin, Puppet bend pin | `Ctrl+P` |
+| Camera | Orbit camera, Pan camera, Dolly camera | `Shift+C` |
+
+The right-hand end carries the **snapping** switch (§4.5) and the **workspace strip** §1.4
+requires in the window chrome.
+
+**Behaviour.**
+
+- Exactly one tool is armed at a time, app-wide. The armed tool is session state: it is
+  neither project state (arming one changes no document) nor workspace state (§1.5), and
+  every session opens on Selection.
+- A group of several tools MUST show one button carrying the member last used, marked with a
+  corner triangle. Press-and-hold or right-click MUST open the group's flyout; clicking the
+  button arms the member shown.
+- A group's shortcut arms the member last used; pressing it again while that group is
+  already armed MUST step to the next member and wrap — so `Q` walks the five shape tools
+  without opening the flyout.
+- Tool bindings live in the keymap's own `Tools` context (§15) and are remappable there like
+  every other binding. That context is not a panel, so a chord resolves against the focused
+  panel and the global table first and reaches the `Tools` table only if both decline —
+  which is what lets `C` cut a clip in the Timeline and arm the razor everywhere else.
+- Every tool button MUST carry a tooltip naming the tool and its current chord (§14). A tool
+  whose behaviour is not built yet MUST say so in that tooltip rather than being hidden: the
+  tool set above is the specification, and a strip missing half of it teaches the wrong shape
+  of the application.
+
+**Implementation status (2026-07-31).** The strip, the groups, the flyouts, the shortcuts,
+the snapping switch and the workspace strip are built. Of the tools themselves only Selection
+and Hand do anything — both pan the picture, as they did before there was a toolbar — and the
+rest change the Viewer's pointer and nothing else. Each tool's behaviour is tracked
+separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
+
 ---
 
 ## 2. Viewer
@@ -1144,9 +1197,11 @@ engine decides what a chord means and the frontend only spells the keypress and 
 answer (K-199). The keymap is stored in the workspace file as the engine's own JSON, so it
 survives a restart in the same format it exports in.
 
-Two honest gaps. The **Tools**, **Project**, **Panels** and **Effects** contexts have rows
+Two honest gaps. The **Project**, **Panels** and **Effects** contexts have rows
 in the table and nothing behind them — those commands are not built on this frontend, so the
-bindings are real and pressing them does nothing. And the arrows step a frame alongside
+bindings are real and pressing them does nothing. The **Tools** context arms the toolbar's
+tools (§1.7) and cycles a group on a repeat press, but what most tools then *do* is not built
+either, so the chord lands and the picture stays as it was. And the arrows step a frame alongside
 `Page Down`/`Page Up`; the table below did not name them, which would have quietly taken
 them away the day dispatch started going through the keymap.
 
@@ -1176,7 +1231,13 @@ them away the day dispatch started going through the keymap.
 | Tools | `Y` | Anchor point tool |
 | Tools | `C` | Razor tool (Sequence layers and layer splitting) |
 | Tools | `Q` | Shape/mask tool cycle |
-| Tools | `G` | Pen tool |
+| Tools | `G` | Pen tool cycle |
+| Tools | `W` | Rotation tool |
+| Tools | `Ctrl+T` | Type tool cycle |
+| Tools | `Ctrl+B` | Brush / clone stamp / eraser cycle |
+| Tools | `Alt+W` | Roto brush / refine edge cycle |
+| Tools | `Ctrl+P` | Puppet tool cycle |
+| Tools | `Shift+C` | Camera tool cycle (AE's `C` is the razor here, §1.7) |
 | Timeline | `P` `S` `R` `T` `A` | Reveal position / scale / rotation / opacity / anchor |
 | Timeline | `E` / `M` | Reveal effects / masks |
 | Timeline | `U` / `UU` | Reveal animated / modified properties |

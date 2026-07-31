@@ -3475,3 +3475,49 @@ both, and keeps the promise that switching Retime on changes nothing visible.
 not keyframed, so nothing draws it in the wrong place, and it is the arm the ponytail
 comment in `Layer::source_time_at` marks for deletion; it is left alone rather than being
 half-migrated. Recorded here so the next person meets it deliberately.
+
+**K-214 · DECIDED · The toolbar is one strip under the menu bar, and it ships with the whole
+tool set whether or not each tool works yet.** From the owner (2026-07-31): the toolbar had
+no counterpart at all on the Flutter frontend — the egui shell's tool row did not survive the
+port, so the only tools that existed were the ones a panel happened to offer.
+
+**Where it lives.** A single strip spanning the window below the menu bar and above the dock
+(docs/07 §1.7). It is chrome: it cannot be closed, docked, tabbed or floated, and it is the
+same strip in every workspace. Its right-hand end carries the two switches that belong to no
+panel — snapping, and the workspace strip §1.4 has always required in the window chrome and
+which until now existed only inside the Window menu.
+
+**The tool set is After Effects', grouped as After Effects groups it.** Selection, Hand,
+Zoom, Rotation, Anchor point, Razor, the five shape tools, the five pen tools, two type
+tools, brush/clone stamp/eraser, roto brush/refine edge, four puppet pins, three camera
+tools. A group is one button showing the member last used with a corner triangle; hold or
+right-click for the rest; the shortcut arms the remembered member and, pressed again while
+that group is armed, steps to the next and wraps. That last rule is why a tool chord is not
+simply "select this tool": `Q` walking the shapes without opening a flyout is the gesture
+the audience arrives with.
+
+**Unbuilt tools are drawn, not hidden.** Only Selection and Hand do anything today; the rest
+change the Viewer's pointer and nothing else. Shipping the strip with only those two would
+have taught the wrong shape of the application and left no agreed place to put the rest as
+they land — so the specified set is on screen, and each unbuilt tool's tooltip says plainly
+that arming it changes nothing yet. The alternative — a tooltip that lies by omission — is
+the one thing a toolbar must not do, because a toolbar is how a user learns what an editor
+can do at all.
+
+**The chords go through the keymap, and the Tools context is asked last.** The engine already
+shipped `tool.select` … `tool.pen` in a `Tools` key context with nothing behind them (K-199);
+this branch adds `tool.rotate`, `tool.type`, `tool.paint`, `tool.roto`, `tool.puppet` and
+`tool.camera` beside them and gives all thirteen a frontend. AE's own chords wherever Lumit
+has not already spent the key — `W` rotates, `Alt+W` is the roto brush — and `Shift+C` for
+the camera group, because `C` was given to the razor in docs/07 §15 long before there was a
+camera tool and moving either would break a keyboard people already have in their hands.
+`Tools` is not a panel, so no focused pane ever *is* that context: a chord resolves against
+the focused panel and the global table first, and reaches the `Tools` table only if both
+decline. That ordering is what lets `C` cut a clip in the Timeline and arm the razor
+everywhere else without either binding knowing about the other.
+
+**The armed tool is session state.** Not project state — arming a tool changes no document —
+and not workspace state either, so it is not written to the layout file; every session opens
+on Selection, as AE does. It lives on the shell's UI state beside the dropper's arm, for the
+same reason: it is set in one place and read in another, and no panel should have to be
+mounted for either.

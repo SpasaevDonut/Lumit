@@ -92,6 +92,29 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 - **Click-to-edit timecode** (currently read-only), may want to remove from this bar and
     only keep the one on timeline and add the functionality there.
 
+**Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7, K-214):** the strip, its groups,
+flyouts, shortcuts and the two switches at its right-hand end landed 2026-07-31. What is
+armed is a *tool*; what each tool then does is the backlog:
+- **Selection** - a drag on the picture pans it; picking a layer by clicking it, and
+    marquee-selecting several, is not built (the transform gizmo already drags a
+    selected layer, docs/07 §2.3).
+- **Zoom** - click to zoom in about the pointer, `Alt` to zoom out. The wheel already
+    does this; the tool does not.
+- **Rotation**, **Anchor point** - the gizmo drags a layer and its origin already; neither
+    is reachable through its tool.
+- **Razor** - `Ctrl+Shift+D` and Composition ▸ Cut clip at playhead exist; clicking a clip
+    with the tool to cut it there does not.
+- **Shape tools** - a rubber-band drag committing mask geometry (the egui build had
+    rectangle/ellipse/star; the rounded rectangle and polygon are new).
+- **Pen tools** - click-to-place mask drawing, and the four vertex/feather variants.
+- **Type**, **Paint** (brush/clone stamp/eraser), **Roto** (roto brush/refine edge),
+    **Puppet**, **Camera** - no engine side yet; these are roadmap features
+    ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
+- **Snapping** is a switch nothing reads (docs/07 §4.5 specifies the behaviour).
+- **The workspace strip shows no preset after a restart** - `Workspace.activePreset` is
+    session-only, because the stored layout is the user's own by then and may no longer
+    match any preset.
+
 **Pixel pickers ([07-UI-SPEC.md](07-UI-SPEC.md) §6.1):**
 - **The x/y position pick is not built.** The colour pick and the depth-of-field focal
     point both land with K-210; a *coordinate* pick — one dropper writing an x/y Float

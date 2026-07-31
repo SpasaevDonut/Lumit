@@ -45,6 +45,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../shell/tool_bar_frb.dart';
 import '../state/dropper.dart';
 import '../state/preview_throttle.dart';
 import '../state/settings.dart';
@@ -380,39 +381,52 @@ class _Stage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      // Panning the picture, not the layer: the overlay's own handle takes the
-      // gesture first when it is hit, so this only fires on empty space.
-      onPanUpdate: (d) => onPan(d.delta),
-      child: Container(
-        color: viewerSurroundFor(
-          t,
-          themed: uiState.workspace.themedViewerSurround,
-        ),
-        child: Stack(
-          children: [
-            if (grid)
+    // Listened to rather than read: the tool is armed from the toolbar, which
+    // is not in this panel's rebuild path, so without this the pointer would
+    // only catch up the next time something else redrew the Viewer.
+    return ListenableBuilder(
+      listenable: uiState.tools,
+      builder: (context, child) => MouseRegion(
+        // What the armed tool changes over the picture today: the pointer. The
+        // gestures each tool performs are not built (K-214) — the cursor is how
+        // the Viewer says which one it has been handed.
+        cursor: viewerCursorFor(uiState.tools.tool),
+        child: child,
+      ),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        // Panning the picture, not the layer: the overlay's own handle takes
+        // the gesture first when it is hit, so this only fires on empty space.
+        onPanUpdate: (d) => onPan(d.delta),
+        child: Container(
+          color: viewerSurroundFor(
+            t,
+            themed: uiState.workspace.themedViewerSurround,
+          ),
+          child: Stack(
+            children: [
+              if (grid)
+                Positioned.fromRect(
+                  rect: fitted,
+                  child: CustomPaint(painter: _CheckerPainter(t)),
+                ),
               Positioned.fromRect(
                 rect: fitted,
-                child: CustomPaint(painter: _CheckerPainter(t)),
+                child: _Picture(uiState: uiState, channel: channel),
               ),
-            Positioned.fromRect(
-              rect: fitted,
-              child: _Picture(uiState: uiState, channel: channel),
-            ),
-            _missingSlate(context, t),
-            _SelectionOverlay(
-              comp: comp,
-              uiState: uiState,
-              fitted: fitted,
-              onChanged: onChanged,
-            ),
-            // Above the overlay, because while the dropper is armed the whole
-            // picture is a target: a drag handle under the pointer must not
-            // take the click that was meant to pick a pixel.
-            DropperLayer(comp: comp, uiState: uiState, fitted: fitted),
-          ],
+              _missingSlate(context, t),
+              _SelectionOverlay(
+                comp: comp,
+                uiState: uiState,
+                fitted: fitted,
+                onChanged: onChanged,
+              ),
+              // Above the overlay, because while the dropper is armed the whole
+              // picture is a target: a drag handle under the pointer must not
+              // take the click that was meant to pick a pixel.
+              DropperLayer(comp: comp, uiState: uiState, fitted: fitted),
+            ],
+          ),
         ),
       ),
     );
