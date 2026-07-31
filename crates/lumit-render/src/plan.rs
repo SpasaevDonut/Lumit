@@ -64,14 +64,40 @@ impl Default for Quality {
 }
 
 impl Quality {
+    /// The display scale as the cache sees it: rounded down to the same 1% step
+    /// [`Self::tag`] keys by.
+    ///
+    /// **Both of them must use this, or footage stops being nameable.** The tag
+    /// declares that two scales inside the same 1% are the same quality, and a
+    /// solid obeys that, because the tag is all a solid's name folds in. Footage
+    /// also folds in the width it is decoded at — and that came from the raw
+    /// scale, so 0.4235 and 0.4240 decoded to 813 and 814 pixels and gave the
+    /// same frame two different names.
+    ///
+    /// The cache bar is where that showed. It asks by a scale it has rounded to
+    /// a thousandth, which is nearly never the exact float the render used, so
+    /// the bar named every frame differently from the way it was banked and drew
+    /// an empty stripe over a composition that was fully cached and playing. A
+    /// composition of solids was unaffected, which is what made it look like a
+    /// fault in footage.
+    ///
+    /// Rounding here rather than at each caller keeps the decode and the name in
+    /// step by construction: the width in the name is the width the pixels were
+    /// decoded at, whoever asked. It also stops a window resize from re-decoding
+    /// for a scale change too small to see.
+    #[must_use]
+    pub fn keyed_scale(self) -> f32 {
+        let step = (self.display_scale.clamp(0.05, 1.0) * 100.0) as u32;
+        step as f32 / 100.0
+    }
+
     /// One decode-width policy for requests AND cache keys — if these ever
     /// disagreed, a cached frame could present at the wrong resolution. `None`
     /// means "decode at native width".
     #[must_use]
     pub fn target_width(self, natural_w: u32) -> Option<u32> {
         let specified = if self.auto_res {
-            let scale = self.display_scale.clamp(0.05, 1.0);
-            let w = (natural_w as f32 * scale).round() as u32;
+            let w = (natural_w as f32 * self.keyed_scale()).round() as u32;
             (w < natural_w).then_some(w.max(16))
         } else {
             (self.divisor > 1).then(|| natural_w / self.divisor)
@@ -90,7 +116,7 @@ impl Quality {
     #[must_use]
     pub fn tag(self) -> u32 {
         if self.auto_res {
-            1000 + (self.display_scale.clamp(0.05, 1.0) * 100.0) as u32
+            1000 + (self.keyed_scale() * 100.0).round() as u32
         } else {
             self.divisor
         }
@@ -412,6 +438,41 @@ pub fn same_decode(a: &[CompJob], b: &[CompJob]) -> bool {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    /// **Two scales the tag calls equal must decode to the same width.**
+    ///
+    /// The regression: the tag keys Auto at 1% steps, so 0.4235 and 0.4240 are
+    /// one quality — but the decode width came from the raw float and gave 813
+    /// and 814 pixels. Footage folds that width into its name, thus one frame
+    /// got two names; a solid folds in only the tag, thus it got one. The cache
+    /// bar reads by a scale rounded to a thousandth, which is almost never the
+    /// float the render used, so it named every frame differently from the way
+    /// it was banked and drew nothing over a composition that was fully cached
+    /// and playing.
+    #[test]
+    fn one_quality_step_is_one_decode_width() {
+        let at = |scale: f32| Quality {
+            auto_res: true,
+            display_scale: scale,
+            ..Quality::default()
+        };
+        // Inside one 1% step, whatever the float.
+        for (a, b) in [(0.4235f32, 0.424f32), (0.4237, 0.424), (0.4271, 0.427)] {
+            assert_eq!(
+                at(a).tag(),
+                at(b).tag(),
+                "the tag already calls {a} and {b} one quality"
+            );
+            assert_eq!(
+                at(a).target_width(1920),
+                at(b).target_width(1920),
+                "thus they must decode to one width, or footage gets two names"
+            );
+        }
+        // And a step that IS a step still separates them.
+        assert_ne!(at(0.42).tag(), at(0.43).tag());
+        assert_ne!(at(0.42).target_width(1920), at(0.43).target_width(1920));
+    }
 
     /// Full quality decodes at native width; a divisor and Auto both shrink it,
     /// and draft caps on top without ever raising the specified width. This is

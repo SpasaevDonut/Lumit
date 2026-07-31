@@ -289,6 +289,11 @@ struct Demotion {
     cost_ms: u32,
     provenance: FrameProvenance,
     pending: lumit_gpu::PendingReadback,
+    /// True when the frame is still on the card and this is a *copy* for the
+    /// tiers below, not a frame on its way out ([`HeadlessRenderer::start_backup`]).
+    /// The frame is then marked as held below when the copy lands, so a later
+    /// eviction does not read the same pixels a second time.
+    backup: bool,
 }
 
 /// A frame that has finished coming down off the graphics card — the payload the
@@ -353,12 +358,20 @@ impl DemotedFrame {
 struct FrameTexture {
     texture: std::sync::Arc<wgpu::Texture>,
     provenance: FrameProvenance,
-    /// True when this frame arrived by being promoted UP the ladder rather than
-    /// composited here ([`HeadlessRenderer::upload_frame_texture`]). It is
-    /// therefore already held below, so evicting it needs no read-back — which
-    /// is what stops a scrub over a span larger than the cache from reading the
-    /// same frames back off the card again and again.
+    /// True when this frame is known to be held below as well — because it
+    /// arrived by being promoted UP the ladder
+    /// ([`HeadlessRenderer::upload_frame_texture`]), or because the idle backup
+    /// has since copied it down ([`HeadlessRenderer::start_backup`]). Evicting
+    /// one of these needs no read-back, which is what stops a scrub over a span
+    /// larger than the cache from reading the same frames off the card again
+    /// and again.
     from_lower_tier: bool,
+    /// What the frame cost to make, in milliseconds — kept beside the texture so
+    /// a copy made for the tiers below can carry the same ranking the store
+    /// evicts by. The cache keeps its own copy of this for eviction; this one is
+    /// for the frames that leave by being *copied* rather than evicted, which
+    /// never go through the eviction path that reports it.
+    cost_ms: u32,
 }
 
 impl lumit_cache::ByteSized for FrameTexture {
@@ -897,6 +910,7 @@ impl HeadlessRenderer {
                         scale_q: preview_scale_q(quality),
                     },
                     from_lower_tier: false,
+                    cost_ms,
                 },
                 cost_ms,
             );
@@ -930,6 +944,7 @@ impl HeadlessRenderer {
                         cost_ms,
                         provenance: evicted.provenance,
                         pending: parts.colour.start_readback8(&self.gpu, &evicted.texture),
+                        backup: false,
                     });
                 }
             }
@@ -947,6 +962,67 @@ impl HeadlessRenderer {
                 self.upload_pool.push(evicted.texture);
             }
         }
+    }
+
+    /// Copy one held frame down to the tiers below **without evicting it** —
+    /// the idle backup (docs/06 §5.5).
+    ///
+    /// # Why this has to exist
+    ///
+    /// Until now a frame reached the disk tier by exactly one route: it was
+    /// pushed out of the card's cache, read back, and parked on the way down.
+    /// That route needs the cache to be *full*. Give the card's cache a budget
+    /// larger than a session ever fills — 10 GB, say — and it is never full,
+    /// nothing is ever pushed out, and thus nothing is ever written to disk. The
+    /// tier that exists to make tomorrow's session start warm stayed empty, and
+    /// the bigger the budget the user gave it, the more certainly it stayed
+    /// empty. That is the wrong way round.
+    ///
+    /// So the ladder gets a second way down, for when there is time to spare:
+    /// pick a held frame that is not on disk yet, and start a read-back of it.
+    /// The frame stays on the card and keeps serving the Viewer; what goes down
+    /// is a copy.
+    ///
+    /// `parked` answers "is this frame already on disk?" — the owner's mirror of
+    /// the disk tier, asked here so this crate needs no knowledge of where the
+    /// frames go.
+    ///
+    /// Returns whether a copy was started. `false` means there is nothing left
+    /// to back up, or no room in flight, which is the caller's signal to stop
+    /// asking until something changes.
+    pub fn start_backup(&mut self, parked: &dyn Fn(u128) -> bool) -> bool {
+        if self.demotions.len() >= MAX_DEMOTIONS_IN_FLIGHT {
+            return false;
+        }
+        let Some(parts) = self.parts.as_ref() else {
+            return false;
+        };
+        // The first held frame that is not downstairs and is not already on its
+        // way there. Order does not matter: every held frame is wanted on disk
+        // eventually, and the caller comes back for the next one.
+        let Some(&(key, bgra)) = self
+            .frame_textures
+            .keys()
+            .find(|(key, _)| !parked(*key) && !self.demotions.iter().any(|d| d.key == *key))
+        else {
+            return false;
+        };
+        let Some(held) = self.frame_textures.peek(&(key, bgra)) else {
+            return false;
+        };
+        if held.from_lower_tier {
+            // Already below; nothing to copy.
+            return false;
+        }
+        self.demotions.push(Demotion {
+            key,
+            bgra,
+            cost_ms: held.cost_ms,
+            provenance: held.provenance,
+            pending: parts.colour.start_readback8(&self.gpu, &held.texture),
+            backup: true,
+        });
+        true
     }
 
     /// Take a texture from the pool that the next promoted frame can use, if
@@ -987,15 +1063,27 @@ impl HeadlessRenderer {
             let (width, height) = demotion.pending.size();
             match demotion.pending.poll(&self.gpu) {
                 None => still_running.push(demotion),
-                Some(Ok(rgba)) => done.push(DemotedFrame {
-                    key: demotion.key,
-                    width,
-                    height,
-                    rgba,
-                    bgra: demotion.bgra,
-                    cost_ms: demotion.cost_ms,
-                    provenance: demotion.provenance,
-                }),
+                Some(Ok(rgba)) => {
+                    // A backup's frame is still on the card. Mark it as held
+                    // below now the copy is made, so the day it *is* pushed out
+                    // it goes quietly instead of being read a second time.
+                    if demotion.backup {
+                        if let Some(held) =
+                            self.frame_textures.peek_mut(&(demotion.key, demotion.bgra))
+                        {
+                            held.from_lower_tier = true;
+                        }
+                    }
+                    done.push(DemotedFrame {
+                        key: demotion.key,
+                        width,
+                        height,
+                        rgba,
+                        bgra: demotion.bgra,
+                        cost_ms: demotion.cost_ms,
+                        provenance: demotion.provenance,
+                    });
+                }
                 Some(Err(_)) => {}
             }
         }
@@ -1052,6 +1140,7 @@ impl HeadlessRenderer {
                 texture: texture.clone(),
                 provenance: frame.provenance,
                 from_lower_tier: true,
+                cost_ms: frame.cost_ms.max(1),
             },
             frame.cost_ms.max(1),
         );
@@ -2320,6 +2409,90 @@ mod tests {
         assert!(
             !came_down.contains(&first),
             "a promoted frame is not read back a second time"
+        );
+    }
+
+    /// **A frame reaches the tiers below even when the cache is never full.**
+    ///
+    /// The regression this pins is a hole the ladder had from the start: the
+    /// only way down was eviction, so a cache with a budget bigger than the
+    /// session ever fills wrote *nothing* to disk. The bigger the budget the
+    /// user gave it, the more certainly the disk tier stayed empty — and the
+    /// symptom was silent, a cache bar green all session and blank after a
+    /// restart.
+    ///
+    /// Here the budget is generous, nothing is ever evicted, and the frame must
+    /// still come down.
+    #[test]
+    fn a_held_frame_is_copied_down_without_being_evicted() {
+        let mut r = match HeadlessRenderer::new() {
+            Ok(r) => r,
+            Err(_) => {
+                eprintln!("skipping: no GPU adapter");
+                return;
+            }
+        };
+        let (store, comp_id) = doc_with_solid(LinearColour([0.0, 1.0, 0.0, 1.0]), 8, 8);
+        let doc = store.snapshot();
+        let q = crate::plan::Quality::default();
+        // Room for a hundred of these frames: this cache never evicts anything.
+        r.set_frame_texture_budget((8 * 8 * 4 + 64) * 100);
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("bank one frame");
+        let key = r
+            .frame_key(&doc, comp_id, 0, q)
+            .expect("a solid-only comp is nameable");
+        assert!(r.has_frame_texture(key, false));
+
+        // Nothing is parked yet, thus the backup has exactly one frame to copy.
+        let none_parked = |_: u128| false;
+        assert!(
+            r.start_backup(&none_parked),
+            "a held frame that is not on disk is worth copying down"
+        );
+
+        let mut down = Vec::new();
+        for _ in 0..200 {
+            down = r.poll_demotions();
+            if !down.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(down.len(), 1, "the copy came down");
+        assert_eq!(down[0].key, key, "under the name it is held by");
+        assert_eq!(down[0].rgba.len(), 8 * 8 * 4, "a whole frame of bytes");
+        assert!(
+            r.has_frame_texture(key, false),
+            "and the frame is still on the card — a copy, not an eviction"
+        );
+
+        // Once it is down it is not copied again, whichever way the caller
+        // answers: the frame itself now knows it is held below.
+        assert!(
+            !r.start_backup(&none_parked),
+            "a frame already copied down is not copied twice"
+        );
+
+        // And when it is finally pushed out, it goes quietly — the pixels are
+        // downstairs already, so reading them a second time would be pure
+        // traffic.
+        r.set_frame_texture_budget(8 * 8 * 4 + 64);
+        let mut doc = (*doc).clone();
+        if let Some(comp) = doc.comp_mut(comp_id) {
+            comp.layers[0].transform.opacity = lumit_core::anim::Property::fixed(25.0);
+        }
+        r.render_prepared(&doc, comp_id, 0, q, false, true)
+            .expect("a second picture takes its place");
+        assert!(!r.has_frame_texture(key, false), "the first was evicted");
+        let mut came_down = Vec::new();
+        for _ in 0..40 {
+            came_down.extend(r.poll_demotions().into_iter().map(|d| d.key));
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(
+            !came_down.contains(&key),
+            "a frame already backed up is not read back when it goes"
         );
     }
 

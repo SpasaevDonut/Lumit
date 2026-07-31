@@ -5707,3 +5707,112 @@ happen.
 The general shape is worth keeping: **when two parts of the application want the
 same key, do not race them — have the broader one ask the narrower one first.**
 A selection inside a layer is narrower than the layer, so it is asked first.
+
+### Why a bigger cache made the disk one useless
+
+A hole in the three-tier cache, and an instructive one: the symptom was the
+opposite of what you would guess from the cause.
+
+A frame got onto disk one way. The card's cache filled up, a frame was pushed
+out to make room, and on its way out it was read back and written to disk. That
+works — as long as the cache *fills up*. Give it more memory than a session ever
+uses, say 10 GB on a roomy card, and it never fills, so nothing is ever pushed
+out, so nothing is ever written to disk. The tier whose only job is to make
+tomorrow start warm stayed completely empty. And the more memory you gave the
+cache, the more certain that became.
+
+It was also silent. The cache bar was green all session, because the frames
+really were held — on the card. Then you restarted and it was blank, because
+none of them had ever reached a file.
+
+The ladder now has a second way down, for when there is time to spare. Each time
+the editor has been idle for a moment, one held frame that is not on disk yet is
+copied down. The frame stays on the card and keeps serving the Viewer; what
+travels is a copy. It uses the same non-blocking read-back an eviction uses — ask
+the card for the pixels, collect them a moment later — and no more of those may
+be in flight than before, so it cannot get in the picture's way.
+
+One detail worth the sentence: the backup runs *alongside* the fill that renders
+new frames, not after it. Waiting for the fill to finish sounds tidier, but on a
+long composition the fill has frames to make for as long as the memory lasts —
+so "after the fill" would have meant "never", which is exactly how long the disk
+tier stayed empty.
+
+**Climbing the ladder before the frame is due.** Rendering runs ahead of the
+clock, so a frame is usually made before it is shown. Fetching one that already
+exists did not: whichever rung it was sitting on, it was climbed at the moment
+the frame was wanted, inside the turn that had to deliver it.
+
+From memory that is one upload — quick, but it came out of that frame's own
+budget instead of out of the slack that running ahead exists to build up. From
+disk it was worse than slow, it was useless: the read goes to another thread and
+the bytes come back a moment later, so a copy asked for at the instant the frame
+was due always arrived after it had gone past, and the frame was composited from
+scratch anyway.
+
+Both are now fetched over the same window of coming frames that source decodes
+already use. By the time playback reaches the frame it is a texture on the card
+and nothing is composited at all.
+
+The idle fill follows the same rule, and it matters most right after the backup
+above has done its work: **the fill never re-renders a frame it already has
+somewhere.** It has no deadline — that is the whole point of it — so a frame in
+memory or in a file is fetched, not made. Without that rule, opening yesterday's
+project would walk a full disk cache and render every frame of it again, which is
+precisely what the cache exists to prevent.
+
+**The cache bar that went blank over video.** Worth recording, because the
+symptom pointed away from the cause.
+
+A frame's name includes how coarsely it was made. For Auto resolution that is
+kept to 1% steps — zoom the Viewer by a hair and you get the same frame back
+rather than an identical one under a new name. But footage has a second thing in
+its name: the width it was decoded at. And that width was worked out from the
+exact scale rather than the rounded one. At 1920 wide, 0.4235 gave 813 pixels
+and 0.4240 gave 814 — one step by the first rule, two names by the second.
+
+The bar is where it showed. It asks the engine by a scale rounded to a
+thousandth, which is almost never the exact number the render used, so it worked
+out a different name for every frame than the one it had been filed under, found
+none of them, and drew an empty stripe over a composition that was entirely
+cached and playing perfectly.
+
+A composition of solids was fine the whole time, because a solid's name has no
+decode width in it. That is why it looked like a fault in video footage, and why
+every test of the bar passed: they were all built from solids.
+
+Both rules now round the same way, so the width in the name is the width the
+pixels really were. A footnote worth having: resizing the window by less than a
+percent no longer re-decodes the footage either.
+
+**The sound that waited and never came back.** Every-frame playback shows every
+frame however long each one takes, so on a heavy stretch the picture falls
+behind the clock. Lumit's answer is to let the sound wait where it is, rather
+than let it run on and drift away from a picture that cannot keep up.
+
+Waiting was right. Never coming back was not. The clock stops reporting the
+moment the sound stops, and the only test that could have started it again read
+that clock — so once the sound had stopped, nothing could ever decide to start
+it. One slow frame took the sound away for the rest of the run, even after the
+picture returned to full speed, and the only way to get it back was to stop
+playback and press play again.
+
+The obvious repair is wrong, and I tried it first: wait for the picture to reach
+the moment the sound had got to. But the sound stops *where it is*, which is
+ahead of the picture by however long the slow frame took. A frame that took
+thirty seconds leaves the sound thirty seconds in front, so the picture needs
+thirty seconds of playing to arrive — and if the composition ends before then, it
+never arrives, and the sound stays off. That is the same fault wearing a
+different hat.
+
+So the sound comes back to the *picture*, not the picture to the sound. The
+moment the renders are running ahead of the presents again — the same measure
+that decides the sound may start at the beginning of a run — the sound is moved
+to the frame on screen and started there. The two are together by construction,
+at a moment the picture is definitely at, because it is the frame you are
+looking at.
+
+The two tests are deliberately unalike: it stops on a *distance* (half a second
+behind) and starts on *frames in hand*. Neither is the other's opposite, so a
+picture wavering at the edge of one cannot start and stop the sound over and
+over.
