@@ -186,6 +186,25 @@ class KeymapState extends ChangeNotifier {
     return keymapLookup(context: context, chord: chord);
   }
 
+  /// The chord [action] answers to, as this machine spells it — for a tooltip
+  /// that teaches the shortcut (docs/07 §14: every icon control names itself
+  /// and its current shortcut). Null when the action has no binding, so a
+  /// caller shows the name alone rather than an empty bracket.
+  ///
+  /// Read from the table the engine last gave us rather than by asking per
+  /// hover: this is drawn on every tooltip and the answer only changes when a
+  /// rebind lands, which is exactly when [_adopt] refreshes it.
+  String? chordFor(String action) {
+    for (final group in _groups) {
+      for (final binding in group.bindings) {
+        if (binding.action == action && binding.chord.isNotEmpty) {
+          return chordLabel(binding.chord);
+        }
+      }
+    }
+    return null;
+  }
+
   /// Re-read the table and the conflicts from the engine.
   void refresh() {
     _groups = keymapGroups();

@@ -458,6 +458,10 @@ mono while focused.
 ### 7.2 Hit targets (recorded deviation KD-2, = K-116)
 
 - Toolbar, transport, dialog, and Viewer-toolbar controls: ≥44px hit extent (household gate).
+  **The tool strip keeps this across and not down** (K-230): its buttons are 44px wide, which
+  is the axis the row is read and aimed along, in a strip 30px tall. The strip runs the full
+  width of the window, so a 44px band of mostly empty chrome is height taken from the panels
+  underneath for nothing; the 16px icon (§5) still has room around it.
 - Dense-surface controls (Timeline rows, clips, keyframes, curve handles, property lanes,
   cache bar): ≥24px visual extent on the smaller axis, with hit-slop extending the
   interactive region to ≥32px. Keyframes render at 9px but hit-test at 32px with

@@ -129,6 +129,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeFileParam dco_decode_box_autoadd_bridge_file_param(dynamic raw);
 
   @protected
+  BridgeMask dco_decode_box_autoadd_bridge_mask(dynamic raw);
+
+  @protected
   BridgeMatte dco_decode_box_autoadd_bridge_matte(dynamic raw);
 
   @protected
@@ -304,6 +307,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMarker dco_decode_bridge_marker(dynamic raw);
 
   @protected
+  BridgeMask dco_decode_bridge_mask(dynamic raw);
+
+  @protected
   BridgeMatte dco_decode_bridge_matte(dynamic raw);
 
   @protected
@@ -390,6 +396,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeTransformProp dco_decode_bridge_transform_prop(dynamic raw);
 
   @protected
+  BridgeVertex dco_decode_bridge_vertex(dynamic raw);
+
+  @protected
   BridgeViewerTransport dco_decode_bridge_viewer_transport(dynamic raw);
 
   @protected
@@ -462,6 +471,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<BridgeMarker> dco_decode_list_bridge_marker(dynamic raw);
 
   @protected
+  List<BridgeMask> dco_decode_list_bridge_mask(dynamic raw);
+
+  @protected
   List<BridgeParamInfo> dco_decode_list_bridge_param_info(dynamic raw);
 
   @protected
@@ -475,6 +487,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeTransformProp> dco_decode_list_bridge_transform_prop(dynamic raw);
+
+  @protected
+  List<BridgeVertex> dco_decode_list_bridge_vertex(dynamic raw);
 
   @protected
   List<ItemReference> dco_decode_list_item_reference(dynamic raw);
@@ -666,6 +681,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   BridgeFileParam sse_decode_box_autoadd_bridge_file_param(
       SseDeserializer deserializer);
+
+  @protected
+  BridgeMask sse_decode_box_autoadd_bridge_mask(SseDeserializer deserializer);
 
   @protected
   BridgeMatte sse_decode_box_autoadd_bridge_matte(SseDeserializer deserializer);
@@ -873,6 +891,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMarker sse_decode_bridge_marker(SseDeserializer deserializer);
 
   @protected
+  BridgeMask sse_decode_bridge_mask(SseDeserializer deserializer);
+
+  @protected
   BridgeMatte sse_decode_bridge_matte(SseDeserializer deserializer);
 
   @protected
@@ -968,6 +989,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeVertex sse_decode_bridge_vertex(SseDeserializer deserializer);
+
+  @protected
   BridgeViewerTransport sse_decode_bridge_viewer_transport(
       SseDeserializer deserializer);
 
@@ -1051,6 +1075,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<BridgeMask> sse_decode_list_bridge_mask(SseDeserializer deserializer);
+
+  @protected
   List<BridgeParamInfo> sse_decode_list_bridge_param_info(
       SseDeserializer deserializer);
 
@@ -1068,6 +1095,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeTransformProp> sse_decode_list_bridge_transform_prop(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeVertex> sse_decode_list_bridge_vertex(
       SseDeserializer deserializer);
 
   @protected
@@ -1273,6 +1304,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_bridge_file_param(
       BridgeFileParam self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_mask(
+      BridgeMask self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bridge_matte(
@@ -1498,6 +1533,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_bridge_marker(BridgeMarker self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_mask(BridgeMask self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_matte(BridgeMatte self, SseSerializer serializer);
 
   @protected
@@ -1605,6 +1643,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeTransformProp self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_vertex(BridgeVertex self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_viewer_transport(
       BridgeViewerTransport self, SseSerializer serializer);
 
@@ -1692,6 +1733,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       List<BridgeMarker> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_mask(
+      List<BridgeMask> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_bridge_param_info(
       List<BridgeParamInfo> self, SseSerializer serializer);
 
@@ -1710,6 +1755,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_bridge_transform_prop(
       List<BridgeTransformProp> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_vertex(
+      List<BridgeVertex> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_item_reference(

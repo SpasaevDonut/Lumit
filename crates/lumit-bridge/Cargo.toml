@@ -81,6 +81,8 @@ features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_System_SystemInformation",
+    # `GetCursorPos`/`SetCursorPos`, for the camera tools' pointer lock (K-230).
+    "Win32_UI_WindowsAndMessaging",
 ]
 
 [dev-dependencies]

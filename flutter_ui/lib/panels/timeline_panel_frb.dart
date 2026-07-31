@@ -39,6 +39,7 @@ import '../state/comp_time.dart';
 import '../state/drag_payloads.dart';
 import '../state/timecode.dart';
 import '../state/timeline_columns.dart';
+import '../state/tools.dart';
 import '../theme/theme.dart';
 import '../widgets/controls.dart';
 import '../widgets/marquee.dart';
@@ -50,6 +51,7 @@ import 'placeholder.dart';
 import 'graph_editor_frb.dart';
 import 'graph_maths.dart';
 import 'timeline_extras_frb.dart';
+import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
 import 'layer_fold_frb.dart';
@@ -614,10 +616,73 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// a curve you can shape.
   bool _graph = false;
 
-  /// With the razor armed, a click on a bar cuts it rather than selecting it.
-  /// Modal on purpose — it is how every editor does the tool, and it is the one
-  /// gesture where "what does a click do here" has two answers.
-  bool _razor = false;
+  /// Whether the razor is armed — which is now the *toolbar's* answer (K-220):
+  /// the Razor tool (`C`) and this panel's own menu item are two doors into one
+  /// state, because two razors that could disagree is one razor too many. The
+  /// menu item arms and disarms the tool.
+  bool _razorArmed(LumitUiState ui) => ui.tools.tool.group == ToolGroup.razor;
+
+  void _toggleRazor(LumitUiState ui) => _razorArmed(ui)
+      ? ui.tools.select(ToolMode.select)
+      : ui.tools.select(ToolMode.razor);
+
+  /// The toolbar's state, subscribed to once.
+  ///
+  /// The armed tool lives on its own notifier beside the rest of the shell's UI
+  /// state, so watching `LumitUiState` does not hear about it: without this the
+  /// lanes kept whatever the razor was when the panel last drew, and arming it
+  /// from the toolbar — or from this panel's own menu — changed nothing until
+  /// something else happened to rebuild.
+  ToolsState? _boundTools;
+
+  void _onToolChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _bindTools(LumitUiState ui) {
+    if (identical(_boundTools, ui.tools)) return;
+    _boundTools?.removeListener(_onToolChanged);
+    _boundTools = ui.tools..addListener(_onToolChanged);
+  }
+
+  /// Cut at [frame]: the layer that was clicked, or — with Shift — every layer
+  /// that spans that moment (docs/07 §4.4).
+  void _razorCutAt(
+    LumitUiState ui,
+    BridgeLayerEntry? clicked,
+    int frame,
+    VoidCallback onChanged,
+  ) {
+    final targets = razorTargets(
+      ui.model.layers,
+      frame,
+      clicked: clicked,
+      allLayers: HardwareKeyboard.instance.isShiftPressed,
+    );
+    if (razorCut(targets, frame)) onChanged();
+  }
+
+  /// `Ctrl+Shift+D`: cut every selected layer at the playhead (docs/07 §4.4).
+  ///
+  /// A command, not a tool — it does not care which tool is armed, and it cuts
+  /// where the playhead is rather than where the pointer is. The rules are the
+  /// razor's, and they are read from the razor rather than written a second
+  /// time: [razorTargets] says what a cut at that frame can land on (strictly
+  /// inside the layer), [razorCut] makes it, and a cut the engine refuses is
+  /// silence.
+  bool _splitSelectionAtPlayhead(LumitUiState ui) {
+    final frame = ui.playheadFrame.value;
+    final selected = ui.selectedLayerIds;
+    final targets = [
+      for (final entry
+          in razorTargets(ui.model.layers, frame,
+              clicked: null, allLayers: true))
+        if (selected.contains(entry.layer.internallayerId)) entry,
+    ];
+    if (targets.isEmpty) return false;
+    if (razorCut(targets, frame)) ui.model.refresh();
+    return true;
+  }
 
   /// The bar drag in flight, if any — a notifier rather than panel state so
   /// only the waveform lanes redraw as the pointer moves, not the whole table.
@@ -658,7 +723,16 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     _vOutline.addListener(() => _followScroll(_vOutline, _vLane));
     _vLane.addListener(() => _followScroll(_vLane, _vOutline));
     HardwareKeyboard.instance.addHandler(_onKey);
+    // Claim Delete for the finer selection this panel holds (K-234). The state
+    // is kept, not looked up again: `dispose` runs after the element is
+    // deactivated, where an ancestor lookup is no longer safe.
+    _ui = Provider.of<LumitUiState>(context, listen: false);
+    _ui!.deleteClaim = _deleteSelectedMasks;
   }
+
+  /// The shell state this panel claimed Delete on, so the claim can be dropped
+  /// again when the panel goes.
+  LumitUiState? _ui;
 
   /// The graph editor's channels right now, resolved from the read model.
   List<GraphChannel> _channelsNow() {
@@ -712,7 +786,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   }
 
   /// The Timeline's keyboard commands: `Shift+F3` toggles the graph, the F9
-  /// family sets easing, `F` re-frames the graph, `Ctrl+C`/`Ctrl+V` copy and
+  /// family sets easing, `Ctrl+Shift+D` cuts the selection at the playhead,
+  /// `F` re-frames the graph, `Ctrl+C`/`Ctrl+V` copy and
   /// paste keyframes, Delete removes the graph's selected keys. Registered on
   /// the hardware keyboard (panels do not hold focus); a focused text field
   /// keeps its keys.
@@ -755,89 +830,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     if (action == 'reveal.animated') {
       return _revealTap();
     }
-    if (action != null &&
-        (action.startsWith('reveal.') || action == 'layer.retime.enable')) {
-      final ui = Provider.of<LumitUiState>(context, listen: false);
-      final layer = ui.selectedLayer.value;
-      if (layer != null) {
-        final id = layer.internallayerId.toString();
-        final shift = HardwareKeyboard.instance.isShiftPressed;
-        final targetProp = switch (action) {
-          'reveal.position' => 'position',
-          'reveal.scale' => 'scale',
-          'reveal.rotation' => 'rotation',
-          'reveal.opacity' => 'opacity',
-          'reveal.anchor' => 'anchor',
-          'reveal.effects' => 'effects',
-          'reveal.masks' => 'masks',
-          'reveal.volume' => 'volume',
-          'layer.retime.enable' || 'reveal.retime' => 'retime',
-          _ => null,
-        };
-
-        if (targetProp != null) {
-          setState(() {
-            _open.add(id);
-
-            if (targetProp == 'effects') {
-              if (_open.contains('$id/effects')) {
-                _open.remove('$id/effects');
-              } else {
-                _open.add('$id/effects');
-              }
-            } else if (targetProp == 'masks') {
-              if (_open.contains('$id/masks')) {
-                _open.remove('$id/masks');
-              } else {
-                _open.add('$id/masks');
-              }
-            } else if (targetProp == 'volume') {
-              if (_open.contains('$id/audio')) {
-                _open.remove('$id/audio');
-              } else {
-                _open.add('$id/audio');
-              }
-            } else if (targetProp == 'retime') {
-              if (_open.contains('$id/retime')) {
-                _open.remove('$id/retime');
-              } else {
-                _open.add('$id/retime');
-              }
-            } else {
-              // Transform properties (position, scale, rotation, opacity, anchor)
-              final propPath = '$id/transform/$targetProp';
-              final groupPath = '$id/transform';
-
-              if (_open.contains(groupPath)) {
-                // Whole group is open. Repeated press closes group & solo props
-                _open.remove(groupPath);
-                for (final p
-                    in ['position', 'scale', 'rotation', 'opacity', 'anchor']) {
-                  _open.remove('$id/transform/$p');
-                }
-              } else if (_open.contains(propPath)) {
-                // Same prop was soloed. Repeated press expands whole Transform group!
-                _open.add(groupPath);
-              } else {
-                // Not soloed yet
-                if (!shift) {
-                  // Single key without Shift: solo ONLY this property
-                  _open.remove(groupPath);
-                  for (final p
-                      in ['position', 'scale', 'rotation', 'opacity', 'anchor']) {
-                    _open.remove('$id/transform/$p');
-                  }
-                }
-                _open.add(propPath);
-              }
-            }
-          });
-          if (action == 'layer.retime.enable') {
-            return false;
-          }
-          return true;
-        }
-      }
+    if (action == 'layer.split') {
+      return _splitSelectionAtPlayhead(ui);
     }
     if (action == 'graph.ease' ||
         action == 'graph.ease.in' ||
@@ -884,6 +878,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       return true;
     }
 
+    // Delete with a mask row selected is not handled here: every one of these
+    // handlers runs, in registration order, so a `true` from this one would not
+    // stop the shell's Delete removing the layer as well. The Timeline claims
+    // the key through [LumitUiState.deleteClaim] instead, which the shell asks
+    // *before* it deletes anything (K-234).
+
     if (!_graph) return false;
 
     if (action == 'graph.fit') {
@@ -895,6 +895,55 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       return true;
     }
     return false;
+  }
+
+  /// Delete every selected mask row, returning whether there was one (K-234).
+  ///
+  /// The shell's Delete calls this before it deletes the selected layers, so a
+  /// picked mask row is what the key acts on — the mask sits *on* the selected
+  /// layer, and deleting the layer instead is the opposite of what was asked.
+  ///
+  /// The same call the row's own context menu makes, so there is one way a mask
+  /// is deleted. One op per mask, as deleting several layers is one op each.
+  bool _deleteSelectedMasks() {
+    if (!mounted) return false;
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    // Mask paths are `<layer>/masks/<mask>`, so the layer and the mask are both
+    // read straight off the selection — no lookup table to keep in step.
+    final wanted = <String, Set<String>>{};
+    for (final path in _selectedProperties) {
+      final cut = path.indexOf('/');
+      if (cut <= 0) continue;
+      final layerId = path.substring(0, cut);
+      if (!isUnderPath(masksPath(layerId), path)) continue;
+      (wanted[layerId] ??= {})
+          .add(path.substring(masksPath(layerId).length + 1));
+    }
+    if (wanted.isEmpty) return false;
+
+    var deleted = false;
+    for (final entry in ui.model.layers) {
+      final ids = wanted[entry.layer.internallayerId.toString()];
+      if (ids == null) continue;
+      for (final mask in entry.info.masks) {
+        if (!ids.contains(mask.id.toString())) continue;
+        try {
+          entry.layer.deleteMask(id: mask.id);
+          deleted = true;
+        } catch (_) {
+          // Gone between the draw and the press; nothing left to delete.
+        }
+      }
+    }
+    if (!deleted) return false;
+    // The rows are gone, so the highlight that pointed at them goes too.
+    setState(() => _selectedProperties.removeWhere((path) {
+          final cut = path.indexOf('/');
+          return cut > 0 &&
+              isUnderPath(masksPath(path.substring(0, cut)), path);
+        }));
+    ui.model.refresh();
+    return true;
   }
 
   /// When the last `U` was pressed, and how many times in a row — the AE reveal
@@ -984,6 +1033,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   @override
   void dispose() {
     HardwareKeyboard.instance.removeHandler(_onKey);
+    if (_ui?.deleteClaim == _deleteSelectedMasks) _ui!.deleteClaim = null;
+    _boundTools?.removeListener(_onToolChanged);
     _barDrag.dispose();
     _layerDrag.dispose();
     _vOutline.dispose();
@@ -1051,6 +1102,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   @override
   Widget build(BuildContext context) {
     final ui = Provider.of<LumitUiState>(context);
+    _bindTools(ui);
     final comp = ui.selectedComp;
     if (comp == null) {
       // Footage dropped with nothing open offers to make the composition it
@@ -1243,9 +1295,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                               graph: _graph,
                                               onToggleGraph: () => setState(
                                                   () => _graph = !_graph),
-                                              razor: _razor,
-                                              onToggleRazor: () => setState(
-                                                  () => _razor = !_razor),
+                                              razor: _razorArmed(ui),
+                                              onToggleRazor: () =>
+                                                  _toggleRazor(ui),
                                               hideShy: _hideShy,
                                               onToggleHideShy: () => setState(
                                                   () => _hideShy = !_hideShy),
@@ -1584,7 +1636,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   magnet: _magnet,
                                                   axis: axis,
                                                   playhead: ui.playheadFrame,
-                                                  razor: _razor,
+                                                  razor: _razorArmed(ui),
+                                                  onRazor: (entry, frame) =>
+                                                      _razorCutAt(ui, entry,
+                                                          frame,
+                                                          ui.model.refresh),
                                                   vScroll: _vLane,
                                                   selectedKeys:
                                                       _laneKeySelection,
@@ -1902,6 +1958,16 @@ class _FoldRow extends StatelessWidget {
           onSeek: onSeek,
           onChanged: onChanged,
         ),
+      FoldMaskRow(:final mask) => _MaskRow(
+          layer: layer,
+          mask: mask,
+          valueColumn: valueColumn,
+          onChanged: () {
+            onEditProperty(path);
+            onChanged();
+          },
+          onLabelTap: () => onSelectProperty(path),
+        ),
     };
   }
 }
@@ -2091,6 +2157,158 @@ class _VolumeRowState extends State<_VolumeRow> {
 /// and only exists while the layer has been given a Retime (Ctrl+Alt+T), so
 /// unlike Volume its scalar arrives on the fold row rather than being read here
 /// (K-184: no bridge calls while drawing).
+/// One mask's row in the fold-out (K-222): its name, its invert switch and its
+/// opacity.
+///
+/// Read from the model, written through the layer's own handle — the same shape
+/// as every other row here. Deleting a mask is on its right-click menu, and on
+/// the Delete key once the row is selected; a button per mask on every row is a
+/// row of ways to lose work by mistake.
+///
+/// The row is selectable like any other property (K-234): tapping its name
+/// calls [onLabelTap], the outline highlights it, and Delete acts on it.
+class _MaskRow extends StatefulWidget {
+  final LayerReference layer;
+  final BridgeMask mask;
+  final ValueColumn valueColumn;
+  final VoidCallback onChanged;
+  final VoidCallback? onLabelTap;
+
+  const _MaskRow({
+    required this.layer,
+    required this.mask,
+    required this.valueColumn,
+    required this.onChanged,
+    this.onLabelTap,
+  });
+
+  @override
+  State<_MaskRow> createState() => _MaskRowState();
+}
+
+class _MaskRowState extends State<_MaskRow> {
+  /// The opacity a drag in flight is showing, before it commits. Held here so
+  /// the whole gesture is **one** op and so one Ctrl+Z undoes the whole drag:
+  /// writing on every tick filled the undo stack with near-identical steps,
+  /// and one undo backed out a single percent — which looked like nothing.
+  double? _staged;
+
+  /// Write the mask back with one field changed. The engine takes the whole
+  /// mask, so this is the only shape an edit has.
+  void _write({bool? inverted, double? opacity}) {
+    final mask = widget.mask;
+    try {
+      widget.layer.setMask(
+        mask: BridgeMask(
+          id: mask.id,
+          name: mask.name,
+          vertices: mask.vertices,
+          closed: mask.closed,
+          inverted: inverted ?? mask.inverted,
+          opacity: opacity ?? mask.opacity,
+        ),
+      );
+      widget.onChanged();
+    } catch (_) {
+      // The mask or its layer went away between the draw and the click.
+    }
+  }
+
+  void _commitOpacity(num v) {
+    setState(() => _staged = null);
+    _write(opacity: v.toDouble());
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final mask = widget.mask;
+    final valueColumn = widget.valueColumn;
+    final t = ThemeScope.of(context).theme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
+      child: Row(
+        children: [
+          lumitIcon(LumitIcon.rectangle, size: iconSize, color: t.textSecondary),
+          const SizedBox(width: 4),
+          // The name is the row's handle, exactly as it is on a transform row:
+          // tapping it selects the mask, and Delete then acts on it.
+          Expanded(
+            child: GestureDetector(
+              key: ValueKey<String>('tl-mask-name-${mask.id}'),
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onLabelTap,
+              child: Text(mask.name,
+                  style: t.body, overflow: TextOverflow.ellipsis),
+            ),
+          ),
+          SizedBox(
+            width: valueColumn.width,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                LumitTooltip(
+                  message: 'Invert this mask',
+                  child: HouseButton(
+                    key: ValueKey<String>('tl-mask-invert-${mask.id}'),
+                    small: true,
+                    frameless: true,
+                    onPressed: () => _write(inverted: !mask.inverted),
+                    child: Text(
+                      'Inv',
+                      style: t.small.copyWith(
+                          color: mask.inverted ? t.accent : t.textMuted),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 56,
+                  // Staged like every other dragged value here: the drag shows
+                  // live and commits once on release, so it is one op and one
+                  // undo step.
+                  child: DragValueField(
+                    key: ValueKey<String>('tl-mask-opacity-${mask.id}'),
+                    value: _staged ?? mask.opacity,
+                    min: 0,
+                    max: 100,
+                    suffix: '%',
+                    onChanged: _commitOpacity,
+                    onChangeLive: (v) => setState(() => _staged = v.toDouble()),
+                    onChangeEnd: _commitOpacity,
+                    onDragCancel: () => setState(() => _staged = null),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _menu(BuildContext context, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 160,
+        child: MenuRow(
+          key: ValueKey<String>('tl-mask-delete-${widget.mask.id}'),
+          onPressed: () {
+            close(null);
+            try {
+              widget.layer.deleteMask(id: widget.mask.id);
+              widget.onChanged();
+            } catch (_) {}
+          },
+          child: const Text('Delete mask'),
+        ),
+      ),
+    );
+  }
+}
+
 class _RetimeRow extends StatefulWidget {
   final CompositionReference comp;
   final LayerReference layer;
@@ -3754,6 +3972,9 @@ class _LayerArea extends StatelessWidget {
   /// Listened to, not read: only the playhead line moves when it changes.
   final ValueListenable<int> playhead;
   final bool razor;
+
+  /// A razor click on a bar: which layer, and the frame under the pointer.
+  final void Function(BridgeLayerEntry entry, int frame) onRazor;
   final ValueChanged<int> onSeek;
 
   /// Clicking a bar is clicking the layer: the lane side selects too.
@@ -3819,6 +4040,7 @@ class _LayerArea extends StatelessWidget {
     required this.axis,
     required this.playhead,
     required this.razor,
+    required this.onRazor,
     required this.onSeek,
     required this.onSelect,
     required this.onChanged,
@@ -3879,7 +4101,15 @@ class _LayerArea extends StatelessWidget {
     // wash and the strip stays one colour.
     final workAreaPixels =
         work.whole ? null : (axis.xOf(work.start), axis.xOf(work.end));
-    return Stack(
+    // The blade pointer and the line that says where the cut lands (K-220).
+    // Round the whole area rather than inside a bar: the line spans every row,
+    // and a pointer clipped to one bar would vanish at its edges. Inert — and
+    // free — while the razor is not armed.
+    return RazorOverlay(
+      active: razor,
+      mark: t.textPrimary,
+      outline: t.surface0,
+      child: Stack(
       children: [
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3999,6 +4229,8 @@ class _LayerArea extends StatelessWidget {
                                                     layers[i].layer.internallayerId),
                                                 playheadFrame: () =>
                                                     playhead.value,
+                                                onRazor: (frame) =>
+                                                    onRazor(layers[i], frame),
                                                 onSelect: () =>
                                                     onSelect(layers[i].layer),
                                                 onChanged: onChanged,
@@ -4088,7 +4320,7 @@ class _LayerArea extends StatelessWidget {
           child: const PlayheadMarker(),
         ),
       ],
-    );
+    ));
   }
 
   /// One fold row's lane: diamonds for a keyed property, the waveform for
@@ -4604,6 +4836,11 @@ class _Bar extends StatefulWidget {
   /// Read when the razor is clicked, not captured when the bar is built.
   final int Function() playheadFrame;
 
+  /// A razor click on this bar, at the frame under the pointer (K-220) — the
+  /// panel decides what that cuts, because Shift cuts layers this bar knows
+  /// nothing about.
+  final void Function(int frame) onRazor;
+
   /// Clicking (or grabbing) the bar selects its layer.
   final VoidCallback onSelect;
   final VoidCallback onChanged;
@@ -4625,6 +4862,7 @@ class _Bar extends StatefulWidget {
     required this.razor,
     required this.selected,
     required this.playheadFrame,
+    required this.onRazor,
     required this.onSelect,
     required this.onChanged,
     required this.dragPreview,
@@ -4749,24 +4987,21 @@ class _BarState extends State<_Bar> {
               },
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                // Armed razor: a click cuts the clip under the playhead rather
-                // than starting a drag. A layer with no clip there says so
-                // through the engine's calm error, which is nothing on screen —
-                // the cut simply does not happen.
-                onTap: widget.razor && !held
-                    ? () {
-                        try {
-                          widget.entry.layer
-                              .cutClipAt(frame: widget.playheadFrame());
-                        } catch (_) {
-                          return;
-                        }
-                        widget.onChanged();
-                      }
-                    // Selection already happened on the down; the tap has
-                    // nothing left to do, but registering it keeps the click
-                    // out of any parent recogniser's hands.
-                    : () {},
+                // Armed razor: a click cuts this layer **where it was clicked**
+                // rather than starting a drag (docs/07 §4.4). At the playhead
+                // is what Cut-at-playhead is for; a razor's whole point is that
+                // the cut lands under the blade. A layer with nothing cuttable
+                // there says so through the engine's calm error, which is
+                // nothing on screen — the cut simply does not happen.
+                onTapUp: widget.razor && !held
+                    ? (details) => widget.onRazor(
+                          widget.axis.frameAt(left + details.localPosition.dx),
+                        )
+                    : null,
+                // Selection already happened on the down; the tap has nothing
+                // left to do, but registering it keeps the click out of any
+                // parent recogniser's hands.
+                onTap: widget.razor && !held ? null : () {},
                 onHorizontalDragDown: widget.razor || held
                     ? null
                     : (d) => _downDx = d.localPosition.dx,

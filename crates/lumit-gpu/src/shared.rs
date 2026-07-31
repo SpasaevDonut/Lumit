@@ -29,14 +29,25 @@
 //! one; wgpu allows that copy because the two formats differ only in sRGB-ness
 //! (a verbatim byte copy, no re-encode).
 //!
-//! # Synchronisation (a known follow-up)
+//! # Synchronisation
 //!
-//! After the copy we `poll(Wait)` so the GPU has finished writing before we tell
-//! Flutter the frame is ready — Flutter never samples a half-written texture.
+//! Two waits, one per hop, both inside [`SharedTexture::present`], because
+//! *submitted* is not *finished*: both `Queue::submit` and D3D11's `Flush` hand
+//! work to the driver and return immediately, while the GPU is still executing.
+//!
+//! 1. `poll(Wait)` after the wgpu copy, so D3D12 has finished writing the shared
+//!    resource before D3D11 reads it.
+//! 2. A D3D11 **event query** after the D3D11 `CopyResource`, so that copy has
+//!    finished before we tell anyone the frame is ready. Without it a reader on
+//!    another device — Flutter's ANGLE device, or the test's — can win the race
+//!    and sample the previous (or cleared) contents.
+//!
 //! We render into the *same* texture each frame, so there is still a theoretical
-//! race if Flutter is mid-sample when the next frame's copy begins. A keyed-mutex
-//! or shared-fence handshake is the robust fix and is recorded as the follow-up
-//! (K-177); it is only worth adding if tearing actually shows in practice.
+//! race if Flutter is mid-sample when the *next* frame's copy begins. A keyed
+//! mutex is the robust fix for that half and stays the follow-up (K-177): it
+//! cannot land here alone, because a keyed-mutex texture must be acquired and
+//! released by the *consumer* too, and ANGLE's legacy share-handle path does not
+//! do that.
 //!
 //! The reference for the embedder-side plumbing (descriptor shape, the DXGI
 //! shared-handle surface type, the texture-registrar dance) is the MIT-licensed
@@ -46,12 +57,13 @@
 
 use crate::GpuContext;
 use windows::core::{Interface, PCWSTR};
-use windows::Win32::Foundation::{CloseHandle, GENERIC_ALL, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, BOOL, GENERIC_ALL, HANDLE};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11CreateDevice, ID3D11Device, ID3D11Device1, ID3D11DeviceContext, ID3D11Texture2D,
-    D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_FLAG,
-    D3D11_RESOURCE_MISC_SHARED, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
+    D3D11CreateDevice, ID3D11Device, ID3D11Device1, ID3D11DeviceContext, ID3D11Query,
+    ID3D11Texture2D, D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE,
+    D3D11_CREATE_DEVICE_FLAG, D3D11_QUERY_DESC, D3D11_QUERY_EVENT, D3D11_RESOURCE_MISC_SHARED,
+    D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
 };
 use windows::Win32::Graphics::Direct3D12::{
     ID3D12Device, ID3D12Resource, D3D12_HEAP_FLAG_SHARED, D3D12_HEAP_PROPERTIES,
@@ -109,6 +121,10 @@ pub struct SharedTexture {
     d3d11_view_of_d3d12: ID3D11Texture2D,
     /// The legacy-shared D3D11 texture Flutter samples.
     d3d11_shared: ID3D11Texture2D,
+    /// An event query, reused every frame, that reports when the per-frame
+    /// D3D11 copy has actually *finished* on the GPU rather than merely been
+    /// submitted. See the module note on synchronisation.
+    copy_done: ID3D11Query,
     /// Kept alive for the two textures above.
     _d3d11_device: ID3D11Device,
     pub width: u32,
@@ -148,18 +164,24 @@ impl SharedTexture {
         // Same adapter by LUID, or the NT open below fails: a handle shared
         // from one GPU cannot be opened on another.
         let hop = unsafe { create_d3d11_hop(adapter_luid, handle, width, height) };
-        let (d3d11_device, d3d11_context, d3d11_view_of_d3d12, d3d11_shared, legacy_handle) =
-            match hop {
-                Ok(parts) => parts,
-                Err(err) => {
-                    // Nothing D3D11 was kept; release the D3D12 side too.
-                    unsafe {
-                        let _ = CloseHandle(HANDLE(handle as *mut core::ffi::c_void));
-                    }
-                    drop(resource);
-                    return Err(err);
+        let (
+            d3d11_device,
+            d3d11_context,
+            d3d11_view_of_d3d12,
+            d3d11_shared,
+            copy_done,
+            legacy_handle,
+        ) = match hop {
+            Ok(parts) => parts,
+            Err(err) => {
+                // Nothing D3D11 was kept; release the D3D12 side too.
+                unsafe {
+                    let _ = CloseHandle(HANDLE(handle as *mut core::ffi::c_void));
                 }
-            };
+                drop(resource);
+                return Err(err);
+            }
+        };
 
         // Wrap the very same D3D12 resource as a wgpu texture so the render path
         // can copy into it. `texture_from_raw` takes a clone (a COM ref-count
@@ -203,6 +225,7 @@ impl SharedTexture {
             d3d11_context,
             d3d11_view_of_d3d12,
             d3d11_shared,
+            copy_done,
             _d3d11_device: d3d11_device,
             width,
             height,
@@ -236,18 +259,75 @@ impl SharedTexture {
             },
         );
         gpu.queue.submit([encoder.finish()]);
-        // No keyed mutex yet: wait for the write to land so a reader never sees a
-        // torn frame (see the module note). Zero *CPU* pixel work still — the
-        // bytes never leave the card.
+        // Wait for the D3D12 write to land before D3D11 reads it below: `submit`
+        // only queues the copy (see the module note on synchronisation). Zero
+        // *CPU* pixel work still — the bytes never leave the card.
         gpu.device.poll(wgpu::Maintain::Wait);
 
         // The hop: D3D12 has finished writing the simultaneous-access resource,
         // so copy it into the legacy-shared texture ANGLE samples, still on the
-        // GPU. Flush submits before Flutter's next composite.
+        // GPU. `End` marks the point the event query reports on; `Flush` submits
+        // the copy and the query together; the wait turns "submitted" into
+        // "finished", so a reader opening the legacy handle on its own device
+        // cannot beat the copy to the pixels.
         unsafe {
             self.d3d11_context
                 .CopyResource(&self.d3d11_shared, &self.d3d11_view_of_d3d12);
+            self.d3d11_context.End(&self.copy_done);
             self.d3d11_context.Flush();
+            wait_for_copy(&self.d3d11_context, &self.copy_done);
+        }
+    }
+}
+
+/// How long [`wait_for_copy`] waits before giving up. A frame copy of a few
+/// megabytes finishes in microseconds; anything near this bound means the device
+/// is wedged, and hanging the render thread forever would be worse than showing
+/// one stale frame.
+const COPY_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Block until the GPU reports `query`'s work complete, or [`COPY_WAIT_LIMIT`]
+/// passes. Never panics: a lost device or an expired bound simply returns, and
+/// the caller presents whatever the texture holds.
+///
+/// # Safety
+/// `query` must have been created on the same device as `context`, and `End`
+/// must already have been called on it.
+unsafe fn wait_for_copy(context: &ID3D11DeviceContext, query: &ID3D11Query) {
+    let start = std::time::Instant::now();
+    loop {
+        // An event query's payload is a single BOOL. When the work is still in
+        // flight the call returns S_FALSE and writes nothing — a *success*
+        // HRESULT, so `Result` cannot tell us apart from S_OK. Starting at
+        // false and reading the value back is what distinguishes them.
+        let mut done = BOOL(0);
+        let status = context.GetData(
+            query,
+            Some(std::ptr::from_mut(&mut done).cast()),
+            core::mem::size_of::<BOOL>() as u32,
+            0,
+        );
+        match status {
+            Ok(()) if done.as_bool() => return,
+            // Device removed or reset: no amount of waiting will finish this.
+            Err(err) => {
+                eprintln!("lumit-gpu: shared texture: GetData failed while awaiting the frame copy: {err}");
+                return;
+            }
+            Ok(()) => {}
+        }
+        if start.elapsed() >= COPY_WAIT_LIMIT {
+            eprintln!(
+                "lumit-gpu: shared texture: the GPU did not report the frame copy finished within {COPY_WAIT_LIMIT:?}; showing the frame anyway"
+            );
+            return;
+        }
+        // Spin hot for the first millisecond, which is where every healthy wait
+        // ends, then stop burning the core.
+        if start.elapsed() < std::time::Duration::from_millis(1) {
+            std::thread::yield_now();
+        } else {
+            std::thread::sleep(std::time::Duration::from_micros(200));
         }
     }
 }
@@ -276,6 +356,7 @@ type D3d11Hop = (
     ID3D11DeviceContext,
     ID3D11Texture2D,
     ID3D11Texture2D,
+    ID3D11Query,
     isize,
 );
 
@@ -362,7 +443,19 @@ unsafe fn create_d3d11_hop(
         .GetSharedHandle()
         .map_err(|e| format!("shared texture: GetSharedHandle failed: {e}"))?;
 
-    Ok((device, context, view, shared, legacy.0 as isize))
+    // One event query, made here and reused every frame, so `present` allocates
+    // nothing per frame (docs/14 on budgeted allocations).
+    let query_desc = D3D11_QUERY_DESC {
+        Query: D3D11_QUERY_EVENT,
+        MiscFlags: 0,
+    };
+    let mut query: Option<ID3D11Query> = None;
+    device
+        .CreateQuery(&query_desc, Some(&mut query))
+        .map_err(|e| format!("shared texture: CreateQuery failed: {e}"))?;
+    let query = query.ok_or_else(|| "shared texture: D3D11 query is null".to_string())?;
+
+    Ok((device, context, view, shared, query, legacy.0 as isize))
 }
 
 /// Create a shared, simultaneous-access D3D12 texture and export its NT handle.

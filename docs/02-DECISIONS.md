@@ -3591,3 +3591,822 @@ the old folder simply stop being addressed, and that folder is deletable at any 
 
 **Not done, and deliberately: nothing about this is in the pull request for K-214.** Mack asked
 for these on a branch of their own so the reviewable change stays the one that was reviewed.
+
+**K-216 · DECIDED · The toolbar is one strip under the menu bar, and it ships with the whole
+tool set whether or not each tool works yet.** From the owner (2026-07-31): the toolbar had
+no counterpart at all on the Flutter frontend — the egui shell's tool row did not survive the
+port, so the only tools that existed were the ones a panel happened to offer.
+
+**Where it lives.** A single strip spanning the window below the menu bar and above the dock
+(docs/07 §1.7). It is chrome: it cannot be closed, docked, tabbed or floated, and it is the
+same strip in every workspace. Its right-hand end carries the two switches that belong to no
+panel — snapping, and the workspace strip §1.4 has always required in the window chrome and
+which until now existed only inside the Window menu.
+
+**The tool set is After Effects', grouped as After Effects groups it.** Selection, Hand,
+Zoom, Rotation, Anchor point, Razor, the five shape tools, the five pen tools, two type
+tools, brush/clone stamp/eraser, roto brush/refine edge, four puppet pins, three camera
+tools. A group is one button showing the member last used with a corner triangle; hold or
+right-click for the rest; the shortcut arms the remembered member and, pressed again while
+that group is armed, steps to the next and wraps. That last rule is why a tool chord is not
+simply "select this tool": `Q` walking the shapes without opening a flyout is the gesture
+the audience arrives with.
+
+**Unbuilt tools are drawn, not hidden.** Only Selection and Hand do anything today; the rest
+change the Viewer's pointer and nothing else. Shipping the strip with only those two would
+have taught the wrong shape of the application and left no agreed place to put the rest as
+they land — so the specified set is on screen, and each unbuilt tool's tooltip says plainly
+that arming it changes nothing yet. The alternative — a tooltip that lies by omission — is
+the one thing a toolbar must not do, because a toolbar is how a user learns what an editor
+can do at all.
+
+**The chords go through the keymap, and the Tools context is asked last.** The engine already
+shipped `tool.select` … `tool.pen` in a `Tools` key context with nothing behind them (K-199);
+this branch adds `tool.rotate`, `tool.type`, `tool.paint`, `tool.roto`, `tool.puppet` and
+`tool.camera` beside them and gives all thirteen a frontend. AE's own chords wherever Lumit
+has not already spent the key — `W` rotates, `Alt+W` is the roto brush — and `Shift+C` for
+the camera group, because `C` was given to the razor in docs/07 §15 long before there was a
+camera tool and moving either would break a keyboard people already have in their hands.
+`Tools` is not a panel, so no focused pane ever *is* that context: a chord resolves against
+the focused panel and the global table first, and reaches the `Tools` table only if both
+decline. That ordering is what lets `C` cut a clip in the Timeline and arm the razor
+everywhere else without either binding knowing about the other.
+
+**The armed tool is session state.** Not project state — arming a tool changes no document —
+and not workspace state either, so it is not written to the layout file; every session opens
+on Selection, as AE does. It lives on the shell's UI state beside the dropper's arm, for the
+same reason: it is set in one place and read in another, and no panel should have to be
+mounted for either.
+
+**K-217 · DECIDED · A layer is something you can see the edges of, point at, and take hold
+of.** From the owner (2026-07-31), specifying the first two toolbar tools: the Selection tool
+should drag the layer under the pointer, hovering one should say so before the click lands,
+several should be selectable at once, and the Hand tool should move the picture and never
+the layer. Everything here follows from that.
+
+**The wireframe is the layer's own rectangle, put through its transform.** Not the comp's:
+the box the Viewer drew before this was the comp rectangle for every kind, which is only
+right when the layer happens to fill the frame. A layer's rectangle comes from what it is
+made of — a clip's frame size, a solid's dimensions, a nested comp's size — and is
+comp-sized for the kinds with no content of their own. A Null gets a 100×100 box of its own,
+because "no pixels" must not mean "cannot be selected": rigging is exactly the job that
+needs to grab one.
+
+**Content sizes are the frontend's to cache, not the read model's to carry.** A clip's size
+is a question about a *file*, and the honest answer needs FFmpeg — which is disk work and
+asynchronous, so it cannot sit in `get_model`, which runs on every document change. So the
+Viewer holds a small cache: cheap kinds are read from the document and dropped whenever the
+revision moves; a clip is probed once per session, and the layer falls back to the comp's
+size until the answer lands. This is the same fallback the engine itself uses when it places
+a clip it cannot probe, so a missing file is a full-frame box rather than a box of nothing.
+
+**Selection is a list, and `selectedLayer` is its first entry.** Almost everything in the
+application acts on one layer and reads that notifier directly; teaching forty call sites to
+take the head of a list would have been a large change with nothing to show for it. So the
+list lives beside it, and setting the single one — which the Timeline and every test do —
+makes that layer the whole selection. Delete now takes the whole selection: with several
+boxes on the picture, deleting one of them would be a surprise every time.
+
+**What a press means is decided by where it went down, not where the drag was recognised.**
+Flutter reports a drag's start position *after* the pointer has travelled its slop, which is
+already further than a 9px handle is wide — every handle drag would have been read as a drag
+of the layer's body, and the first version of this was. The press point is recorded
+separately, and the slop's travel is folded into the drag so a move does not lag the pointer
+by it for the rest of the gesture.
+
+**The marquee takes only what it wholly contains.** After Effects' rule, and the one that
+makes a sloppy sweep predictable: a rectangle that merely clips a corner of a layer is far
+more likely to be an accident than an intention.
+
+**The layer-controls switch hides the marks, not the mouse.** The Viewer bar's new switch
+governs drawing only — clicks and drags still select and move with it off. It exists because
+a grade cannot be judged with a box and eight handles over the picture, which is the same
+reason the surround is neutral (K-203); it is not a way of putting the tools down, and After
+Effects' Show Layer Controls behaves the same.
+
+**A preview may fail; a gesture may not.** The provisional picture during a drag is a
+courtesy, and asking for it crosses the bridge, where anything can throw (a stopped worker,
+a machine with no adapter). It threw out of the pointer handler and killed the drag
+mid-stroke, commit and all. Every preview and every commit in the gizmo is guarded now: the
+boxes follow the pointer and the edit lands whatever the renderer is doing.
+
+**What is deliberately not built yet.** A multiple selection moves but grows no handles —
+scaling a set about one shared box is different maths, not a smaller version of this one. A
+keyframed position draws no box at all, because the read model carries the curve rather than
+its value at the playhead, and a box in the wrong place is worse than none. The anchor
+handle, snapping, parent-aware and 3D gizmos, and motion paths are unchanged from before
+this entry: still specified, still absent, now listed in docs/TODO.md against §2.3.
+
+**K-218 · DECIDED · Every zoom is anchored, and — except the wheel — every zoom is a
+flight.** From the owner (2026-07-31), specifying the Zoom tool and asking for zooming across
+the interface to stop jumping.
+
+**One piece of arithmetic, three gestures.** The wheel, a click of the Zoom tool and a
+dragged box are the same question — what magnification and pan put *this* where I want it —
+so they go through the same two pure functions rather than each growing its own version. The
+click doubles about the point clicked (`Alt` halves), which is After Effects' step and the
+one the magnification menu's own list walks; the box fits its rectangle to the panel and
+centres it, and `Alt`+box is the exact inverse, shrinking the whole view into the box's
+footprint. Being an exact inverse is the point: `Alt` undoes the sweep you have just made
+rather than being a differently-sized guess at it.
+
+**Anchoring is the property worth testing.** "The comp point you aimed at does not move" is
+what makes zooming feel like leaning in rather than teleporting, and it is a property a unit
+test can state in one line for all three gestures. The tests assert exactly that, not a
+table of expected numbers.
+
+**Zooming animates, and the interpolation is geometric.** A magnification change is a *place*
+changing, not a value being nudged: cutting from one magnification to another loses the
+reader's place, which is the very thing anchoring exists to keep. So it travels, over the
+shell's own motion duration (15-DESIGN §7), and cuts instantly under *No animation* — the
+setting means what it says. The interpolation is on the logarithm of the magnification,
+because magnification is a ratio: lerping the number itself makes the first half of a 1× → 8×
+flight bolt and the second half crawl. The magnification and the pan are animated together
+from one controller, because animating them separately lets the anchor point drift mid-flight
+— which is the whole promise, broken in the middle where it is most visible.
+
+**The wheel stays instant.** It already arrives as a stream of small steps; animating each of
+them puts the picture behind the fingers. A gesture that is itself continuous does not want a
+second continuity laid over it.
+
+**The frame is re-asked for at the end of the flight, not during it.** The engine renders at
+the size the picture is *shown* at, so the frame in hand is the wrong resolution once the
+magnification has changed — but a render per frame of a 120 ms animation is a render per
+frame for nothing, since the intermediate ones are stretched by less than the eye can hold.
+
+**Not done: the same treatment everywhere else.** The Timeline's time zoom, the graph
+editor's, and the Project panel's thumbnail scaling all still jump. They want the same
+pattern — a target, a controller, a geometric interpolation, and the animation level deciding
+whether it runs — and it should be lifted into one shared piece rather than written three
+more times. Recorded in docs/TODO.md.
+
+**K-219 · DECIDED · The Rotation tool turns the selection about each layer's own anchor, and
+its pointer is drawn rather than picked.** From the owner (2026-07-31), specifying the fourth
+toolbar tool: the cursor should be a curved arrow like After Effects', sharper at a corner
+than along an edge, leaning the way the layer would turn — and the drag should turn only what
+is selected, about the anchor, with `Shift` locking to 45°.
+
+**The pointer is painted, and the system one is hidden under it.** No desktop platform ships
+a rotate cursor, and Flutter can only ask for cursors the platform has — so this draws its
+own over the picture. Hiding the real pointer is not a thing to do lightly, and it is worth
+it here for one reason: a drawn pointer can *turn*. The arc faces away from the layer's
+anchor, so it always curves round the pin the layer spins on, and it closes up towards a
+corner and opens out along an edge — so the pointer says where you are on the layer without
+your looking away from the picture. A cursor that could only sit there in one orientation
+would not have been worth hiding anything for.
+
+**Corner-ness is measured in the layer's own space.** The arc's width comes from how equally
+far out the two axes are from the middle: equal is the diagonal, which is a corner; one alone
+is square out from an edge. Measured through the layer's inverse map, so "the top-right
+corner" stays the top-right corner of the *layer* when the layer is upside down — the same
+reasoning as the wireframe's hit-testing (K-217), and the same one line of maths.
+
+**A set turns as one gesture.** The angle is swept about the *first* selected layer's anchor
+and applied to every selected layer, each of which still turns about its own anchor. The
+alternative — each layer measuring its own angle from the same pointer — makes a multiple
+selection fly apart the moment the anchors differ, which is not a rotation of anything.
+
+**Clicking selects, as it does with the Selection tool.** After Effects' behaviour, and
+without it every turn would mean a trip back to the toolbar to choose the next layer.
+
+**The anchor is marked while the tool is armed.** A rotation about a point you cannot see is
+a rotation you cannot predict, and the anchor is exactly the thing this tool is *about*. It
+is drawn as the ring-and-cross the anchor-point tool's icon carries, so the two read as one
+idea.
+
+**The same slop trap as K-217, in a new place.** The turn is measured from where the pointer
+went *down*, not from where the framework recognised the drag: recognition happens after ~18
+pixels, and measuring from there took a fixed bite out of every turn — a quarter-turn drag
+committed 45° instead of 90°. Recorded twice now because it will keep coming: any gesture
+whose *meaning* depends on its start point has to record that start point itself.
+
+**K-220 · DECIDED · The Anchor point tool pans behind, and the Razor cuts under the blade.**
+From the owner (2026-07-31), asking what After Effects does with these two and for the same
+behaviour here. The answers differ, because only one of them is an After Effects tool at all.
+
+**Anchor point is AE's Pan Behind, and the name is the behaviour.** Dragging a layer's anchor
+naively moves the layer, because Position places the anchor: change the anchor and the same
+Position means somewhere else. The tool moves the anchor *and* compensates Position by
+exactly the amount that cancels the jump, so the pivot slides while the picture stays still.
+The maths is `pan_behind_position`, ported from the egui frontend's anchor overlay and
+already unit-tested — this branch supplies the gesture round it, not new geometry.
+
+Two modifiers, both AE's. `Shift` locks the drag to one **screen** axis (the lock is about
+the hand's gesture, not the layer's axes, so it stays straight across the screen on a turned
+layer). `Ctrl`/`Cmd` snaps the anchor to the layer's nine key points — corners, edge
+midpoints, centre — measured in **screen** pixels, because a layer at 10% would otherwise
+snap from half a screen away and one at 1000% would never snap at all. That is the same rule
+docs/07 §4.5 sets for the Timeline: the distance a user can see is the distance that counts.
+
+**One op for four properties.** The anchor pair and the position pair are only meaningful
+together here — committing half of this edit *moves the picture*, which is the one thing the
+tool promises not to do — so it goes through `set_transforms`, which exists for exactly this
+and makes the drag one undo step.
+
+**The Razor is not an After Effects tool, and copying Premiere is right.** AE has no razor:
+it splits layers with `Ctrl+Shift+D` at the playhead, and the toolbar key `C` is its camera
+cycle. Lumit has a razor because it has Sequence layers — the Vegas-style cutting surface
+(K-071) — so the tool is Premiere's, and Premiere's razor cuts **where you click**, not where
+the playhead is. The old behaviour (click a bar, cut at the playhead) made the tool a slower
+way of pressing the shortcut; docs/07 §4.4 has always said "click a clip to cut it at that
+time", and now it does. `Shift`-click cuts every layer that spans that moment, which is
+Premiere's cut-all-tracks.
+
+**Two kinds of cut, because there are two kinds of layer.** A Sequence layer holds clips, so
+a cut makes an **edit point** inside it. Everything else **splits into two layers**, which is
+what AE's `Ctrl+Shift+D` does — a new bridge op (`split_at`), one `Batch`, one undo step. The
+halves keep everything (source, effects, masks, parent, label, keyframes) and — this is the
+part that matters — the **same `start_offset`**, so each half shows exactly the frames it
+showed before and every keyframe stays on the same comp frame (K-213). A cut at either end is
+refused rather than making a layer of no length.
+
+**One razor, two doors.** The Timeline's own "Arm razor" menu item now arms the *toolbar's*
+tool rather than a flag of its own. Two pieces of state that both mean "the razor is armed"
+is one too many: they would disagree the first time someone used the other door.
+
+**Both pointers are drawn, for K-219's reason.** No platform ships a pan-behind cursor or a
+razor. The anchor's pointer is the anchor's own ring-and-cross with a small arrow at its tail
+(AE's pairing, and it says what the tool moves); the razor's is a blade with a full-height
+line down the lanes marking where the cut will land — the line is the useful half, because a
+cut you cannot aim is a cut you undo.
+
+**K-221 · DECIDED · A cut through a retimed layer leaves a keyframe behind, and the gizmo's
+centre handle pans behind.** From the owner (2026-07-31), two refinements to the tools that
+landed with K-220.
+
+**Why a cut needs a key.** Splitting a layer gives both halves the whole document — the same
+source, the same effects, and the same Retime map. That is what makes the cut invisible, and
+it is also what makes the two halves' speed ramps *one curve*: bend the first half's speed
+afterwards and the second half bends with it, which is not what anyone means by cutting. So
+the razor puts a keyframe at the cut, on both halves, giving each an end of its own to hold.
+Premiere does the same to a speed ramp it cuts, for the same reason.
+
+**And why the key must not change anything.** A cut that altered the speed ramp it was
+cutting would be worse than no cut at all, so the insertion preserves the curve exactly. A
+span is one cubic bezier (docs/impl/keyframe-eval.md §1); de Casteljau splits a cubic into
+two cubics whose union *is* the original — not an approximation of it — so all that is left
+is converting the control points back into the AE speed/influence pair each keyframe side
+stores, which is the exact inverse of `CubicSpan::from_ae`. The test samples the span two
+hundred times before and after and demands agreement to 1e-6. A held span is inserted flat,
+because a hold has no shape to keep; a key outside the keyed range takes the held end value.
+
+`Property::insert_key_preserving_shape` lives in `lumit-core::anim`, not in the bridge: it is
+curve arithmetic, and the kind of rule that has to be provable rather than observed. The
+razor calls it before cloning the layer, which is what puts the key on both halves.
+
+**The centre handle.** The Selection tool's gizmo now has a ninth handle at the layer's
+anchor, and dragging it pans behind exactly as the Anchor point tool does (K-220) — same
+`Shift` axis lock, same `Ctrl`/`Cmd` snapping, same one-op commit. Its grab radius is 16px
+against the other handles' 32, and that asymmetry is the whole design: the anchor usually
+sits in the middle of the box, which is also the easiest place to grab a layer to move it, so
+a generous slop there would turn every body drag into a pan-behind — the pivot sliding while
+the layer stayed put, which reads as the drag being broken. The pivot has to be aimed at.
+
+**K-222 · DECIDED · The shape tools draw masks, and a mask crosses the bridge as its path.**
+From the owner (2026-07-31), choosing to build masks now and shape layers on a branch of
+their own.
+
+**The seam that did not exist.** `lumit-core` has had masks all along — bezier paths,
+rectangle/ellipse/star constructors, and a renderer that applies them — and *no bridge API
+exposed any of it*. The Flutter frontend could not see a mask, let alone make one. So the
+first half of this is the seam: `get_masks`, `add_mask`, `set_mask`, `delete_mask`, and the
+masks carried in the read model (K-184) so the Timeline's twirl-down draws a row per mask
+without asking per frame.
+
+**A mask crosses as its path, in layer space.** `BridgeVertex` is the engine's vertex — a
+position and two tangent handles, each an offset from it — carried across unchanged, so a
+path never changes meaning by crossing. Layer space, not comp space, because that is what
+makes a mask travel with its layer's transform for free; the tool takes the pointer's screen
+position and runs it backwards through the layer's map, the same inverse the wireframe
+hit-tests with.
+
+**Every edit is the whole mask.** The engine's op is `SetLayerMasks` — the whole list,
+exactly invertible — so an add, a delete, a rename and an invert are all one shape of edit
+and each is one undo step. The bridge refuses a path of fewer than two vertices: that is not
+a shape, and a mask that gates nothing would be a Timeline row with nothing behind it.
+
+**Two gestures, because there are two kinds of shape.** Rectangle, rounded rectangle, ellipse
+and star are *boxes*: drag two opposite corners, `Shift` for square, and the drag reads the
+same in all four directions because the box is normalised before the path is built. The
+polygon is a *path*: click for a corner, click-drag for a vertex whose bezier handles mirror
+each other as they grow, `Alt` to break that mirror, and a click on the first vertex closes
+it — closing being what applies it. Escape abandons, Backspace takes back a point. (After
+Effects calls this its Pen tool and gives its polygon tool a regular n-gon; the owner asked
+for it on the polygon, and one path-building tool is better than two.)
+
+**Masks sit above Effects in the fold-out**, because that is the order they are applied in: a
+mask gates the layer's alpha *before* its effects run (docs/06 render order), so the
+twirl-down reads top to bottom the way the picture is built.
+
+**Nothing selected says so.** After Effects would make a shape layer; Lumit's `LayerKind` has
+no Shape variant, so there is nothing honest to make. The tool posts a notice naming what to
+do instead. Silence would read as a broken tool, and a solid-with-a-mask dressed as a shape
+layer would be a lie in the layer list — one that would have to be untold when the real kind
+lands.
+
+**K-223 · DECIDED · The path-building gesture is the Pen's, and the polygon tool draws a
+polygon. Supersedes K-222's placement of it.** From the owner (2026-07-31): "I think I
+might've misunderstood the polygon tool — everything I said there applies to the pen tool."
+They are right, and K-222 built it in the wrong place.
+
+**What moved.** Click for a corner, click-drag for a vertex whose bezier handles mirror as
+they grow, `Alt` to break that mirror, click the first vertex to close and apply, `Escape` to
+abandon, `Backspace` to take a point back — all of that is now the **Pen** (`G`), which is
+where After Effects puts it and where anyone arriving from AE will look for it.
+
+**What the polygon is instead.** A shape you drag out like the others: the regular five-sided
+figure inscribed in the drag's box, first point at the top, `Shift` for a regular pentagon in
+a square box. It is the star without its notches, and the two now read as the pair they are.
+
+**Why this was worth correcting rather than living with.** A tool that does something other
+than its name is a tool that has to be explained every time; and the Pen sitting there doing
+nothing while the polygon did the Pen's job would have been two wrong tools rather than one.
+The code moved with the name: `PolygonDraft` is `PathDraft`, and it is documented as the
+Pen's.
+
+**And the five shape tools are marked built.** K-222 shipped them working while their
+`ToolMode.ready` flags still said otherwise, so every tooltip claimed "not built yet" over a
+tool that drew masks. `ready` is a promise about what a tooltip says (K-216) and it was
+lying; a test now pins the set.
+
+**K-224 · DECIDED · A mask's points are things you can aim at, sweep up and drag.** From the
+owner (2026-07-31): "if you have the selection tool and wireframes enabled, if you have a
+layer that's a shape or has a mask, you should be able to see the individual points that make
+it up. And if you do the drag selection I mentioned it should select any point inside it so
+you can alter and drag them about."
+
+**What a press means, in one order.** Over the picture with the Selection tool the pointer
+has more and more things under it, so the order they are tried in is the whole design: a
+**scale or rotation handle** first (it sits on the box's edge, where the body also is), then a
+**mask point** of a *selected* layer, then the **layer** under the pointer, then empty space.
+Points come before the body because they are drawn on top of it and are much smaller; they
+come after the handles because a handle is the coarser target and losing it would be worse.
+Only *selected* layers' points are tried: a stray vertex of some layer underneath must never
+steal a press meant for the picture.
+
+**The marquee gathers points when there are points to gather.** A sweep from empty space that
+catches any of the selected layers' vertices selects **those**, and the layer selection is
+left alone; a sweep that catches none is the layer sweep it has always been. That is one
+gesture doing two jobs, decided by what is actually under it — which is what After Effects
+does, and what makes "select some points and move them" a single fluid thing rather than a
+mode.
+
+**Which forced the selection to be decided on release, not on press.** The old marquee cleared
+the selection the moment it began. That is invisible when it is layers being swept, and fatal
+when it is points: the press would drop the very layer whose points the sweep was about to
+gather. So the band now leaves the selection alone while it is drawn and settles it on
+release — which also keeps the boxes on screen while the user is aiming, and is the better
+behaviour on its own terms.
+
+**A drag moves each point in its own layer's space.** The pointer's travel is a *screen*
+delta; each mask is written in its layer's coordinates. The delta is therefore mapped through
+each layer's own inverse (two points on the picture, subtracted, so scale and rotation are
+undone exactly) before it is added — so a selection spanning two layers with different
+transforms still moves together on screen. One `set_mask` per mask, which is one undo step per
+mask, the same rule the razor follows for a multi-layer cut.
+
+**No live preview while points are dragged.** The dragged points follow the pointer as drawn
+marks, and the picture catches up on release. The preview path (K-183) patches one layer's
+*transform* into a clone of the document; a mask path has no room in it, and inventing one for
+a gesture this short is not worth a second preview shape. The marks moving is enough feedback
+to aim with.
+
+**Handles are not points.** A vertex's two bezier handles cannot be dragged yet, and neither
+can a mask path be keyframed. Both are in TODO.md. This decision is about the *positions* of
+the points, which is the half that makes a drawn mask correctable.
+
+**K-225 · DECIDED · The Type tool makes and edits text layers on the picture, and the
+toolbar grows the options the drawing tools use.** From the owner (2026-07-31): "Now add
+typing. These should also be their own layer type… along with this there should be the
+options for fills/border colour pickers and pixel widths etc just like AE."
+
+**Text is already its own layer kind**, so this is the interface catching up with the
+engine: `LayerKind::Text` holds a document (one styled run, docs/03 §9.1), the renderer
+rasterises it, and the only way to make one was a menu item that dropped "Text" in the middle
+of the composition. The tool puts it where the user points.
+
+**One click, two meanings.** On empty picture the tool makes a text layer *where the pointer
+is* and starts typing into it; on an existing text layer it edits that one. Clicking
+somewhere else ends the edit and begins the next, which is After Effects' behaviour and the
+only one that lets a caption be typed without a trip to the Timeline.
+
+**A stray click leaves nothing behind.** A layer this tool made that ends its edit with no
+text is deleted. An empty line renders nothing, so what a stray click would otherwise leave
+is an invisible row in the Timeline — the same reasoning as the bridge refusing a mask of one
+vertex.
+
+**The document is written once, and the picture keeps up through a preview.** Every document
+edit is an undo step, so a `set_text` per keystroke would make undo walk back through a
+sentence one letter at a time. So typing sends `render_frame_with_text_preview` — a third
+member of K-183's preview family, beside the effects and transform ones, patching a document
+into a *clone* the same way — and the layer is written when the edit ends. One typing
+session, one undo step.
+
+**The caret is drawn; the text is the engine's.** The keyboard is a real Flutter text field,
+so arrows, selection, backspace, paste and IME all work — but it is invisible, because the
+text the user should see is the engine's own rendering. What is drawn is the caret, placed by
+the same rough estimate of a line's width the bridge uses to anchor a new text layer (half
+the point size per character). Being wrong the same way on both sides is what keeps the caret
+and the picture agreeing about where a line ends; the true advance widths live in the
+rasteriser and are not on the bridge. When they are, both sums change together.
+
+**A new layer's anchor is recentred when the edit ends, pan-behind.** It starts on the left
+end of an empty line, because an empty line has no middle; once there is a line, the anchor
+moves to its middle and Position compensates by exactly the amount that keeps the words where
+they were (K-220's sum). So a typed layer scales and turns about itself without ever having
+appeared to move.
+
+**Vertical type is not built.** `lumit-text` lays out one horizontal line; the member stays
+on the strip, marked unbuilt like every other, and says so if it is clicked.
+
+**The toolbar grows a tool options area**, where After Effects has one: the fill swatch and
+the point size while a type tool is armed, the fill and stroke swatches and the stroke width
+while a drawing tool is. Fill and size are live — they set what the next text layer is made
+with. **Stroke and stroke width are drawn disabled**, because nothing in the engine strokes
+anything: a shape layer's outline and a paint stroke are both engine features that do not
+exist. They are shown rather than hidden for the same reason unbuilt tools are shown (K-216):
+the tool set is the specified one, and a control that is visibly not working yet says more
+than a gap does.
+
+**And a bug the Type tool found: arming a tool did not rebuild the Viewer's overlays.** The
+panel listened to the tool only to change the *pointer*, handing the whole stage in as a
+cached child — so every tool layer under it stayed armed for whichever tool was in hand when
+the panel last rebuilt, and only happened to work because a tool is usually picked before
+anything else redraws. The stage is now built inside the listener.
+
+**K-226 · DECIDED · The tools that draw wear a drawn pointer: the eyedropper's crosshair
+badged with the tool's own icon, a brush ring for the painting tools, and an I-beam for
+type.** From the owner (2026-07-31): "for the shape and pen tools, they should use the same
+cursor as the dropper has? And maybe have the icon for the shape or pen in use just slightly
+offset to the bottom right of the cursor… For text I think it should use a text select type
+cursor and rotate this depending on if the text is horizontal or vertical… make sure the
+different brush options all have correct cursor icons for their function."
+
+**Shape and Pen: crosshair plus badge.** The crosshair is the eyedropper's — the pointer that
+means *this exact pixel* — because that is exactly what the first corner of a shape or the
+first point of a path is. The tool's own icon sits down and to the right of it, out of the
+way of the shape being dragged out, drawn twice: a halo copy a pixel across, then the ink one,
+so it is legible on a white picture and a black one alike. This is After Effects' own badging
+and it is what makes five shape tools that share a gesture tell each other apart.
+
+**The painting tools get a ring, not a crosshair.** A brush is not a point, it is a *width*,
+so its pointer is a circle the size of the stroke it would leave, with a dot at the centre for
+where that stroke starts. The ring is drawn from the toolbar's stroke width through the
+current magnification — a picture-pixel width shown at picture scale — clamped so a hairline
+still has a visible pointer and a very wide brush does not fill the window. The badge under it
+says which of brush, clone stamp and eraser is in hand. **Nothing is painted**: the layer
+exists to wear the pointer and to say what is missing when clicked, since the engine has no
+paint at all (docs/TODO.md).
+
+**Type: the I-beam, turned when the type is.** Horizontal type takes the system's own I-beam
+— every platform ships one and everybody already reads it as "you can type here". No platform
+ships a *sideways* one, so vertical type has one drawn: the same beam a quarter turn round, so
+the pointer says which way the line will run before a single letter is typed.
+
+**And the click is where the words start.** A new text layer's anchor now begins at the left
+end of its line's baseline rather than in the middle of an empty box, so what is typed runs to
+the right of the pointer and sits on it instead of straddling it — the same relationship the
+caret is drawn with. The anchor is still recentred on the finished line pan-behind (K-225), so
+nothing appears to move.
+
+**Why drawn rather than chosen.** A system cursor is a small fixed picture from the list the
+platform ships, and none of these are on it. The three tools that already needed this —
+Rotation, Anchor point and Razor — hide the system pointer over the picture and paint their
+own; these do the same, through one shared pointer widget rather than a fourth private
+painter.
+
+**K-228 · DECIDED · A tool that is not built cannot be armed. It stays on the strip, drawn
+disabled.** From the owner (2026-07-31): "I think we'd be better off just disabling that in the
+toolbar for now… it'd be better to see what we still need to add rather than removing it and
+forgetting about the code."
+
+**Which is a correction to K-216's honesty rule, not a reversal of it.** K-216 put every
+specified tool on the strip and had the unbuilt ones say so in a tooltip. That was right about
+*showing* them and wrong about *arming* them: a tool you can pick that then does nothing reads
+as a broken application, and the tooltip is only read by someone who already suspected. Shown,
+disabled and labelled is the honest version of the same idea — the strip still teaches the
+shape of the application, and nothing in it lies.
+
+**Disabled means disabled everywhere.** `ToolsState.select` refuses an unbuilt tool, so the
+button, the flyout row and the keyboard chord all decline together; a group's chord cycles only
+its built members; and a group with nothing built in it takes no click at all. The state is the
+gate rather than the widget, because there are three ways in and only one of them is a button.
+
+**The flag is `ToolMode.ready`, which already existed.** No second list to keep in step: a tool
+becomes armable the moment its behaviour lands, in the same commit, and the test that pins the
+built set (K-223) now pins what is *arming-able* too. This is also what keeps the two branches
+straight — paint is built on the engine branch and not on this one, and each branch's toolbar
+follows its own flags without either being edited to suit the other.
+
+**What is disabled today:** the Roto tools and the Puppet pins (both engine features of their
+own size, at the owner's direction), the Pen's four editing siblings, and vertical type.
+
+**K-229 · DECIDED · The camera tools move the composition's active camera by dragging on the
+picture.** From the owner (2026-07-31): "Camera, make this like after effects implementation
+along with any gizmo's etc and custom cursors if necessary."
+
+**What Lumit's camera is, which decides what the tools can be.** A camera layer holds a
+position, three rotations and a *zoom* — the focal distance in composition pixels. The plane at
+the camera's own position renders 1:1 and centred, so **the position is the point the camera is
+looking at**, and the eye sits `zoom` behind it along the camera's forward axis. Everything
+follows:
+
+* **Orbit** changes the rotations and leaves the position alone. Because the eye is derived
+  from both, it swings round the point being looked at — a true orbit, with no separate pivot
+  to store.
+* **Track** slides the position along the camera's own right and up axes, so the eye travels
+  with it and the picture slides under the pointer, the same sense the Hand tool has.
+* **Dolly** slides the position along the forward axis, moving the eye and what it looks at
+  together, in or out of the scene, by a fraction of the distance already in hand — so a dolly
+  across a wide shot covers ground and one in a close-up creeps.
+
+**The axes are built the compositor's way** (`Ry · Rx · Rz`, lumit-gpu's `camera_matrix`). This
+is the one piece of frontend arithmetic that has to agree with the renderer exactly: a tool
+that moved the camera along a different set of axes would send it sideways when asked for
+forward. It is unit-tested against hand-computed cases rather than by dragging.
+
+**Dragging up lifts the camera over the top** — which means tilting it to look *down*, a
+negative x rotation in a frame where +y is down the screen. Getting that backwards is the
+classic inverted orbit, so it has its own test. The pitch is clamped just short of the poles
+rather than wrapped: past straight down the next pixel flips the picture over.
+
+**The gizmo is the pivot.** While a camera tool is armed the point the camera is looking at is
+marked, and while orbiting the circle it swings round is drawn faintly. That point projects to
+the middle of the frame by construction, which is worth saying plainly: what the camera looks
+at is the middle of the picture.
+
+**They act on the active camera, not the selection.** The topmost visible camera layer whose
+span covers the playhead — the one the renderer looks through — because the camera is what you
+are looking *through* rather than a thing you have picked. With no camera at all the tool says
+so. A camera whose placement is keyframed is left alone, the same rule the layer gizmo follows:
+there is no single value for a drag to add to.
+
+**No point of interest, and no unified camera tool.** After Effects' two-node camera has a
+separate point of interest, and its Unified Camera tool switches between the three by mouse
+button. Both are in TODO.md; neither changes the three tools above.
+
+**K-230 · DECIDED · What the toolbar's tools were getting wrong, in one pass.** From the owner
+(2026-07-31), on using the tools for the first time. Every item here is a correction to K-216 →
+K-229 rather than a new capability, so they are recorded together.
+
+**One gesture is one undo step.** Dragging a layer on the picture wrote Position x and Position
+y as two ops, so `Ctrl+Z` put the layer back along one axis and left it half moved; scaling did
+the same. Both write through `set_transforms` now — the batch op the Anchor point tool already
+used — so a drag is one step. The Type tool was worse: making a layer was three ops (a layer
+saying "Text" in the middle of the composition, an empty line written into it, a move to the
+click) and finishing the edit was two more, so undo walked back through states nobody had ever
+seen. Making a text layer is now one op (`add_text_layer_at`) and finishing a typing session is
+one more (`set_text_placed`), so the first undo takes back the words and the very next removes
+the layer. **The rule, stated once: an op is what the user would call an action, and a gesture
+that writes several properties writes them in one `Op::Batch`.**
+
+**A drag takes what is selected, whatever is on top of it.** A press inside an already-selected
+layer moves *that* layer, even where a higher one overlaps the same spot; only a plain click
+still takes the topmost, because that is how a layer underneath gets chosen with the mouse at
+all. Without the rule, a layer chosen in the Timeline could not be dragged wherever anything
+covered it — the press silently swapped the selection and moved the wrong thing.
+
+**Windows ships neither a grab nor a magnifier, so the Hand and the Zoom draw their own.**
+Flutter accepts `grab`, `grabbing`, `zoomIn` and `zoomOut`; the Windows embedder's table has
+none of them and quietly answers with the ordinary arrow, which is why arming those two tools
+looked like arming nothing. They join the Rotation, Anchor point and Razor tools in hiding the
+system pointer and painting their own (K-219, K-226): an open hand that closes while it pans,
+and a magnifier whose sign follows the Alt key. The Razor gives up its crosshair over the
+*picture* — it cuts in the Timeline, and a precise pointer promised a gesture the Viewer does
+not have — and its Timeline blade gains a marked hot spot, because the point where a leaning
+blade actually bites is otherwise an unmarked corner of a drawing.
+
+**The Rotation pointer settles on eight positions** — the four edges and four corners of the
+layer's own box — rather than leaning by a continuously varying angle. The continuum was true
+to the geometry and worse to read: a mark that is never twice the same shape is one the eye
+re-reads every time. Eight shapes are eight things to recognise.
+
+**A preview in flight is drawn in flight.** The wireframe is built from the document, so while
+a turn was being dragged the picture rotated under a box that sat still until the button came
+up. The angle in flight is published on the interface state and the layer that draws the boxes
+reads it. The same rule covers the drawing tools' own pointers: a `MouseRegion` stops reporting
+a hovering pointer the moment a button goes down, so every drawn pointer follows the *drag* as
+well, and the Pen previews its next edge as the curve the placed vertex's handles make it,
+not as a straight line that changes shape once the point lands.
+
+**Zooming in must not cost the window.** The transparency board behind the picture was a widget
+the size of the *picture*: at 800 % on an HD composition that is 15360 pixels across, and an
+8-pixel grid over it is half a million rectangles a paint for the few thousand on screen. It is
+bounded by the panel now, clipped to the picture and pinned to the picture's own grid, so it
+costs the same at every magnification.
+
+**Magnification is not resolution.** The scale reported to the engine follows the *panel* — a
+Viewer docked small is cheap, which is the point of reporting anything — and not the zoom
+inside it. Zooming out used to lower the preview resolution, which threw away every cached
+frame and made the picture coarser for a gesture that only meant "let me see more of it".
+Zooming in cannot raise it either: above composition resolution there is nothing to render.
+
+**Panning, and hovering with a camera tool, must ask the engine nothing.** Both rebuilt their
+panel on every movement of the pointer, and both re-read the document to do it — the Viewer
+asked for the composition's settings, its size and every layer's source item; the camera layer
+re-found the active camera, which reads a focal distance and a frame rate across the bridge.
+Both answers are held until an edit lands. Budgets in `bridge_call_budget_test.dart`.
+
+**The camera tools hold the pointer still while they drag.** Moving a camera is a gesture with
+no place — nothing on the picture is being aimed at — so a pointer that wanders out of the
+Viewer and finally into the corner of the screen is a drag that ends before the user does. The
+pointer is pinned where it was pressed and only its movement is read (`freeze_cursor` /
+`restore_frozen_cursor`, Windows-only; elsewhere the drag reads movement between events exactly
+as before). Putting the pointer back is itself a movement, so the drag measures against the
+anchor rather than against the last event, and the put-back reads as no movement at all.
+
+**A text layer is as big as its line.** Text had no measured bounds on the frontend and fell
+back to the composition's size, so a click with the Type tool drew a box the size of the frame
+round twelve-pixel text. It measures the point size tall and the engine's own width estimate
+wide; an empty line keeps one character's worth so a layer waiting to be typed into is still
+visible and still says what size it will be set at.
+
+**Escape ends a typing session, and so does `Ctrl+Z`.** The text field swallowed the undo
+chord, so undo appeared to have stopped working while typing. The edit is written first and the
+chord handed on, so there is one undo path in the application rather than two.
+
+**The toolbar is 30px tall, and keeps its 44px buttons across.** 15-DESIGN §7.2's hit extent is
+kept along the row — which is what the strip is read by — and given up down the page: the strip
+runs the full width of the window, so a 44px band of mostly empty chrome is height taken from
+the panels underneath for nothing.
+
+**The snapping switch is removed.** Nothing in the application read it (docs/07 §1.7 said so
+outright). A toggle that governs nothing is worse than a missing one: it makes the reader doubt
+what snapping *is* here rather than what it is set to. It returns with the snapping it governs.
+
+**K-231 · DECIDED · The second pass over the tools, from using them (2026-07-31).** Follows
+K-230 in the same shape: corrections found by the owner in a working build, recorded together.
+
+**A layer switched off is not on the picture at all.** It gets no wireframe and takes no click,
+and a click over it falls through to whatever is underneath. Switching a layer's eye off is how
+you get it out of the way; a box round something invisible, and a click that selected it, put
+it straight back in the way.
+
+**A scale in flight is drawn in flight, and a scale may be negative.** The wireframe follows a
+scale drag exactly as K-230 made it follow a turn — one shared "the box as the gesture in
+flight would have it" in the gizmo, which the rotation knob, the scale handles and the Rotation
+tool all pass through. And the layer↔screen map no longer floors the factor just above zero: a
+handle dragged past the anchor turns the layer over, which is how every editor mirrors a layer.
+Only *zero* is barred, because the inverse map divides by it; the sign is kept.
+
+**Drawing reads the copy in hand; only editing checks.** The read model (K-184) asked the
+engine whether the document had moved before answering — once per frame while a frame was being
+built, and *every time* outside one, which is where every pointer handler runs. So a tool that
+redraws as the mouse moves asked that question at the rate a mouse reports, and the answer was
+always no: moving a mouse changes no document. The paint path now reads `heldLayers` /
+`heldRevision`, which ask nothing. That is safe precisely because a change refreshes the model
+and notifies, and everything that draws is listening — but it means **a panel that commits an
+edit must refresh the model itself**, which the Timeline and Effect controls already did and
+the Viewer now does too. Checking-as-you-draw was covering for that, invisibly.
+
+**The pointer a tool draws follows the mouse whichever button is held.** Recorded under K-230's
+pointer rules in docs/07 §2.3.3, and worth naming here for the shape of the bug: `MouseRegion`
+reports *hover*, which stops the moment any button goes down — including buttons the tool does
+not answer to at all. So right-clicking froze the drawn pointer where it was pressed until the
+button came up. The position comes from pointer *move* events now, through one shared
+`DrawnPointerRegion` rather than seven copies of the tracking.
+
+**A drawn pointer is one frame behind, and that is inherent.** The system pointer is composited
+by the operating system; ours is painted by the application, so it arrives with the frame. The
+cost is kept to a repaint rather than a rebuild, and a tool that can wear a system pointer
+still does — which is why only the tools with no platform cursor draw their own.
+
+**K-233 · DECIDED · The third pass over the tools, from using them (2026-07-31).** Follows
+K-230 and K-231. (K-232 is the cache bar's own entry.)
+
+**The Anchor point tool puts the pivot where you point.** It was a *nudge*: the drag was
+measured from the press and added to the anchor the layer already had, so grabbing anywhere and
+pushing moved the pivot by that much. That makes placing a pivot a matter of aim-then-correct —
+you can push it towards somewhere, never put it anywhere. A **click** now places it, and a drag
+keeps it under the pointer the whole way. Shift still locks to one screen axis, measured from
+the press; Ctrl (Cmd) still snaps to the layer's own key points. Shift+click stays a *selection*
+gesture and moves nothing: a click that both changed the selection and moved that layer's pivot
+would be two edits nobody asked for at once.
+
+**The Pen tells you when a click would close the path.** The closing tolerance is a fixed number
+of screen pixels and nothing said how near "near enough" was — you clicked, and either the path
+closed or it grew a point you did not want. The first vertex grows a ring and the pointer wears
+a smaller one, so the question's two halves are both answered: *which* point closes it, and
+whether the click about to be made is that one.
+
+**The Pen previews the edge it is actually aiming at.** While the next vertex's handles are
+being pulled out, that vertex is already placed — it is where the press landed — so the
+preview runs to *there* and bends into it by the handle facing back along the path, which is
+the mirror of the one under the pointer (or the vertex itself, when Alt has broken the pair).
+
+**`Ctrl+Z` takes back one point while a path is being built.** The one place in the application
+where undo means something narrower than "undo the last edit", and it has to be: the points are
+not in the document — the path is applied in one op when it closes — so an undo pressed
+mid-path sailed straight past every point placed and undid whatever the user had done *before*
+picking up the Pen. It goes back to the document's own undo the moment the path is empty.
+
+**A text box grows with the words.** The document holds the old line until the edit ends
+(K-230's one-op rule), so a box measured from the document did not grow as the words did. What
+is being typed is published for the boxes to measure, the same way a turn in flight is (K-230).
+
+**The camera tools' chatter, finally.** K-230 cached the active camera and K-231 gave the paint
+path an *unchecked* read of the model, but the camera layer's own cache key was still the
+checking one — so it asked the engine for the document's revision on every frame of every mouse
+movement, which is what it had been reported doing twice. It reads the held revision now.
+
+**And the test that should have caught that could not see it.** `bridge_call_budget_test.dart`
+pumped frames with `tester.pump()`, which does not advance the clock — so every frame carried
+the same timestamp, the read model's own "once per frame" grouping saw *one* frame for a whole
+gesture, and the budget measured zero while the running application was making a call per
+frame. The budgets pump with time on the clock now. **A performance test that cannot reproduce
+the conditions it is guarding is worse than no test: it certifies the bug.**
+
+**K-234 · DECIDED · Mask rows in the Timeline: selectable, undoable, deletable (2026-07-31).**
+Three faults reported by the owner against the mask rows K-222 added, fixed together because
+they are one story: you pick a mask, you change it, you take the change back, you delete it.
+
+**A mask's opacity is one undo step for the whole drag.** The row's opacity field wrote
+straight through on every drag tick, so a drag across twenty ticks left twenty
+`SetLayerMasks` ops on the undo stack and one `Ctrl+Z` took back one percent — which reads as
+undo doing nothing. The op was invertible all along; the fault was the *rate* of committing.
+The field stages its value in the row and commits once on release, exactly as the Volume,
+transform and effect-parameter rows already do. **Any control that writes while a gesture is
+running must stage: an undo step is a gesture, not a tick.**
+
+**A mask row is a property row.** It carries a fold path already, so it joins
+`_selectedProperties` through the same click that selects Position — plain, Ctrl and Shift all
+behave as they do everywhere else, the row lights up, its Masks heading marks itself, and
+closing the fold drops the selection inside it (K-203). No parallel mask-selection state:
+a second selection model is a second thing to keep honest.
+
+**A panel with a finer selection is asked before Delete deletes a layer.** Every keyboard
+shortcut in the shell is a `HardwareKeyboard` handler, and Flutter runs *all* of them on every
+key — so a panel cannot claim a chord merely by handling it and returning true. With a mask row
+selected, the Timeline's Delete and the shell's Delete would both have fired, and the layer the
+mask sits on would have gone with it. The shell asks `LumitUiState.deleteClaim` first and stands
+down when the answer is yes; the Timeline sets that claim while it is mounted and answers with
+"I deleted the selected masks" or "not mine". Deleting a mask is the same call the row's
+right-click menu makes, so there is one path a mask is deleted by.
+
+**K-235 · DECIDED · Two pointers that were pointing at the wrong thing (2026-07-31).**
+
+**The Anchor point tool's pointer is a reticle.** It carried a small arrow off its tail, down
+and to the right, so the mark would read as a pointer rather than as an overlay that happened
+to sit under the mouse. That was a lie about the one thing a pointer must be honest about: the
+arrow's tip is not where the pivot lands — the middle of the ring is. A ring with gapped
+crosshair arms says "this exact point" and has no tip to mislead with. The gap is not
+decoration: it leaves the point itself visible instead of covering it with the mark that is
+supposed to be aiming at it.
+
+**The Razor's pointer is the application's own scissors, and the line does the aiming.** The
+tool drew a bespoke blade leaning up and away from the point it cuts at, which needed a second
+mark (K-230's hot spot) to say where the edge actually bit. Once the cut line says *where*, the
+pointer only has to say *which tool is in hand* — and the icon already on the toolbar says that
+better than a hand-drawn one, at no cost in code. The blade and its hot spot are deleted; the
+full-height line at the pointer's frame stays, because that is the mark that answers the
+question the razor asks.
+
+**The general rule these two share.** A drawn pointer must have exactly one point it claims,
+and everything else it draws must be recognisable rather than aiming. Where a mark cannot be
+both, the aiming belongs to a separate mark that can be put exactly where the action lands.
+
+**Alt brings the system pointer back, and it has to be sent away again.** Alt is the key
+Windows reserves for the window menu, and pressing it takes the pointer's own state with it —
+so the arrow reappeared beside the Zoom tool's drawn magnifier, which is two pointers, exactly
+what hiding the system one is for. Flutter will not re-apply a cursor by itself: it only does
+so when the answer *changes*, and hidden-to-hidden is no change. The request is made directly
+for the device the pointer events arrive from. **Not** by giving the region a new identity to
+force the question — that was tried, and it rebuilt the gesture detector underneath and dropped
+any drag in flight, which the Alt-box-zoom test caught.
+
+**A pivot dragged on the gizmo moves as it is dragged.** The last of the in-flight previews
+(K-230's turn, K-231's scale): the anchor handle wrote on release only, so the mark sat still
+while the picture behind it was already being previewed. The box deliberately does not move —
+that is what panning behind means — but the pivot on it does.
+
+
+**K-236 · DECIDED · A cut keys only what has been retimed, and the Zoom tool opens on the plus
+(2026-07-31).** From the owner, on the last pass before merging.
+
+**The razor's keyframe belongs to a retimed layer, not to a layer with a Retime property.**
+K-221 gave both halves of a cut a keyframe at the cut, so two speed ramps that were one curve
+each get an end of their own to hold. Right — for a layer somebody has shaped. But switching
+Retime on installs the *identity* map, so "has a Retime property" and "has been retimed" are
+different questions, and the first one was being asked. Cutting an untouched layer left
+keyframes on both halves that the user then had to notice and remove, for a cut they had asked
+nothing else of. The rule now tests the map itself: keys whose values read back their own
+times, joined linearly, are the map nobody has touched. A frozen frame is a retime however it
+is written, and an eased pair that happens to start and end where an identity would is a ramp,
+not an identity — both have their own tests.
+
+**The Zoom tool believes what it has seen, not what the platform remembers.** Arming it could
+open on the minus, so a plain click zoomed *out*. Windows eats the Alt key-up when Alt reaches
+for the window menu or Alt+Tab leaves the application, so the platform's own "is Alt down?" can
+answer yes long after the key came up. The tool tracks Alt from the events it sees, starts
+false every time it is armed, and the *click* reads that same flag rather than asking the
+platform again — so what the pointer promises and what the click does cannot disagree, which
+was the other half of the same fault.
+
+
+**A workspace name you cannot read is a button you cannot use.** The strip lost 14px of height
+(K-230) and the workspace names kept the 24px of vertical padding they had in a 44px band. In a
+30px one that left the words three pixels tall: four pressable blanks on the right of the bar,
+which is exactly the report — "hovering that area still shows a button that can be pressed".
+The padding fits the strip now, and the test measures the *label*, not the button: a control
+that is laid out and hit-tests correctly can still be unreadable, and only the text's own height
+says so.

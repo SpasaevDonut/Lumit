@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'assets.dart';
 import 'effect.dart';
 import 'export.dart';
 import 'footage.dart';
@@ -332,6 +333,28 @@ class CompositionReference {
         that: this,
       );
 
+  /// Add a text layer **where the Type tool clicked**, already holding the
+  /// document it should hold, as one op (K-230).
+  ///
+  /// The tool used to make a layer and then correct it: `add_text_layer`
+  /// starts a layer saying "Text" in the middle of the composition, and the
+  /// tool then wrote an empty line into it and moved it to the click. Three
+  /// ops for one gesture, so `Ctrl+Z` walked back through two states nobody
+  /// had ever seen — an empty box, then the word "Text" — before the layer
+  /// finally went away. One op is one undo step, and undoing it removes the
+  /// layer, which is what making a layer means.
+  ///
+  /// The anchor sits on the **left end of the baseline**, so what is typed
+  /// runs to the right of the point clicked and sits on it rather than
+  /// straddling it. It is recentred on the finished line when the edit ends.
+  LayerReference addTextLayerAt(
+          {required BridgeTextDocument document,
+          required double x,
+          required double y}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddTextLayerAt(
+              that: this, document: document, x: x, y: y);
+
   /// Start playing this comp's audio from `start` seconds.
   void audioPlay({required double start}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceAudioPlay(
@@ -534,6 +557,26 @@ class CompositionReference {
               scale: scale,
               layer: layer,
               effects: effects);
+
+  /// Ask for `frame` with `layer`'s text document replaced by `document` —
+  /// the same live path as the two above, for the Type tool (K-225).
+  ///
+  /// Typing is the one edit where the provisional value changes many times a
+  /// second and the document must *not*: a `set_text` per keystroke would be
+  /// an undo step per keystroke. So the tool previews as it types and writes
+  /// once, when the edit ends.
+  void renderFrameWithTextPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required BridgeTextDocument document}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithTextPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              document: document);
 
   /// Ask for `frame` with `layer`'s transform replaced by `transform` — the
   /// same live-drag path as [`Self::render_frame_with_preview`], for the

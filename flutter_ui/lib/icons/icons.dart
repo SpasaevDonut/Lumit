@@ -6,13 +6,19 @@
 
 import 'package:flutter/widgets.dart';
 import 'package:iconoir_flutter/regular/align_left.dart' as ic;
+import 'package:iconoir_flutter/regular/arc_3d.dart' as ic;
 import 'package:iconoir_flutter/regular/circle.dart' as ic;
 import 'package:iconoir_flutter/regular/color_picker.dart' as ic;
+import 'package:iconoir_flutter/regular/copy.dart' as ic;
 import 'package:iconoir_flutter/regular/cube.dart' as ic;
 import 'package:iconoir_flutter/regular/cursor_pointer.dart' as ic;
 import 'package:iconoir_flutter/regular/design_nib.dart' as ic;
+import 'package:iconoir_flutter/regular/design_pencil.dart' as ic;
+import 'package:iconoir_flutter/regular/drag.dart' as ic;
 import 'package:iconoir_flutter/regular/drag_hand_gesture.dart' as ic;
 import 'package:iconoir_flutter/regular/ease_curve_control_points.dart' as ic;
+import 'package:iconoir_flutter/regular/erase.dart' as ic;
+import 'package:iconoir_flutter/regular/expand.dart' as ic;
 import 'package:iconoir_flutter/regular/eye.dart' as ic;
 import 'package:iconoir_flutter/regular/eye_closed.dart' as ic;
 import 'package:iconoir_flutter/regular/fill_color.dart' as ic;
@@ -20,6 +26,8 @@ import 'package:iconoir_flutter/regular/flare.dart' as ic;
 import 'package:iconoir_flutter/regular/folder.dart' as ic;
 import 'package:iconoir_flutter/regular/frame.dart' as ic;
 import 'package:iconoir_flutter/regular/fx.dart' as ic;
+import 'package:iconoir_flutter/regular/globe.dart' as ic;
+import 'package:iconoir_flutter/regular/intersect.dart' as ic;
 import 'package:iconoir_flutter/regular/keyframe.dart' as ic;
 import 'package:iconoir_flutter/regular/keyframe_plus.dart' as ic;
 import 'package:iconoir_flutter/regular/label.dart' as ic;
@@ -27,28 +35,45 @@ import 'package:iconoir_flutter/regular/link.dart' as ic;
 import 'package:iconoir_flutter/regular/link_xmark.dart' as ic;
 import 'package:iconoir_flutter/regular/lock.dart' as ic;
 import 'package:iconoir_flutter/regular/lock_slash.dart' as ic;
+import 'package:iconoir_flutter/regular/magic_wand.dart' as ic;
 import 'package:iconoir_flutter/regular/magnet.dart' as ic;
+import 'package:iconoir_flutter/regular/mask_square.dart' as ic;
 import 'package:iconoir_flutter/regular/media_video.dart' as ic;
+import 'package:iconoir_flutter/regular/minus_circle.dart' as ic;
 import 'package:iconoir_flutter/regular/movie.dart' as ic;
 import 'package:iconoir_flutter/regular/nav_arrow_down.dart' as ic;
 import 'package:iconoir_flutter/regular/nav_arrow_left.dart' as ic;
 import 'package:iconoir_flutter/regular/nav_arrow_right.dart' as ic;
 import 'package:iconoir_flutter/regular/network.dart' as ic;
+import 'package:iconoir_flutter/regular/path_arrow.dart' as ic;
 import 'package:iconoir_flutter/regular/pause.dart' as ic;
+import 'package:iconoir_flutter/regular/pentagon.dart' as ic;
+import 'package:iconoir_flutter/regular/pin.dart' as ic;
 import 'package:iconoir_flutter/regular/play.dart' as ic;
+import 'package:iconoir_flutter/regular/plus_circle.dart' as ic;
 import 'package:iconoir_flutter/regular/refresh_double.dart' as ic;
+import 'package:iconoir_flutter/regular/rotate_camera_right.dart' as ic;
+import 'package:iconoir_flutter/regular/scissor.dart' as ic;
+import 'package:iconoir_flutter/regular/snow_flake.dart' as ic;
 import 'package:iconoir_flutter/regular/sound_high.dart' as ic;
 import 'package:iconoir_flutter/regular/sound_off.dart' as ic;
 import 'package:iconoir_flutter/regular/square.dart' as ic;
+import 'package:iconoir_flutter/regular/square_dashed.dart' as ic;
 import 'package:iconoir_flutter/regular/star.dart' as ic;
 import 'package:iconoir_flutter/regular/text.dart' as ic;
 import 'package:iconoir_flutter/regular/timer.dart' as ic;
+import 'package:iconoir_flutter/regular/type.dart' as ic;
 import 'package:iconoir_flutter/regular/video_camera.dart' as ic;
 import 'package:iconoir_flutter/regular/view_columns_3.dart' as ic;
 import 'package:iconoir_flutter/regular/wind.dart' as ic;
+import 'package:iconoir_flutter/regular/zoom_in.dart' as ic;
 import 'package:iconoir_flutter/solid/keyframe.dart' as ics;
 
-/// One icon — the same 44 variants as the Rust `Icon` enum, same names.
+/// One icon.
+///
+/// The first 44 variants are the Rust `Icon` enum's, name for name. The tool
+/// marks after them (K-216) are this frontend's own: the archived egui shell has
+/// no toolbar to draw them, so there is no Rust counterpart to keep in step.
 enum LumitIcon {
   pointer,
   move,
@@ -113,6 +138,45 @@ enum LumitIcon {
   /// Effects puts on a null. Drawn, not looked up (Iconoir has no crosshair),
   /// and deliberately unlike [rectangle] and [solid], which are plain squares.
   nullLayer,
+
+  // --- The toolbar's tools (K-216, docs/07 §1.7). ---
+  zoomIn,
+  rotate,
+
+  /// The anchor-point tool: a crosshair in a ring, the same mark the Viewer
+  /// draws a layer's origin with. Painter-drawn — Iconoir has no crosshair, and
+  /// the tool's whole job is that one mark.
+  anchorPoint,
+  razor,
+
+  /// A square with its corners taken off. Painter-drawn: Iconoir's own square
+  /// is [rectangle], and the two shape tools have to be told apart at 16px,
+  /// which two lookups of the same glyph could not do.
+  roundedRectangle,
+  polygon,
+  vertexAdd,
+  vertexDelete,
+  vertexConvert,
+  maskFeather,
+  textVertical,
+  brush,
+  cloneStamp,
+  eraser,
+  rotoBrush,
+  refineEdge,
+  puppetPin,
+  puppetStarch,
+  puppetOverlap,
+  puppetBend,
+  cameraOrbit,
+  cameraPan,
+  cameraDolly,
+
+  /// The Viewer bar's layer-controls switch (K-217): a box with a handle on
+  /// each corner — the mark it governs, drawn small. Painter-drawn, because
+  /// what it depicts is Lumit's own gizmo rather than anything a general icon
+  /// set has a glyph for.
+  wireframe,
 }
 
 /// The size an icon draws at (15-DESIGN §5: 16px for panels, 20px for the
@@ -146,6 +210,9 @@ Widget lumitIcon(LumitIcon icon, {required double size, required Color color}) {
     LumitIcon.shyHidden => ShyPainter(color, hidden: true),
     LumitIcon.circleFilled => CircleFillPainter(color),
     LumitIcon.nullLayer => NullLayerPainter(color),
+    LumitIcon.anchorPoint => AnchorPointPainter(color),
+    LumitIcon.roundedRectangle => RoundedRectanglePainter(color),
+    LumitIcon.wireframe => WireframePainter(color),
     _ => null,
   };
   if (painter != null) {
@@ -239,11 +306,39 @@ Widget _glyph(LumitIcon icon, Color color) => switch (icon) {
       LumitIcon.motionBlur => const SizedBox.shrink(), // handled above
       LumitIcon.fx => ic.Fx(color: color),
       LumitIcon.label => ic.Label(color: color),
+      // The toolbar's tools. Where Iconoir has no mark for a tool nobody but an
+      // editor would name — a razor, a puppet pin — the nearest honest glyph
+      // from the same family is used rather than a second family being brought
+      // in for one icon (15-DESIGN §5: one set, no exceptions).
+      LumitIcon.zoomIn => ic.ZoomIn(color: color),
+      LumitIcon.rotate => ic.RotateCameraRight(color: color),
+      LumitIcon.razor => ic.Scissor(color: color),
+      LumitIcon.polygon => ic.Pentagon(color: color),
+      LumitIcon.vertexAdd => ic.PlusCircle(color: color),
+      LumitIcon.vertexDelete => ic.MinusCircle(color: color),
+      LumitIcon.vertexConvert => ic.PathArrow(color: color),
+      LumitIcon.maskFeather => ic.SquareDashed(color: color),
+      LumitIcon.textVertical => ic.Type(color: color),
+      LumitIcon.brush => ic.DesignPencil(color: color),
+      LumitIcon.cloneStamp => ic.Copy(color: color),
+      LumitIcon.eraser => ic.Erase(color: color),
+      LumitIcon.rotoBrush => ic.MaskSquare(color: color),
+      LumitIcon.refineEdge => ic.MagicWand(color: color),
+      LumitIcon.puppetPin => ic.Pin(color: color),
+      LumitIcon.puppetStarch => ic.SnowFlake(color: color),
+      LumitIcon.puppetOverlap => ic.Intersect(color: color),
+      LumitIcon.puppetBend => ic.Arc3d(color: color),
+      LumitIcon.cameraOrbit => ic.Globe(color: color),
+      LumitIcon.cameraPan => ic.Drag(color: color),
+      LumitIcon.cameraDolly => ic.Expand(color: color),
       // Painter-drawn, handled above.
       LumitIcon.shy ||
       LumitIcon.shyHidden ||
       LumitIcon.circleFilled ||
-      LumitIcon.nullLayer =>
+      LumitIcon.nullLayer ||
+      LumitIcon.anchorPoint ||
+      LumitIcon.roundedRectangle ||
+      LumitIcon.wireframe =>
         const SizedBox.shrink(),
     };
 
@@ -361,4 +456,92 @@ class NullLayerPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(NullLayerPainter old) => old.color != color;
+}
+
+/// The anchor-point tool's mark, on the same 24×24 grid: a ring with a cross
+/// through it — the origin crosshair the Viewer draws on the selected layer,
+/// which is exactly what the tool moves.
+class AnchorPointPainter extends CustomPainter {
+  final Color color;
+  const AnchorPointPainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide / _iconGridUnits;
+    Offset at(double x, double y) => Offset(x * s, y * s);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _iconStrokeUnits * s
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawCircle(at(12, 12), 5.0 * s, paint);
+    // The arms reach past the ring, so the centre reads as a point being aimed
+    // at rather than a circle with a plus in it.
+    canvas.drawLine(at(12, 3), at(12, 21), paint);
+    canvas.drawLine(at(3, 12), at(21, 12), paint);
+  }
+
+  @override
+  bool shouldRepaint(AnchorPointPainter old) => old.color != color;
+}
+
+/// The rounded-rectangle shape tool's mark: the same square as [LumitIcon.rectangle]
+/// with its corners taken off, so the pair reads as two members of one family
+/// at 16px.
+class RoundedRectanglePainter extends CustomPainter {
+  final Color color;
+  const RoundedRectanglePainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide / _iconGridUnits;
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = _iconStrokeUnits * s
+      ..strokeJoin = StrokeJoin.round;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+        Rect.fromLTRB(4 * s, 4 * s, 20 * s, 20 * s),
+        // A quarter of the side, not three-eighths: at 6 the corners ate so
+        // much of each edge that the mark read as a circle with flats on it
+        // rather than as a square with its corners taken off.
+        Radius.circular(4 * s),
+      ),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(RoundedRectanglePainter old) => old.color != color;
+}
+
+/// The layer-controls switch: a box with a small filled square at each corner —
+/// the gizmo the switch shows and hides, on the same 24×24 grid.
+class WireframePainter extends CustomPainter {
+  final Color color;
+  const WireframePainter(this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final s = size.shortestSide / _iconGridUnits;
+    Offset at(double x, double y) => Offset(x * s, y * s);
+    canvas.drawRect(
+      Rect.fromPoints(at(5, 5), at(19, 19)),
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = _iconStrokeUnits * s,
+    );
+    final handle = Paint()..color = color;
+    for (final (x, y) in const [(5.0, 5.0), (19.0, 5.0), (19.0, 19.0), (5.0, 19.0)]) {
+      canvas.drawRect(
+        Rect.fromCenter(center: at(x, y), width: 4 * s, height: 4 * s),
+        handle,
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(WireframePainter old) => old.color != color;
 }
