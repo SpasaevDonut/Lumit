@@ -4378,3 +4378,26 @@ any drag in flight, which the Alt-box-zoom test caught.
 (K-230's turn, K-231's scale): the anchor handle wrote on release only, so the mark sat still
 while the picture behind it was already being previewed. The box deliberately does not move —
 that is what panning behind means — but the pivot on it does.
+
+
+**K-236 · DECIDED · A cut keys only what has been retimed, and the Zoom tool opens on the plus
+(2026-07-31).** From the owner, on the last pass before merging.
+
+**The razor's keyframe belongs to a retimed layer, not to a layer with a Retime property.**
+K-221 gave both halves of a cut a keyframe at the cut, so two speed ramps that were one curve
+each get an end of their own to hold. Right — for a layer somebody has shaped. But switching
+Retime on installs the *identity* map, so "has a Retime property" and "has been retimed" are
+different questions, and the first one was being asked. Cutting an untouched layer left
+keyframes on both halves that the user then had to notice and remove, for a cut they had asked
+nothing else of. The rule now tests the map itself: keys whose values read back their own
+times, joined linearly, are the map nobody has touched. A frozen frame is a retime however it
+is written, and an eased pair that happens to start and end where an identity would is a ramp,
+not an identity — both have their own tests.
+
+**The Zoom tool believes what it has seen, not what the platform remembers.** Arming it could
+open on the minus, so a plain click zoomed *out*. Windows eats the Alt key-up when Alt reaches
+for the window menu or Alt+Tab leaves the application, so the platform's own "is Alt down?" can
+answer yes long after the key came up. The tool tracks Alt from the events it sees, starts
+false every time it is armed, and the *click* reads that same flag rather than asking the
+platform again — so what the pointer promises and what the click does cannot disagree, which
+was the other half of the same fault.

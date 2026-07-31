@@ -143,12 +143,27 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
   /// that is the whole job of a zoom-in and a zoom-out pointer — so pressing or
   /// releasing Alt has to repaint. A keyboard handler is the only way to hear
   /// about a modifier changing while nothing else is happening.
+  ///
+  /// **It starts false every time the tool is picked up** (K-236). Windows eats
+  /// the Alt key-up when Alt reaches for the window menu or Alt+Tab leaves the
+  /// application, so the platform's own "is Alt down?" can answer yes long
+  /// after the key came up — and the Zoom tool then opened on the minus,
+  /// zooming *out* on a plain click. What this tool believes is what it has
+  /// seen for itself since it was armed, and the next press of Alt corrects it
+  /// either way.
   bool _alt = false;
 
   @override
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void didUpdateWidget(ViewerZoomLayer old) {
+    super.didUpdateWidget(old);
+    // Freshly armed: the tool has seen no Alt of its own yet.
+    if (widget.active && !old.active) _alt = false;
   }
 
   @override
@@ -216,8 +231,11 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
           onPointerMove: (event) => _device = event.device,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapUp: (details) => widget.onZoomAt(details.localPosition,
-                out: HardwareKeyboard.instance.isAltPressed),
+            // `_alt`, not the platform's answer: what the pointer showed is
+            // what the click must do, or the tool does the opposite of what it
+            // has just promised (K-236).
+            onTapUp: (details) =>
+                widget.onZoomAt(details.localPosition, out: _alt),
             onPanStart: (details) => setState(() {
               _from = details.localPosition;
               _to = details.localPosition;
@@ -236,8 +254,7 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
               // A drag of a few pixels is a click that wobbled: zooming to a
               // 3-pixel box would throw the picture into the far distance.
               if (box == null || (box.width < 8 && box.height < 8)) return;
-              widget.onZoomBox(box,
-                  out: HardwareKeyboard.instance.isAltPressed);
+              widget.onZoomBox(box, out: _alt);
             },
             onPanCancel: () => setState(() {
               _from = null;

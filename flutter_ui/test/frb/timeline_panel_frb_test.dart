@@ -199,16 +199,10 @@ void main() {
     /// two ramps stay welded: bending one half's speed would bend the other's,
     /// because they are the same curve. The key goes in preserving the curve's
     /// shape, so the cut itself changes nothing that plays.
-    testWidgets('cutting a retimed layer puts a keyframe at the cut, on both'
-        ' halves', (tester) async {
-      final p = withComp();
-      final layer = p.comp.addSolidLayer();
-      expect(layer.toggleRetimeProperty(), isTrue,
-          reason: 'the identity map goes on');
-      final before = layer.getRetimeProperty();
-      expect(before, isA<BridgeScalar_Keyframed>());
-      final keysBefore = (before as BridgeScalar_Keyframed).field0.length;
-
+    /// Cut a layer at the middle of its bar with the razor, and hand back the
+    /// halves.
+    Future<List<LayerReference>> cutInHalf(
+        WidgetTester tester, dynamic p, LayerReference layer) async {
       p.uiState.tools.select(ToolMode.razor);
       p.uiState.model.refresh();
       await mount(tester, p);
@@ -218,16 +212,65 @@ void main() {
       final box = tester.getRect(bar);
       await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy));
       await tester.pumpAndSettle();
+      return (p.comp as CompositionReference).getLayers();
+    }
 
-      final after = p.comp.getLayers();
+    int keysOf(LayerReference layer) {
+      final retime = layer.getRetimeProperty();
+      return retime is BridgeScalar_Keyframed ? retime.field0.length : 0;
+    }
+
+    /// **A cut only keys a layer that has actually been retimed** (K-236).
+    /// Switching Retime on installs the identity map, so the property being
+    /// there says nothing about whether the layer has been retimed — and a cut
+    /// that dropped keys into an untouched map left the user keys to notice and
+    /// remove for a cut they had asked nothing else of.
+    testWidgets('cutting a layer nobody retimed leaves its map alone',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      expect(layer.toggleRetimeProperty(), isTrue,
+          reason: 'the identity map goes on');
+      final keysBefore = keysOf(layer);
+
+      final after = await cutInHalf(tester, p, layer);
+
+      expect(after.length, 2, reason: 'it still cuts');
+      for (final half in after) {
+        expect(keysOf(half), keysBefore,
+            reason: 'and puts no keys into a map nobody has shaped');
+      }
+    });
+
+    testWidgets('cutting a retimed layer puts a keyframe at the cut, on both'
+        ' halves', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      expect(layer.toggleRetimeProperty(), isTrue);
+      // Half speed, which is a map somebody has shaped: the layer's first
+      // second shows the source's first half-second. Both halves of a cut
+      // would otherwise share one curve, and bending one would bend the other.
+      layer.setRetimeProperty(
+        value: BridgeScalar.keyframed([
+          for (final (frame, value) in [(0, 0.0), (60, 0.5)])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: frame),
+              value: value,
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      final keysBefore = keysOf(layer);
+      expect(keysBefore, greaterThan(0));
+
+      final after = await cutInHalf(tester, p, layer);
+
       expect(after.length, 2);
       for (final half in after) {
-        final retime = half.getRetimeProperty();
-        expect(retime, isA<BridgeScalar_Keyframed>(),
-            reason: 'both halves are still retimed');
-        expect((retime as BridgeScalar_Keyframed).field0.length,
-            keysBefore + 1,
-            reason: 'and both carry the key the cut added');
+        expect(keysOf(half), keysBefore + 1,
+            reason: 'both carry the key the cut added, so each half has an end '
+                'of its own to hold');
       }
     });
 

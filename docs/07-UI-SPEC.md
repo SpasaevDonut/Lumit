@@ -837,7 +837,10 @@ A Sequence layer's row renders its clips back-to-back (glossary §2):
   frame it would cut, so the cut can be aimed before it is made. The line does the aiming and
   the pointer only says which tool is in hand (K-235, replacing K-230's hot-spot rule): a drawn
   blade leaning away from the point it cuts at needed a second mark to say where the edge
-  actually bit, and the icon on the toolbar says "razor" better than a bespoke drawing of one. A cut at a layer's own end MUST be refused — there is no
+  actually bit, and the icon on the toolbar says "razor" better than a bespoke drawing of one.
+  **A cut only keys a layer that has actually been retimed** (K-236): switching Retime on
+  installs the identity map, and putting keys into a map nobody has shaped leaves the user keys
+  to notice and remove for a cut they asked nothing else of. A cut at a layer's own end MUST be refused — there is no
   second half there — rather than making a layer of no length.
 - Per-clip context menu: frame interpolation mode (nearest / blend / flow), Retime reset,
   reveal in Project panel, replace source (preserves trim and Retime where durations allow).

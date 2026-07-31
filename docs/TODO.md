@@ -107,7 +107,8 @@ armed is a *tool*; what each tool then does is the backlog:
 - **Razor** - built (K-220): the blade pointer and cut line over the lanes, a click that
     cuts under the pointer (splitting a layer in two, or making an edit point inside a
     Sequence layer), `Shift` cutting every layer that spans that moment, and a curve-preserving
-    keyframe at the cut on both halves of a retimed layer (K-221). Still owed: a Sequence
+    keyframe at the cut on both halves of a layer that has actually been retimed (K-221, narrowed
+    by K-236: an untouched identity map is left alone). Still owed: a Sequence
     layer's eased ramps refuse a cut (`UncuttableClip`), and its **clips'** own speed maps get
     no key at the cut the way a layer's Retime does. (The razor is Timeline-only by design.)
 - **Shape tools** - built for masks (K-222): all five drag out corner to corner with `Shift`
