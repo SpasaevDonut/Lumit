@@ -1,12 +1,13 @@
-// The shape tools: the paths they draw, in the layer's own coordinates
-// (K-220, docs/07 §1.7, §2.3).
+// The shape tools and the Pen: the paths they draw, in the layer's own
+// coordinates (K-220, K-221, docs/07 §1.7, §2.3.1).
 //
 // **In plain terms.** A mask is a shape drawn on a layer that decides which of
 // its pixels show. The shape tools draw one: rectangle, rounded rectangle,
-// ellipse and star drag out corner to corner, and the polygon tool builds a
-// path point by point. This file is the *geometry* — given two corners, what
-// vertices does an ellipse have? — and it is pure, so it is tested by
-// arithmetic rather than by dragging.
+// ellipse, polygon and star all drag out corner to corner. The **Pen** is the
+// odd one out — it builds a path point by point ([PathDraft]) — and it lives
+// here too because what it builds is the same kind of path. This file is the
+// *geometry*: given two corners, what vertices does an ellipse have? It is pure,
+// so it is tested by arithmetic rather than by dragging.
 //
 // **Everything here is in layer space.** A mask travels with its layer's
 // transform: move the layer and the mask moves with it, because the path is
@@ -40,6 +41,10 @@ const double roundedCornerFraction = 0.25;
 const int starPoints = 5;
 const double starInnerFraction = 0.4;
 
+/// How many sides a polygon has. After Effects' own default, and the same count
+/// as the star's points so the two tools read as a pair.
+const int polygonSides = 5;
+
 /// A corner vertex — no curvature either side.
 BridgeVertex shapeCorner(double x, double y) => BridgeVertex(
       x: x,
@@ -70,8 +75,8 @@ BridgeVertex shapeCorner(double x, double y) => BridgeVertex(
 /// way round they were dragged — which is what makes "start here, end there"
 /// mean the same thing in all four directions. [square] is Shift.
 ///
-/// The polygon tool is not here: it does not drag out a shape, it builds one
-/// point by point (see `PolygonDraft`).
+/// The Pen is not here: it does not drag out a shape, it builds one point by
+/// point (see [PathDraft]).
 List<BridgeVertex> shapePath({
   required ToolMode tool,
   required (double, double) from,
@@ -223,8 +228,24 @@ List<BridgeVertex> shapePath({
           }(),
       ];
 
-    // A polygon is drawn point by point; anything else is not a shape tool at
-    // all and draws nothing.
+    case ToolMode.shapePolygon:
+      // A regular polygon inscribed in the box, first point at the top — the
+      // star without its notches, and the same tool After Effects has. (The
+      // *path-building* gesture that was briefly on this tool belongs to the
+      // Pen, where After Effects puts it — K-221.)
+      final rx = w / 2;
+      final ry = h / 2;
+      final cx = left + rx;
+      final cy = top + ry;
+      return [
+        for (var i = 0; i < polygonSides; i++)
+          () {
+            final a = 2 * math.pi * i / polygonSides - math.pi / 2;
+            return shapeCorner(cx + rx * math.cos(a), cy + ry * math.sin(a));
+          }(),
+      ];
+
+    // Not a shape tool: the Pen builds its path point by point (see [PathDraft]).
     case _:
       return const [];
   }
@@ -254,11 +275,11 @@ String shapeMaskName(ToolMode tool) => switch (tool) {
       ToolMode.shapeEllipse => 'Ellipse',
       ToolMode.shapeStar => 'Star',
       ToolMode.shapePolygon => 'Polygon',
+      ToolMode.pen => 'Path',
       _ => 'Mask',
     };
 
-/// A polygon being drawn: the vertices placed so far, and the one under the
-/// pointer (K-220).
+/// A path being drawn with the **Pen** (K-221): the vertices placed so far.
 ///
 /// **The gesture this models.** A click places a corner. A click *and drag*
 /// places a vertex and pulls a pair of bezier handles out of it, mirrored so
@@ -271,10 +292,10 @@ String shapeMaskName(ToolMode tool) => switch (tool) {
 ///
 /// Immutable-ish by design: every gesture returns a new draft rather than
 /// mutating one, so the widget holds a value and the tests need no widget.
-class PolygonDraft {
+class PathDraft {
   final List<BridgeVertex> vertices;
 
-  const PolygonDraft({this.vertices = const []});
+  const PathDraft({this.vertices = const []});
 
   bool get isEmpty => vertices.isEmpty;
 
@@ -288,7 +309,7 @@ class PolygonDraft {
       vertices.isEmpty ? null : (vertices.first.x, vertices.first.y);
 
   /// With a corner placed at [at].
-  PolygonDraft withCorner((double, double) at) => PolygonDraft(
+  PathDraft withCorner((double, double) at) => PathDraft(
         vertices: [...vertices, shapeCorner(at.$1, at.$2)],
       );
 
@@ -297,7 +318,7 @@ class PolygonDraft {
   /// [independent] is `Alt`: the entering handle keeps whatever it had (nothing,
   /// for a vertex being born) instead of mirroring the leaving one. Mirrored is
   /// the default because a smooth curve is what a dragged vertex is *for*.
-  PolygonDraft withBezier(
+  PathDraft withBezier(
     (double, double) at,
     (double, double) handle, {
     bool independent = false,
@@ -313,13 +334,13 @@ class PolygonDraft {
       tanOutX: outX,
       tanOutY: outY,
     );
-    return PolygonDraft(vertices: [...vertices, vertex]);
+    return PathDraft(vertices: [...vertices, vertex]);
   }
 
   /// Without its last vertex — the undo inside the gesture.
-  PolygonDraft withoutLast() => vertices.isEmpty
+  PathDraft withoutLast() => vertices.isEmpty
       ? this
-      : PolygonDraft(vertices: vertices.sublist(0, vertices.length - 1));
+      : PathDraft(vertices: vertices.sublist(0, vertices.length - 1));
 }
 
 /// Whether [at] is close enough to [target] to count as clicking it, measured

@@ -1027,10 +1027,10 @@ void main() {
               'not built — docs/TODO.md)');
     });
 
-    testWidgets('the polygon tool places points and closes on the first one',
+    testWidgets('the Pen places points and closes on the first one',
         (tester) async {
       final p = withLayer();
-      p.uiState.tools.select(ToolMode.shapePolygon);
+      p.uiState.tools.select(ToolMode.pen);
       await mount(tester, p);
 
       final fitted = fittedRect(tester, p.comp);
@@ -1050,9 +1050,33 @@ void main() {
 
       final masks = p.layer.getMasks();
       expect(masks, hasLength(1));
-      expect(masks.single.name, 'Polygon');
+      expect(masks.single.name, 'Path');
       expect(masks.single.vertices, hasLength(3));
       expect(masks.single.closed, isTrue);
+    });
+
+    testWidgets('the polygon tool drags out a five-sided mask', (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.shapePolygon);
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture =
+          await tester.startGesture(fitted.center - const Offset(70, 70));
+      await tester.pump();
+      await gesture.moveTo(fitted.center);
+      await tester.pump();
+      await gesture.moveTo(fitted.center + const Offset(70, 70));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final masks = p.layer.getMasks();
+      expect(masks, hasLength(1));
+      expect(masks.single.name, 'Polygon');
+      expect(masks.single.vertices, hasLength(5),
+          reason: 'a polygon is a shape you drag out, not a path you build '
+              '(K-221)');
     });
 
     testWidgets('a missing footage layer raises the badge', (tester) async {

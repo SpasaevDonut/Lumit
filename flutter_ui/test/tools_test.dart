@@ -115,7 +115,8 @@ void main() {
       // tooltip promises, so it may only be true where something reads the
       // armed tool and does the work. Selection selects and drags (K-215),
       // Hand pans, Zoom magnifies (K-216), Rotation turns (K-217), Anchor
-      // point pans behind and the Razor cuts (K-218); everything else is a
+      // point pans behind and the Razor cuts (K-218), the five shape tools
+      // draw masks and the Pen builds one (K-220, K-221); everything else is a
       // cursor and a place to build into.
       expect(ToolMode.values.where((t) => t.ready).toSet(), {
         ToolMode.select,
@@ -124,6 +125,12 @@ void main() {
         ToolMode.rotate,
         ToolMode.anchor,
         ToolMode.razor,
+        ToolMode.shapeRectangle,
+        ToolMode.shapeRoundedRectangle,
+        ToolMode.shapeEllipse,
+        ToolMode.shapePolygon,
+        ToolMode.shapeStar,
+        ToolMode.pen,
       });
     });
   });

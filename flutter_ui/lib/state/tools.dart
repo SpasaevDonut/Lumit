@@ -57,15 +57,21 @@ enum ToolMode {
   razor(ToolGroup.razor, 'Razor', LumitIcon.razor, ready: true),
 
   // The shape tools draw a mask on the selected layer, or a shape layer with
-  // nothing selected — AE's rule, and the reason they are one group.
-  shapeRectangle(ToolGroup.shape, 'Rectangle', LumitIcon.rectangle),
+  // nothing selected — AE's rule, and the reason they are one group. The shape
+  // layer half needs an engine layer kind that does not exist (K-220), so with
+  // nothing selected they say so rather than acting.
+  shapeRectangle(ToolGroup.shape, 'Rectangle', LumitIcon.rectangle,
+      ready: true),
   shapeRoundedRectangle(
-      ToolGroup.shape, 'Rounded rectangle', LumitIcon.roundedRectangle),
-  shapeEllipse(ToolGroup.shape, 'Ellipse', LumitIcon.ellipse),
-  shapePolygon(ToolGroup.shape, 'Polygon', LumitIcon.polygon),
-  shapeStar(ToolGroup.shape, 'Star', LumitIcon.star),
+      ToolGroup.shape, 'Rounded rectangle', LumitIcon.roundedRectangle,
+      ready: true),
+  shapeEllipse(ToolGroup.shape, 'Ellipse', LumitIcon.ellipse, ready: true),
+  shapePolygon(ToolGroup.shape, 'Polygon', LumitIcon.polygon, ready: true),
+  shapeStar(ToolGroup.shape, 'Star', LumitIcon.star, ready: true),
 
-  pen(ToolGroup.pen, 'Pen', LumitIcon.pen),
+  // The Pen builds a mask path point by point (K-221). Its four siblings edit a
+  // *finished* path, which is not built.
+  pen(ToolGroup.pen, 'Pen', LumitIcon.pen, ready: true),
   penAddVertex(ToolGroup.pen, 'Add vertex', LumitIcon.vertexAdd),
   penDeleteVertex(ToolGroup.pen, 'Delete vertex', LumitIcon.vertexDelete),
   penConvertVertex(ToolGroup.pen, 'Convert vertex', LumitIcon.vertexConvert),

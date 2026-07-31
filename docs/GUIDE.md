@@ -5017,3 +5017,24 @@ in it. Rather than quietly doing nothing, the tool posts a line in the status ba
 telling you to select a layer. The alternative — making a solid and putting a mask
 on it, and calling that a shape layer — would be a lie in the layer list, and one
 that would have to be untold the day the real thing arrives.
+
+### The Pen and the polygon, put the right way round (K-221)
+
+A correction worth recording, because the shape of the mistake is instructive.
+The click-a-point, drag-for-a-curve, click-the-first-point-to-close gesture was
+built on the **polygon** tool. It is the **Pen's** gesture — that is what a pen
+tool is, in After Effects and in every drawing application — and the polygon
+tool's job is to drag out a polygon, the same way the star tool drags out a star.
+
+So the builder moved to the Pen, and the polygon became a regular five-sided
+figure inscribed in the box you drag, first point at the top: the star without
+its notches.
+
+Two things came out of the swap. The class called `PolygonDraft` is now
+`PathDraft`, because it was never about polygons — it is a path being built, and
+a name that says what a thing is beats a name that says where it happened to live
+first. And the five shape tools had been shipped with their "is this built?" flags
+still saying no, so every one of their tooltips claimed the tool did nothing while
+it was busily drawing masks. That flag is a promise about what the interface tells
+you, so a wrong one is not a cosmetic bug; there is now a test that pins the whole
+set of built tools, which will fail the next time one ships out of step.

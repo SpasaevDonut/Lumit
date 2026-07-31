@@ -114,11 +114,15 @@ armed is a *tool*; what each tool then does is the backlog:
     keyframe at the cut on both halves of a retimed layer (K-219). Still owed: a Sequence
     layer's eased ramps refuse a cut (`UncuttableClip`), and its **clips'** own speed maps get
     no key at the cut the way a layer's Retime does. (The razor is Timeline-only by design.)
-- **Shape tools** - built for masks (K-220): rectangle, rounded rectangle, ellipse and star
-    drag out corner to corner with `Shift` for square, and the polygon tool builds a path
-    point by point (click for a corner, click-drag for mirrored bezier handles, `Alt` to break
-    the pair, click the first point to close). Masks list in the layer's twirl-down under a
-    Masks heading, invert, fade and delete, and are outlined on the picture. What is owed:
+- **Shape tools** - built for masks (K-220): all five drag out corner to corner with `Shift`
+    for square (polygon and star being the regular figures inscribed in the box). Masks list
+    in the layer's twirl-down under a Masks heading, invert, fade and delete, and are
+    outlined on the picture.
+- **Pen** - built (K-221): the path builder — click for a corner, click-drag for mirrored
+    bezier handles, `Alt` to break the pair, click the first point to close and apply. Its
+    four siblings (add/delete/convert vertex, mask feather) edit a finished path; see mask
+    editing below.
+    What the two owe between them:
     - **Shape layers.** With nothing selected the tool says "select a layer" instead of making
       one, because `LayerKind` has no Shape variant. A shape layer needs a new layer kind, a
       geometry model with fill and stroke, renderer support and its own Timeline rows — an
@@ -129,7 +133,6 @@ armed is a *tool*; what each tool then does is the backlog:
     - **Mask paths cannot be keyframed** (docs/03 has them as animatable), and there is no
       mask **mode** (add/subtract/intersect) — every mask adds.
     - **Mask feather** has neither a control nor a renderer path.
-- **Pen tools** - click-to-place mask drawing, and the four vertex/feather variants.
 - **Type**, **Paint** (brush/clone stamp/eraser), **Roto** (roto brush/refine edge),
     **Puppet**, **Camera** - no engine side yet; these are roadmap features
     ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.

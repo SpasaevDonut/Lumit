@@ -151,7 +151,7 @@ strip whatever workspace is active.
 | Anchor point | Anchor point | `Y` |
 | Razor | Razor | `C` |
 | Shape | Rectangle, Rounded rectangle, Ellipse, Polygon, Star | `Q` |
-| | *(with a layer selected these draw a **mask** on it; §2.3)* | |
+| | *(with a layer selected these draw a **mask** on it; §2.3.1)* | |
 | Pen | Pen, Add vertex, Delete vertex, Convert vertex, Mask feather | `G` |
 | Type | Horizontal type, Vertical type | `Ctrl+T` |
 | Paint | Brush, Clone stamp, Eraser | `Ctrl+B` |
@@ -316,14 +316,17 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
 - With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected
   After Effects makes a *shape layer*; Lumit's engine has no such layer kind yet, so the tool
   MUST say what to do instead rather than doing nothing quietly (TODO.md tracks the kind).
-- **Rectangle, rounded rectangle, ellipse and star** drag out between two opposite corners of
-  the shape's box — whichever way round the drag went — with `Shift` keeping the box square.
-- **The polygon tool builds a path point by point**: a click places a corner; a click-and-drag
+- **All five shape tools drag out** between two opposite corners of the shape's box —
+  whichever way round the drag went — with `Shift` keeping the box square. Rectangle and
+  rounded rectangle fill the box; ellipse is inscribed in it; polygon and star are the regular
+  five-sided and five-pointed figures inscribed in it, first point at the top.
+- **The Pen builds a path point by point** (K-221): a click places a corner; a click-and-drag
   places a vertex and pulls a **mirrored** pair of bezier handles out of it, the dragged
   handle leaving the vertex and its reflection entering; holding `Alt` during that drag breaks
   the pair so the entering handle stays where it was. Clicking the **first** vertex closes the
   path, and closing is what applies it. `Escape` abandons the path; `Backspace` takes back the
-  last point.
+  last point. The Pen's four siblings — add, delete and convert vertex, and mask feather —
+  edit a *finished* path and are not built.
 - A mask's path is stored in **layer space**, so it travels with the layer's transform.
 - Every selected layer's masks MUST be outlined on the picture, with a mark on each vertex.
 - Masks appear in the layer's Timeline twirl-down under a **Masks** heading — above Effects,

@@ -645,10 +645,12 @@ class _Stage extends StatelessWidget {
                   onChanged: onChanged,
                 ),
               ),
-              // The shape tools: a drag draws a mask on the selected layer, and
-              // the polygon tool builds one point by point (K-220).
+              // The shape tools and the Pen: a drag draws a mask on the
+              // selected layer, and the Pen builds one point by point (K-220,
+              // K-221).
               ViewerShapeLayer(
-                active: uiState.tools.tool.group == ToolGroup.shape,
+                active: uiState.tools.tool.group == ToolGroup.shape ||
+                    uiState.tools.tool == ToolMode.pen,
                 tool: uiState.tools.tool,
                 state: Provider.of<LumitState>(context, listen: false),
                 uiState: uiState,

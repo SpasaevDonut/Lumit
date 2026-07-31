@@ -3787,3 +3787,28 @@ no Shape variant, so there is nothing honest to make. The tool posts a notice na
 do instead. Silence would read as a broken tool, and a solid-with-a-mask dressed as a shape
 layer would be a lie in the layer list — one that would have to be untold when the real kind
 lands.
+
+**K-221 · DECIDED · The path-building gesture is the Pen's, and the polygon tool draws a
+polygon. Supersedes K-220's placement of it.** From the owner (2026-07-31): "I think I
+might've misunderstood the polygon tool — everything I said there applies to the pen tool."
+They are right, and K-220 built it in the wrong place.
+
+**What moved.** Click for a corner, click-drag for a vertex whose bezier handles mirror as
+they grow, `Alt` to break that mirror, click the first vertex to close and apply, `Escape` to
+abandon, `Backspace` to take a point back — all of that is now the **Pen** (`G`), which is
+where After Effects puts it and where anyone arriving from AE will look for it.
+
+**What the polygon is instead.** A shape you drag out like the others: the regular five-sided
+figure inscribed in the drag's box, first point at the top, `Shift` for a regular pentagon in
+a square box. It is the star without its notches, and the two now read as the pair they are.
+
+**Why this was worth correcting rather than living with.** A tool that does something other
+than its name is a tool that has to be explained every time; and the Pen sitting there doing
+nothing while the polygon did the Pen's job would have been two wrong tools rather than one.
+The code moved with the name: `PolygonDraft` is `PathDraft`, and it is documented as the
+Pen's.
+
+**And the five shape tools are marked built.** K-220 shipped them working while their
+`ToolMode.ready` flags still said otherwise, so every tooltip claimed "not built yet" over a
+tool that drew masks. `ready` is a promise about what a tooltip says (K-214) and it was
+lying; a test now pins the set.
