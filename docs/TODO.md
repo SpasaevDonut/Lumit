@@ -18,40 +18,35 @@ this file is the concrete backlog underneath it.
 
 These sit above everything else: they are what the editor feels like in the hand.
 
-- **The disk tier is written but dark.** `crates/lumit-cache/src/disk.rs` and
-    `crates/lumit-render/src/diskio.rs` are complete — open, park, load back,
-    budget, the cache bar's blue tier, and a cache-root override honouring
-    "Settings → Performance → Cache" ([07-UI-SPEC.md](07-UI-SPEC.md) §15). Nothing
-    outside `diskio.rs` ever constructs it: `grep -rn 'diskio::' crates/` returns
-    nothing, so the third tier of the three-tier cache never runs and the Settings
-    control it was written for does not exist. Wanted: the worker spawns it, the
-    Settings window gets its budget row and root-folder picker back beside the RAM
-    and VRAM rows, and the cache bar shows the blue tier. Land the **disk bar** with
-    it: the status line's cache meter gains a third bar beside the RAM and VRAM ones
-    it grew on 2026-07-29.
-    **The demotion ladder is also unbuilt.** docs/06 §5 wants a frame evicted from
-    VRAM to fall to RAM, and one evicted from RAM to fall to disk; today an eviction
-    simply drops the frame. VRAM→RAM needs a read-back at eviction time and — to be
-    worth anything — a way back up, since nothing can currently turn held bytes into
-    a texture the Viewer shows, so a demoted frame would be re-rendered anyway. That
-    upload path is the same piece the disk tier needs, so the two want doing together:
-    read-back on evict, upload on hit, then disk underneath both.
-    **Blocked, and on what.** The tier cannot be wired honestly while frames are
-    filed by *position*. A disk tier exists to outlive an edit and a restart, and a
-    positional name does not identify pixels: the RAM and VRAM tiers are emptied on
-    every commit precisely because of that, and a disk copy that survived one would
-    serve the picture from before the edit — or, after reopening a project, from
-    another day's document. So **content keying comes first** (the entry under *Next*:
-    file frames under a content hash). The pieces for it are closer than that entry
-    says: `lumit_render::cache::frame_key` already computes the hash, and the
-    renderer holds the probe cache it needs (`ProbeView`), so a hash is computable on
-    the worker thread without any new bridge view — what needs designing is how the
-    cache bar names a frame from its position once the keys are hashes (the worker
-    can publish held *positions* alongside the hashes, which is what the VRAM mirror
-    already does). Two further pieces the disk tier needs on top: a way back INTO the
-    VRAM tier from bytes (nothing uploads a frame to a texture today), and a decision
-    about when to pay the read-back that parking a frame costs at all — the zero-copy
-    path (K-183) keeps no bytes, so the idle fill is the honest place to spend it.
+- **The present stalls the pipeline: replace `poll(Maintain::Wait)` with a keyed
+    mutex** (the entry under *Threading* below). Every present waits for the
+    graphics card to go idle before it hands the texture over
+    (`shared.rs:242`, `shared_linux.rs:235`, `shared_metal.rs:205`). Playback
+    from the card has the slack to hide the stall; playback from memory does
+    not. **Its own branch and its own pull request**: it is surgery on the
+    shared-texture chain, where a mistake shows as tearing and not as an error.
+    Measure first — the three fixes below it landed on 2026-07-30 and may have
+    made it moot.
+    **It does not mean reviving the read-back transport** (deleted in K-183) and
+    must not: the Viewer receives a GPU handle and nothing else. The ladder's own
+    read-back (K-214) copies finished frames into the engine's cache and never
+    crosses the bridge — same word, different thing.
+
+    The other three fixes of this group are done (2026-07-30): the coming frames
+    are read off disk in advance, the cache holds its bytes in one shared
+    allocation, and a promotion writes into a display texture that the cache has
+    finished with. Promotion from memory was already ahead of the playhead —
+    renders run ahead into the ring — thus what was missing was the disk rung.
+
+- **What is left of playback's bridge chatter scales with the rows on screen.**
+    The three constant questions are gone (2026-07-30): the preview tier rides
+    in on the frame the worker publishes, and the transport — which reports what
+    this build compiled to — is read once. A rebuilt Viewer bar now asks the
+    engine nothing, pinned by `bridge_call_budget_test.dart`. What remains is one
+    `sample_scalar` for each animated row on screen, plus one `time_of_frame`:
+    honest questions, asked one at a time. Batch them per frame if they ever
+    bite, the way `time_of_frame` was already folded to one.
+
 - **Multi-frame rendering is built; the worker pool is what is left.** Renders run
     ahead of the clock into a bounded ring sized by measured p95 cost, presents pace
     against the clock, decode runs on its own thread, and the sound waits out a
@@ -167,6 +162,7 @@ armed is a *tool*; what each tool then does is the backlog:
       the stored stroke.
     - **Paint on a Precomp layer's nested pixels** — those never come back to the CPU, so a
       stroke on one currently marks nothing.
+
 - **Camera** - built (K-229): orbit, track and dolly the active camera by dragging, with the
     pivot marked and `Shift` locking an axis. Still owed:
     - **A point of interest** (After Effects' two-node camera): the model has position and
@@ -264,37 +260,12 @@ switch landed 2026-07-31. What that section still owes:
     is `lumit_bridge`. Same fix the macOS side took; iOS has no target and no CI
     job yet.
 
-- **The frame cache keys by position, not by content (K-178's design).** Each
-    entry is filed under `(comp, frame, scale)`, so an edit does not change any
-    frame's name and the cache must be told to drop the composition's frames on
-    every committed change — which it now is. The cost is that a change which
-    cannot alter a pixel (a rename, a work-area nudge, a solo toggle) still
-    retires every held frame of that comp, and the cache bar goes blank with it.
-    The fix is the documented one: file frames under
-    `lumit_render::cache::frame_key`, a hash of what is actually in them. That
-    needs a `SourceProbes` view on the bridge side, which is why it was not done
-    here. Note the cache bar's per-frame query (`cached_frames`) depends on being
-    able to name a frame from its position — under content keying it would
-    compute the same hash per frame instead, which works but needs the probes too.
-- **The frame key never hashes a layer's parent chain, and skips hidden layers.**
-    `comp_frame_key` (crates/lumit-eval/src/lib.rs) `continue`s past any layer with
-    `visible == false`, and no layer's key includes the transforms it inherits — so
-    hiding a *parent* and then moving it changes the picture (its children still
-    follow it) while the key stays put, and the children keep serving stale cached
-    frames. This pre-dates the Null layer for any hidden parent, but K-206 makes it
-    the common case: a Null is the layer a user will most naturally hide, having
-    nothing to look at. Fix is either to hash the parent chain into each child's
-    contribution, or to stop gating hidden layers out when something is parented
-    to them.
-- **The disk frame cache is built but never constructed** — see "The disk tier
-    is written but dark" under *Now*, which carries the detail. The VRAM tier
-    landed 2026-07-27 (K-187), the RAM tier exists, and the design language's
-    steel blue for "on disk only" ([15-DESIGN.md](15-DESIGN.md) §6.3) waits on
-    the same wiring.
 - **The shared-texture chain has no keyed mutex** (a torn frame is possible in
     principle — see the fence entry under Threading), and the D3D12 → D3D11
     legacy-handle hop the Windows path rides is knowledge docs/06 does not yet
-    describe.
+    describe. It is also what forces the present's full pipeline stall, which is
+    what makes playback from memory miss realtime — see the first entry under
+    *Now*, which is where the ordering argument for doing this **last** lives.
 - **The Scopes' trace still crosses the bridge as pixels**, serialised a byte at
     a time like any other `Vec<u8>`, and is decoded into an image Dart-side. Small
     next to a full frame, but it is on the same per-frame path and could take the
@@ -506,14 +477,12 @@ the budget ranking (`bridge_call_budget_test.dart` prints it).
     (they are never built while hidden, 2026-07-28); scoping the visible tree
     remains.
 
-**The RAM frame cache is now only the scope path's cache (K-183, narrowed by
-K-187).** The zero-copy transport keeps no CPU bytes, so `framecache` is filled
-only by scope traces; what serves the Viewer is the VRAM final-frame cache
-(K-187, "cache on the card"), which the cache bar merges into its answer.
-`framecache`'s content-keying upgrade (K-178's design, needs the probe view)
-remains worthwhile but is now much lower stakes. Registering a texture still
-cannot happen in a widget test; `integration_test/shared_texture_test.dart`
-(run by hand on a real window) is the coverage.
+**The RAM frame cache is the middle rung of the ladder now (K-214).** It was briefly only the
+scope path's — the zero-copy transport keeps no CPU bytes (K-183) — and it is filled again by
+the demotion ladder: every frame read back off the graphics card lands there on its way to
+disk, and is uploaded straight back when it is wanted. Registering a texture still cannot
+happen in a widget test; `integration_test/shared_texture_test.dart` (run by hand on a real
+window) is the coverage.
 
 **The Windows shared-texture test races, rarely (seen 2026-07-30).**
 `lumit-gpu`'s `shared::tests::the_legacy_handle_yields_the_pixels_angle_style` failed one
@@ -552,12 +521,12 @@ measured 58.7 fps on 1080p60 footage just before the ring landed.
 - Colour-management settings; preview-mode (Cached/Realtime) toggle; CUDA on/off;
     plugins/decoder page. (The **Keymap** editor landed with K-199.)
 - The egui shell's fuller Performance/General/Export pages are not rebuilt in
-    Flutter yet: the disk cache budget and root folder (the tier is built but
-    never constructed — see *Now*), autosave interval/keep, and the export
-    defaults (preset + filename template). The RAM and VRAM cache budgets
-    landed in the Settings window (K-187) and now survive a restart; idle
-    background fill landed with no setting (it costs nothing the user would
-    trade). Each remaining page lands wired to the
+    Flutter yet: autosave interval/keep, and the export defaults (preset +
+    filename template). All three cache budgets are in the Settings window and
+    survive a restart — RAM and VRAM with K-187, the disk tier's budget and its
+    location with K-214, and its scope — application-wide or this project — with
+    K-215; idle background fill landed with no setting (it costs
+    nothing the user would trade). Each remaining page lands wired to the
     engine through the bridge, not as a Dart-side setting nothing reads
     (K-181/K-182).
 

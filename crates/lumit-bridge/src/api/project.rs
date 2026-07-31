@@ -322,6 +322,78 @@ impl ProjectReference {
             .map(|p| p.to_string_lossy().into_owned()))
     }
 
+    /// Where *this project* parks its rendered frames, overriding the
+    /// application-wide choice — or `None` when it follows that choice, which is
+    /// the ordinary case (docs/06-RENDER-PIPELINE.md §5.4).
+    ///
+    /// Returned as the enum plus a folder, the same pair
+    /// [`Self::set_cache_location`] takes; the folder is empty unless the
+    /// location is `Custom`.
+    #[frb(sync)]
+    pub fn cache_location(
+        &self,
+    ) -> Result<Option<crate::api::cache::BridgeProjectCacheLocation>, BridgeError> {
+        use lumit_core::model::CacheLocation;
+        let state = self.state()?;
+        let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(state
+            .store
+            .snapshot()
+            .cache_location
+            .as_ref()
+            .map(|held| match held {
+                CacheLocation::AppData => crate::api::cache::BridgeProjectCacheLocation {
+                    location: crate::api::cache::BridgeCacheLocation::AppData,
+                    folder: String::new(),
+                },
+                CacheLocation::BesideProject => crate::api::cache::BridgeProjectCacheLocation {
+                    location: crate::api::cache::BridgeCacheLocation::BesideProject,
+                    folder: String::new(),
+                },
+                CacheLocation::Custom { folder } => crate::api::cache::BridgeProjectCacheLocation {
+                    location: crate::api::cache::BridgeCacheLocation::Custom,
+                    folder: folder.clone(),
+                },
+            }))
+    }
+
+    /// Give this project its own cache location, or clear it so the project
+    /// follows the application-wide choice again (`location: None`).
+    ///
+    /// An ordinary op, so it is undoable, journalled, and saved inside the `.lum`
+    /// — which is the point of it being in the document at all: the choice travels
+    /// with a copy of the project and survives being opened on another machine.
+    /// Nothing already cached is moved or deleted; the frames in the old folder
+    /// simply stop being addressed, and that folder may be deleted by hand at any
+    /// time.
+    #[frb(sync)]
+    pub fn set_cache_location(
+        &self,
+        location: Option<crate::api::cache::BridgeProjectCacheLocation>,
+    ) -> Result<(), BridgeError> {
+        use lumit_core::model::CacheLocation;
+        let location = location.and_then(|chosen| match chosen.location {
+            crate::api::cache::BridgeCacheLocation::AppData => Some(CacheLocation::AppData),
+            crate::api::cache::BridgeCacheLocation::BesideProject => {
+                Some(CacheLocation::BesideProject)
+            }
+            // A custom location with no folder chosen is not a location: leave
+            // the project following the application rather than pointing its
+            // cache at nothing.
+            crate::api::cache::BridgeCacheLocation::Custom if chosen.folder.is_empty() => None,
+            crate::api::cache::BridgeCacheLocation::Custom => Some(CacheLocation::Custom {
+                folder: chosen.folder,
+            }),
+        });
+        let state = self.state()?;
+        let state = state.write().map_err(|_| BridgeError::WriteFailed)?;
+        state
+            .store
+            .commit(Op::SetCacheLocation { location })
+            .map_err(BridgeError::OpError)?;
+        Ok(())
+    }
+
     /// Whether there is anything to undo or redo, for greying the menu items.
     #[frb(sync)]
     pub fn history(&self) -> Result<BridgeHistory, BridgeError> {

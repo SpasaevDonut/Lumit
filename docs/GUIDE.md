@@ -1144,11 +1144,11 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   whatever was used longest ago gets thrown out first. The limit is in bytes, not item
   counts — one 4K frame costs what sixty thumbnails cost, and budgeting any other way is
   how apps balloon.
-  As of the disk tier (`disk.rs`), frames also get **parked on disk**: once a project is
-  saved, a `yourproject.lum-cache` folder appears beside it and rendered frames are quietly
-  written there (compressed) by a background thread — so closing and reopening a project
-  doesn't start the cache from zero, and frames squeezed out of RAM can come back without
-  re-rendering. Each frame is one small file named by its content fingerprint; anything
+  As of the disk tier (`disk.rs`), frames also get **parked on disk**: a cache folder — in
+  Lumit's own app-data area by default, or beside the project file or somewhere you choose
+  (Settings → Performance) — collects rendered frames, written there compressed by a
+  background thread, so closing and reopening a project doesn't start the cache from zero,
+  and frames squeezed out of memory can come back without re-rendering. Each frame is one small file named by its content fingerprint; anything
   unreadable is silently deleted and re-rendered, so the folder is **always safe to delete**
   — it can make things faster, never wrong. The idle background fill now checks the disk
   before rendering: promoting a parked frame beats recomputing it. The timeline's cache bar
@@ -1157,7 +1157,9 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   The third tier is **VRAM**: the last few hundred megabytes of frames you actually looked
   at stay resident on the graphics card, so scrubbing back over them re-shows the exact
   texture with zero work — no upload, no colour maths. All three tiers answer to the same
-  content fingerprint, so a frame is a frame wherever it lives.
+  content fingerprint, so a frame is a frame wherever it lives — and a frame pushed out of
+  one tier falls into the next rather than being lost (K-214; the long section at the end of
+  this guide walks the whole ladder).
 - **Timeline guide lines** — the faint vertical lines through the lanes have a mode picker
   in the bottom bar ("Grid"): **beats** (the default — detected beats shine through every
   layer so cuts land on the music), **time** (a neutral second grid that subdivides as you
@@ -2527,12 +2529,16 @@ time you passed over a frame, even one you had just seen. The old egui app never
 did that: it keeps a shelf of already-drawn frames in memory and, when you scrub
 back over one, just takes it off the shelf. The bridge now has the same shelf
 (`crates/lumit-bridge/src/framecache.rs`). Each finished frame is filed on the
-shelf under a label that says *which* comp, *which* frame, at *what* preview
-size, and *which version of the document* it belongs to — so scrubbing back and
-forth is a shelf lookup with no drawing at all. The "which version" part matters:
-the moment you edit anything, the document becomes a new version and every frame
-on the shelf is thrown away, because they now show the old picture — you can
-never be handed a stale frame. There is a size limit (a few hundred megabytes by
+shelf under a label, so scrubbing back and forth is a shelf lookup with no
+drawing at all.
+
+*What the label says has since changed, and it matters — see "The three-tier
+cache" at the end of this guide (K-214).* As first built it said which comp, which
+frame, at what preview size, and which version of the document — and because a
+label like that does not change when the picture does, the only safe thing to do
+on any edit was to throw the whole shelf away. The label is now a hash of what is
+actually in the frame, so an edit that cannot change a pixel keeps every frame,
+and an undo finds its frames still on the shelf. There is a size limit (a few hundred megabytes by
 default, adjustable in Settings → Performance); when the shelf is full the
 least-recently-seen frames are dropped to make room, and "Clear cache" empties it
 on demand. A companion tidy-up: when you scrub quickly, a frame you have already
@@ -2542,11 +2548,11 @@ request tells the engine "that one is stale, skip it" before it starts.
 **Seeing what is on the shelf (the cache bar).** A thin green strip now runs
 along the bottom of the timeline ruler, over the frames whose picture is already
 on that shelf — so at a glance you can see how much of the comp is ready to play
-back instantly, exactly as the old egui app shows it. The engine only tells the
-bridge *how many* frames are cached, not *which* ones, so the Flutter side keeps
-its own note of the frames it has driven onto the shelf and draws a band over
-each; editing anything (which throws the shelf away) or clearing the cache wipes
-the strip too. The strip is scoped to the current preview size — which matters,
+back instantly, exactly as the old egui app shows it. (At this point the Flutter
+side kept its own note of which frames it had driven onto the shelf, because the
+engine reported only *how many* were cached; the engine answers per frame now, and
+the strip gained a steel-blue state for frames parked on disk — again, see the
+K-214 section at the end.) The strip is scoped to the current preview size — which matters,
 because the **resolution picker** (Full / Half / Third / Quarter in the transport)
 now genuinely renders a smaller picture rather than a full-size one relabelled:
 choosing Half asks the engine for half-resolution pixels, which are faster to
@@ -4570,12 +4576,13 @@ and since frames stopped travelling as pixels (K-183) the memory tier is only
 used by the scopes — so a Viewer busily banking frames on the card reported
 "nothing held" on the status line and looked broken.
 
-One number cannot answer "what is cached" for either tier, so the meter no longer
+One number cannot answer "what is cached" for any of them, so the meter no longer
 tries: it draws a small bar per tier with the megabytes held beside it, and
 clicking a bar empties that tier alone. The budget for each is in the tooltip and
 in Settings → Performance, because the status line is one line shared with the
-notices and the export progress. A third bar joins them when the disk tier
-actually runs.
+notices and the export progress. All three bars are there now (K-214) — the disk
+one asks before it deletes, since that tier holds files rather than a re-render's
+worth of work.
 
 ### Three ways a cache can lie about itself
 
@@ -4646,6 +4653,257 @@ sounds like belt and braces, but the rule in docs/14 is not "validate at the
 edges", it is *no panics in engine crates* — and a document from disk is not
 something the ops layer has vetted.
 
+### The three-tier cache, and why editing stopped throwing frames away (K-214)
+
+The most expensive thing Lumit does is composite a frame. Everything about how
+the editor *feels* comes back to how rarely it has to do that twice. This is the
+whole arrangement in plain terms, because it changed shape substantially.
+
+**A frame's name is a hash of what is in it.** Before rendering, Lumit writes
+down everything that could possibly affect the picture — every layer's evaluated
+transform, its effects and their values, masks, blend mode, switches, which file
+each footage layer reads and which frame of it, the transforms it inherits from
+its parents, and the preview resolution — and hashes all of it into one
+128-bit number. Two frames with the same number are guaranteed to be the same
+picture. So a finished frame is filed under that number, and asking for a frame
+means computing the number and looking it up.
+
+Nothing about *where* the frame sits goes into the name. That one decision is
+what the following three behaviours fall out of, and all three are things you can
+feel in the hand:
+
+- **An edit that cannot change a pixel costs nothing.** Renaming a layer, nudging
+  the work area, toggling solo on the only visible layer, adding sound to a layer,
+  moving a marker, changing the opacity of a *hidden* layer: each of these
+  produces exactly the same hashes as before, so every held frame is still held
+  and the cache bar stays green. Until this landed, the cache was named by
+  position — `(comp, frame, scale)` — which does not change when the picture does,
+  so the only safe thing to do on any committed edit was **throw every frame
+  away**. That is what made the bar go blank on a keystroke.
+- **Undo is instantly warm.** The restored document asks for the names it asked
+  for before the edit; if they have not been evicted since, they are still there.
+  Nothing is re-rendered to get back to where you were.
+- **There is no invalidation code at all.** No dirty flags, no "which frames could
+  this edit have reached" reasoning — which is a genuinely hard question once you
+  remember that a precomp means editing one composition changes every composition
+  containing it. An edit changes values, values change hashes, and the old entries
+  simply stop being asked for and age out.
+
+**One honest catch, and it had to be fixed for any of this to be safe.** A hidden
+layer contributes nothing to the hash, which is right — it draws nothing. But a
+layer *parented* to it still follows it. So moving a hidden Null moved its
+children on screen while every name stayed the same, and the children kept
+serving frames from before the move. Under the old positional keying that bug was
+harmless (everything was thrown away on every edit anyway); under content keying
+it would show a stale picture. Each layer's contribution now includes the
+transforms of its whole parent chain, and the algorithm version was bumped so
+every frame named under the old scheme stops being addressed.
+
+**Three places a frame can live, and it can move between them.** Cheapest to
+reach first:
+
+1. **On the graphics card** — a finished display texture. Showing one is a single
+   GPU copy; nothing is composited and no pixels cross into the application.
+2. **In memory** — the same frame's bytes. Putting one back on the card is an
+   upload: a fraction of a composite.
+3. **On disk** — a small file per frame in a cache folder. This is the only tier
+   that outlives the session, so a project you reopen tomorrow can be warm.
+
+When the card's cache is full and a new frame arrives, the frame that leaves is
+**read back off the card into memory and written to disk** rather than dropped —
+and can be put straight back on the card when it is wanted again. That is the
+"demotion ladder", and without the *upward* half it would be pointless: before it
+existed nothing could turn held bytes into a texture the Viewer shows, so a frame
+that fell out of the card would have been re-composited regardless and the two
+lower tiers were bookkeeping with nothing to show for it.
+
+**Why reading a frame back does not stutter the preview.** Copying a frame off
+the graphics card is slow enough to notice, and eviction happens *during* a
+render — on the thread the picture is waiting on. So the read-back is not
+performed there. The worker *asks* the card for it (encodes a copy command and
+returns immediately), and collects the bytes a turn or two later, by which time
+the card has done it alongside whatever it was rendering next. At most four of
+those may be in flight at once, which is what keeps a burst of evictions from
+flooding the bus; anything past that is dropped, and a dropped one costs a
+re-render and nothing else.
+
+Two small rules keep the ladder from wasting work. A frame that came back *up*
+is not sent down again when it leaves — it is already in memory and on disk, so
+copying it down a second time would be pure traffic (this is what stops a long
+scrub over a span bigger than the cache from reading the same frames off the card
+over and over). And a frame is written to disk on the way down, not when memory
+later forgets it, so a session that ends unexpectedly has still banked what it
+made.
+
+**Where the disk cache lives.** By default in Lumit's own cache folder, in a
+subfolder named after the project's internal id — which is written into the
+`.lum` and never changes, so an unsaved project caches from the moment it is
+created and still finds its frames after a save and a reopen. Each platform has
+its own idea of where that folder is, and Lumit uses the local one rather than
+inventing a path (the same call the crash journal and the media index already
+make, so there is only ever one Lumit folder):
+
+| | Where the frames go |
+|---|---|
+| Windows | `%LOCALAPPDATA%\Lumit\Lumit\cache\frames\<document id>\` |
+| macOS | `~/Library/Caches/dev.Lumit.Lumit/frames/<document id>/` |
+| Linux | `$XDG_CACHE_HOME/lumit/frames/<document id>/`, or `~/.cache/lumit/…` |
+
+On Windows that is deliberately **Local** AppData and not Roaming: a roaming
+profile on a work machine would try to copy the whole cache to a network share at
+logoff, and a frame cache can be tens of gigabytes.
+
+This is the *cache* directory, not the temp directory — temp is emptied on
+reboot, so a project would come back cold every morning. These do survive a
+reboot. What they do allow is the operating system reclaiming the space when a
+disk gets tight (macOS's Optimise Storage and the usual Linux cleaners both treat
+these folders as fair game), which is exactly right for something deletable at
+any time: "warm yesterday, cold today" is possible and is not a fault.
+
+Settings → Performance offers two alternatives: beside the project file, which
+makes the cache travel with the project and is never reclaimed by anyone, or a
+folder you pick, to put it on a faster or roomier drive. Changing the setting
+moves nothing; the old folder is simply no longer looked at, and deleting a cache
+folder by hand is always safe.
+
+**Why the cache bar is a photograph rather than a question.** The stripe under the
+ruler shows which frames are held. Answering that per frame now means *naming*
+each frame — hashing the whole composition at that time — which needs the
+renderer's knowledge of the footage files and is far too much work for the thread
+that paints the interface. So the bar leaves a note saying which composition and
+what scale it is drawing, and the render worker computes the strip and publishes
+it; the bar draws whatever was last published. It is at most a tenth of a second
+stale, blank for a moment after switching compositions, and on a very long
+composition it samples rather than naming all forty thousand frames to draw a
+stripe a thousand pixels wide. Mint means the frame plays now; steel blue means it
+is parked on disk and one promotion away; dimmed means it is held, but at a
+coarser resolution than you are viewing.
+
+### Three things the cache learned afterwards (K-215)
+
+The three-tier cache above shipped with three known gaps, written into the
+backlog rather than papered over. All three are closed now, and each is worth a
+paragraph because each is a different *kind* of gap.
+
+**The disk tier could not tell a dear frame from a cheap one.** The two tiers
+above it evict by the rule the design asks for — throw out whatever is *stale,
+large, and cheap to make again* — because they hold that information in memory
+beside each frame. The disk tier held nothing beside its files, so all it could
+sort by was the one thing a filesystem remembers: when each file was written. It
+therefore deleted the oldest frame even when that frame had taken half a second
+to render and its neighbour had taken two milliseconds.
+
+It now keeps a small **index**: for each parked frame, its size, what it cost to
+render, when it was last wanted, and what preview size it was made at. Two files,
+and the reason there are two is worth knowing, because it is a pattern you will
+meet again. A single file rewritten on every change would rewrite megabytes to
+record one frame. A single file rewritten only occasionally would lose whatever
+happened since — and those frames are *worse than forgotten*, because the files
+are still on the disk taking up room nothing knows to reclaim. So there is a
+snapshot (`index.bin`) rewritten now and then, and a log (`index.log`) with one
+small fixed-size record appended per change. Opening reads the snapshot and
+replays the log. A record half-written when the power went is a partial record at
+the end, and being fixed-size is exactly what makes that detectable — it is
+discarded and the whole ones before it still count. If either file is missing or
+unreadable the folder is walked once and the index rebuilt from it, so a cache
+from an older build, or one whose index was deleted, costs a scan and nothing
+else.
+
+**The cache bar was sampled on a long composition, and now it converges.**
+Drawing the stripe means asking "is this frame held?" per frame, and each answer
+means naming that frame — hashing the whole composition at that moment. On a
+ten-minute composition that is tens of thousands of hashes, so the first version
+sampled: one frame in forty stood for its neighbours. Honest at the width a
+stripe is drawn, and wrong if you zoom in.
+
+What it does now is two passes. The sampled pass still runs first, because the
+bar owes an answer for the *whole* composition immediately — a stripe that fills
+in from the left looks like the cache filling in from the left, which is a lie
+about something the user is watching closely. Then a refinement pass walks the
+strip in bounded chunks, replacing each sample with the frames it stood for, and
+it starts at the frame last shown and wraps — so the part of the bar under the
+playhead is the part that firms up first. A composition short enough to name in
+one go has a stride of one and its first pass is already the truth. One detail
+that took a moment to get right: only a *held* sample paints the frames it
+skipped. Painting a whole stride green off one held frame and correcting it a
+moment later would flash cache the user does not have.
+
+**Where a project caches is now the project's business, if it wants it to be.**
+The location setting was application-wide: every project cached wherever Lumit
+was set to. That is the right default and the wrong only-option — a project
+living on a scratch drive wants its frames on that drive, and a project you hand
+to someone else should carry the choice with it. So the document itself can hold
+a location, and Settings → Performance grew an **Applies to** row: *Everything*,
+which is the setting, or *This project*, which is a field inside the `.lum`.
+
+Two consequences fall out of it being in the document rather than in the
+settings. It travels: copy the project, open it on another machine, and it still
+caches where you said. And it is an ordinary edit — the same op machinery as
+moving a layer — so it is undoable, it is journalled with everything else, and it
+is saved when you save. A project that has never been given a location of its own
+stores nothing at all, so its file does not grow a line for a choice nobody made.
+
+### Making playback use the cache it has
+
+The three tiers were built and full, and playback still did not get all it could
+from them. Three things were in the way. None of them changes what the cache
+holds — they change what it costs to get a frame out of it.
+
+**The disk tier was always one step too late.** Reading a frame off disk is done
+by a different thread, and the bytes come back a moment after they are asked
+for — a turn or two of the worker loop. Playback asked for a frame at the moment
+it had to show it, so the bytes always arrived after the frame had gone past, and
+playback composited the frame from the beginning instead. The frames did arrive,
+and they were used the *second* time you played over that part; but a first pass
+over a span that had been parked on disk got no good from it at all. That is most
+of what the disk tier holds when you re-open a project, which is exactly when you
+want it to help.
+
+Playback already looks ahead: while it makes one frame, it tells the decode
+thread which video frames the *coming* frames will need, so those decodes happen
+alongside. The disk reads now go out in the same place. By the time playback
+reaches the frame, the bytes have arrived and the frame is on the card. Nothing
+waits for a read — a frame that has not turned up is composited as it was before.
+
+**A frame in memory was copied to be put back on the card.** A 1080p frame is
+8 MB. Putting one back on the card handed the uploader a *copy* of those bytes,
+because the cache must not hold its lock while the graphics card works. The fix
+is a shared handle (Rust calls it an `Arc`): the cache and the uploader point at
+the same 8 MB, and the count of who is looking is what keeps it alive. Handing a
+frame over is now the cost of adding one to a number. The same handle goes to the
+disk thread, so a frame that falls out of the card is no longer copied twice on
+its way down.
+
+**Every promoted frame made a new texture on the card.** A texture is memory on
+the graphics card, and asking for one is not free. Playback promotes a frame each
+time it passes one, so that was an allocation per frame — while the cache was, at
+the same moment, throwing away a texture of exactly the same size, because a
+promotion pushes something out. So the ones that leave are kept in a small pool
+(four of them) and written over instead.
+
+The care here is in one question: is anybody still using that texture? A texture
+that the Viewer is showing must not be written over — you would see the wrong
+picture, and no error would be raised. The shared handle answers it without any
+bookkeeping: if the pool holds the *only* remaining share of a texture, nothing
+else can be showing it. Only then is it used again. One more rule, which is about
+what the card allows rather than about safety: a texture that a composite drew
+into cannot have bytes written into it, so only textures that a promotion made
+are kept.
+
+**And one more, which is not about the cache at all.** Showing a frame made the
+interface ask the engine three questions it did not need to ask. Two Viewer
+widgets show which preview tier playback has settled on, and each asked the
+engine for that number every time it redrew — which is every frame. A third
+asked which route frames take from the engine to the screen, and that one is
+decided when Lumit is built: the answer cannot change while it runs. At 24
+frames a second that is about 72 questions a second before playback does
+anything of use, and it grows with the frame rate.
+
+Each crossing between the interface and the engine is cheap, and none of these is
+free. So the frame now brings the tier with it — the only thing that can change
+it is a new frame — and the route is read once and kept. A redrawn Viewer bar
+now asks the engine nothing at all, and there is a test that counts the
+crossings and fails if that stops being true.
 ### The toolbar, and why it shows tools that do nothing yet (K-216)
 
 Every editor has a strip of tools under its menus, and the Flutter frontend did
@@ -5225,7 +5483,6 @@ yet — the stamping is a plain loop over pixels on the CPU, next door to the ma
 rasteriser. That last one is the only one that would change the code rather than
 add to it, and it changes how a stroke is *drawn*, not what a stroke *is*, which
 is why the storage was settled first.
-
 ### A tool you cannot pick, and why that is the honest option (K-228)
 
 Every tool in the specification is on the strip, including the ones nothing is

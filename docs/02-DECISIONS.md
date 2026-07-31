@@ -3476,6 +3476,121 @@ not keyframed, so nothing draws it in the wrong place, and it is the arm the pon
 comment in `Layer::source_time_at` marks for deletion; it is left alone rather than being
 half-migrated. Recorded here so the next person meets it deliberately.
 
+**K-214 · DECIDED · The frame cache is named by content, and its three tiers are one ladder.**
+Requested by Mack (2026-07-30), from two complaints that turned out to be the same one: "a lot
+of things are resetting the cache when they shouldn't — moving the work area, adding audio to a
+layer, changing the opacity of a hidden layer", and "when I undo, we shouldn't have to cache
+from scratch again". Both are the cost of positional keying, which K-178 recorded as an interim
+and this entry closes.
+
+**Every tier is keyed by the content hash the specification always asked for** (docs/06 §5.2),
+not by `(comp, frame, scale)`. A positional name does not change when the picture does, so the
+only safe answer to a committed edit was to drop every held frame of every composition — and
+the price was paid on exactly the edits that cannot change a pixel. There is now no
+invalidation step anywhere: an edit renames the frames it changed and leaves the rest
+addressable, so a rename keeps the bar green and an undo finds its frames still filed under the
+names the restored document asks for. It also makes the disk tier honest, which is why the
+TODO listed content keying as its blocker: a frame parked under a positional name would serve
+the picture from before an edit, or from another day's document entirely.
+
+**The key gained a layer's inherited parent chain, and `ALGO_VERSION` went to 2.** A hidden
+layer contributes nothing — it draws nothing — but its children still follow it, so moving a
+hidden Null changed the picture while leaving every name alone. Harmless while everything was
+discarded on every edit; a stale-frame bug the moment names started surviving. K-206 makes it
+the common case rather than a corner: a Null is the layer a user will most readily hide.
+
+**The demotion ladder runs both ways, and the read-back is asynchronous.** A frame evicted from
+the card is read back into memory and written behind to disk; a frame held below is uploaded
+straight back into a texture instead of being composited again. The upward half is what makes
+the lower tiers worth having at all — before it, nothing could turn held bytes into a picture
+the Viewer shows.
+
+**Deviation from docs/06 §5.3, recorded rather than hidden: there is no cost threshold on
+demoting.** The specification says to read a frame back only when its recompute cost exceeds
+the read-back's, which is the right idea; the number to compare is not available. A composite
+is *submitted* to the graphics card and the call returns, so the wall-clock a renderer can
+measure around it is the submit, not the work — a frame that costs the card 8 ms can measure
+under one, and a threshold on that gates the ladder on noise. What bounds the traffic instead
+is a ceiling of four read-backs in flight, which bounds it directly; the measured cost is still
+used for eviction *ordering*, where a comparative number is good enough. Two derived rules: a
+frame promoted up is never demoted again (it is already below), and a frame goes to disk on the
+way down rather than when memory later forgets it.
+
+**The disk cache lives in Lumit's own cache folder by default**, keyed by the document id,
+rather than in the `<project>.lum-cache/` sidecar docs/06 §5.4 describes. The sidecar only works
+once a project *has* a file, and a project should cache from the moment it is created; the
+document id is in the `.lum` and survives every save. Both other options are offered in
+Settings → Performance — beside the project (the per-project choice) and a folder the user picks
+— and changing the setting moves nothing, since a cache folder is deletable at any time with no
+correctness effect. A per-project override stored inside the `.lum` is left in the backlog.
+
+**Clearing the disk tier asks first**; the other two do not. RAM and VRAM cost a re-render each,
+while this one deletes files that may represent a night's work and there is nothing to undo.
+With nothing parked it does not ask.
+
+**The cache bar became a published strip rather than a query** (docs/06 §5.6's "lock-free bitmap
+snapshot", which was always the design). Naming a frame needs the renderer's probe results and a
+hash per frame, so the interface cannot answer its own question: the bar records what it is
+drawing and the worker publishes the strip for it. Consequences stated rather than papered over —
+up to ~150 ms stale, blank for a beat after a composition switch, and sampled on a composition
+longer than about a thousand frames, because the stripe is a thousand pixels wide at most. Its
+values grew from three to five: nothing, held-coarser, held, on-disk-coarser, on-disk, with
+playable outranking promotable.
+
+**The card's tier and memory's share one colour on the bar** (mint), because they answer the same
+question — does this frame play now — and a frame in memory is one upload from the screen. Which
+of the two holds it is the status line meter's business, where each tier has its own bar.
+
+**K-215 · DECIDED · The three follow-ups K-214 left in the backlog are closed.** Requested by
+Mack (2026-07-30): implement what the TODO named rather than leaving it. Each was a stated gap,
+and each is a different kind of gap.
+
+**The disk tier has an index, so it evicts by the same rule as the tiers above it.** It held
+nothing beside its files, so the only thing it could sort by was the modification time a
+filesystem happens to remember — it deleted the oldest frame even when that frame had cost half a
+second to render and its neighbour two milliseconds. It now records size, recompute cost, last use
+and quality per entry, so presence and the byte total cost nothing at run time and eviction is the
+spec's stale × large ÷ cheap-to-remake (docs/06 §5.3) from the top of the ladder to the bottom.
+
+Two files rather than one, which is the interesting part: a snapshot (`index.bin`) rewritten now
+and then, and a log (`index.log`) with one fixed-size record appended per change. A snapshot
+rewritten per change rewrites megabytes to record one frame; a snapshot rewritten only
+occasionally loses what happened since, and those losses are *worse than forgotten* — the files
+remain on disk taking up room nothing knows to reclaim. Opening replays the log over the
+snapshot; a record torn by a crash is a partial trailing record and is discarded by length, which
+is what fixed-size records buy. Either file missing or unreadable falls back to walking the
+folder, which is §5.4's "rebuilt by scan if missing or corrupt".
+
+**A deviation from §5.4, recorded rather than silent: not SQLite.** The spec says `index.db`. This
+is a flat map of fixed-size rows read once at start-up and otherwise held in memory; SQLite would
+put a C dependency into an engine crate to store it, and the media frame index (docs/10 §3)
+already sets the house precedent of a plain binary sidecar.
+
+**The cache bar converges on per-frame truth instead of staying sampled.** Naming a frame means
+hashing the composition at that time, so a ten-minute composition is tens of thousands of hashes
+and the first version sampled one frame in forty. Two passes now: the sampled pass still runs
+first, because the bar owes an answer for the whole composition at once — a stripe filling in from
+one end reads as the *cache* filling in from one end — and a refinement pass then walks the strip
+in bounded chunks replacing each sample with the frames it stood for, starting at the frame last
+shown and wrapping so the region under the playhead firms up first. A composition short enough to
+name in one go has a stride of one and is exact on the first pass. Only a **held** sample paints
+the frames it skipped: painting a stride green off one held frame and correcting it a moment later
+would flash cache the user does not have.
+
+**Where a project parks its frames can now be the project's own answer.** Application-wide is the
+right default and was the wrong only-option: a project living on a scratch drive wants its frames
+on that drive, and a project handed to someone else should carry the choice with it. So
+`Document` gains `cache_location: Option<CacheLocation>` — `None` meaning "follow the
+application", which is the ordinary case and stores nothing in the file — set through an ordinary
+op, so it is undoable, journalled and saved like any other edit, and it travels with a copy of the
+project in a way a settings-file entry could not. Settings → Performance gained an **Applies to**
+row (*Everything* / *This project*); switching back to Everything clears the project's answer
+rather than copying the application's into it, so the project follows along afterwards. A
+project's answer overrides the application's, and changing either moves nothing — the frames in
+the old folder simply stop being addressed, and that folder is deletable at any time.
+
+**Not done, and deliberately: nothing about this is in the pull request for K-214.** Mack asked
+for these on a branch of their own so the reviewable change stays the one that was reviewed.
 **K-216 · DECIDED · The toolbar is one strip under the menu bar, and it ships with the whole
 tool set whether or not each tool works yet.** From the owner (2026-07-31): the toolbar had
 no counterpart at all on the Flutter frontend — the egui shell's tool row did not survive the

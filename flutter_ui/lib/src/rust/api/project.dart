@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'cache.dart';
 import 'composition.dart';
 import 'effect.dart';
 import 'folder.dart';
@@ -59,6 +60,18 @@ class ProjectReference {
   String autosave({required String projectPath, required int keep}) =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceAutosave(
           that: this, projectPath: projectPath, keep: keep);
+
+  /// Where *this project* parks its rendered frames, overriding the
+  /// application-wide choice — or `None` when it follows that choice, which is
+  /// the ordinary case (docs/06-RENDER-PIPELINE.md §5.4).
+  ///
+  /// Returned as the enum plus a folder, the same pair
+  /// [`Self::set_cache_location`] takes; the folder is empty unless the
+  /// location is `Custom`.
+  BridgeProjectCacheLocation? cacheLocation() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceCacheLocation(
+        that: this,
+      );
 
   List<ItemReference> getItems() =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceGetItems(
@@ -154,6 +167,19 @@ class ProjectReference {
   /// *between* saves, so once the document is on disk it is redundant.
   Future<String> save({required String path}) => BridgeLib.instance.api
       .crateApiProjectProjectReferenceSave(that: this, path: path);
+
+  /// Give this project its own cache location, or clear it so the project
+  /// follows the application-wide choice again (`location: None`).
+  ///
+  /// An ordinary op, so it is undoable, journalled, and saved inside the `.lum`
+  /// — which is the point of it being in the document at all: the choice travels
+  /// with a copy of the project and survives being opened on another machine.
+  /// Nothing already cached is moved or deleted; the frames in the old folder
+  /// simply stop being addressed, and that folder may be deleted by hand at any
+  /// time.
+  void setCacheLocation({BridgeProjectCacheLocation? location}) =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceSetCacheLocation(
+          that: this, location: location);
 
   Stream<WorkerResponse> startWorker() =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceStartWorker(

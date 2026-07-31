@@ -106,6 +106,10 @@ Future<String?> pickKeymapToOpen() async {
   return file?.path;
 }
 
+/// Pick a folder — Settings → Performance's cache location, where the disk tier
+/// parks its frames (docs/07 §15). Null when the dialogue was cancelled.
+Future<String?> pickFolder() => getDirectoryPath(confirmButtonText: 'Choose');
+
 /// Choose where to write a keymap, or null when cancelled.
 Future<String?> pickKeymapSaveLocation() async {
   final location = await getSaveLocation(

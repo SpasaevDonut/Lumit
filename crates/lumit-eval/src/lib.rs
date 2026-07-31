@@ -30,9 +30,16 @@ pub mod graph;
 pub mod pool;
 pub mod schedule;
 
-/// Bump when any rendering algorithm's output changes: every cached frame
-/// keyed under the old version stops being addressed.
-pub const ALGO_VERSION: u32 = 1;
+/// Bump when any rendering algorithm's output changes — or when the key itself
+/// starts covering something it did not: every cached frame keyed under the old
+/// version stops being addressed, which is what makes a fix to the key safe.
+///
+/// * 1 — the original key.
+/// * 2 — a layer's inherited parent-chain placement joined the key (see
+///   [`feed_layer`]). Under version 1 a hidden parent could be moved without
+///   renaming its children's frames, so those frames were served stale; every
+///   version-1 entry has to stop being addressed for the fix to mean anything.
+pub const ALGO_VERSION: u32 = 2;
 
 /// A 128-bit content hash addressing one rendered comp frame (docs/06 §5.2:
 /// collisions are treated as impossible; no structural comparison at lookup).
@@ -405,6 +412,49 @@ fn feed_layer(
         tr.opacity.value_at(lt),
     ] {
         feed_f64(h, v);
+    }
+    // The parent chain's inherited placement (K-103 parenting): a parented layer
+    // is drawn inside its ancestors' coordinate space, so every ancestor's
+    // evaluated transform is content for THIS layer's pixels.
+    //
+    // **Why it cannot be left to the ancestors' own contributions.** An ancestor
+    // that draws is hashed in its own right, so moving a visible parent already
+    // changed the comp's key. A *hidden* one is not: `feed_comp` skips it, exactly
+    // as the renderer draws nothing for it — while its children still follow it.
+    // Without this the pixels moved and the name did not, so the children served
+    // frames from before the move. A Null is the layer a user hides most readily
+    // (K-206: there is nothing to look at), which makes that the common case
+    // rather than a corner.
+    //
+    // Sampled the way [`lumit_render::build::parent_world_placement`] samples —
+    // each ancestor at its own local time, farthest ancestor first, and only the
+    // values `place_matrix` consumes (opacity does not inherit, so it is not
+    // content here). Hashed only for a layer that HAS a parent, so an unparented
+    // layer's contribution is unchanged.
+    if layer.parent.is_some() {
+        h.update(b"parents/");
+        for ancestor in lumit_core::model::layer_parent_chain(comp, layer.id)
+            .iter()
+            .rev()
+            .filter_map(|id| comp.layers.iter().find(|l| l.id == *id))
+        {
+            let alt = t - ancestor.start_offset.0.to_f64();
+            let atr = &ancestor.transform;
+            for v in [
+                atr.position_x.value_at(alt),
+                atr.position_y.value_at(alt),
+                atr.position_z.value_at(alt),
+                atr.anchor_x.value_at(alt),
+                atr.anchor_y.value_at(alt),
+                atr.scale_x.value_at(alt),
+                atr.scale_y.value_at(alt),
+                atr.rotation.value_at(alt),
+                atr.rotation_x.value_at(alt),
+                atr.rotation_y.value_at(alt),
+            ] {
+                feed_f64(h, v);
+            }
+        }
     }
     h.update(&[u8::from(layer.switches.three_d)]);
     h.update(&[blend_tag(layer.blend)]);
@@ -938,6 +988,114 @@ mod tests {
             before,
             key(&doc, &comp, 1.0),
             "moving a Null moves what is parented to it, so its frames must retire"
+        );
+    }
+
+    /// **The hidden-parent hole (ALGO_VERSION 2).** A hidden layer draws
+    /// nothing, so it contributes nothing to the key — but a layer parented to
+    /// it still follows it. Moving a hidden parent therefore moved the picture
+    /// while leaving every name alone, and the children served frames from
+    /// before the move. K-206 makes it the common case rather than a corner: a
+    /// Null is the layer a user hides most readily, having nothing to look at.
+    ///
+    /// Fails without the parent-chain fold in `feed_layer`.
+    #[test]
+    fn moving_a_hidden_parent_retires_its_children() {
+        let doc = Document::new();
+        let mut null = text_layer("null", 0.0, 5.0, 0.0);
+        null.kind = LayerKind::Null;
+        null.switches.visible = false;
+        let mut child = text_layer("child", 0.0, 5.0, 0.0);
+        child.parent = Some(null.id);
+
+        let mut comp = comp_with(vec![child, null]);
+        let before = key(&doc, &comp, 1.0);
+        comp.layers[1].transform.position_x = Property::fixed(400.0);
+        assert_ne!(
+            before,
+            key(&doc, &comp, 1.0),
+            "a hidden parent still places its children, so moving it must retire \
+             their frames"
+        );
+
+        // The grandparent case too: the whole chain places the child, so an
+        // ancestor two steps up is content just as the immediate parent is.
+        let mut grandparent = text_layer("gp", 0.0, 5.0, 0.0);
+        grandparent.kind = LayerKind::Null;
+        grandparent.switches.visible = false;
+        let mut parent = text_layer("p", 0.0, 5.0, 0.0);
+        parent.kind = LayerKind::Null;
+        parent.switches.visible = false;
+        parent.parent = Some(grandparent.id);
+        let mut child = text_layer("child", 0.0, 5.0, 0.0);
+        child.parent = Some(parent.id);
+
+        let mut chain = comp_with(vec![child, parent, grandparent]);
+        let before = key(&doc, &chain, 1.0);
+        chain.layers[2].transform.rotation = Property::fixed(30.0);
+        assert_ne!(before, key(&doc, &chain, 1.0), "the whole chain is content");
+    }
+
+    /// The other half of the same promise: hiding a layer nothing is parented
+    /// to, and then editing it, changes no pixel — so every frame's key, and
+    /// every cached frame with it, must survive. This is the behaviour the
+    /// cache is judged on in the hand ("changing the opacity of a hidden layer
+    /// should not reset the cache"), and the parent-chain fold above must not
+    /// have cost it.
+    #[test]
+    fn editing_a_hidden_layer_keeps_every_frame() {
+        let doc = Document::new();
+        let mut hidden = text_layer("hidden", 0.0, 5.0, 0.0);
+        hidden.switches.visible = false;
+        let mut comp = comp_with(vec![text_layer("shown", 0.0, 5.0, 0.0), hidden]);
+        let before = key(&doc, &comp, 1.0);
+
+        comp.layers[1].transform.opacity = Property::fixed(12.0);
+        comp.layers[1].transform.position_x = Property::fixed(900.0);
+        comp.layers[1].name = "renamed while hidden".into();
+        assert_eq!(
+            before,
+            key(&doc, &comp, 1.0),
+            "a hidden layer with no children draws nothing, whatever is done to it"
+        );
+    }
+
+    /// Edits that cannot reach a pixel keep every key — the whole reason the
+    /// cache is content-keyed rather than emptied on every commit. The work
+    /// area is where the playhead loops, a marker is a label, a label colour is
+    /// Timeline chrome, and volume is sound: none of them is in the picture.
+    #[test]
+    fn picture_free_edits_keep_every_key() {
+        let doc = Document::new();
+        let mut comp = comp_with(vec![text_layer("hi", 0.0, 8.0, 0.0)]);
+        let before = key(&doc, &comp, 1.0);
+
+        comp.work_area = Some((secs(1.0), secs(2.0)));
+        assert_eq!(
+            before,
+            key(&doc, &comp, 1.0),
+            "the work area is not content"
+        );
+
+        comp.markers.push(lumit_core::markers::Marker {
+            id: Uuid::now_v7(),
+            time: secs(1.0),
+            duration: None,
+            label: "beat".into(),
+            kind: lumit_core::markers::MarkerKind::Beat { confidence: 1.0 },
+            extra: serde_json::Map::new(),
+        });
+        assert_eq!(before, key(&doc, &comp, 1.0), "a marker is a label");
+
+        comp.layers[0].label = 5;
+        comp.layers[0].volume_db = Property::fixed(-6.0);
+        comp.layers[0].switches.audible = false;
+        comp.layers[0].switches.shy = true;
+        comp.layers[0].switches.locked = true;
+        assert_eq!(
+            before,
+            key(&doc, &comp, 1.0),
+            "label, volume, audio and the Timeline switches change no pixel"
         );
     }
 

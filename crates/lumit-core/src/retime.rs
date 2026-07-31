@@ -1477,7 +1477,7 @@ fn fit_map_to_rate(
         mn = mn.min(v);
         mx = mx.max(v);
     }
-    if (mn < 0.0 && mx > 0.0) || (!allow_reverse && mn < 0.0) {
+    if mn < 0.0 && (mx > 0.0 || !allow_reverse) {
         return None;
     }
     let c_avg = (hi.s.to_f64() - s0) / d; // mean speed = Δs / d

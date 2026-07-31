@@ -614,17 +614,14 @@ LumitIcon iconForKind(BridgeLayerKind kind) => switch (kind) {
 /// The cache bar: a thin stripe under the time ruler showing which frames are
 /// already rendered and held (docs/07-UI-SPEC.md §3.2, docs/15-DESIGN.md §6.3).
 ///
-/// **What the colours mean.** Mint means the frame is held at the resolution the
-/// Viewer is showing — it plays now, which is the promise the bar exists to make
-/// (docs/13 §B5). A dimmed mint means it is held only at a coarser resolution
-/// than is being displayed: there is something, but it would be rendered again
-/// to show it at this size. Nothing drawn means nothing held. No amber, no red,
-/// no pulsing — an empty cache is not a fault.
-///
-/// The design language reserves steel blue for frames on disk only. There is no
-/// disk frame cache in this engine yet, so that state cannot occur and is not
-/// drawn; when one arrives it is a third value from `cachedFrames` and a third
-/// colour here.
+/// **What the colours mean.** Mint means the frame is held in memory or on the
+/// graphics card at the resolution the Viewer is showing — it plays now, which is
+/// the promise the bar exists to make (docs/13 §B5). Steel blue means it is
+/// parked on disk only: one promotion from playing, not playable this instant.
+/// Either colour dimmed means it is held only at a coarser resolution than is
+/// being displayed — there is something, but it would be rendered again to show
+/// it at this size. Nothing drawn means nothing held. No amber, no red, no
+/// pulsing — an empty cache is not a fault.
 ///
 /// **It never polls.** The cache's lock is the one a render holds, so reading it
 /// per paint would put the interface behind the renderer. `revision` is bumped
@@ -667,6 +664,8 @@ class TimelineCacheBar extends StatelessWidget {
               axis: axis,
               ready: t.success,
               coarse: t.success.withValues(alpha: 0.4),
+              onDisk: t.cacheDisk,
+              onDiskCoarse: t.cacheDisk.withValues(alpha: 0.4),
             ),
           ),
         );
@@ -1107,19 +1106,32 @@ class _CacheBarPainter extends CustomPainter {
   final CacheBarAxis axis;
   final Color ready;
   final Color coarse;
+  final Color onDisk;
+  final Color onDiskCoarse;
 
   const _CacheBarPainter({
     required this.tiers,
     required this.axis,
     required this.ready,
     required this.coarse,
+    required this.onDisk,
+    required this.onDiskCoarse,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint();
     for (final (start, end, tier) in cacheBarRuns(tiers)) {
-      paint.color = tier >= 2 ? ready : coarse;
+      // The engine's five states (`cached_frames`): 1 held coarser, 2 held at
+      // this resolution, 3 on disk coarser, 4 on disk at this resolution. An
+      // unknown value from a newer engine draws as the plainest "something is
+      // held" rather than as nothing.
+      paint.color = switch (tier) {
+        1 => coarse,
+        3 => onDiskCoarse,
+        4 => onDisk,
+        _ => ready,
+      };
       final left = axis.xOf(start).clamp(0.0, size.width);
       // The run's right edge is the left edge of the frame after it, so a run
       // covers its last frame rather than stopping at that frame's start. At
@@ -1138,7 +1150,10 @@ class _CacheBarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_CacheBarPainter old) =>
-      old.tiers != tiers || old.ready != ready || old.coarse != coarse;
+      old.tiers != tiers ||
+      old.ready != ready ||
+      old.coarse != coarse ||
+      old.onDisk != onDisk;
 }
 
 /// The Timeline's two-tone ground (K-202): the work area at one value, and a

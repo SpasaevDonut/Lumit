@@ -360,6 +360,30 @@ Playback reads VRAM first, promotes RAM→VRAM, and promotes disk→RAM→VRAM a
 (never plays directly from disk). Writes are write-behind on background IO threads; a disk
 write never blocks a render.
 
+**Shipped (K-214).** All three tiers run. The VRAM tier holds finished display textures
+(K-187), the RAM tier holds their bytes, and the disk tier parks them in a folder that
+outlives the session. The rungs between them are built both ways: a frame evicted from VRAM
+is read back off the card and lands in RAM and on disk, and a frame held below is uploaded
+straight back into a texture rather than composited again. What the tiers hold is
+**final comp frames only** — node-output caching is the evaluator's, and is not built.
+
+**"Ahead of the playhead" is what makes the disk tier count during playback.** A read off disk
+goes to the IO thread, and the bytes come back one or two turns of the worker loop later. A
+frame asked for at the moment it must be shown thus always arrives too late, and playback
+composites it again — a span parked on disk was then worth nothing to playback, which is most
+of what the disk tier holds after a project is re-opened. Playback asks for the frames of its
+look-ahead window instead, at the same time as it posts their source decodes, so the frame is
+on the card before playback reaches it. Nothing waits: a frame that has not arrived is
+composited as before.
+
+**Two costs the ladder used to pay for each frame, and no longer pays.** The bytes of a frame
+are held in one allocation that the memory tier and the disk tier share, in place of a copy for
+each (8 MB for each 1080p frame, twice, on the worker thread). And a promotion writes into a
+display texture that the VRAM cache has finished with, in place of making one, whenever nothing
+shows that texture any more. The share count of the texture is what says so, which is the only
+safe test: a write into a texture that a present still shows would put the wrong picture on the
+screen.
+
 ### 5.2 Cache key
 
 Every cache entry is keyed by a 128-bit content hash (BLAKE3-short or xxHash3-128; collisions
@@ -397,6 +421,24 @@ Normative details:
 dependency walker: an edit changes evaluated values, values change hashes, old entries simply
 stop being addressed and age out via eviction.
 
+**As built (K-214).** Every tier is content-keyed, and the invalidation machinery is gone. It
+briefly existed: while the tiers were keyed by `(comp, frame, scale)` an edit did not rename any
+frame, so the only safe answer was for a committed change to drop every held frame of every
+composition — and the cost was paid on the edits that cannot change a pixel. A rename, a
+work-area nudge, a solo toggle, sound added to a layer, an opacity keyframe on a hidden layer:
+each one emptied the cache and the bar went blank with it. None of them does now, and an undo
+finds its frames still filed under the names the restored document asks for.
+
+The one place the key was not honest has been fixed with it: a layer's inherited **parent-chain**
+placement now feeds its contribution (`ALGO_VERSION` 2). A hidden layer contributes nothing —
+correctly, since it draws nothing — but its children still follow it, so moving a hidden parent
+moved the picture while leaving every name alone, and the children served frames from before the
+move. K-206 makes that the common case rather than a corner: a Null is the layer a user hides
+most readily, having nothing to look at.
+
+A frame is only nameable once its footage is probed. Until then it renders live and is banked
+nowhere, so an entry can never be a promise the renderer did not keep.
+
 ### 5.3 Eviction
 
 Cost-aware LRU (GreedyDual-style), managed by the resource governor's budgets: each entry
@@ -405,6 +447,24 @@ cheap-to-recompute × large. Additional rules: the displayed frame and a window 
 playhead are pinned; final comp frames outlive intermediates at equal staleness (playback needs
 finals; intermediates rebuild from cached inputs); VRAM eviction demotes to RAM only when
 recompute cost exceeds a readback-cost threshold, otherwise drops.
+
+**As built (K-214), with one deviation, and why.** Every eviction demotes; there is no cost
+threshold on the decision. The threshold is the right idea and the number to compare against
+is not available: a composite is *submitted* to the graphics card and the call returns, so the
+wall-clock the renderer can measure around it is the submit rather than the work — a frame that
+costs the card 8 ms can measure under one. Gating the ladder on that would gate it on noise.
+What bounds the traffic instead is a hard ceiling on how many read-backs may be in flight at
+once (four); a burst of evictions past it drops the extra frames, which costs a re-render and
+nothing else. The read-back is *encoded* at eviction time and collected a worker turn or two
+later, so an eviction never makes the preview wait for the bus. The measured cost is still
+recorded and still used — for eviction **ordering**, which is comparative and where a noisy
+number is good enough.
+
+Two rules fall out of the ladder being two-way. A frame that arrived by being promoted UP is
+not read back when it goes: it is already held below, and demoting it again would be pure
+traffic — this is what stops a scrub across a span larger than the cache from reading the same
+frames off the card over and over. And a frame goes to disk on the way *down*, not when RAM
+later forgets it, so an editor that stops unexpectedly has still banked what it rendered.
 
 ### 5.4 Disk cache format and location
 
@@ -416,6 +476,43 @@ The disk cache lives in the project's sidecar folder (`<project>.lum-cache/`,
 - `index.db` — SQLite: hash → file, size, recompute cost, last-use, quality. Rebuilt by scan if
   missing or corrupt; a corrupt entry is discarded silently and re-rendered.
 - Default size cap 50 GB, user-set; evicted by the same cost-aware policy using the index.
+
+**As built (K-214).**
+
+- **Where.** Three choices, in Settings → Performance (docs/07 §15): the application's own
+  cache folder keyed by the document's id (the default), a `<project>.lum-cache/` folder beside
+  the project file, or a folder the user picks. The choice is application-wide by default and
+  can be made **per project** instead (K-215), in which case it is stored in the `.lum` through
+  an ordinary op — so it is undoable, and it travels with a copy of the project rather than
+  staying behind in one machine's settings. A project's own answer overrides the application's. The sidecar cannot be the default because it
+  only works once the project *has* a file, and a project should cache from the moment it is
+  created; the document id is written into the `.lum` and survives every save, so an app-data
+  cache still finds its frames tomorrow. An unsaved project set to "beside the project" falls
+  back to the app-data folder until it is saved. Changing the choice moves nothing: the old
+  folder is simply no longer addressed, and may be deleted by hand at any time.
+- **Format.** `KFR1`: magic, pixel format, colourspace, width, height, then LZ4-compressed
+  **RGBA8** — the display-encoded bytes the preview compositor actually produces, which are the
+  same pixels an export writes (K-031). fp16 planes join as a new format tag when the working
+  format reaches the processor; the header carries a format field for exactly that. One
+  canonical channel order on disk, so a cache is not silently unreadable on the next platform:
+  the Windows and macOS zero-copy paths composite in BGRA, and the swizzle is paid on the IO
+  thread in both directions, never on a render.
+- **The index** (K-215). `index.bin` — every entry's hash, size, recompute cost, last use and
+  quality — plus `index.log`, one fixed-size record appended per change since that snapshot.
+  Opening reads the snapshot and replays the log; a record torn by a crash is a partial
+  trailing record and is discarded by length. Either file missing or unreadable means the
+  folder is walked once and the index rebuilt from it, which is this section's "rebuilt by scan
+  if missing or corrupt". So presence, the byte total and the eviction order all cost nothing at
+  run time, and **eviction is the same stale × large ÷ cheap-to-remake policy as the tiers
+  above** rather than the modification-time order a filesystem is limited to.
+
+  A **deviation, recorded rather than silent**: the spec says `index.db`, SQLite. This is a flat
+  map of fixed-size rows, read once at start-up and otherwise held in memory; SQLite would add a
+  C dependency to an engine crate to store it, and the media frame index (docs/10 §3) already
+  sets the house precedent of a plain binary sidecar.
+- Anything unreadable — bad magic, unknown format, truncation, a failed decompression, the
+  wrong pixel count — is deleted and re-rendered. The cache can never make a frame wrong, only
+  faster.
 
 ### 5.5 Idle-time background cache fill
 
@@ -431,6 +528,27 @@ The timeline shows, per comp, a per-frame strip: **green** — final frame in RA
 current quality, plays in real time now; **blue** — on disk only, promotable; **dimmed
 green/blue** — cached at a lower preview resolution than currently displayed. Redrawn from a
 lock-free bitmap snapshot; the UI thread never queries the cache itself (K-017).
+
+**As built (K-214).** The strip is five values per frame — `0` nothing, `1` held coarser,
+`2` held at this resolution, `3` on disk coarser, `4` on disk at this resolution — and playable
+outranks promotable, so a frame both held and parked reads as held.
+
+The snapshot is not an optimisation here, it is the only way the question can be answered.
+Under content keying, "is frame 12 held?" means *naming* frame 12 — hashing the whole
+composition at that time — which needs the renderer's probe results and is not work for the
+thread that paints. So the bar leaves a note saying which composition, how many frames and what
+preview scale it is drawing, and the render worker publishes the strip it asks for: all zeros
+until the worker has answered, which is honest rather than another composition's frames.
+
+Three bounds on that work, all stated rather than hidden. It is recomputed only when something
+has actually moved (the bar's request, the document revision, or one of the three tiers'
+contents), at most every 150 ms — and at most every 500 ms while playback is running, since the
+walk shares the thread that renders and that thread has a deadline. And a composition longer than about a thousand frames is
+**sampled** — one frame per stride stands for its neighbours — because the stripe is a
+thousand-odd pixels wide at most and hashing forty thousand frames to draw it would be work
+nobody can see. The dimmed state probes the adaptive tiers' scales (Half, Third, Quarter),
+which are the scales frames genuinely get cached at, rather than every scale a Viewer could
+be resized to.
 
 ## 6. Preview
 

@@ -1208,10 +1208,36 @@ pub struct Document {
     /// Where new solids/comps are filed (see [`AutoFolders`]).
     #[serde(default)]
     pub auto_folders: AutoFolders,
+    /// Where *this project's* rendered frames are parked, overriding the
+    /// application-wide choice (docs/06-RENDER-PIPELINE.md §5.4, docs/07 §15).
+    ///
+    /// `None` — the usual case — means "whatever the application is set to". A
+    /// project only carries one of these when the user has asked for this project
+    /// in particular to cache somewhere: a scratch drive it lives on, or beside
+    /// itself so the cache travels with it. It is in the document rather than in
+    /// the settings file precisely because it belongs to the project, so it
+    /// survives being opened on another machine and moves with a copy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_location: Option<CacheLocation>,
     /// Unknown fields from newer Lumit versions, preserved on load/save
     /// (docs/10-FILE-FORMAT.md §1.1 — mandatory forward compatibility).
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+/// Where a project's rendered frames are parked (docs/06 §5.4). The document's
+/// own answer; the application-wide setting has the same three choices.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CacheLocation {
+    /// Under the application's own cache folder, keyed by document id.
+    AppData,
+    /// In a `<project>.lum-cache/` folder beside the project file, so a copy of
+    /// the project carries its cache with it. Falls back to [`Self::AppData`]
+    /// until the project has been saved and therefore has a file to sit beside.
+    BesideProject,
+    /// Under a folder the user picked.
+    Custom { folder: String },
 }
 
 impl Document {
@@ -1220,6 +1246,7 @@ impl Document {
             id: Uuid::now_v7(),
             items: Vec::new(),
             auto_folders: AutoFolders::default(),
+            cache_location: None,
             extra: serde_json::Map::new(),
         }
     }

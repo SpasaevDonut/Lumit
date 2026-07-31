@@ -77,6 +77,15 @@ pub struct BridgeSharedFrameInfoLinux {
     pub drm_fourcc: u32,
     /// The DRM modifier (`DRM_FORMAT_MOD_LINEAR` = 0 on the linear-tiling path).
     pub modifier: u64,
+    /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+    /// 4 Quarter.
+    ///
+    /// Carried on the frame in place of being asked for. Two Viewer widgets
+    /// showed the tier, and each one asked the engine for it in its `build()` —
+    /// two calls across the boundary for each frame of playback, for a number
+    /// that only changes when a frame is made. The frame that changes it now
+    /// brings it.
+    pub tier: u32,
 }
 
 /// The Windows zero-copy Viewer frame (K-177): an NT handle to a shared D3D12
@@ -94,6 +103,15 @@ pub struct BridgeSharedFrameInfo {
     pub frame: u64,
     pub width: u32,
     pub height: u32,
+    /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+    /// 4 Quarter.
+    ///
+    /// Carried on the frame in place of being asked for. Two Viewer widgets
+    /// showed the tier, and each one asked the engine for it in its `build()` —
+    /// two calls across the boundary for each frame of playback, for a number
+    /// that only changes when a frame is made. The frame that changes it now
+    /// brings it.
+    pub tier: u32,
 }
 
 /// A small still picture as plain pixels — the thumbnail payload
@@ -247,6 +265,10 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         | Op::SetMediaRef { .. }
         | Op::SetFolderChildren { .. }
         | Op::SetAutoFolder { .. }
+        // Where this project parks its frames. No panel draws it — Settings
+        // reads it directly — but it is a document change like any other, so it
+        // belongs in the item scope rather than in a silent default.
+        | Op::SetCacheLocation { .. }
         // A solid def is a project item, and its name shows in the panel.
         | Op::SetSolidDef { .. } => (None, None, true),
 
@@ -368,16 +390,18 @@ impl LumitBridgeState {
 
         let (comp, layer, items) = op_scope(&document_change.op);
 
-        // Frames are filed by position, not by content, so the edit that just
-        // landed did not change any frame's name — drop the held frames or the
-        // Viewer would be served the picture from before it.
+        // **Nothing is invalidated here, and that is the point (K-178).** This
+        // used to drop every held frame of every composition on every committed
+        // op, because frames were filed by position: the edit did not change any
+        // frame's *name*, so the only safe answer was to throw them all away.
+        // The cost was paid on edits that cannot change a pixel — a rename, a
+        // work-area nudge, a solo toggle, sound added to a layer — and the cache
+        // bar went blank with each one.
         //
-        // All of them, not the scope's composition: `op_scope` answers "which
-        // panel redraws", which is a different and narrower question. A batched
-        // edit names no composition, a solid or a relink belongs to the project
-        // rather than to one comp, and a precomp layer means an edit to one
-        // composition changes every composition that contains it.
-        crate::framecache::invalidate_all();
+        // Frames are now filed under a hash of what is in them (docs/06 §5.2),
+        // so an edit renames exactly the frames it changed and every other frame
+        // stays addressable. An undo asks for the names it asked for before and
+        // finds them still held. There is no invalidation step left to get right.
 
         let change = ScopedChange {
             project: ProjectReference::new(project_id),

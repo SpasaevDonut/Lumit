@@ -333,16 +333,21 @@ void main() {
 
       expect(find.byKey(const ValueKey('cache-meter')), findsOneWidget);
       // One bar per tier, each with its own megabytes: a merged number cannot
-      // answer "what is cached" for either of them.
+      // answer "what is cached" for any of the three.
       expect(find.text('RAM'), findsOneWidget);
       expect(find.text('VRAM'), findsOneWidget);
-      expect(find.textContaining('MB'), findsNWidgets(2),
+      expect(find.text('Disk'), findsOneWidget);
+      expect(find.textContaining('MB'), findsNWidgets(3),
           reason: 'the megabytes held read out beside each bar');
       // Clicking a tier empties that tier; the readout is live, so this must
-      // not throw with no project rendered yet.
+      // not throw with no project rendered yet. The disk tier asks first rather
+      // than deleting on a click — with nothing parked there is nothing to ask
+      // about, so no dialogue appears and nothing happens.
       await tester.tap(find.byKey(const ValueKey('cache-meter-ram')));
       await tester.pump();
       await tester.tap(find.byKey(const ValueKey('cache-meter-vram')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('cache-meter-disk')));
       await tester.pump();
       expect(find.byKey(const ValueKey('cache-meter')), findsOneWidget);
     });

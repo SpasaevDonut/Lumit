@@ -38,8 +38,11 @@
 //! [`cache`] gives every finished frame a name derived from its *content* — a
 //! hash of everything that went into it — so scrubbing back to a frame finds it
 //! already made, and an edit that cannot change the picture (a rename, say)
-//! throws nothing away. Frames live in RAM, and [`diskio`] parks them in the
-//! project's sidecar so they survive a restart.
+//! throws nothing away. Finished frames sit in three stores, cheapest to reach
+//! first: display textures still on the graphics card ([`headless`]), their bytes
+//! in memory, and files on disk ([`diskio`]) which outlive the session. A frame
+//! squeezed out of one falls to the next rather than being lost, and comes back
+//! up without being composited again.
 //!
 //! [`export`] and [`headless`] are the two entry points that drive all of the
 //! above without a window: writing a file, and rendering single frames for a
@@ -66,7 +69,10 @@ pub use decode::{CompFrame, CompJob, CompLayerPixels, PreviewEngine, PreviewResu
 pub use draw::{
     AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
 };
-pub use headless::{HeadlessRenderer, PrefetchWant, PreparedFrame, DEFAULT_VRAM_CACHE_BYTES};
+pub use headless::{
+    preview_scale_q, DemotedFrame, FrameProvenance, HeadlessRenderer, PrefetchWant, PreparedFrame,
+    Promotion, DEFAULT_VRAM_CACHE_BYTES,
+};
 pub use plan::{plan_comp_frame, Quality, RetimeOverride};
 pub use realise::Realiser;
 pub use source::{SourceProbe, SourceProbes};

@@ -210,7 +210,6 @@ tools and the Pen (§2.3.1), Horizontal type (§2.3.2), the three painting tools
 three camera tools (§2.3.5). **Disabled** (K-228 — shown, not armable): vertical type, the Pen's
 four editing siblings, the Roto tools and the Puppet pins. Each tool's behaviour is tracked
 separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
-
 ---
 
 ## 2. Viewer
@@ -443,7 +442,8 @@ as the Rotation, Anchor point and Razor tools already do.
   pointer is down and committed once on release. `Escape` abandons a stroke in flight;
   `Backspace` takes the last committed one back.
 - The brush's **size, hardness and opacity** sit on the toolbar beside the fill swatch (§1.7)
-  and are live. They are not the shape tools' stroke pair, which stays disabled.
+  and are live. They are the brush's own three, not the shape tools' fill and stroke pair
+  (§1.7) — a brush is a different thing that happens to have a width.
 - A stroke is stored as the **gesture** in layer coordinates, so it re-stamps at whatever
   resolution the frame is rendered at and every setting stays changeable
   ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7.1).
@@ -453,6 +453,7 @@ as the Rotation, Anchor point and Razor tools already do.
 - Not built: pressure and tilt, non-round brushes, spacing and scatter, write-on (per-stroke
   start and end times), per-stroke blending modes, and painting in Layer view rather than on the
   composite.
+
 
 ### 2.3.5 The camera tools (K-229)
 
@@ -1416,7 +1417,24 @@ fold-out already shows them), and **Performance** (playback mode, quality tier a
 and the RAM and VRAM frame-cache budgets with their readouts and Clear buttons). The two
 budgets are **typed and draggable numbers capped at what the machine has** — installed RAM
 and the adapter's dedicated video memory, asked of the engine — rather than a pick from a
-fixed list of sizes (K-194). The egui build's
+fixed list of sizes (K-194).
+
+**The disk tier's controls landed with K-214**, as a third section on the same page: its
+budget (the same typed-and-draggable row), a readout of what is parked and where, and a
+**Where** row choosing between *With Lumit* — the application's own cache folder, the default
+and the only one that works before a project has been saved — *Beside the project*, which is
+the per-project choice, and *A folder I choose*, which offers a folder picker beside the
+dropdown. An **Applies to** row beside it chooses the scope (K-215): *Everything*, kept in the settings
+file, or *This project*, kept inside the `.lum` so it travels with a copy of the project —
+a project's own answer overriding the application's. Switching back to Everything clears the
+project's answer rather than copying the application's into it, so the project follows along
+afterwards; and because it is an ordinary op, giving a project its own location undoes like any
+other edit. Changing any of this moves nothing, so the old folder can be deleted by hand
+whenever the user likes. Its **Clear** asks before deleting,
+unlike the other two tiers': RAM and VRAM cost a re-render each, while this one destroys files
+that may be a night's work and there is nothing to undo. With nothing parked it does not ask —
+a question about deleting nothing is only noise. The status line's cache meter grew a matching
+third bar (Disk), which asks the same question when clicked. The egui build's
 **Export** and **Autosave** groups are *not* rebuilt yet: neither has anything behind it on
 this frontend (docs/TODO.md), and an empty page is a promise the window cannot keep.
 
