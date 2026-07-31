@@ -1,6 +1,6 @@
 // The Viewer's layer controls: the wireframe boxes, the handles that scale and
 // rotate, the click that selects, the drag that moves, and the marquee that
-// selects several at once (K-215, docs/07 §2.3).
+// selects several at once (K-217, docs/07 §2.3).
 //
 // **In plain terms.** Everything you can do to a layer with the mouse *on the
 // picture* is here. A box is drawn round each selected layer, turned the way
@@ -53,7 +53,7 @@ const double gizmoHandleSlop = 32;
 const double gizmoRotateReach = 28;
 
 /// How close a press has to be to the **anchor** handle to grab it, rather than
-/// starting a move of the layer (K-219).
+/// starting a move of the layer (K-221).
 ///
 /// Much tighter than [gizmoHandleSlop], and deliberately: the anchor usually
 /// sits in the middle of the box, which is also the easiest place to grab a
@@ -79,8 +79,8 @@ enum GizmoHandle {
   left,
   rotate,
 
-  /// The anchor point itself (K-219): dragging it pans behind — the pivot moves
-  /// and the picture stays put, exactly as the Anchor point tool does (K-218).
+  /// The anchor point itself (K-221): dragging it pans behind — the pivot moves
+  /// and the picture stays put, exactly as the Anchor point tool does (K-220).
   /// It sits wherever the layer's anchor is, which is usually but not always
   /// the middle of the box.
   anchor;
@@ -137,7 +137,7 @@ class LayerBox {
   /// with a keyframed scale still moves; it just grows no handles.
   final bool scalable;
 
-  /// The layer's masks (K-220), so the Viewer can outline them. Read from the
+  /// The layer's masks (K-222), so the Viewer can outline them. Read from the
   /// model with everything else, so drawing them costs no bridge calls.
   final List<BridgeMask> masks;
 
@@ -240,7 +240,7 @@ class LayerBox {
 }
 
 /// One vertex of one mask, named so a selection can hold it: which layer, which
-/// mask, and which point along it (K-222).
+/// mask, and which point along it (K-224).
 ///
 /// A plain string rather than a record, because it is a *set* key: two points
 /// are the same point when their names match, and a string says that without a
@@ -393,7 +393,7 @@ class ViewerGizmoLayer extends StatefulWidget {
   final ToolMode tool;
 
   /// Whether each selected layer's anchor point is marked — the pin it turns
-  /// on. Drawn while the Rotation tool is armed (K-217), where "about what?" is
+  /// on. Drawn while the Rotation tool is armed (K-219), where "about what?" is
   /// the question the picture has to answer.
   final bool showAnchors;
 
@@ -446,7 +446,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
   /// The layer under the pointer, drawn faintly so a click is predictable.
   UuidValue? _hover;
 
-  /// The mask points that are selected, by [maskPointKey] (K-222).
+  /// The mask points that are selected, by [maskPointKey] (K-224).
   ///
   /// Points, not layers: with a mask on the picture the same marquee that
   /// gathers layers gathers *vertices*, and a drag then moves them. Which of
@@ -490,7 +490,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         handlesFor: widget.showControls && _selectionTool ? soleHandles : null,
         // The masks of what is selected: a mask you cannot see is a mask you
         // cannot judge, and until mask editing exists this outline is the only
-        // sight of one on the picture (K-220).
+        // sight of one on the picture (K-222).
         maskedBoxes: widget.showControls ? selected : const [],
         selectedPoints: _points,
         pointNudge: _drag == _GizmoDrag.points ? _delta : Offset.zero,
@@ -645,7 +645,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
       // Empty picture: rubber-band. The selection is left alone until the band
       // is let go — partly so the boxes stay on screen while it is drawn, and
       // partly because a sweep over a *selected* layer's mask points gathers
-      // points (K-222), which it could not do if the press had already dropped
+      // points (K-224), which it could not do if the press had already dropped
       // the layer they belong to.
       setState(() => _drag = _GizmoDrag.marquee);
       return;
@@ -860,7 +860,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
   // --- Anchor (pan behind) --------------------------------------------------
 
   /// Where the anchor is being dragged to, in layer space, with the same two
-  /// modifiers the Anchor point tool has (K-218): Shift locks the drag to one
+  /// modifiers the Anchor point tool has (K-220): Shift locks the drag to one
   /// screen axis, Ctrl/Cmd snaps to the layer's own key points.
   Offset? _anchorNow() {
     final box = _acting;
@@ -917,7 +917,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     final position = _panBehindFor(box, anchor);
     try {
       // One op for the four properties: half of this edit moves the picture,
-      // which is the one thing panning behind promises not to do (K-218).
+      // which is the one thing panning behind promises not to do (K-220).
       box.layer.setTransforms(
         props: const [
           BridgeTransformProp.anchorX,
@@ -940,7 +940,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
 
   // --- Mask points ----------------------------------------------------------
 
-  /// Write every dragged point's new position (K-222).
+  /// Write every dragged point's new position (K-224).
   ///
   /// The drag is a screen delta; each point is moved in its **own layer's**
   /// space, so a selection spanning two layers with different transforms still
@@ -1004,7 +1004,7 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     // selection the user just made another way.
     if (rect.width < 3 && rect.height < 3) return;
 
-    // A sweep over a selected layer's mask points gathers **points** (K-222):
+    // A sweep over a selected layer's mask points gathers **points** (K-224):
     // with a path on screen that is what a rubber band means, and the layers
     // are already selected anyway. With none caught it is the layer sweep it
     // has always been.
@@ -1150,7 +1150,7 @@ class _GizmoPainter extends CustomPainter {
       for (final handle in GizmoHandle.scaling) {
         _handle(canvas, handles.handleAt(handle) + moved);
       }
-      // The pivot, which is now a handle in its own right (K-219): drawn as
+      // The pivot, which is now a handle in its own right (K-221): drawn as
       // the anchor's ring-and-cross rather than a square, so it never reads as
       // a ninth scale handle.
       _anchor(canvas, handles.handleAt(GizmoHandle.anchor) + moved);
@@ -1256,7 +1256,7 @@ class _GizmoPainter extends CustomPainter {
         ..strokeWidth = 1,
     );
 
-    // Every vertex, so a path can be seen point by point (K-222): hollow when
+    // Every vertex, so a path can be seen point by point (K-224): hollow when
     // it is merely there, filled when it is selected — the same "outline means
     // available, fill means chosen" the keyframe diamonds use.
     for (var i = 0; i < mask.vertices.length; i++) {

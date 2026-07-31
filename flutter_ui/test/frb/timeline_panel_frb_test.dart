@@ -61,7 +61,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    /// The Razor tool (K-218). Clicking a bar cuts that layer **where the
+    /// The Razor tool (K-220). Clicking a bar cuts that layer **where the
     /// pointer is**, not at the playhead — the difference between a razor and
     /// the Cut-at-playhead command.
     testWidgets('the razor splits a layer in two where it is clicked',
@@ -135,7 +135,7 @@ void main() {
           layer.internallayerId);
     });
 
-    /// **Cutting a retimed layer gives each half an end of its own (K-219).**
+    /// **Cutting a retimed layer gives each half an end of its own (K-221).**
     ///
     /// Both halves keep the whole speed map, so without a key at the cut the
     /// two ramps stay welded: bending one half's speed would bend the other's,
@@ -174,7 +174,7 @@ void main() {
     });
 
     /// Masks appear in the fold-out under their own heading, and only once the
-    /// layer has one — the same rule Effects follows (K-220).
+    /// layer has one — the same rule Effects follows (K-222).
     testWidgets('a masked layer grows a Masks heading in its twirl-down',
         (tester) async {
       final p = withComp();
@@ -226,7 +226,7 @@ void main() {
     });
 
     /// Paint strokes list under their own heading, between Masks and Effects —
-    /// the order the picture is built in (K-225).
+    /// the order the picture is built in (K-227).
     testWidgets('a painted layer grows a Paint heading in its twirl-down',
         (tester) async {
       final p = withComp();
@@ -280,7 +280,7 @@ void main() {
     });
 
     /// A shape layer lists its art under a Contents heading, above Masks and
-    /// Effects — the order the picture is built in (K-228).
+    /// Effects — the order the picture is built in (K-230).
     testWidgets('a shape layer grows a Contents heading in its twirl-down',
         (tester) async {
       final p = withComp();
@@ -1835,7 +1835,7 @@ void main() {
       expect(inner.getLayers(), isEmpty);
     });
 
-    /// **The cut lands under the blade, not under the playhead (K-218).**
+    /// **The cut lands under the blade, not under the playhead (K-220).**
     ///
     /// The razor used to cut at the playhead wherever the bar was clicked,
     /// which made it a slower way of pressing Ctrl+Shift+D. docs/07 §4.4 has

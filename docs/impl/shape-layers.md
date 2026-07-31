@@ -1,6 +1,6 @@
 # Shape layers — the plan before the code
 
-**Status: built (K-228), first cut.** The durable parts now live in
+**Status: built (K-230), first cut.** The durable parts now live in
 [../03-DATA-MODEL.md](../03-DATA-MODEL.md) §7.2, [../06-RENDER-PIPELINE.md](../06-RENDER-PIPELINE.md)
 §1.2 and [../07-UI-SPEC.md](../07-UI-SPEC.md) §2.3.1; what is left here is the reasoning behind
 the choices and the record of how the plan turned out. Two things went differently
@@ -19,7 +19,7 @@ from the plan and are worth knowing:
 
 Not built: nested groups and the shape modifiers, gradient fills, dashed strokes,
 joins and caps other than round, animated paths, and dragging a shape's points on
-the picture (K-222 does that for mask points).
+the picture (K-224 does that for mask points).
 
 ## In plain terms
 
@@ -30,7 +30,7 @@ whenever you drag a shape tool with nothing selected. Lumit cannot: `LayerKind`
 has footage, solid, precomp, text, camera, sequence, adjustment and null in it,
 and no shape. That is the gap.
 
-A mask (K-220, shipped) is a *path on another layer* that decides which pixels
+A mask (K-222, shipped) is a *path on another layer* that decides which pixels
 show. A shape layer is a path that **is** the picture. The geometry is the same
 `BezierPath`; everything else differs.
 
@@ -47,7 +47,7 @@ show. A shape layer is a path that **is** the picture. The geometry is the same
 2. **The renderer** (`lumit-render`, `lumit-gpu`). A shape layer has no source
    pixels, so `build.rs` needs a draw kind that rasterises a path at the size the
    frame is being rendered at: fill by non-zero winding, stroke as a widened
-   path. The natural size (K-215's wireframe reads it) is the path's bounding box.
+   path. The natural size (K-217's wireframe reads it) is the path's bounding box.
    Decide early whether rasterising happens on the CPU into a texture (simple,
    costs an upload per change) or on the GPU by tessellating (fast, and the only
    honest answer for a shape being animated). The second is right; the first is
@@ -63,17 +63,17 @@ show. A shape layer is a path that **is** the picture. The geometry is the same
 ## Decisions taken already, so they are not re-taken
 
 - **The path type is shared with masks.** One `BezierPath` in the document, one
-  set of maths, one bridge vertex type (`BridgeVertex`, K-220). A shape layer's
+  set of maths, one bridge vertex type (`BridgeVertex`, K-222). A shape layer's
   path and a mask's path differ in what they *do*, not in what they are.
 - **Layer space, as everything else.** A shape's coordinates are the layer's own,
   so the layer's transform moves the shape exactly as it moves a mask.
 - **Nothing is dressed up as a shape layer until there is one.** Until the kind
-  exists the tools say so (K-220). A solid with a mask would be a lie in the
+  exists the tools say so (K-222). A solid with a mask would be a lie in the
   layer list.
 
 ## The trap to expect
 
-The wireframe and hit-testing (K-215) read a layer's *content size* to draw its
+The wireframe and hit-testing (K-217) read a layer's *content size* to draw its
 box. A shape layer's size is its path's bounding box, which **changes as the path
 is edited** — unlike every kind built so far, whose size is fixed by its source.
 `LayerBoundsCache` caches by document revision, so it will follow, but the cache

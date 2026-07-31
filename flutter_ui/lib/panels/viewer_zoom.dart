@@ -1,5 +1,5 @@
 // The Zoom tool, and the arithmetic every zoom in the Viewer goes through
-// (K-216, docs/07 §2.2).
+// (K-218, docs/07 §2.2).
 //
 // **In plain terms.** There are three ways to change the magnification: the
 // wheel, a click with the Zoom tool, and dragging a box with it. All three ask

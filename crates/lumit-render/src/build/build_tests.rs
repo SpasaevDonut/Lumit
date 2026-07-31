@@ -362,7 +362,7 @@ fn a_live_adjustment_layer_emits_a_staging_draw() {
 // --- K-119: Settings → Export filename template ------------------------
 
 /// A paint stroke is stamped into the layer's own pixels before its masks gate
-/// them (K-225) — the render side of the feature, checked where the pixels are
+/// them (K-227) — the render side of the feature, checked where the pixels are
 /// actually made rather than through a GPU nobody has on CI.
 #[test]
 fn a_paint_stroke_reaches_the_layers_pixels() {

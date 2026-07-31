@@ -338,7 +338,7 @@ Masks apply in order before the effect stack ([06-RENDER-PIPELINE.md](06-RENDER-
 (`None|Add|Subtract|Intersect|Lighten|Darken|Difference` — v1 is **Add only**), and `feather` /
 `expansion`. Variable-width feather is post-v1; the model will reserve per-vertex feather data.
 
-### 7.1 Paint strokes (K-225)
+### 7.1 Paint strokes (K-227)
 
 ```rust
 struct PaintStroke {
@@ -369,7 +369,7 @@ it. The op is `SetLayerPaint` — the whole list, exactly invertible, like `SetL
 start and end times), per-stroke blending modes, and a GPU stamping path. None of them changes
 the shape above.
 
-### 7.2 Shape layers (K-228)
+### 7.2 Shape layers (K-230)
 
 ```rust
 LayerKind::Shape { contents: Vec<ShapeItem> }

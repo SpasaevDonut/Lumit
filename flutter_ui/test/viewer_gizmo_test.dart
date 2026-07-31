@@ -1,4 +1,4 @@
-// The Viewer gizmo's arithmetic (K-215): which layer a point is inside, what a
+// The Viewer gizmo's arithmetic (K-217): which layer a point is inside, what a
 // marquee catches, where the handles sit once a layer is turned, and what a
 // handle drag means.
 //
@@ -131,7 +131,7 @@ void main() {
     });
   });
 
-  /// A mask's own points (K-222): with the Selection tool and the wireframes
+  /// A mask's own points (K-224): with the Selection tool and the wireframes
   /// on, every vertex of every mask is a thing you can aim at, sweep up and
   /// drag. The arithmetic that decides *which* is here.
   group('A mask\'s points', () {
@@ -220,7 +220,7 @@ void main() {
           reason: 'open ground inside the layer is not a handle');
     });
 
-    /// The anchor became a handle with K-219, and it sits where a body drag
+    /// The anchor became a handle with K-221, and it sits where a body drag
     /// begins — so it has to be *aimed at* rather than fallen into, or every
     /// drag of a layer would pan behind instead of moving it.
     test('the anchor is a handle, but only within a tight radius', () {

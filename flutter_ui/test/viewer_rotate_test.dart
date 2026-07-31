@@ -1,4 +1,4 @@
-// The Rotation tool's pointer (K-217): which way the curved arrow leans, and
+// The Rotation tool's pointer (K-219): which way the curved arrow leans, and
 // how tight its curve is.
 //
 // Both are pure functions of where the pointer is over the layer, so both are

@@ -1,4 +1,4 @@
-// The Type tool: making and editing text layers on the picture (K-223,
+// The Type tool: making and editing text layers on the picture (K-225,
 // docs/07 §1.7, §2.3.2).
 //
 // **In plain terms.** With the Type tool in hand, clicking empty picture makes a
@@ -124,7 +124,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
   BridgeColourRgba _fill =
       const BridgeColourRgba(r: 1, g: 1, b: 1, a: 1);
 
-  /// Where the pointer is, for the drawn beam vertical type wears (K-224).
+  /// Where the pointer is, for the drawn beam vertical type wears (K-226).
   Offset? _pointer;
 
   final TextEditingController _controller = TextEditingController();
@@ -160,7 +160,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
     if (!widget.active) return const SizedBox.shrink();
     final viewScale = widget.fitted.width / widget.compSize.width;
     // Horizontal type wears the system's own I-beam; vertical type has one
-    // drawn for it, because no platform ships a sideways beam (K-224).
+    // drawn for it, because no platform ships a sideways beam (K-226).
     final vertical = widget.tool == ToolMode.typeVertical;
     final t = ThemeScope.of(context).theme;
     return Positioned.fill(
@@ -292,7 +292,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
           BridgeTransformProp.positionY,
         ],
         values: [
-          // The click is where the text goes (K-224): the anchor starts on the
+          // The click is where the text goes (K-226): the anchor starts on the
           // left end of the line's baseline, so what is typed runs to the right
           // of the pointer and sits on it rather than straddling it. An empty
           // line has no width to be anchored in the middle of anyway; the
@@ -393,7 +393,7 @@ class _ViewerTypeLayerState extends State<ViewerTypeLayer> {
 
   /// Put a new layer's anchor in the middle of the line it turned out to hold,
   /// **without the line moving**: the pivot slides and Position compensates,
-  /// the same pan-behind sum the Anchor point tool commits (K-218).
+  /// the same pan-behind sum the Anchor point tool commits (K-220).
   void _recentreAnchor(LayerReference layer, String text) {
     final transform = layer.getTransform();
     final old = Offset(

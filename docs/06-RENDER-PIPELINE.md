@@ -42,7 +42,7 @@ For a visual layer at comp time `t`, the compiled subgraph is, in order:
 
 1. **Source** — fetch or rasterise the layer source at the resolved source time. For footage:
    decode, colour-interpret, linearise, premultiply (§3). For text/shape/solid: rasterise
-   vectors at the working raster size. A **shape layer** (K-228,
+   vectors at the working raster size. A **shape layer** (K-230,
    [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.2) has no asset at all: its contents are rasterised
    into their own bounding box, which is also the layer's natural size — the one kind whose size
    moves when it is edited. Each item is filled through the mask rasteriser and then outlined
@@ -51,7 +51,7 @@ For a visual layer at comp time `t`, the compiled subgraph is, in order:
    layer's frame-interpolation policy (nearest / blend / flow) synthesises non-integer source
    frames ([04-RETIMING.md](04-RETIMING.md)). Overrun holds the boundary frame. Retime affects
    only source fetch; keyframes on masks, effects, and transform remain in layer/comp time.
-2.5. **Paint** — the layer's paint strokes (K-225, [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.1)
+2.5. **Paint** — the layer's paint strokes (K-227, [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.1)
    are stamped into its raster in the order they were made: brush strokes lay colour down,
    eraser strokes take alpha away, clone strokes copy from the raster **as it was before any
    stroke in the pass** was stamped. Paint happens before masks, so a mask gates the painted

@@ -590,7 +590,7 @@ pub struct RenderCompRequestWithPreview {
     pub layer: LayerReference,
     pub effects: Option<Vec<EffectInstance>>,
     pub transform: Option<crate::api::layer::BridgeTransform>,
-    /// A text layer's document, while it is being typed (K-223). The Type tool
+    /// A text layer's document, while it is being typed (K-225). The Type tool
     /// writes the layer once, when the edit ends; this is what keeps the
     /// picture in step in the meantime without an undo step per keystroke.
     pub text: Option<crate::api::assets::BridgeTextDocument>,
@@ -1198,7 +1198,7 @@ fn render_comp(
     Ok(())
 }
 
-/// Replace a text layer's document with the one being typed (K-223).
+/// Replace a text layer's document with the one being typed (K-225).
 ///
 /// Only a text layer has a document to replace; anything else is a preview from
 /// a layer that changed kind under the tool, and is ignored rather than failing
@@ -2156,7 +2156,7 @@ mod tests {
         assert!(super::cut_patch(&rgba, 0, 0, 0.0, 0.0, 1).is_none());
     }
 
-    /// The Type tool's live preview (K-223): the picture keeps up with what is
+    /// The Type tool's live preview (K-225): the picture keeps up with what is
     /// being typed, and the document is not touched until the edit ends.
     #[test]
     fn a_text_preview_replaces_only_a_text_layer() {

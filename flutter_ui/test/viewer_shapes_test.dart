@@ -1,4 +1,4 @@
-// The shape tools' geometry (K-220), and the Pen's draft (K-221): what each
+// The shape tools' geometry (K-222), and the Pen's draft (K-223): what each
 // tool draws between two corners, and how a path grows point by point.
 //
 // Pure arithmetic in layer space, so it is checked by arithmetic. The one thing
@@ -154,7 +154,7 @@ void main() {
     });
   });
 
-  /// The Pen's path builder (K-221). This gesture was briefly on the polygon
+  /// The Pen's path builder (K-223). This gesture was briefly on the polygon
   /// tool; it is After Effects' pen, and it belongs to the Pen.
   group('The Pen\'s draft', () {
     test('a click adds a corner', () {

@@ -3476,7 +3476,7 @@ not keyframed, so nothing draws it in the wrong place, and it is the arm the pon
 comment in `Layer::source_time_at` marks for deletion; it is left alone rather than being
 half-migrated. Recorded here so the next person meets it deliberately.
 
-**K-214 · DECIDED · The toolbar is one strip under the menu bar, and it ships with the whole
+**K-216 · DECIDED · The toolbar is one strip under the menu bar, and it ships with the whole
 tool set whether or not each tool works yet.** From the owner (2026-07-31): the toolbar had
 no counterpart at all on the Flutter frontend — the egui shell's tool row did not survive the
 port, so the only tools that existed were the ones a panel happened to offer.
@@ -3522,7 +3522,7 @@ on Selection, as AE does. It lives on the shell's UI state beside the dropper's 
 same reason: it is set in one place and read in another, and no panel should have to be
 mounted for either.
 
-**K-215 · DECIDED · A layer is something you can see the edges of, point at, and take hold
+**K-217 · DECIDED · A layer is something you can see the edges of, point at, and take hold
 of.** From the owner (2026-07-31), specifying the first two toolbar tools: the Selection tool
 should drag the layer under the pointer, hovering one should say so before the click lands,
 several should be selectable at once, and the Hand tool should move the picture and never
@@ -3581,7 +3581,7 @@ its value at the playhead, and a box in the wrong place is worse than none. The 
 handle, snapping, parent-aware and 3D gizmos, and motion paths are unchanged from before
 this entry: still specified, still absent, now listed in docs/TODO.md against §2.3.
 
-**K-216 · DECIDED · Every zoom is anchored, and — except the wheel — every zoom is a
+**K-218 · DECIDED · Every zoom is anchored, and — except the wheel — every zoom is a
 flight.** From the owner (2026-07-31), specifying the Zoom tool and asking for zooming across
 the interface to stop jumping.
 
@@ -3624,7 +3624,7 @@ pattern — a target, a controller, a geometric interpolation, and the animation
 whether it runs — and it should be lifted into one shared piece rather than written three
 more times. Recorded in docs/TODO.md.
 
-**K-217 · DECIDED · The Rotation tool turns the selection about each layer's own anchor, and
+**K-219 · DECIDED · The Rotation tool turns the selection about each layer's own anchor, and
 its pointer is drawn rather than picked.** From the owner (2026-07-31), specifying the fourth
 toolbar tool: the cursor should be a curved arrow like After Effects', sharper at a corner
 than along an edge, leaning the way the layer would turn — and the drag should turn only what
@@ -3643,7 +3643,7 @@ would not have been worth hiding anything for.
 far out the two axes are from the middle: equal is the diagonal, which is a corner; one alone
 is square out from an edge. Measured through the layer's inverse map, so "the top-right
 corner" stays the top-right corner of the *layer* when the layer is upside down — the same
-reasoning as the wireframe's hit-testing (K-215), and the same one line of maths.
+reasoning as the wireframe's hit-testing (K-217), and the same one line of maths.
 
 **A set turns as one gesture.** The angle is swept about the *first* selected layer's anchor
 and applied to every selected layer, each of which still turns about its own anchor. The
@@ -3658,13 +3658,13 @@ a rotation you cannot predict, and the anchor is exactly the thing this tool is 
 is drawn as the ring-and-cross the anchor-point tool's icon carries, so the two read as one
 idea.
 
-**The same slop trap as K-215, in a new place.** The turn is measured from where the pointer
+**The same slop trap as K-217, in a new place.** The turn is measured from where the pointer
 went *down*, not from where the framework recognised the drag: recognition happens after ~18
 pixels, and measuring from there took a fixed bite out of every turn — a quarter-turn drag
 committed 45° instead of 90°. Recorded twice now because it will keep coming: any gesture
 whose *meaning* depends on its start point has to record that start point itself.
 
-**K-218 · DECIDED · The Anchor point tool pans behind, and the Razor cuts under the blade.**
+**K-220 · DECIDED · The Anchor point tool pans behind, and the Razor cuts under the blade.**
 From the owner (2026-07-31), asking what After Effects does with these two and for the same
 behaviour here. The answers differ, because only one of them is an After Effects tool at all.
 
@@ -3708,15 +3708,15 @@ refused rather than making a layer of no length.
 tool rather than a flag of its own. Two pieces of state that both mean "the razor is armed"
 is one too many: they would disagree the first time someone used the other door.
 
-**Both pointers are drawn, for K-217's reason.** No platform ships a pan-behind cursor or a
+**Both pointers are drawn, for K-219's reason.** No platform ships a pan-behind cursor or a
 razor. The anchor's pointer is the anchor's own ring-and-cross with a small arrow at its tail
 (AE's pairing, and it says what the tool moves); the razor's is a blade with a full-height
 line down the lanes marking where the cut will land — the line is the useful half, because a
 cut you cannot aim is a cut you undo.
 
-**K-219 · DECIDED · A cut through a retimed layer leaves a keyframe behind, and the gizmo's
+**K-221 · DECIDED · A cut through a retimed layer leaves a keyframe behind, and the gizmo's
 centre handle pans behind.** From the owner (2026-07-31), two refinements to the tools that
-landed with K-218.
+landed with K-220.
 
 **Why a cut needs a key.** Splitting a layer gives both halves the whole document — the same
 source, the same effects, and the same Retime map. That is what makes the cut invisible, and
@@ -3739,14 +3739,14 @@ curve arithmetic, and the kind of rule that has to be provable rather than obser
 razor calls it before cloning the layer, which is what puts the key on both halves.
 
 **The centre handle.** The Selection tool's gizmo now has a ninth handle at the layer's
-anchor, and dragging it pans behind exactly as the Anchor point tool does (K-218) — same
+anchor, and dragging it pans behind exactly as the Anchor point tool does (K-220) — same
 `Shift` axis lock, same `Ctrl`/`Cmd` snapping, same one-op commit. Its grab radius is 16px
 against the other handles' 32, and that asymmetry is the whole design: the anchor usually
 sits in the middle of the box, which is also the easiest place to grab a layer to move it, so
 a generous slop there would turn every body drag into a pan-behind — the pivot sliding while
 the layer stayed put, which reads as the drag being broken. The pivot has to be aimed at.
 
-**K-220 · DECIDED · The shape tools draw masks, and a mask crosses the bridge as its path.**
+**K-222 · DECIDED · The shape tools draw masks, and a mask crosses the bridge as its path.**
 From the owner (2026-07-31), choosing to build masks now and shape layers on a branch of
 their own.
 
@@ -3788,10 +3788,10 @@ do instead. Silence would read as a broken tool, and a solid-with-a-mask dressed
 layer would be a lie in the layer list — one that would have to be untold when the real kind
 lands.
 
-**K-221 · DECIDED · The path-building gesture is the Pen's, and the polygon tool draws a
-polygon. Supersedes K-220's placement of it.** From the owner (2026-07-31): "I think I
+**K-223 · DECIDED · The path-building gesture is the Pen's, and the polygon tool draws a
+polygon. Supersedes K-222's placement of it.** From the owner (2026-07-31): "I think I
 might've misunderstood the polygon tool — everything I said there applies to the pen tool."
-They are right, and K-220 built it in the wrong place.
+They are right, and K-222 built it in the wrong place.
 
 **What moved.** Click for a corner, click-drag for a vertex whose bezier handles mirror as
 they grow, `Alt` to break that mirror, click the first vertex to close and apply, `Escape` to
@@ -3808,12 +3808,12 @@ nothing while the polygon did the Pen's job would have been two wrong tools rath
 The code moved with the name: `PolygonDraft` is `PathDraft`, and it is documented as the
 Pen's.
 
-**And the five shape tools are marked built.** K-220 shipped them working while their
+**And the five shape tools are marked built.** K-222 shipped them working while their
 `ToolMode.ready` flags still said otherwise, so every tooltip claimed "not built yet" over a
-tool that drew masks. `ready` is a promise about what a tooltip says (K-214) and it was
+tool that drew masks. `ready` is a promise about what a tooltip says (K-216) and it was
 lying; a test now pins the set.
 
-**K-222 · DECIDED · A mask's points are things you can aim at, sweep up and drag.** From the
+**K-224 · DECIDED · A mask's points are things you can aim at, sweep up and drag.** From the
 owner (2026-07-31): "if you have the selection tool and wireframes enabled, if you have a
 layer that's a shape or has a mask, you should be able to see the individual points that make
 it up. And if you do the drag selection I mentioned it should select any point inside it so
@@ -3859,7 +3859,7 @@ to aim with.
 can a mask path be keyframed. Both are in TODO.md. This decision is about the *positions* of
 the points, which is the half that makes a drawn mask correctable.
 
-**K-223 · DECIDED · The Type tool makes and edits text layers on the picture, and the
+**K-225 · DECIDED · The Type tool makes and edits text layers on the picture, and the
 toolbar grows the options the drawing tools use.** From the owner (2026-07-31): "Now add
 typing. These should also be their own layer type… along with this there should be the
 options for fills/border colour pickers and pixel widths etc just like AE."
@@ -3897,7 +3897,7 @@ rasteriser and are not on the bridge. When they are, both sums change together.
 **A new layer's anchor is recentred when the edit ends, pan-behind.** It starts on the left
 end of an empty line, because an empty line has no middle; once there is a line, the anchor
 moves to its middle and Position compensates by exactly the amount that keeps the words where
-they were (K-218's sum). So a typed layer scales and turns about itself without ever having
+they were (K-220's sum). So a typed layer scales and turns about itself without ever having
 appeared to move.
 
 **Vertical type is not built.** `lumit-text` lays out one horizontal line; the member stays
@@ -3908,7 +3908,7 @@ the point size while a type tool is armed, the fill and stroke swatches and the 
 while a drawing tool is. Fill and size are live — they set what the next text layer is made
 with. **Stroke and stroke width are drawn disabled**, because nothing in the engine strokes
 anything: a shape layer's outline and a paint stroke are both engine features that do not
-exist. They are shown rather than hidden for the same reason unbuilt tools are shown (K-214):
+exist. They are shown rather than hidden for the same reason unbuilt tools are shown (K-216):
 the tool set is the specified one, and a control that is visibly not working yet says more
 than a gap does.
 
@@ -3918,7 +3918,7 @@ cached child — so every tool layer under it stayed armed for whichever tool wa
 the panel last rebuilt, and only happened to work because a tool is usually picked before
 anything else redraws. The stage is now built inside the listener.
 
-**K-224 · DECIDED · The tools that draw wear a drawn pointer: the eyedropper's crosshair
+**K-226 · DECIDED · The tools that draw wear a drawn pointer: the eyedropper's crosshair
 badged with the tool's own icon, a brush ring for the painting tools, and an I-beam for
 type.** From the owner (2026-07-31): "for the shape and pen tools, they should use the same
 cursor as the dropper has? And maybe have the icon for the shape or pen in use just slightly
@@ -3950,7 +3950,7 @@ the pointer says which way the line will run before a single letter is typed.
 **And the click is where the words start.** A new text layer's anchor now begins at the left
 end of its line's baseline rather than in the middle of an empty box, so what is typed runs to
 the right of the pointer and sits on it instead of straddling it — the same relationship the
-caret is drawn with. The anchor is still recentred on the finished line pan-behind (K-223), so
+caret is drawn with. The anchor is still recentred on the finished line pan-behind (K-225), so
 nothing appears to move.
 
 **Why drawn rather than chosen.** A system cursor is a small fixed picture from the list the
@@ -3959,8 +3959,8 @@ Rotation, Anchor point and Razor — hide the system pointer over the picture an
 own; these do the same, through one shared pointer widget rather than a fourth private
 painter.
 
-**K-225 · DECIDED · Painting is a list of strokes on a layer, stamped into its pixels before
-its masks gate them.** From the owner (2026-07-31): "please implement the brush stuff". K-224
+**K-227 · DECIDED · Painting is a list of strokes on a layer, stamped into its pixels before
+its masks gate them.** From the owner (2026-07-31): "please implement the brush stuff". K-226
 gave the three painting tools their pointers and an honest notice; this gives them something
 to do.
 
@@ -3999,7 +3999,7 @@ one back.
 **The brush gets its own three settings, and they are live.** Size, hardness and opacity sit
 on the toolbar beside the fill swatch whenever a painting tool is armed. They are *not* the
 shape tools' stroke pair — a brush is a different thing that happens to have a width, and
-K-223's stroke controls stay disabled because nothing still strokes a path. The brush colour
+K-225's stroke controls stay disabled because nothing still strokes a path. The brush colour
 **is** the fill: a fill is what a tool lays down.
 
 **Strokes list in the Timeline** under a Paint heading between Masks and Effects — the order
@@ -4017,12 +4017,12 @@ same reason: those pixels never come back to the CPU.
 **Not built, and named so nobody assumes otherwise:** pressure and tilt, brush shapes other
 than round, spacing and scatter, write-on (a stroke's own start and end times), painting in
 Layer view rather than on the composite, and per-stroke blending modes.
-**K-226 · DECIDED · A tool that is not built cannot be armed. It stays on the strip, drawn
+**K-228 · DECIDED · A tool that is not built cannot be armed. It stays on the strip, drawn
 disabled.** From the owner (2026-07-31): "I think we'd be better off just disabling that in the
 toolbar for now… it'd be better to see what we still need to add rather than removing it and
 forgetting about the code."
 
-**Which is a correction to K-214's honesty rule, not a reversal of it.** K-214 put every
+**Which is a correction to K-216's honesty rule, not a reversal of it.** K-216 put every
 specified tool on the strip and had the unbuilt ones say so in a tooltip. That was right about
 *showing* them and wrong about *arming* them: a tool you can pick that then does nothing reads
 as a broken application, and the tooltip is only read by someone who already suspected. Shown,
@@ -4036,14 +4036,14 @@ gate rather than the widget, because there are three ways in and only one of the
 
 **The flag is `ToolMode.ready`, which already existed.** No second list to keep in step: a tool
 becomes armable the moment its behaviour lands, in the same commit, and the test that pins the
-built set (K-221) now pins what is *arming-able* too. This is also what keeps the two branches
+built set (K-223) now pins what is *arming-able* too. This is also what keeps the two branches
 straight — paint is built on the engine branch and not on this one, and each branch's toolbar
 follows its own flags without either being edited to suit the other.
 
 **What is disabled today:** the Roto tools and the Puppet pins (both engine features of their
 own size, at the owner's direction), the Pen's four editing siblings, and vertical type.
 
-**K-227 · DECIDED · The camera tools move the composition's active camera by dragging on the
+**K-229 · DECIDED · The camera tools move the composition's active camera by dragging on the
 picture.** From the owner (2026-07-31): "Camera, make this like after effects implementation
 along with any gizmo's etc and custom cursors if necessary."
 
@@ -4087,8 +4087,8 @@ there is no single value for a drag to add to.
 separate point of interest, and its Unified Camera tool switches between the three by mouse
 button. Both are in TODO.md; neither changes the three tools above.
 
-**K-228 · DECIDED · A shape layer is a list of paths with a fill and a stroke, and its size is
-the box its art fills.** The other half of K-220's gesture: with nothing selected the shape
+**K-230 · DECIDED · A shape layer is a list of paths with a fill and a stroke, and its size is
+the box its art fills.** The other half of K-222's gesture: with nothing selected the shape
 tools now make a layer instead of saying they cannot, which is what the owner asked for when
 the shape tools were specified.
 
@@ -4107,7 +4107,7 @@ feature nobody has written.
 **A fill is the mask rasteriser; a stroke is the paint rasteriser.** The fill's coverage comes
 from `mask::rasterise`, the same scanline walk with the same subsamples that decides which
 pixels a mask gates. The outline is a `PaintStroke` run along the flattened path — the widened
-path K-225 already had. Two rasterisers already in the engine, each doing what it was written
+path K-227 already had. Two rasterisers already in the engine, each doing what it was written
 to do, instead of a third that could disagree with both.
 
 **The layer's size is its art's bounding box, and it moves.** Every kind built so far has a
@@ -4123,7 +4123,7 @@ under the drag. It is added at the top of the stack and selected, so the next dr
 which is the behaviour that makes "draw a shape, then draw another" work without a trip to the
 Timeline.
 
-**The stroke controls are live at last.** K-223 put a stroke swatch and a width on the toolbar
+**The stroke controls are live at last.** K-225 put a stroke swatch and a width on the toolbar
 and drew them disabled, because nothing in the engine stroked anything. A shape layer's art
 does, so they now paint: a width of zero draws no outline, which is how a fill-only shape is
 made. The Type tool's options are unchanged.
@@ -4140,5 +4140,5 @@ of edit and each is one undo step.
 **Not built, and named so nobody assumes otherwise:** nested groups and the shape modifiers
 (repeater, trim paths, wiggle, offset paths), gradient fills, dashed strokes, line joins and
 caps other than round, fill rules other than the mask rasteriser's, animated paths, and editing
-a shape layer's points on the picture (K-222 edits *mask* points; the same gesture over shape
+a shape layer's points on the picture (K-224 edits *mask* points; the same gesture over shape
 contents is the next piece).

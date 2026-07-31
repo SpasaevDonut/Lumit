@@ -1,5 +1,5 @@
 // How big a layer is, in its own pixels — the rectangle the Viewer draws a
-// wireframe round and hit-tests a click against (K-215).
+// wireframe round and hit-tests a click against (K-217).
 //
 // **In plain terms.** A layer's transform says where it sits, how big it is
 // drawn and which way up. It does not say how big the *thing* is: that comes
@@ -35,7 +35,7 @@ import 'package:uuid/uuid.dart';
 const Size nullLayerBounds = Size(100, 100);
 
 /// The box a shape layer's art fills, in the layer's own coordinates, or null
-/// when there is no art (K-228).
+/// when there is no art (K-230).
 ///
 /// The **control points** bound the curve rather than the curve itself — a cubic
 /// never leaves its own control hull — which is the same rule `lumit-core`'s
@@ -118,7 +118,7 @@ class LayerBoundsCache extends ChangeNotifier {
     if (entry.info.kind == BridgeLayerKind.nullLayer) return nullLayerBounds;
 
     // A shape layer is exactly as big as its art, and **that changes as the art
-    // is edited** (K-228) — the first kind whose size is not fixed by a source.
+    // is edited** (K-230) — the first kind whose size is not fixed by a source.
     // The cache follows the document's revision, so it keeps up; this comment
     // is here because the rest of this file was written when "a layer's size"
     // was a constant.

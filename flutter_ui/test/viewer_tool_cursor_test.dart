@@ -1,4 +1,4 @@
-// The drawn pointers (K-224): the brush ring's size, and that each tool badges
+// The drawn pointers (K-226): the brush ring's size, and that each tool badges
 // its own icon.
 //
 // The ring is the part with arithmetic in it — a brush width is in *picture*

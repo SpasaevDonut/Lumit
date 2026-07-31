@@ -1,5 +1,5 @@
 // The shape tools and the Pen over the picture: the drag that draws a mask, and
-// the Pen's point-by-point path (K-220, K-221, docs/07 §2.3).
+// the Pen's point-by-point path (K-222, K-223, docs/07 §2.3).
 //
 // **In plain terms.** With a shape tool in hand and a layer selected, dragging
 // over the picture draws a mask on that layer — a rectangle, a rounded
@@ -7,7 +7,7 @@
 // dragged, with Shift keeping it square. The **Pen** is different: it builds a
 // path a point at a time, and clicking its first point again closes and applies
 // it. (That gesture was briefly on the polygon tool; it is After Effects' pen,
-// and it belongs on the Pen — K-221.)
+// and it belongs on the Pen — K-223.)
 //
 // **What it does with nothing selected.** Nothing — and it says so. After
 // Effects would make a *shape layer* there, which Lumit's engine has no such
@@ -46,7 +46,7 @@ class ViewerShapeLayer extends StatefulWidget {
   final List<LayerBox> boxes;
 
   /// The composition, for the shape layer a drag makes when nothing is
-  /// selected (K-228).
+  /// selected (K-230).
   final CompositionReference comp;
 
   /// Where the picture sits on screen, and the comp's own size — the two that
@@ -82,7 +82,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   Offset? _to;
 
   /// Where the pointer went down, for the same reason every other tool records
-  /// it (K-215): the framework only reports a drag once it has travelled its
+  /// it (K-217): the framework only reports a drag once it has travelled its
   /// slop, and a shape that started 18px from where you pressed is the wrong
   /// shape.
   Offset? _downAt;
@@ -91,7 +91,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   PathDraft _draft = const PathDraft();
   Offset? _penPointer;
 
-  /// Where the pointer is, for the drawn cursor (K-224). Tracked for every
+  /// Where the pointer is, for the drawn cursor (K-226). Tracked for every
   /// shape tool, not only the Pen, because every one of them wears one.
   Offset? _pointer;
 
@@ -144,7 +144,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   }
 
   /// A point on screen in the composition's own pixels — what a shape layer's
-  /// art is built in when there is no layer to ask (K-228).
+  /// art is built in when there is no layer to ask (K-230).
   (double, double) _compPoint(Offset at) {
     final scale = widget.compSize.width == 0
         ? 1.0
@@ -162,7 +162,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final target = _target;
     return Positioned.fill(
       child: MouseRegion(
-        // Hidden, because the drawn pointer below replaces it (K-224): the
+        // Hidden, because the drawn pointer below replaces it (K-226): the
         // eyedropper's crosshair, badged with this tool's own icon.
         cursor: SystemMouseCursors.none,
         onEnter: (event) => setState(() => _pointer = event.localPosition),
@@ -263,7 +263,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final box = _target;
     if (box == null) {
       // Nothing selected: After Effects' other half of this gesture — a new
-      // shape layer at the top of the composition (K-228).
+      // shape layer at the top of the composition (K-230).
       _commitShapeLayer(shapePath(
         tool: widget.tool,
         from: _compPoint(from),
@@ -298,7 +298,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final box = _target;
     // The path is built in the layer's coordinates when there is a layer, and
     // in the composition's when there is not — the same path either way, and
-    // the difference is only which thing it will belong to (K-228).
+    // the difference is only which thing it will belong to (K-230).
     final at = box == null
         ? _compPoint(details.localPosition)
         : () {
@@ -365,7 +365,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   // --- Committing -----------------------------------------------------------
 
   /// A new shape layer holding this art, at the top of the composition — what a
-  /// shape tool or the Pen does with nothing selected (K-228).
+  /// shape tool or the Pen does with nothing selected (K-230).
   ///
   /// The art takes the toolbar's fill, and its stroke when one has a width: the
   /// two swatches that had nothing to paint until there were shape layers.

@@ -121,18 +121,18 @@ class BridgeLayerInfo {
   /// which is exactly what decides whether the fold-out shows a Retime row.
   final BridgeScalar? retime;
 
-  /// The layer's masks (K-220), bottom of the stack first. Carried in the
+  /// The layer's masks (K-222), bottom of the stack first. Carried in the
   /// read model for the same reason the effects are: the Timeline's
   /// twirl-down draws a row per mask, and asking per row per frame is the
   /// cost K-184 exists to remove. Edits still go through `set_mask`.
   final List<BridgeMask> masks;
 
-  /// The layer's paint strokes (K-225), oldest first — carried for the same
+  /// The layer's paint strokes (K-227), oldest first — carried for the same
   /// reason the masks are: the Timeline lists them, and the Viewer needs to
   /// know a layer has some without asking per frame.
   final List<BridgeStroke> paint;
 
-  /// A shape layer's art (K-228), bottom first; empty on every other kind.
+  /// A shape layer's art (K-230), bottom first; empty on every other kind.
   /// Carried for the same reason again — and for one more: the art *is* the
   /// layer's size, so the Viewer's wireframe reads it here.
   final List<BridgeShapeItem> shapeContents;
@@ -214,7 +214,7 @@ enum BridgeLayerKind {
   precomp,
   text,
 
-  /// Vector art as the layer's own picture (K-228).
+  /// Vector art as the layer's own picture (K-230).
   shape,
   camera,
   sequence,
@@ -386,7 +386,7 @@ class BridgeMatte {
           inverted == other.inverted;
 }
 
-/// What a paint stroke does to the pixels under it (K-225).
+/// What a paint stroke does to the pixels under it (K-227).
 enum BridgePaintMode {
   /// Lay the stroke's colour down.
   paint,
@@ -452,7 +452,7 @@ enum BridgeRevealKind {
   ;
 }
 
-/// One piece of vector art on a shape layer (K-228): a path, and how it is
+/// One piece of vector art on a shape layer (K-230): a path, and how it is
 /// painted.
 ///
 /// The path is `BridgeVertex`, the same vertices a mask crosses with: one path
@@ -542,7 +542,7 @@ class BridgeSpan {
           startOffset == other.startOffset;
 }
 
-/// One paint stroke on a layer (K-225): the path the pointer took, and how it
+/// One paint stroke on a layer (K-227): the path the pointer took, and how it
 /// was painted.
 ///
 /// A **polyline**, not a bezier — a stroke is a record of a gesture rather than
@@ -730,7 +730,7 @@ enum BridgeTransformProp {
   ;
 }
 
-/// One vertex of a mask's path (K-220): where it sits in **layer space**, and
+/// One vertex of a mask's path (K-222): where it sits in **layer space**, and
 /// the two tangent handles that shape the curve either side of it.
 ///
 /// Tangents are offsets *from* the vertex, in the same layer pixels — the shape
@@ -952,7 +952,7 @@ class LayerReference {
         that: this,
       );
 
-  /// This layer's masks, bottom of the stack first (K-220).
+  /// This layer's masks, bottom of the stack first (K-222).
   ///
   /// Empty on a layer with none, which is most layers — the Timeline asks
   /// every row whether it has masks to list, exactly as it asks about clips.
@@ -971,7 +971,7 @@ class LayerReference {
         that: this,
       );
 
-  /// This layer's paint strokes, oldest first (K-225).
+  /// This layer's paint strokes, oldest first (K-227).
   List<BridgeStroke> getPaint() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetPaint(
         that: this,
@@ -998,7 +998,7 @@ class LayerReference {
         that: this,
       );
 
-  /// This shape layer's contents, bottom of the stack first (K-228).
+  /// This shape layer's contents, bottom of the stack first (K-230).
   ///
   /// Empty on a layer that is not a shape, rather than an error: the Timeline
   /// asks every row what it has to list, exactly as it asks about masks.

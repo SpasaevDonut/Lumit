@@ -1,5 +1,5 @@
 // The painting tools over the picture: brush, eraser and clone stamp
-// (K-225, docs/07 §2.3.4).
+// (K-227, docs/07 §2.3.4).
 //
 // **In plain terms.** With a painting tool in hand, dragging over the picture
 // leaves a mark on the **selected layer**. The brush lays down the toolbar's
@@ -113,7 +113,7 @@ class _ViewerPaintLayerState extends State<ViewerPaintLayer> {
 
   /// Where the press landed. The framework only reports a drag once it has
   /// travelled its slop, and a stroke that began 18px along is the wrong stroke
-  /// (K-215's trap, and every tool since).
+  /// (K-217's trap, and every tool since).
   Offset? _downAt;
 
   /// The clone stamp's source, in the *layer's* coordinates, so it stays put on
@@ -176,7 +176,7 @@ class _ViewerPaintLayerState extends State<ViewerPaintLayer> {
     return Positioned.fill(
       child: MouseRegion(
         // Hidden, because the ring below replaces it: a system arrow inside the
-        // brush ring would read as two pointers (K-224).
+        // brush ring would read as two pointers (K-226).
         cursor: SystemMouseCursors.none,
         onEnter: (e) => setState(() => _pointer = e.localPosition),
         onHover: (e) => setState(() => _pointer = e.localPosition),

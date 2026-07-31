@@ -87,7 +87,7 @@ pub enum Op {
         layer: Uuid,
         masks: Vec<crate::mask::Mask>,
     },
-    /// Replace a layer's whole paint stroke list (docs/03 §7.1, K-225).
+    /// Replace a layer's whole paint stroke list (docs/03 §7.1, K-227).
     ///
     /// The whole list, exactly invertible, exactly as `SetLayerMasks` is: a
     /// stroke added, deleted, recoloured or renamed is one shape of edit and one
@@ -97,7 +97,7 @@ pub enum Op {
         layer: Uuid,
         strokes: Vec<crate::paint::PaintStroke>,
     },
-    /// Replace a shape layer's whole contents (docs/03 §7.2, K-228).
+    /// Replace a shape layer's whole contents (docs/03 §7.2, K-230).
     ///
     /// The whole list, exactly invertible, like `SetLayerMasks` and
     /// `SetLayerPaint`: vector art arrives and changes as a whole.

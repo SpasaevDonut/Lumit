@@ -289,7 +289,7 @@ pub fn build_comp_draws_at(
                 let px = solid_rgba(sd.colour);
                 // A flat colour is normally an 8×8 tile stretched to size —
                 // but a mask gates *pixels* and a stroke paints them, so both
-                // want the solid at its real size to work on (K-225).
+                // want the solid at its real size to work on (K-227).
                 let (tw, th) = if layer.masks.is_empty() && layer.paint.is_empty() {
                     (8, 8)
                 } else {
@@ -313,7 +313,7 @@ pub fn build_comp_draws_at(
             }),
             // Vector art: rasterised at the size the frame is being drawn at,
             // into its own bounding box, which is also the layer's natural size
-            // (K-228). Unlike every other kind, that size moves when the art is
+            // (K-230). Unlike every other kind, that size moves when the art is
             // edited.
             LayerKind::Shape { contents } => in_span(layer)
                 .then(|| lumit_core::shape::contents_bounds(contents))
@@ -338,7 +338,7 @@ pub fn build_comp_draws_at(
         };
         raw.map(|(mut rgba, w, h, natural)| {
             // Paint first, masks second: a stroke is part of the layer's
-            // picture, and a mask gates the picture (K-225, docs/06 render
+            // picture, and a mask gates the picture (K-227, docs/06 render
             // order). Painting after the mask would let a brush draw outside
             // the shape the mask cut.
             lumit_core::paint::apply_strokes(

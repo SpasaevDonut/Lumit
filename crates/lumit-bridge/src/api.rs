@@ -95,11 +95,11 @@ pub enum BridgeError {
     EmptyPath,
     /// The edit named a mask this layer does not have.
     NoSuchMask,
-    /// A paint stroke with no points in it (K-225).
+    /// A paint stroke with no points in it (K-227).
     EmptyStroke,
     /// No stroke of that id on this layer.
     NoSuchStroke,
-    /// The layer is not a shape layer (K-228).
+    /// The layer is not a shape layer (K-230).
     NotShape,
     /// The razor was pointed at a time outside the layer's span, or at one of
     /// its ends — either way there is no second layer to make.

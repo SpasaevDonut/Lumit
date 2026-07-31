@@ -305,7 +305,7 @@ void main() {
       expect(p.comp.getLayers().single.getClips(), hasLength(1),
           reason: 'the razor is a mode, not the default click');
 
-      // The Timeline's menu item arms the toolbar's Razor tool (K-218) —
+      // The Timeline's menu item arms the toolbar's Razor tool (K-220) —
       // one razor, two doors.
       await openMore(tester);
       await tester.tap(find.byKey(const ValueKey('tl-razor')));

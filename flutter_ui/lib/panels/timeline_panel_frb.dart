@@ -579,7 +579,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// a curve you can shape.
   bool _graph = false;
 
-  /// Whether the razor is armed — which is now the *toolbar's* answer (K-218):
+  /// Whether the razor is armed — which is now the *toolbar's* answer (K-220):
   /// the Razor tool (`C`) and this panel's own menu item are two doors into one
   /// state, because two razors that could disagree is one razor too many. The
   /// menu item arms and disarms the tool.
@@ -2032,7 +2032,7 @@ class _VolumeRowState extends State<_VolumeRow> {
 /// and only exists while the layer has been given a Retime (Ctrl+Alt+T), so
 /// unlike Volume its scalar arrives on the fold row rather than being read here
 /// (K-184: no bridge calls while drawing).
-/// One mask's row in the fold-out (K-220): its name, its invert switch and its
+/// One mask's row in the fold-out (K-222): its name, its invert switch and its
 /// opacity.
 ///
 /// Read from the model, written through the layer's own handle — the same shape
@@ -2147,7 +2147,7 @@ class _MaskRow extends StatelessWidget {
   }
 }
 
-/// One piece of a shape layer's art in the Timeline (K-228): what it is called,
+/// One piece of a shape layer's art in the Timeline (K-230): what it is called,
 /// how opaque it is, and the menu that deletes it.
 ///
 /// The same shape as the mask and stroke rows: the engine takes the whole
@@ -2248,7 +2248,7 @@ class _ShapeItemRow extends StatelessWidget {
   }
 }
 
-/// One paint stroke in the Timeline (K-225): what it is called, how opaque it
+/// One paint stroke in the Timeline (K-227): what it is called, how opaque it
 /// is, and the menu that deletes it.
 ///
 /// The same shape as [_MaskRow], and for the same reason: the engine takes the
@@ -4149,7 +4149,7 @@ class _LayerArea extends StatelessWidget {
     // wash and the strip stays one colour.
     final workAreaPixels =
         work.whole ? null : (axis.xOf(work.start), axis.xOf(work.end));
-    // The blade pointer and the line that says where the cut lands (K-218).
+    // The blade pointer and the line that says where the cut lands (K-220).
     // Round the whole area rather than inside a bar: the line spans every row,
     // and a pointer clipped to one bar would vanish at its edges. Inert — and
     // free — while the razor is not armed.
@@ -4884,7 +4884,7 @@ class _Bar extends StatefulWidget {
   /// Read when the razor is clicked, not captured when the bar is built.
   final int Function() playheadFrame;
 
-  /// A razor click on this bar, at the frame under the pointer (K-218) — the
+  /// A razor click on this bar, at the frame under the pointer (K-220) — the
   /// panel decides what that cuts, because Shift cuts layers this bar knows
   /// nothing about.
   final void Function(int frame) onRazor;

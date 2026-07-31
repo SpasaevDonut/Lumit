@@ -1,4 +1,4 @@
-// The Anchor point tool — After Effects calls it Pan Behind (K-218,
+// The Anchor point tool — After Effects calls it Pan Behind (K-220,
 // docs/07 §1.7): drag a layer's anchor without the picture moving.
 //
 // **In plain terms.** The anchor point is the spot a layer scales and rotates
@@ -117,7 +117,7 @@ class ViewerAnchorLayer extends StatefulWidget {
 class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
   Offset? _pointer;
 
-  /// The press, for the same reason every other tool records it (K-215): a drag
+  /// The press, for the same reason every other tool records it (K-217): a drag
   /// is only recognised once the pointer has travelled its slop, and a pivot
   /// that jumped by that much on the first frame of every drag would be
   /// unusable.
@@ -273,7 +273,7 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
           ),
         );
       } catch (_) {
-        // A preview is a courtesy (K-215); the commit still lands.
+        // A preview is a courtesy (K-217); the commit still lands.
       }
     });
   }

@@ -1,4 +1,4 @@
-// The toolbar: the strip of tools under the menu bar (docs/07 §1.7, K-214).
+// The toolbar: the strip of tools under the menu bar (docs/07 §1.7, K-216).
 //
 // **In plain terms.** This is the row every editor has under its menus — the
 // arrow, the hand, the pen — and picking one of them says what dragging in the
@@ -83,7 +83,7 @@ class LumitToolBarFrb extends StatelessWidget {
             // Scrolls rather than overflowing: a narrow window has less width
             // than thirteen tools want, and an overflow stripe is not a design.
             // Flexible rather than Expanded so the options beside it get their
-            // share of the room instead of being squeezed to nothing (K-225).
+            // share of the room instead of being squeezed to nothing (K-227).
             Flexible(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -95,7 +95,7 @@ class LumitToolBarFrb extends StatelessWidget {
                 ),
               ),
             ),
-            // The armed tool's own options, when it has any (K-223): After
+            // The armed tool's own options, when it has any (K-225): After
             // Effects puts them here, and the strip is empty for the tools
             // that draw nothing.
             if (toolOptionsFor(ui.tools.tool) != ToolOptions.none) ...[
@@ -126,16 +126,16 @@ class LumitToolBarFrb extends StatelessWidget {
 enum ToolOptions {
   none,
 
-  /// Fill and size: what the Type tool sets a new line in (K-223).
+  /// Fill and size: what the Type tool sets a new line in (K-225).
   type,
 
   /// Fill and stroke: what a shape tool draws with. Both live since shape
-  /// layers landed (K-228) — a shape layer's art carries a fill colour, a
+  /// layers landed (K-230) — a shape layer's art carries a fill colour, a
   /// stroke colour and a stroke width, and a width of zero draws no outline.
   shape,
 
   /// The brush: the colour it lays down, and its size, hardness and opacity
-  /// (K-225). All four live — painting is built.
+  /// (K-227). All four live — painting is built.
   paint,
 }
 
@@ -369,7 +369,7 @@ class _ToolButtonState extends State<_ToolButton> {
     final active = widget.tools.tool.group == widget.group;
     final members = ToolMode.membersOf(widget.group);
     // A group nothing in which is built is on the strip but cannot be pressed
-    // (K-226): the tool set is the specification, and a button that visibly
+    // (K-228): the tool set is the specification, and a button that visibly
     // cannot be pressed says "coming" where a missing one says nothing.
     final enabled = ToolMode.builtMembersOf(widget.group).isNotEmpty;
 
@@ -500,7 +500,7 @@ class _ToolFlyout extends StatelessWidget {
               key: ValueKey<String>('tool-flyout-${member.name}'),
               selected: member == armed,
               // A member that is not built is listed and does nothing when
-              // clicked (K-226) — the same rule the buttons follow.
+              // clicked (K-228) — the same rule the buttons follow.
               onPressed: member.ready ? () => onPick(member) : () {},
               child: Row(
                 children: [
@@ -641,12 +641,12 @@ MouseCursor viewerCursorFor(ToolMode tool) => switch (tool) {
       ToolMode.anchor => SystemMouseCursors.move,
       // Type points at where the words will start; horizontal takes the
       // system's I-beam, and vertical has one drawn for it over the picture
-      // (K-224) because no platform ships a sideways beam.
+      // (K-226) because no platform ships a sideways beam.
       ToolMode.typeHorizontal => SystemMouseCursors.text,
       ToolMode.typeVertical => SystemMouseCursors.none,
       // The tools that draw and the tools that paint wear a *drawn* pointer —
       // the eyedropper's crosshair, or a brush ring, badged with the tool's own
-      // icon (K-224). Their own overlay hides the system pointer and paints it;
+      // icon (K-226). Their own overlay hides the system pointer and paints it;
       // this is the fallback underneath, and the nearest system pointer to it.
       _ => tool.group == ToolGroup.shape ||
               tool.group == ToolGroup.pen ||

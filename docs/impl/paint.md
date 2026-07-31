@@ -1,6 +1,6 @@
 # Paint — how a stroke becomes pixels
 
-**Status: built (K-225), first cut.** The model, the CPU rasteriser, the bridge, the tools and
+**Status: built (K-227), first cut.** The model, the CPU rasteriser, the bridge, the tools and
 the Timeline rows are in. What is not in is named at the end, and none of it changes what is
 stored.
 

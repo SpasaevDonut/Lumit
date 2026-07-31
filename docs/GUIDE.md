@@ -4646,7 +4646,7 @@ sounds like belt and braces, but the rule in docs/14 is not "validate at the
 edges", it is *no panics in engine crates* — and a document from disk is not
 something the ops layer has vetted.
 
-### The toolbar, and why it shows tools that do nothing yet (K-214)
+### The toolbar, and why it shows tools that do nothing yet (K-216)
 
 Every editor has a strip of tools under its menus, and the Flutter frontend did
 not: the row the old shell had never made it across the port, so the arrow, the
@@ -4685,7 +4685,7 @@ without either binding having to know the other exists.
 **Why most of them do nothing.** Only Selection and Hand do any work today —
 both pan the picture, as they did before there was a toolbar — and every other
 tool changes the shape of the pointer over the Viewer and stops there. That is
-deliberate, and it is a decision (K-214) rather than an oversight. The tool set
+deliberate, and it is a decision (K-216) rather than an oversight. The tool set
 is specified: shipping the strip with only the two working tools on it would
 teach a wrong idea of what the application is, and would leave nowhere agreed
 for the rest to appear as they are built. So the whole set is drawn, and each
@@ -4699,7 +4699,7 @@ to live, and the UI spec has always asked for the workspace names to be visible
 in the window chrome rather than buried in a menu. Snapping is, for now, a
 switch nothing reads: same rule as the tools, and the same reason.
 
-### Wireframes, and what "selected" means on the picture (K-215)
+### Wireframes, and what "selected" means on the picture (K-217)
 
 Before this, the Viewer could show you one box round one layer and give you one
 small square to drag it by. Now the picture behaves the way an editor expects:
@@ -4766,7 +4766,7 @@ pointer, and every drag moves the *view* instead of the layer. That is the entir
 difference between the two tools, and it is why the tool lives in one value the
 whole application reads (see the toolbar section above).
 
-### The Zoom tool, and why zooming now flies (K-216)
+### The Zoom tool, and why zooming now flies (K-218)
 
 Three gestures change how big the picture is drawn: the wheel, a click with the
 Zoom tool, and dragging a box with it. They are all the same question in
@@ -4816,7 +4816,7 @@ hand is the wrong resolution. A fresh one is asked for when the flight *lands*,
 not on every frame of it — a render per animation frame would cost a great deal
 to show something for 8 milliseconds.
 
-### The Rotation tool, and a cursor we had to draw ourselves (K-217)
+### The Rotation tool, and a cursor we had to draw ourselves (K-219)
 
 Pick the Rotation tool and drag anywhere over the picture: the selected layer
 turns. It turns about its **anchor point** — the little cross that appears while
@@ -4858,7 +4858,7 @@ needed — record where the pointer actually went down and measure from that. Wo
 remembering as a rule: any gesture whose *meaning* depends on where it began has
 to remember where it began.
 
-### Pan behind, and a razor that cuts where you point (K-218)
+### Pan behind, and a razor that cuts where you point (K-220)
 
 Two more tools, and they are less alike than their neighbours on the strip: one
 is an After Effects tool copied faithfully, the other is a tool After Effects
@@ -4925,7 +4925,7 @@ rebuild the panel, which is the worst kind of bug — it works while you are
 testing it and fails while you are using it. The panel subscribes to the tool
 directly now.
 
-### Cutting a speed ramp without bending it (K-219)
+### Cutting a speed ramp without bending it (K-221)
 
 When the razor cuts a layer, both halves keep *everything* — same source, same
 effects, same speed map. That is what makes the cut invisible. It is also a
@@ -4964,7 +4964,7 @@ instead — the pivot sliding away while the layer sat still, which reads as the
 drag being broken rather than as a different gesture. So the pivot has to be
 aimed at.
 
-### Masks, and the seam that was missing (K-220)
+### Masks, and the seam that was missing (K-222)
 
 A **mask** is a shape drawn on a layer that decides which of its pixels show.
 The engine has had them all along — the shape model, the maths for rectangles
@@ -5018,7 +5018,7 @@ telling you to select a layer. The alternative — making a solid and putting a 
 on it, and calling that a shape layer — would be a lie in the layer list, and one
 that would have to be untold the day the real thing arrives.
 
-### The Pen and the polygon, put the right way round (K-221)
+### The Pen and the polygon, put the right way round (K-223)
 
 A correction worth recording, because the shape of the mistake is instructive.
 The click-a-point, drag-for-a-curve, click-the-first-point-to-close gesture was
@@ -5039,7 +5039,7 @@ it was busily drawing masks. That flag is a promise about what the interface tel
 you, so a wrong one is not a cosmetic bug; there is now a test that pins the whole
 set of built tools, which will fail the next time one ships out of step.
 
-### Moving a mask's points (K-222)
+### Moving a mask's points (K-224)
 
 A mask you have drawn is only half a tool until you can correct it. With the
 Selection tool in hand and the layer controls showing, every vertex of every
@@ -5074,7 +5074,7 @@ a mask path does not fit through it. The marks moving is enough to aim by. What
 is still owed: a vertex's two **bezier handles** cannot be dragged, and mask paths
 cannot be keyframed.
 
-### Typing on the picture (K-223)
+### Typing on the picture (K-225)
 
 Text has been its own kind of layer in the engine for a long time — the
 renderer draws it, the document holds the words, the size and the colour — but
@@ -5117,7 +5117,7 @@ scales and turns about itself.
 **Vertical type is not built.** The text engine lays out one horizontal line.
 The tool stays on the strip and says so, like every other unbuilt tool.
 
-### Tool options: fill, size, and the stroke that is not there yet (K-223)
+### Tool options: fill, size, and the stroke that is not there yet (K-225)
 
 The toolbar now shows the settings the armed tool draws with, where After
 Effects shows them: a fill swatch and a size while a type tool is in hand, a
@@ -5140,7 +5140,7 @@ stayed armed for whatever had been in hand when the panel last redrew. It only
 ever worked because a tool is usually picked before anything else makes the
 Viewer redraw. The stage is now built inside the listener.
 
-### What the pointer tells you (K-224)
+### What the pointer tells you (K-226)
 
 An operating system ships a short list of mouse pointers — an arrow, a hand, a
 crosshair, an I-beam — and "rounded rectangle tool" is not on it. So the tools
@@ -5171,7 +5171,7 @@ type anything. And the point you click is now the *start* of the line rather
 than its middle: the new layer's anchor begins at the left end of the baseline,
 so the words run to the right of where you clicked and sit on it.
 
-### Painting: what a brush stroke actually is (K-225)
+### Painting: what a brush stroke actually is (K-227)
 
 Drag a brush over the picture and Lumit keeps **the drag, not the paint**. What
 goes into the project is the path your pointer took — in the layer's own
@@ -5226,7 +5226,7 @@ rasteriser. That last one is the only one that would change the code rather than
 add to it, and it changes how a stroke is *drawn*, not what a stroke *is*, which
 is why the storage was settled first.
 
-### A tool you cannot pick, and why that is the honest option (K-226)
+### A tool you cannot pick, and why that is the honest option (K-228)
 
 Every tool in the specification is on the strip, including the ones nothing is
 built behind. Until now those could be armed: you would pick the Roto brush, drag
@@ -5245,7 +5245,7 @@ The flag driving this is the same `ready` flag the tooltips already used, so
 nothing has to be kept in step by hand: a tool becomes pickable in the commit
 that makes it do something.
 
-### Moving the camera by dragging (K-227)
+### Moving the camera by dragging (K-229)
 
 A 3D composition is looked at through a **camera layer**, and the three camera
 tools move it with the mouse instead of by typing numbers into the Timeline.
@@ -5289,7 +5289,7 @@ camera, where the pivot is a thing you can move on its own), the **Unified
 Camera** tool that puts all three gestures on the three mouse buttons, and
 depth-of-field handles on the picture.
 
-### Shape layers: art that is numbers, not pixels (K-228)
+### Shape layers: art that is numbers, not pixels (K-230)
 
 Until now the shape tools could only draw a **mask** — a path *on* another
 layer, deciding which of its pixels show. Drag one with nothing selected and it

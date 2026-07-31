@@ -261,7 +261,7 @@ impl CubicSpan {
     }
 
     /// De Casteljau: the two cubics that together *are* this one, meeting at
-    /// parameter `u` (K-219). Exact, not an approximation — which is the whole
+    /// parameter `u` (K-221). Exact, not an approximation — which is the whole
     /// reason a key can be inserted mid-span without the picture changing.
     #[must_use]
     pub fn split_at(&self, u: f64) -> (Self, Self) {
@@ -371,7 +371,7 @@ impl Property {
         matches!(&self.animation, Animation::Keyframed(keys) if !keys.is_empty())
     }
 
-    /// Put a keyframe at `t` **without changing the curve** (K-219).
+    /// Put a keyframe at `t` **without changing the curve** (K-221).
     ///
     /// The new key takes the value the curve already had there, and the two
     /// halves of the span it lands in are re-described so that every value
@@ -637,7 +637,7 @@ mod tests {
         assert!((evaluate(&keys, 0.5).unwrap() - 0.5).abs() < 1e-9);
     }
 
-    /// **A key inserted mid-span must not move the curve** (K-219). Sampled
+    /// **A key inserted mid-span must not move the curve** (K-221). Sampled
     /// densely across the whole span, before and after, and compared: the razor
     /// puts one of these on every retimed layer it cuts, and a cut that changed
     /// the speed ramp would be a cut nobody could trust.

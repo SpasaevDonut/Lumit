@@ -461,7 +461,7 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
-    /// Add a Shape layer holding `contents`, at the top of the stack (K-228).
+    /// Add a Shape layer holding `contents`, at the top of the stack (K-230).
     ///
     /// The art is in the layer's own coordinates, and the layer is placed so
     /// that art lands where it was drawn: the anchor sits on the art's own
@@ -1094,7 +1094,7 @@ impl CompositionReference {
     }
 
     /// Ask for `frame` with `layer`'s text document replaced by `document` —
-    /// the same live path as the two above, for the Type tool (K-223).
+    /// the same live path as the two above, for the Type tool (K-225).
     ///
     /// Typing is the one edit where the provisional value changes many times a
     /// second and the document must *not*: a `set_text` per keystroke would be

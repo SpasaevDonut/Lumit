@@ -53,7 +53,7 @@ pub enum PaintMode {
 ///
 /// The path is a **polyline** rather than a bezier: it is a record of a gesture,
 /// sampled as it happened, not a shape anyone will edit vertex by vertex. Masks
-/// and shape layers are the bezier things (K-220); a stroke is a stroke.
+/// and shape layers are the bezier things (K-222); a stroke is a stroke.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PaintStroke {
     pub id: Uuid,

@@ -2260,7 +2260,7 @@ fn concurrent_project_creation_and_editing_does_not_deadlock() {
     }
 }
 
-// --- Shape layers (K-228) -------------------------------------------------
+// --- Shape layers (K-230) -------------------------------------------------
 
 use crate::api::layer::BridgeLayerKind;
 
@@ -2398,7 +2398,7 @@ fn a_shape_layer_refuses_art_that_is_not_a_shape() {
     ));
 }
 
-// --- Paint: strokes on a layer (K-225) ------------------------------------
+// --- Paint: strokes on a layer (K-227) ------------------------------------
 
 fn stroke(name: &str, points: &[(f64, f64)]) -> crate::api::layer::BridgeStroke {
     use crate::api::layer::{BridgePaintMode, BridgeStroke, BridgeStrokePoint};

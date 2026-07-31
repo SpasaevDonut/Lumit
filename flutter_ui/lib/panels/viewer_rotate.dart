@@ -1,4 +1,4 @@
-// The Rotation tool (K-217, docs/07 §1.7): the curved pointer, and the drag
+// The Rotation tool (K-219, docs/07 §1.7): the curved pointer, and the drag
 // that turns whatever is selected about its own anchor point.
 //
 // **In plain terms.** With this tool in hand the pointer becomes a curved arrow
@@ -135,7 +135,7 @@ class _ViewerRotateLayerState extends State<ViewerRotateLayer> {
   /// Where the turn is measured from: the point the pointer went *down*, not
   /// where the framework recognised the drag.
   ///
-  /// The same trap the gizmo's handles fell into (K-215): a pan is only
+  /// The same trap the gizmo's handles fell into (K-217): a pan is only
   /// recognised after the pointer has travelled its slop, so `DragStartDetails`
   /// is already some way round the circle — and every turn came out short by
   /// however far that was.
@@ -255,7 +255,7 @@ class _ViewerRotateLayerState extends State<ViewerRotateLayer> {
           transform: transformWithRotation(box.layer.getTransform(), degrees),
         );
       } catch (_) {
-        // A preview is a courtesy; the turn still lands (K-215).
+        // A preview is a courtesy; the turn still lands (K-217).
       }
     });
   }

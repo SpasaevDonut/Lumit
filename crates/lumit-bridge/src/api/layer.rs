@@ -37,7 +37,7 @@ pub struct BridgeLayerSwitches {
     pub shy: bool,
 }
 
-/// One vertex of a mask's path (K-220): where it sits in **layer space**, and
+/// One vertex of a mask's path (K-222): where it sits in **layer space**, and
 /// the two tangent handles that shape the curve either side of it.
 ///
 /// Tangents are offsets *from* the vertex, in the same layer pixels — the shape
@@ -55,7 +55,7 @@ pub struct BridgeVertex {
     pub tan_out_y: f64,
 }
 
-/// One piece of vector art on a shape layer (K-228): a path, and how it is
+/// One piece of vector art on a shape layer (K-230): a path, and how it is
 /// painted.
 ///
 /// The path is `BridgeVertex`, the same vertices a mask crosses with: one path
@@ -132,7 +132,7 @@ impl BridgeShapeItem {
     }
 }
 
-/// What a paint stroke does to the pixels under it (K-225).
+/// What a paint stroke does to the pixels under it (K-227).
 #[frb(non_opaque)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BridgePaintMode {
@@ -156,7 +156,7 @@ pub struct BridgeStrokePoint {
     pub y: f64,
 }
 
-/// One paint stroke on a layer (K-225): the path the pointer took, and how it
+/// One paint stroke on a layer (K-227): the path the pointer took, and how it
 /// was painted.
 ///
 /// A **polyline**, not a bezier — a stroke is a record of a gesture rather than
@@ -345,7 +345,7 @@ pub enum BridgeLayerKind {
     Solid,
     Precomp,
     Text,
-    /// Vector art as the layer's own picture (K-228).
+    /// Vector art as the layer's own picture (K-230).
     Shape,
     Camera,
     Sequence,
@@ -407,16 +407,16 @@ pub struct BridgeLayerInfo {
     /// The Retime property (K-197), or None when the layer is not retimed —
     /// which is exactly what decides whether the fold-out shows a Retime row.
     pub retime: Option<BridgeScalar>,
-    /// The layer's masks (K-220), bottom of the stack first. Carried in the
+    /// The layer's masks (K-222), bottom of the stack first. Carried in the
     /// read model for the same reason the effects are: the Timeline's
     /// twirl-down draws a row per mask, and asking per row per frame is the
     /// cost K-184 exists to remove. Edits still go through `set_mask`.
     pub masks: Vec<BridgeMask>,
-    /// The layer's paint strokes (K-225), oldest first — carried for the same
+    /// The layer's paint strokes (K-227), oldest first — carried for the same
     /// reason the masks are: the Timeline lists them, and the Viewer needs to
     /// know a layer has some without asking per frame.
     pub paint: Vec<BridgeStroke>,
-    /// A shape layer's art (K-228), bottom first; empty on every other kind.
+    /// A shape layer's art (K-230), bottom first; empty on every other kind.
     /// Carried for the same reason again — and for one more: the art *is* the
     /// layer's size, so the Viewer's wireframe reads it here.
     pub shape_contents: Vec<BridgeShapeItem>,
@@ -829,7 +829,7 @@ impl LayerReference {
         })
     }
 
-    /// This layer's masks, bottom of the stack first (K-220).
+    /// This layer's masks, bottom of the stack first (K-222).
     ///
     /// Empty on a layer with none, which is most layers — the Timeline asks
     /// every row whether it has masks to list, exactly as it asks about clips.
@@ -895,7 +895,7 @@ impl LayerReference {
         })
     }
 
-    /// This layer's paint strokes, oldest first (K-225).
+    /// This layer's paint strokes, oldest first (K-227).
     #[frb(sync)]
     pub fn get_paint(&self) -> Result<Vec<BridgeStroke>, BridgeError> {
         Ok(self.item()?.paint.iter().map(BridgeStroke::read).collect())
@@ -971,7 +971,7 @@ impl LayerReference {
         })
     }
 
-    /// This shape layer's contents, bottom of the stack first (K-228).
+    /// This shape layer's contents, bottom of the stack first (K-230).
     ///
     /// Empty on a layer that is not a shape, rather than an error: the Timeline
     /// asks every row what it has to list, exactly as it asks about masks.
@@ -1085,7 +1085,7 @@ impl LayerReference {
             .position(|l| l.id == self.layer_id)
             .ok_or(BridgeError::InvalidLayer)?;
 
-        // A retimed layer gets a keyframe *at the cut*, on both halves (K-219).
+        // A retimed layer gets a keyframe *at the cut*, on both halves (K-221).
         //
         // Both halves keep the whole map, so without this the two speed ramps
         // stay welded together: editing one half's speed would bend the other

@@ -84,21 +84,21 @@ final class FoldRetimeRow extends LayerFoldRow {
   const FoldRetimeRow(this.scalar, {required int depth}) : super(depth);
 }
 
-/// One mask on the layer (K-220): its name, and the switches that decide how it
+/// One mask on the layer (K-222): its name, and the switches that decide how it
 /// gates the picture.
 final class FoldMaskRow extends LayerFoldRow {
   final BridgeMask mask;
   const FoldMaskRow(this.mask, {required int depth}) : super(depth);
 }
 
-/// One piece of a shape layer's art (K-228): its name, its fill and its
+/// One piece of a shape layer's art (K-230): its name, its fill and its
 /// outline — the row that makes a drawn shape editable after the fact.
 final class FoldShapeRow extends LayerFoldRow {
   final BridgeShapeItem item;
   const FoldShapeRow(this.item, {required int depth}) : super(depth);
 }
 
-/// One paint stroke on the layer (K-225): its name, so a stroke can be found,
+/// One paint stroke on the layer (K-227): its name, so a stroke can be found,
 /// renamed and deleted after it was painted.
 final class FoldStrokeRow extends LayerFoldRow {
   final BridgeStroke stroke;
@@ -333,7 +333,7 @@ List<LayerFoldRow> layerFoldRows({
 
   // Contents first of the three: a shape layer's art *is* its picture, so it
   // comes before the masks that gate that picture and the effects that process
-  // it (K-228, docs/06 render order).
+  // it (K-230, docs/06 render order).
   if (info.shapeContents.isNotEmpty) {
     final contentsOpen = open.contains(contentsPath(id));
     rows.add(FoldGroupRow(
@@ -371,7 +371,7 @@ List<LayerFoldRow> layerFoldRows({
 
   // Paint, between Masks and Effects, because that is where it happens: strokes
   // are stamped into the layer's own pixels, which the masks then gate and the
-  // effects then process (K-225, docs/06 render order).
+  // effects then process (K-227, docs/06 render order).
   if (info.paint.isNotEmpty) {
     final paintOpen = open.contains(paintPath(id));
     rows.add(FoldGroupRow(

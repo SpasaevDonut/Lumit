@@ -356,7 +356,7 @@ void main() {
       final beforeX = (before.positionX as BridgeScalar_Static).field0;
 
       // The layer fills the comp, so the middle of the picture is inside it —
-      // there is no handle to find any more: the body is the handle (K-215).
+      // there is no handle to find any more: the body is the handle (K-217).
       final stage = find.byType(ViewerPanelFrb);
       final gesture = await tester.startGesture(tester.getCenter(stage));
       await tester.pump();
@@ -972,7 +972,7 @@ void main() {
       expect(at(moved.positionX), greaterThan(positionNow));
     });
 
-    /// The shape tools (K-220). With a layer selected a drag draws a **mask** on
+    /// The shape tools (K-222). With a layer selected a drag draws a **mask** on
     /// it; with nothing selected there is nothing to mask, and the status line
     /// says so rather than the drag vanishing into silence.
     testWidgets('a shape drag adds a mask to the selected layer',
@@ -1006,7 +1006,7 @@ void main() {
       expect(xs.reduce((a, b) => a > b ? a : b), lessThan(1920));
     });
 
-    /// The Pen with nothing selected makes a shape layer too (K-228): the same
+    /// The Pen with nothing selected makes a shape layer too (K-230): the same
     /// path, and the only difference is what it will belong to.
     testWidgets('the Pen with nothing selected closes onto a shape layer',
         (tester) async {
@@ -1086,10 +1086,10 @@ void main() {
       expect(masks.single.name, 'Polygon');
       expect(masks.single.vertices, hasLength(5),
           reason: 'a polygon is a shape you drag out, not a path you build '
-              '(K-221)');
+              '(K-223)');
     });
 
-    /// Mask points are editable on the picture (K-222): they draw as squares on
+    /// Mask points are editable on the picture (K-224): they draw as squares on
     /// the path, a marquee gathers them, and dragging moves them.
     testWidgets('a mask\'s points can be swept up and dragged', (tester) async {
       final p = withLayer();
@@ -1128,7 +1128,7 @@ void main() {
 
       // Sweep the top two points only, starting from empty space *outside* the
       // picture: a press inside a selected layer moves that layer, which is
-      // what the Selection tool has always done (K-215) and what After Effects
+      // what the Selection tool has always done (K-217) and what After Effects
       // does. The surround is the empty part a marquee starts from.
       final panel = tester.getRect(find.byType(ViewerPanelFrb));
       final gesture = await tester.startGesture(panel.topLeft + const Offset(2, 2));
@@ -1162,7 +1162,7 @@ void main() {
           reason: 'the points the sweep missed stayed put');
     });
 
-    /// The Type tool (K-223): a click on empty picture makes a text layer where
+    /// The Type tool (K-225): a click on empty picture makes a text layer where
     /// it landed, typing previews rather than writing, and ending the edit
     /// writes the document once.
     testWidgets('the Type tool makes a text layer where you click',
@@ -1272,7 +1272,7 @@ void main() {
       expect(layer.getText()!.text, 'Retitled');
     });
 
-    /// Painting (K-225): a drag on the selected layer leaves a stroke, and one
+    /// Painting (K-227): a drag on the selected layer leaves a stroke, and one
     /// drag is one stroke and one undo step.
     testWidgets('a brush drag paints a stroke on the selected layer',
         (tester) async {
@@ -1375,7 +1375,7 @@ void main() {
       expect(p.state.notice.value?.message, contains('Select a layer to paint'));
     });
 
-    /// The other half of the shape tools' gesture (K-228): with nothing
+    /// The other half of the shape tools' gesture (K-230): with nothing
     /// selected they make a **shape layer** rather than saying they cannot.
     testWidgets('a shape drag with nothing selected makes a shape layer',
         (tester) async {
@@ -1458,7 +1458,7 @@ void main() {
       expect(p.comp.getLayers().first.getShapeContents().single.stroke, isNull);
     });
 
-    /// The camera tools (K-227): a drag moves the composition's active camera,
+    /// The camera tools (K-229): a drag moves the composition's active camera,
     /// and with no camera the tool says so rather than swallowing the gesture.
     testWidgets('the camera tools orbit, track and dolly the active camera',
         (tester) async {

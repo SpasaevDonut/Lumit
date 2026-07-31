@@ -1,5 +1,5 @@
 // The camera tools: orbit, track and dolly the composition's camera
-// (K-227, docs/07 §2.3.5).
+// (K-229, docs/07 §2.3.5).
 //
 // **In plain terms.** A 3D composition is looked at through a **camera layer**,
 // and these three tools are how you move it by dragging on the picture instead
@@ -357,7 +357,7 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
     if (!widget.active) return const SizedBox.shrink();
     return Positioned.fill(
       child: MouseRegion(
-        // Hidden, because the drawn pointer below replaces it (K-224).
+        // Hidden, because the drawn pointer below replaces it (K-226).
         cursor: SystemMouseCursors.none,
         onEnter: (e) => setState(() => _pointer = e.localPosition),
         onHover: (e) => setState(() => _pointer = e.localPosition),

@@ -1,4 +1,4 @@
-// The painting tools' arithmetic (K-225): which mode each tool commits, and the
+// The painting tools' arithmetic (K-227): which mode each tool commits, and the
 // thinning every stroke goes through before it crosses the bridge.
 //
 // A stroke is a record of a gesture, and a gesture arrives as hundreds of

@@ -134,7 +134,7 @@ Structure only; every preset uses the same panel inventory.
   future Composer workspace is specified in [09-AUDIO.md](09-AUDIO.md) and deliberately not
   here.
 
-### 1.7 The toolbar (K-214)
+### 1.7 The toolbar (K-216)
 
 A single **toolbar** spans the window immediately below the menu bar and above the dock. It
 is chrome, not a panel: it cannot be closed, moved, tabbed or floated, and it is the same
@@ -162,18 +162,18 @@ strip whatever workspace is active.
 The right-hand end carries the **tool options** area (below), the **snapping** switch (§4.5)
 and the **workspace strip** §1.4 requires in the window chrome.
 
-**Tool options** (K-223). The armed tool's own settings, where After Effects puts them, and
+**Tool options** (K-225). The armed tool's own settings, where After Effects puts them, and
 empty for the tools that draw nothing:
 
 | Armed tool | Options |
 |---|---|
 | Type | **Fill** swatch, **size** in pixels |
-| Brush, Clone stamp, Eraser | **Fill** swatch, brush **size**, **hardness**, **opacity** (K-225) |
-| Shape, Pen | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels — all live (K-228) |
+| Brush, Clone stamp, Eraser | **Fill** swatch, brush **size**, **hardness**, **opacity** (K-227) |
+| Shape, Pen | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels — all live (K-230) |
 
 Every option is session state, like the armed tool itself, and every one is live: fill and size
 say what the next thing drawn is made with, and the stroke pair outlines a new shape layer's art
-(K-228 — a width of zero draws no outline).
+(K-230 — a width of zero draws no outline).
 
 **Behaviour.**
 
@@ -194,7 +194,7 @@ say what the next thing drawn is made with, and the stroke pair outlines a new s
   whose behaviour is not built yet MUST say so in that tooltip rather than being hidden: the
   tool set above is the specification, and a strip missing half of it teaches the wrong shape
   of the application.
-- **A tool whose behaviour is not built MUST NOT be armable** (K-226). Its button and its
+- **A tool whose behaviour is not built MUST NOT be armable** (K-228). Its button and its
   flyout row are drawn disabled, and the button, the row and the keyboard chord all decline
   together — the refusal belongs to the state that holds the armed tool, because there are
   three ways in and only one of them is a button. A group with nothing built in it takes no
@@ -207,7 +207,7 @@ say what the next thing drawn is made with, and the stroke pair outlines a new s
 the tool options area, the snapping switch and the workspace strip are built. Built tools:
 Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), the five shape
 tools and the Pen (§2.3.1), Horizontal type (§2.3.2), the three painting tools (§2.3.4) and the
-three camera tools (§2.3.5). **Disabled** (K-226 — shown, not armable): vertical type, the Pen's
+three camera tools (§2.3.5). **Disabled** (K-228 — shown, not armable): vertical type, the Pen's
 four editing siblings, the Roto tools and the Puppet pins. Each tool's behaviour is tracked
 separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
 
@@ -235,7 +235,7 @@ A single compact bar at the bottom of the Viewer holds, left to right:
 1. **Magnification** dropdown: Fit, Fit up to 100%, then 25 / 33.3 / 50 / 100 / 200 / 400 /
    800 %. Magnification is display scaling only; it MUST NOT change render resolution.
    `Ctrl+scroll` zooms about the pointer; `Shift+/` fits.
-   **Every magnification change is anchored** (K-216): the comp point the gesture names —
+   **Every magnification change is anchored** (K-218): the comp point the gesture names —
    under the pointer for a wheel notch or a click, the middle of the box for a sweep — MUST
    still be under that point afterwards. A magnification MUST be clamped to a sane range
    rather than running to zero or infinity.
@@ -276,7 +276,7 @@ A single compact bar at the bottom of the Viewer holds, left to right:
 
 The bar MUST remain one row; overflow collapses from the right into a chevron menu.
 
-### 2.3 Layer controls: the wireframe and the transform gizmo (K-215)
+### 2.3 Layer controls: the wireframe and the transform gizmo (K-217)
 
 - Selecting a visual layer shows a combined gizmo in comp space: move (body drag), scale
   (corner/edge handles, `Shift` for uniform), rotate (a bar standing off the top edge), and
@@ -296,7 +296,7 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   selection instead of replacing it.
 - **Dragging** a layer's body moves it; dragging one that is not selected selects it first,
   and dragging one that is already part of a selection moves the whole selection together.
-- The gizmo's **centre handle is the anchor point** (K-219), and dragging it pans behind —
+- The gizmo's **centre handle is the anchor point** (K-221), and dragging it pans behind —
   the pivot moves, the picture does not — with the same `Shift` axis lock and `Ctrl`/`Cmd`
   key-point snapping the Anchor point tool has. Its grab radius MUST be much tighter than a
   scale handle's: it sits where a body drag naturally begins, and a generous one would turn
@@ -305,14 +305,14 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   3D orientation when the layer is 3D.
 - The **Hand tool** never edits on the picture: with it armed the wireframe is a read-out of
   what is selected — no handles, no hover highlight — and every drag pans the view.
-- The **Rotation tool** (K-217) turns the **selection** — every selected layer, each about
+- The **Rotation tool** (K-219) turns the **selection** — every selected layer, each about
   **its own anchor point** — from a drag anywhere over the picture; `Shift` locks the turn to
   45° steps, and clicking picks a layer as the Selection tool does. Each selected layer's
   anchor MUST be marked while the tool is armed: it is the pin the layer spins on, and a
   rotation about an unseen point is a rotation nobody can predict. A set turns as one gesture
   — the angle is swept about the first selected layer's anchor and applied to all of them —
   rather than each layer chasing its own angle from the same pointer.
-- The **Anchor point tool** (After Effects' Pan Behind, K-218) drags a layer's anchor while
+- The **Anchor point tool** (After Effects' Pan Behind, K-220) drags a layer's anchor while
   **Position compensates**, so the pivot slides and the picture does not move at all. It acts
   on the layer under the pointer (selecting it, as the Selection tool does), or on the
   selection when the pointer is elsewhere. `Shift` locks the drag to one screen axis;
@@ -334,10 +334,10 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   other layers' anchors/edges. Snapping is on by default; holding `Ctrl` suspends it during
   a drag. Snap matches MUST be indicated visually at the moment of snap.
 
-### 2.3.1 The shape tools and masks (K-220)
+### 2.3.1 The shape tools and masks (K-222)
 
 - With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected it
-  makes a **shape layer** at the top of the composition (K-228), holding the art it drew, in the
+  makes a **shape layer** at the top of the composition (K-230), holding the art it drew, in the
   toolbar's fill and — when the width is not zero — its stroke. The new layer MUST land where
   the art was drawn and MUST become the selection, so the next drag masks it.
 - A shape layer's art lists in its Timeline twirl-down under a **Contents** heading, above Masks
@@ -346,7 +346,7 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   whichever way round the drag went — with `Shift` keeping the box square. Rectangle and
   rounded rectangle fill the box; ellipse is inscribed in it; polygon and star are the regular
   five-sided and five-pointed figures inscribed in it, first point at the top.
-- **The Pen builds a path point by point** (K-221): a click places a corner; a click-and-drag
+- **The Pen builds a path point by point** (K-223): a click places a corner; a click-and-drag
   places a vertex and pulls a **mirrored** pair of bezier handles out of it, the dragged
   handle leaving the vertex and its reflection entering; holding `Alt` during that drag breaks
   the pair so the entering handle stays where it was. Clicking the **first** vertex closes the
@@ -356,7 +356,7 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
 - A mask's path is stored in **layer space**, so it travels with the layer's transform.
 - Every selected layer's masks MUST be outlined on the picture, with a mark on each vertex.
 - **A mask's points can be edited with the Selection tool** while the layer controls are shown
-  (K-222). Each vertex is drawn as a small square, filled when it is selected. A click takes
+  (K-224). Each vertex is drawn as a small square, filled when it is selected. A click takes
   the point under the pointer (`Shift` adds to or removes from the set); a **marquee** that
   catches any of the selected layers' vertices takes **those**, leaving the layer selection
   alone, and one that catches none is the layer sweep of §2.3. Dragging a selected point moves
@@ -379,10 +379,10 @@ bar's switch. Not built: the anchor-point centre handle, snapping of any kind, p
 and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (a multiple
 selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
-drawn, listed, inverted, faded, deleted, and their points selected and moved** (K-222); their
+drawn, listed, inverted, faded, deleted, and their points selected and moved** (K-224); their
 bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
 
-### 2.3.2 The Type tool (K-223)
+### 2.3.2 The Type tool (K-225)
 
 - With a type tool armed, clicking **empty picture** MUST make a **text layer** where the
   pointer is and begin typing into it; clicking an **existing text layer** MUST edit that one.
@@ -407,7 +407,7 @@ bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
   the strip and says so.
 - Per-character and per-word text animators are a later feature ([TODO.md](TODO.md)).
 
-### 2.3.3 The tools' pointers (K-224)
+### 2.3.3 The tools' pointers (K-226)
 
 Every tool MUST say what it is through the pointer, and the ones no platform ships a cursor
 for are **drawn**: the system pointer is hidden over the Viewer and the tool paints its own,
@@ -432,7 +432,7 @@ as the Rotation, Anchor point and Razor tools already do.
 - The brush ring MUST be the **brush size** (§2.3.4), so what is under the pointer is the mark
   about to be made.
 
-### 2.3.4 The painting tools (K-225)
+### 2.3.4 The painting tools (K-227)
 
 - With a painting tool armed, a drag over the picture leaves a **stroke on the selected layer**.
   With nothing selected the tool MUST say so rather than swallowing the press.
@@ -454,7 +454,7 @@ as the Rotation, Anchor point and Razor tools already do.
   start and end times), per-stroke blending modes, and painting in Layer view rather than on the
   composite.
 
-### 2.3.5 The camera tools (K-227)
+### 2.3.5 The camera tools (K-229)
 
 - The three camera tools act on the **active camera** — the topmost visible camera layer whose
   span covers the playhead — regardless of the selection, because the camera is what the
@@ -748,7 +748,7 @@ A Sequence layer's row renders its clips back-to-back (glossary §2):
 - **Overrun hatching**: when a clip's Retime requests source beyond the media (glossary §4),
   the affected span renders with a hatched overlay and the boundary frame holds. Overrun
   MUST never move edit points (K-022). Context menu offers *Trim to source end* explicitly.
-- **Razor** (K-218): with the razor tool (`C`) click a layer to cut it **at the time under
+- **Razor** (K-220): with the razor tool (`C`) click a layer to cut it **at the time under
   the pointer** — not at the playhead, which is what `Ctrl+Shift+D` is for. `Shift`-clicking
   cuts **every layer whose span contains that moment**, the way Premiere's razor cuts all
   tracks. Cutting a Footage (or any non-Sequence) layer converts nothing — it **splits the
