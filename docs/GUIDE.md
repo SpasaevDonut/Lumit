@@ -5838,37 +5838,41 @@ Both rules now round the same way, so the width in the name is the width the
 pixels really were. A footnote worth having: resizing the window by less than a
 percent no longer re-decodes the footage either.
 
-**The sound that waited and never came back.** Every-frame playback shows every
-frame however long each one takes, so on a heavy stretch the picture falls
-behind the clock. Lumit's answer is to let the sound wait where it is, rather
-than let it run on and drift away from a picture that cannot keep up.
+**The sound that would not stop, and would not come back.** Three rules, two of
+them wrong, and each wrong in a way worth remembering.
 
-Waiting was right. Never coming back was not. The clock stops reporting the
-moment the sound stops, and the only test that could have started it again read
-that clock — so once the sound had stopped, nothing could ever decide to start
-it. One slow frame took the sound away for the rest of the run, even after the
-picture returned to full speed, and the only way to get it back was to stop
-playback and press play again.
+Every-frame playback shows every frame however long it takes, so on a heavy
+stretch the picture stops keeping time. Lumit's answer is to stop the sound
+rather than let it run over a picture that has fallen out of step with it.
 
-The obvious repair is wrong, and I tried it first: wait for the picture to reach
-the moment the sound had got to. But the sound stops *where it is*, which is
-ahead of the picture by however long the slow frame took. A frame that took
-thirty seconds leaves the sound thirty seconds in front, so the picture needs
-thirty seconds of playing to arrive — and if the composition ends before then, it
-never arrives, and the sound stays off. That is the same fault wearing a
-different hat.
+The first rule measured **how far in front of the picture the sound had got**,
+and stopped it at half a second. It also never started it again: the clock stops
+reporting the moment the sound stops, so the only test that could have restarted
+it could not run at all. One slow frame took the sound away for the rest of the
+run.
 
-So the sound comes back to the *picture*, not the picture to the sound. The
-moment the renders are running ahead of the presents again — the same measure
-that decides the sound may start at the beginning of a run — the sound is moved
-to the frame on screen and started there. The two are together by construction,
-at a moment the picture is definitely at, because it is the frame you are
-looking at.
+The second rule tried to start it again by **waiting for the picture to reach the
+moment the sound had got to** — which cannot work, because the sound stops
+*ahead* of the picture by however long the slow frame took. Thirty seconds of
+rendering leaves it thirty seconds ahead; if the composition ends before the
+picture gets there, the sound never returns.
 
-The two tests are deliberately unalike: it stops on a *distance* (half a second
-behind) and starts on *frames in hand*. Neither is the other's opposite, so a
-picture wavering at the edge of one cannot start and stop the sound over and
-over.
+The third started the sound again as soon as **finished frames were waiting**.
+But frames are usually waiting at the instant a picture goes out, even when the
+run as a whole is nowhere near full speed — so the sound came back on the very
+next picture, stopped, came back, and to the ear never stopped at all. It just
+stuttered.
+
+What is measured now is the obvious thing: **the gap between one picture going
+out and the next.** That gap *is* the rate you are watching. One picture arriving
+late stops the sound immediately, because sound over a picture that has stopped
+keeping time is the whole complaint. Eight in a row arriving on time starts it
+again — one picture landing on time by chance says nothing about the next, so
+stopping takes the evidence of one and starting takes the evidence of many.
+
+And when it starts, it starts *at the picture*: the sound is moved to the frame
+on screen first, so the two are together by construction rather than by hope.
+
 ### Shape layers: art that is numbers, not pixels (K-237)
 
 Until now the shape tools could only draw a **mask** — a path *on* another
