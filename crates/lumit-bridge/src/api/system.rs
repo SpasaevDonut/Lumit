@@ -128,3 +128,109 @@ pub fn video_memory_bytes() -> u64 {
         0
     }
 }
+
+/// Where the pointer was when a drag took hold of it, for the tools that hold
+/// it still (K-230).
+///
+/// **In plain terms.** Dragging a camera about is not a gesture with a *place*
+/// — nothing on the picture is being aimed at, only the movement matters — so
+/// the pointer running off the edge of the picture, and eventually off the edge
+/// of the screen, is pure loss: the drag stops when the pointer runs out of
+/// desk. Every 3D application answers this the same way: the pointer is pinned
+/// where it was pressed and only its *movement* is read, and it reappears where
+/// it started when the button comes up.
+///
+/// Windows has no "lock the pointer" call, so this is the way it is done
+/// everywhere: remember where it was, and put it back after each movement.
+/// Putting it back is itself a movement, which the frontend recognises and
+/// ignores (see the camera tools' layer).
+static FROZEN_CURSOR: std::sync::Mutex<Option<(i32, i32)>> = std::sync::Mutex::new(None);
+
+/// Remember where the pointer is, and say whether it could be — a platform
+/// with no implementation answers `false`, and the frontend then simply lets
+/// the pointer travel as it always did.
+#[frb(sync)]
+pub fn freeze_cursor() -> bool {
+    #[cfg(windows)]
+    {
+        use windows::Win32::Foundation::POINT;
+        use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+        let mut point = POINT::default();
+        // SAFETY: `point` is a live, correctly sized POINT; the call fills it.
+        if unsafe { GetCursorPos(&mut point) }.is_err() {
+            return false;
+        }
+        let Ok(mut held) = FROZEN_CURSOR.lock() else {
+            return false;
+        };
+        *held = Some((point.x, point.y));
+        true
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+/// Put the pointer back where [freeze_cursor] left it. Nothing at all when
+/// nothing is frozen, so an extra call is harmless.
+#[frb(sync)]
+pub fn restore_frozen_cursor() {
+    #[cfg(windows)]
+    {
+        use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+        let Ok(held) = FROZEN_CURSOR.lock() else {
+            return;
+        };
+        if let Some((x, y)) = *held {
+            // SAFETY: a plain call with two integers; a refusal (a locked
+            // desktop, another window holding the pointer) is not an error
+            // worth acting on — the drag carries on either way.
+            let _ = unsafe { SetCursorPos(x, y) };
+        }
+    }
+}
+
+/// Let the pointer go again, at the end of the drag.
+#[frb(sync)]
+pub fn thaw_cursor() {
+    if let Ok(mut held) = FROZEN_CURSOR.lock() {
+        *held = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Freezing and thawing must be safe to call in any order, and thawing must
+    /// actually let go — a restore after it moves nothing, which is what keeps a
+    /// drag that ended from dragging the pointer back later.
+    ///
+    /// The pointer is never *moved* here: `restore_frozen_cursor` with nothing
+    /// frozen is by construction a no-op, and a test that warped the developer's
+    /// mouse would be a rude test.
+    #[test]
+    fn thawing_lets_the_pointer_go() {
+        freeze_cursor();
+        thaw_cursor();
+        assert!(
+            FROZEN_CURSOR
+                .lock()
+                .map(|held| held.is_none())
+                .unwrap_or(false),
+            "thawing leaves nothing to restore to"
+        );
+        restore_frozen_cursor();
+    }
+
+    /// A platform with no implementation answers `false` rather than pretending,
+    /// which is what lets the camera drag fall back to reading movement between
+    /// events instead of measuring against an anchor that is not being held.
+    #[test]
+    fn freezing_says_whether_it_worked() {
+        let held = freeze_cursor();
+        assert_eq!(held, cfg!(windows));
+        thaw_cursor();
+    }
+}

@@ -16,8 +16,8 @@ import 'project_item.dart';
 import 'retime.dart';
 import 'solid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit_masks`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -121,6 +121,12 @@ class BridgeLayerInfo {
   /// which is exactly what decides whether the fold-out shows a Retime row.
   final BridgeScalar? retime;
 
+  /// The layer's masks (K-222), bottom of the stack first. Carried in the
+  /// read model for the same reason the effects are: the Timeline's
+  /// twirl-down draws a row per mask, and asking per row per frame is the
+  /// cost K-184 exists to remove. Edits still go through `set_mask`.
+  final List<BridgeMask> masks;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -137,6 +143,7 @@ class BridgeLayerInfo {
     required this.label,
     this.matte,
     this.retime,
+    required this.masks,
   });
 
   @override
@@ -155,7 +162,8 @@ class BridgeLayerInfo {
       effects.hashCode ^
       label.hashCode ^
       matte.hashCode ^
-      retime.hashCode;
+      retime.hashCode ^
+      masks.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -176,7 +184,8 @@ class BridgeLayerInfo {
           effects == other.effects &&
           label == other.label &&
           matte == other.matte &&
-          retime == other.retime;
+          retime == other.retime &&
+          masks == other.masks;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
@@ -279,6 +288,56 @@ class BridgeLayerSwitches {
           motionBlur == other.motionBlur &&
           collapse == other.collapse &&
           shy == other.shy;
+}
+
+/// One mask on a layer: a bezier path that gates the layer's alpha before its
+/// effects and transform (docs/06 render order).
+///
+/// The path is in **layer space** — the same coordinates the layer's own pixels
+/// use — so a mask travels with the layer's transform for free, exactly as it
+/// does in After Effects.
+class BridgeMask {
+  final UuidValue id;
+  final String name;
+  final List<BridgeVertex> vertices;
+
+  /// Whether the path joins its last vertex back to its first. An open path
+  /// gates nothing yet; it is a shape being drawn.
+  final bool closed;
+  final bool inverted;
+
+  /// 0..100.
+  final double opacity;
+
+  const BridgeMask({
+    required this.id,
+    required this.name,
+    required this.vertices,
+    required this.closed,
+    required this.inverted,
+    required this.opacity,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      vertices.hashCode ^
+      closed.hashCode ^
+      inverted.hashCode ^
+      opacity.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeMask &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          vertices == other.vertices &&
+          closed == other.closed &&
+          inverted == other.inverted &&
+          opacity == other.opacity;
 }
 
 /// A layer used as another layer's matte (docs/03 §5.1).
@@ -484,6 +543,52 @@ enum BridgeTransformProp {
   ;
 }
 
+/// One vertex of a mask's path (K-222): where it sits in **layer space**, and
+/// the two tangent handles that shape the curve either side of it.
+///
+/// Tangents are offsets *from* the vertex, in the same layer pixels — the shape
+/// `lumit-core`'s `mask::Vertex` uses, carried across unchanged so a path never
+/// changes meaning by crossing the bridge. A corner vertex is one with both
+/// tangents at zero.
+class BridgeVertex {
+  final double x;
+  final double y;
+  final double tanInX;
+  final double tanInY;
+  final double tanOutX;
+  final double tanOutY;
+
+  const BridgeVertex({
+    required this.x,
+    required this.y,
+    required this.tanInX,
+    required this.tanInY,
+    required this.tanOutX,
+    required this.tanOutY,
+  });
+
+  @override
+  int get hashCode =>
+      x.hashCode ^
+      y.hashCode ^
+      tanInX.hashCode ^
+      tanInY.hashCode ^
+      tanOutX.hashCode ^
+      tanOutY.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeVertex &&
+          runtimeType == other.runtimeType &&
+          x == other.x &&
+          y == other.y &&
+          tanInX == other.tanInX &&
+          tanInY == other.tanInY &&
+          tanOutX == other.tanOutX &&
+          tanOutY == other.tanOutY;
+}
+
 class LayerReference {
   final UuidValue internalprojectId;
   final UuidValue internalcompId;
@@ -503,6 +608,18 @@ class LayerReference {
   /// to a corner. An unknown name is refused; nothing partial is committed.
   void addEffect({required String name}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceAddEffect(that: this, name: name);
+
+  /// Add `mask` to the top of this layer's stack.
+  ///
+  /// The whole list is committed, because that is the op the engine has and
+  /// it is exactly invertible (`SetLayerMasks`) — an add, a delete and a
+  /// reorder are all one shape of edit, and each is one undo step.
+  ///
+  /// A path of fewer than two vertices is refused: it is not a shape, and a
+  /// mask that gates nothing would be a row in the Timeline with nothing
+  /// behind it.
+  void addMask({required BridgeMask mask}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceAddMask(that: this, mask: mask);
 
   /// Whether this layer's source actually carries sound.
   ///
@@ -557,6 +674,10 @@ class LayerReference {
   /// anything that was already in time with the music.
   void deleteClipAt({required PlatformInt64 frame}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceDeleteClipAt(that: this, frame: frame);
+
+  /// Remove a mask by id.
+  void deleteMask({required UuidValue id}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceDeleteMask(that: this, id: id);
 
   /// Copy this layer, inserting the copy directly above the original.
   ///
@@ -615,6 +736,15 @@ class LayerReference {
   /// The label-colour index: which chip the Timeline draws beside the layer
   /// number, as an index into the theme's label palette (TL2).
   int getLabel() => BridgeLib.instance.api.crateApiLayerLayerReferenceGetLabel(
+        that: this,
+      );
+
+  /// This layer's masks, bottom of the stack first (K-222).
+  ///
+  /// Empty on a layer with none, which is most layers — the Timeline asks
+  /// every row whether it has masks to list, exactly as it asks about clips.
+  List<BridgeMask> getMasks() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetMasks(
         that: this,
       );
 
@@ -815,6 +945,12 @@ class LayerReference {
   void setLabel({required int label}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetLabel(that: this, label: label);
 
+  /// Replace one mask — its path, its name, its invert switch, its opacity.
+  /// Named by id, so a stale reference is a calm error rather than an edit
+  /// landing on whichever mask happens to sit at that index now.
+  void setMask({required BridgeMask mask}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetMask(that: this, mask: mask);
+
   /// Point this layer at another as its matte, or clear it with `None`.
   ///
   /// A matte naming a layer that is not there degrades to "no matte" at render
@@ -894,6 +1030,29 @@ class LayerReference {
   void setText({required BridgeTextDocument document}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetText(that: this, document: document);
 
+  /// Replace a text layer's document **and its anchor and position
+  /// together**, as one op (K-230).
+  ///
+  /// For the end of a typing session, which is one action to the user and has
+  /// to be one undo step. It is two edits underneath — what the line says, and
+  /// the pivot moving to the middle of the line it turned out to be, with
+  /// Position compensating so the line does not shift — and committing them
+  /// separately made `Ctrl+Z` undo a pivot nobody had moved before it undid
+  /// the typing.
+  void setTextPlaced(
+          {required BridgeTextDocument document,
+          required double anchorX,
+          required double anchorY,
+          required double positionX,
+          required double positionY}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetTextPlaced(
+          that: this,
+          document: document,
+          anchorX: anchorX,
+          anchorY: anchorY,
+          positionX: positionX,
+          positionY: positionY);
+
   /// Replace one transform property's whole animation, as one
   /// [`lumit_core::Op::SetTransformProperty`].
   ///
@@ -925,6 +1084,25 @@ class LayerReference {
   /// a transform property, and for the same invertibility reason.
   void setVolumeDb({required BridgeScalar value}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetVolumeDb(that: this, value: value);
+
+  /// Razor: split this layer in two at `frame` (docs/07 §4.4).
+  ///
+  /// After Effects' split, not a clip cut: the layer keeps everything it has —
+  /// its source, effects, masks, parent, label and keyframes — and the copy
+  /// takes the tail. Both halves keep the **same `start_offset`**, which is
+  /// what makes the cut invisible: layer time is measured from that offset
+  /// (K-213), so each half shows exactly the frames it showed before and every
+  /// keyframe stays where it was on the comp's clock.
+  ///
+  /// One `Batch`, so it is one undo step — docs/07 §4.7 requires that of every
+  /// destructive-feeling action, and a razor that took two would be two.
+  ///
+  /// The copy goes directly above the original, where a duplicate goes.
+  /// `frame` must land strictly inside the layer's span: cutting at either end
+  /// would make a layer of no length, so it is a calm error rather than a
+  /// zero-length layer nobody asked for.
+  void splitAt({required PlatformInt64 frame}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSplitAt(that: this, frame: frame);
 
   /// Turn Retime on or off (Ctrl+Alt+T), returning whether it is now on.
   ///

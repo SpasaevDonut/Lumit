@@ -19,6 +19,7 @@ import 'package:lumit_flutter/panels/project_panel_frb.dart';
 import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
+import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -58,6 +59,389 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tl-more')));
       await tester.pumpAndSettle();
     }
+
+    /// The Razor tool (K-220). Clicking a bar cuts that layer **where the
+    /// pointer is**, not at the playhead — the difference between a razor and
+    /// the Cut-at-playhead command.
+    testWidgets('the razor splits a layer in two where it is clicked',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      expect(p.comp.getLayers().length, 1);
+      final span = layer.getSpan();
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      expect(bar, findsOneWidget);
+      final box = tester.getRect(bar);
+      // A third of the way along the bar, well inside it.
+      await tester.tapAt(Offset(box.left + box.width / 3, box.center.dy));
+      await tester.pumpAndSettle();
+
+      final after = p.comp.getLayers();
+      expect(after.length, 2, reason: 'one layer became two');
+      // The halves meet: the first ends where the second begins, and together
+      // they cover exactly what the layer covered.
+      final spans = [for (final l in after) l.getSpan()];
+      final ins = [for (final s in spans) s.inPoint.num / s.inPoint.den];
+      final outs = [for (final s in spans) s.outPoint.num / s.outPoint.den];
+      ins.sort();
+      outs.sort();
+      expect(ins.first, closeTo(span.inPoint.num / span.inPoint.den, 1e-9));
+      expect(outs.last, closeTo(span.outPoint.num / span.outPoint.den, 1e-9));
+      expect(outs.first, closeTo(ins.last, 1e-9),
+          reason: 'no gap and no overlap at the cut');
+    });
+
+    /// **Cut at playhead is a command, not a tool (docs/07 §4.4).** The chord
+    /// went nowhere: `layer.split` was bound in the Timeline context but no
+    /// handler answered it, so the only way to cut was to arm the razor.
+    testWidgets('Ctrl+Shift+D cuts the selected layer at the playhead',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      final span = layer.getSpan();
+      p.uiState.setSelection([layer]);
+      p.uiState.playheadFrame.value = 12;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      expect(p.uiState.tools.tool.group, isNot(ToolGroup.razor),
+          reason: 'no razor armed: this is a command');
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      final after = p.comp.getLayers();
+      expect(after.length, 2, reason: 'one layer became two');
+      final spans = [for (final l in after) l.getSpan()];
+      final ins = [for (final s in spans) s.inPoint.num / s.inPoint.den];
+      final outs = [for (final s in spans) s.outPoint.num / s.outPoint.den];
+      ins.sort();
+      outs.sort();
+      expect(ins.first, closeTo(span.inPoint.num / span.inPoint.den, 1e-9));
+      expect(outs.last, closeTo(span.outPoint.num / span.outPoint.den, 1e-9));
+      expect(outs.first, closeTo(ins.last, 1e-9),
+          reason: 'the halves meet at the cut');
+      // The playhead is where they meet: this cut is at the playhead, not
+      // wherever a pointer happened to be.
+      expect(outs.first,
+          closeTo(p.comp.timeOfFrame(frame: 12).num /
+              p.comp.timeOfFrame(frame: 12).den, 1e-9));
+    });
+
+    /// A cut with nothing selected, or one the engine refuses, is silence.
+    testWidgets('Ctrl+Shift+D with nothing selected cuts nothing',
+        (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      p.uiState.playheadFrame.value = 12;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyD);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getLayers().length, 1);
+    });
+
+    testWidgets('the razor is the toolbar tool, and undoes as one step',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 3, box.center.dy));
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().length, 2);
+
+      p.state.project!.undo();
+      expect(p.comp.getLayers().length, 1,
+          reason: 'a razor cut is one undo step (docs/07 §4.7)');
+    });
+
+    testWidgets('with the Selection tool a click on a bar selects rather than'
+        ' cutting', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar = find.byKey(ValueKey<String>(
+          'tl-bar-body-${layer.internallayerId}'));
+      await tester.tap(bar);
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getLayers().length, 1, reason: 'nothing was cut');
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          layer.internallayerId);
+    });
+
+    /// **Cutting a retimed layer gives each half an end of its own (K-221).**
+    ///
+    /// Both halves keep the whole speed map, so without a key at the cut the
+    /// two ramps stay welded: bending one half's speed would bend the other's,
+    /// because they are the same curve. The key goes in preserving the curve's
+    /// shape, so the cut itself changes nothing that plays.
+    /// Cut a layer at the middle of its bar with the razor, and hand back the
+    /// halves.
+    Future<List<LayerReference>> cutInHalf(
+        WidgetTester tester, dynamic p, LayerReference layer) async {
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final bar =
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy));
+      await tester.pumpAndSettle();
+      return (p.comp as CompositionReference).getLayers();
+    }
+
+    int keysOf(LayerReference layer) {
+      final retime = layer.getRetimeProperty();
+      return retime is BridgeScalar_Keyframed ? retime.field0.length : 0;
+    }
+
+    /// **A cut only keys a layer that has actually been retimed** (K-236).
+    /// Switching Retime on installs the identity map, so the property being
+    /// there says nothing about whether the layer has been retimed — and a cut
+    /// that dropped keys into an untouched map left the user keys to notice and
+    /// remove for a cut they had asked nothing else of.
+    testWidgets('cutting a layer nobody retimed leaves its map alone',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      expect(layer.toggleRetimeProperty(), isTrue,
+          reason: 'the identity map goes on');
+      final keysBefore = keysOf(layer);
+
+      final after = await cutInHalf(tester, p, layer);
+
+      expect(after.length, 2, reason: 'it still cuts');
+      for (final half in after) {
+        expect(keysOf(half), keysBefore,
+            reason: 'and puts no keys into a map nobody has shaped');
+      }
+    });
+
+    testWidgets('cutting a retimed layer puts a keyframe at the cut, on both'
+        ' halves', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      expect(layer.toggleRetimeProperty(), isTrue);
+      // Half speed, which is a map somebody has shaped: the layer's first
+      // second shows the source's first half-second. Both halves of a cut
+      // would otherwise share one curve, and bending one would bend the other.
+      layer.setRetimeProperty(
+        value: BridgeScalar.keyframed([
+          for (final (frame, value) in [(0, 0.0), (60, 0.5)])
+            BridgeKeyframe(
+              time: p.comp.timeOfFrame(frame: frame),
+              value: value,
+              interpIn: const BridgeSideInterp.linear(),
+              interpOut: const BridgeSideInterp.linear(),
+            ),
+        ]),
+      );
+      final keysBefore = keysOf(layer);
+      expect(keysBefore, greaterThan(0));
+
+      final after = await cutInHalf(tester, p, layer);
+
+      expect(after.length, 2);
+      for (final half in after) {
+        expect(keysOf(half), keysBefore + 1,
+            reason: 'both carry the key the cut added, so each half has an end '
+                'of its own to hold');
+      }
+    });
+
+    /// Masks appear in the fold-out under their own heading, and only once the
+    /// layer has one — the same rule Effects follows (K-222).
+    testWidgets('a masked layer grows a Masks heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final twirl =
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
+      await tester.tap(twirl);
+      await tester.pumpAndSettle();
+      expect(find.text('Transform'), findsOneWidget);
+      expect(find.text('Masks'), findsNothing,
+          reason: 'an empty heading is a promise the row cannot keep');
+
+      layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Ellipse',
+          vertices: const [
+            BridgeVertex(
+                x: 0, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 80, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Masks'), findsOneWidget);
+      // And it opens onto the mask itself.
+      await tester.tap(find.byKey(ValueKey<String>(
+          'tl-group-${layer.internallayerId}/masks')));
+      await tester.pumpAndSettle();
+      expect(find.text('Ellipse'), findsOneWidget);
+
+      // The invert switch writes through to the document.
+      final masks = layer.getMasks();
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-mask-invert-${masks.single.id}')));
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.inverted, isTrue);
+    });
+
+    /// Give [layer] a mask, mount, and open the twirls that show its row.
+    Future<void> openMaskRow(
+        WidgetTester tester, dynamic p, LayerReference layer, String name) async {
+      layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: name,
+          vertices: const [
+            BridgeVertex(
+                x: 0, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 0, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 100, y: 80, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      (p.uiState as LumitUiState).model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/masks')));
+      await tester.pumpAndSettle();
+      expect(find.text(name), findsOneWidget);
+    }
+
+    /// **A mask's opacity was not undoable (K-234).** Its field wrote on every
+    /// drag tick, so a drag left a stack of near-identical steps and one Ctrl+Z
+    /// backed out a single percent — which looks like nothing happening. The
+    /// drag is staged now, exactly as every other value row here stages its.
+    testWidgets('dragging a mask opacity is ONE undo step', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      final field = find.byKey(ValueKey<String>('tl-mask-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks().single.opacity, lessThan(100),
+          reason: 'the drag reached the mask');
+
+      p.state.project!.undo();
+      expect(layer.getMasks().single.opacity, 100,
+          reason: 'ONE undo returns the opacity it had before the drag');
+    });
+
+    /// **A mask row is a property row (K-234).** It joins the same selection
+    /// every other row is in, so it lights up, the heading holding it marks
+    /// itself, and Delete has something to act on.
+    testWidgets('clicking a mask selects its row', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final t = LumitTheme.dark();
+      Color? fillOver(String text) {
+        final box = find.ancestor(
+            of: find.text(text), matching: find.byType(Container));
+        return (tester.widget<Container>(box.first).decoration as BoxDecoration)
+            .color;
+      }
+
+      expect(fillOver('Ellipse'), isNull, reason: 'nothing picked to start');
+
+      await tester.tap(find.text('Ellipse'));
+      await tester.pump();
+
+      expect(fillOver('Ellipse'), t.selectionFill,
+          reason: 'the mask row is the one selected');
+      expect(fillOver('Masks'), t.selectionFill.withValues(alpha: 0.45),
+          reason: 'the heading holding it marks itself, a shade dimmer');
+    });
+
+    /// **Delete removes the selected mask (K-234).** The shell's Delete deletes
+    /// the selected *layers*; with a mask row picked it stands down and this
+    /// claim runs instead, so the key acts on what is actually selected rather
+    /// than on the layer the mask sits on.
+    testWidgets('Delete removes a selected mask and leaves its layer',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+      // The layer is selected too, which is the case that used to delete it.
+      p.uiState.setSelection([layer]);
+      await tester.pump();
+
+      final claim = p.uiState.deleteClaim;
+      expect(claim, isNotNull, reason: 'the Timeline claims Delete');
+      expect(claim!(), isFalse,
+          reason: 'with no mask picked the shell keeps the key');
+
+      await tester.tap(find.text('Ellipse'));
+      await tester.pump();
+      expect(p.uiState.deleteClaim!(), isTrue,
+          reason: 'with a mask picked the Timeline takes it');
+      await tester.pumpAndSettle();
+
+      expect(layer.getMasks(), isEmpty, reason: 'the mask is gone');
+      expect(p.comp.getLayers(), hasLength(1),
+          reason: 'and its layer is still there');
+      expect(find.text('Masks'), findsNothing,
+          reason: 'the heading goes with the last mask under it');
+    });
 
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();
@@ -1563,41 +1947,43 @@ void main() {
       expect(inner.getLayers(), isEmpty);
     });
 
-    /// The layer rows deliberately do *not* rebuild when the playhead moves —
-    /// they used to, sixty times a second during playback, re-asking the engine
-    /// for every layer's name and span each time, and the cost grew with the
-    /// layer count. Only the playhead line redraws now.
+    /// **The cut lands under the blade, not under the playhead (K-220).**
     ///
-    /// The razor is what makes that observable: it reads the playhead when it is
-    /// clicked rather than when its bar was built. If someone reverts to
-    /// capturing the value at build time, the bar has not rebuilt since the
-    /// playhead moved, so the cut lands on the old frame and this fails.
-    testWidgets('the razor cuts where the playhead is now, not where it was',
+    /// The razor used to cut at the playhead wherever the bar was clicked,
+    /// which made it a slower way of pressing Ctrl+Shift+D. docs/07 §4.4 has
+    /// always said "click a clip to cut it at that time"; this is that,
+    /// asserted by putting the playhead somewhere the cut must *not* land.
+    testWidgets('the razor cuts under the pointer, not under the playhead',
         (tester) async {
       final p = withComp();
-      final layer = p.comp.addSequenceLayer();
-      p.uiState.selectedLayer.value = layer;
+      final layer = p.comp.addSolidLayer();
+      p.uiState.tools.select(ToolMode.razor);
+      p.uiState.model.refresh();
       await mount(tester, p);
 
-      // Turn the razor on, then move the playhead — without touching anything
-      // that would rebuild the bar.
-      await openMore(tester);
-      await tester.tap(find.byKey(const ValueKey('tl-razor')));
-      await tester.pumpAndSettle();
-      p.uiState.playheadFrame.value = 30;
+      // The playhead sits at the very start; the click lands well past it.
+      p.uiState.playheadFrame.value = 0;
       await tester.pump();
 
       final bar =
-          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}'));
-      expect(bar, findsOneWidget);
-      await tester.tap(bar, warnIfMissed: false);
-      await tester.pump();
+          find.byKey(ValueKey<String>('tl-bar-body-${layer.internallayerId}'));
+      final box = tester.getRect(bar);
+      await tester.tapAt(Offset(box.left + box.width / 2, box.center.dy));
+      await tester.pumpAndSettle();
 
-      // A Sequence layer with no clips has nothing to cut, so what is asserted
-      // is the frame the razor asked for rather than the resulting clips: the
-      // playhead must still be at 30, and nothing may have thrown.
       expect(tester.takeException(), isNull);
-      expect(p.uiState.playheadFrame.value, 30);
+      final after = p.comp.getLayers();
+      expect(after.length, 2);
+      // The seam is around the middle of the layer, nowhere near frame 0 —
+      // which a cut at the playhead could not have produced at all (it would
+      // have been refused as outside the span, leaving one layer).
+      final seam = [
+        for (final l in after)
+          l.getSpan().inPoint.num / l.getSpan().inPoint.den,
+      ].reduce((a, b) => a > b ? a : b);
+      expect(seam, greaterThan(0.0));
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'and the razor did not move the playhead to do it');
     });
 
     /// The twirl-down the port dropped. A layer opens onto its *section

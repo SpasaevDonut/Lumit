@@ -91,6 +91,12 @@ impl ActionId {
             "tool.razor" => "Razor tool",
             "tool.shape" => "Shape tool",
             "tool.pen" => "Pen tool",
+            "tool.rotate" => "Rotation tool",
+            "tool.type" => "Type tool",
+            "tool.paint" => "Brush tool",
+            "tool.roto" => "Roto brush tool",
+            "tool.puppet" => "Puppet tool",
+            "tool.camera" => "Camera tool",
             // Timeline reveals and edits.
             "reveal.position" => "Reveal Position",
             "reveal.scale" => "Reveal Scale",
@@ -545,6 +551,17 @@ pub fn default_keymap() -> Keymap {
         row(Tools, "C", "tool.razor"),
         row(Tools, "Q", "tool.shape"),
         row(Tools, "G", "tool.pen"),
+        // The rest of the toolbar (K-216). After Effects' own chords wherever
+        // Lumit has not already spent the key: W rotates and Alt+W is the roto
+        // brush there too. Its camera cycle is `C`, which docs/07 §15 gave to
+        // the razor long before there was a camera tool, so the camera group
+        // takes `Shift+C` rather than either key changing meaning.
+        row(Tools, "W", "tool.rotate"),
+        row(Tools, "Mod+T", "tool.type"),
+        row(Tools, "Mod+B", "tool.paint"),
+        row(Tools, "Alt+W", "tool.roto"),
+        row(Tools, "Mod+P", "tool.puppet"),
+        row(Tools, "Shift+C", "tool.camera"),
         // --- Timeline: reveals and edits ---
         row(Timeline, "P", "reveal.position"),
         row(Timeline, "S", "reveal.scale"),

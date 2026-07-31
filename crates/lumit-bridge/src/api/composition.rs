@@ -461,6 +461,49 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
+    /// Add a text layer **where the Type tool clicked**, already holding the
+    /// document it should hold, as one op (K-230).
+    ///
+    /// The tool used to make a layer and then correct it: `add_text_layer`
+    /// starts a layer saying "Text" in the middle of the composition, and the
+    /// tool then wrote an empty line into it and moved it to the click. Three
+    /// ops for one gesture, so `Ctrl+Z` walked back through two states nobody
+    /// had ever seen — an empty box, then the word "Text" — before the layer
+    /// finally went away. One op is one undo step, and undoing it removes the
+    /// layer, which is what making a layer means.
+    ///
+    /// The anchor sits on the **left end of the baseline**, so what is typed
+    /// runs to the right of the point clicked and sits on it rather than
+    /// straddling it. It is recentred on the finished line when the edit ends.
+    #[frb(sync)]
+    pub fn add_text_layer_at(
+        &self,
+        document: crate::api::assets::BridgeTextDocument,
+        x: f64,
+        y: f64,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::anim::Property;
+        use lumit_core::model::TransformGroup;
+
+        let comp = self.composition()?;
+        let size = document.size;
+        let layer = crate::edits::base_layer(
+            "Text".into(),
+            lumit_core::model::LayerKind::Text {
+                document: crate::api::assets::text_document_of(document),
+            },
+            comp.duration.0,
+            TransformGroup {
+                anchor_x: Property::fixed(0.0),
+                anchor_y: Property::fixed(size),
+                position_x: Property::fixed(x),
+                position_y: Property::fixed(y),
+                ..TransformGroup::default()
+            },
+        );
+        self.add_at_top(layer)
+    }
+
     /// Add a Camera layer at the comp centre. The default zoom is the After
     /// Effects 50 mm model, `comp width × 50/36`.
     #[frb(sync)]
@@ -913,6 +956,7 @@ impl CompositionReference {
             layer,
             effects: Some(effects.iter().map(|i| i.get_effects()).collect()),
             transform: None,
+            text: None,
         }))
     }
 
@@ -1047,6 +1091,33 @@ impl CompositionReference {
             layer,
             effects: None,
             transform: Some(transform),
+            text: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s text document replaced by `document` —
+    /// the same live path as the two above, for the Type tool (K-225).
+    ///
+    /// Typing is the one edit where the provisional value changes many times a
+    /// second and the document must *not*: a `set_text` per keystroke would be
+    /// an undo step per keystroke. So the tool previews as it types and writes
+    /// once, when the edit ends.
+    #[frb(sync)]
+    pub fn render_frame_with_text_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        document: crate::api::assets::BridgeTextDocument,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: Some(document),
         }))
     }
 }

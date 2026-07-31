@@ -82,6 +82,24 @@ class CompModel extends ChangeNotifier {
     return _revision;
   }
 
+  /// The copy in hand, and the revision it was read at, **without asking the
+  /// engine anything** (K-230).
+  ///
+  /// For the paint path, and only for it. Every getter above checks with the
+  /// engine that the document has not moved — once per frame while a frame is
+  /// being built, and *every time* outside one, which is where pointer handlers
+  /// run. That check is a bridge call, so a tool that redraws as the mouse
+  /// moves was asking whether the document had changed at the rate the mouse
+  /// reports, and the answer was always no: moving a mouse changes no document.
+  ///
+  /// Drawing never needs the check. A change refreshes this model and notifies,
+  /// and everything that draws from it is listening — so a paint that used the
+  /// held copy is repainted from the new one the moment there is one. Code that
+  /// has just *committed* an edit and wants to read it back keeps the checking
+  /// getters above.
+  List<BridgeLayerEntry> get heldLayers => _model?.layers ?? const [];
+  BigInt? get heldRevision => _revision;
+
   /// Point the model at [comp] (or null) and read it.
   void bind(CompositionReference? comp) {
     _comp = comp;

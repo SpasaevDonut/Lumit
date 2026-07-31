@@ -79,13 +79,130 @@ the live in/out/offset); Sequence layers' clips still draw none.
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):** magnification, channel view,
 the transparency grid and wheel zoom about the cursor have landed. Still missing:
-- wireframe/overlay menu
+- the wireframe/overlay *menu* (the layer-controls switch itself landed with K-217)
 - guides menu
 - region-of-interest
 - colour-management indicator
 - background-colour swatch.
 - **Click-to-edit timecode** (currently read-only), may want to remove from this bar and
     only keep the one on timeline and add the functionality there.
+
+**Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7, K-216):** the strip, its groups,
+flyouts, shortcuts and the two switches at its right-hand end landed 2026-07-31. What is
+armed is a *tool*; what each tool then does is the backlog:
+- **Selection** - built (K-217): click, Shift-click, marquee, body drag, the scale
+    handles and the rotation bar, plus a selected layer's **mask points** — click, sweep and
+    drag (K-224). What is left is on the gizmo rather than the tool — see the layer-controls
+    list below.
+- **Hand** - built (K-217): the grab pointer, and a drag that pans the view and never
+    the layer.
+- **Zoom** - built (K-218): the lens pointer (and its zoom-out twin under `Alt`), click
+    to zoom about the point, and a dragged box that fits that area to the panel — `Alt`
+    inverting both.
+- **Rotation** - built (K-219): the drawn curved pointer (tighter at a corner, leaning
+    round the anchor), a drag that turns the whole selection about each layer's own anchor,
+    `Shift` locking to 45 degrees, and the anchor marked while it is armed.
+- **Anchor point** - built (K-220): pan behind, with `Shift` locking an axis and `Ctrl`
+    snapping to the layer's nine key points, as one undo step.
+- **Razor** - built (K-220): the blade pointer and cut line over the lanes, a click that
+    cuts under the pointer (splitting a layer in two, or making an edit point inside a
+    Sequence layer), `Shift` cutting every layer that spans that moment, and a curve-preserving
+    keyframe at the cut on both halves of a layer that has actually been retimed (K-221, narrowed
+    by K-236: an untouched identity map is left alone). Still owed: a Sequence
+    layer's eased ramps refuse a cut (`UncuttableClip`), and its **clips'** own speed maps get
+    no key at the cut the way a layer's Retime does. (The razor is Timeline-only by design.)
+- **Shape tools** - built for masks (K-222): all five drag out corner to corner with `Shift`
+    for square (polygon and star being the regular figures inscribed in the box). Masks list
+    in the layer's twirl-down under a Masks heading, invert, fade and delete, and are
+    outlined on the picture.
+- **Pen** - built (K-223), with its four editing siblings disabled on the strip (K-228): the
+    path builder — click for a corner, click-drag for mirrored
+    bezier handles, `Alt` to break the pair, click the first point to close and apply. Its
+    four siblings (add/delete/convert vertex, mask feather) edit a finished path; see mask
+    editing below.
+    What the two owe between them:
+    - **Shape layers.** With nothing selected the tool says "select a layer" instead of making
+      one, because `LayerKind` has no Shape variant. A shape layer needs a new layer kind, a
+      geometry model with fill and stroke, renderer support and its own Timeline rows — an
+      engine feature in its own right, being done on a branch off this one.
+    - **Mask editing.** A finished mask's **points** can be selected and dragged with the
+      Selection tool (K-224); its **handles** cannot, so the `Alt`-drag that re-links a broken
+      tangent pair only exists while a point is being *placed*. The Pen tools'
+      add/delete/convert vertex variants are the same piece of work, as is dragging a whole
+      path by one of its segments.
+    - **Mask paths cannot be keyframed** (docs/03 has them as animatable), and there is no
+      mask **mode** (add/subtract/intersect) — every mask adds.
+    - **Mask feather** has neither a control nor a renderer path.
+- **Type** - horizontal type is built (K-225, K-226): a click makes a text layer where you point or
+    edits the one you clicked, typing previews rather than writing, and the document lands as
+    one undo step when the edit ends. Still owed:
+    - **Vertical type**, which needs `lumit-text` to lay a line out downwards.
+    - **True glyph metrics across the bridge.** The caret is placed by the same half-an-em-per
+      -character estimate the bridge anchors a text layer with, so the two agree with each
+      other and neither agrees with the rasteriser. A measured advance width would replace
+      both sums at once.
+    - **Multiple lines, and a character panel** — font, tracking, leading, alignment: the
+      document is one styled run (docs/03 §9.1) and the renderer draws one line.
+    - **Per-character and per-word text animators**, the feature the owner named as later.
+    - Clicking a text layer to edit it needs the layer to have a box, so a text layer with a
+      keyframed position cannot be clicked into (the same rule the gizmo follows).
+- **Paint** (brush/clone stamp/eraser) - **nothing at all in the engine**: there is no stroke
+    model in the document, no op to add one, and no renderer path to draw one. It is a
+    feature of the same size as shape layers, and belongs with them on the engine branch. The
+    toolbar's stroke colour and width are held and shown disabled until it exists; the three
+    tools wear their proper brush-ring pointers (K-226) and say what is missing when clicked.
+    The ring is drawn from the stroke width because there is no separate brush size yet — a
+    real paint feature would bring its own brush settings (size, hardness, opacity, flow).
+- **Camera** - built (K-229): orbit, track and dolly the active camera by dragging, with the
+    pivot marked and `Shift` locking an axis. Still owed:
+    - **A point of interest** (After Effects' two-node camera): the model has position and
+      rotation only, so the orbit pivot is the point the camera already looks at rather than a
+      pinnable one. Adding it is an engine change (`LayerKind::Camera`, docs/03).
+    - **The Unified Camera tool** — one tool with the three gestures on the three mouse
+      buttons.
+    - **Depth-of-field controls on the picture** (focus distance, aperture), and a camera whose
+      placement is **keyframed** cannot be dragged (no single value to add to).
+    - A camera drag already writes its five properties as one batched op, so it is one undo
+      step; a drag that spans **several layers** is still one step per layer, because no op
+      carries edits to more than one.
+- **Roto** (roto brush/refine edge) and **Puppet** - **disabled on the strip** (K-228) until
+    there is an engine behind them; both are roadmap features of their own size
+    ([16-ROADMAP.md](16-ROADMAP.md)). Roto wants a segmentation model and a per-frame stroke
+    propagation; Puppet wants a mesh, pins and a deformer in the renderer. They stay visible and
+    unarmable so the gap is on the strip rather than in someone's memory.
+- **Snapping** is a switch nothing reads (docs/07 §4.5 specifies the behaviour).
+- **The workspace strip shows no preset after a restart** - `Workspace.activePreset` is
+    session-only, because the stored layout is the user's own by then and may no longer
+    match any preset.
+
+**Smooth zooming everywhere else (K-218).** The Viewer's magnification now flies to its
+target — geometric interpolation, magnification and pan on one controller, instant under
+*No animation* (`_goToZoom` in `viewer_panel_frb.dart`). Nothing else does: the **Timeline's
+time zoom** (`=`/`-`, `Ctrl+wheel`, the full-comp `\` toggle), the **graph editor's** zoom
+and auto-fit, and the **Project panel's** thumbnail scaling all still cut. They want the
+same shape — a target, one controller, a geometric interpolation, the animation level
+deciding whether it runs — and it should be lifted into one shared piece (a small
+`AnimatedViewport`-style helper) rather than written three more times. The Timeline is the
+one that matters most: it is zoomed constantly while cutting.
+
+**Layer controls in the Viewer ([07-UI-SPEC.md](07-UI-SPEC.md) §2.3, K-217):** the
+wireframe, selection on the picture, the marquee, the move/scale/rotate gizmo and the bar's
+switch landed 2026-07-31. What that section still owes:
+- **Motion paths** (§2.4) - a keyed position draws no path in the Viewer, and its keys
+    cannot be dragged there.
+- **Scale and rotation of a multiple selection** - several layers move together, but each
+    keeps its own box and only a lone selection grows handles. AE scales a set about one
+    shared box.
+- **Snapping** - nothing outside the Timeline's keyframe magnet snaps to anything. The
+    toolbar's switch, which nothing read, is **gone** (K-230); a global one comes back with
+    the snapping it would govern (docs/07 §4.5, §1.7).
+- **Parent-aware and 3D gizmos** - the box is built from the layer's own transform, so a
+    parented layer's box ignores its parent's placement and a 3D layer's ignores the camera.
+- **A keyframed position draws no box at all**, so an animated layer cannot be picked on the
+    picture. It wants the value *at the playhead*, which the read model does not carry.
+- **Text layers measure the engine's own estimate, not their glyphs** (K-230): the point size
+    tall and half an em per character wide, which is the same sum the caret and the anchor use.
+    True glyph bounds crossing the bridge would replace all three at once.
 
 **Pixel pickers ([07-UI-SPEC.md](07-UI-SPEC.md) §6.1):**
 - **The x/y position pick is not built.** The colour pick and the depth-of-field focal
