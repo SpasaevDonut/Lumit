@@ -28,6 +28,7 @@ import 'frb_test_support.dart';
 
 void main() {
   setUpAll(initEngineForTests);
+  _testPrecompose();
 
   group('Timeline (frb)', () {
     ({LumitState state, LumitUiState uiState, CompositionReference comp})
@@ -2741,4 +2742,18 @@ Uint8List _tinyWav() {
   }
   out.add(data);
   return out.toBytes();
+}
+
+void _testPrecompose() {
+  testWidgets('precompose creates a single precomp composition and layer', (tester) async {
+    final p = withComp();
+    final l1 = p.comp.addSolidLayer();
+    final l2 = p.comp.addSolidLayer();
+    expect(p.comp.getLayers().length, 2);
+
+    final precomp = p.comp.precompose(layers: [l1, l2]);
+    expect(precomp, isNotNull);
+    expect(p.comp.getLayers().length, 1);
+    expect(p.comp.getLayers().first.internallayerId, precomp.internallayerId);
+  });
 }

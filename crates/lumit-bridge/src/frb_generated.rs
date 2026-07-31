@@ -1006,6 +1006,43 @@ fn wire__crate__api__composition__composition_reference_add_precomp_layer_impl(
         },
     )
 }
+fn wire__crate__api__composition__composition_reference_precompose_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "composition_reference_precompose",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_that =
+                <crate::api::composition::CompositionReference>::sse_decode(&mut deserializer);
+            let api_layers =
+                <Vec<crate::api::layer::LayerReference>>::sse_decode(&mut deserializer);
+            let api_name =
+                <Option<String>>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, BridgeError>((move || {
+                let output_ok = crate::api::composition::CompositionReference::precompose(
+                    &api_that, &api_layers, api_name,
+                )?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__composition__composition_reference_add_sequence_layer_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -8246,6 +8283,7 @@ fn pde_ffi_dispatcher_sync_impl(
 32 => wire__crate__api__composition__composition_reference_audio_prepare_impl(ptr, rust_vec_len, data_len),
 33 => wire__crate__api__composition__composition_reference_cached_frames_impl(ptr, rust_vec_len, data_len),
 34 => wire__crate__api__composition__composition_reference_clear_beat_markers_impl(ptr, rust_vec_len, data_len),
+35 => wire__crate__api__composition__composition_reference_precompose_impl(ptr, rust_vec_len, data_len),
 36 => wire__crate__api__composition__composition_reference_document_revision_impl(ptr, rust_vec_len, data_len),
 37 => wire__crate__api__composition__composition_reference_duration_frames_impl(ptr, rust_vec_len, data_len),
 38 => wire__crate__api__composition__composition_reference_fps_impl(ptr, rust_vec_len, data_len),

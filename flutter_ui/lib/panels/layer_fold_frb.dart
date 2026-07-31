@@ -297,35 +297,24 @@ List<LayerFoldRow> layerFoldRows({
   }
 
   final transformGroupOpen = open.contains(transformPath(id));
-  bool anyTransformChildOpen = transformGroupOpen;
-  if (!anyTransformChildOpen) {
-    for (final p in ['anchor', 'position', 'scale', 'rotation', 'opacity']) {
-      if (open.contains('$id/transform/$p')) {
-        anyTransformChildOpen = true;
-        break;
-      }
-    }
-  }
 
-  if (anyTransformChildOpen) {
-    rows.add(FoldGroupRow(
-      path: transformPath(id),
-      label: 'Transform',
-      open: transformGroupOpen,
-      depth: 1,
-    ));
-    for (final group in transformGroups(threeD: info.switches.threeD)) {
-      final key = switch (group.label) {
-        'Anchor point' => 'anchor',
-        'Position' => 'position',
-        'Scale' => 'scale',
-        'Rotation' || 'Rotation x' || 'Rotation y' => 'rotation',
-        'Opacity' => 'opacity',
-        _ => '',
-      };
-      if (transformGroupOpen || open.contains('$id/transform/$key')) {
-        rows.add(FoldTransformRow(group, info.transform, depth: 2));
-      }
+  rows.add(FoldGroupRow(
+    path: transformPath(id),
+    label: 'Transform',
+    open: transformGroupOpen,
+    depth: 1,
+  ));
+  for (final group in transformGroups(threeD: info.switches.threeD)) {
+    final key = switch (group.label) {
+      'Anchor point' => 'anchor',
+      'Position' => 'position',
+      'Scale' => 'scale',
+      'Rotation' || 'Rotation x' || 'Rotation y' => 'rotation',
+      'Opacity' => 'opacity',
+      _ => '',
+    };
+    if (transformGroupOpen || open.contains('$id/transform/$key')) {
+      rows.add(FoldTransformRow(group, info.transform, depth: 2));
     }
   }
 

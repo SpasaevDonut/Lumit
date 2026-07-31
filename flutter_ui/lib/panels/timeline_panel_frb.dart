@@ -412,9 +412,6 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           _dropSelectionUnder(path);
         } else {
           _open.add(path);
-          if (!path.contains('/')) {
-            _open.add(transformPath(path));
-          }
         }
       });
 
@@ -833,6 +830,23 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
     if (action == 'reveal.animated') {
       return _revealTap();
+    }
+    if (action == 'layer.precompose') {
+      final selected = ui.selectedLayers.value.isNotEmpty
+          ? ui.selectedLayers.value
+          : (ui.selectedLayer.value != null
+              ? [ui.selectedLayer.value!]
+              : <LayerReference>[]);
+      final comp = ui.selectedComp;
+      if (selected.isNotEmpty && comp != null) {
+        try {
+          final precomp = comp.precompose(layers: selected);
+          ui.selectedLayer.value = precomp;
+          ui.selectedLayers.value = [precomp];
+          ui.model.refresh();
+        } catch (_) {}
+      }
+      return true;
     }
     if (action != null &&
         (action.startsWith('reveal.') || action == 'layer.retime.enable')) {

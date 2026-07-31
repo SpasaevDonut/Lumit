@@ -426,6 +426,134 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
+    /// Pre-compose selected layers into a new composition (Ctrl+Shift+C).
+    /// Creates a new nested composition, moves the specified layers into it,
+    /// and replaces them in this composition with a single Precomp layer.
+    #[frb(sync)]
+    pub fn precompose(
+        &self,
+        layers: &[LayerReference],
+        name: Option<String>,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::model::{Composition, MotionBlur, ProjectItem};
+        use lumit_core::Op;
+
+        if layers.is_empty() {
+            return Err(BridgeError::InvalidLayer);
+        }
+
+        let project_id = self.project;
+
+        let (ops, precomp_layer_id) = {
+            let map = PROJECTS.read().map_err(|_| BridgeError::InvalidProject)?;
+            let state = map.get(&project_id).ok_or(BridgeError::InvalidProject)?;
+            let bridge = state.read().map_err(|_| BridgeError::InvalidProject)?;
+            let doc = bridge.store.snapshot();
+
+            let comp = self.composition()?;
+            let comp_name = name.unwrap_or_else(|| "Pre-comp 1".to_string());
+            let new_comp_id = Uuid::now_v7();
+
+            let layer_ids: Vec<Uuid> = layers.iter().map(|l| l.layer_id).collect();
+
+            let mut inner_layers = Vec::new();
+            for l in &comp.layers {
+                if layer_ids.contains(&l.id) {
+                    inner_layers.push(l.clone());
+                }
+            }
+
+            if inner_layers.is_empty() {
+                return Err(BridgeError::InvalidLayer);
+            }
+
+            let min_in = inner_layers
+                .iter()
+                .map(|l| l.in_point)
+                .min()
+                .unwrap_or(lumit_core::time::CompTime::ZERO);
+            let max_out = inner_layers
+                .iter()
+                .map(|l| l.out_point)
+                .max()
+                .unwrap_or_else(|| lumit_core::time::CompTime(comp.duration.0));
+
+            let zero_dur = lumit_core::time::Duration(lumit_core::time::Rational::ZERO);
+            let inner_duration = max_out.delta(min_in).unwrap_or(comp.duration);
+
+            for l in &mut inner_layers {
+                let layer_dur = l.out_point.delta(l.in_point).unwrap_or(zero_dur);
+                let new_in_offset = l.in_point.delta(min_in).unwrap_or(zero_dur);
+                let new_in = lumit_core::time::CompTime::ZERO
+                    .add_dur(new_in_offset)
+                    .unwrap_or(lumit_core::time::CompTime::ZERO);
+                let new_out = new_in.add_dur(layer_dur).unwrap_or(new_in);
+                l.in_point = new_in;
+                l.out_point = new_out;
+            }
+
+            let new_comp = Composition {
+                id: new_comp_id,
+                name: comp_name.clone(),
+                width: comp.width,
+                height: comp.height,
+                frame_rate: comp.frame_rate,
+                duration: inner_duration,
+                background: comp.background,
+                work_area: comp.work_area,
+                layers: inner_layers,
+                markers: Vec::new(),
+                motion_blur: MotionBlur::default(),
+                extra: serde_json::Map::new(),
+            };
+
+            let top_index = comp
+                .layers
+                .iter()
+                .position(|l| layer_ids.contains(&l.id))
+                .unwrap_or(0);
+
+            let mut ops = vec![Op::AddItem {
+                index: doc.items.len(),
+                item: Box::new(ProjectItem::Composition(new_comp)),
+            }];
+
+            for id in &layer_ids {
+                ops.push(Op::RemoveLayer {
+                    comp: self.id,
+                    layer: *id,
+                });
+            }
+
+            let mut precomp_layer = crate::edits::base_layer(
+                comp_name,
+                lumit_core::model::LayerKind::Precomp { comp: new_comp_id },
+                comp.duration.0,
+                crate::edits::centred_transform(
+                    f64::from(comp.width),
+                    f64::from(comp.height),
+                    comp.width,
+                    comp.height,
+                ),
+            );
+            precomp_layer.in_point = min_in;
+            precomp_layer.out_point = max_out;
+            let precomp_layer_id = precomp_layer.id;
+
+            ops.push(Op::AddLayer {
+                comp: self.id,
+                index: top_index,
+                layer: Box::new(precomp_layer),
+            });
+
+            (ops, precomp_layer_id)
+        }; // <-- Locks dropped here!
+
+        self.commit(Op::Batch { ops })?;
+
+        Ok(LayerReference::new(self.project, self.id, precomp_layer_id))
+    }
+
     /// Add a Text layer with the "Text" starter document, centred.
     #[frb(sync)]
     pub fn add_text_layer(&self) -> Result<LayerReference, BridgeError> {
