@@ -26,6 +26,19 @@
 import 'dart:math' as math;
 import 'dart:ui' show Offset;
 
+/// A scale factor that can be flipped but never vanishes (K-230).
+///
+/// **Negative scale is a real value**: dragging a handle past the anchor turns
+/// the layer over, which is how every editor mirrors a layer, and the map used
+/// to floor the factor at a hair above zero — so a layer could be squashed to
+/// nothing and never turned over. Only *zero* is barred, because the inverse
+/// map divides by it; the sign is kept.
+double nonZeroScale(double factor) {
+  const smallest = 1e-6;
+  if (factor.abs() >= smallest) return factor;
+  return factor.isNegative ? -smallest : smallest;
+}
+
 /// The evaluated 2D transform of a layer at the playhead, composed with the
 /// Viewer's fitted-image placement. Construct it once per paint with
 /// [ViewerLayerMap.of] and use [toScreen] / [layerOf] to move points across the
@@ -84,14 +97,75 @@ class ViewerLayerMap {
       py: positionY,
       ax: anchorX,
       ay: anchorY,
-      sx: math.max(scaleXPercent / 100.0, 1e-6),
-      sy: math.max(scaleYPercent / 100.0, 1e-6),
+      sx: nonZeroScale(scaleXPercent / 100.0),
+      sy: nonZeroScale(scaleYPercent / 100.0),
       sin: math.sin(rot),
       cos: math.cos(rot),
       origin: origin,
       viewScale: viewScale,
     );
   }
+
+  /// The same map with the layer turned to [rotationDegrees] instead.
+  ///
+  /// What a turn *in flight* looks like: the picture is previewed at the new
+  /// angle, so the wireframe over it has to be too, and rebuilding the whole
+  /// map from the document would only give back the angle the drag is leaving.
+  ViewerLayerMap turnedTo(double rotationDegrees) {
+    final rot = rotationDegrees * math.pi / 180.0;
+    return ViewerLayerMap(
+      px: px,
+      py: py,
+      ax: ax,
+      ay: ay,
+      sx: sx,
+      sy: sy,
+      sin: math.sin(rot),
+      cos: math.cos(rot),
+      origin: origin,
+      viewScale: viewScale,
+    );
+  }
+
+  /// The same map with the layer scaled to [scaleXPercent] / [scaleYPercent]
+  /// instead — what a scale *in flight* looks like, for the same reason
+  /// [turnedTo] exists.
+  ViewerLayerMap scaledTo(double scaleXPercent, double scaleYPercent) =>
+      ViewerLayerMap(
+        px: px,
+        py: py,
+        ax: ax,
+        ay: ay,
+        sx: nonZeroScale(scaleXPercent / 100.0),
+        sy: nonZeroScale(scaleYPercent / 100.0),
+        sin: sin,
+        cos: cos,
+        origin: origin,
+        viewScale: viewScale,
+      );
+
+  /// The same map with the layer's pivot moved to ([anchorX], [anchorY]) and
+  /// its position set to [position] — the pair a pan-behind writes together.
+  ///
+  /// What a pivot drag in flight looks like (K-235): the anchor mark moves and
+  /// the picture, box and all, deliberately does not.
+  ViewerLayerMap pivotedAt(
+    double anchorX,
+    double anchorY, {
+    required Offset position,
+  }) =>
+      ViewerLayerMap(
+        px: position.dx,
+        py: position.dy,
+        ax: anchorX,
+        ay: anchorY,
+        sx: sx,
+        sy: sy,
+        sin: sin,
+        cos: cos,
+        origin: origin,
+        viewScale: viewScale,
+      );
 
   /// Layer space → screen (local) coordinate.
   Offset toScreen(double x, double y) {

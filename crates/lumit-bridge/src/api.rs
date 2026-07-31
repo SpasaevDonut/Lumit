@@ -91,6 +91,13 @@ pub enum BridgeError {
     NotFootage,
     /// No clip sits under the playhead.
     NoClipThere,
+    /// A mask path with fewer than two vertices — not a shape.
+    EmptyPath,
+    /// The edit named a mask this layer does not have.
+    NoSuchMask,
+    /// The razor was pointed at a time outside the layer's span, or at one of
+    /// its ends — either way there is no second layer to make.
+    NothingToSplit,
     /// The clip under the playhead is an eased ramp that cannot be split
     /// cleanly at this time — cutting it would silently change its speed curve.
     UncuttableClip,
@@ -169,6 +176,11 @@ impl fmt::Display for BridgeError {
                 write!(f, "Only footage layers convert to sequenced")
             }
             BridgeError::NoClipThere => write!(f, "No clip under the playhead"),
+            BridgeError::EmptyPath => write!(f, "A mask needs at least two points"),
+            BridgeError::NoSuchMask => write!(f, "No such mask on this layer"),
+            BridgeError::NothingToSplit => {
+                write!(f, "That time is not inside the layer")
+            }
             BridgeError::UncuttableClip => {
                 write!(f, "That eased ramp cannot be cut here yet")
             }

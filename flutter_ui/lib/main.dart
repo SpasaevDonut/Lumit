@@ -14,6 +14,7 @@ import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
+import 'package:lumit_flutter/shell/tool_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/footage.dart';
@@ -28,7 +29,9 @@ import 'package:lumit_flutter/state/dock.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/keymap.dart';
+import 'package:lumit_flutter/state/layer_bounds.dart';
 import 'package:lumit_flutter/state/settings.dart';
+import 'package:lumit_flutter/state/tools.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
@@ -364,8 +367,33 @@ class LumitUiState extends ChangeNotifier {
   /// The keyboard map every shortcut is looked up in (docs/07 §15, K-199).
   late final KeymapState keymap;
 
+  /// How big each layer's content is, for the Viewer's boxes and hit-testing
+  /// (K-217). Held here because the answer is the document's, not a panel's,
+  /// and probing a clip is disk work that must happen once rather than per
+  /// Viewer rebuild.
+  final LayerBoundsCache layerBounds = LayerBoundsCache();
+
+  /// Which tool the toolbar has armed (docs/07 §1.7, K-216).
+  ///
+  /// Session state at the shell level, like the dropper below it and for the
+  /// same reason: the tool is picked in one place and read in another, and no
+  /// panel should have to be mounted for either.
+  final ToolsState tools = ToolsState();
+
   DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
+
+  /// A finer selection's claim on Delete (K-234), set by the Timeline while it
+  /// is mounted and cleared when it goes.
+  ///
+  /// The shell's Delete removes the selected *layers*, which is only the right
+  /// answer when nothing smaller is selected: with a mask row picked, Delete
+  /// means that mask, and deleting the layer it sits on instead is the opposite
+  /// of what was asked. The shell asks this first and stands down when it
+  /// returns true. A callback rather than a race between key handlers: every
+  /// hardware-keyboard handler runs on every key, so a panel cannot claim a
+  /// chord simply by handling it.
+  bool Function()? deleteClaim;
 
   /// The appearance the shell is drawing in.
   ///
@@ -535,7 +563,76 @@ class LumitUiState extends ChangeNotifier {
   /// first registration.
   ValueNotifier<int?> viewerFrameid = ValueNotifier(null);
 
+  /// The layer everything single-layer works on: Effect controls, the keyboard
+  /// commands, the Timeline's fold-out. The *primary* of the selection below.
   ValueNotifier<LayerReference?> selectedLayer = ValueNotifier(null);
+
+  /// The whole selection, primary first (K-217).
+  ///
+  /// Kept beside [selectedLayer] rather than replacing it, because almost
+  /// everything in the application acts on one layer and reads it directly —
+  /// and a second notifier is cheaper than teaching forty call sites to take
+  /// the first element of a list. The two are held in step by [_syncSelection]:
+  /// setting [selectedLayer] on its own (which the Timeline and the tests do)
+  /// makes that layer the entire selection, which is exactly what clicking one
+  /// row means.
+  final ValueNotifier<List<LayerReference>> selectedLayers =
+      ValueNotifier(const []);
+
+  /// The selection as ids, for a "is this one selected?" test that does not
+  /// walk the list per layer per paint.
+  Set<UuidValue> get selectedLayerIds =>
+      {for (final layer in selectedLayers.value) layer.internallayerId};
+
+  /// Replace the selection. The first entry becomes [selectedLayer].
+  void setSelection(List<LayerReference> layers) {
+    selectedLayers.value = List.unmodifiable(layers);
+    selectedLayer.value = layers.isEmpty ? null : layers.first;
+  }
+
+  /// Add [layer] to the selection, or take it out again — Shift-click.
+  void toggleSelected(LayerReference layer) {
+    final id = layer.internallayerId;
+    final next = [
+      for (final held in selectedLayers.value)
+        if (held.internallayerId != id) held,
+    ];
+    if (next.length == selectedLayers.value.length) next.add(layer);
+    setSelection(next);
+  }
+
+  void clearSelection() => setSelection(const []);
+
+  /// The turn a Rotation-tool drag is part way through, by layer id (K-230).
+  ///
+  /// The picture is previewed at the new angle while the drag is in flight, but
+  /// the document still holds the old one — so the wireframe drawn from the
+  /// document lagged the picture and only caught up on release. The tool that
+  /// is turning publishes here and the gizmo that draws the boxes reads it; the
+  /// two are different widgets in different layers of the Viewer's stack, and
+  /// this is the one value they share. Empty whenever nothing is turning.
+  final ValueNotifier<Map<UuidValue, double>> liveRotations =
+      ValueNotifier(const {});
+
+  /// The line a Type edit is part way through, by layer id (K-232).
+  ///
+  /// Published for the same reason as [liveRotations]: what is being typed is
+  /// previewed on the picture while the document still holds the old document,
+  /// so a box measured from the document does not grow as the words do. Empty
+  /// whenever nothing is being typed.
+  final ValueNotifier<Map<UuidValue, ({String text, double size})>> liveText =
+      ValueNotifier(const {});
+
+  /// Keep the list honest when something sets the primary on its own.
+  void _syncSelection() {
+    final primary = selectedLayer.value;
+    if (primary == null) {
+      if (selectedLayers.value.isNotEmpty) selectedLayers.value = const [];
+      return;
+    }
+    if (selectedLayerIds.contains(primary.internallayerId)) return;
+    selectedLayers.value = List.unmodifiable([primary]);
+  }
 
   /// The frame every panel renders and previews at.
   ///
@@ -631,6 +728,7 @@ class LumitUiState extends ChangeNotifier {
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
+    selectedLayer.addListener(_syncSelection);
     // The keymap: restored from the workspace if the user has changed one,
     // otherwise the engine's shipped defaults (K-199). Held here because
     // every keypress goes through it and the settings page edits it, so it
@@ -728,11 +826,15 @@ class LumitUiState extends ChangeNotifier {
   void dispose() {
     sub?.cancel();
     _changes?.cancel();
+    tools.dispose();
+    layerBounds.dispose();
     model.dispose();
     cacheChanged.dispose();
     previewTier.dispose();
     viewerFrameid.dispose();
+    selectedLayer.removeListener(_syncSelection);
     selectedLayer.dispose();
+    selectedLayers.dispose();
     activePanel.dispose();
     super.dispose();
   }
@@ -858,6 +960,9 @@ class _LumitAppViewState extends State<LumitAppView> {
       child: Column(
         children: [
           LumitMenuBarFrb(app: state),
+          // The tools, under the menu and above everything else — where a
+          // toolbar goes, and where docs/07 §1.7 puts it.
+          const LumitToolBarFrb(),
           Expanded(
             child: DockWidget(
               root: uiState.split,
@@ -916,7 +1021,22 @@ class _LumitAppViewState extends State<LumitAppView> {
     // answers both. (This handler runs wherever focus is; the active panel is
     // what the dock last fronted, which is what a user would call "where I am".)
     final action = ui.keymap.actionFor(_contextOf(ui.activePanel.value), event);
-    if (action == null) return KeyEventResult.ignored;
+    if (action == null) {
+      // The Tools context is the one context no panel *is* (docs/07 §15 scopes
+      // it to the toolbar, not to a pane), so it is asked for separately and
+      // only once the focused panel and the app-wide table have both declined.
+      // That ordering is what keeps a panel free to claim a letter a tool also
+      // uses — `C` cuts a clip in the Timeline and arms the razor everywhere
+      // else — without either binding having to know about the other.
+      final tool = ui.keymap.actionFor(BridgeKeyContext.tools, event);
+      if (tool != null && ui.tools.handleAction(tool)) {
+        return KeyEventResult.handled;
+      }
+      return KeyEventResult.ignored;
+    }
+    // A tool action can also arrive from the primary lookup, if someone rebinds
+    // one into a context a panel is. Same handler either way.
+    if (ui.tools.handleAction(action)) return KeyEventResult.handled;
 
     var handled = true;
     switch (action) {
@@ -985,12 +1105,23 @@ class _LumitAppViewState extends State<LumitAppView> {
           state.notifyDocumentChanged();
         }
       case 'edit.delete.selection':
-        final layer = ui.selectedLayer.value;
-        if (layer == null) {
+        // A panel holding a finer selection than the layer one gets the key
+        // first (K-234) — a selected mask row is what Delete is about, not the
+        // layer under it.
+        if (ui.deleteClaim?.call() ?? false) {
+          break;
+        }
+        // The whole selection, not just the primary (K-217): with several
+        // layers boxed in the Viewer, Delete taking one of them would be a
+        // surprise every time.
+        final layers = ui.selectedLayers.value;
+        if (layers.isEmpty) {
           handled = false;
         } else {
-          layer.delete();
-          ui.selectedLayer.value = null;
+          for (final layer in layers) {
+            layer.delete();
+          }
+          ui.clearSelection();
           state.notifyDocumentChanged();
         }
       // A bound action this shell has no call for yet — the menus carry those.

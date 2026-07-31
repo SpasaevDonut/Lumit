@@ -331,6 +331,9 @@ class Workspace extends ChangeNotifier {
 
   void resetWorkspaceLayout() {
     dock = defaultLayout();
+    // The default arrangement is Edit's (see `presetLayout`), so the strip
+    // ticks Edit rather than nothing after a reset.
+    activePreset = WorkspacePreset.edit;
     notifyListeners();
     save();
   }
@@ -339,9 +342,19 @@ class Workspace extends ChangeNotifier {
   /// arrangement changes: no panel closes, reloads or re-evaluates anything.
   void applyWorkspacePreset(WorkspacePreset preset) {
     dock = presetLayout(preset);
+    activePreset = preset;
     notifyListeners();
     save();
   }
+
+  /// Which shipped preset the arrangement was last set to, for the toolbar's
+  /// workspace strip to tick (docs/07 §1.4).
+  ///
+  /// Session-only, and not part of the stored layout: what persists is the
+  /// arrangement itself, which the user is free to drag about afterwards — so
+  /// on the next launch the strip shows no preset ticked rather than claiming
+  /// one the panels may no longer match.
+  WorkspacePreset? activePreset;
 
   void touch() {
     notifyListeners();

@@ -37,6 +37,97 @@ pub struct BridgeLayerSwitches {
     pub shy: bool,
 }
 
+/// One vertex of a mask's path (K-222): where it sits in **layer space**, and
+/// the two tangent handles that shape the curve either side of it.
+///
+/// Tangents are offsets *from* the vertex, in the same layer pixels — the shape
+/// `lumit-core`'s `mask::Vertex` uses, carried across unchanged so a path never
+/// changes meaning by crossing the bridge. A corner vertex is one with both
+/// tangents at zero.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BridgeVertex {
+    pub x: f64,
+    pub y: f64,
+    pub tan_in_x: f64,
+    pub tan_in_y: f64,
+    pub tan_out_x: f64,
+    pub tan_out_y: f64,
+}
+
+/// One mask on a layer: a bezier path that gates the layer's alpha before its
+/// effects and transform (docs/06 render order).
+///
+/// The path is in **layer space** — the same coordinates the layer's own pixels
+/// use — so a mask travels with the layer's transform for free, exactly as it
+/// does in After Effects.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeMask {
+    pub id: Uuid,
+    pub name: String,
+    pub vertices: Vec<BridgeVertex>,
+    /// Whether the path joins its last vertex back to its first. An open path
+    /// gates nothing yet; it is a shape being drawn.
+    pub closed: bool,
+    pub inverted: bool,
+    /// 0..100.
+    pub opacity: f64,
+}
+
+impl BridgeMask {
+    #[frb(ignore)]
+    fn read(mask: &lumit_core::mask::Mask) -> Self {
+        Self {
+            id: mask.id,
+            name: mask.name.clone(),
+            vertices: mask
+                .path
+                .vertices
+                .iter()
+                .map(|v| BridgeVertex {
+                    x: v.pos.0,
+                    y: v.pos.1,
+                    tan_in_x: v.tan_in.0,
+                    tan_in_y: v.tan_in.1,
+                    tan_out_x: v.tan_out.0,
+                    tan_out_y: v.tan_out.1,
+                })
+                .collect(),
+            closed: mask.path.closed,
+            inverted: mask.inverted,
+            opacity: mask.opacity,
+        }
+    }
+
+    /// The engine's mask this describes. `id` is kept, so an edit names the
+    /// mask it came from; a caller making a *new* mask sends a fresh uuid.
+    #[frb(ignore)]
+    fn write(&self) -> lumit_core::mask::Mask {
+        lumit_core::mask::Mask {
+            id: self.id,
+            name: self.name.clone(),
+            path: lumit_core::mask::BezierPath {
+                vertices: self
+                    .vertices
+                    .iter()
+                    .map(|v| lumit_core::mask::Vertex {
+                        pos: (v.x, v.y),
+                        tan_in: (v.tan_in_x, v.tan_in_y),
+                        tan_out: (v.tan_out_x, v.tan_out_y),
+                    })
+                    .collect(),
+                closed: self.closed,
+            },
+            inverted: self.inverted,
+            // A mask with an absurd opacity is a mask that renders wrongly for
+            // ever after; clamped here rather than trusted.
+            opacity: self.opacity.clamp(0.0, 100.0),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// Which switch an edit names. One enum rather than eight methods so the
 /// Timeline's switch column is one handler, and so a new switch cannot be added
 /// engine-side without the compiler pointing at every arm here.
@@ -138,6 +229,11 @@ pub struct BridgeLayerInfo {
     /// The Retime property (K-197), or None when the layer is not retimed —
     /// which is exactly what decides whether the fold-out shows a Retime row.
     pub retime: Option<BridgeScalar>,
+    /// The layer's masks (K-222), bottom of the stack first. Carried in the
+    /// read model for the same reason the effects are: the Timeline's
+    /// twirl-down draws a row per mask, and asking per row per frame is the
+    /// cost K-184 exists to remove. Edits still go through `set_mask`.
+    pub masks: Vec<BridgeMask>,
 }
 
 /// Build one layer's [`BridgeLayerInfo`] from an already-fetched composition —
@@ -218,6 +314,7 @@ pub(crate) fn read_layer_info(
             .retime
             .as_ref()
             .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)),
+        masks: layer.masks.iter().map(BridgeMask::read).collect(),
     }
 }
 
@@ -538,6 +635,72 @@ impl LayerReference {
         })
     }
 
+    /// This layer's masks, bottom of the stack first (K-222).
+    ///
+    /// Empty on a layer with none, which is most layers — the Timeline asks
+    /// every row whether it has masks to list, exactly as it asks about clips.
+    #[frb(sync)]
+    pub fn get_masks(&self) -> Result<Vec<BridgeMask>, BridgeError> {
+        Ok(self.item()?.masks.iter().map(BridgeMask::read).collect())
+    }
+
+    /// Add `mask` to the top of this layer's stack.
+    ///
+    /// The whole list is committed, because that is the op the engine has and
+    /// it is exactly invertible (`SetLayerMasks`) — an add, a delete and a
+    /// reorder are all one shape of edit, and each is one undo step.
+    ///
+    /// A path of fewer than two vertices is refused: it is not a shape, and a
+    /// mask that gates nothing would be a row in the Timeline with nothing
+    /// behind it.
+    #[frb(sync)]
+    pub fn add_mask(&self, mask: BridgeMask) -> Result<(), BridgeError> {
+        if mask.vertices.len() < 2 {
+            return Err(BridgeError::EmptyPath);
+        }
+        let mut masks = self.item()?.masks;
+        masks.push(mask.write());
+        self.commit_masks(masks)
+    }
+
+    /// Replace one mask — its path, its name, its invert switch, its opacity.
+    /// Named by id, so a stale reference is a calm error rather than an edit
+    /// landing on whichever mask happens to sit at that index now.
+    #[frb(sync)]
+    pub fn set_mask(&self, mask: BridgeMask) -> Result<(), BridgeError> {
+        if mask.vertices.len() < 2 {
+            return Err(BridgeError::EmptyPath);
+        }
+        let mut masks = self.item()?.masks;
+        let at = masks
+            .iter()
+            .position(|m| m.id == mask.id)
+            .ok_or(BridgeError::NoSuchMask)?;
+        masks[at] = mask.write();
+        self.commit_masks(masks)
+    }
+
+    /// Remove a mask by id.
+    #[frb(sync)]
+    pub fn delete_mask(&self, id: Uuid) -> Result<(), BridgeError> {
+        let mut masks = self.item()?.masks;
+        let before = masks.len();
+        masks.retain(|m| m.id != id);
+        if masks.len() == before {
+            return Err(BridgeError::NoSuchMask);
+        }
+        self.commit_masks(masks)
+    }
+
+    #[frb(ignore)]
+    fn commit_masks(&self, masks: Vec<lumit_core::mask::Mask>) -> Result<(), BridgeError> {
+        self.commit(lumit_core::Op::SetLayerMasks {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            masks,
+        })
+    }
+
     /// The clips on this Sequence layer, in the order it holds them.
     ///
     /// An empty list on a layer that is not a Sequence, rather than an error:
@@ -571,6 +734,101 @@ impl LayerReference {
         let (left, right) = clips[index].cut(tau).ok_or(BridgeError::UncuttableClip)?;
         clips.splice(index..=index, [left, right]);
         self.commit_clips(clips)
+    }
+
+    /// Razor: split this layer in two at `frame` (docs/07 §4.4).
+    ///
+    /// After Effects' split, not a clip cut: the layer keeps everything it has —
+    /// its source, effects, masks, parent, label and keyframes — and the copy
+    /// takes the tail. Both halves keep the **same `start_offset`**, which is
+    /// what makes the cut invisible: layer time is measured from that offset
+    /// (K-213), so each half shows exactly the frames it showed before and every
+    /// keyframe stays where it was on the comp's clock.
+    ///
+    /// One `Batch`, so it is one undo step — docs/07 §4.7 requires that of every
+    /// destructive-feeling action, and a razor that took two would be two.
+    ///
+    /// The copy goes directly above the original, where a duplicate goes.
+    /// `frame` must land strictly inside the layer's span: cutting at either end
+    /// would make a layer of no length, so it is a calm error rather than a
+    /// zero-length layer nobody asked for.
+    #[frb(sync)]
+    pub fn split_at(&self, frame: i64) -> Result<(), BridgeError> {
+        let comp = self.composition()?;
+        let layer = self.item()?;
+        let t = comp
+            .frame_rate
+            .time_of_frame(frame)
+            .map_err(|_| BridgeError::InvalidTime)?;
+        if t.0 <= layer.in_point.0 || t.0 >= layer.out_point.0 {
+            return Err(BridgeError::NothingToSplit);
+        }
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| l.id == self.layer_id)
+            .ok_or(BridgeError::InvalidLayer)?;
+
+        // A retimed layer gets a keyframe *at the cut*, on both halves (K-221).
+        //
+        // Both halves keep the whole map, so without this the two speed ramps
+        // stay welded together: editing one half's speed would bend the other
+        // half's curve, because they are the same curve. A key at the cut gives
+        // each half an end of its own to hold. It is inserted preserving the
+        // shape, so the cut itself changes nothing that plays — and it goes in
+        // *before* the clone, which is what puts it on both halves.
+        // **Only a layer that has actually been retimed** (K-236). Switching
+        // Retime on installs the identity map, and a map nobody has shaped
+        // needs no key at the cut: both halves play their source at their own
+        // clock whatever happens to the other. Keys appearing on a layer the
+        // user never retimed are keys they then have to notice and remove.
+        let retimed = layer
+            .retime
+            .as_ref()
+            .is_some_and(|r| !lumit_core::model::Layer::is_identity_retime(r));
+        let mut head = layer.clone();
+        if let Some(retime) = head.retime.as_mut().filter(|_| retimed) {
+            // Layer time, not comp time: keyframes live in the layer's own
+            // clock, measured from its start offset (K-213).
+            // A subtraction that cannot overflow is still a subtraction that
+            // can: an unrepresentable time leaves the map alone rather than
+            // taking the cut down with it.
+            if let Ok(local) = t.0.checked_sub(head.start_offset.0) {
+                retime.insert_key_preserving_shape(local);
+            }
+        }
+
+        let mut tail = head.clone();
+        tail.id = Uuid::now_v7();
+        for effect in &mut tail.effects {
+            effect.id = Uuid::now_v7();
+        }
+        tail.in_point = t;
+
+        let mut ops = vec![lumit_core::Op::SetLayerSpan {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            in_point: layer.in_point,
+            out_point: t,
+            // Untouched: the offset is what makes both halves show the frames
+            // they showed before the cut.
+            start_offset: layer.start_offset,
+        }];
+        // The head keeps its id, so its new map is written to it by name; the
+        // tail carries its copy of the map in the layer being added.
+        if head.retime != layer.retime {
+            ops.push(lumit_core::Op::SetRetimeProperty {
+                comp: self.comp_id,
+                layer: self.layer_id,
+                retime: head.retime.clone(),
+            });
+        }
+        ops.push(lumit_core::Op::AddLayer {
+            comp: self.comp_id,
+            index,
+            layer: Box::new(tail),
+        });
+        self.commit(lumit_core::Op::Batch { ops })
     }
 
     /// Delete the clip under `frame`, leaving a gap.
