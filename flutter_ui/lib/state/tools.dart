@@ -189,17 +189,6 @@ class ToolsState extends ChangeNotifier {
   /// variant you chose rather than snapping back to the first one.
   final Map<ToolGroup, ToolMode> _lastUsed = {};
 
-  /// Snapping, the toolbar's own toggle (docs/07 §4.5). Held here because it is
-  /// the toolbar's switch and applies wherever snapping applies, not to one
-  /// panel.
-  bool _snapping = true;
-  bool get snapping => _snapping;
-  set snapping(bool value) {
-    if (_snapping == value) return;
-    _snapping = value;
-    notifyListeners();
-  }
-
   /// The **fill** the drawing tools use: the colour new text is set in (K-225),
   /// and the colour a shape layer's fill will take once there are shape layers.
   ToolColour _fill = ToolColour.white;

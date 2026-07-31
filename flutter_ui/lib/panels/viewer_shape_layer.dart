@@ -32,6 +32,13 @@ import 'viewer_gizmo.dart';
 import 'viewer_tool_cursor.dart';
 import 'viewer_shapes.dart';
 
+/// How big the "this click closes the path" ring is drawn, in screen pixels.
+///
+/// The same order as the closing tolerance itself (10 screen pixels, see
+/// [withinClosingDistance]), so the mark is honest about the target it stands
+/// for rather than being a decoration near it.
+const double closingRingRadius = 10;
+
 /// The shape tools over the picture.
 class ViewerShapeLayer extends StatefulWidget {
   /// Whether a shape tool is armed. Inert otherwise.
@@ -120,6 +127,14 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   /// Escape abandons a path in progress; Backspace takes back its last point.
   /// Both are what every path tool does, and both are why a half-drawn path is
   /// never a trap.
+  ///
+  /// **`Ctrl+Z` takes back a point too, while a path is being built** (K-232).
+  /// This is the one place the application's undo means something narrower than
+  /// "undo the last edit": the points are not in the document yet — the path is
+  /// applied in one op when it closes — so an undo pressed mid-path used to
+  /// sail past every point placed and undo whatever the user had done *before*
+  /// picking up the Pen, which is never what was meant. It goes back to the
+  /// document's own undo the moment the path is empty.
   bool _onKey(KeyEvent event) {
     if (!widget.active || !_isPen || _draft.isEmpty) return false;
     if (event is! KeyDownEvent) return false;
@@ -127,11 +142,35 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
       setState(() => _draft = const PathDraft());
       return true;
     }
-    if (event.logicalKey == LogicalKeyboardKey.backspace) {
+    final undo = event.logicalKey == LogicalKeyboardKey.keyZ &&
+        (HardwareKeyboard.instance.isControlPressed ||
+            HardwareKeyboard.instance.isMetaPressed);
+    if (undo || event.logicalKey == LogicalKeyboardKey.backspace) {
       setState(() => _draft = _draft.withoutLast());
       return true;
     }
     return false;
+  }
+
+  /// Whether a click where the pointer is would **close** the path (K-232).
+  ///
+  /// The closing tolerance is a fixed number of screen pixels, and until this
+  /// was drawn there was nothing at all to say how near "near enough" was: you
+  /// clicked, and either the path closed or it grew a point you did not want.
+  /// The mark is the answer to "how close do I need to be" — the first vertex
+  /// grows a ring, and the pointer says a click will close rather than place.
+  bool get _wouldClose {
+    if (!_isPen || !_draft.canClose) return false;
+    final at = _penPointer;
+    final box = _target;
+    final start = _draft.first;
+    if (at == null || box == null || start == null) return false;
+    final p = box.map.layerOf(at);
+    return withinClosingDistance(
+      (p.dx, p.dy),
+      start,
+      screenScale: box.map.viewScale * box.map.sx,
+    );
   }
 
   /// The layer a shape would be drawn on: the primary selection.
@@ -161,20 +200,15 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     final t = ThemeScope.of(context).theme;
     final target = _target;
     return Positioned.fill(
-      child: MouseRegion(
-        // Hidden, because the drawn pointer below replaces it (K-226): the
-        // eyedropper's crosshair, badged with this tool's own icon.
-        cursor: SystemMouseCursors.none,
-        onEnter: (event) => setState(() => _pointer = event.localPosition),
-        onHover: (event) => setState(() {
-          _pointer = event.localPosition;
+      // The system pointer is hidden, because the drawn pointer below replaces
+      // it (K-226): the eyedropper's crosshair, badged with this tool's own
+      // icon.
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() {
+          _pointer = at;
           // The Pen also draws the edge it would place next, from the last
           // point placed to here.
-          if (_isPen) _penPointer = event.localPosition;
-        }),
-        onExit: (_) => setState(() {
-          _pointer = null;
-          _penPointer = null;
+          _penPointer = _isPen ? at : null;
         }),
         child: Listener(
           onPointerDown: (event) => _downAt = event.localPosition,
@@ -198,6 +232,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
                     penPointer: _penPointer,
                     handleFrom: _handleFrom,
                     handleTo: _handleTo,
+                    closing: _wouldClose,
                     accent: widget.accent,
                   ),
                 ),
@@ -219,6 +254,8 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
   void _onPanStart(DragStartDetails details) {
     final at = _downAt ?? details.localPosition;
+    // Where the crosshair is drawn is [DrawnPointerRegion]'s business, whichever
+    // button is down (K-230).
     if (_isPen) {
       // A click that became a drag: the vertex lands where the press was, and
       // the drag pulls its handles out.
@@ -236,6 +273,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
   void _onPanUpdate(DragUpdateDetails details) {
     setState(() {
+      _pointer = details.localPosition;
       if (_isPen) {
         _handleTo = details.localPosition;
         _penPointer = details.localPosition;
@@ -426,6 +464,9 @@ class _ShapePreviewPainter extends CustomPainter {
   final Offset? penPointer;
   final Offset? handleFrom;
   final Offset? handleTo;
+
+  /// Whether a click where the pointer is would close the path (K-232).
+  final bool closing;
   final Color accent;
 
   const _ShapePreviewPainter({
@@ -438,6 +479,7 @@ class _ShapePreviewPainter extends CustomPainter {
     required this.penPointer,
     required this.handleFrom,
     required this.handleTo,
+    required this.closing,
     required this.accent,
   });
 
@@ -479,15 +521,54 @@ class _ShapePreviewPainter extends CustomPainter {
         final at = layer.map.toScreen(v.x, v.y);
         canvas.drawCircle(at, i == 0 ? 5 : 3, Paint()..color = accent);
       }
-      // The edge that would be drawn if the pointer clicked now.
-      final pointer = penPointer;
-      if (pointer != null) {
+      // Near enough to close: the first vertex grows a ring, and the pointer
+      // wears one too (K-232). Two marks rather than one, because the question
+      // has two halves — *which* point closes the path, and whether the click
+      // about to be made is that one.
+      if (closing) {
+        final ring = Paint()
+          ..color = accent
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.5;
+        final first = draft.vertices.first;
+        canvas.drawCircle(
+            layer.map.toScreen(first.x, first.y), closingRingRadius, ring);
+        final pointer = penPointer;
+        if (pointer != null) {
+          canvas.drawCircle(pointer, closingRingRadius * 0.6, ring);
+        }
+      }
+      // The edge that would be drawn if the pointer clicked now — as the curve
+      // it would actually be, not as a straight line (K-230).
+      //
+      // The last point placed may have handles pulled out of it, and those
+      // handles bend the edge *leaving* it. Drawing that edge straight promised
+      // one shape and delivered another the moment the next point landed. The
+      // curve is the same cubic the committed path uses, with the pointer
+      // standing in for a vertex that has no handles yet.
+      //
+      // **While the next vertex's own handles are being pulled out** (K-232)
+      // the edge stops being a guess: the vertex is already placed — it is
+      // where the press landed — so the curve runs to *there*, and bends into
+      // it by the handle facing back along the path, which is the mirror of the
+      // one under the pointer. It is the shape that will exist the moment the
+      // button comes up, drawn as it is being aimed rather than after.
+      final landing = handleFrom ?? penPointer;
+      if (landing != null) {
         final last = draft.vertices.last;
-        canvas.drawLine(
-          layer.map.toScreen(last.x, last.y),
-          pointer,
+        final from = layer.map.toScreen(last.x, last.y);
+        final out =
+            layer.map.toScreen(last.x + last.tanOutX, last.y + last.tanOutY);
+        // The new vertex's *in* handle. A vertex with no handles yet — an
+        // ordinary hover — has none, so the curve runs straight into it.
+        final into = _incomingHandle(landing);
+        canvas.drawPath(
+          Path()
+            ..moveTo(from.dx, from.dy)
+            ..cubicTo(out.dx, out.dy, into.dx, into.dy, landing.dx, landing.dy),
           Paint()
             ..color = accent.withValues(alpha: 0.5)
+            ..style = PaintingStyle.stroke
             ..strokeWidth = 1,
         );
       }
@@ -507,6 +588,20 @@ class _ShapePreviewPainter extends CustomPainter {
       canvas.drawCircle(hTo, 3, Paint()..color = accent);
       canvas.drawCircle(hFrom, 4, Paint()..color = accent);
     }
+  }
+
+  /// The control point the edge *arrives* at [landing] through.
+  ///
+  /// While a vertex's handles are being dragged out, the one that faces back
+  /// along the path is the mirror of the one under the pointer — unless Alt has
+  /// broken the pair, in which case the incoming side keeps where it was, which
+  /// is the vertex itself. With no drag in flight there are no handles yet and
+  /// the edge arrives straight.
+  Offset _incomingHandle(Offset landing) {
+    final hTo = handleTo;
+    if (handleFrom == null || hTo == null) return landing;
+    if (HardwareKeyboard.instance.isAltPressed) return landing;
+    return landing * 2 - hTo;
   }
 
   /// A mask path in layer space, as a screen path — cubics between each pair of

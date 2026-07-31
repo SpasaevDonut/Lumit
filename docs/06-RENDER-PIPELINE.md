@@ -367,7 +367,15 @@ is read back off the card and lands in RAM and on disk, and a frame held below i
 straight back into a texture rather than composited again. What the tiers hold is
 **final comp frames only** — node-output caching is the evaluator's, and is not built.
 
-**"Ahead of the playhead" is what makes the disk tier count during playback.** A read off disk
+**"Ahead of the playhead" applies to BOTH lower rungs, and neither used to.** The ring renders
+ahead of the clock, so a frame is composited before it is shown — but the trip *up* the ladder
+was made at the moment the frame was wanted, inside the turn that had to produce it. From memory
+that is an upload: quick, but paid out of the frame's own budget rather than out of the slack the
+ring exists to bank. From disk it is worse — see below. Both rungs are now climbed over the same
+look-ahead window whose source decodes are already posted, so by the time the ring reaches the
+frame it is a hit on the card and no composite happens at all.
+
+**And the disk rung is what makes the tier count during playback.** A read off disk
 goes to the IO thread, and the bytes come back one or two turns of the worker loop later. A
 frame asked for at the moment it must be shown thus always arrives too late, and playback
 composites it again — a span parked on disk was then worth nothing to playback, which is most
@@ -435,6 +443,16 @@ correctly, since it draws nothing — but its children still follow it, so movin
 moved the picture while leaving every name alone, and the children served frames from before the
 move. K-206 makes that the common case rather than a corner: a Null is the layer a user hides
 most readily, having nothing to look at.
+
+**The quality axis is one number, and everything that reads it must round the same way.**
+Auto resolution keys at 1% steps, thus two scales inside one step are one quality. Footage also
+folds in the width it decodes at, and that width came from the raw scale — so 0.4235 and 0.4240
+were one quality by the tag and two names by the width. The cache bar asks by a scale rounded to
+a thousandth, which is nearly never the float the render used, thus it named every frame
+differently from the way it was banked and drew nothing over a composition that was full and
+playing. A composition of solids was correct throughout, because a solid folds in the tag alone.
+The decode width now comes from the same rounded scale the tag does (`Quality::keyed_scale`),
+thus the width in the name is the width the pixels were decoded at.
 
 A frame is only nameable once its footage is probed. Until then it renders live and is banked
 nowhere, so an entry can never be a promise the renderer did not keep.
@@ -521,6 +539,37 @@ the playhead across the work area, at the current preview quality, into RAM (wri
 disk). It yields to any interactive request via epoch cancellation and is the first thing the
 degradation ladder pauses. Concurrency adapts to measured per-frame cost and memory headroom
 (the MFR lesson) — never a fixed thread count.
+
+**As built.** The fill renders one frame per idle turn, forward-biased two frames ahead for
+each one behind, after a ~200 ms lull.
+
+**And a second job runs on the same lull: the idle backup.** A frame reached the disk tier by
+one route only — pushed out of the VRAM cache, read back on the way down, parked. That route
+needs the cache to be *full*. Give it a budget larger than a session ever fills (10 GB on a
+roomy card) and it is never full, thus nothing is ever pushed out, thus **nothing is ever
+written to disk**: the more memory the user gives the cache, the more certainly the tier that
+exists to make tomorrow start warm stays empty. The failure is silent — the bar is green all
+session, and blank again after a restart.
+
+So the ladder has a second way down. On each idle lull, one held frame that is not yet parked
+is copied down: the frame stays on the card and keeps serving the Viewer, and a copy goes to
+memory and to disk. The copy is the same non-blocking read-back an eviction uses and is bounded
+by the same in-flight ceiling, thus it can never compete with the picture. A frame that has been
+copied down is marked as held below, so the day it *is* pushed out it goes without being read a
+second time.
+
+The idle fill obeys the same rule, and it matters most immediately after the backup has done its
+job: **the fill never composites a frame that is already held below.** It has no deadline — that
+is what makes it the fill — so a frame that exists in memory or in a file is climbed rather than
+made again. Without this, re-opening a project would walk a full disk cache and re-render every
+frame of it, which is the exact opposite of what the cache is for. An upload counts as that
+turn's work, so a request arriving mid-fill still waits at most one frame; asking the disk for a
+copy costs this thread nothing, so the walk queues those as it passes and the copies land while
+it is idle.
+
+The backup runs **alongside** the fill rather than after it. On a long composition the fill has
+frames to make for as long as the budget lasts, so "when the fill is finished" would mean
+"never" — which is how long the disk tier stayed empty.
 
 ### 5.6 Cache bars
 

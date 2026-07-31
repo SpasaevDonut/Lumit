@@ -92,6 +92,10 @@ pub struct WorkerState {
     /// playhead is held, or the budget is full). Cleared whenever the anchor,
     /// the document or the budget moves.
     fill_exhausted: bool,
+    /// True when every frame held on the card is on disk as well, so the idle
+    /// backup has nothing to copy ([`idle_backup`]). Cleared whenever a frame
+    /// is banked or the disk tier is re-opened, since either can make work.
+    backup_exhausted: bool,
     /// When the last request arrived — the fill waits out a ~200 ms lull
     /// after it (docs/06 §5.5), so a scrub in progress is never contended.
     last_request: std::time::Instant,
@@ -204,6 +208,10 @@ fn sync_caches(state: &mut WorkerState) {
     if (used as u64, entries as u64) != state.published_vram {
         state.published_vram = (used as u64, entries as u64);
         crate::framecache::vram::publish(used as u64, entries as u64);
+        // What the card holds has changed, thus there may be something new to
+        // copy down. Cheaper than asking the backup itself, which would walk
+        // every held frame to find out.
+        state.backup_exhausted = false;
     }
 
     sync_disk(state);
@@ -228,8 +236,10 @@ fn sync_disk(state: &mut WorkerState) {
             .tx
             .send(lumit_render::diskio::Cmd::SetRoot(root.clone()));
         // A different folder holds different frames, so there may be something
-        // to promote again.
+        // to promote again — and everything held is unparked as far as the new
+        // folder is concerned, thus there is a backup to make.
         state.fill_exhausted = false;
+        state.backup_exhausted = false;
     }
     let budget = crate::framecache::disk::budget();
     if budget != state.applied_disk_budget {
@@ -600,25 +610,39 @@ fn zero_copy_wants_bgra() -> bool {
     ))
 }
 
-/// Ask the disk tier for a frame that playback will want soon.
+/// Put a frame playback will want soon onto the graphics card **before** it is
+/// due — the "ahead of the playhead" half of docs/06 §5.1.
 ///
-/// **Why the lead time is the whole point.** A read off disk goes to the IO
-/// thread, and the frame it brings back arrives one or two turns of the worker
-/// loop later. [`prepare_frame`] asks for a frame at the moment it must show it,
-/// thus the bytes always come too late for that frame and it is composited
-/// again. Playback then gets no good from a span that is parked on disk, which
-/// is most of what the disk tier holds after a project is re-opened.
+/// # Why each rung needs its own lead time
 ///
-/// This asks for the frames that playback will reach in a moment, at the same
-/// time as the decodes for those frames go to the prefetch thread. The bytes
-/// arrive, [`collect_disk_loads`] puts them on the card, and playback finds the
-/// frame already there.
+/// The ring renders ahead of the clock, thus a frame is composited before it is
+/// shown. What was *not* ahead of anything was the trip up the ladder. Both
+/// lower rungs were climbed at the moment the frame was wanted, inside the
+/// render turn:
 ///
-/// Nothing here waits and nothing here is expensive: naming a frame is a hash of
-/// the composition, and the watermark in [`play_one_frame`] names each coming
-/// frame once for each pass of playback.
+/// * **From memory** the climb is an upload, and an upload is quick — but it
+///   happened on the worker thread in the middle of the turn that had to
+///   produce the frame, so it was paid out of that frame's budget rather than
+///   out of the slack the ring exists to bank.
+/// * **From disk** the climb is a message to another thread, and the bytes come
+///   back one or two turns of the loop later. Asked for at the moment the frame
+///   was due, they always arrived too late for it, and playback composited the
+///   frame from the beginning instead — so a span sitting in a file was worth
+///   nothing to the pass that went over it.
+///
+/// This does both in advance, over the same look-ahead window whose source
+/// decodes are already posted. By the time the ring reaches the frame it is a
+/// hit on the card and no composite happens at all.
+///
+/// Nothing here waits. A frame that cannot be named yet is left alone, a copy
+/// that has not arrived is simply not there yet, and the ordinary path composites
+/// as it always did.
+///
+/// Returns whether it did work the caller should count: an upload happened.
+/// Asking the disk for a copy is a message to another thread and costs this one
+/// nothing, thus it does not count.
 #[frb(ignore)]
-fn request_disk_lead(
+fn line_up_frame(
     renderer: &mut lumit_render::HeadlessRenderer,
     disk: &lumit_render::diskio::DiskIo,
     disk_wanted: &mut std::collections::HashMap<u128, lumit_render::FrameProvenance>,
@@ -626,32 +650,54 @@ fn request_disk_lead(
     comp: Uuid,
     frame: u64,
     quality: lumit_render::Quality,
-) {
+) -> bool {
     let bgra = zero_copy_wants_bgra();
     let Some(key) = renderer.frame_key(document, comp, frame, quality) else {
-        // Not nameable yet (footage still being probed), thus not on disk under
-        // any name either.
-        return;
+        // Not nameable yet (footage still being probed), thus not held anywhere
+        // under any name either.
+        return false;
     };
+    if renderer.has_frame_texture(key, bgra) {
+        // Already where it needs to be.
+        return false;
+    }
+    let provenance = lumit_render::FrameProvenance {
+        comp,
+        frame,
+        scale_q: lumit_render::preview_scale_q(quality),
+    };
+    // Memory first: it is one upload away, which is cheaper than a file and far
+    // cheaper than a composite. Doing it now means the render turn finds a hit.
+    if let Some(held) = crate::framecache::held(key) {
+        // Only the order it came down in can go back up: the other order would
+        // show with red and blue swapped.
+        if held.bgra == bgra {
+            return renderer
+                .upload_frame_texture(lumit_render::Promotion {
+                    key,
+                    bgra,
+                    width: held.width,
+                    height: held.height,
+                    bytes: &held.bytes,
+                    cost_ms: held.cost_ms,
+                    provenance,
+                })
+                .is_some();
+        }
+    }
     if !wants_disk_lead(
-        renderer.has_frame_texture(key, bgra),
+        false,
         crate::framecache::contains(key),
         disk.contains(key),
         disk_wanted.contains_key(&key),
     ) {
-        return;
+        return false;
     }
-    disk_wanted.insert(
-        key,
-        lumit_render::FrameProvenance {
-            comp,
-            frame,
-            scale_q: lumit_render::preview_scale_q(quality),
-        },
-    );
+    disk_wanted.insert(key, provenance);
     _ = disk
         .tx
         .send(lumit_render::diskio::Cmd::Load { hash: key, bgra });
+    false
 }
 
 /// Whether a coming frame is worth a read off disk.
@@ -674,14 +720,17 @@ fn wants_disk_lead(on_card: bool, in_memory: bool, on_disk: bool, already_asked:
 /// 1. **Already on the card** — [`HeadlessRenderer::render_prepared`] answers
 ///    from its own cache without compositing.
 /// 2. **Held in memory** — uploaded straight back into a texture, which is a
-///    fraction of a composite and the reason the RAM tier exists at all.
+///    fraction of a composite and the reason the RAM tier exists at all. During
+///    playback this has usually happened already, in advance
+///    ([`line_up_frame`]); what is left here is the frame nobody looked ahead
+///    for — a scrub, or the first frame of a pass.
 /// 3. **Parked on disk** — *asked for*, never waited on. A disk read plus
 ///    decompression is not something to hold the preview open for, so the frame
 ///    is composited now and the copy off disk lands a turn or two later, in time
 ///    for the next visit. This is what makes reopening a project warm up as you
 ///    scrub rather than only where the fill has reached. Playback does not wait
 ///    for that second visit: it asks for the coming frames in advance
-///    ([`request_disk_lead`]), thus a parked span plays from the card.
+///    ([`line_up_frame`]), thus a parked span plays from the card.
 /// 4. **Composited**, and banked on the way past.
 #[frb(ignore)]
 fn prepare_frame(
@@ -740,6 +789,46 @@ fn prepare_frame(
     state
         .renderer
         .render_prepared_named(document, comp, frame, quality, bgra, name)
+}
+
+/// Copy ONE held frame down to disk while the editor is idle — so a session
+/// that never fills the card's cache still leaves something for tomorrow.
+///
+/// # Why this exists
+///
+/// A frame used to reach the disk tier by one route only: it was pushed out of
+/// the card's cache, read back on the way down, and parked. That route needs the
+/// cache to be **full**. Give it a budget bigger than a session ever fills —
+/// 10 GB on a roomy card — and it is never full, nothing is ever pushed out, and
+/// nothing is ever written to disk. The tier whose whole purpose is to make
+/// tomorrow start warm stayed empty, and the *more* memory the user gave the
+/// cache the more certainly it stayed empty. Exactly the wrong way round, and
+/// invisible: the cache bar was green all session, and green again as nothing
+/// after a restart.
+///
+/// So the ladder has a second way down, used only when there is time to spare.
+/// The frame stays on the card and keeps serving the Viewer; a copy goes to
+/// memory and to disk. One frame per turn, and never more than the read-backs
+/// already in flight allow, so this can never compete with the picture.
+///
+/// It runs on the same lull as the fill but is *not* gated on the fill being
+/// finished: on a long composition the fill has frames to make for as long as
+/// the budget lasts, and waiting for it to run out would mean waiting for ever.
+#[frb(ignore)]
+fn idle_backup(state: &mut WorkerState) {
+    // Nowhere to put them: the disk tier is off (no project folder yet, or no
+    // home directory). Nothing to do until that changes, which `sync_disk`
+    // reports by clearing the flag.
+    if state.seen_disk_location.1.is_none() {
+        state.backup_exhausted = true;
+        return;
+    }
+    // Two disjoint borrows of the worker's state: the renderer walks its held
+    // frames, the disk mirror answers which of them are already parked.
+    let disk = &state.disk;
+    if !state.renderer.start_backup(&|hash| disk.contains(hash)) {
+        state.backup_exhausted = true;
+    }
 }
 
 /// Render ONE uncached frame near the playhead into the VRAM frame cache —
@@ -805,6 +894,11 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     // — the far side of where you now are. It still terminates: the walk is
     // bounded, and every frame in the window ends up held.
     let window = (budget / frame_bytes).max(1);
+    // Frames the disk holds are asked for as the walk passes them, and the walk
+    // carries on. A load is a message to another thread, thus queueing several
+    // costs nothing here — and by the time the fill comes round again they have
+    // arrived and gone onto the card, which is what makes a re-opened project
+    // warm up by *reading* rather than by rendering everything a second time.
     for frame in crate::playback::fill_order(anchor, first, last).take(window) {
         // Naming the frame is what tells the fill whether there is anything to
         // do — and under content keying the name is the same one every tier files
@@ -814,6 +908,35 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             .frame_key(&document, comp_ref.id, frame, quality)
         {
             if state.renderer.has_frame_texture(key, bgra) {
+                continue;
+            }
+            // **Held below: climb it, do not make it again.** The fill has no
+            // deadline — that is what makes it the fill — thus a frame that
+            // already exists in memory or in a file must never be composited
+            // afresh. `prepare_frame` below would do that for a parked frame:
+            // it asks for the copy and composites anyway, which is right when a
+            // frame is due *now* and wrong here. After a re-opened project this
+            // is the difference between reading a session's cache back and
+            // rendering the whole of it a second time.
+            if crate::framecache::contains(key) || state.disk.contains(key) {
+                let uploaded = line_up_frame(
+                    &mut state.renderer,
+                    &state.disk,
+                    &mut state.disk_wanted,
+                    &document,
+                    comp_ref.id,
+                    frame,
+                    quality,
+                );
+                // An upload is this turn's work, exactly as a render would be:
+                // a request arriving mid-fill then waits for one frame, not for
+                // a window's worth. Asking the disk costs this thread nothing,
+                // so the walk carries on queueing those.
+                if uploaded {
+                    _ = stream.add(WorkerResponse::CacheFilled);
+                    state.fill_exhausted = false;
+                    return;
+                }
                 continue;
             }
         }
@@ -826,6 +949,12 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         }
         return;
     }
+    // Nothing left for the fill to *make*. Copies may still be on their way up
+    // from disk, and the fill does not wait for them by spinning: walking the
+    // window again means naming every frame in it again, which is real work to
+    // do while the answer is on another thread. What wakes it instead is the
+    // copy landing — `collect_disk_loads` clears this the moment one reaches
+    // the card, and the fill then finds it held and moves on to the next.
     state.fill_exhausted = true;
 }
 
@@ -918,6 +1047,11 @@ struct Playback {
     /// [`Self::pre_roll_done`]). `None` once the sound has been started, or
     /// when this run never had any.
     pending_audio: Option<std::sync::Arc<lumit_core::Document>>,
+    /// True while the sound is stopped **because the picture fell behind it**,
+    /// as against stopped because the user asked. Every-frame playback holds the
+    /// track rather than letting it drift (K-171), and this is what remembers to
+    /// start it again when the picture arrives — see [`chase_audio`].
+    audio_held_for_picture: bool,
     /// How many frames the last [`Self::advance`] had to jump over to catch the
     /// clock. Zero while playback is keeping up.
     ///
@@ -1110,6 +1244,137 @@ fn clock_seconds() -> Option<f64> {
     None
 }
 
+/// Hold the sound when the picture falls behind it, and start it again — level
+/// with the picture — once the picture is running freely. Every-frame
+/// playback's half of A/V sync (K-171).
+///
+/// # Why it stops at all
+///
+/// Every-frame mode shows every frame however long each one takes, thus the
+/// picture can fall behind the clock. Two answers were possible and only one is
+/// correct: let the sound run on and drift away from the picture, or stop the
+/// sound. Lumit stops it.
+///
+/// # Why it must start again by itself, and why the picture is not what it waits
+/// for
+///
+/// It did not start again at all. The clock stops reporting when the sound
+/// stops, thus the test that stopped it could never run a second time and
+/// nothing started it. One slow frame took the sound away for the rest of the
+/// run, and the only way back was to stop playback and press play again.
+///
+/// The obvious repair is wrong, and was tried: wait for the picture to reach the
+/// moment the sound had got to. The sound stops where it is, thus that moment is
+/// **in front of** the picture by however long the slow frame took — thirty
+/// seconds of rendering puts it thirty seconds in front. The picture then needs
+/// thirty seconds of playing to arrive, and if the composition ends first it
+/// never arrives at all. The sound stays off for the rest of the run, which is
+/// the fault this exists to repair.
+///
+/// So the sound comes back to the **picture**. When the renders are in front of
+/// the presents again — the same measure the pre-roll uses to decide the sound
+/// may start at all — the sound is moved to the frame on screen and started
+/// there. The two are level by construction, at a moment the picture is
+/// certainly at, because it is the frame being shown.
+///
+/// # The two tests are different on purpose
+///
+/// It stops on a *distance* ([`AUDIO_HOLD_BEHIND`]) and starts on *banked
+/// frames*. Neither is the other's negation, thus a picture that wavers at the
+/// edge of one cannot start and stop the sound at every frame.
+#[frb(ignore)]
+fn chase_audio(playback: &mut Playback, frame: u64) {
+    let shown = frame as f64 / playback.fps;
+    let Some(clock) = held_clock_seconds() else {
+        // No mix at all: nothing to hold and nothing to start.
+        playback.audio_held_for_picture = false;
+        return;
+    };
+    let banked = playback.ring.len();
+    match audio_chase(playback.audio_held_for_picture, clock - shown, banked) {
+        AudioChase::Hold => {
+            playback.audio_held_for_picture = true;
+            crate::api::audio::audio_pause();
+        }
+        AudioChase::Start => {
+            playback.audio_held_for_picture = false;
+            // To the frame on screen, then run. The sound stopped ahead of the
+            // picture, thus starting it where it stopped would play a moment
+            // the picture has not reached.
+            crate::api::audio::audio_seek(shown);
+            resume_audio();
+        }
+        AudioChase::Leave => {}
+    }
+}
+
+/// What to do with the sound this frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[frb(ignore)]
+enum AudioChase {
+    /// Stop it: the picture is too far behind.
+    Hold,
+    /// Start it: the picture has arrived.
+    Start,
+    /// Neither.
+    Leave,
+}
+
+/// The rule [`chase_audio`] applies, with no sound device in it so the rule can
+/// be tested on its own.
+///
+/// `behind` is how far the sound is in front of the picture, in seconds.
+/// `banked` is how many finished frames are waiting to be shown.
+#[frb(ignore)]
+fn audio_chase(held: bool, behind: f64, banked: usize) -> AudioChase {
+    if held {
+        // Frames waiting to be shown means the renders are in front of the
+        // presents again, thus the picture is running freely and the sound can
+        // rejoin it. Deliberately NOT "the picture reached the sound": the sound
+        // stopped ahead of the picture, at a moment the picture may never get
+        // to, and does not get to at all if the composition ends first.
+        if banked >= PRE_ROLL_FRAMES {
+            AudioChase::Start
+        } else {
+            AudioChase::Leave
+        }
+    } else if behind > AUDIO_HOLD_BEHIND {
+        AudioChase::Hold
+    } else {
+        AudioChase::Leave
+    }
+}
+
+/// How far the picture may fall behind the sound before the sound waits for it.
+/// Half a second is well past any unevenness the ring absorbs, thus this cannot
+/// fire on ordinary jitter.
+const AUDIO_HOLD_BEHIND: f64 = 0.5;
+
+/// Where the sound has got to **whether or not it is running** — the number
+/// [`clock_seconds`] hides once the sound stops.
+///
+/// Every-frame playback stops the sound when the picture falls behind, and the
+/// clock then holds its position. Deciding when the picture has caught up needs
+/// exactly that held position, thus it cannot be read through a function that
+/// answers `None` for a stopped clock. `None` here means there is no mix at all.
+#[frb(ignore)]
+fn held_clock_seconds() -> Option<f64> {
+    #[cfg(feature = "media")]
+    {
+        let (seconds, _playing, loaded) = crate::audio::clock();
+        loaded.then_some(seconds)
+    }
+    #[cfg(not(feature = "media"))]
+    None
+}
+
+/// Start the sound again where it stopped (see [`crate::audio::resume`]).
+#[frb(ignore)]
+fn resume_audio() {
+    #[cfg(feature = "media")]
+    crate::audio::resume();
+}
+
 pub struct RenderCompRequest {
     pub comp: CompositionReference,
     pub frame: u64,
@@ -1266,6 +1531,7 @@ fn worker_loop(
         bar_refined_to: 0,
         bar_published_at: std::time::Instant::now() - BAR_MIN_INTERVAL,
         fill_exhausted: true,
+        backup_exhausted: true,
         last_request: std::time::Instant::now(),
         layer_sample: None,
     };
@@ -1291,7 +1557,9 @@ fn worker_loop(
                 }
             }
         } else {
-            let wait = if state.fill_exhausted {
+            // Idle work of any kind means come back soon; with none left, wait
+            // long enough that an idle editor costs nothing.
+            let wait = if state.fill_exhausted && state.backup_exhausted {
                 std::time::Duration::from_millis(200)
             } else {
                 std::time::Duration::from_millis(2)
@@ -1301,8 +1569,18 @@ fn worker_loop(
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     let lull =
                         state.last_request.elapsed() >= std::time::Duration::from_millis(200);
-                    if !state.fill_exhausted && lull {
-                        idle_fill(&mut state, &mut stream);
+                    if lull {
+                        if !state.fill_exhausted {
+                            idle_fill(&mut state, &mut stream);
+                        }
+                        // Alongside the fill, not after it. On a long
+                        // composition the fill has frames to make for as long as
+                        // the budget lasts, thus "when the fill is finished"
+                        // would mean "never" — and never is how long the disk
+                        // tier stayed empty.
+                        if !state.backup_exhausted {
+                            idle_backup(&mut state);
+                        }
                     }
                     None
                 }
@@ -1388,19 +1666,8 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             // it, so a stop resumes filling from where the user actually is.
             state.last_shown = Some((playback.comp.clone(), frame, playback.scale));
             state.fill_exhausted = false;
-            // Every-frame plays WITH sound while it holds the comp's rate, and
-            // pauses the sound when the picture falls genuinely behind — the
-            // K-171 v1 behaviour (a paused track over a slow-motion picture,
-            // never a drifting one). Half a second of lag is well past any
-            // jitter the ring absorbs. Once paused the clock stops reporting,
-            // so this fires once per fall-behind, and the next press of play
-            // starts the sound afresh.
             if matches!(playback.mode, BridgePlaybackMode::EveryFrame) {
-                if let Some(clock) = clock_seconds() {
-                    if clock - frame as f64 / playback.fps > 0.5 {
-                        crate::api::audio::audio_pause();
-                    }
-                }
+                chase_audio(playback, frame);
             }
             present_ring_frame(&mut state.renderer, frame, &prepared, stream);
             return;
@@ -1461,7 +1728,7 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                 // asked for when it is shown always comes too late and is
                 // composited again. Asked for now, it is on the card before
                 // playback gets there.
-                request_disk_lead(
+                _ = line_up_frame(
                     &mut state.renderer,
                     &state.disk,
                     &mut state.disk_wanted,
@@ -1632,6 +1899,7 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
         ring: std::collections::VecDeque::new(),
         costs: crate::playback::CostWindow::default(),
         prefetched_to: None,
+        audio_held_for_picture: false,
         skipped: 0,
     });
     // A fresh run starts optimistic at Full and walks down to whatever this
@@ -2403,6 +2671,7 @@ mod tests {
             ring: std::collections::VecDeque::new(),
             costs: crate::playback::CostWindow::default(),
             prefetched_to: None,
+            audio_held_for_picture: false,
             pending_audio: None,
             skipped: 0,
         }
@@ -2884,10 +3153,66 @@ mod tests {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod bar_strip_tests {
-    use super::{refine_bar_strip, sample_bar_strip, wants_disk_lead};
+    use super::{
+        audio_chase, refine_bar_strip, sample_bar_strip, wants_disk_lead, AudioChase,
+        PRE_ROLL_FRAMES,
+    };
+
+    /// **The sound stops when the picture falls behind, and comes back to the
+    /// picture when the picture is running freely again.**
+    ///
+    /// Every-frame playback shows every frame however long each takes, thus the
+    /// picture can fall behind. Lumit stops the sound rather than let it drift
+    /// away from a picture that cannot keep up (K-171).
+    ///
+    /// The first regression: it never started again. The clock stops reporting
+    /// when the sound stops, thus the test that stopped it could not run a
+    /// second time. One slow frame took the sound away for the whole run.
+    ///
+    /// The second, which the first repair caused: waiting for the picture to
+    /// reach the moment the sound had got to. The sound stops **in front of**
+    /// the picture, by however long the slow frame took, thus a thirty-second
+    /// frame leaves it thirty seconds in front — and if the composition ends
+    /// before the picture gets there, it never comes back. The sound must
+    /// return to the picture, not the picture to the sound.
+    #[test]
+    fn the_sound_stops_for_the_picture_and_comes_back_to_it() {
+        let full = PRE_ROLL_FRAMES;
+        // Running, and the picture keeps up: nothing happens.
+        assert_eq!(audio_chase(false, 0.0, full), AudioChase::Leave);
+        assert_eq!(
+            audio_chase(false, 0.4, full),
+            AudioChase::Leave,
+            "inside the unevenness the ring absorbs"
+        );
+        // Running, and the picture falls well behind: the sound stops.
+        assert_eq!(audio_chase(false, 0.6, 0), AudioChase::Hold);
+
+        // Stopped, and the renders are still not keeping up: it stays stopped.
+        assert_eq!(audio_chase(true, 30.0, 0), AudioChase::Leave);
+        assert_eq!(audio_chase(true, 30.0, full - 1), AudioChase::Leave);
+
+        // Stopped, and frames are banked again: the sound comes back — and it
+        // does so however far in front it stopped, because what it returns to
+        // is the frame on screen. Thirty seconds in front is the case the
+        // picture could never have caught up with.
+        assert_eq!(audio_chase(true, 30.0, full), AudioChase::Start);
+        assert_eq!(audio_chase(true, 0.6, full), AudioChase::Start);
+
+        // The two tests are not each other's negation, thus a picture at the
+        // edge of one cannot start and stop the sound at every frame: 0.4 s
+        // behind neither stops a running sound nor, on its own, starts a
+        // stopped one.
+        assert_eq!(audio_chase(false, 0.4, full), AudioChase::Leave);
+        assert_eq!(audio_chase(true, 0.4, 0), AudioChase::Leave);
+    }
 
     /// Playback asks the disk tier for a frame in advance, and only when the
-    /// read is of use.
+    /// read is of use — the last rung, reached only when the ones above it
+    /// cannot answer. The rung above is memory, and it is climbed in advance
+    /// too: `line_up_frame` uploads a held frame to the card before the frame is
+    /// due, thus by the time this predicate is asked, "in memory" has already
+    /// been dealt with and only a genuine file read is left.
     ///
     /// **Why this matters.** A read off disk arrives one or two turns of the
     /// worker loop after it is asked for. A frame asked for at the moment it

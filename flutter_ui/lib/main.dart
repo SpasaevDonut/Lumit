@@ -383,6 +383,18 @@ class LumitUiState extends ChangeNotifier {
   DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
 
+  /// A finer selection's claim on Delete (K-234), set by the Timeline while it
+  /// is mounted and cleared when it goes.
+  ///
+  /// The shell's Delete removes the selected *layers*, which is only the right
+  /// answer when nothing smaller is selected: with a mask row picked, Delete
+  /// means that mask, and deleting the layer it sits on instead is the opposite
+  /// of what was asked. The shell asks this first and stands down when it
+  /// returns true. A callback rather than a race between key handlers: every
+  /// hardware-keyboard handler runs on every key, so a panel cannot claim a
+  /// chord simply by handling it.
+  bool Function()? deleteClaim;
+
   /// The appearance the shell is drawing in.
   ///
   /// Scheme and shape are held rather than the built theme, because the theme is
@@ -590,6 +602,26 @@ class LumitUiState extends ChangeNotifier {
   }
 
   void clearSelection() => setSelection(const []);
+
+  /// The turn a Rotation-tool drag is part way through, by layer id (K-230).
+  ///
+  /// The picture is previewed at the new angle while the drag is in flight, but
+  /// the document still holds the old one — so the wireframe drawn from the
+  /// document lagged the picture and only caught up on release. The tool that
+  /// is turning publishes here and the gizmo that draws the boxes reads it; the
+  /// two are different widgets in different layers of the Viewer's stack, and
+  /// this is the one value they share. Empty whenever nothing is turning.
+  final ValueNotifier<Map<UuidValue, double>> liveRotations =
+      ValueNotifier(const {});
+
+  /// The line a Type edit is part way through, by layer id (K-232).
+  ///
+  /// Published for the same reason as [liveRotations]: what is being typed is
+  /// previewed on the picture while the document still holds the old document,
+  /// so a box measured from the document does not grow as the words do. Empty
+  /// whenever nothing is being typed.
+  final ValueNotifier<Map<UuidValue, ({String text, double size})>> liveText =
+      ValueNotifier(const {});
 
   /// Keep the list honest when something sets the primary on its own.
   void _syncSelection() {
@@ -1073,6 +1105,12 @@ class _LumitAppViewState extends State<LumitAppView> {
           state.notifyDocumentChanged();
         }
       case 'edit.delete.selection':
+        // A panel holding a finer selection than the layer one gets the key
+        // first (K-234) — a selected mask row is what Delete is about, not the
+        // layer under it.
+        if (ui.deleteClaim?.call() ?? false) {
+          break;
+        }
         // The whole selection, not just the primary (K-217): with several
         // layers boxed in the Viewer, Delete taking one of them would be a
         // surprise every time.

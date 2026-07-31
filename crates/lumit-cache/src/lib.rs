@@ -250,6 +250,18 @@ impl<K: Eq + Hash + Clone, V: ByteSized> ByteLru<K, V> {
         self.map.get(key).map(|e| &e.value)
     }
 
+    /// The same, to change a held value in place — without bumping recency and
+    /// without changing what it costs.
+    ///
+    /// For bookkeeping the owner learns *after* the value went in: a frame that
+    /// has since been copied to a lower tier, say. The value's size must not
+    /// change, because the byte total was counted at insert time; nothing this
+    /// answers with can change a size, which is why it is a note about the
+    /// value rather than the value itself.
+    pub fn peek_mut(&mut self, key: &K) -> Option<&mut V> {
+        self.map.get_mut(key).map(|e| &mut e.value)
+    }
+
     pub fn used_bytes(&self) -> usize {
         self.used
     }

@@ -2807,6 +2807,31 @@ shared red-green-blue-alpha. The proving colour in the test is orange on
 purpose — with the channels swapped it would show blue, where the earlier
 magenta (whose red and blue are equal) would have hidden the mistake.
 
+*"Submitted" is not "finished", and what a fence is.* Telling a graphics card to
+do something is like handing a note through a hatch. The moment the note is
+accepted, your side is free to carry on — the work itself happens later, out of
+sight, at the card's own pace. This is the whole reason graphics are fast, and
+it is also a trap: the call that copies the picture into the shared texture
+returns long before a single pixel has moved. If you announce the frame at that
+moment, whoever opens the texture next may be looking at it *while* it is still
+being filled, or before it has been touched at all.
+
+A **fence** (Direct3D calls the small one used here an *event query*) is the
+answer: a marker dropped into the queue of work behind the copy. Because the card
+does the queued work in order, when the card reports that it has reached the
+marker, everything before the marker — the copy — is genuinely done. So the
+engine drops a marker after the copy and then asks, over and over, "reached it
+yet?" until the answer is yes. That is the only honest way to turn "I have asked"
+into "it has happened".
+
+Not waiting was a real bug, and a nasty kind: the test that opens the texture the
+way Flutter does passed almost always and failed perhaps one run in fifty, with
+every pixel reading as empty — the reader simply won the race that time. It broke
+a build that had nothing to do with it. The wait is bounded: if the card has not
+reported the copy finished after a quarter of a second, the engine gives up,
+prints a line saying so, and shows the frame regardless. One stale frame is a
+blink; a render thread waiting for ever on a wedged card is a frozen application.
+
 *Every-frame playback now keeps two frames in motion.* One frame used to be
 requested, rendered, delivered, shown — and only then the next requested, so the
 renderer sat idle while the interface caught up, and the interface sat idle
@@ -5546,6 +5571,304 @@ camera, where the pivot is a thing you can move on its own), the **Unified
 Camera** tool that puts all three gestures on the three mouse buttons, and
 depth-of-field handles on the picture.
 
+### Pointers we have to draw ourselves, and why (K-230)
+
+A mouse pointer on a desktop is not a picture the application supplies — it names
+one from a list the operating system ships, and the system draws it. That list is
+short and it is not the same list everywhere. Flutter offers names for a
+*hand-that-grabs* and a *magnifier*, but Windows has neither; ask for one there
+and the embedder quietly hands back the ordinary arrow. Nothing errors, nothing
+warns: the tool simply looks like no tool at all, which is exactly what the Hand
+and Zoom tools were doing.
+
+So they join the Rotation, Anchor point and Razor tools in the other approach:
+hide the system pointer over the Viewer and **paint our own** on top of the
+picture. An open hand that closes while it drags, and a magnifier whose sign
+follows the `Alt` key. It costs a small painter each and it is the only way to
+have them.
+
+Drawn pointers have one trap worth knowing. The thing that reports "the mouse is
+here" as it moves over a region is a `MouseRegion`, and it reports *hovering* —
+which by definition stops the moment a button goes down. A pointer drawn from
+hover alone therefore freezes where you pressed and sits inside the very shape
+you are dragging out — and it stops for *any* button, including the right one,
+which none of these tools do anything with. Taking the position from each tool's
+own drag was only half a fix: left-drag followed, right-click still pinned the
+pointer until the button came up. So they all share one small wrapper,
+`DrawnPointerRegion`, which listens for pointer *movement* rather than hovering.
+Movement is reported whatever the button is doing, so the drawn pointer keeps up
+either way — and it is only about where the mark is painted: no tool has gained a
+gesture on a button it did not already answer to.
+
+### One gesture, one undo step (K-230)
+
+The document is a stack of small, exactly reversible edits called **ops**, and
+`Ctrl+Z` undoes one of them. That is a good design with one obligation: *an op
+has to be what a person would call an action*. A layer's Position is two separate
+numbers in the model — x and y, which is what makes it possible to animate them
+apart — so writing them as two ops meant one drag became two undo steps, and the
+first `Ctrl+Z` put the layer back along one axis only. It reads as broken undo
+rather than as two honest edits.
+
+The engine has an op that carries several edits and undoes them together
+(`Op::Batch`), and the fix everywhere is to reach for it. A drag writes both
+axes at once. A scale writes both axes at once. Making a text layer used to be
+*three* ops — a layer saying "Text" in the middle of the composition, an empty
+line written into it, and a move to where you clicked — so undoing walked back
+through two states nobody had ever seen; it is one op now, and the layer arrives
+already saying what it should say, where it should be. Finishing a typing session
+is one more. So the first undo takes back the words and the very next removes the
+layer, which is the whole of what a person means by "undo the text I just made".
+
+### Holding the pointer still (K-230)
+
+Some drags aim at a place — you are moving *this* handle to *that* point — and
+some are pure movement. Turning a camera is the second kind: nothing on the
+picture is being aimed at, only the direction and distance you drag. For those,
+letting the pointer travel is pure loss. It wanders out of the panel, and
+eventually into the corner of the screen, where it stops moving and the drag
+stops with it while your hand is still going.
+
+Every 3D application answers this the same way, and there is no "lock the
+pointer" call on Windows to do it with. So: remember where the pointer was when
+the button went down (`GetCursorPos`), and after each movement put it straight
+back (`SetCursorPos`). It never appears to move, and the movements still arrive.
+
+The one subtlety is that *putting it back is itself a movement*, and the system
+reports it like any other — with a delta that exactly cancels the real one. So
+the drag measures each event against the anchor it is pinned to rather than
+against the previous event; the put-back then reads as no movement at all, which
+is the truth of it. Where the platform cannot do this at all, the freeze reports
+that it failed and the drag falls back to reading movements between events, as it
+always did.
+
+### Why zooming in used to freeze the window (K-230)
+
+Behind a transparent picture there is a checkerboard, so you can tell "black" from
+"nothing". It is drawn the obvious way: a loop over the area, one small rectangle
+per light square. That is fine when the area is a panel — a few thousand squares
+— and a disaster when the area is the *picture*, because a picture at 800% on an
+HD composition is 15360 pixels across. Half a million rectangles, every frame,
+for the few thousand actually on screen. The window stops responding, and it
+looks as though the *rendering* has become slow when nothing is being rendered
+differently at all.
+
+The board is bounded by the panel now and clipped to the picture, with the
+pattern still pinned to the picture's own corner so panning slides the board with
+the picture rather than the picture swimming over a fixed grid. Its cost is the
+same at every magnification. The general lesson is worth keeping: **anything
+drawn per-unit-of-area must be bounded by what is on screen, not by what is being
+looked at.**
+
+### Magnification is not resolution (K-230)
+
+Two different numbers are easy to confuse. **Magnification** is how big the
+picture is drawn — a display setting, changing nothing about the frame itself.
+**Resolution** is how many pixels the engine is asked to make, which costs real
+time and fills the cache.
+
+The Viewer tells the engine what fraction of full resolution to render, and that
+number follows the *panel*: a Viewer docked into a corner is genuinely cheap,
+which is the point. It must not follow the zoom inside the panel. Zooming out
+used to lower it, which threw away every cached frame and made the picture
+coarser — for a gesture that only meant "let me see more of it". Zooming in
+cannot raise it either: above the composition's own resolution there is nothing
+left to render.
+
+### Asking the engine nothing (K-230)
+
+There is a standing rule in this frontend that a rebuild must not re-read the
+world (see the bridge-call budget tests). Two tools broke it in the same way and
+it is a useful shape to recognise.
+
+Both the Hand tool and the camera tools redraw on **every movement of the
+pointer** — they have to; something is following your mouse. Redrawing then runs
+the panel's build method again, and if that method asks the engine anything, the
+question is asked at the rate a mouse reports, which is a hundred times a second
+or more. Panning re-read the composition's settings, its size, and every layer's
+source item. Hovering with a camera tool re-found the active camera, which reads
+a focal distance and a frame rate across the bridge.
+
+Neither answer can change without an edit landing, so both are worked out once
+and held until one does. The rule generalises: **if a rebuild can be caused by
+moving the mouse, nothing in it may cross the bridge.**
+
+There was one more layer of this, and it is the subtle one (K-231). The held
+copy of the document — the read model — used to *check* with the engine that the
+document had not moved before answering any question about it. Cheap-sounding,
+and it grouped those checks to one per frame while a frame was being built. But
+outside a frame it checked every single time, and "outside a frame" is exactly
+where mouse handlers run. So the cheapest question in the application was being
+asked hundreds of times a second, to be told nothing had changed, because moving
+a mouse changes no document.
+
+Drawing does not need the check at all: when the document does change, the model
+is refreshed and everything drawing from it is repainted anyway. So the paint
+path reads the copy in hand and asks nothing. The catch — and it is worth
+knowing, because it bit during this change — is that the check was quietly
+covering for something else: a panel that commits its own edit and then draws
+would see its own edit only because the check happened to notice. Every panel
+that commits now refreshes the model itself, which is what the Timeline and
+Effect controls were already doing. **Tell the model; do not make drawing ask.**
+
+
+### A performance test that cannot see the bug (K-233)
+
+Worth knowing on its own, because it wasted two rounds of the owner reporting
+the same thing.
+
+The frontend has *budget tests*: they count how many calls cross to the engine
+during one interaction, and fail if the number jumps. One of them hovered the
+mouse over the Viewer with a camera tool in hand and asserted the count was
+zero. It passed. The application was making a call on every single frame.
+
+The reason is a detail of how Flutter's test harness works. `await tester.pump()`
+draws a frame but does **not** move the clock, so every frame in the test carries
+the same timestamp. The read model groups its work "once per frame" by comparing
+that timestamp — so as far as it was concerned the whole twenty-move gesture was
+one frame, and it did its work once. In a running application every frame has a
+new timestamp, and the work happened sixty times a second.
+
+The fix is one argument — `tester.pump(const Duration(milliseconds: 16))` — and
+the lesson is bigger than the argument: **a performance test that cannot
+reproduce the conditions it is guarding does not merely fail to catch the bug,
+it certifies that the bug is not there.** When a budget reads zero, check that
+it can read non-zero: break the thing on purpose and watch the number move.
+### Who gets the Delete key (K-234)
+
+Every keyboard shortcut in Lumit is registered the same way: the panel (or the
+shell) hands Flutter a function and says "call me on every key press". The catch
+is in *every*. Flutter calls **all** of them, in the order they registered, and
+it does not stop at the first one that says "I dealt with that". So a panel
+cannot claim a key simply by handling it — the shell's own handler for the same
+key has already run, or is about to.
+
+That was harmless while the handlers disagreed about *which* keys they cared
+about, and became a bug the moment two of them wanted the same one. `Delete` in
+the shell means "remove the selected layers". `Delete` in the Timeline, with a
+mask row picked, means "remove that mask". Both fired: the mask went, and so did
+the layer it was drawn on.
+
+The fix is a single question the shell asks before it acts. `LumitUiState` holds
+one nullable function called `deleteClaim`; the Timeline points it at its own
+"delete the selected masks" while it is on screen, and the shell's `Delete` calls
+it first. `true` means "that key was mine, I have dealt with it" and the shell
+stands down; `false` means "nothing of mine was selected" and the shell deletes
+the layers as it always did. One place decides, so the two answers cannot both
+happen.
+
+The general shape is worth keeping: **when two parts of the application want the
+same key, do not race them — have the broader one ask the narrower one first.**
+A selection inside a layer is narrower than the layer, so it is asked first.
+
+### Why a bigger cache made the disk one useless
+
+A hole in the three-tier cache, and an instructive one: the symptom was the
+opposite of what you would guess from the cause.
+
+A frame got onto disk one way. The card's cache filled up, a frame was pushed
+out to make room, and on its way out it was read back and written to disk. That
+works — as long as the cache *fills up*. Give it more memory than a session ever
+uses, say 10 GB on a roomy card, and it never fills, so nothing is ever pushed
+out, so nothing is ever written to disk. The tier whose only job is to make
+tomorrow start warm stayed completely empty. And the more memory you gave the
+cache, the more certain that became.
+
+It was also silent. The cache bar was green all session, because the frames
+really were held — on the card. Then you restarted and it was blank, because
+none of them had ever reached a file.
+
+The ladder now has a second way down, for when there is time to spare. Each time
+the editor has been idle for a moment, one held frame that is not on disk yet is
+copied down. The frame stays on the card and keeps serving the Viewer; what
+travels is a copy. It uses the same non-blocking read-back an eviction uses — ask
+the card for the pixels, collect them a moment later — and no more of those may
+be in flight than before, so it cannot get in the picture's way.
+
+One detail worth the sentence: the backup runs *alongside* the fill that renders
+new frames, not after it. Waiting for the fill to finish sounds tidier, but on a
+long composition the fill has frames to make for as long as the memory lasts —
+so "after the fill" would have meant "never", which is exactly how long the disk
+tier stayed empty.
+
+**Climbing the ladder before the frame is due.** Rendering runs ahead of the
+clock, so a frame is usually made before it is shown. Fetching one that already
+exists did not: whichever rung it was sitting on, it was climbed at the moment
+the frame was wanted, inside the turn that had to deliver it.
+
+From memory that is one upload — quick, but it came out of that frame's own
+budget instead of out of the slack that running ahead exists to build up. From
+disk it was worse than slow, it was useless: the read goes to another thread and
+the bytes come back a moment later, so a copy asked for at the instant the frame
+was due always arrived after it had gone past, and the frame was composited from
+scratch anyway.
+
+Both are now fetched over the same window of coming frames that source decodes
+already use. By the time playback reaches the frame it is a texture on the card
+and nothing is composited at all.
+
+The idle fill follows the same rule, and it matters most right after the backup
+above has done its work: **the fill never re-renders a frame it already has
+somewhere.** It has no deadline — that is the whole point of it — so a frame in
+memory or in a file is fetched, not made. Without that rule, opening yesterday's
+project would walk a full disk cache and render every frame of it again, which is
+precisely what the cache exists to prevent.
+
+**The cache bar that went blank over video.** Worth recording, because the
+symptom pointed away from the cause.
+
+A frame's name includes how coarsely it was made. For Auto resolution that is
+kept to 1% steps — zoom the Viewer by a hair and you get the same frame back
+rather than an identical one under a new name. But footage has a second thing in
+its name: the width it was decoded at. And that width was worked out from the
+exact scale rather than the rounded one. At 1920 wide, 0.4235 gave 813 pixels
+and 0.4240 gave 814 — one step by the first rule, two names by the second.
+
+The bar is where it showed. It asks the engine by a scale rounded to a
+thousandth, which is almost never the exact number the render used, so it worked
+out a different name for every frame than the one it had been filed under, found
+none of them, and drew an empty stripe over a composition that was entirely
+cached and playing perfectly.
+
+A composition of solids was fine the whole time, because a solid's name has no
+decode width in it. That is why it looked like a fault in video footage, and why
+every test of the bar passed: they were all built from solids.
+
+Both rules now round the same way, so the width in the name is the width the
+pixels really were. A footnote worth having: resizing the window by less than a
+percent no longer re-decodes the footage either.
+
+**The sound that waited and never came back.** Every-frame playback shows every
+frame however long each one takes, so on a heavy stretch the picture falls
+behind the clock. Lumit's answer is to let the sound wait where it is, rather
+than let it run on and drift away from a picture that cannot keep up.
+
+Waiting was right. Never coming back was not. The clock stops reporting the
+moment the sound stops, and the only test that could have started it again read
+that clock — so once the sound had stopped, nothing could ever decide to start
+it. One slow frame took the sound away for the rest of the run, even after the
+picture returned to full speed, and the only way to get it back was to stop
+playback and press play again.
+
+The obvious repair is wrong, and I tried it first: wait for the picture to reach
+the moment the sound had got to. But the sound stops *where it is*, which is
+ahead of the picture by however long the slow frame took. A frame that took
+thirty seconds leaves the sound thirty seconds in front, so the picture needs
+thirty seconds of playing to arrive — and if the composition ends before then, it
+never arrives, and the sound stays off. That is the same fault wearing a
+different hat.
+
+So the sound comes back to the *picture*, not the picture to the sound. The
+moment the renders are running ahead of the presents again — the same measure
+that decides the sound may start at the beginning of a run — the sound is moved
+to the frame on screen and started there. The two are together by construction,
+at a moment the picture is definitely at, because it is the frame you are
+looking at.
+
+The two tests are deliberately unalike: it stops on a *distance* (half a second
+behind) and starts on *frames in hand*. Neither is the other's opposite, so a
+picture wavering at the edge of one cannot start and stop the sound over and
+over.
 ### Shape layers: art that is numbers, not pixels (K-237)
 
 Until now the shape tools could only draw a **mask** — a path *on* another

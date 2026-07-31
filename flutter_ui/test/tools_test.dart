@@ -256,17 +256,4 @@ void main() {
     });
   });
 
-  group('Snapping', () {
-    test('it is on by default and toggles once per real change', () {
-      final tools = ToolsState();
-      var notices = 0;
-      tools.addListener(() => notices++);
-
-      expect(tools.snapping, isTrue);
-      tools.snapping = false;
-      tools.snapping = false;
-      expect(tools.snapping, isFalse);
-      expect(notices, 1);
-    });
-  });
 }

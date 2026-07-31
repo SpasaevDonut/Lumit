@@ -27,6 +27,53 @@ import 'package:lumit_flutter/state/tools.dart';
 
 import '../icons/icons.dart';
 
+/// Where the pointer is, for a tool that draws its own, and the hidden system
+/// cursor that goes with it (K-230).
+///
+/// **Why a `Listener` and not the `MouseRegion` alone.** A `MouseRegion` reports
+/// *hover*, and hovering stops the instant any mouse button is held — including
+/// the secondary one, which none of these tools do anything with. Taken from
+/// hover alone, a drawn pointer freezes where the press landed and stays frozen
+/// until the button comes up or the pointer leaves the panel: a right-click over
+/// the picture pinned the hand, the magnifier and the rest in place.
+/// `onPointerMove` fires whichever button is down, so the drawn pointer keeps
+/// following the real one. Nothing here handles a *gesture*; this only says
+/// where to draw.
+///
+/// [onPointer] is given the position in this widget's own coordinates, and null
+/// when the pointer has left — which is what a drawn pointer should draw
+/// nothing for.
+class DrawnPointerRegion extends StatelessWidget {
+  final ValueChanged<Offset?> onPointer;
+
+  /// The system cursor underneath. Hidden for everything that draws its own,
+  /// but the Type tool's horizontal member keeps the platform's I-beam.
+  final MouseCursor cursor;
+
+  final Widget child;
+
+  const DrawnPointerRegion({
+    super.key,
+    required this.onPointer,
+    required this.child,
+    this.cursor = SystemMouseCursors.none,
+  });
+
+  @override
+  Widget build(BuildContext context) => MouseRegion(
+        cursor: cursor,
+        // The enter is the `MouseRegion`'s alone: it fires when the panel
+        // appears under a pointer that is not moving, which no move event would.
+        onEnter: (event) => onPointer(event.localPosition),
+        onExit: (_) => onPointer(null),
+        child: Listener(
+          onPointerHover: (event) => onPointer(event.localPosition),
+          onPointerMove: (event) => onPointer(event.localPosition),
+          child: child,
+        ),
+      );
+}
+
 /// How far the tool's badge sits from the pointer, and how big it is drawn.
 ///
 /// Down and to the right, out of the way of what is being drawn: a badge above
@@ -76,37 +123,41 @@ class ToolPointer extends StatelessWidget {
     final at = this.at;
     if (at == null) return const SizedBox.shrink();
     return Positioned.fill(
-      child: IgnorePointer(
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: CustomPaint(
-                painter: _ToolPointerPainter(
-                  at: at,
-                  mark: mark,
-                  outline: outline,
-                  ringRadius: ringRadius,
+      // Its own layer, so moving the pointer repaints the pointer and not the
+      // picture or the shape being dragged out under it (K-233).
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _ToolPointerPainter(
+                    at: at,
+                    mark: mark,
+                    outline: outline,
+                    ringRadius: ringRadius,
+                  ),
                 ),
               ),
-            ),
-            Positioned(
-              left: at.dx + toolBadgeOffset.dx,
-              top: at.dy + toolBadgeOffset.dy,
-              // The icon twice: the halo copy a pixel down and across, then the
-              // ink one over it. Cheaper than an outlined glyph and legible on
-              // any picture, which is the whole requirement.
-              child: Stack(
-                children: [
-                  Transform.translate(
-                    offset: const Offset(1, 1),
-                    child: lumitIcon(tool.icon,
-                        size: toolBadgeSize, color: outline),
-                  ),
-                  lumitIcon(tool.icon, size: toolBadgeSize, color: mark),
-                ],
+              Positioned(
+                left: at.dx + toolBadgeOffset.dx,
+                top: at.dy + toolBadgeOffset.dy,
+                // The icon twice: the halo copy a pixel down and across, then the
+                // ink one over it. Cheaper than an outlined glyph and legible on
+                // any picture, which is the whole requirement.
+                child: Stack(
+                  children: [
+                    Transform.translate(
+                      offset: const Offset(1, 1),
+                      child: lumitIcon(tool.icon,
+                          size: toolBadgeSize, color: outline),
+                    ),
+                    lumitIcon(tool.icon, size: toolBadgeSize, color: mark),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -173,6 +224,307 @@ class _ToolPointerPainter extends CustomPainter {
 double brushRingRadius(double width, double viewScale) =>
     (width * viewScale / 2).clamp(minBrushRingRadius, maxBrushRingRadius);
 
+/// The Hand tool's pointer: an open hand, and a closed one while it drags
+/// (K-230).
+///
+/// **Why this is drawn.** Flutter can only ask for the pointers the platform
+/// ships, and Windows ships no hand-with-fingers at all — `grab` and `grabbing`
+/// are in Flutter's own list but not in the Windows embedder's, where anything
+/// unknown quietly becomes the ordinary arrow. That is what the Hand tool was
+/// showing: nothing. Drawing it is the only way to have it, and it buys the
+/// closing hand as well, which is the half that says the pan has hold of the
+/// picture.
+class HandPointer extends StatelessWidget {
+  final Offset? at;
+
+  /// Whether the hand is holding: a drag in flight.
+  final bool holding;
+  final Color mark;
+  final Color outline;
+
+  const HandPointer({
+    super.key,
+    required this.at,
+    required this.holding,
+    required this.mark,
+    required this.outline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final at = this.at;
+    if (at == null) return const SizedBox.shrink();
+    return Positioned.fill(
+      // Its own layer, so moving the pointer repaints the pointer and not the
+      // picture, the wireframes or the tool's own preview under it (K-233).
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: CustomPaint(
+            painter: _HandPainter(
+              at: at,
+              holding: holding,
+              mark: mark,
+              outline: outline,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The hand itself, on a 24-unit grid centred on the pointer.
+///
+/// Two passes as every drawn pointer here does — a thick outline stroke, then
+/// the mark over it — so it is legible over a black picture and a white one.
+class _HandPainter extends CustomPainter {
+  final Offset at;
+  final bool holding;
+  final Color mark;
+  final Color outline;
+
+  const _HandPainter({
+    required this.at,
+    required this.holding,
+    required this.mark,
+    required this.outline,
+  });
+
+  /// How tall the drawn hand is, in screen pixels.
+  static const double _size = 20;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.translate(at.dx, at.dy);
+    final s = _size / 24;
+    canvas.scale(s, s);
+    // The palm's middle sits on the pointer, which is where a hand grips.
+    canvas.translate(-12, -12);
+    final path = holding ? _fist() : _openHand();
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = outline
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 4.5
+        ..strokeJoin = StrokeJoin.round
+        ..strokeCap = StrokeCap.round,
+    );
+    canvas.drawPath(path, Paint()..color = mark);
+    canvas.restore();
+  }
+
+  /// An open hand: palm, four fingers standing, thumb out to the left.
+  Path _openHand() => Path()
+    ..moveTo(6, 14)
+    ..lineTo(6, 9)
+    ..lineTo(8, 9)
+    ..lineTo(8, 4)
+    ..lineTo(10, 4)
+    ..lineTo(10, 9)
+    ..lineTo(12, 9)
+    ..lineTo(12, 3)
+    ..lineTo(14, 3)
+    ..lineTo(14, 9)
+    ..lineTo(16, 9)
+    ..lineTo(16, 5)
+    ..lineTo(18, 5)
+    ..lineTo(18, 15)
+    ..cubicTo(18, 19, 15, 21, 12, 21)
+    ..cubicTo(9, 21, 6, 19, 6, 15)
+    ..close();
+
+  /// The same hand closed: the fingers curled down onto the palm, with the
+  /// knuckles as the line across the top.
+  Path _fist() => Path()
+    ..moveTo(6, 13)
+    ..cubicTo(6, 10, 8, 9, 10, 9)
+    ..lineTo(16, 9)
+    ..cubicTo(17, 9, 18, 10, 18, 11)
+    ..lineTo(18, 15)
+    ..cubicTo(18, 19, 15, 21, 12, 21)
+    ..cubicTo(9, 21, 6, 19, 6, 15)
+    ..close();
+
+  @override
+  bool shouldRepaint(_HandPainter old) =>
+      old.at != at ||
+      old.holding != holding ||
+      old.mark != mark ||
+      old.outline != outline;
+}
+
+/// The Hand tool over the picture: the drawn hand, and the drag that pans.
+///
+/// It takes the drag itself rather than letting it fall through to the panel,
+/// so the pan is this layer's own gesture. Where the hand is *drawn* comes from
+/// [DrawnPointerRegion], which is what keeps it following the pointer while a
+/// button — any button — is held.
+class ViewerHandLayer extends StatefulWidget {
+  /// Whether the Hand tool is armed. Inert otherwise — no pointer taken, no
+  /// system cursor hidden.
+  final bool active;
+
+  /// How far the picture should move, per pointer movement.
+  final ValueChanged<Offset> onPan;
+
+  final Color mark;
+  final Color outline;
+
+  const ViewerHandLayer({
+    super.key,
+    required this.active,
+    required this.onPan,
+    required this.mark,
+    required this.outline,
+  });
+
+  @override
+  State<ViewerHandLayer> createState() => _ViewerHandLayerState();
+}
+
+class _ViewerHandLayerState extends State<ViewerHandLayer> {
+  Offset? _pointer;
+  bool _holding = false;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!widget.active) return const SizedBox.shrink();
+    return Positioned.fill(
+      // The system pointer is hidden, because the hand below replaces it: an
+      // arrow sitting inside the drawn hand would read as two pointers (K-219's
+      // rule).
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onPanStart: (d) => setState(() {
+            _holding = true;
+            _pointer = d.localPosition;
+          }),
+          onPanUpdate: (d) {
+            setState(() => _pointer = d.localPosition);
+            widget.onPan(d.delta);
+          },
+          onPanEnd: (_) => setState(() => _holding = false),
+          onPanCancel: () => setState(() => _holding = false),
+          child: Stack(children: [
+            const Positioned.fill(child: SizedBox.expand()),
+            HandPointer(
+              at: _pointer,
+              holding: _holding,
+              mark: widget.mark,
+              outline: widget.outline,
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+/// The Zoom tool's pointer: a magnifier with a plus in it, or a minus while Alt
+/// says the click will zoom out (K-230).
+///
+/// Drawn for the same reason the hand is: Flutter's `zoomIn`/`zoomOut` are not
+/// in the Windows embedder's list of pointers, so asking for one got the plain
+/// arrow — a Zoom tool that looked exactly like no tool at all.
+class MagnifierPointer extends StatelessWidget {
+  final Offset? at;
+
+  /// Whether the click would zoom out (the Alt modifier).
+  final bool out;
+  final Color mark;
+  final Color outline;
+
+  const MagnifierPointer({
+    super.key,
+    required this.at,
+    required this.out,
+    required this.mark,
+    required this.outline,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final at = this.at;
+    if (at == null) return const SizedBox.shrink();
+    return Positioned.fill(
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: CustomPaint(
+            painter: _MagnifierPainter(
+              at: at,
+              out: out,
+              mark: mark,
+              outline: outline,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MagnifierPainter extends CustomPainter {
+  final Offset at;
+  final bool out;
+  final Color mark;
+  final Color outline;
+
+  const _MagnifierPainter({
+    required this.at,
+    required this.out,
+    required this.mark,
+    required this.outline,
+  });
+
+  /// The lens' radius in screen pixels, and how far the handle runs past it.
+  static const double _lens = 6.5;
+  static const double _handle = 7;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // The lens sits *on* the pointer: what a magnification is anchored to is
+    // the point in the middle of the glass, and that has to be the point the
+    // pointer claims (docs/07 §2.2 — the comp point under the cursor stays
+    // under the cursor).
+    canvas.save();
+    canvas.translate(at.dx, at.dy);
+    const grip = 0.7071 * _lens;
+    for (final (colour, width) in [(outline, 3.4), (mark, 1.6)]) {
+      final paint = Paint()
+        ..color = colour
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = width
+        ..strokeCap = StrokeCap.round;
+      canvas.drawCircle(Offset.zero, _lens, paint);
+      canvas.drawLine(
+        const Offset(grip, grip),
+        const Offset(grip + _handle * 0.7071, grip + _handle * 0.7071),
+        paint,
+      );
+      // The sign inside the glass: plus in, minus out. The bar across is drawn
+      // for both, so the two pointers differ by one stroke and read as one
+      // family.
+      const arm = 3.0;
+      canvas.drawLine(const Offset(-arm, 0), const Offset(arm, 0), paint);
+      if (!out) {
+        canvas.drawLine(const Offset(0, -arm), const Offset(0, arm), paint);
+      }
+    }
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(_MagnifierPainter old) =>
+      old.at != at ||
+      old.out != out ||
+      old.mark != mark ||
+      old.outline != outline;
+}
+
 /// The text pointer, for the Type tool's vertical member (K-226).
 ///
 /// Horizontal type wears the system's own I-beam — every platform has one and
@@ -196,9 +548,11 @@ class TextPointer extends StatelessWidget {
     final at = this.at;
     if (at == null) return const SizedBox.shrink();
     return Positioned.fill(
-      child: IgnorePointer(
-        child: CustomPaint(
-          painter: _BeamPainter(at: at, mark: mark, outline: outline),
+      child: RepaintBoundary(
+        child: IgnorePointer(
+          child: CustomPaint(
+            painter: _BeamPainter(at: at, mark: mark, outline: outline),
+          ),
         ),
       ),
     );

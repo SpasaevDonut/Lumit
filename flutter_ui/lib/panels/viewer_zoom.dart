@@ -17,6 +17,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'viewer_tool_cursor.dart';
+
 /// The magnification a Viewer can be taken to. Below the floor the picture is
 /// a speck; above the ceiling a comp pixel is a tile and every further step
 /// costs texture memory for nothing.
@@ -105,12 +107,18 @@ class ViewerZoomLayer extends StatefulWidget {
 
   final Color accent;
 
+  /// The drawn pointer's own colours (K-230).
+  final Color mark;
+  final Color outline;
+
   const ViewerZoomLayer({
     super.key,
     required this.active,
     required this.onZoomAt,
     required this.onZoomBox,
     required this.accent,
+    required this.mark,
+    required this.outline,
   });
 
   @override
@@ -121,18 +129,41 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
   Offset? _from;
   Offset? _to;
 
+  /// Where the pointer is, for the drawn magnifier. Null when it is not over
+  /// the picture, which is where a drawn pointer should draw nothing.
+  Offset? _pointer;
+
+  /// The mouse the pointer events are coming from, so the hidden cursor can be
+  /// asked for again for that same device — see [_hideSystemCursorAgain].
+  int? _device;
+
   /// Whether Alt is held, tracked rather than read at the moment of the click.
   ///
   /// The cursor has to say which way the click will go *before* it is clicked —
   /// that is the whole job of a zoom-in and a zoom-out pointer — so pressing or
   /// releasing Alt has to repaint. A keyboard handler is the only way to hear
   /// about a modifier changing while nothing else is happening.
+  ///
+  /// **It starts false every time the tool is picked up** (K-236). Windows eats
+  /// the Alt key-up when Alt reaches for the window menu or Alt+Tab leaves the
+  /// application, so the platform's own "is Alt down?" can answer yes long
+  /// after the key came up — and the Zoom tool then opened on the minus,
+  /// zooming *out* on a plain click. What this tool believes is what it has
+  /// seen for itself since it was armed, and the next press of Alt corrects it
+  /// either way.
   bool _alt = false;
 
   @override
   void initState() {
     super.initState();
     HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void didUpdateWidget(ViewerZoomLayer old) {
+    super.didUpdateWidget(old);
+    // Freshly armed: the tool has seen no Alt of its own yet.
+    if (widget.active && !old.active) _alt = false;
   }
 
   @override
@@ -143,9 +174,35 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
 
   bool _onKey(KeyEvent event) {
     final held = HardwareKeyboard.instance.isAltPressed;
-    if (held != _alt && mounted) setState(() => _alt = held);
+    if (held != _alt && mounted) {
+      setState(() => _alt = held);
+      _hideSystemCursorAgain();
+    }
     // Never consumed: Alt is a modifier here, not a shortcut.
     return false;
+  }
+
+  /// Ask the platform to hide the pointer again (K-235).
+  ///
+  /// Alt is the key Windows reserves for the window menu, and pressing it takes
+  /// the pointer's own state with it: the arrow comes back and sits beside our
+  /// drawn magnifier, which is two pointers — exactly what hiding the system
+  /// one is for. Flutter will not re-apply a cursor by itself here, because it
+  /// only does so when the answer *changes*, and "hidden" to "hidden" is no
+  /// change at all.
+  ///
+  /// So the same request Flutter's own cursor manager makes is made directly,
+  /// for the device the pointer events are arriving from. Nothing in the widget
+  /// tree moves — an earlier attempt gave the region a new identity to force
+  /// the question, which rebuilt the gesture detector under it and dropped any
+  /// drag that was in flight.
+  void _hideSystemCursorAgain() {
+    final device = _device;
+    if (device == null || _pointer == null) return;
+    SystemChannels.mouseCursor.invokeMethod<void>(
+      'activateSystemCursor',
+      <String, dynamic>{'device': device, 'kind': 'none'},
+    );
   }
 
   Rect? get _box {
@@ -159,37 +216,63 @@ class _ViewerZoomLayerState extends State<ViewerZoomLayer> {
   Widget build(BuildContext context) {
     if (!widget.active) return const SizedBox.shrink();
     return Positioned.fill(
-      child: MouseRegion(
-        cursor:
-            _alt ? SystemMouseCursors.zoomOut : SystemMouseCursors.zoomIn,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTapUp: (details) => widget.onZoomAt(details.localPosition,
-              out: HardwareKeyboard.instance.isAltPressed),
-          onPanStart: (details) => setState(() {
-            _from = details.localPosition;
-            _to = details.localPosition;
-          }),
-          onPanUpdate: (details) =>
-              setState(() => _to = details.localPosition),
-          onPanEnd: (_) {
-            final box = _box;
-            setState(() {
+      // The system pointer is hidden and replaced below (K-230): `zoomIn` and
+      // `zoomOut` are in Flutter's list of pointers but not in the Windows
+      // embedder's, where an unknown one silently becomes the ordinary arrow —
+      // so the Zoom tool looked like no tool at all. A drawn magnifier is the
+      // only one there is.
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
+        child: Listener(
+          // Which mouse is being used, for the cursor request above. A Listener
+          // rather than a wider change: it consumes nothing and takes no
+          // gesture away from the detector under it.
+          onPointerHover: (event) => _device = event.device,
+          onPointerMove: (event) => _device = event.device,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // `_alt`, not the platform's answer: what the pointer showed is
+            // what the click must do, or the tool does the opposite of what it
+            // has just promised (K-236).
+            onTapUp: (details) =>
+                widget.onZoomAt(details.localPosition, out: _alt),
+            onPanStart: (details) => setState(() {
+              _from = details.localPosition;
+              _to = details.localPosition;
+              _pointer = details.localPosition;
+            }),
+            onPanUpdate: (details) => setState(() {
+              _to = details.localPosition;
+              _pointer = details.localPosition;
+            }),
+            onPanEnd: (_) {
+              final box = _box;
+              setState(() {
+                _from = null;
+                _to = null;
+              });
+              // A drag of a few pixels is a click that wobbled: zooming to a
+              // 3-pixel box would throw the picture into the far distance.
+              if (box == null || (box.width < 8 && box.height < 8)) return;
+              widget.onZoomBox(box, out: _alt);
+            },
+            onPanCancel: () => setState(() {
               _from = null;
               _to = null;
-            });
-            // A drag of a few pixels is a click that wobbled: zooming to a
-            // 3-pixel box would throw the picture into the far distance.
-            if (box == null || (box.width < 8 && box.height < 8)) return;
-            widget.onZoomBox(box,
-                out: HardwareKeyboard.instance.isAltPressed);
-          },
-          onPanCancel: () => setState(() {
-            _from = null;
-            _to = null;
-          }),
-          child: CustomPaint(
-            painter: _ZoomBoxPainter(box: _box, accent: widget.accent),
+            }),
+            child: Stack(children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _ZoomBoxPainter(box: _box, accent: widget.accent),
+                ),
+              ),
+              MagnifierPointer(
+                at: _pointer,
+                out: _alt,
+                mark: widget.mark,
+                outline: widget.outline,
+              ),
+            ]),
           ),
         ),
       ),

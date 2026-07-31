@@ -159,8 +159,18 @@ strip whatever workspace is active.
 | Puppet | Puppet position pin, Puppet starch pin, Puppet overlap pin, Puppet bend pin | `Ctrl+P` |
 | Camera | Orbit camera, Pan camera, Dolly camera | `Shift+C` |
 
-The right-hand end carries the **tool options** area (below), the **snapping** switch (§4.5)
-and the **workspace strip** §1.4 requires in the window chrome.
+The right-hand end carries the **tool options** area (below) and the **workspace strip** §1.4
+requires in the window chrome.
+
+**The strip is 30px tall and its buttons are 44px wide** (K-230). 15-DESIGN §7.2's hit extent
+is kept *across* the row, which is what the strip is read and aimed by, and given up down the
+page: the strip runs the full width of the window, so a 44px band of mostly empty chrome is
+height taken from the panels underneath for nothing.
+
+**There is no snapping switch** (K-230). One was here, and nothing in the application read it.
+A toggle that governs nothing is worse than a missing one — it makes the reader doubt what
+snapping *is* here rather than what it is set to — so it returns with the snapping it governs
+(§4.5).
 
 **Tool options** (K-225). The armed tool's own settings, where After Effects puts them, and
 empty for the tools that draw nothing:
@@ -204,7 +214,7 @@ say what the next thing drawn is made with, and the stroke pair outlines a new s
   showing it.
 
 **Implementation status (2026-07-31).** The strip, the groups, the flyouts, the shortcuts,
-the tool options area, the snapping switch and the workspace strip are built. Built tools:
+the tool options area and the workspace strip are built. Built tools:
 Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), the five shape
 tools and the Pen (§2.3.1), Horizontal type (§2.3.2), the three painting tools (§2.3.4) and the
 three camera tools (§2.3.5). **Disabled** (K-228 — shown, not armable): vertical type, the Pen's
@@ -248,7 +258,16 @@ A single compact bar at the bottom of the Viewer holds, left to right:
    out about it, and dragging a box zooms so that box fits the panel and is centred;
    `Alt`+box is the exact inverse — the whole view shrinks into the box, still centred on it.
    The pointer MUST show which way the click will go before it is clicked, changing as `Alt`
-   is pressed and released. A drag of only a few pixels MUST be treated as a click.
+   is pressed and released. A drag of only a few pixels MUST be treated as a click. Its
+   pointer is **drawn** (K-230, §2.3.3): Windows ships no magnifier, and Flutter's name for
+   one silently becomes the ordinary arrow there.
+   **Magnification MUST NOT change the resolution rendered** (K-230). The scale the engine is
+   asked for follows the *panel* — a Viewer docked small is cheap — and not the zoom inside
+   it: zooming out used to lower it, which threw away every cached frame and made the picture
+   coarser for a gesture that only meant "let me see more of it", and zooming in cannot raise
+   it above composition resolution because there is nothing there to render.
+   **The transparency board MUST cost the panel, not the picture** (K-230): bounded by the
+   panel and clipped to the picture, never a surface the size of a magnified composition.
 2. **Preview resolution** dropdown: Full / Half / Third / Quarter / Auto (glossary §5).
    True raster downsampling — Half renders a quarter of the pixels. **Auto** renders only
    the pixels the current magnification can display. The setting is **stored per comp** in
@@ -283,11 +302,17 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
 - The **wireframe** is the box itself: the layer's own content rectangle put through its
   transform, so it turns and stretches with the layer rather than staying axis-aligned. A
   layer's rectangle is its content's — a clip's frame size, a solid's dimensions, a nested
-  comp's size — and comp-sized for the kinds that have no content of their own (adjustment,
-  text until it measures its glyphs). A Null draws its own 100×100 box, so a layer with no
+  comp's size — and comp-sized for the kinds that have no content of their own (adjustment).
+  **Text measures its own line** (K-230): the point size tall and the engine's own width
+  estimate wide, with an empty line keeping one character's worth so a layer waiting to be
+  typed into is still visible. It was comp-sized, which drew a box the size of the frame round
+  twelve-pixel text. A Null draws its own 100×100 box, so a layer with no
   picture can still be selected and dragged.
-- **Selecting on the picture** (Selection tool): clicking takes the topmost layer whose box
-  contains the pointer; `Shift`-clicking adds to or removes from the selection; clicking
+- **A layer switched off is not on the picture** (K-231): it gets no wireframe, no hover
+  highlight and no handles, and a click over it MUST fall through to whatever is under it. Its
+  eye being off is how a layer is got out of the way.
+- **Selecting on the picture** (Selection tool): clicking takes the topmost *visible* layer
+  whose box contains the pointer; `Shift`-clicking adds to or removes from the selection; clicking
   empty space clears it. Hovering a layer that is not selected MUST draw its box faintly, so
   a click never selects something the user could not see coming.
 - **The marquee**: dragging from a point inside no layer rubber-bands a rectangle and, on
@@ -295,8 +320,20 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   selection instead of replacing it.
 - **Dragging** a layer's body moves it; dragging one that is not selected selects it first,
   and dragging one that is already part of a selection moves the whole selection together.
+  **A press inside something already selected takes that**, even where a higher layer overlaps
+  the same spot (K-230); only a plain click still takes the topmost, which is how a layer
+  underneath gets chosen with the mouse at all. Without the rule a layer chosen in the Timeline
+  could not be dragged wherever anything covered it.
+- **One gesture is one undo step** (K-230). A drag writes Position x and y, and a scale writes
+  both axes, in a single batched op: an undo that put the layer back along one axis only reads
+  as the undo being broken rather than as two honest edits.
+- **Scale may be negative** (K-231). A handle dragged past the anchor turns the layer over,
+  which is how a layer is mirrored; only a scale of exactly zero is barred, because the
+  layer↔screen map inverts it. The box MUST follow a scale drag as it happens, the same rule a
+  turn follows.
 - The gizmo's **centre handle is the anchor point** (K-221), and dragging it pans behind —
-  the pivot moves, the picture does not — with the same `Shift` axis lock and `Ctrl`/`Cmd`
+  the pivot moves, the picture does not, and the **mark moves as it is dragged** rather than on
+  release (K-235) — with the same `Shift` axis lock and `Ctrl`/`Cmd`
   key-point snapping the Anchor point tool has. Its grab radius MUST be much tighter than a
   scale handle's: it sits where a body drag naturally begins, and a generous one would turn
   every move into a pan-behind.
@@ -317,15 +354,27 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   selection when the pointer is elsewhere. `Shift` locks the drag to one screen axis;
   `Ctrl` (`Cmd`) snaps the anchor to the layer's own key points — its four corners, four edge
   midpoints and centre — with the snap distance measured in **screen** pixels, so it is as
-  precise as the magnification allows (§4.5's rule for every snap). The whole drag MUST be
+  precise as the magnification allows (§4.5's rule for every snap).
+  **The pivot goes where the pointer is** (K-233): a click places it there and a drag keeps it
+  under the pointer. It MUST NOT be a nudge from where the anchor already was — that lets a
+  pivot be pushed towards a place but never put at one. `Shift`+click stays a selection gesture
+  and moves nothing. The whole drag MUST be
   one undo step: half of it would move the picture, which is the one thing pan-behind
-  promises not to do. Its pointer is the anchor's own ring-and-cross with a small arrow at
-  its tail, and the layer's live anchor is marked while the tool is armed.
+  promises not to do. Its pointer is a **reticle** — the anchor's own ring with gapped crosshair
+  arms, centred on the point the pivot will land at (K-235). It MUST NOT carry an arrow or any
+  other tip: the pivot lands in the middle of the ring, and a tip elsewhere claims a place the
+  tool does not act at. The layer's live anchor is marked while the tool is armed.
 - The Rotation tool's **pointer is a curved arrow**, drawn rather than a system cursor
   (no platform ships one). It MUST lean round the anchor — the curve faces the way the layer
   would turn from where the pointer is — and MUST be tighter towards a corner than along an
   edge, measured in the layer's own space so it follows the layer's rotation. The system
   pointer is hidden over the picture while it is armed and nowhere else.
+  **It settles on eight positions and nothing between them** (K-230) — the layer's four edges
+  and four corners. A continuously leaning mark was true to the geometry and worse to read: a
+  pointer that is never twice the same shape is one the eye re-reads every time.
+- **A preview in flight MUST be drawn in flight** (K-230). The picture is previewed at the new
+  angle while a turn is being dragged, so the wireframe over it MUST turn with it rather than
+  waiting for the document to be written on release.
 - A **layer-controls switch** in the Viewer bar (§2.2) hides and shows the boxes, the
   handles and the hover highlight, for judging the picture itself. It governs *drawing* only:
   clicks and drags still select and move, exactly as After Effects' Show Layer Controls does.
@@ -352,6 +401,17 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   path, and closing is what applies it. `Escape` abandons the path; `Backspace` takes back the
   last point. The Pen's four siblings — add, delete and convert vertex, and mask feather —
   edit a *finished* path and are not built.
+  **The edge to the pointer MUST be previewed as the curve it would be** (K-230), bent by the
+  placed vertex's handles: drawing it straight promised one shape and delivered another the
+  moment the next point landed. While the *next* vertex's handles are being dragged out, that
+  edge MUST run to where that vertex was placed and bend into it by its own incoming handle
+  (K-233) — the shape that will exist when the button comes up, drawn as it is aimed.
+  **A click that would close the path MUST say so before it is made** (K-233): the first vertex
+  and the pointer both take a ring, so "how close do I need to be" is answered on the picture
+  rather than by trying.
+  **`Ctrl+Z` takes back one point while a path is being built** (K-233), and returns to the
+  document's own undo once the path is empty. This is the one place undo means something
+  narrower than the last edit, and it must: the points are not in the document yet.
 - A mask's path is stored in **layer space**, so it travels with the layer's transform.
 - Every selected layer's masks MUST be outlined on the picture, with a mark on each vertex.
 - **A mask's points can be edited with the Selection tool** while the layer controls are shown
@@ -370,6 +430,11 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   because a mask gates the layer's alpha before its effects run (docs/06 render order) — and
   the heading appears only once the layer has one, exactly as Effects does. Each row carries
   the mask's name, its invert switch and its opacity, and its context menu deletes it.
+- **A mask row is an ordinary property row (K-234).** Clicking its name selects it, with the
+  same plain / `Ctrl` / `Shift` gestures every other property row takes (§4.3), and the row and
+  the heading over it light up the same way. A **whole opacity drag is one undo step**, not one
+  per tick. With a mask row selected, **`Delete` deletes that mask** rather than the layer it
+  sits on.
 
 **Implementation status (2026-07-31).** Built: the wireframe, hover, click and Shift-click
 selection, the marquee, body-drag move (of a whole multiple selection), the eight scale
@@ -378,8 +443,9 @@ bar's switch. Not built: the anchor-point centre handle, snapping of any kind, p
 and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (a multiple
 selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
-drawn, listed, inverted, faded, deleted, and their points selected and moved** (K-224); their
-bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
+drawn, listed, selected, inverted, faded, deleted (by menu or `Delete`), and their points
+selected and moved** (K-224, K-234); their bezier **handles** cannot be dragged, and mask
+paths cannot be keyframed.
 
 ### 2.3.2 The Type tool (K-225)
 
@@ -390,7 +456,12 @@ bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
   renders nothing, and what would be left is an invisible row in the Timeline.
 - The document MUST be written **once**, when the edit ends — one typing session, one undo
   step — with the picture kept in step meanwhile by the text preview path (K-183's family).
-  Ending an edit means `Enter`, clicking elsewhere, or putting the tool down.
+  Ending an edit means `Enter`, `Escape`, clicking elsewhere, or putting the tool down.
+- **Making the layer is one op, and finishing the edit is one more** (K-230). So the first
+  undo takes back the words and the very next removes the layer. It was five ops between them,
+  and undo walked back through states nobody had ever seen: an empty box, then the word "Text".
+- **`Ctrl+Z` while typing MUST end the edit and then undo** (K-230). The text field swallows
+  the chord otherwise, and undo appears to have stopped working.
 - The **caret** is drawn by the tool; the text on screen is the engine's own rendering. The
   caret is placed by the same estimate of a line's width the bridge anchors a text layer with
   (half the point size per character), so the two never disagree about where a line ends.
@@ -399,6 +470,8 @@ bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
   line when the edit ends, with Position compensating so the words do not move (§2.3's
   pan-behind sum).
 - New text takes the toolbar's **fill** and **size** (§1.7).
+- **The box grows with the words** (K-233): what is being typed is what the wireframe measures,
+  even though the document does not hold it until the edit ends.
 - **The click is where the words start**: a new layer's anchor begins at the left end of its
   line's baseline, so what is typed runs to the right of the pointer and sits on it rather
   than straddling it — the same relationship the caret is drawn with.
@@ -412,6 +485,21 @@ Every tool MUST say what it is through the pointer, and the ones no platform shi
 for are **drawn**: the system pointer is hidden over the Viewer and the tool paints its own,
 as the Rotation, Anchor point and Razor tools already do.
 
+**Windows ships neither a grab nor a magnifier** (K-230). Flutter accepts `grab`, `grabbing`,
+`zoomIn` and `zoomOut`; the Windows embedder's table holds none of them and quietly answers
+with the ordinary arrow — which is why the Hand and Zoom tools looked like no tool at all. Any
+pointer this application needs and a platform lacks MUST be drawn rather than named.
+
+**A drawn pointer MUST follow the pointer whichever button is held, not only the hover**
+(K-230). A `MouseRegion` stops reporting a hovering pointer the moment a button goes down, so a
+pointer drawn from hover alone freezes where the press landed — inside the very shape being
+dragged out. Hover stops for **any** button, including ones the tool does nothing with: taking
+the position from the tool's own drag callbacks fixes the left button only, and a right-click
+over the Viewer still pins the drawn pointer until the button comes up. The position MUST
+therefore come from pointer *move* events, which arrive whatever the button, and the drawn
+pointer MUST clear when the pointer leaves the panel. Following the pointer is a drawing rule
+only: no tool gains a gesture on a button it did not already handle.
+
 | Tool | Pointer |
 |---|---|
 | Shape, Pen | The **crosshair** the eyedropper uses, badged with the tool's own icon down and to the right |
@@ -421,7 +509,10 @@ as the Rotation, Anchor point and Razor tools already do.
 | Orbit, Track, Dolly camera | The crosshair badged with the tool's icon (§2.3.5) |
 | Rotation | A curved arrow leaning round the anchor (§2.3) |
 | Anchor point | The anchor's ring-and-cross (§2.3) |
-| Razor | The blade and its cut line (§4.4) |
+| Razor (Timeline) | The scissors icon, with the cut line doing the aiming (§4.4, K-235) |
+| Razor (Viewer) | The ordinary arrow: it cuts in the Timeline, and a precise pointer here promised a gesture the Viewer does not have (K-230) |
+| Hand | A drawn **open hand**, closing while it pans (K-230) |
+| Zoom | A drawn **magnifier**, its sign following `Alt` (K-230) |
 
 - A badge MUST be drawn with a halo behind it, so it is legible on a white picture and a black
   one alike, and MUST sit **down and to the right** — above or to the left would cover the
@@ -474,6 +565,11 @@ as the Rotation, Anchor point and Razor tools already do.
   - **Dolly** slides the position along the forward axis by a fraction of the distance already
     in hand, so a wide shot covers ground and a close-up creeps.
 - `Shift` locks an orbit or a track to one axis.
+- **The pointer MUST be held still for the length of the drag** (K-230) and only its movement
+  read. Moving a camera aims at nothing on the picture, so a pointer free to wander leaves the
+  Viewer and finally stops in the corner of the screen — ending the drag before the user does.
+  Where a platform cannot hold it, the drag MUST fall back to reading the movement between
+  events rather than refusing.
 - The camera's axes MUST be built the way the compositor builds its matrix (`Ry · Rx · Rz`), or
   a tool sends the camera sideways when it is asked for forward.
 - The **gizmo** marks the point the camera is looking at, and the Orbit tool draws the circle it
@@ -735,8 +831,10 @@ layer row opens the **layer menu** — duplicate, reorder, delete.
   property selection, and a click on empty ground in either half of the table selects
   nothing at all — no layer, no properties, no keys. `U`/`UU`/`UUU` reveal what is
   animated / what has been modified / nothing, on the selected layer or — with nothing
-  selected — on every layer in the comp. Still to build here: moving/deleting a whole
-  *lane* selection, the Masks group, and the expression toggle.
+  selected — on every layer in the comp. Mask rows are in that same selection (K-234), and
+  `Delete` with one picked deletes the mask rather than its layer: a panel holding a finer
+  selection than the layer one is asked before the shell's `Delete` removes anything. Still to
+  build here: moving/deleting a whole *lane* selection, and the expression toggle.
 
 ### 4.4 Sequence layers
 
@@ -760,8 +858,14 @@ A Sequence layer's row renders its clips back-to-back (glossary §2):
   step (§4.7).
   The razor is armed from the **toolbar** (§1.7); the Timeline's own menu item is a second
   door into the same state, never a second razor. While it is armed the pointer over the
-  lanes is a drawn blade and a vertical line MUST follow it across every row, so the cut can
-  be aimed before it is made. A cut at a layer's own end MUST be refused — there is no
+  lanes is the **scissors icon** and a vertical line MUST follow it across every row at the
+  frame it would cut, so the cut can be aimed before it is made. The line does the aiming and
+  the pointer only says which tool is in hand (K-235, replacing K-230's hot-spot rule): a drawn
+  blade leaning away from the point it cuts at needed a second mark to say where the edge
+  actually bit, and the icon on the toolbar says "razor" better than a bespoke drawing of one.
+  **A cut only keys a layer that has actually been retimed** (K-236): switching Retime on
+  installs the identity map, and putting keys into a map nobody has shaped leaves the user keys
+  to notice and remove for a cut they asked nothing else of. A cut at a layer's own end MUST be refused — there is no
   second half there — rather than making a layer of no length.
 - Per-clip context menu: frame interpolation mode (nearest / blend / flow), Retime reset,
   reveal in Project panel, replace source (preserves trim and Retime where durations allow).
@@ -771,6 +875,10 @@ A Sequence layer's row renders its clips back-to-back (glossary §2):
 Snapping MUST cover, as sources and targets: edit points, layer in/out points, keyframes,
 markers, **beat markers**, the playhead, and work area edges. On by default; a header toggle
 plus `Ctrl`-hold to suspend during a drag.
+
+**The switch lives where the snapping does.** The toolbar carried a second one that nothing
+read, and it is gone (K-230, §1.7): a global switch belongs there once there is snapping
+outside the Timeline for it to govern.
 
 **Shipped (K-190):** the **magnet** in the lane bottom bar, on by default, covering the
 one snap that exists so far — a keyframe dragged on its lane lands on a whole frame. With

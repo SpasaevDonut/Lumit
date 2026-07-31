@@ -39,6 +39,7 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
+import 'package:lumit_flutter/src/rust/api/system.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
 import 'viewer_tool_cursor.dart';
@@ -286,13 +287,45 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   CameraPose? _start;
   Offset _delta = Offset.zero;
 
+  /// Where the pointer is being held for the length of the drag, and whether
+  /// this platform could hold it there at all (K-230). Off the lock, the drag
+  /// falls back to reading the movement between events, exactly as it did.
+  Offset? _anchor;
+  bool _locked = false;
+
+  /// The active camera, and what the answer was worked out against.
+  ///
+  /// Held, because this layer rebuilds on every movement of the pointer — the
+  /// drawn pointer has to follow it — and finding the camera is **not** free:
+  /// the layer's focal distance and the composition's rate are both reads
+  /// across the bridge. Moving the mouse over the picture with a camera tool in
+  /// hand was making both of them, dozens of times a second, to re-answer a
+  /// question only an edit or the playhead can change (K-230).
+  ({LayerReference layer, CameraPose pose})? _held;
+  BigInt? _heldRevision;
+  int? _heldFrame;
+
   /// The active camera layer: the topmost visible Camera whose span covers the
   /// playhead, which is the one the renderer looks through.
-  ///
-  /// Read from the model (K-184), so finding it costs no bridge calls.
   ({LayerReference layer, CameraPose pose})? get _camera {
+    // The **held** revision, not a checked one (K-232). Reading the checking
+    // getter asks the engine whether the document has moved — and this runs on
+    // every rebuild, which for a tool that draws its own pointer means every
+    // movement of the mouse. That was the whole of the camera tools' chatter.
+    final revision = widget.uiState.model.heldRevision;
     final frame = widget.uiState.playheadFrame.value;
-    for (final entry in widget.uiState.model.layers) {
+    if (_heldRevision != revision || _heldFrame != frame) {
+      _heldRevision = revision;
+      _heldFrame = frame;
+      _held = _findCamera(frame);
+    }
+    return _held;
+  }
+
+  /// The walk itself. Everything but the two reads noted above comes off the
+  /// read model (K-184).
+  ({LayerReference layer, CameraPose pose})? _findCamera(int frame) {
+    for (final entry in widget.uiState.model.heldLayers) {
       final info = entry.info;
       if (info.kind != BridgeLayerKind.camera) continue;
       if (!info.switches.visible) continue;
@@ -356,18 +389,16 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
   Widget build(BuildContext context) {
     if (!widget.active) return const SizedBox.shrink();
     return Positioned.fill(
-      child: MouseRegion(
-        // Hidden, because the drawn pointer below replaces it (K-226).
-        cursor: SystemMouseCursors.none,
-        onEnter: (e) => setState(() => _pointer = e.localPosition),
-        onHover: (e) => setState(() => _pointer = e.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      // The system pointer is hidden, because the drawn pointer below replaces
+      // it (K-226).
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapUp: (_) {
             if (_camera == null) _sayNoCamera();
           },
-          onPanStart: (_) => _onPanStart(),
+          onPanStart: _onPanStart,
           onPanUpdate: _onPanUpdate,
           onPanEnd: (_) => _onPanEnd(),
           onPanCancel: _onPanEnd,
@@ -403,12 +434,20 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
         'No camera to move — add a camera layer first',
       );
 
-  void _onPanStart() {
+  void _onPanStart(DragStartDetails details) {
     final camera = _camera;
     if (camera == null) {
       _sayNoCamera();
       return;
     }
+    // The pointer is pinned where it was pressed for as long as the drag lasts
+    // (K-230). Moving a camera is a gesture with no *place* — nothing on the
+    // picture is being aimed at — so a pointer that wanders out of the Viewer,
+    // and finally into the corner of the screen where it stops moving at all,
+    // is a drag that ends before the user does. It reappears where it started
+    // when the button comes up, which is what every 3D application does.
+    _anchor = details.localPosition;
+    _locked = freezeCursor();
     setState(() {
       _acting = camera.layer;
       _start = camera.pose;
@@ -418,12 +457,28 @@ class _ViewerCameraLayerState extends State<ViewerCameraLayer> {
 
   void _onPanUpdate(DragUpdateDetails details) {
     if (_acting == null) return;
-    setState(() => _delta += details.delta);
+    final anchor = _anchor;
+    if (_locked && anchor != null) {
+      // Measured from where the pointer is *held*, not from the last event:
+      // putting the pointer back is itself a movement, and the delta the
+      // framework reports for that one exactly undoes the real one. Against the
+      // anchor, the put-back event reads as no movement at all, which is the
+      // truth of it.
+      final moved = details.localPosition - anchor;
+      if (moved == Offset.zero) return;
+      setState(() => _delta += moved);
+      restoreFrozenCursor();
+    } else {
+      setState(() => _delta += details.delta);
+    }
     _write(preview: true);
   }
 
   void _onPanEnd() {
     if (_acting != null && _delta != Offset.zero) _write(preview: false);
+    if (_locked) thawCursor();
+    _locked = false;
+    _anchor = null;
     setState(() {
       _acting = null;
       _start = null;

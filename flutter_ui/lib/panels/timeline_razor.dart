@@ -17,10 +17,12 @@
 // this only asks (`cut_clip_at` or `split_at`).
 
 import 'package:flutter/widgets.dart';
+
+import '../icons/icons.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 
-/// How long the drawn blade is, in screen pixels.
+/// How big the scissors pointer is drawn, in screen pixels.
 const double razorCursorSize = 16;
 
 /// The layers a razor click at [frame] should cut.
@@ -43,7 +45,12 @@ List<BridgeLayerEntry> razorTargets(
   bool spans(BridgeLayerEntry entry) =>
       frame > entry.info.inFrame.toInt() && frame < entry.info.outFrame.toInt();
 
-  if (allLayers) return [for (final entry in layers) if (spans(entry)) entry];
+  if (allLayers) {
+    return [
+      for (final entry in layers)
+        if (spans(entry)) entry,
+    ];
+  }
   if (clicked == null || !spans(clicked)) return const [];
   return [clicked];
 }
@@ -120,12 +127,39 @@ class _RazorOverlayState extends State<RazorOverlay> {
         children: [
           widget.child,
           Positioned.fill(
-            child: IgnorePointer(
-              child: CustomPaint(
-                painter: _RazorCursorPainter(
-                  at: _pointer,
-                  mark: widget.mark,
-                  outline: widget.outline,
+            child: RepaintBoundary(
+              child: IgnorePointer(
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: _RazorCutLinePainter(
+                          at: _pointer,
+                          mark: widget.mark,
+                        ),
+                      ),
+                    ),
+                    if (_pointer != null)
+                      Positioned(
+                        left: _pointer!.dx - razorCursorSize / 2,
+                        top: _pointer!.dy - razorCursorSize / 2,
+                        // The application's own scissors, drawn twice: the halo
+                        // copy a pixel down and across, then the ink over it, so
+                        // it is legible on a bar of any label colour. The same
+                        // trick the badged tool pointers use.
+                        child: Stack(
+                          children: [
+                            Transform.translate(
+                              offset: const Offset(1, 1),
+                              child: lumitIcon(LumitIcon.razor,
+                                  size: razorCursorSize, color: widget.outline),
+                            ),
+                            lumitIcon(LumitIcon.razor,
+                                size: razorCursorSize, color: widget.mark),
+                          ],
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -136,25 +170,24 @@ class _RazorOverlayState extends State<RazorOverlay> {
   }
 }
 
-/// The blade, and the line down the lanes that says where the cut lands.
-class _RazorCursorPainter extends CustomPainter {
+/// The line down the lanes that says where the cut lands (K-235).
+///
+/// **This is the mark that matters**, and it is now the only one drawn here:
+/// the pointer itself is the application's own scissors, placed as a widget
+/// above. A hand-drawn blade leaning off the point it cuts at needed a second
+/// mark to say where the edge actually bit — and once the line says that, the
+/// pointer only has to say *which tool is in hand*, which the toolbar's own
+/// icon already says better than a bespoke drawing of one.
+class _RazorCutLinePainter extends CustomPainter {
   final Offset? at;
   final Color mark;
-  final Color outline;
 
-  const _RazorCursorPainter({
-    required this.at,
-    required this.mark,
-    required this.outline,
-  });
+  const _RazorCutLinePainter({required this.at, required this.mark});
 
   @override
   void paint(Canvas canvas, Size size) {
     final point = at;
     if (point == null) return;
-
-    // The cut line first, so the blade draws over it: full height, at the
-    // pointer's time, which is the one thing the user needs to aim.
     canvas.drawLine(
       Offset(point.dx, 0),
       Offset(point.dx, size.height),
@@ -162,41 +195,9 @@ class _RazorCursorPainter extends CustomPainter {
         ..color = mark.withValues(alpha: 0.7)
         ..strokeWidth = 1,
     );
-
-    canvas.save();
-    canvas.translate(point.dx, point.dy);
-    _blade(canvas, outline, 3.2);
-    _blade(canvas, mark, 1.4);
-    canvas.restore();
-  }
-
-  /// A blade on its handle, leaning the way a razor is held: the edge runs down
-  /// to the pointer's own position, so what it cuts is where it points.
-  void _blade(Canvas canvas, Color colour, double width) {
-    final paint = Paint()
-      ..color = colour
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = width
-      ..strokeJoin = StrokeJoin.round
-      ..strokeCap = StrokeCap.round;
-    const s = razorCursorSize;
-    // The blade: a leaning quadrilateral above and right of the point.
-    final blade = Path()
-      ..moveTo(0, 0)
-      ..lineTo(s * 0.45, -s * 0.75)
-      ..lineTo(s * 0.85, -s * 0.45)
-      ..lineTo(s * 0.4, s * 0.3)
-      ..close();
-    canvas.drawPath(blade, paint);
-    // The handle, running back up from the blade's top corner.
-    canvas.drawLine(
-      const Offset(s * 0.45, -s * 0.75),
-      const Offset(s * 0.15, -s * 1.15),
-      paint,
-    );
   }
 
   @override
-  bool shouldRepaint(_RazorCursorPainter old) =>
-      old.at != at || old.mark != mark || old.outline != outline;
+  bool shouldRepaint(_RazorCutLinePainter old) =>
+      old.at != at || old.mark != mark;
 }

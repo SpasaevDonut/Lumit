@@ -1094,6 +1094,30 @@ impl Layer {
         }
     }
 
+    /// Whether a Retime map is the **identity** one — every moment of the layer
+    /// showing the same moment of its source, which is what switching Retime on
+    /// installs and what an untouched map still is (K-236).
+    ///
+    /// Worth asking, because "the layer has a Retime property" and "the layer
+    /// has been retimed" are different questions, and only the second one
+    /// justifies putting keys into a cut. A map with two keys that read back
+    /// their own times is a map nobody has shaped.
+    pub fn is_identity_retime(retime: &Property) -> bool {
+        let crate::anim::Animation::Keyframed(keys) = &retime.animation else {
+            // A Static map holds one moment for the whole layer, which is a
+            // freeze — a deliberate retime, not an identity.
+            return false;
+        };
+        keys.iter().all(|key| {
+            matches!(key.interp_in, crate::anim::SideInterp::Linear)
+                && matches!(key.interp_out, crate::anim::SideInterp::Linear)
+                // The value *is* the time it sits at: source time equals layer
+                // time, which is the whole of what identity means. Compared as
+                // the f64 the keyframe stores, since that is what was written.
+                && (key.value - key.time.to_f64()).abs() < 1e-9
+        })
+    }
+
     /// Which moment of the source this layer shows at layer-local time `lt`
     /// (seconds). The Retime property when it has one, otherwise `lt` itself —
     /// an un-retimed layer reads its source at its own clock.
@@ -1318,6 +1342,50 @@ mod tests {
 
     fn secs(s: i64) -> CompTime {
         CompTime(Rational::new(s, 1).unwrap())
+    }
+
+    /// **What "has been retimed" means** (K-236). Switching Retime on installs
+    /// the identity map, so the presence of the property says nothing about
+    /// whether the layer has actually been retimed — and only the second
+    /// justifies a razor putting keys into both halves of a cut.
+    #[test]
+    fn an_untouched_retime_map_is_the_identity_one() {
+        let map =
+            Layer::identity_retime(Rational::new(0, 1).unwrap(), Rational::new(4, 1).unwrap());
+        assert!(Layer::is_identity_retime(&map));
+    }
+
+    #[test]
+    fn a_shaped_retime_map_is_not() {
+        let mut map =
+            Layer::identity_retime(Rational::new(0, 1).unwrap(), Rational::new(4, 1).unwrap());
+        // Half speed: the layer's four seconds show the source's first two.
+        if let crate::anim::Animation::Keyframed(keys) = &mut map.animation {
+            if let Some(last) = keys.last_mut() {
+                last.value = 2.0;
+            }
+        }
+        assert!(!Layer::is_identity_retime(&map));
+    }
+
+    #[test]
+    fn an_eased_map_that_happens_to_end_where_it_started_is_not_identity() {
+        // The values read back their own times, but the curve between them
+        // does not: an eased pair is a ramp, not an identity.
+        let mut map =
+            Layer::identity_retime(Rational::new(0, 1).unwrap(), Rational::new(4, 1).unwrap());
+        if let crate::anim::Animation::Keyframed(keys) = &mut map.animation {
+            if let Some(first) = keys.first_mut() {
+                first.interp_out = crate::anim::SideInterp::Hold;
+            }
+        }
+        assert!(!Layer::is_identity_retime(&map));
+    }
+
+    #[test]
+    fn a_frozen_frame_is_a_retime_however_it_is_written() {
+        let frozen = Property::fixed(1.5);
+        assert!(!Layer::is_identity_retime(&frozen));
     }
 
     /// `BlendMode::ALL` must list every variant exactly once (the layer

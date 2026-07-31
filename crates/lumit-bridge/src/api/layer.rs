@@ -1093,8 +1093,17 @@ impl LayerReference {
         // each half an end of its own to hold. It is inserted preserving the
         // shape, so the cut itself changes nothing that plays — and it goes in
         // *before* the clone, which is what puts it on both halves.
+        // **Only a layer that has actually been retimed** (K-236). Switching
+        // Retime on installs the identity map, and a map nobody has shaped
+        // needs no key at the cut: both halves play their source at their own
+        // clock whatever happens to the other. Keys appearing on a layer the
+        // user never retimed are keys they then have to notice and remove.
+        let retimed = layer
+            .retime
+            .as_ref()
+            .is_some_and(|r| !lumit_core::model::Layer::is_identity_retime(r));
         let mut head = layer.clone();
-        if let Some(retime) = head.retime.as_mut() {
+        if let Some(retime) = head.retime.as_mut().filter(|_| retimed) {
             // Layer time, not comp time: keyframes live in the layer's own
             // clock, measured from its start offset (K-213).
             // A subtraction that cannot overflow is still a subtraction that

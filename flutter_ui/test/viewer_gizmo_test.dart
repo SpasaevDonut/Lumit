@@ -357,4 +357,80 @@ void main() {
       expect(result % 45, closeTo(0, 0.001));
     });
   });
+
+  /// **A turn in flight (K-230).** The picture is previewed at the new angle
+  /// while the drag is happening, so the box over it has to be drawn at that
+  /// angle too — the document still holds the old one, and drawing from the
+  /// document is what made the wireframe sit still until the button came up.
+  group('A box turned to an angle it has not been committed at', () {
+    test('its corners are where the turned layer would put them', () {
+      final upright = box(size: const Size(200, 100));
+      final turned = upright.turnedTo(90);
+      // The layer is anchored on its own middle at (300, 200), so a quarter
+      // turn takes the top-left corner from (200, 150) to (350, 100).
+      expect(turned.corners.first.dx, closeTo(350, 1e-6));
+      expect(turned.corners.first.dy, closeTo(100, 1e-6));
+      expect(turned.rotationDegrees, 90);
+    });
+
+    test('it is the same box in every other respect', () {
+      final upright = box();
+      final turned = upright.turnedTo(37);
+      expect(turned.id, upright.id);
+      expect(turned.bounds, upright.bounds);
+      expect(turned.anchorScreen, upright.anchorScreen,
+          reason: 'a layer turns about its anchor, so the anchor does not move');
+    });
+
+    test('turning it to where it already is changes nothing', () {
+      final at30 = box(rotation: 30);
+      final again = at30.turnedTo(30);
+      for (var i = 0; i < 4; i++) {
+        expect(again.corners[i].dx, closeTo(at30.corners[i].dx, 1e-9));
+        expect(again.corners[i].dy, closeTo(at30.corners[i].dy, 1e-9));
+      }
+    });
+  });
+
+  /// **A scale in flight (K-230), and a scale that flips.** The same rule the
+  /// turn follows: the picture is previewed at the value being dragged towards,
+  /// so the box has to be drawn there too. And a handle dragged *past* the
+  /// anchor turns the layer over — which the map used to make impossible by
+  /// flooring the factor just above zero, so a layer could be squashed to
+  /// nothing and never mirrored.
+  group('A box scaled to a size it has not been committed at', () {
+    test('its corners are where the scaled layer would put them', () {
+      final full = box(size: const Size(200, 100));
+      final half = full.scaledTo(50, 50);
+      // Anchored on its own middle at (300, 200): at half size the box runs
+      // from (250, 175) to (350, 225).
+      expect(half.corners.first.dx, closeTo(250, 1e-6));
+      expect(half.corners.first.dy, closeTo(175, 1e-6));
+      expect(half.corners[2].dx, closeTo(350, 1e-6));
+      expect(half.corners[2].dy, closeTo(225, 1e-6));
+    });
+
+    test('a negative scale turns the layer over rather than collapsing it', () {
+      final flipped = box(size: const Size(200, 100)).scaledTo(-100, 100);
+      // The layer's own top-left corner is now on the right of the anchor.
+      expect(flipped.corners.first.dx, closeTo(400, 1e-6));
+      expect(flipped.corners[1].dx, closeTo(200, 1e-6));
+      expect(flipped.corners.first.dy, closeTo(150, 1e-6),
+          reason: 'the axis that was not flipped is untouched');
+    });
+
+    test('a mirrored layer still hit-tests where it is drawn', () {
+      final flipped = box(size: const Size(200, 100)).scaledTo(-100, 100);
+      expect(flipped.contains(const Offset(350, 200)), isTrue);
+      expect(flipped.contains(const Offset(450, 200)), isFalse);
+    });
+
+    test('zero is the one factor barred, because the map inverts it', () {
+      expect(nonZeroScale(0), isNot(0));
+      expect(nonZeroScale(-0.0), isNot(0));
+      expect(nonZeroScale(-2), -2, reason: 'a real factor is left alone');
+      final collapsed = box().scaledTo(0, 0);
+      expect(collapsed.map.layerOf(const Offset(300, 200)).dx.isFinite, isTrue);
+    });
+  });
 }

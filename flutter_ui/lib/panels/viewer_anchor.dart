@@ -35,6 +35,7 @@ import 'package:lumit_flutter/src/rust/api/layer.dart';
 import '../state/preview_throttle.dart';
 import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
+import 'viewer_tool_cursor.dart';
 
 /// How close, in screen pixels, a snapped anchor has to be to a key point.
 const double anchorSnapDistance = 12;
@@ -154,11 +155,8 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
     final at = _pointer;
     final target = _acting ?? (at == null ? null : _targetAt(at));
     return Positioned.fill(
-      child: MouseRegion(
-        cursor: SystemMouseCursors.none,
-        onEnter: (event) => setState(() => _pointer = event.localPosition),
-        onHover: (event) => setState(() => _pointer = event.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
         child: Listener(
           onPointerDown: (event) => _downAt = event.localPosition,
           child: GestureDetector(
@@ -192,16 +190,51 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
     );
   }
 
+  /// A click **puts the pivot where you clicked** (K-232), on the layer it
+  /// lands on — and picks that layer, as every tool's click does.
+  ///
+  /// Shift is the exception and stays a selection gesture: it adds to or takes
+  /// away from the selection without moving anything, because a click that both
+  /// changed what was selected and moved that layer's pivot would be two edits
+  /// nobody asked for at once.
   void _onTapUp(TapUpDetails details) {
-    final hit = layerAtPoint(widget.boxes, details.localPosition);
+    final at = details.localPosition;
+    final hit = layerAtPoint(widget.boxes, at);
     if (hit == null) {
       widget.uiState.clearSelection();
       return;
     }
     if (HardwareKeyboard.instance.isShiftPressed) {
       widget.uiState.toggleSelected(hit.layer);
-    } else {
-      widget.uiState.setSelection([hit.layer]);
+      return;
+    }
+    widget.uiState.setSelection([hit.layer]);
+    _place(hit, at);
+  }
+
+  /// Move [box]'s anchor to the pointer at [at], with Position compensating so
+  /// the picture does not move. One op, so one undo step.
+  void _place(LayerBox box, Offset at) {
+    final anchor = _wantedAnchor(box, at);
+    final position = _panBehind(box, anchor);
+    try {
+      box.layer.setTransforms(
+        props: const [
+          BridgeTransformProp.anchorX,
+          BridgeTransformProp.anchorY,
+          BridgeTransformProp.positionX,
+          BridgeTransformProp.positionY,
+        ],
+        values: [
+          BridgeScalar.static_(anchor.dx),
+          BridgeScalar.static_(anchor.dy),
+          BridgeScalar.static_(position.dx),
+          BridgeScalar.static_(position.dy),
+        ],
+      );
+      widget.onChanged();
+    } catch (_) {
+      // The layer went away between the press and the release.
     }
   }
 
@@ -222,18 +255,23 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
 
   /// Where the anchor should sit, in layer space, for the pointer at [at].
   ///
-  /// The drag is measured from the press to the pointer and applied to the
-  /// anchor the layer started with, rather than the pointer's own position
-  /// being taken as the anchor: grabbing anywhere and *nudging* is what a
-  /// pan-behind drag is, and it lets a pivot be moved a few pixels without the
-  /// pointer having to be exactly on it.
+  /// **The pointer's own position, not a nudge** (K-232). The tool used to
+  /// measure the drag from the press and add it to the anchor the layer already
+  /// had, so grabbing anywhere and pushing moved the pivot by that much. That
+  /// makes placing a pivot a matter of aim-then-correct: you cannot put it
+  /// somewhere, only push it towards somewhere. Now the pivot goes where the
+  /// pointer is — a click puts it there, and a drag keeps it under the pointer
+  /// the whole way.
+  ///
+  /// Shift still locks to one screen axis, measured from where the press
+  /// landed; Ctrl (Cmd) still snaps to the layer's own key points.
   Offset _wantedAnchor(LayerBox box, Offset at) {
-    var delta = at - (_downAt ?? at);
+    var wantedScreen = at;
     if (HardwareKeyboard.instance.isShiftPressed) {
-      delta = constrainToAxis(delta);
+      final from = _downAt ?? at;
+      wantedScreen = from + constrainToAxis(at - from);
     }
-    final started = box.map.toScreen(box.map.ax, box.map.ay);
-    final wanted = box.map.layerOf(started + delta);
+    final wanted = box.map.layerOf(wantedScreen);
     return _isPrimaryModifierHeld ? snapAnchor(wanted, box) : wanted;
   }
 
@@ -294,33 +332,11 @@ class _ViewerAnchorLayerState extends State<ViewerAnchorLayer> {
     final box = _acting;
     final at = _pointer;
     _throttle.cancel();
-    if (box != null && at != null && at != _downAt) {
-      final anchor = _wantedAnchor(box, at);
-      final position = _panBehind(box, anchor);
-      try {
-        // One op for all four properties, so one drag is one undo step: the
-        // anchor and the position are only meaningful together here — half of
-        // this edit would move the picture, which is the one thing pan-behind
-        // promises not to do.
-        box.layer.setTransforms(
-          props: const [
-            BridgeTransformProp.anchorX,
-            BridgeTransformProp.anchorY,
-            BridgeTransformProp.positionX,
-            BridgeTransformProp.positionY,
-          ],
-          values: [
-            BridgeScalar.static_(anchor.dx),
-            BridgeScalar.static_(anchor.dy),
-            BridgeScalar.static_(position.dx),
-            BridgeScalar.static_(position.dy),
-          ],
-        );
-        widget.onChanged();
-      } catch (_) {
-        // The layer went away mid-drag.
-      }
-    }
+    // One op for all four properties, so one drag is one undo step: the anchor
+    // and the position are only meaningful together here — half of this edit
+    // would move the picture, which is the one thing pan-behind promises not to
+    // do.
+    if (box != null && at != null && at != _downAt) _place(box, at);
     setState(() {
       _acting = null;
       _downAt = null;
@@ -372,6 +388,17 @@ class _AnchorCursorPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// A **reticle**, centred on the point it acts at (K-235).
+  ///
+  /// It used to carry a small arrow off its tail, down and to the right, so the
+  /// mark would read as a pointer rather than as an overlay. That was a lie
+  /// about the one thing a pointer must be honest about: the arrow's tip is not
+  /// where the pivot lands — the middle of the ring is — so the mark pointed at
+  /// somewhere the tool was not going to act.
+  ///
+  /// The arms stop short of the middle. A reticle's gap is what leaves the
+  /// exact point visible instead of covering it with the mark that is supposed
+  /// to be aiming at it.
   void _cursor(Canvas canvas, Color colour, double width) {
     final paint = Paint()
       ..color = colour
@@ -379,22 +406,15 @@ class _AnchorCursorPainter extends CustomPainter {
       ..strokeWidth = width
       ..strokeCap = StrokeCap.round
       ..strokeJoin = StrokeJoin.round;
-    // The crosshair-in-a-ring: the anchor's own mark, so the pointer and the
-    // thing it moves are plainly the same idea.
     const r = anchorCursorSize / 2;
     canvas.drawCircle(Offset.zero, r, paint);
-    canvas.drawLine(const Offset(-r * 1.9, 0), const Offset(r * 1.9, 0), paint);
-    canvas.drawLine(const Offset(0, -r * 1.9), const Offset(0, r * 1.9), paint);
-    // The little arrow at the tail, down and right, so the mark reads as a
-    // pointer rather than as an overlay that happens to sit under the mouse.
-    final arrow = Path()
-      ..moveTo(r * 1.4, r * 1.4)
-      ..lineTo(r * 3.2, r * 3.2)
-      ..moveTo(r * 3.2, r * 3.2)
-      ..lineTo(r * 3.2, r * 1.9)
-      ..moveTo(r * 3.2, r * 3.2)
-      ..lineTo(r * 1.9, r * 3.2);
-    canvas.drawPath(arrow, paint);
+    for (final (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]) {
+      canvas.drawLine(
+        Offset(dx * r * 0.55, dy * r * 0.55),
+        Offset(dx * r * 2.0, dy * r * 2.0),
+        paint,
+      );
+    }
   }
 
   @override
