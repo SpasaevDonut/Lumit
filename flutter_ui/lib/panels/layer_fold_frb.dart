@@ -293,7 +293,9 @@ List<LayerFoldRow> layerFoldRows({
   // the source the rest of the fold-out then transforms. A layer that has not
   // been given one shows no row rather than a dead control.
   if (info.retime case final retime?) {
-    rows.add(FoldRetimeRow(retime, depth: 1));
+    if (open.contains(retimePath(id))) {
+      rows.add(FoldRetimeRow(retime, depth: 1));
+    }
   }
 
   final transformGroupOpen = open.contains(transformPath(id));

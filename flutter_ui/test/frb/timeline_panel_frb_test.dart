@@ -28,7 +28,6 @@ import 'frb_test_support.dart';
 
 void main() {
   setUpAll(initEngineForTests);
-  _testPrecompose();
 
   group('Timeline (frb)', () {
     ({LumitState state, LumitUiState uiState, CompositionReference comp})
@@ -38,6 +37,18 @@ void main() {
       p.uiState.setSelectedComp(comp);
       return (state: p.state, uiState: p.uiState, comp: comp);
     }
+
+    testWidgets('precompose creates a single precomp composition and layer', (tester) async {
+      final p = withComp();
+      final l1 = p.comp.addSolidLayer();
+      final l2 = p.comp.addSolidLayer();
+      expect(p.comp.getLayers().length, 2);
+
+      final precomp = p.comp.precompose(layers: [l1, l2]);
+      expect(precomp, isNotNull);
+      expect(p.comp.getLayers().length, 1);
+      expect(p.comp.getLayers().first.internallayerId, precomp.internallayerId);
+    });
 
     Future<void> mount(WidgetTester tester, dynamic p) async {
       // The outline alone is 800 px of columns; the default 800×600 test
@@ -2742,18 +2753,4 @@ Uint8List _tinyWav() {
   }
   out.add(data);
   return out.toBytes();
-}
-
-void _testPrecompose() {
-  testWidgets('precompose creates a single precomp composition and layer', (tester) async {
-    final p = withComp();
-    final l1 = p.comp.addSolidLayer();
-    final l2 = p.comp.addSolidLayer();
-    expect(p.comp.getLayers().length, 2);
-
-    final precomp = p.comp.precompose(layers: [l1, l2]);
-    expect(precomp, isNotNull);
-    expect(p.comp.getLayers().length, 1);
-    expect(p.comp.getLayers().first.internallayerId, precomp.internallayerId);
-  });
 }

@@ -891,6 +891,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                 _open.add('$id/audio');
               }
             } else if (targetProp == 'retime') {
+              if (layer.getRetimeProperty() == null) {
+                layer.toggleRetimeProperty();
+              }
               if (_open.contains('$id/retime')) {
                 _open.remove('$id/retime');
               } else {
@@ -925,9 +928,6 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
               }
             }
           });
-          if (action == 'layer.retime.enable') {
-            return false;
-          }
           return true;
         }
       }
@@ -1118,6 +1118,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           }
         }
         if (groups.audio) _open.add(audioPath(id));
+        if (groups.retime) _open.add(retimePath(id));
       }
     });
     return true;
