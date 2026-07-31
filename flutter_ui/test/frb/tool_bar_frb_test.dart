@@ -119,6 +119,32 @@ void main() {
       expect(find.byKey(const ValueKey('tool-snapping')), findsNothing);
     });
 
+    /// **A button you cannot read is a button you cannot use** (K-236). The
+    /// strip lost 14px of height and the workspace names kept 24px of padding,
+    /// which squeezed the words out of a 30px band and left four pressable
+    /// blanks on the right of the bar.
+    testWidgets('the workspace names are readable inside the strip',
+        (tester) async {
+      await mount(tester);
+      final bar = tester.getRect(find.byType(LumitToolBarFrb));
+
+      for (final preset in WorkspacePreset.values) {
+        final label = find.text(preset.title);
+        expect(label, findsOneWidget, reason: '${preset.title} is on the strip');
+        final rect = tester.getRect(label);
+        // Its own line height, not whatever is left over. Squeezed into the
+        // padding it measured three pixels tall and read as nothing at all —
+        // which is how four pressable blanks came to sit on the right of the
+        // bar. Ten is below a real line and far above a crushed one.
+        expect(rect.height, greaterThanOrEqualTo(10),
+            reason: '${preset.title} has room for its own words');
+        expect(rect.top, greaterThanOrEqualTo(bar.top - 0.5));
+        expect(rect.bottom, lessThanOrEqualTo(bar.bottom + 0.5),
+            reason: '${preset.title} is inside the strip, not clipped by it');
+      }
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('the workspace strip rearranges the panels', (tester) async {
       final p = await mount(tester);
       expect(p.uiState.workspace.activePreset, isNull,

@@ -504,7 +504,12 @@ class _WorkspaceStrip extends StatelessWidget {
             child: HouseButton(
               key: ValueKey<String>('workspace-${preset.name}'),
               frameless: true,
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+              // The padding is what fits the name into the strip, and the strip
+              // is 14px shorter than it was (K-230): at 12 above and below,
+              // 24px of padding in a 30px band left the words with five and
+              // they were squeezed out of sight, leaving a button that could be
+              // pressed and not read (K-236).
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               onPressed: () => ui.workspace.applyWorkspacePreset(preset),
               child: Text(
                 preset.title,

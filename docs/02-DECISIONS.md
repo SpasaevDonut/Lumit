@@ -4401,3 +4401,12 @@ answer yes long after the key came up. The tool tracks Alt from the events it se
 false every time it is armed, and the *click* reads that same flag rather than asking the
 platform again — so what the pointer promises and what the click does cannot disagree, which
 was the other half of the same fault.
+
+
+**A workspace name you cannot read is a button you cannot use.** The strip lost 14px of height
+(K-230) and the workspace names kept the 24px of vertical padding they had in a 44px band. In a
+30px one that left the words three pixels tall: four pressable blanks on the right of the bar,
+which is exactly the report — "hovering that area still shows a button that can be pressed".
+The padding fits the strip now, and the test measures the *label*, not the button: a control
+that is laid out and hit-tests correctly can still be unreadable, and only the text's own height
+says so.
