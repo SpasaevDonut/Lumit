@@ -2260,6 +2260,144 @@ fn concurrent_project_creation_and_editing_does_not_deadlock() {
     }
 }
 
+// --- Shape layers (K-228) -------------------------------------------------
+
+use crate::api::layer::BridgeLayerKind;
+
+fn shape_item(name: &str, x: f64, y: f64, side: f64) -> crate::api::layer::BridgeShapeItem {
+    use crate::api::layer::{BridgeShapeItem, BridgeVertex};
+    let corner = |x: f64, y: f64| BridgeVertex {
+        x,
+        y,
+        tan_in_x: 0.0,
+        tan_in_y: 0.0,
+        tan_out_x: 0.0,
+        tan_out_y: 0.0,
+    };
+    BridgeShapeItem {
+        id: Uuid::now_v7(),
+        name: name.into(),
+        vertices: vec![
+            corner(x, y),
+            corner(x + side, y),
+            corner(x + side, y + side),
+            corner(x, y + side),
+        ],
+        closed: true,
+        fill: Some(crate::api::assets::BridgeColourRgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }),
+        stroke: None,
+        stroke_width: 0.0,
+        opacity: 100.0,
+    }
+}
+
+/// A shape tool with nothing selected makes one of these, and it lands where
+/// the art was drawn.
+#[test]
+fn a_shape_layer_is_made_from_its_art_and_placed_where_it_was_drawn() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    let shape = comp
+        .add_shape_layer(
+            "Rectangle".into(),
+            vec![shape_item("Rectangle", 200.0, 100.0, 50.0)],
+        )
+        .expect("a shape layer");
+
+    assert_eq!(shape.get_kind().expect("kind"), BridgeLayerKind::Shape);
+    let contents = shape.get_shape_contents().expect("contents");
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0].name, "Rectangle");
+    assert_eq!(contents[0].vertices.len(), 4);
+
+    // Anchored on the art's own corner and positioned at it, so the rectangle
+    // is where it was drawn.
+    let tf = shape.get_transform().expect("transform");
+    let still = |s: &BridgeScalar| match s {
+        BridgeScalar::Static(v) => *v,
+        _ => panic!("a fresh layer is not keyframed"),
+    };
+    assert_eq!(still(&tf.anchor_x), 0.0);
+    assert_eq!(still(&tf.position_x), 200.0);
+    assert_eq!(still(&tf.position_y), 100.0);
+
+    // It is at the top of the stack, where After Effects puts a new shape.
+    let layers = comp.get_layers().expect("layers");
+    assert_eq!(layers.first().map(|l| l.id()), Some(shape.id()));
+}
+
+#[test]
+fn shape_contents_are_replaced_as_a_whole_and_undone_in_one_step() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let shape = comp
+        .add_shape_layer("Art".into(), vec![shape_item("Rectangle", 0.0, 0.0, 10.0)])
+        .expect("a shape layer");
+
+    let mut contents = shape.get_shape_contents().expect("contents");
+    contents.push(shape_item("Second", 40.0, 40.0, 10.0));
+    shape.set_shape_contents(contents).expect("set");
+    assert_eq!(shape.get_shape_contents().expect("contents").len(), 2);
+
+    project.undo().expect("undone");
+    assert_eq!(
+        shape.get_shape_contents().expect("contents").len(),
+        1,
+        "one edit, one undo step"
+    );
+}
+
+#[test]
+fn shape_contents_ride_the_read_model() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let shape = comp
+        .add_shape_layer("Art".into(), vec![shape_item("Rectangle", 0.0, 0.0, 10.0)])
+        .expect("a shape layer");
+
+    let model = comp.get_model().expect("model");
+    let entry = model
+        .layers
+        .iter()
+        .find(|l| l.layer.id() == shape.id())
+        .expect("the layer");
+    assert_eq!(entry.info.shape_contents.len(), 1);
+    assert_eq!(entry.info.kind, BridgeLayerKind::Shape);
+
+    // Every other kind answers with an empty list rather than an error.
+    assert!(layer.get_shape_contents().expect("contents").is_empty());
+}
+
+#[test]
+fn a_shape_layer_refuses_art_that_is_not_a_shape() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    assert!(matches!(
+        comp.add_shape_layer("Nothing".into(), Vec::new()),
+        Err(BridgeError::EmptyPath)
+    ));
+
+    let mut thin = shape_item("Line", 0.0, 0.0, 10.0);
+    thin.vertices.truncate(1);
+    assert!(matches!(
+        comp.add_shape_layer("Thin".into(), vec![thin]),
+        Err(BridgeError::EmptyPath)
+    ));
+
+    // And a layer that is not a shape refuses the edit rather than growing art.
+    assert!(matches!(
+        layer.set_shape_contents(vec![shape_item("Rectangle", 0.0, 0.0, 10.0)]),
+        Err(BridgeError::NotShape)
+    ));
+}
+
 // --- Paint: strokes on a layer (K-225) ------------------------------------
 
 fn stroke(name: &str, points: &[(f64, f64)]) -> crate::api::layer::BridgeStroke {

@@ -97,6 +97,15 @@ pub enum Op {
         layer: Uuid,
         strokes: Vec<crate::paint::PaintStroke>,
     },
+    /// Replace a shape layer's whole contents (docs/03 §7.2, K-228).
+    ///
+    /// The whole list, exactly invertible, like `SetLayerMasks` and
+    /// `SetLayerPaint`: vector art arrives and changes as a whole.
+    SetShapeContents {
+        comp: Uuid,
+        layer: Uuid,
+        contents: Vec<crate::shape::ShapeItem>,
+    },
     /// Replace a layer's whole effect stack (docs/03 §8; coarse + exactly
     /// invertible like SetLayerMasks — add/remove/reorder/param edits all
     /// commit the new list).
@@ -451,6 +460,30 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 comp: *comp,
                 layer: *layer,
                 strokes: previous,
+            })
+        }
+        Op::SetShapeContents {
+            comp,
+            layer,
+            contents,
+        } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let crate::model::LayerKind::Shape {
+                contents: existing, ..
+            } = &mut l.kind
+            else {
+                return Err(OpError::UnknownLayer);
+            };
+            let previous = std::mem::replace(existing, contents.clone());
+            Ok(Op::SetShapeContents {
+                comp: *comp,
+                layer: *layer,
+                contents: previous,
             })
         }
         Op::SetLayerEffects {

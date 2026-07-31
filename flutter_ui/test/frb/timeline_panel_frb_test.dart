@@ -279,6 +279,58 @@ void main() {
       expect(layer.getPaint().single.opacity, 40);
     });
 
+    /// A shape layer lists its art under a Contents heading, above Masks and
+    /// Effects — the order the picture is built in (K-228).
+    testWidgets('a shape layer grows a Contents heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      BridgeVertex corner(double x, double y) => BridgeVertex(
+          x: x, y: y, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0);
+      final layer = p.comp.addShapeLayer(
+        name: 'Rectangle',
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: 'Rectangle',
+            vertices: [
+              corner(0, 0),
+              corner(60, 0),
+              corner(60, 40),
+              corner(0, 40),
+            ],
+            closed: true,
+            fill: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+            stroke: null,
+            strokeWidth: 0,
+            opacity: 100,
+          ),
+        ],
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      expect(find.text('Contents'), findsOneWidget);
+
+      await tester.tap(find.byKey(
+          ValueKey<String>('tl-group-${layer.internallayerId}/contents')));
+      await tester.pumpAndSettle();
+      expect(find.text('Rectangle'), findsWidgets);
+
+      // The row's opacity writes through to the document.
+      final item = layer.getShapeContents().single;
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')), '30');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(layer.getShapeContents().single.opacity, 30);
+    });
+
     testWidgets('without a composition it says so', (tester) async {
       final p = freshProject();
       await tester.pumpWidget(hostPanel(

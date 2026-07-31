@@ -1831,6 +1831,12 @@ class _FoldRow extends StatelessWidget {
           valueColumn: valueColumn,
           onChanged: onChanged,
         ),
+      FoldShapeRow(:final item) => _ShapeItemRow(
+          layer: layer,
+          item: item,
+          valueColumn: valueColumn,
+          onChanged: onChanged,
+        ),
       FoldStrokeRow(:final stroke) => _StrokeRow(
           layer: layer,
           stroke: stroke,
@@ -2135,6 +2141,107 @@ class _MaskRow extends StatelessWidget {
             } catch (_) {}
           },
           child: const Text('Delete mask'),
+        ),
+      ),
+    );
+  }
+}
+
+/// One piece of a shape layer's art in the Timeline (K-228): what it is called,
+/// how opaque it is, and the menu that deletes it.
+///
+/// The same shape as the mask and stroke rows: the engine takes the whole
+/// contents list, so every edit is "the list, with this item changed".
+class _ShapeItemRow extends StatelessWidget {
+  final LayerReference layer;
+  final BridgeShapeItem item;
+  final ValueColumn valueColumn;
+  final VoidCallback onChanged;
+
+  const _ShapeItemRow({
+    required this.layer,
+    required this.item,
+    required this.valueColumn,
+    required this.onChanged,
+  });
+
+  /// Write the contents back with this item changed, or dropped.
+  void _write({double? opacity, bool delete = false}) {
+    try {
+      final contents = <BridgeShapeItem>[
+        for (final other in layer.getShapeContents())
+          if (other.id != item.id)
+            other
+          else if (!delete)
+            BridgeShapeItem(
+              id: other.id,
+              name: other.name,
+              vertices: other.vertices,
+              closed: other.closed,
+              fill: other.fill,
+              stroke: other.stroke,
+              strokeWidth: other.strokeWidth,
+              opacity: opacity ?? other.opacity,
+            ),
+      ];
+      layer.setShapeContents(contents: contents);
+      onChanged();
+    } catch (_) {
+      // The item or its layer went away between the draw and the click.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
+      child: Row(
+        children: [
+          lumitIcon(LumitIcon.rectangle, size: iconSize, color: t.textSecondary),
+          const SizedBox(width: 4),
+          Expanded(
+            child:
+                Text(item.name, style: t.body, overflow: TextOverflow.ellipsis),
+          ),
+          SizedBox(
+            width: valueColumn.width,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                SizedBox(
+                  width: 56,
+                  child: DragValueField(
+                    key: ValueKey<String>('tl-shape-opacity-${item.id}'),
+                    value: item.opacity,
+                    min: 0,
+                    max: 100,
+                    suffix: '%',
+                    onChanged: (v) => _write(opacity: v.toDouble()),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _menu(BuildContext context, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 160,
+        child: MenuRow(
+          key: ValueKey<String>('tl-shape-delete-${item.id}'),
+          onPressed: () {
+            close(null);
+            _write(delete: true);
+          },
+          child: const Text('Delete shape'),
         ),
       ),
     );

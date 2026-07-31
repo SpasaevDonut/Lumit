@@ -178,6 +178,7 @@ pub fn collect_comp_jobs(
             // the composite below; solids/text/cameras rasterise elsewhere).
             LayerKind::Solid { .. }
             | LayerKind::Text { .. }
+            | LayerKind::Shape { .. }
             | LayerKind::Camera { .. }
             | LayerKind::Adjustment
             | LayerKind::Null => {}

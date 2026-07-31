@@ -91,6 +91,13 @@ final class FoldMaskRow extends LayerFoldRow {
   const FoldMaskRow(this.mask, {required int depth}) : super(depth);
 }
 
+/// One piece of a shape layer's art (K-228): its name, its fill and its
+/// outline — the row that makes a drawn shape editable after the fact.
+final class FoldShapeRow extends LayerFoldRow {
+  final BridgeShapeItem item;
+  const FoldShapeRow(this.item, {required int depth}) : super(depth);
+}
+
 /// One paint stroke on the layer (K-225): its name, so a stroke can be found,
 /// renamed and deleted after it was painted.
 final class FoldStrokeRow extends LayerFoldRow {
@@ -254,6 +261,7 @@ String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldWaveformRow() => waveformPath(layerId),
       FoldMaskRow(:final mask) => '${masksPath(layerId)}/${mask.id}',
       FoldStrokeRow(:final stroke) => '${paintPath(layerId)}/${stroke.id}',
+      FoldShapeRow(:final item) => '${contentsPath(layerId)}/${item.id}',
     };
 
 /// Whether [path] sits under [ancestor] — a property under its group, a
@@ -276,6 +284,9 @@ String effectPath(String layerId, String effectId) =>
 
 /// The path of a layer's Masks group.
 String masksPath(String layerId) => '$layerId/masks';
+
+/// The path of a shape layer's Contents group.
+String contentsPath(String layerId) => '$layerId/contents';
 
 /// The path of a layer's Paint group.
 String paintPath(String layerId) => '$layerId/paint';
@@ -317,6 +328,24 @@ List<LayerFoldRow> layerFoldRows({
   if (transformOpen) {
     for (final group in transformGroups(threeD: info.switches.threeD)) {
       rows.add(FoldTransformRow(group, info.transform, depth: 2));
+    }
+  }
+
+  // Contents first of the three: a shape layer's art *is* its picture, so it
+  // comes before the masks that gate that picture and the effects that process
+  // it (K-228, docs/06 render order).
+  if (info.shapeContents.isNotEmpty) {
+    final contentsOpen = open.contains(contentsPath(id));
+    rows.add(FoldGroupRow(
+      path: contentsPath(id),
+      label: 'Contents',
+      open: contentsOpen,
+      depth: 1,
+    ));
+    if (contentsOpen) {
+      for (final item in info.shapeContents) {
+        rows.add(FoldShapeRow(item, depth: 2));
+      }
     }
   }
 

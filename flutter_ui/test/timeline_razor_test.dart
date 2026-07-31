@@ -66,6 +66,7 @@ void main() {
         label: 0,
         masks: const [],
         paint: const [],
+        shapeContents: const [],
       ),
     );
   }

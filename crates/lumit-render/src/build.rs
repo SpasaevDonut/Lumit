@@ -311,6 +311,28 @@ pub fn build_comp_draws_at(
                 );
                 (r.rgba, r.width, r.height, (r.width as f32, r.height as f32))
             }),
+            // Vector art: rasterised at the size the frame is being drawn at,
+            // into its own bounding box, which is also the layer's natural size
+            // (K-228). Unlike every other kind, that size moves when the art is
+            // edited.
+            LayerKind::Shape { contents } => in_span(layer)
+                .then(|| lumit_core::shape::contents_bounds(contents))
+                .flatten()
+                .map(|(x0, y0, x1, y1)| {
+                    let natural_w = (x1 - x0).max(1.0);
+                    let natural_h = (y1 - y0).max(1.0);
+                    // The same reduced-resolution rule the other rasterised
+                    // kinds follow: draw at the working scale, and let the
+                    // placement matrix carry the natural size.
+                    let w = natural_w.round().max(1.0) as u32;
+                    let h = natural_h.round().max(1.0) as u32;
+                    (
+                        lumit_core::shape::rasterise_contents(contents, w, h, x0, y0, x1, y1),
+                        w,
+                        h,
+                        (natural_w as f32, natural_h as f32),
+                    )
+                }),
             LayerKind::Precomp { .. } => None, // handled as Nested below
             LayerKind::Camera { .. } => None,  // shapes the view, draws nothing
         };

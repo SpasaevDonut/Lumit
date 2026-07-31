@@ -60,6 +60,7 @@ import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 import 'viewer_rotate.dart';
 import 'viewer_shape_layer.dart';
+import 'viewer_camera.dart';
 import 'viewer_paint.dart';
 import 'viewer_type.dart';
 import 'viewer_zoom.dart';
@@ -663,6 +664,12 @@ class _Stage extends StatelessWidget {
                 state: Provider.of<LumitState>(context, listen: false),
                 uiState: uiState,
                 boxes: _boxes(),
+                comp: comp,
+                fitted: fitted,
+                compSize: Size(
+                  compSize.width.toDouble(),
+                  compSize.height.toDouble(),
+                ),
                 accent: t.accent,
                 onChanged: onChanged,
               ),
@@ -717,6 +724,24 @@ class _Stage extends StatelessWidget {
                 boxes: _boxes(),
                 mark: t.textPrimary,
                 outline: t.surface0,
+                onChanged: onChanged,
+              ),
+              // The camera tools: a drag orbits, tracks or dollies the comp's
+              // active camera (K-227).
+              ViewerCameraLayer(
+                active: uiState.tools.tool.group == ToolGroup.camera,
+                tool: uiState.tools.tool,
+                comp: comp,
+                state: Provider.of<LumitState>(context, listen: false),
+                uiState: uiState,
+                fitted: fitted,
+                compSize: Size(
+                  compSize.width.toDouble(),
+                  compSize.height.toDouble(),
+                ),
+                mark: t.textPrimary,
+                outline: t.surface0,
+                accent: t.accent,
                 onChanged: onChanged,
               ),
               // Over the layer controls, and inert unless the Zoom tool is

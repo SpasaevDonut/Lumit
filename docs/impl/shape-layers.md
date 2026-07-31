@@ -1,11 +1,25 @@
 # Shape layers — the plan before the code
 
-**Status: a plan, not a spec.** Nothing here is built. It exists so the branch
-that builds it (`claude/shape-layers-engine`, off the toolbar work) starts from a
-decided shape rather than from a blank file, and so the reasoning survives if the
-branch is picked up by someone else. When it lands, the durable parts move into
-[../03-DATA-MODEL.md](../03-DATA-MODEL.md), [../06-RENDER-PIPELINE.md](../06-RENDER-PIPELINE.md)
-and [../07-UI-SPEC.md](../07-UI-SPEC.md), and this note is archived.
+**Status: built (K-228), first cut.** The durable parts now live in
+[../03-DATA-MODEL.md](../03-DATA-MODEL.md) §7.2, [../06-RENDER-PIPELINE.md](../06-RENDER-PIPELINE.md)
+§1.2 and [../07-UI-SPEC.md](../07-UI-SPEC.md) §2.3.1; what is left here is the reasoning behind
+the choices and the record of how the plan turned out. Two things went differently
+from the plan and are worth knowing:
+
+* **The renderer is CPU, and reuses two rasterisers rather than adding one.** A
+  fill goes through `mask::rasterise` (the same coverage a mask is gated by); an
+  outline goes through `paint::apply_strokes` (a brush run along the flattened
+  path). The plan left CPU-versus-GPU open and said the GPU was the honest
+  long-term answer — it still is, and it changes the rasteriser without changing
+  anything stored.
+* **The trap was real.** `LayerBoundsCache` did follow the revision, as the plan
+  hoped, but both sides had to agree on *how* the box is measured: by control
+  points, not by the curve. That is now written down in both places and tested on
+  both sides.
+
+Not built: nested groups and the shape modifiers, gradient fills, dashed strokes,
+joins and caps other than round, animated paths, and dragging a shape's points on
+the picture (K-222 does that for mask points).
 
 ## In plain terms
 

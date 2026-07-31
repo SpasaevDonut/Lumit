@@ -4017,3 +4017,128 @@ same reason: those pixels never come back to the CPU.
 **Not built, and named so nobody assumes otherwise:** pressure and tilt, brush shapes other
 than round, spacing and scatter, write-on (a stroke's own start and end times), painting in
 Layer view rather than on the composite, and per-stroke blending modes.
+**K-226 · DECIDED · A tool that is not built cannot be armed. It stays on the strip, drawn
+disabled.** From the owner (2026-07-31): "I think we'd be better off just disabling that in the
+toolbar for now… it'd be better to see what we still need to add rather than removing it and
+forgetting about the code."
+
+**Which is a correction to K-214's honesty rule, not a reversal of it.** K-214 put every
+specified tool on the strip and had the unbuilt ones say so in a tooltip. That was right about
+*showing* them and wrong about *arming* them: a tool you can pick that then does nothing reads
+as a broken application, and the tooltip is only read by someone who already suspected. Shown,
+disabled and labelled is the honest version of the same idea — the strip still teaches the
+shape of the application, and nothing in it lies.
+
+**Disabled means disabled everywhere.** `ToolsState.select` refuses an unbuilt tool, so the
+button, the flyout row and the keyboard chord all decline together; a group's chord cycles only
+its built members; and a group with nothing built in it takes no click at all. The state is the
+gate rather than the widget, because there are three ways in and only one of them is a button.
+
+**The flag is `ToolMode.ready`, which already existed.** No second list to keep in step: a tool
+becomes armable the moment its behaviour lands, in the same commit, and the test that pins the
+built set (K-221) now pins what is *arming-able* too. This is also what keeps the two branches
+straight — paint is built on the engine branch and not on this one, and each branch's toolbar
+follows its own flags without either being edited to suit the other.
+
+**What is disabled today:** the Roto tools and the Puppet pins (both engine features of their
+own size, at the owner's direction), the Pen's four editing siblings, and vertical type.
+
+**K-227 · DECIDED · The camera tools move the composition's active camera by dragging on the
+picture.** From the owner (2026-07-31): "Camera, make this like after effects implementation
+along with any gizmo's etc and custom cursors if necessary."
+
+**What Lumit's camera is, which decides what the tools can be.** A camera layer holds a
+position, three rotations and a *zoom* — the focal distance in composition pixels. The plane at
+the camera's own position renders 1:1 and centred, so **the position is the point the camera is
+looking at**, and the eye sits `zoom` behind it along the camera's forward axis. Everything
+follows:
+
+* **Orbit** changes the rotations and leaves the position alone. Because the eye is derived
+  from both, it swings round the point being looked at — a true orbit, with no separate pivot
+  to store.
+* **Track** slides the position along the camera's own right and up axes, so the eye travels
+  with it and the picture slides under the pointer, the same sense the Hand tool has.
+* **Dolly** slides the position along the forward axis, moving the eye and what it looks at
+  together, in or out of the scene, by a fraction of the distance already in hand — so a dolly
+  across a wide shot covers ground and one in a close-up creeps.
+
+**The axes are built the compositor's way** (`Ry · Rx · Rz`, lumit-gpu's `camera_matrix`). This
+is the one piece of frontend arithmetic that has to agree with the renderer exactly: a tool
+that moved the camera along a different set of axes would send it sideways when asked for
+forward. It is unit-tested against hand-computed cases rather than by dragging.
+
+**Dragging up lifts the camera over the top** — which means tilting it to look *down*, a
+negative x rotation in a frame where +y is down the screen. Getting that backwards is the
+classic inverted orbit, so it has its own test. The pitch is clamped just short of the poles
+rather than wrapped: past straight down the next pixel flips the picture over.
+
+**The gizmo is the pivot.** While a camera tool is armed the point the camera is looking at is
+marked, and while orbiting the circle it swings round is drawn faintly. That point projects to
+the middle of the frame by construction, which is worth saying plainly: what the camera looks
+at is the middle of the picture.
+
+**They act on the active camera, not the selection.** The topmost visible camera layer whose
+span covers the playhead — the one the renderer looks through — because the camera is what you
+are looking *through* rather than a thing you have picked. With no camera at all the tool says
+so. A camera whose placement is keyframed is left alone, the same rule the layer gizmo follows:
+there is no single value for a drag to add to.
+
+**No point of interest, and no unified camera tool.** After Effects' two-node camera has a
+separate point of interest, and its Unified Camera tool switches between the three by mouse
+button. Both are in TODO.md; neither changes the three tools above.
+
+**K-228 · DECIDED · A shape layer is a list of paths with a fill and a stroke, and its size is
+the box its art fills.** The other half of K-220's gesture: with nothing selected the shape
+tools now make a layer instead of saying they cannot, which is what the owner asked for when
+the shape tools were specified.
+
+**The path type is the mask's, unchanged.** One `BezierPath` in the document, one rasteriser,
+one vertex type across the bridge. A shape's path and a mask's path differ in what they *do*,
+not in what they are — which is why the shape tools and the Pen could draw a shape layer's art
+with the same geometry they had been drawing masks with since the day they landed. Nothing in
+`viewer_shapes.dart` changed.
+
+**Flat contents, not nested groups.** `LayerKind::Shape { contents: Vec<ShapeItem> }`, each
+item a path plus a fill colour, a stroke colour and a stroke width. After Effects' nested
+groups exist to carry its shape *modifiers* — repeater, trim paths, wiggle — and none of those
+are built; a group hierarchy with nothing to put in it is a data model designed around a
+feature nobody has written.
+
+**A fill is the mask rasteriser; a stroke is the paint rasteriser.** The fill's coverage comes
+from `mask::rasterise`, the same scanline walk with the same subsamples that decides which
+pixels a mask gates. The outline is a `PaintStroke` run along the flattened path — the widened
+path K-225 already had. Two rasterisers already in the engine, each doing what it was written
+to do, instead of a third that could disagree with both.
+
+**The layer's size is its art's bounding box, and it moves.** Every kind built so far has a
+size fixed by its source: a clip's frame size, a solid's dimensions, a comp's. A shape layer's
+changes as the art is edited, which was the trap named in the plan note — `LayerBoundsCache`
+keys on the document revision so it follows, and both sides now bound the curve by its
+**control points** (a cubic never leaves its own control hull) so the box on screen is the box
+the picture was drawn into.
+
+**A new shape layer lands where the art was drawn**: the anchor sits on the art's own top-left
+corner and Position carries it there, so a rectangle dragged across the picture appears exactly
+under the drag. It is added at the top of the stack and selected, so the next drag masks it —
+which is the behaviour that makes "draw a shape, then draw another" work without a trip to the
+Timeline.
+
+**The stroke controls are live at last.** K-223 put a stroke swatch and a width on the toolbar
+and drew them disabled, because nothing in the engine stroked anything. A shape layer's art
+does, so they now paint: a width of zero draws no outline, which is how a fill-only shape is
+made. The Type tool's options are unchanged.
+
+**Contents list in the Timeline** under a Contents heading, *above* Masks and Effects — a shape
+layer's art is its picture, the masks gate that picture, and the effects process it, which is
+the order docs/06 builds a layer in. The heading appears only once there is art, exactly as
+Masks and Paint do.
+
+**One op, `SetShapeContents`, replacing the whole list** — the third of the same shape after
+`SetLayerMasks` and `SetLayerPaint`. An add, a delete, a recolour and a path edit are one kind
+of edit and each is one undo step.
+
+**Not built, and named so nobody assumes otherwise:** nested groups and the shape modifiers
+(repeater, trim paths, wiggle, offset paths), gradient fills, dashed strokes, line joins and
+caps other than round, fill rules other than the mask rasteriser's, animated paths, and editing
+a shape layer's points on the picture (K-222 edits *mask* points; the same gesture over shape
+contents is the next piece).

@@ -1006,27 +1006,35 @@ void main() {
       expect(xs.reduce((a, b) => a > b ? a : b), lessThan(1920));
     });
 
-    testWidgets('a shape drag with nothing selected says what to do instead',
+    /// The Pen with nothing selected makes a shape layer too (K-228): the same
+    /// path, and the only difference is what it will belong to.
+    testWidgets('the Pen with nothing selected closes onto a shape layer',
         (tester) async {
       final p = withLayer();
       p.uiState.clearSelection();
-      p.uiState.tools.select(ToolMode.shapeRectangle);
+      p.uiState.tools.select(ToolMode.pen);
       await mount(tester, p);
 
       final fitted = fittedRect(tester, p.comp);
-      final gesture = await tester.startGesture(fitted.center);
-      await tester.pump();
-      await gesture.moveBy(const Offset(40, 30));
-      await tester.pump();
-      await gesture.moveBy(const Offset(40, 30));
-      await tester.pump();
-      await gesture.up();
+      final first = fitted.center;
+      await tester.tapAt(first);
+      await tester.pumpAndSettle();
+      await tester.tapAt(first + const Offset(80, 0));
+      await tester.pumpAndSettle();
+      await tester.tapAt(first + const Offset(80, 60));
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().length, 1, reason: 'still being drawn');
+
+      // Clicking the first point again closes the path and applies it.
+      await tester.tapAt(first);
       await tester.pumpAndSettle();
 
-      expect(p.layer.getMasks(), isEmpty);
-      expect(p.state.notice.value?.message, contains('Select a layer'),
-          reason: 'silence would look like a broken tool (shape layers are '
-              'not built — docs/TODO.md)');
+      final layers = p.comp.getLayers();
+      expect(layers.length, 2);
+      expect(layers.first.getKind(), BridgeLayerKind.shape);
+      expect(layers.first.getShapeContents().single.vertices, hasLength(3));
+      expect(p.layer.getMasks(), isEmpty,
+          reason: 'the layer that was not selected was not masked');
     });
 
     testWidgets('the Pen places points and closes on the first one',
@@ -1365,6 +1373,150 @@ void main() {
 
       expect(p.layer.getPaint(), isEmpty);
       expect(p.state.notice.value?.message, contains('Select a layer to paint'));
+    });
+
+    /// The other half of the shape tools' gesture (K-228): with nothing
+    /// selected they make a **shape layer** rather than saying they cannot.
+    testWidgets('a shape drag with nothing selected makes a shape layer',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.shapeRectangle);
+      await mount(tester, p);
+
+      final before = p.comp.getLayers().length;
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      await gesture.moveBy(const Offset(40, 30));
+      await tester.pump();
+      await gesture.moveBy(const Offset(40, 30));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final layers = p.comp.getLayers();
+      expect(layers.length, before + 1, reason: 'one drag, one shape layer');
+      final shape = layers.first;
+      expect(shape.getKind(), BridgeLayerKind.shape,
+          reason: 'and it is at the top of the stack');
+      final contents = shape.getShapeContents();
+      expect(contents, hasLength(1));
+      expect(contents.single.name, 'Rectangle');
+      expect(contents.single.vertices, hasLength(4));
+      expect(contents.single.fill, isNotNull,
+          reason: "it takes the toolbar's fill");
+
+      // The art lands where it was drawn: the drag began at the middle of the
+      // picture, so the layer's position is the middle of the comp.
+      final size = p.comp.getSize();
+      double still(dynamic s) => (s as dynamic).field0 as double;
+      expect(still(shape.getTransform().positionX),
+          closeTo(size.width / 2, size.width * 0.02));
+
+      // And the new layer is what is selected, so the next drag masks it.
+      expect(p.uiState.selectedLayerIds, contains(shape.internallayerId));
+    });
+
+    testWidgets('a shape layer takes the toolbar\'s stroke when it has a width',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools
+        ..select(ToolMode.shapeEllipse)
+        ..strokeWidth = 6;
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      await gesture.moveBy(const Offset(50, 40));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 20));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final item = p.comp.getLayers().first.getShapeContents().single;
+      expect(item.stroke, isNotNull);
+      expect(item.strokeWidth, 6);
+
+      // With no width there is no outline to draw. (The selection is cleared
+      // first: the layer just made is selected, so another drag would mask it
+      // rather than make a second shape layer.)
+      p.uiState.clearSelection();
+      p.uiState.tools.strokeWidth = 0;
+      await tester.pump();
+      final second = await tester.startGesture(fitted.topLeft + const Offset(20, 20));
+      await tester.pump();
+      await second.moveBy(const Offset(40, 40));
+      await tester.pump();
+      await second.moveBy(const Offset(20, 20));
+      await tester.pump();
+      await second.up();
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().first.getShapeContents().single.stroke, isNull);
+    });
+
+    /// The camera tools (K-227): a drag moves the composition's active camera,
+    /// and with no camera the tool says so rather than swallowing the gesture.
+    testWidgets('the camera tools orbit, track and dolly the active camera',
+        (tester) async {
+      final p = withLayer();
+      final camera = p.comp.addCameraLayer();
+      p.uiState.model.refresh();
+      p.uiState.tools.select(ToolMode.cameraOrbit);
+      await mount(tester, p);
+
+      double still(dynamic s) => (s as dynamic).field0 as double;
+      final before = camera.getTransform();
+      final centre = fittedRect(tester, p.comp).center;
+
+      Future<void> drag(Offset by) async {
+        final gesture = await tester.startGesture(centre);
+        await tester.pump();
+        for (var i = 0; i < 6; i++) {
+          await gesture.moveBy(by / 6);
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+      }
+
+      // Orbit: the rotations change and the point being looked at does not.
+      await drag(const Offset(120, 0));
+      var after = camera.getTransform();
+      expect(still(after.rotationY), isNot(still(before.rotationY)));
+      expect(still(after.positionX), closeTo(still(before.positionX), 0.001),
+          reason: 'an orbit swings round what the camera looks at');
+
+      // Track: the position moves, the rotations do not.
+      p.uiState.tools.select(ToolMode.cameraPan);
+      await tester.pump();
+      final beforeTrack = camera.getTransform();
+      await drag(const Offset(0, 90));
+      after = camera.getTransform();
+      expect(still(after.positionY), isNot(still(beforeTrack.positionY)));
+      expect(still(after.rotationY), closeTo(still(beforeTrack.rotationY), 1e-9));
+
+      // Dolly: it moves along the view axis.
+      p.uiState.tools.select(ToolMode.cameraDolly);
+      await tester.pump();
+      final beforeDolly = camera.getTransform();
+      await drag(const Offset(150, 0));
+      after = camera.getTransform();
+      expect(still(after.positionZ), greaterThan(still(beforeDolly.positionZ)));
+    });
+
+    testWidgets('a camera drag with no camera says what to do instead',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.cameraOrbit);
+      await mount(tester, p);
+
+      await tester.tapAt(fittedRect(tester, p.comp).center);
+      await tester.pumpAndSettle();
+      expect(p.state.notice.value?.message, contains('add a camera layer'));
     });
 
     testWidgets('a missing footage layer raises the badge', (tester) async {

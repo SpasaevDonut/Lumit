@@ -119,15 +119,18 @@ armed is a *tool*; what each tool then does is the backlog:
     for square (polygon and star being the regular figures inscribed in the box). Masks list
     in the layer's twirl-down under a Masks heading, invert, fade and delete, and are
     outlined on the picture.
-- **Pen** - built (K-221): the path builder — click for a corner, click-drag for mirrored
+- **Pen** - built (K-221), with its four editing siblings disabled on the strip (K-226): the
+    path builder — click for a corner, click-drag for mirrored
     bezier handles, `Alt` to break the pair, click the first point to close and apply. Its
     four siblings (add/delete/convert vertex, mask feather) edit a finished path; see mask
     editing below.
     What the two owe between them:
-    - **Shape layers.** With nothing selected the tool says "select a layer" instead of making
-      one, because `LayerKind` has no Shape variant. A shape layer needs a new layer kind, a
-      geometry model with fill and stroke, renderer support and its own Timeline rows — an
-      engine feature in its own right, being done on a branch off this one.
+    - **Shape layers** are built (K-228, docs/impl/shape-layers.md): with nothing selected a
+      shape tool or the Pen makes a layer holding the art, in the toolbar's fill and stroke,
+      listed in the Timeline under Contents. Still owed: nested groups and the shape
+      **modifiers** (repeater, trim paths, wiggle, offset paths), gradient fills, dashed
+      strokes, joins and caps other than round, animated paths, and dragging a shape's points
+      on the picture the way K-222 drags a mask's.
     - **Mask editing.** A finished mask's **points** can be selected and dragged with the
       Selection tool (K-222); its **handles** cannot, so the `Alt`-drag that re-links a broken
       tangent pair only exists while a point is being *placed*. The Pen tools'
@@ -164,10 +167,22 @@ armed is a *tool*; what each tool then does is the backlog:
       the stored stroke.
     - **Paint on a Precomp layer's nested pixels** — those never come back to the CPU, so a
       stroke on one currently marks nothing.
-    - The shape tools' **stroke colour and width** are still held and shown disabled: they need
-      shape layers, not paint.
-- **Roto** (roto brush/refine edge), **Puppet**, **Camera** - no engine side yet; these are
-    roadmap features ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
+- **Camera** - built (K-227): orbit, track and dolly the active camera by dragging, with the
+    pivot marked and `Shift` locking an axis. Still owed:
+    - **A point of interest** (After Effects' two-node camera): the model has position and
+      rotation only, so the orbit pivot is the point the camera already looks at rather than a
+      pinnable one. Adding it is an engine change (`LayerKind::Camera`, docs/03).
+    - **The Unified Camera tool** — one tool with the three gestures on the three mouse
+      buttons.
+    - **Depth-of-field controls on the picture** (focus distance, aperture), and a camera whose
+      placement is **keyframed** cannot be dragged (no single value to add to).
+    - A camera drag writes five properties, so it is five undo steps: there is no batched
+      transform op (see the gizmo's note above).
+- **Roto** (roto brush/refine edge) and **Puppet** - **disabled on the strip** (K-226) until
+    there is an engine behind them; both are roadmap features of their own size
+    ([16-ROADMAP.md](16-ROADMAP.md)). Roto wants a segmentation model and a per-frame stroke
+    propagation; Puppet wants a mesh, pins and a deformer in the renderer. They stay visible and
+    unarmable so the gap is on the strip rather than in someone's memory.
 - **Snapping** is a switch nothing reads (docs/07 §4.5 specifies the behaviour).
 - **The workspace strip shows no preset after a restart** - `Workspace.activePreset` is
     session-only, because the stored layout is the user's own by then and may no longer

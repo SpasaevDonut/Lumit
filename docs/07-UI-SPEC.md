@@ -169,12 +169,11 @@ empty for the tools that draw nothing:
 |---|---|
 | Type | **Fill** swatch, **size** in pixels |
 | Brush, Clone stamp, Eraser | **Fill** swatch, brush **size**, **hardness**, **opacity** (K-225) |
-| Shape, Pen | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels |
+| Shape, Pen | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels — all live (K-228) |
 
-Fill and size say what the next thing drawn is made with, and both are session state like the
-armed tool itself. Stroke and stroke width MUST be shown **disabled** until something strokes
-a path: neither a shape layer's outline nor a paint stroke exists in the engine, and a control
-that quietly did nothing would be the same lie an unbuilt tool without its tooltip would be.
+Every option is session state, like the armed tool itself, and every one is live: fill and size
+say what the next thing drawn is made with, and the stroke pair outlines a new shape layer's art
+(K-228 — a width of zero draws no outline).
 
 **Behaviour.**
 
@@ -195,14 +194,22 @@ that quietly did nothing would be the same lie an unbuilt tool without its toolt
   whose behaviour is not built yet MUST say so in that tooltip rather than being hidden: the
   tool set above is the specification, and a strip missing half of it teaches the wrong shape
   of the application.
+- **A tool whose behaviour is not built MUST NOT be armable** (K-226). Its button and its
+  flyout row are drawn disabled, and the button, the row and the keyboard chord all decline
+  together — the refusal belongs to the state that holds the armed tool, because there are
+  three ways in and only one of them is a button. A group with nothing built in it takes no
+  click at all and offers no flyout; a group's chord cycles only its built members, and a group
+  whose first member is unbuilt opens on one that works. A tool you can pick that then does
+  nothing reads as a broken application; shown, disabled and labelled is the honest version of
+  showing it.
 
 **Implementation status (2026-07-31).** The strip, the groups, the flyouts, the shortcuts,
 the tool options area, the snapping switch and the workspace strip are built. Built tools:
 Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), the five shape
-tools and the Pen (§2.3.1), Horizontal type (§2.3.2), and the three painting tools (§2.3.4).
-Not built, and changing only the pointer: vertical type, the Pen's four editing siblings, Roto,
-Puppet and Camera. Each tool's behaviour is tracked separately in [TODO.md](TODO.md); the snapping
-switch is likewise a switch nothing reads yet.
+tools and the Pen (§2.3.1), Horizontal type (§2.3.2), the three painting tools (§2.3.4) and the
+three camera tools (§2.3.5). **Disabled** (K-226 — shown, not armable): vertical type, the Pen's
+four editing siblings, the Roto tools and the Puppet pins. Each tool's behaviour is tracked
+separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
 
 ---
 
@@ -329,9 +336,12 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
 
 ### 2.3.1 The shape tools and masks (K-220)
 
-- With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected
-  After Effects makes a *shape layer*; Lumit's engine has no such layer kind yet, so the tool
-  MUST say what to do instead rather than doing nothing quietly (TODO.md tracks the kind).
+- With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected it
+  makes a **shape layer** at the top of the composition (K-228), holding the art it drew, in the
+  toolbar's fill and — when the width is not zero — its stroke. The new layer MUST land where
+  the art was drawn and MUST become the selection, so the next drag masks it.
+- A shape layer's art lists in its Timeline twirl-down under a **Contents** heading, above Masks
+  and Effects: the art is the picture, the masks gate it, the effects process it.
 - **All five shape tools drag out** between two opposite corners of the shape's box —
   whichever way round the drag went — with `Shift` keeping the box square. Rectangle and
   rounded rectangle fill the box; ellipse is inscribed in it; polygon and star are the regular
@@ -409,6 +419,7 @@ as the Rotation, Anchor point and Razor tools already do.
 | Brush, Clone stamp, Eraser | A **ring** the size of the stroke it would leave, a dot at its centre, badged with the tool's icon |
 | Horizontal type | The system **I-beam** |
 | Vertical type | A drawn I-beam, **turned a quarter turn** |
+| Orbit, Track, Dolly camera | The crosshair badged with the tool's icon (§2.3.5) |
 | Rotation | A curved arrow leaning round the anchor (§2.3) |
 | Anchor point | The anchor's ring-and-cross (§2.3) |
 | Razor | The blade and its cut line (§4.4) |
@@ -442,6 +453,34 @@ as the Rotation, Anchor point and Razor tools already do.
 - Not built: pressure and tilt, non-round brushes, spacing and scatter, write-on (per-stroke
   start and end times), per-stroke blending modes, and painting in Layer view rather than on the
   composite.
+
+### 2.3.5 The camera tools (K-227)
+
+- The three camera tools act on the **active camera** — the topmost visible camera layer whose
+  span covers the playhead — regardless of the selection, because the camera is what the
+  composition is being looked *through* rather than a thing that has been picked. With no
+  camera at all the tool MUST say so.
+- Lumit's camera has no separate point of interest: its **position is the point it is looking
+  at** (that plane renders 1:1 and centred) and the eye sits its *zoom* — the focal distance —
+  behind that, along the camera's forward axis. So:
+  - **Orbit** changes the rotations only, swinging the eye round the point being looked at.
+    Dragging up MUST lift the camera over the top (tilting it to look down). The pitch MUST be
+    clamped just short of the poles rather than wrapped: one pixel past straight down flips the
+    picture over.
+  - **Track** slides the position along the camera's own right and up axes, *against* the drag,
+    so the picture follows the pointer as it does under the Hand tool. The Viewer's
+    magnification MUST be undone, so the picture keeps up with the pointer.
+  - **Dolly** slides the position along the forward axis by a fraction of the distance already
+    in hand, so a wide shot covers ground and a close-up creeps.
+- `Shift` locks an orbit or a track to one axis.
+- The camera's axes MUST be built the way the compositor builds its matrix (`Ry · Rx · Rz`), or
+  a tool sends the camera sideways when it is asked for forward.
+- The **gizmo** marks the point the camera is looking at, and the Orbit tool draws the circle it
+  swings round. Each tool wears the drawn pointer of §2.3.3, badged with its own icon.
+- A camera whose placement is keyframed is left alone — there is no single value for a drag to
+  add to, the same rule §2.3's gizmo follows.
+- Not built: a **point of interest** (After Effects' two-node camera), the **Unified Camera**
+  tool, and depth-of-field handles on the picture.
 
 ### 2.4 Motion paths
 

@@ -55,6 +55,83 @@ pub struct BridgeVertex {
     pub tan_out_y: f64,
 }
 
+/// One piece of vector art on a shape layer (K-228): a path, and how it is
+/// painted.
+///
+/// The path is `BridgeVertex`, the same vertices a mask crosses with: one path
+/// type in the document, drawn by two things.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct BridgeShapeItem {
+    pub id: Uuid,
+    pub name: String,
+    pub vertices: Vec<BridgeVertex>,
+    pub closed: bool,
+    /// The colour inside the path. `None` draws no fill.
+    pub fill: Option<crate::api::assets::BridgeColourRgba>,
+    /// The outline's colour, and its width in layer pixels. `None` draws no
+    /// outline; a width of zero draws none either.
+    pub stroke: Option<crate::api::assets::BridgeColourRgba>,
+    pub stroke_width: f64,
+    /// 0..100.
+    pub opacity: f64,
+}
+
+impl BridgeShapeItem {
+    #[frb(ignore)]
+    fn read(item: &lumit_core::shape::ShapeItem) -> Self {
+        Self {
+            id: item.id,
+            name: item.name.clone(),
+            vertices: item
+                .path
+                .vertices
+                .iter()
+                .map(|v| BridgeVertex {
+                    x: v.pos.0,
+                    y: v.pos.1,
+                    tan_in_x: v.tan_in.0,
+                    tan_in_y: v.tan_in.1,
+                    tan_out_x: v.tan_out.0,
+                    tan_out_y: v.tan_out.1,
+                })
+                .collect(),
+            closed: item.path.closed,
+            fill: item.fill.map(crate::api::assets::colour_of),
+            stroke: item.stroke.map(crate::api::assets::colour_of),
+            stroke_width: item.stroke_width,
+            opacity: item.opacity,
+        }
+    }
+
+    /// The engine's item this describes. Public to the crate because the
+    /// composition builds a whole layer out of a list of them.
+    #[frb(ignore)]
+    pub(crate) fn write_item(&self) -> lumit_core::shape::ShapeItem {
+        lumit_core::shape::ShapeItem {
+            id: self.id,
+            name: self.name.clone(),
+            path: lumit_core::mask::BezierPath {
+                vertices: self
+                    .vertices
+                    .iter()
+                    .map(|v| lumit_core::mask::Vertex {
+                        pos: (v.x, v.y),
+                        tan_in: (v.tan_in_x, v.tan_in_y),
+                        tan_out: (v.tan_out_x, v.tan_out_y),
+                    })
+                    .collect(),
+                closed: self.closed,
+            },
+            fill: self.fill.map(crate::api::assets::linear_of),
+            stroke: self.stroke.map(crate::api::assets::linear_of),
+            stroke_width: self.stroke_width.clamp(0.0, 10_000.0),
+            opacity: self.opacity.clamp(0.0, 100.0),
+            extra: serde_json::Map::new(),
+        }
+    }
+}
+
 /// What a paint stroke does to the pixels under it (K-225).
 #[frb(non_opaque)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +345,8 @@ pub enum BridgeLayerKind {
     Solid,
     Precomp,
     Text,
+    /// Vector art as the layer's own picture (K-228).
+    Shape,
     Camera,
     Sequence,
     Adjustment,
@@ -337,6 +416,10 @@ pub struct BridgeLayerInfo {
     /// reason the masks are: the Timeline lists them, and the Viewer needs to
     /// know a layer has some without asking per frame.
     pub paint: Vec<BridgeStroke>,
+    /// A shape layer's art (K-228), bottom first; empty on every other kind.
+    /// Carried for the same reason again — and for one more: the art *is* the
+    /// layer's size, so the Viewer's wireframe reads it here.
+    pub shape_contents: Vec<BridgeShapeItem>,
 }
 
 /// Build one layer's [`BridgeLayerInfo`] from an already-fetched composition —
@@ -369,6 +452,7 @@ pub(crate) fn read_layer_info(
             K::Camera { .. } => BridgeLayerKind::Camera,
             K::Sequence { .. } => BridgeLayerKind::Sequence,
             K::Adjustment => BridgeLayerKind::Adjustment,
+            K::Shape { .. } => BridgeLayerKind::Shape,
             K::Null => BridgeLayerKind::NullLayer,
         },
         switches: BridgeLayerSwitches {
@@ -419,6 +503,12 @@ pub(crate) fn read_layer_info(
             .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)),
         masks: layer.masks.iter().map(BridgeMask::read).collect(),
         paint: layer.paint.iter().map(BridgeStroke::read).collect(),
+        shape_contents: match &layer.kind {
+            lumit_core::model::LayerKind::Shape { contents } => {
+                contents.iter().map(BridgeShapeItem::read).collect()
+            }
+            _ => Vec::new(),
+        },
     }
 }
 
@@ -881,6 +971,52 @@ impl LayerReference {
         })
     }
 
+    /// This shape layer's contents, bottom of the stack first (K-228).
+    ///
+    /// Empty on a layer that is not a shape, rather than an error: the Timeline
+    /// asks every row what it has to list, exactly as it asks about masks.
+    #[frb(sync)]
+    pub fn get_shape_contents(&self) -> Result<Vec<BridgeShapeItem>, BridgeError> {
+        let lumit_core::model::LayerKind::Shape { contents } = self.item()?.kind else {
+            return Ok(Vec::new());
+        };
+        Ok(contents.iter().map(BridgeShapeItem::read).collect())
+    }
+
+    /// Replace this shape layer's whole contents.
+    ///
+    /// The whole list, exactly invertible (`SetShapeContents`), the same shape
+    /// of edit as a mask list or a paint list: an add, a delete, a recolour and
+    /// a path edit are one kind of thing and each is one undo step.
+    ///
+    /// A path of fewer than two vertices is refused, as a mask's is: it is not
+    /// a shape, and it would be a Timeline row with nothing behind it.
+    #[frb(sync)]
+    pub fn set_shape_contents(&self, contents: Vec<BridgeShapeItem>) -> Result<(), BridgeError> {
+        let lumit_core::model::LayerKind::Shape { .. } = self.item()?.kind else {
+            return Err(BridgeError::NotShape);
+        };
+        if contents.iter().any(|i| i.vertices.len() < 2) {
+            return Err(BridgeError::EmptyPath);
+        }
+        self.commit(lumit_core::Op::SetShapeContents {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            contents: contents.iter().map(BridgeShapeItem::write_item).collect(),
+        })
+    }
+
+    /// Add one piece of art on top of this shape layer's stack.
+    #[frb(sync)]
+    pub fn add_shape_item(&self, item: BridgeShapeItem) -> Result<(), BridgeError> {
+        let mut contents = self.get_shape_contents()?;
+        let lumit_core::model::LayerKind::Shape { .. } = self.item()?.kind else {
+            return Err(BridgeError::NotShape);
+        };
+        contents.push(item);
+        self.set_shape_contents(contents)
+    }
+
     /// The clips on this Sequence layer, in the order it holds them.
     ///
     /// An empty list on a layer that is not a Sequence, rather than an error:
@@ -1133,6 +1269,7 @@ impl LayerReference {
             LayerKind::Precomp { comp } => comp,
             LayerKind::Solid { def } => def,
             LayerKind::Text { .. }
+            | LayerKind::Shape { .. }
             | LayerKind::Camera { .. }
             | LayerKind::Sequence { .. }
             | LayerKind::Adjustment
@@ -1159,6 +1296,7 @@ impl LayerReference {
             K::Camera { .. } => BridgeLayerKind::Camera,
             K::Sequence { .. } => BridgeLayerKind::Sequence,
             K::Adjustment => BridgeLayerKind::Adjustment,
+            K::Shape { .. } => BridgeLayerKind::Shape,
             K::Null => BridgeLayerKind::NullLayer,
         })
     }

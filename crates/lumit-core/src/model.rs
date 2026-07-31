@@ -812,6 +812,17 @@ pub enum LayerKind {
     /// masks and effect stack apply to the accumulated composite of every layer
     /// beneath it, within its span. A comp-sized container for effects.
     Adjustment,
+    /// Vector art as the layer's own picture (docs/03-DATA-MODEL.md §7.2,
+    /// K-228): one or more paths, each with a fill and a stroke, drawn at
+    /// whatever resolution the frame is rendered at.
+    ///
+    /// The paths are `mask::BezierPath` — the same path type a mask uses, and
+    /// deliberately so: a shape layer's path and a mask's path differ in what
+    /// they *do*, not in what they are.
+    Shape {
+        #[serde(default)]
+        contents: Vec<crate::shape::ShapeItem>,
+    },
     /// A Null layer (docs/01-GLOSSARY.md): an invisible layer with no source
     /// and no size, carrying only a transform, so other layers can be parented
     /// to it and moved as a rig. It never draws. Masks and effects can be added

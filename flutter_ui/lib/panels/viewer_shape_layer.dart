@@ -22,8 +22,10 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:uuid/uuid.dart';
 
 import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
@@ -43,6 +45,15 @@ class ViewerShapeLayer extends StatefulWidget {
   /// map that turns the pointer into layer coordinates.
   final List<LayerBox> boxes;
 
+  /// The composition, for the shape layer a drag makes when nothing is
+  /// selected (K-228).
+  final CompositionReference comp;
+
+  /// Where the picture sits on screen, and the comp's own size — the two that
+  /// turn a pointer into composition pixels when there is no layer to ask.
+  final Rect fitted;
+  final Size compSize;
+
   final Color accent;
 
   final VoidCallback onChanged;
@@ -54,6 +65,9 @@ class ViewerShapeLayer extends StatefulWidget {
     required this.state,
     required this.uiState,
     required this.boxes,
+    required this.comp,
+    required this.fitted,
+    required this.compSize,
     required this.accent,
     required this.onChanged,
   });
@@ -129,11 +143,17 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     return null;
   }
 
-  /// The one thing this tool cannot do yet, said out loud rather than by
-  /// silence (docs/TODO.md: shape layers need an engine layer kind).
-  void _sayNoLayer() => widget.state.postNotice(
-        'Select a layer to draw a mask on — shape layers are not built yet',
-      );
+  /// A point on screen in the composition's own pixels — what a shape layer's
+  /// art is built in when there is no layer to ask (K-228).
+  (double, double) _compPoint(Offset at) {
+    final scale = widget.compSize.width == 0
+        ? 1.0
+        : widget.fitted.width / widget.compSize.width;
+    return (
+      (at.dx - widget.fitted.left) / scale,
+      (at.dy - widget.fitted.top) / scale,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -242,7 +262,14 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
     final box = _target;
     if (box == null) {
-      _sayNoLayer();
+      // Nothing selected: After Effects' other half of this gesture — a new
+      // shape layer at the top of the composition (K-228).
+      _commitShapeLayer(shapePath(
+        tool: widget.tool,
+        from: _compPoint(from),
+        to: _compPoint(to),
+        square: HardwareKeyboard.instance.isShiftPressed,
+      ));
       return;
     }
     final a = box.map.layerOf(from);
@@ -269,26 +296,41 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   /// first point.
   void _onPenTap(TapUpDetails details) {
     final box = _target;
-    if (box == null) {
-      _sayNoLayer();
-      return;
-    }
-    final at = box.map.layerOf(details.localPosition);
+    // The path is built in the layer's coordinates when there is a layer, and
+    // in the composition's when there is not — the same path either way, and
+    // the difference is only which thing it will belong to (K-228).
+    final at = box == null
+        ? _compPoint(details.localPosition)
+        : () {
+            final p = box.map.layerOf(details.localPosition);
+            return (p.dx, p.dy);
+          }();
     final start = _draft.first;
     if (start != null &&
         _draft.canClose &&
         withinClosingDistance(
-          (at.dx, at.dy),
+          at,
           start,
-          screenScale: box.map.viewScale * box.map.sx,
+          screenScale: box == null
+              ? _screenScale
+              : box.map.viewScale * box.map.sx,
         )) {
       final path = _draft.vertices;
       setState(() => _draft = const PathDraft());
-      _commit(box, path);
+      if (box == null) {
+        _commitShapeLayer(path);
+      } else {
+        _commit(box, path);
+      }
       return;
     }
-    setState(() => _draft = _draft.withCorner((at.dx, at.dy)));
+    setState(() => _draft = _draft.withCorner(at));
   }
+
+  /// How many screen pixels one composition pixel covers.
+  double get _screenScale => widget.compSize.width == 0
+      ? 1.0
+      : widget.fitted.width / widget.compSize.width;
 
   /// A click that turned into a drag: the vertex is placed where the press was
   /// and its handles are pulled out to the pointer.
@@ -301,20 +343,60 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     });
     final box = _target;
     if (from == null || to == null) return;
-    if (box == null) {
-      _sayNoLayer();
-      return;
-    }
-    final at = box.map.layerOf(from);
-    final handle = box.map.layerOf(to);
+    final at = box == null
+        ? _compPoint(from)
+        : () {
+            final p = box.map.layerOf(from);
+            return (p.dx, p.dy);
+          }();
+    final handle = box == null
+        ? _compPoint(to)
+        : () {
+            final p = box.map.layerOf(to);
+            return (p.dx, p.dy);
+          }();
     setState(() => _draft = _draft.withBezier(
-          (at.dx, at.dy),
-          (handle.dx, handle.dy),
+          at,
+          handle,
           independent: HardwareKeyboard.instance.isAltPressed,
         ));
   }
 
   // --- Committing -----------------------------------------------------------
+
+  /// A new shape layer holding this art, at the top of the composition — what a
+  /// shape tool or the Pen does with nothing selected (K-228).
+  ///
+  /// The art takes the toolbar's fill, and its stroke when one has a width: the
+  /// two swatches that had nothing to paint until there were shape layers.
+  void _commitShapeLayer(List<BridgeVertex> path) {
+    if (path.length < 2) return;
+    final tools = widget.uiState.tools;
+    final name = shapeMaskName(widget.tool);
+    try {
+      final layer = widget.comp.addShapeLayer(
+        name: name,
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: name,
+            vertices: path,
+            // Always closed: a shape tool draws a closed figure, and the Pen
+            // commits only when its path has come back to its first point.
+            closed: true,
+            fill: tools.fillRgba,
+            stroke: tools.strokeWidth > 0 ? tools.strokeRgba : null,
+            strokeWidth: tools.strokeWidth,
+            opacity: 100,
+          ),
+        ],
+      );
+      widget.uiState.setSelection([layer]);
+      widget.onChanged();
+    } catch (_) {
+      widget.state.postNotice('Could not add a shape layer', error: true);
+    }
+  }
 
   void _commit(LayerBox box, List<BridgeVertex> path) {
     if (path.length < 2) return;

@@ -14,6 +14,7 @@ pub mod pixels;
 pub mod preset;
 pub mod retime;
 pub mod sequence;
+pub mod shape;
 pub mod store;
 pub mod time;
 

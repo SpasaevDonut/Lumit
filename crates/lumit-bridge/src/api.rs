@@ -99,6 +99,8 @@ pub enum BridgeError {
     EmptyStroke,
     /// No stroke of that id on this layer.
     NoSuchStroke,
+    /// The layer is not a shape layer (K-228).
+    NotShape,
     /// The razor was pointed at a time outside the layer's span, or at one of
     /// its ends — either way there is no second layer to make.
     NothingToSplit,
@@ -184,6 +186,7 @@ impl fmt::Display for BridgeError {
             BridgeError::NoSuchMask => write!(f, "No such mask on this layer"),
             BridgeError::EmptyStroke => write!(f, "A paint stroke needs at least one point"),
             BridgeError::NoSuchStroke => write!(f, "No such paint stroke on this layer"),
+            BridgeError::NotShape => write!(f, "That layer is not a shape layer"),
             BridgeError::NothingToSplit => {
                 write!(f, "That time is not inside the layer")
             }

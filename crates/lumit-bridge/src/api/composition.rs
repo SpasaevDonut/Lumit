@@ -461,6 +461,47 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
+    /// Add a Shape layer holding `contents`, at the top of the stack (K-228).
+    ///
+    /// The art is in the layer's own coordinates, and the layer is placed so
+    /// that art lands where it was drawn: the anchor sits on the art's own
+    /// top-left corner and Position carries it to the same place in the comp.
+    /// A shape tool that dragged a rectangle across the picture therefore makes
+    /// a layer whose rectangle is exactly where the drag was.
+    #[frb(sync)]
+    pub fn add_shape_layer(
+        &self,
+        name: String,
+        contents: Vec<crate::api::layer::BridgeShapeItem>,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::anim::Property;
+        use lumit_core::model::TransformGroup;
+
+        if contents.is_empty() || contents.iter().any(|i| i.vertices.len() < 2) {
+            return Err(BridgeError::EmptyPath);
+        }
+        let comp = self.composition()?;
+        let items: Vec<lumit_core::shape::ShapeItem> =
+            contents.iter().map(|i| i.write_item()).collect();
+        // The art's own box: the layer's natural size, and where it sits.
+        let (x0, y0, _x1, _y1) =
+            lumit_core::shape::contents_bounds(&items).ok_or(BridgeError::EmptyPath)?;
+
+        let layer = crate::edits::base_layer(
+            name,
+            lumit_core::model::LayerKind::Shape { contents: items },
+            comp.duration.0,
+            TransformGroup {
+                anchor_x: Property::fixed(0.0),
+                anchor_y: Property::fixed(0.0),
+                position_x: Property::fixed(x0),
+                position_y: Property::fixed(y0),
+                ..TransformGroup::default()
+            },
+        );
+        self.add_at_top(layer)
+    }
+
     /// Add a Camera layer at the comp centre. The default zoom is the After
     /// Effects 50 mm model, `comp width × 50/36`.
     #[frb(sync)]

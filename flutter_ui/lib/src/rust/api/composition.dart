@@ -301,6 +301,19 @@ class CompositionReference {
         that: this,
       );
 
+  /// Add a Shape layer holding `contents`, at the top of the stack (K-228).
+  ///
+  /// The art is in the layer's own coordinates, and the layer is placed so
+  /// that art lands where it was drawn: the anchor sits on the art's own
+  /// top-left corner and Position carries it to the same place in the comp.
+  /// A shape tool that dragged a rectangle across the picture therefore makes
+  /// a layer whose rectangle is exactly where the drag was.
+  LayerReference addShapeLayer(
+          {required String name, required List<BridgeShapeItem> contents}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddShapeLayer(
+              that: this, name: name, contents: contents);
+
   /// Add a Solid layer backed by a fresh SolidDef filed in the Solids
   /// auto-folder — one batch, one undo step, matching the egui frontend. The
   /// solid is comp-sized and white, named "White solid N".

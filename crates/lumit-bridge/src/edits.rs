@@ -62,6 +62,7 @@ pub(crate) fn base_layer(
         LayerKind::Sequence { .. } => 6,
         LayerKind::Adjustment => 7,
         LayerKind::Null => 8,
+        LayerKind::Shape { .. } => 9,
     };
     Layer {
         id: Uuid::now_v7(),

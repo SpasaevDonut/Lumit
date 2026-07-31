@@ -166,6 +166,10 @@ class _ToolPointerPainter extends CustomPainter {
 
 /// The ring a brush of [width] layer pixels draws at this magnification, kept
 /// within sight either way.
+///
+/// The painting tools are disabled on this branch (K-226) — the engine has no
+/// paint strokes — so nothing calls this yet; it is the pointer they wear the
+/// moment they do, and it is tested so it will be right when they arrive.
 double brushRingRadius(double width, double viewScale) =>
     (width * viewScale / 2).clamp(minBrushRingRadius, maxBrushRingRadius);
 

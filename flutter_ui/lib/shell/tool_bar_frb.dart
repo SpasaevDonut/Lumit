@@ -129,10 +129,9 @@ enum ToolOptions {
   /// Fill and size: what the Type tool sets a new line in (K-223).
   type,
 
-  /// Fill and stroke: what a shape tool *would* draw with. Held and shown,
-  /// because they are the same two settings the Type tool uses and hiding them
-  /// would make the pair look like it only half exists — but the stroke half is
-  /// drawn disabled, since nothing in the engine strokes anything yet.
+  /// Fill and stroke: what a shape tool draws with. Both live since shape
+  /// layers landed (K-228) — a shape layer's art carries a fill colour, a
+  /// stroke colour and a stroke width, and a width of zero draws no outline.
   shape,
 
   /// The brush: the colour it lays down, and its size, hardness and opacity
@@ -208,37 +207,20 @@ class _ToolOptions extends StatelessWidget {
             ),
           )
         else ...[
-          // Disabled rather than absent: the tools that would use a stroke are
-          // on the strip, so the setting they would use should be visible and
-          // visibly not working yet (docs/TODO.md).
-          LumitTooltip(
-            message: 'Stroke — not built yet: nothing in the engine strokes a '
-                'path',
-            child: Opacity(
-              opacity: 0.4,
-              child: _Swatch(
-                label: 'Stroke',
-                colour: tools.stroke,
-                onPicked: null,
-              ),
-            ),
+          _Swatch(
+            label: 'Stroke',
+            colour: tools.stroke,
+            onPicked: (colour) => tools.stroke = colour,
           ),
           const SizedBox(width: 6),
-          LumitTooltip(
-            message: 'Stroke width — not built yet',
-            child: Opacity(
-              opacity: 0.4,
-              child: SizedBox(
-                width: 58,
-                child: DragValueField(
-                  value: tools.strokeWidth,
-                  min: 0,
-                  max: 1000,
-                  suffix: ' px',
-                  onChanged: (_) {},
-                ),
-              ),
-            ),
+          _Number(
+            label: 'Width',
+            tip: 'Outline width of a new shape, in pixels. Zero draws none.',
+            value: tools.strokeWidth,
+            min: 0,
+            max: 1000,
+            suffix: ' px',
+            onChanged: (v) => tools.strokeWidth = v,
           ),
         ],
       ],
@@ -386,30 +368,40 @@ class _ToolButtonState extends State<_ToolButton> {
     final member = widget.tools.memberOf(widget.group);
     final active = widget.tools.tool.group == widget.group;
     final members = ToolMode.membersOf(widget.group);
+    // A group nothing in which is built is on the strip but cannot be pressed
+    // (K-226): the tool set is the specification, and a button that visibly
+    // cannot be pressed says "coming" where a missing one says nothing.
+    final enabled = ToolMode.builtMembersOf(widget.group).isNotEmpty;
 
     // 15-DESIGN §5's icon states, exactly: secondary at rest, primary on hover,
-    // accent when this is the tool in your hand.
-    final colour = active
-        ? t.accent
-        : _hover
-            ? t.textPrimary
-            : t.textSecondary;
+    // accent when this is the tool in your hand — and muted for a group that
+    // cannot be armed at all.
+    final colour = !enabled
+        ? t.textDisabled
+        : active
+            ? t.accent
+            : _hover
+                ? t.textPrimary
+                : t.textSecondary;
 
     return LumitTooltip(
       message: _tooltip(context, member, members.length > 1),
       child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) => setState(() => _hover = true),
+        cursor: enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+        onEnter: (_) => setState(() => _hover = enabled),
         onExit: (_) => setState(() => _hover = false),
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onTap: () => widget.tools.select(member),
+          onTap: enabled ? () => widget.tools.select(member) : null,
           // Both routes to the hidden tools, because both are muscle memory:
           // After Effects opens the flyout on a press-and-hold, and every other
           // toolbar on this machine opens a menu on the right button.
-          onLongPress: members.length > 1 ? () => _openFlyout(context) : null,
-          onSecondaryTapUp:
-              members.length > 1 ? (_) => _openFlyout(context) : null,
+          onLongPress: enabled && members.length > 1
+              ? () => _openFlyout(context)
+              : null,
+          onSecondaryTapUp: enabled && members.length > 1
+              ? (_) => _openFlyout(context)
+              : null,
           child: AnimatedContainer(
             key: ValueKey<String>('tool-${widget.group.name}'),
             duration: animationDuration(scope.animationLevel),
@@ -457,7 +449,7 @@ class _ToolButtonState extends State<_ToolButton> {
     final parts = <String>[
       chord == null ? member.label : '${member.label} ($chord)',
       if (hasHidden) 'Hold or right-click for the rest of the group',
-      if (!member.ready) 'Not built yet — arming it changes nothing so far',
+      if (!member.ready) 'Not built yet — it cannot be armed until it is',
     ];
     return parts.join(' · ');
   }
@@ -507,14 +499,29 @@ class _ToolFlyout extends StatelessWidget {
             MenuRow(
               key: ValueKey<String>('tool-flyout-${member.name}'),
               selected: member == armed,
-              onPressed: () => onPick(member),
+              // A member that is not built is listed and does nothing when
+              // clicked (K-226) — the same rule the buttons follow.
+              onPressed: member.ready ? () => onPick(member) : () {},
               child: Row(
                 children: [
                   lumitIcon(member.icon,
                       size: iconSize,
-                      color: member == armed ? t.accent : t.textSecondary),
+                      color: !member.ready
+                          ? t.textDisabled
+                          : member == armed
+                              ? t.accent
+                              : t.textSecondary),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(member.label)),
+                  Expanded(
+                    child: Text(
+                      member.label,
+                      style: member.ready
+                          ? null
+                          : TextStyle(color: t.textDisabled),
+                    ),
+                  ),
+                  if (!member.ready)
+                    Text('Not built', style: t.small.copyWith(color: t.textDisabled)),
                 ],
               ),
             ),

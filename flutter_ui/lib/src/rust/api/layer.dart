@@ -16,8 +16,8 @@ import 'project_item.dart';
 import 'retime.dart';
 import 'solid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `assert_receiver_is_total_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -132,6 +132,11 @@ class BridgeLayerInfo {
   /// know a layer has some without asking per frame.
   final List<BridgeStroke> paint;
 
+  /// A shape layer's art (K-228), bottom first; empty on every other kind.
+  /// Carried for the same reason again — and for one more: the art *is* the
+  /// layer's size, so the Viewer's wireframe reads it here.
+  final List<BridgeShapeItem> shapeContents;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -150,6 +155,7 @@ class BridgeLayerInfo {
     this.retime,
     required this.masks,
     required this.paint,
+    required this.shapeContents,
   });
 
   @override
@@ -170,7 +176,8 @@ class BridgeLayerInfo {
       matte.hashCode ^
       retime.hashCode ^
       masks.hashCode ^
-      paint.hashCode;
+      paint.hashCode ^
+      shapeContents.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -193,7 +200,8 @@ class BridgeLayerInfo {
           matte == other.matte &&
           retime == other.retime &&
           masks == other.masks &&
-          paint == other.paint;
+          paint == other.paint &&
+          shapeContents == other.shapeContents;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
@@ -205,6 +213,9 @@ enum BridgeLayerKind {
   solid,
   precomp,
   text,
+
+  /// Vector art as the layer's own picture (K-228).
+  shape,
   camera,
   sequence,
   adjustment,
@@ -439,6 +450,65 @@ enum BridgeRevealKind {
   /// `UU`: groups holding anything changed from a fresh layer's state.
   modified,
   ;
+}
+
+/// One piece of vector art on a shape layer (K-228): a path, and how it is
+/// painted.
+///
+/// The path is `BridgeVertex`, the same vertices a mask crosses with: one path
+/// type in the document, drawn by two things.
+class BridgeShapeItem {
+  final UuidValue id;
+  final String name;
+  final List<BridgeVertex> vertices;
+  final bool closed;
+
+  /// The colour inside the path. `None` draws no fill.
+  final BridgeColourRgba? fill;
+
+  /// The outline's colour, and its width in layer pixels. `None` draws no
+  /// outline; a width of zero draws none either.
+  final BridgeColourRgba? stroke;
+  final double strokeWidth;
+
+  /// 0..100.
+  final double opacity;
+
+  const BridgeShapeItem({
+    required this.id,
+    required this.name,
+    required this.vertices,
+    required this.closed,
+    this.fill,
+    this.stroke,
+    required this.strokeWidth,
+    required this.opacity,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      vertices.hashCode ^
+      closed.hashCode ^
+      fill.hashCode ^
+      stroke.hashCode ^
+      strokeWidth.hashCode ^
+      opacity.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeShapeItem &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          vertices == other.vertices &&
+          closed == other.closed &&
+          fill == other.fill &&
+          stroke == other.stroke &&
+          strokeWidth == other.strokeWidth &&
+          opacity == other.opacity;
 }
 
 /// Where a layer sits on the comp timeline, in exact rational seconds.
@@ -738,6 +808,10 @@ class LayerReference {
   void addMask({required BridgeMask mask}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceAddMask(that: this, mask: mask);
 
+  /// Add one piece of art on top of this shape layer's stack.
+  void addShapeItem({required BridgeShapeItem item}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceAddShapeItem(that: this, item: item);
+
   /// Add `stroke` on top of this layer's paint.
   ///
   /// The whole list is committed, because that is the op the engine has and
@@ -921,6 +995,15 @@ class LayerReference {
   /// hides the row.
   BridgeScalar? getRetimeProperty() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetRetimeProperty(
+        that: this,
+      );
+
+  /// This shape layer's contents, bottom of the stack first (K-228).
+  ///
+  /// Empty on a layer that is not a shape, rather than an error: the Timeline
+  /// asks every row what it has to list, exactly as it asks about masks.
+  List<BridgeShapeItem> getShapeContents() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetShapeContents(
         that: this,
       );
 
@@ -1151,6 +1234,18 @@ class LayerReference {
   /// reverse gate open, which the engine enforces at evaluation.
   void setRetimeSpeed({required double percent}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetRetimeSpeed(that: this, percent: percent);
+
+  /// Replace this shape layer's whole contents.
+  ///
+  /// The whole list, exactly invertible (`SetShapeContents`), the same shape
+  /// of edit as a mask list or a paint list: an add, a delete, a recolour and
+  /// a path edit are one kind of thing and each is one undo step.
+  ///
+  /// A path of fewer than two vertices is refused, as a mask's is: it is not
+  /// a shape, and it would be a Timeline row with nothing behind it.
+  void setShapeContents({required List<BridgeShapeItem> contents}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetShapeContents(
+          that: this, contents: contents);
 
   /// Move or trim the layer. One op, so a drag that changes the in point and
   /// the start offset together — a slip edit — is still one undo step.

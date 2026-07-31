@@ -24,6 +24,9 @@ pub enum SourceRef {
     Solid(Uuid),
     Precomp(Uuid),
     Text,
+    /// Vector art rasterised from the layer's own contents (K-228). Like Text,
+    /// it has no asset behind it: the art *is* the layer.
+    Shape,
     Sequence,
 }
 
@@ -210,6 +213,7 @@ fn source_ref(kind: &LayerKind) -> Option<SourceRef> {
         LayerKind::Solid { def } => SourceRef::Solid(*def),
         LayerKind::Precomp { comp } => SourceRef::Precomp(*comp),
         LayerKind::Text { .. } => SourceRef::Text,
+        LayerKind::Shape { .. } => SourceRef::Shape,
         LayerKind::Sequence { .. } => SourceRef::Sequence,
         // Three kinds have no source of their own. An Adjustment layer is
         // handled before this point (it wraps what is below it); a Camera and a

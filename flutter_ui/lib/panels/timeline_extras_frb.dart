@@ -602,6 +602,8 @@ LumitIcon iconForKind(BridgeLayerKind kind) => switch (kind) {
       BridgeLayerKind.sequence => LumitIcon.sequence,
       BridgeLayerKind.precomp => LumitIcon.comp,
       BridgeLayerKind.text => LumitIcon.text,
+      // Vector art, drawn as the shape tool that usually makes it (K-228).
+      BridgeLayerKind.shape => LumitIcon.rectangle,
       BridgeLayerKind.camera => LumitIcon.camera,
       // An adjustment layer is a comp-sized effect container, drawn as a solid —
       // the same choice layer_style.dart and the egui frontend make.

@@ -763,6 +763,17 @@ fn feed_source(
             // hashed at the layer level like any other layer's.
             h.update(b"adjust");
         }
+        LayerKind::Shape { contents } => {
+            // The art *is* the layer, so the art is what the key hashes: a
+            // moved vertex or a recoloured fill must retire the cached frames
+            // that drew the old one. Serialised rather than hashed field by
+            // field, so a new field on a shape item cannot quietly stop
+            // counting.
+            h.update(b"shape/");
+            if let Ok(json) = serde_json::to_vec(contents) {
+                h.update(&json);
+            }
+        }
         LayerKind::Null => {
             // No source of its own and no pixels. Only its transform matters,
             // and the caller hashes that at the layer level like every other

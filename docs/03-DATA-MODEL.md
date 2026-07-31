@@ -369,6 +369,39 @@ it. The op is `SetLayerPaint` — the whole list, exactly invertible, like `SetL
 start and end times), per-stroke blending modes, and a GPU stamping path. None of them changes
 the shape above.
 
+### 7.2 Shape layers (K-228)
+
+```rust
+LayerKind::Shape { contents: Vec<ShapeItem> }
+
+struct ShapeItem {
+    id: Uuid,
+    name: String,
+    path: BezierPath,                 // the mask's path type, unchanged
+    fill: Option<LinearColour>,       // None draws no fill
+    stroke: Option<LinearColour>,     // None, or a zero width, draws no outline
+    stroke_width: f64,                // layer pixels
+    opacity: f64,                     // 0..100
+}
+```
+
+A shape layer's art **is** its picture: vector paths rasterised at whatever resolution the
+frame is rendered at, so they stay crisp at any scale. The path type is the mask's, deliberately
+— a shape's path and a mask's path differ in what they do, not in what they are.
+
+The list is **flat**: After Effects' nested groups exist to carry its shape modifiers (repeater,
+trim paths, wiggle), and none of those are built.
+
+**The layer's natural size is the box its art fills**, bounding the curves by their control
+points, and it *changes as the art is edited* — the only layer kind whose size is not fixed by
+its source. Anything caching a layer's size must key on the document revision.
+
+The op is `SetShapeContents` — the whole list, exactly invertible, like `SetLayerMasks` and
+`SetLayerPaint`.
+
+**Future:** nested groups and the shape modifiers, gradient fills, dashed strokes, joins and
+caps other than round, and animated paths.
+
 ## 8. Effects
 
 ```rust

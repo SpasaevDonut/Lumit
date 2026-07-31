@@ -16,6 +16,7 @@
 // blocks a paint: while a probe is in flight the layer falls back to the comp's
 // own size, and the answer arriving repaints whoever is listening.
 
+import 'dart:math' as math;
 import 'dart:ui' show Size;
 
 import 'package:flutter/foundation.dart';
@@ -32,6 +33,34 @@ import 'package:uuid/uuid.dart';
 /// After Effects' own, and the transform the engine gives a new Null anchors on
 /// the same square.
 const Size nullLayerBounds = Size(100, 100);
+
+/// The box a shape layer's art fills, in the layer's own coordinates, or null
+/// when there is no art (K-228).
+///
+/// The **control points** bound the curve rather than the curve itself — a cubic
+/// never leaves its own control hull — which is the same rule `lumit-core`'s
+/// `shape::ShapeItem::bounds` follows. The two must agree: the engine sizes the
+/// raster with its version and the wireframe is drawn from this one.
+Size? shapeContentsBounds(List<BridgeShapeItem> contents) {
+  double? minX, minY, maxX, maxY;
+  for (final item in contents) {
+    final half = item.stroke != null ? item.strokeWidth / 2 : 0.0;
+    for (final v in item.vertices) {
+      for (final (x, y) in [
+        (v.x, v.y),
+        (v.x + v.tanInX, v.y + v.tanInY),
+        (v.x + v.tanOutX, v.y + v.tanOutY),
+      ]) {
+        minX = minX == null ? x - half : math.min(minX, x - half);
+        minY = minY == null ? y - half : math.min(minY, y - half);
+        maxX = maxX == null ? x + half : math.max(maxX, x + half);
+        maxY = maxY == null ? y + half : math.max(maxY, y + half);
+      }
+    }
+  }
+  if (minX == null || minY == null || maxX == null || maxY == null) return null;
+  return Size(math.max(maxX - minX, 1), math.max(maxY - minY, 1));
+}
 
 /// Every layer's own size, answered from the document and remembered.
 class LayerBoundsCache extends ChangeNotifier {
@@ -87,6 +116,16 @@ class LayerBoundsCache extends ChangeNotifier {
     // A Null never draws, so its box is the convention above rather than
     // anything read from the document.
     if (entry.info.kind == BridgeLayerKind.nullLayer) return nullLayerBounds;
+
+    // A shape layer is exactly as big as its art, and **that changes as the art
+    // is edited** (K-228) — the first kind whose size is not fixed by a source.
+    // The cache follows the document's revision, so it keeps up; this comment
+    // is here because the rest of this file was written when "a layer's size"
+    // was a constant.
+    if (entry.info.kind == BridgeLayerKind.shape) {
+      final art = shapeContentsBounds(entry.info.shapeContents);
+      return art ?? _compSize(compSize);
+    }
 
     final ItemReference? source;
     try {
