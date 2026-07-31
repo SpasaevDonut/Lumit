@@ -4904,3 +4904,33 @@ free. So the frame now brings the tier with it — the only thing that can chang
 it is a new frame — and the route is read once and kept. A redrawn Viewer bar
 now asks the engine nothing at all, and there is a test that counts the
 crossings and fails if that stops being true.
+
+### Why a bigger cache made the disk one useless
+
+A hole in the three-tier cache, and an instructive one: the symptom was the
+opposite of what you would guess from the cause.
+
+A frame got onto disk one way. The card's cache filled up, a frame was pushed
+out to make room, and on its way out it was read back and written to disk. That
+works — as long as the cache *fills up*. Give it more memory than a session ever
+uses, say 10 GB on a roomy card, and it never fills, so nothing is ever pushed
+out, so nothing is ever written to disk. The tier whose only job is to make
+tomorrow start warm stayed completely empty. And the more memory you gave the
+cache, the more certain that became.
+
+It was also silent. The cache bar was green all session, because the frames
+really were held — on the card. Then you restarted and it was blank, because
+none of them had ever reached a file.
+
+The ladder now has a second way down, for when there is time to spare. Each time
+the editor has been idle for a moment, one held frame that is not on disk yet is
+copied down. The frame stays on the card and keeps serving the Viewer; what
+travels is a copy. It uses the same non-blocking read-back an eviction uses — ask
+the card for the pixels, collect them a moment later — and no more of those may
+be in flight than before, so it cannot get in the picture's way.
+
+One detail worth the sentence: the backup runs *alongside* the fill that renders
+new frames, not after it. Waiting for the fill to finish sounds tidier, but on a
+long composition the fill has frames to make for as long as the memory lasts —
+so "after the fill" would have meant "never", which is exactly how long the disk
+tier stayed empty.

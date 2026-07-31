@@ -92,6 +92,10 @@ pub struct WorkerState {
     /// playhead is held, or the budget is full). Cleared whenever the anchor,
     /// the document or the budget moves.
     fill_exhausted: bool,
+    /// True when every frame held on the card is on disk as well, so the idle
+    /// backup has nothing to copy ([`idle_backup`]). Cleared whenever a frame
+    /// is banked or the disk tier is re-opened, since either can make work.
+    backup_exhausted: bool,
     /// When the last request arrived — the fill waits out a ~200 ms lull
     /// after it (docs/06 §5.5), so a scrub in progress is never contended.
     last_request: std::time::Instant,
@@ -204,6 +208,10 @@ fn sync_caches(state: &mut WorkerState) {
     if (used as u64, entries as u64) != state.published_vram {
         state.published_vram = (used as u64, entries as u64);
         crate::framecache::vram::publish(used as u64, entries as u64);
+        // What the card holds has changed, thus there may be something new to
+        // copy down. Cheaper than asking the backup itself, which would walk
+        // every held frame to find out.
+        state.backup_exhausted = false;
     }
 
     sync_disk(state);
@@ -228,8 +236,10 @@ fn sync_disk(state: &mut WorkerState) {
             .tx
             .send(lumit_render::diskio::Cmd::SetRoot(root.clone()));
         // A different folder holds different frames, so there may be something
-        // to promote again.
+        // to promote again — and everything held is unparked as far as the new
+        // folder is concerned, thus there is a backup to make.
         state.fill_exhausted = false;
+        state.backup_exhausted = false;
     }
     let budget = crate::framecache::disk::budget();
     if budget != state.applied_disk_budget {
@@ -740,6 +750,46 @@ fn prepare_frame(
     state
         .renderer
         .render_prepared_named(document, comp, frame, quality, bgra, name)
+}
+
+/// Copy ONE held frame down to disk while the editor is idle — so a session
+/// that never fills the card's cache still leaves something for tomorrow.
+///
+/// # Why this exists
+///
+/// A frame used to reach the disk tier by one route only: it was pushed out of
+/// the card's cache, read back on the way down, and parked. That route needs the
+/// cache to be **full**. Give it a budget bigger than a session ever fills —
+/// 10 GB on a roomy card — and it is never full, nothing is ever pushed out, and
+/// nothing is ever written to disk. The tier whose whole purpose is to make
+/// tomorrow start warm stayed empty, and the *more* memory the user gave the
+/// cache the more certainly it stayed empty. Exactly the wrong way round, and
+/// invisible: the cache bar was green all session, and green again as nothing
+/// after a restart.
+///
+/// So the ladder has a second way down, used only when there is time to spare.
+/// The frame stays on the card and keeps serving the Viewer; a copy goes to
+/// memory and to disk. One frame per turn, and never more than the read-backs
+/// already in flight allow, so this can never compete with the picture.
+///
+/// It runs on the same lull as the fill but is *not* gated on the fill being
+/// finished: on a long composition the fill has frames to make for as long as
+/// the budget lasts, and waiting for it to run out would mean waiting for ever.
+#[frb(ignore)]
+fn idle_backup(state: &mut WorkerState) {
+    // Nowhere to put them: the disk tier is off (no project folder yet, or no
+    // home directory). Nothing to do until that changes, which `sync_disk`
+    // reports by clearing the flag.
+    if state.seen_disk_location.1.is_none() {
+        state.backup_exhausted = true;
+        return;
+    }
+    // Two disjoint borrows of the worker's state: the renderer walks its held
+    // frames, the disk mirror answers which of them are already parked.
+    let disk = &state.disk;
+    if !state.renderer.start_backup(&|hash| disk.contains(hash)) {
+        state.backup_exhausted = true;
+    }
 }
 
 /// Render ONE uncached frame near the playhead into the VRAM frame cache —
@@ -1262,6 +1312,7 @@ fn worker_loop(
         bar_refined_to: 0,
         bar_published_at: std::time::Instant::now() - BAR_MIN_INTERVAL,
         fill_exhausted: true,
+        backup_exhausted: true,
         last_request: std::time::Instant::now(),
         layer_sample: None,
     };
@@ -1287,7 +1338,9 @@ fn worker_loop(
                 }
             }
         } else {
-            let wait = if state.fill_exhausted {
+            // Idle work of any kind means come back soon; with none left, wait
+            // long enough that an idle editor costs nothing.
+            let wait = if state.fill_exhausted && state.backup_exhausted {
                 std::time::Duration::from_millis(200)
             } else {
                 std::time::Duration::from_millis(2)
@@ -1297,8 +1350,18 @@ fn worker_loop(
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                     let lull =
                         state.last_request.elapsed() >= std::time::Duration::from_millis(200);
-                    if !state.fill_exhausted && lull {
-                        idle_fill(&mut state, &mut stream);
+                    if lull {
+                        if !state.fill_exhausted {
+                            idle_fill(&mut state, &mut stream);
+                        }
+                        // Alongside the fill, not after it. On a long
+                        // composition the fill has frames to make for as long as
+                        // the budget lasts, thus "when the fill is finished"
+                        // would mean "never" — and never is how long the disk
+                        // tier stayed empty.
+                        if !state.backup_exhausted {
+                            idle_backup(&mut state);
+                        }
                     }
                     None
                 }

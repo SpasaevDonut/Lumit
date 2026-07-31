@@ -511,6 +511,28 @@ disk). It yields to any interactive request via epoch cancellation and is the fi
 degradation ladder pauses. Concurrency adapts to measured per-frame cost and memory headroom
 (the MFR lesson) — never a fixed thread count.
 
+**As built.** The fill renders one frame per idle turn, forward-biased two frames ahead for
+each one behind, after a ~200 ms lull.
+
+**And a second job runs on the same lull: the idle backup.** A frame reached the disk tier by
+one route only — pushed out of the VRAM cache, read back on the way down, parked. That route
+needs the cache to be *full*. Give it a budget larger than a session ever fills (10 GB on a
+roomy card) and it is never full, thus nothing is ever pushed out, thus **nothing is ever
+written to disk**: the more memory the user gives the cache, the more certainly the tier that
+exists to make tomorrow start warm stays empty. The failure is silent — the bar is green all
+session, and blank again after a restart.
+
+So the ladder has a second way down. On each idle lull, one held frame that is not yet parked
+is copied down: the frame stays on the card and keeps serving the Viewer, and a copy goes to
+memory and to disk. The copy is the same non-blocking read-back an eviction uses and is bounded
+by the same in-flight ceiling, thus it can never compete with the picture. A frame that has been
+copied down is marked as held below, so the day it *is* pushed out it goes without being read a
+second time.
+
+The backup runs **alongside** the fill rather than after it. On a long composition the fill has
+frames to make for as long as the budget lasts, so "when the fill is finished" would mean
+"never" — which is how long the disk tier stayed empty.
+
 ### 5.6 Cache bars
 
 The timeline shows, per comp, a per-frame strip: **green** — final frame in RAM or VRAM at
