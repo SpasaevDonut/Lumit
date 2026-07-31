@@ -60,6 +60,8 @@ import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 import 'viewer_rotate.dart';
 import 'viewer_shape_layer.dart';
+import 'viewer_tool_cursor.dart';
+import 'viewer_type.dart';
 import 'viewer_zoom.dart';
 
 /// The magnifications the picker offers. `null` means fit-to-panel, which is
@@ -589,18 +591,24 @@ class _Stage extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     // Listened to rather than read: the tool is armed from the toolbar, which
-    // is not in this panel's rebuild path, so without this the pointer would
-    // only catch up the next time something else redrew the Viewer.
+    // is not in this panel's rebuild path, so without this neither the pointer
+    // nor the tool overlays would catch up until something else redrew the
+    // Viewer. The whole stage is inside the builder for that reason — handing
+    // it in as a cached `child` kept the *pointer* current while every tool
+    // layer under it stayed armed for whichever tool was in hand when the panel
+    // last rebuilt (K-223).
     return ListenableBuilder(
       listenable: uiState.tools,
-      builder: (context, child) => MouseRegion(
-        // What the armed tool changes over the picture today: the pointer. The
-        // gestures each tool performs are not built (K-214) — the cursor is how
-        // the Viewer says which one it has been handed.
+      builder: (context, _) => MouseRegion(
+        // Which pointer the armed tool wears over the picture.
         cursor: viewerCursorFor(uiState.tools.tool),
-        child: child,
+        child: _stage(context, t),
       ),
-      child: GestureDetector(
+    );
+  }
+
+  Widget _stage(BuildContext context, LumitTheme t) {
+    return GestureDetector(
         behavior: HitTestBehavior.opaque,
         // Panning the picture, not the layer: the overlay's own handle takes
         // the gesture first when it is hit, so this only fires on empty space.
@@ -645,16 +653,46 @@ class _Stage extends StatelessWidget {
                   onChanged: onChanged,
                 ),
               ),
-              // The shape tools: a drag draws a mask on the selected layer, and
-              // the polygon tool builds one point by point (K-220).
+              // The shape tools and the Pen: a drag draws a mask on the
+              // selected layer, and the Pen builds one point by point (K-220,
+              // K-221).
               ViewerShapeLayer(
-                active: uiState.tools.tool.group == ToolGroup.shape,
+                active: uiState.tools.tool.group == ToolGroup.shape ||
+                    uiState.tools.tool == ToolMode.pen,
                 tool: uiState.tools.tool,
                 state: Provider.of<LumitState>(context, listen: false),
                 uiState: uiState,
                 boxes: _boxes(),
                 accent: t.accent,
                 onChanged: onChanged,
+              ),
+              // The Type tool: a click makes or edits a text layer, and what
+              // is typed is previewed until the edit ends (K-223).
+              ViewerTypeLayer(
+                active: uiState.tools.tool.group == ToolGroup.type,
+                tool: uiState.tools.tool,
+                comp: comp,
+                state: Provider.of<LumitState>(context, listen: false),
+                uiState: uiState,
+                boxes: _boxes(),
+                fitted: fitted,
+                compSize: Size(
+                  compSize.width.toDouble(),
+                  compSize.height.toDouble(),
+                ),
+                accent: t.accent,
+                onChanged: onChanged,
+              ),
+              // The painting tools: their own pointers, and a notice saying
+              // why nothing is painted (K-224).
+              ViewerPaintPointerLayer(
+                active: uiState.tools.tool.group == ToolGroup.paint,
+                tool: uiState.tools.tool,
+                state: Provider.of<LumitState>(context, listen: false),
+                uiState: uiState,
+                viewScale: compSize.width == 0
+                    ? 1.0
+                    : fitted.width / compSize.width,
               ),
               // The Anchor point tool: its own pointer, and a drag that slides
               // the pivot while the picture stays still (K-218).
@@ -695,7 +733,6 @@ class _Stage extends StatelessWidget {
             ],
           ),
         ),
-      ),
     );
   }
 

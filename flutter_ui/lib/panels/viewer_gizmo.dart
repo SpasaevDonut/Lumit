@@ -239,6 +239,63 @@ class LayerBox {
   }
 }
 
+/// One vertex of one mask, named so a selection can hold it: which layer, which
+/// mask, and which point along it (K-222).
+///
+/// A plain string rather than a record, because it is a *set* key: two points
+/// are the same point when their names match, and a string says that without a
+/// hashCode to write.
+String maskPointKey(UuidValue layerId, UuidValue maskId, int index) =>
+    '$layerId#$maskId#$index';
+
+/// Every mask vertex of [box], with where it sits on screen and the key that
+/// names it.
+List<({String key, Offset at, UuidValue maskId, int index})> maskPointsOf(
+    LayerBox box) {
+  final out = <({String key, Offset at, UuidValue maskId, int index})>[];
+  for (final mask in box.masks) {
+    for (var i = 0; i < mask.vertices.length; i++) {
+      final v = mask.vertices[i];
+      out.add((
+        key: maskPointKey(box.id, mask.id, i),
+        at: box.map.toScreen(v.x, v.y),
+        maskId: mask.id,
+        index: i,
+      ));
+    }
+  }
+  return out;
+}
+
+/// The mask point under [point] across [boxes], or null when none is near
+/// enough. Nearest wins, so two points close together do not fight.
+({LayerBox box, String key, UuidValue maskId, int index})? maskPointAt(
+  List<LayerBox> boxes,
+  Offset point, {
+  double slop = gizmoAnchorSlop / 2,
+}) {
+  ({LayerBox box, String key, UuidValue maskId, int index})? best;
+  var bestDistance = slop;
+  for (final box in boxes) {
+    for (final p in maskPointsOf(box)) {
+      final d = (p.at - point).distance;
+      if (d <= bestDistance) {
+        bestDistance = d;
+        best = (box: box, key: p.key, maskId: p.maskId, index: p.index);
+      }
+    }
+  }
+  return best;
+}
+
+/// Every mask point of [boxes] inside [rect] — what a marquee catches when it
+/// is sweeping points rather than layers.
+Set<String> maskPointsInRect(List<LayerBox> boxes, Rect rect) => {
+      for (final box in boxes)
+        for (final p in maskPointsOf(box))
+          if (rect.contains(p.at)) p.key,
+    };
+
 /// Which layer a click at [point] lands on: the topmost whose box contains it.
 ///
 /// [boxes] is in stacking order, top first — the order the read model reports
@@ -316,7 +373,7 @@ double rotationForDrag({
 }
 
 /// What the pointer is doing to the picture right now.
-enum _GizmoDrag { none, move, scale, rotate, anchor, marquee }
+enum _GizmoDrag { none, move, scale, rotate, anchor, points, marquee }
 
 /// The layer controls over the picture.
 class ViewerGizmoLayer extends StatefulWidget {
@@ -389,6 +446,14 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
   /// The layer under the pointer, drawn faintly so a click is predictable.
   UuidValue? _hover;
 
+  /// The mask points that are selected, by [maskPointKey] (K-222).
+  ///
+  /// Points, not layers: with a mask on the picture the same marquee that
+  /// gathers layers gathers *vertices*, and a drag then moves them. Which of
+  /// the two a gesture means is decided by what is under it — a press on a
+  /// point edits the path, a press anywhere else is the layer's.
+  final Set<String> _points = {};
+
   final PreviewThrottle _throttle = PreviewThrottle();
 
   @override
@@ -427,6 +492,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         // cannot judge, and until mask editing exists this outline is the only
         // sight of one on the picture (K-220).
         maskedBoxes: widget.showControls ? selected : const [],
+        selectedPoints: _points,
+        pointNudge: _drag == _GizmoDrag.points ? _delta : Offset.zero,
         anchors: widget.showControls && widget.showAnchors
             ? [for (final box in selected) box.anchorScreen]
             : const [],
@@ -491,10 +558,31 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
   /// A click selects what is under it — with Shift, adds to or removes from the
   /// selection; on empty space, selects nothing.
   void _onTapUp(TapUpDetails details) {
-    final hit = layerAtPoint(widget.boxes, details.localPosition);
     final shift = HardwareKeyboard.instance.isShiftPressed;
+    // A mask point first: it sits on top of the layer it belongs to, and a
+    // click on it means the point rather than the layer.
+    final point = widget.showControls
+        ? maskPointAt(_selected, details.localPosition)
+        : null;
+    if (point != null) {
+      setState(() {
+        if (!shift) {
+          _points
+            ..clear()
+            ..add(point.key);
+        } else if (!_points.remove(point.key)) {
+          _points.add(point.key);
+        }
+      });
+      return;
+    }
+
+    final hit = layerAtPoint(widget.boxes, details.localPosition);
     if (hit == null) {
-      if (!shift) widget.uiState.clearSelection();
+      if (!shift) {
+        setState(_points.clear);
+        widget.uiState.clearSelection();
+      }
       return;
     }
     if (shift) {
@@ -535,13 +623,30 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
       }
     }
 
+    // A mask point, on a layer that is selected: dragging it edits the path.
+    // Only on selected layers, because a stray point of some layer underneath
+    // must not steal a press meant for the picture.
+    final point = widget.showControls
+        ? maskPointAt(_selected, at)
+        : null;
+    if (point != null) {
+      setState(() {
+        if (!_points.contains(point.key)) {
+          if (!HardwareKeyboard.instance.isShiftPressed) _points.clear();
+          _points.add(point.key);
+        }
+        _drag = _GizmoDrag.points;
+      });
+      return;
+    }
+
     final hit = layerAtPoint(widget.boxes, at);
     if (hit == null) {
-      // Empty picture: rubber-band. Shift keeps what is already selected, so a
-      // marquee can add to a selection made by clicking.
-      if (!HardwareKeyboard.instance.isShiftPressed) {
-        widget.uiState.clearSelection();
-      }
+      // Empty picture: rubber-band. The selection is left alone until the band
+      // is let go — partly so the boxes stay on screen while it is drawn, and
+      // partly because a sweep over a *selected* layer's mask points gathers
+      // points (K-222), which it could not do if the press had already dropped
+      // the layer they belong to.
       setState(() => _drag = _GizmoDrag.marquee);
       return;
     }
@@ -572,6 +677,10 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         _previewRotate();
       case _GizmoDrag.anchor:
         _previewAnchor();
+      // The points follow the pointer as they are dragged; the picture catches
+      // up on release. A mask preview would mean patching a path into the
+      // engine's clone, which the preview call has no room for.
+      case _GizmoDrag.points:
       case _GizmoDrag.marquee || _GizmoDrag.none:
         break;
     }
@@ -587,6 +696,8 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
         _commitRotate();
       case _GizmoDrag.anchor:
         _commitAnchor();
+      case _GizmoDrag.points:
+        _commitPoints();
       case _GizmoDrag.marquee:
         _commitMarquee();
       case _GizmoDrag.none:
@@ -827,6 +938,64 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     }
   }
 
+  // --- Mask points ----------------------------------------------------------
+
+  /// Write every dragged point's new position (K-222).
+  ///
+  /// The drag is a screen delta; each point is moved in its **own layer's**
+  /// space, so a selection spanning two layers with different transforms still
+  /// moves together on screen. One `set_mask` per mask, which is one undo step
+  /// per mask — the same rule the razor follows for a multi-layer cut.
+  void _commitPoints() {
+    if (_delta == Offset.zero || _points.isEmpty) return;
+    var landed = false;
+    for (final box in _selected) {
+      for (final mask in box.masks) {
+        final moved = <int>[
+          for (var i = 0; i < mask.vertices.length; i++)
+            if (_points.contains(maskPointKey(box.id, mask.id, i))) i,
+        ];
+        if (moved.isEmpty) continue;
+        // The delta in this layer's coordinates: two points on the picture,
+        // subtracted, so the layer's scale and rotation are undone exactly.
+        final origin = box.map.layerOf(Offset.zero);
+        final shifted = box.map.layerOf(_delta);
+        final dx = shifted.dx - origin.dx;
+        final dy = shifted.dy - origin.dy;
+        final vertices = [
+          for (var i = 0; i < mask.vertices.length; i++)
+            if (moved.contains(i))
+              BridgeVertex(
+                x: mask.vertices[i].x + dx,
+                y: mask.vertices[i].y + dy,
+                tanInX: mask.vertices[i].tanInX,
+                tanInY: mask.vertices[i].tanInY,
+                tanOutX: mask.vertices[i].tanOutX,
+                tanOutY: mask.vertices[i].tanOutY,
+              )
+            else
+              mask.vertices[i],
+        ];
+        try {
+          box.layer.setMask(
+            mask: BridgeMask(
+              id: mask.id,
+              name: mask.name,
+              vertices: vertices,
+              closed: mask.closed,
+              inverted: mask.inverted,
+              opacity: mask.opacity,
+            ),
+          );
+          landed = true;
+        } catch (_) {
+          // The mask went away mid-drag; the rest still move.
+        }
+      }
+    }
+    if (landed) widget.onChanged();
+  }
+
   // --- Marquee --------------------------------------------------------------
 
   void _commitMarquee() {
@@ -834,6 +1003,22 @@ class _ViewerGizmoLayerState extends State<ViewerGizmoLayer> {
     // A stray click that happened to be read as a tiny drag should not clear a
     // selection the user just made another way.
     if (rect.width < 3 && rect.height < 3) return;
+
+    // A sweep over a selected layer's mask points gathers **points** (K-222):
+    // with a path on screen that is what a rubber band means, and the layers
+    // are already selected anyway. With none caught it is the layer sweep it
+    // has always been.
+    if (widget.showControls) {
+      final caughtPoints = maskPointsInRect(_selected, rect);
+      if (caughtPoints.isNotEmpty) {
+        setState(() {
+          if (!HardwareKeyboard.instance.isShiftPressed) _points.clear();
+          _points.addAll(caughtPoints);
+        });
+        return;
+      }
+    }
+    setState(_points.clear);
     final caught = layersInsideRect(widget.boxes, rect);
     final shift = HardwareKeyboard.instance.isShiftPressed;
     final layers = <LayerReference>[
@@ -904,6 +1089,11 @@ class _GizmoPainter extends CustomPainter {
 
   /// The boxes whose masks are outlined.
   final List<LayerBox> maskedBoxes;
+
+  /// The mask points that are selected, and how far a drag has moved them so
+  /// far — so the path follows the pointer before the document hears about it.
+  final Set<String> selectedPoints;
+  final Offset pointNudge;
   final LayerBox? hover;
   final LayerBox? handlesFor;
 
@@ -918,6 +1108,8 @@ class _GizmoPainter extends CustomPainter {
   const _GizmoPainter({
     required this.selected,
     required this.maskedBoxes,
+    required this.selectedPoints,
+    required this.pointNudge,
     required this.hover,
     required this.handlesFor,
     required this.anchors,
@@ -1020,22 +1212,40 @@ class _GizmoPainter extends CustomPainter {
   /// is moved or turned.
   void _maskOutline(Canvas canvas, LayerBox box, BridgeMask mask) {
     if (mask.vertices.length < 2) return;
-    Offset at(BridgeVertex v) => box.map.toScreen(v.x, v.y) + moved;
-    Offset out(BridgeVertex v) =>
-        box.map.toScreen(v.x + v.tanOutX, v.y + v.tanOutY) + moved;
-    Offset into(BridgeVertex v) =>
-        box.map.toScreen(v.x + v.tanInX, v.y + v.tanInY) + moved;
+    // A selected point follows the pointer while it is being dragged, so the
+    // path bends live rather than jumping on release.
+    Offset nudgeFor(int i) =>
+        selectedPoints.contains(maskPointKey(box.id, mask.id, i))
+            ? pointNudge
+            : Offset.zero;
+    Offset at(int i) {
+      final v = mask.vertices[i];
+      return box.map.toScreen(v.x, v.y) + moved + nudgeFor(i);
+    }
 
-    final path = Path()..moveTo(at(mask.vertices.first).dx, at(mask.vertices.first).dy);
+    Offset out(int i) {
+      final v = mask.vertices[i];
+      return box.map.toScreen(v.x + v.tanOutX, v.y + v.tanOutY) +
+          moved +
+          nudgeFor(i);
+    }
+
+    Offset into(int i) {
+      final v = mask.vertices[i];
+      return box.map.toScreen(v.x + v.tanInX, v.y + v.tanInY) +
+          moved +
+          nudgeFor(i);
+    }
+
+    final path = Path()..moveTo(at(0).dx, at(0).dy);
     for (var i = 1; i < mask.vertices.length; i++) {
-      final a = mask.vertices[i - 1];
-      final b = mask.vertices[i];
-      path.cubicTo(out(a).dx, out(a).dy, into(b).dx, into(b).dy, at(b).dx, at(b).dy);
+      path.cubicTo(
+          out(i - 1).dx, out(i - 1).dy, into(i).dx, into(i).dy, at(i).dx, at(i).dy);
     }
     if (mask.closed && mask.vertices.length > 2) {
-      final a = mask.vertices.last;
-      final b = mask.vertices.first;
-      path.cubicTo(out(a).dx, out(a).dy, into(b).dx, into(b).dy, at(b).dx, at(b).dy);
+      final last = mask.vertices.length - 1;
+      path.cubicTo(
+          out(last).dx, out(last).dy, into(0).dx, into(0).dy, at(0).dx, at(0).dy);
       path.close();
     }
     canvas.drawPath(
@@ -1045,13 +1255,24 @@ class _GizmoPainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1,
     );
-    // A small square on every vertex, the mark mask editing will grab when it
-    // is built (docs/TODO.md).
-    for (final v in mask.vertices) {
-      canvas.drawRect(
-        Rect.fromCenter(center: at(v), width: 5, height: 5),
-        Paint()..color = accent,
-      );
+
+    // Every vertex, so a path can be seen point by point (K-222): hollow when
+    // it is merely there, filled when it is selected — the same "outline means
+    // available, fill means chosen" the keyframe diamonds use.
+    for (var i = 0; i < mask.vertices.length; i++) {
+      final selected =
+          selectedPoints.contains(maskPointKey(box.id, mask.id, i));
+      final rect = Rect.fromCenter(center: at(i), width: 6, height: 6);
+      canvas.drawRect(rect, Paint()..color = selected ? accent : surface);
+      if (!selected) {
+        canvas.drawRect(
+          rect,
+          Paint()
+            ..color = accent
+            ..strokeWidth = 1
+            ..style = PaintingStyle.stroke,
+        );
+      }
     }
   }
 

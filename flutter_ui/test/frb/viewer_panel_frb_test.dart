@@ -24,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/panels/viewer_tool_cursor.dart';
 import 'package:lumit_flutter/panels/viewer_zoom.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/tools.dart';
@@ -35,6 +36,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/widgets/dropper_overlay.dart';
+import 'package:uuid/uuid.dart';
 
 import 'frb_test_support.dart';
 
@@ -1027,10 +1029,10 @@ void main() {
               'not built — docs/TODO.md)');
     });
 
-    testWidgets('the polygon tool places points and closes on the first one',
+    testWidgets('the Pen places points and closes on the first one',
         (tester) async {
       final p = withLayer();
-      p.uiState.tools.select(ToolMode.shapePolygon);
+      p.uiState.tools.select(ToolMode.pen);
       await mount(tester, p);
 
       final fitted = fittedRect(tester, p.comp);
@@ -1050,9 +1052,234 @@ void main() {
 
       final masks = p.layer.getMasks();
       expect(masks, hasLength(1));
-      expect(masks.single.name, 'Polygon');
+      expect(masks.single.name, 'Path');
       expect(masks.single.vertices, hasLength(3));
       expect(masks.single.closed, isTrue);
+    });
+
+    testWidgets('the polygon tool drags out a five-sided mask', (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.shapePolygon);
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture =
+          await tester.startGesture(fitted.center - const Offset(70, 70));
+      await tester.pump();
+      await gesture.moveTo(fitted.center);
+      await tester.pump();
+      await gesture.moveTo(fitted.center + const Offset(70, 70));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final masks = p.layer.getMasks();
+      expect(masks, hasLength(1));
+      expect(masks.single.name, 'Polygon');
+      expect(masks.single.vertices, hasLength(5),
+          reason: 'a polygon is a shape you drag out, not a path you build '
+              '(K-221)');
+    });
+
+    /// Mask points are editable on the picture (K-222): they draw as squares on
+    /// the path, a marquee gathers them, and dragging moves them.
+    testWidgets('a mask\'s points can be swept up and dragged', (tester) async {
+      final p = withLayer();
+      // A small rectangle mask in the middle of the comp, so its points sit
+      // well inside the picture.
+      p.layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Rectangle',
+          vertices: const [
+            BridgeVertex(
+                x: 860, y: 440, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 1060, y: 440, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 1060, y: 640, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 860, y: 640, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final before = p.layer.getMasks().single.vertices;
+      final fitted = fittedRect(tester, p.comp);
+      // Where the mask's top-left point is on screen: layer space maps 1:1 to
+      // the comp here, so it is the fitted rect scaled.
+      Offset onScreen(double x, double y) => Offset(
+            fitted.left + x / 1920 * fitted.width,
+            fitted.top + y / 1080 * fitted.height,
+          );
+
+      // Sweep the top two points only, starting from empty space *outside* the
+      // picture: a press inside a selected layer moves that layer, which is
+      // what the Selection tool has always done (K-215) and what After Effects
+      // does. The surround is the empty part a marquee starts from.
+      final panel = tester.getRect(find.byType(ViewerPanelFrb));
+      final gesture = await tester.startGesture(panel.topLeft + const Offset(2, 2));
+      await tester.pump();
+      await gesture.moveTo(onScreen(1000, 480));
+      await tester.pump();
+      await gesture.moveTo(onScreen(1100, 500));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      // Nothing has moved yet — a sweep only chooses.
+      expect(p.layer.getMasks().single.vertices.first.x, before.first.x);
+
+      // Now drag one of the caught points; both should travel.
+      final drag = await tester.startGesture(onScreen(860, 440));
+      await tester.pump();
+      // Past the framework's pan slop, which is larger than the touch slop.
+      for (var i = 0; i < 10; i++) {
+        await drag.moveBy(const Offset(6, 0));
+        await tester.pump();
+      }
+      await drag.up();
+      await tester.pumpAndSettle();
+
+      final after = p.layer.getMasks().single.vertices;
+      expect(after[0].x, greaterThan(before[0].x),
+          reason: 'the swept top-left point moved');
+      expect(after[1].x, greaterThan(before[1].x),
+          reason: 'and so did the other one the sweep caught');
+      expect(after[3].x, closeTo(before[3].x, 0.001),
+          reason: 'the points the sweep missed stayed put');
+    });
+
+    /// The Type tool (K-223): a click on empty picture makes a text layer where
+    /// it landed, typing previews rather than writing, and ending the edit
+    /// writes the document once.
+    testWidgets('the Type tool makes a text layer where you click',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      p.uiState
+        ..setSelectedComp(comp)
+        ..tools.select(ToolMode.typeHorizontal);
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      final fitted = fittedRect(tester, comp);
+      final at = fitted.center + const Offset(40, 20);
+      await tester.tapAt(at);
+      await tester.pumpAndSettle();
+
+      final layers = comp.getLayers();
+      expect(layers, hasLength(1), reason: 'the click made one');
+      final layer = layers.single;
+      expect(layer.getText(), isNotNull, reason: 'and it is a text layer');
+      expect(layer.getText()!.text, isEmpty,
+          reason: 'an empty line, waiting to be typed into');
+
+      // Where it landed, in comp pixels.
+      final size = comp.getSize();
+      final scale = fitted.width / size.width;
+      final tf = layer.getTransform();
+      double still(dynamic s) => (s as dynamic).field0 as double;
+      expect(still(tf.positionX),
+          closeTo((at.dx - fitted.left) / scale, 0.5));
+      expect(still(tf.positionY), closeTo((at.dy - fitted.top) / scale, 0.5));
+
+      // Typing does not touch the document — that is what the preview path is
+      // for — and ending the edit writes it once.
+      await tester.enterText(find.byType(EditableText), 'Hello');
+      await tester.pump();
+      expect(layer.getText()!.text, isEmpty,
+          reason: 'still previewing; the document is untouched');
+
+      p.uiState.tools.select(ToolMode.select);
+      await tester.pumpAndSettle();
+      expect(layer.getText()!.text, 'Hello',
+          reason: 'putting the tool down ends the edit and writes it');
+    });
+
+    testWidgets('a Type click with nothing typed leaves no layer behind',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      p.uiState
+        ..setSelectedComp(comp)
+        ..tools.select(ToolMode.typeHorizontal);
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      await tester.tapAt(fittedRect(tester, comp).center);
+      await tester.pumpAndSettle();
+      expect(comp.getLayers(), hasLength(1));
+
+      p.uiState.tools.select(ToolMode.select);
+      await tester.pumpAndSettle();
+      expect(comp.getLayers(), isEmpty,
+          reason: 'a stray click must not leave an empty text layer');
+    });
+
+    testWidgets('the Type tool edits the text layer you click on',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final layer = comp.addTextLayer();
+      p.uiState
+        ..setSelectedComp(comp)
+        ..tools.select(ToolMode.typeHorizontal);
+      p.uiState.model.refresh();
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      await tester.tapAt(fittedRect(tester, comp).center);
+      await tester.pumpAndSettle();
+      expect(comp.getLayers(), hasLength(1),
+          reason: 'clicking an existing text layer edits it rather than '
+              'making another');
+      expect(find.byType(EditableText), findsOneWidget);
+      expect(tester.widget<EditableText>(find.byType(EditableText))
+          .controller.text, 'Text', reason: 'seeded with what it says');
+
+      await tester.enterText(find.byType(EditableText), 'Retitled');
+      await tester.pump();
+      p.uiState.tools.select(ToolMode.select);
+      await tester.pumpAndSettle();
+      expect(layer.getText()!.text, 'Retitled');
+    });
+
+    /// The painting tools (K-224): each wears a brush ring with its own badge,
+    /// and a click says what is missing rather than being swallowed.
+    testWidgets('a paint tool wears a ring and says why nothing is painted',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.brush);
+      await mount(tester, p);
+
+      expect(find.byType(ViewerPaintPointerLayer), findsOneWidget);
+
+      await tester.tapAt(fittedRect(tester, p.comp).center);
+      await tester.pumpAndSettle();
+      expect(p.state.notice.value?.message, contains('not built yet'),
+          reason: 'the engine has no paint strokes (docs/TODO.md)');
+      expect(p.state.notice.value?.message, contains('Brush'),
+          reason: 'and it names the tool in hand');
     });
 
     testWidgets('a missing footage layer raises the badge', (tester) async {

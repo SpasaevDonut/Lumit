@@ -151,7 +151,7 @@ strip whatever workspace is active.
 | Anchor point | Anchor point | `Y` |
 | Razor | Razor | `C` |
 | Shape | Rectangle, Rounded rectangle, Ellipse, Polygon, Star | `Q` |
-| | *(with a layer selected these draw a **mask** on it; §2.3)* | |
+| | *(with a layer selected these draw a **mask** on it; §2.3.1)* | |
 | Pen | Pen, Add vertex, Delete vertex, Convert vertex, Mask feather | `G` |
 | Type | Horizontal type, Vertical type | `Ctrl+T` |
 | Paint | Brush, Clone stamp, Eraser | `Ctrl+B` |
@@ -159,8 +159,21 @@ strip whatever workspace is active.
 | Puppet | Puppet position pin, Puppet starch pin, Puppet overlap pin, Puppet bend pin | `Ctrl+P` |
 | Camera | Orbit camera, Pan camera, Dolly camera | `Shift+C` |
 
-The right-hand end carries the **snapping** switch (§4.5) and the **workspace strip** §1.4
-requires in the window chrome.
+The right-hand end carries the **tool options** area (below), the **snapping** switch (§4.5)
+and the **workspace strip** §1.4 requires in the window chrome.
+
+**Tool options** (K-223). The armed tool's own settings, where After Effects puts them, and
+empty for the tools that draw nothing:
+
+| Armed tool | Options |
+|---|---|
+| Type | **Fill** swatch, **size** in pixels |
+| Shape, Pen, Paint | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels |
+
+Fill and size say what the next thing drawn is made with, and both are session state like the
+armed tool itself. Stroke and stroke width MUST be shown **disabled** until something strokes
+a path: neither a shape layer's outline nor a paint stroke exists in the engine, and a control
+that quietly did nothing would be the same lie an unbuilt tool without its tooltip would be.
 
 **Behaviour.**
 
@@ -183,10 +196,12 @@ requires in the window chrome.
   of the application.
 
 **Implementation status (2026-07-31).** The strip, the groups, the flyouts, the shortcuts,
-the snapping switch and the workspace strip are built. Of the tools themselves only Selection
-and Hand do anything — both pan the picture, as they did before there was a toolbar — and the
-rest change the Viewer's pointer and nothing else. Each tool's behaviour is tracked
-separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
+the tool options area, the snapping switch and the workspace strip are built. Built tools:
+Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), the five shape
+tools and the Pen (§2.3.1), and Horizontal type (§2.3.2). Not built, and changing only the
+pointer: vertical type, the Pen's four editing siblings, all of Paint, Roto, Puppet and
+Camera. Each tool's behaviour is tracked separately in [TODO.md](TODO.md); the snapping
+switch is likewise a switch nothing reads yet.
 
 ---
 
@@ -316,16 +331,31 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
 - With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected
   After Effects makes a *shape layer*; Lumit's engine has no such layer kind yet, so the tool
   MUST say what to do instead rather than doing nothing quietly (TODO.md tracks the kind).
-- **Rectangle, rounded rectangle, ellipse and star** drag out between two opposite corners of
-  the shape's box — whichever way round the drag went — with `Shift` keeping the box square.
-- **The polygon tool builds a path point by point**: a click places a corner; a click-and-drag
+- **All five shape tools drag out** between two opposite corners of the shape's box —
+  whichever way round the drag went — with `Shift` keeping the box square. Rectangle and
+  rounded rectangle fill the box; ellipse is inscribed in it; polygon and star are the regular
+  five-sided and five-pointed figures inscribed in it, first point at the top.
+- **The Pen builds a path point by point** (K-221): a click places a corner; a click-and-drag
   places a vertex and pulls a **mirrored** pair of bezier handles out of it, the dragged
   handle leaving the vertex and its reflection entering; holding `Alt` during that drag breaks
   the pair so the entering handle stays where it was. Clicking the **first** vertex closes the
   path, and closing is what applies it. `Escape` abandons the path; `Backspace` takes back the
-  last point.
+  last point. The Pen's four siblings — add, delete and convert vertex, and mask feather —
+  edit a *finished* path and are not built.
 - A mask's path is stored in **layer space**, so it travels with the layer's transform.
 - Every selected layer's masks MUST be outlined on the picture, with a mark on each vertex.
+- **A mask's points can be edited with the Selection tool** while the layer controls are shown
+  (K-222). Each vertex is drawn as a small square, filled when it is selected. A click takes
+  the point under the pointer (`Shift` adds to or removes from the set); a **marquee** that
+  catches any of the selected layers' vertices takes **those**, leaving the layer selection
+  alone, and one that catches none is the layer sweep of §2.3. Dragging a selected point moves
+  every selected point, each in **its own layer's** space so a set spanning differently
+  transformed layers still travels together on screen. The order a press is resolved in MUST
+  be: scale/rotation handle, then mask point of a *selected* layer, then layer body, then
+  empty space. The marquee MUST settle the selection on release rather than clearing it on
+  press — otherwise the press would drop the layer whose points the sweep is about to gather.
+  Bezier **handles** on a finished path are not editable yet, and mask paths cannot be
+  keyframed.
 - Masks appear in the layer's Timeline twirl-down under a **Masks** heading — above Effects,
   because a mask gates the layer's alpha before its effects run (docs/06 render order) — and
   the heading appears only once the layer has one, exactly as Effects does. Each row carries
@@ -338,8 +368,57 @@ bar's switch. Not built: the anchor-point centre handle, snapping of any kind, p
 and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (a multiple
 selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
-drawn, listed, inverted, faded and deleted, but not yet edited** — no vertex or handle on a
-finished mask can be dragged, and mask paths cannot be keyframed.
+drawn, listed, inverted, faded, deleted, and their points selected and moved** (K-222); their
+bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
+
+### 2.3.2 The Type tool (K-223)
+
+- With a type tool armed, clicking **empty picture** MUST make a **text layer** where the
+  pointer is and begin typing into it; clicking an **existing text layer** MUST edit that one.
+  Clicking elsewhere ends the edit and begins the next.
+- A layer the tool made that ends its edit with **no text** MUST be deleted: an empty line
+  renders nothing, and what would be left is an invisible row in the Timeline.
+- The document MUST be written **once**, when the edit ends — one typing session, one undo
+  step — with the picture kept in step meanwhile by the text preview path (K-183's family).
+  Ending an edit means `Enter`, clicking elsewhere, or putting the tool down.
+- The **caret** is drawn by the tool; the text on screen is the engine's own rendering. The
+  caret is placed by the same estimate of a line's width the bridge anchors a text layer with
+  (half the point size per character), so the two never disagree about where a line ends.
+  When true glyph metrics cross the bridge, both sums change together.
+- A new layer's **anchor** starts at the left end of its empty line and is recentred on the
+  line when the edit ends, with Position compensating so the words do not move (§2.3's
+  pan-behind sum).
+- New text takes the toolbar's **fill** and **size** (§1.7).
+- **The click is where the words start**: a new layer's anchor begins at the left end of its
+  line's baseline, so what is typed runs to the right of the pointer and sits on it rather
+  than straddling it — the same relationship the caret is drawn with.
+- **Vertical type is not built**: the engine lays out one horizontal line. The member stays on
+  the strip and says so.
+- Per-character and per-word text animators are a later feature ([TODO.md](TODO.md)).
+
+### 2.3.3 The tools' pointers (K-224)
+
+Every tool MUST say what it is through the pointer, and the ones no platform ships a cursor
+for are **drawn**: the system pointer is hidden over the Viewer and the tool paints its own,
+as the Rotation, Anchor point and Razor tools already do.
+
+| Tool | Pointer |
+|---|---|
+| Shape, Pen | The **crosshair** the eyedropper uses, badged with the tool's own icon down and to the right |
+| Brush, Clone stamp, Eraser | A **ring** the size of the stroke that would be left, a dot at its centre, badged with the tool's icon |
+| Horizontal type | The system **I-beam** |
+| Vertical type | A drawn I-beam, **turned a quarter turn** |
+| Rotation | A curved arrow leaning round the anchor (§2.3) |
+| Anchor point | The anchor's ring-and-cross (§2.3) |
+| Razor | The blade and its cut line (§4.4) |
+
+- A badge MUST be drawn with a halo behind it, so it is legible on a white picture and a black
+  one alike, and MUST sit **down and to the right** — above or to the left would cover the
+  shape being dragged out.
+- The brush ring MUST follow the **magnification**: a width in picture pixels drawn at picture
+  scale, clamped so a hairline is still visible and a very wide brush does not fill the window.
+- **Nothing is painted.** The painting tools have a pointer and a notice naming what is
+  missing; the engine has no paint strokes ([TODO.md](TODO.md)).
 
 ### 2.4 Motion paths
 

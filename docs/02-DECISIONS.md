@@ -3787,3 +3787,174 @@ no Shape variant, so there is nothing honest to make. The tool posts a notice na
 do instead. Silence would read as a broken tool, and a solid-with-a-mask dressed as a shape
 layer would be a lie in the layer list — one that would have to be untold when the real kind
 lands.
+
+**K-221 · DECIDED · The path-building gesture is the Pen's, and the polygon tool draws a
+polygon. Supersedes K-220's placement of it.** From the owner (2026-07-31): "I think I
+might've misunderstood the polygon tool — everything I said there applies to the pen tool."
+They are right, and K-220 built it in the wrong place.
+
+**What moved.** Click for a corner, click-drag for a vertex whose bezier handles mirror as
+they grow, `Alt` to break that mirror, click the first vertex to close and apply, `Escape` to
+abandon, `Backspace` to take a point back — all of that is now the **Pen** (`G`), which is
+where After Effects puts it and where anyone arriving from AE will look for it.
+
+**What the polygon is instead.** A shape you drag out like the others: the regular five-sided
+figure inscribed in the drag's box, first point at the top, `Shift` for a regular pentagon in
+a square box. It is the star without its notches, and the two now read as the pair they are.
+
+**Why this was worth correcting rather than living with.** A tool that does something other
+than its name is a tool that has to be explained every time; and the Pen sitting there doing
+nothing while the polygon did the Pen's job would have been two wrong tools rather than one.
+The code moved with the name: `PolygonDraft` is `PathDraft`, and it is documented as the
+Pen's.
+
+**And the five shape tools are marked built.** K-220 shipped them working while their
+`ToolMode.ready` flags still said otherwise, so every tooltip claimed "not built yet" over a
+tool that drew masks. `ready` is a promise about what a tooltip says (K-214) and it was
+lying; a test now pins the set.
+
+**K-222 · DECIDED · A mask's points are things you can aim at, sweep up and drag.** From the
+owner (2026-07-31): "if you have the selection tool and wireframes enabled, if you have a
+layer that's a shape or has a mask, you should be able to see the individual points that make
+it up. And if you do the drag selection I mentioned it should select any point inside it so
+you can alter and drag them about."
+
+**What a press means, in one order.** Over the picture with the Selection tool the pointer
+has more and more things under it, so the order they are tried in is the whole design: a
+**scale or rotation handle** first (it sits on the box's edge, where the body also is), then a
+**mask point** of a *selected* layer, then the **layer** under the pointer, then empty space.
+Points come before the body because they are drawn on top of it and are much smaller; they
+come after the handles because a handle is the coarser target and losing it would be worse.
+Only *selected* layers' points are tried: a stray vertex of some layer underneath must never
+steal a press meant for the picture.
+
+**The marquee gathers points when there are points to gather.** A sweep from empty space that
+catches any of the selected layers' vertices selects **those**, and the layer selection is
+left alone; a sweep that catches none is the layer sweep it has always been. That is one
+gesture doing two jobs, decided by what is actually under it — which is what After Effects
+does, and what makes "select some points and move them" a single fluid thing rather than a
+mode.
+
+**Which forced the selection to be decided on release, not on press.** The old marquee cleared
+the selection the moment it began. That is invisible when it is layers being swept, and fatal
+when it is points: the press would drop the very layer whose points the sweep was about to
+gather. So the band now leaves the selection alone while it is drawn and settles it on
+release — which also keeps the boxes on screen while the user is aiming, and is the better
+behaviour on its own terms.
+
+**A drag moves each point in its own layer's space.** The pointer's travel is a *screen*
+delta; each mask is written in its layer's coordinates. The delta is therefore mapped through
+each layer's own inverse (two points on the picture, subtracted, so scale and rotation are
+undone exactly) before it is added — so a selection spanning two layers with different
+transforms still moves together on screen. One `set_mask` per mask, which is one undo step per
+mask, the same rule the razor follows for a multi-layer cut.
+
+**No live preview while points are dragged.** The dragged points follow the pointer as drawn
+marks, and the picture catches up on release. The preview path (K-183) patches one layer's
+*transform* into a clone of the document; a mask path has no room in it, and inventing one for
+a gesture this short is not worth a second preview shape. The marks moving is enough feedback
+to aim with.
+
+**Handles are not points.** A vertex's two bezier handles cannot be dragged yet, and neither
+can a mask path be keyframed. Both are in TODO.md. This decision is about the *positions* of
+the points, which is the half that makes a drawn mask correctable.
+
+**K-223 · DECIDED · The Type tool makes and edits text layers on the picture, and the
+toolbar grows the options the drawing tools use.** From the owner (2026-07-31): "Now add
+typing. These should also be their own layer type… along with this there should be the
+options for fills/border colour pickers and pixel widths etc just like AE."
+
+**Text is already its own layer kind**, so this is the interface catching up with the
+engine: `LayerKind::Text` holds a document (one styled run, docs/03 §9.1), the renderer
+rasterises it, and the only way to make one was a menu item that dropped "Text" in the middle
+of the composition. The tool puts it where the user points.
+
+**One click, two meanings.** On empty picture the tool makes a text layer *where the pointer
+is* and starts typing into it; on an existing text layer it edits that one. Clicking
+somewhere else ends the edit and begins the next, which is After Effects' behaviour and the
+only one that lets a caption be typed without a trip to the Timeline.
+
+**A stray click leaves nothing behind.** A layer this tool made that ends its edit with no
+text is deleted. An empty line renders nothing, so what a stray click would otherwise leave
+is an invisible row in the Timeline — the same reasoning as the bridge refusing a mask of one
+vertex.
+
+**The document is written once, and the picture keeps up through a preview.** Every document
+edit is an undo step, so a `set_text` per keystroke would make undo walk back through a
+sentence one letter at a time. So typing sends `render_frame_with_text_preview` — a third
+member of K-183's preview family, beside the effects and transform ones, patching a document
+into a *clone* the same way — and the layer is written when the edit ends. One typing
+session, one undo step.
+
+**The caret is drawn; the text is the engine's.** The keyboard is a real Flutter text field,
+so arrows, selection, backspace, paste and IME all work — but it is invisible, because the
+text the user should see is the engine's own rendering. What is drawn is the caret, placed by
+the same rough estimate of a line's width the bridge uses to anchor a new text layer (half
+the point size per character). Being wrong the same way on both sides is what keeps the caret
+and the picture agreeing about where a line ends; the true advance widths live in the
+rasteriser and are not on the bridge. When they are, both sums change together.
+
+**A new layer's anchor is recentred when the edit ends, pan-behind.** It starts on the left
+end of an empty line, because an empty line has no middle; once there is a line, the anchor
+moves to its middle and Position compensates by exactly the amount that keeps the words where
+they were (K-218's sum). So a typed layer scales and turns about itself without ever having
+appeared to move.
+
+**Vertical type is not built.** `lumit-text` lays out one horizontal line; the member stays
+on the strip, marked unbuilt like every other, and says so if it is clicked.
+
+**The toolbar grows a tool options area**, where After Effects has one: the fill swatch and
+the point size while a type tool is armed, the fill and stroke swatches and the stroke width
+while a drawing tool is. Fill and size are live — they set what the next text layer is made
+with. **Stroke and stroke width are drawn disabled**, because nothing in the engine strokes
+anything: a shape layer's outline and a paint stroke are both engine features that do not
+exist. They are shown rather than hidden for the same reason unbuilt tools are shown (K-214):
+the tool set is the specified one, and a control that is visibly not working yet says more
+than a gap does.
+
+**And a bug the Type tool found: arming a tool did not rebuild the Viewer's overlays.** The
+panel listened to the tool only to change the *pointer*, handing the whole stage in as a
+cached child — so every tool layer under it stayed armed for whichever tool was in hand when
+the panel last rebuilt, and only happened to work because a tool is usually picked before
+anything else redraws. The stage is now built inside the listener.
+
+**K-224 · DECIDED · The tools that draw wear a drawn pointer: the eyedropper's crosshair
+badged with the tool's own icon, a brush ring for the painting tools, and an I-beam for
+type.** From the owner (2026-07-31): "for the shape and pen tools, they should use the same
+cursor as the dropper has? And maybe have the icon for the shape or pen in use just slightly
+offset to the bottom right of the cursor… For text I think it should use a text select type
+cursor and rotate this depending on if the text is horizontal or vertical… make sure the
+different brush options all have correct cursor icons for their function."
+
+**Shape and Pen: crosshair plus badge.** The crosshair is the eyedropper's — the pointer that
+means *this exact pixel* — because that is exactly what the first corner of a shape or the
+first point of a path is. The tool's own icon sits down and to the right of it, out of the
+way of the shape being dragged out, drawn twice: a halo copy a pixel across, then the ink one,
+so it is legible on a white picture and a black one alike. This is After Effects' own badging
+and it is what makes five shape tools that share a gesture tell each other apart.
+
+**The painting tools get a ring, not a crosshair.** A brush is not a point, it is a *width*,
+so its pointer is a circle the size of the stroke it would leave, with a dot at the centre for
+where that stroke starts. The ring is drawn from the toolbar's stroke width through the
+current magnification — a picture-pixel width shown at picture scale — clamped so a hairline
+still has a visible pointer and a very wide brush does not fill the window. The badge under it
+says which of brush, clone stamp and eraser is in hand. **Nothing is painted**: the layer
+exists to wear the pointer and to say what is missing when clicked, since the engine has no
+paint at all (docs/TODO.md).
+
+**Type: the I-beam, turned when the type is.** Horizontal type takes the system's own I-beam
+— every platform ships one and everybody already reads it as "you can type here". No platform
+ships a *sideways* one, so vertical type has one drawn: the same beam a quarter turn round, so
+the pointer says which way the line will run before a single letter is typed.
+
+**And the click is where the words start.** A new text layer's anchor now begins at the left
+end of its line's baseline rather than in the middle of an empty box, so what is typed runs to
+the right of the pointer and sits on it instead of straddling it — the same relationship the
+caret is drawn with. The anchor is still recentred on the finished line pan-behind (K-223), so
+nothing appears to move.
+
+**Why drawn rather than chosen.** A system cursor is a small fixed picture from the list the
+platform ships, and none of these are on it. The three tools that already needed this —
+Rotation, Anchor point and Razor — hide the system pointer over the picture and paint their
+own; these do the same, through one shared pointer widget rather than a fourth private
+painter.

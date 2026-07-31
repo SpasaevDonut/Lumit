@@ -913,6 +913,7 @@ impl CompositionReference {
             layer,
             effects: Some(effects.iter().map(|i| i.get_effects()).collect()),
             transform: None,
+            text: None,
         }))
     }
 
@@ -1047,6 +1048,33 @@ impl CompositionReference {
             layer,
             effects: None,
             transform: Some(transform),
+            text: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s text document replaced by `document` —
+    /// the same live path as the two above, for the Type tool (K-223).
+    ///
+    /// Typing is the one edit where the provisional value changes many times a
+    /// second and the document must *not*: a `set_text` per keystroke would be
+    /// an undo step per keystroke. So the tool previews as it types and writes
+    /// once, when the edit ends.
+    #[frb(sync)]
+    pub fn render_frame_with_text_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        document: crate::api::assets::BridgeTextDocument,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: Some(document),
         }))
     }
 }

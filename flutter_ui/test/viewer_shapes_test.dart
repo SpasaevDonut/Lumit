@@ -1,10 +1,12 @@
-// The shape tools' geometry (K-220): what each tool draws between two corners,
-// and how the polygon tool's path grows point by point.
+// The shape tools' geometry (K-220), and the Pen's draft (K-221): what each
+// tool draws between two corners, and how a path grows point by point.
 //
 // Pure arithmetic in layer space, so it is checked by arithmetic. The one thing
 // every case shares is that the drag's two points are opposite corners of the
 // shape's box *whichever way round they were dragged* — which is what makes the
 // tools behave the same in all four directions, and is easy to get wrong.
+
+import 'dart:math' as math;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/viewer_shapes.dart';
@@ -131,16 +133,39 @@ void main() {
     });
   });
 
-  group('The polygon draft', () {
+  group('Polygon', () {
+    test('a regular five-sided figure in the box, first point at the top', () {
+      final path = shapePath(
+        tool: ToolMode.shapePolygon,
+        from: (0, 0),
+        to: (100, 100),
+      );
+      expect(path.length, polygonSides);
+      expect(path.first.x, closeTo(50, 1e-9));
+      expect(path.first.y, closeTo(0, 1e-9), reason: 'the top point');
+      // Every point sits on the ellipse inscribed in the box, so every one is
+      // the same distance from the middle of a square box.
+      for (final v in path) {
+        final d = math.sqrt(math.pow(v.x - 50, 2) + math.pow(v.y - 50, 2));
+        expect(d, closeTo(50, 1e-9));
+      }
+      expect(path.every((v) => v.tanOutX == 0 && v.tanOutY == 0), isTrue,
+          reason: 'a polygon is all corners');
+    });
+  });
+
+  /// The Pen's path builder (K-221). This gesture was briefly on the polygon
+  /// tool; it is After Effects' pen, and it belongs to the Pen.
+  group('The Pen\'s draft', () {
     test('a click adds a corner', () {
-      final draft = const PolygonDraft().withCorner((10, 10));
+      final draft = const PathDraft().withCorner((10, 10));
       expect(draft.vertices.length, 1);
       expect(draft.vertices.single.tanOutX, 0);
       expect(draft.canClose, isFalse, reason: 'one point is not a shape');
     });
 
     test('three points make it closable', () {
-      final draft = const PolygonDraft()
+      final draft = const PathDraft()
           .withCorner((0, 0))
           .withCorner((10, 0))
           .withCorner((10, 10));
@@ -150,7 +175,7 @@ void main() {
 
     test('a click-drag mirrors the handles, so the curve runs through', () {
       final draft =
-          const PolygonDraft().withBezier((50, 50), (70, 50));
+          const PathDraft().withBezier((50, 50), (70, 50));
       final v = draft.vertices.single;
       expect(v.tanOutX, 20);
       expect(v.tanOutY, 0);
@@ -159,7 +184,7 @@ void main() {
     });
 
     test('Alt breaks the pair, leaving the entering handle alone', () {
-      final draft = const PolygonDraft()
+      final draft = const PathDraft()
           .withBezier((50, 50), (70, 30), independent: true);
       final v = draft.vertices.single;
       expect(v.tanOutX, 20);
@@ -169,12 +194,12 @@ void main() {
     });
 
     test('the last point can be taken back', () {
-      final draft = const PolygonDraft()
+      final draft = const PathDraft()
           .withCorner((0, 0))
           .withCorner((10, 0))
           .withoutLast();
       expect(draft.vertices.length, 1);
-      expect(const PolygonDraft().withoutLast().isEmpty, isTrue,
+      expect(const PathDraft().withoutLast().isEmpty, isTrue,
           reason: 'and taking back nothing is not an error');
     });
   });

@@ -96,8 +96,9 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 flyouts, shortcuts and the two switches at its right-hand end landed 2026-07-31. What is
 armed is a *tool*; what each tool then does is the backlog:
 - **Selection** - built (K-215): click, Shift-click, marquee, body drag, the scale
-    handles and the rotation bar. What is left is on the gizmo rather than the tool —
-    see the layer-controls list below.
+    handles and the rotation bar, plus a selected layer's **mask points** — click, sweep and
+    drag (K-222). What is left is on the gizmo rather than the tool — see the layer-controls
+    list below.
 - **Hand** - built (K-215): the grab pointer, and a drag that pans the view and never
     the layer.
 - **Zoom** - built (K-216): the lens pointer (and its zoom-out twin under `Alt`), click
@@ -114,25 +115,49 @@ armed is a *tool*; what each tool then does is the backlog:
     keyframe at the cut on both halves of a retimed layer (K-219). Still owed: a Sequence
     layer's eased ramps refuse a cut (`UncuttableClip`), and its **clips'** own speed maps get
     no key at the cut the way a layer's Retime does. (The razor is Timeline-only by design.)
-- **Shape tools** - built for masks (K-220): rectangle, rounded rectangle, ellipse and star
-    drag out corner to corner with `Shift` for square, and the polygon tool builds a path
-    point by point (click for a corner, click-drag for mirrored bezier handles, `Alt` to break
-    the pair, click the first point to close). Masks list in the layer's twirl-down under a
-    Masks heading, invert, fade and delete, and are outlined on the picture. What is owed:
+- **Shape tools** - built for masks (K-220): all five drag out corner to corner with `Shift`
+    for square (polygon and star being the regular figures inscribed in the box). Masks list
+    in the layer's twirl-down under a Masks heading, invert, fade and delete, and are
+    outlined on the picture.
+- **Pen** - built (K-221): the path builder — click for a corner, click-drag for mirrored
+    bezier handles, `Alt` to break the pair, click the first point to close and apply. Its
+    four siblings (add/delete/convert vertex, mask feather) edit a finished path; see mask
+    editing below.
+    What the two owe between them:
     - **Shape layers.** With nothing selected the tool says "select a layer" instead of making
       one, because `LayerKind` has no Shape variant. A shape layer needs a new layer kind, a
       geometry model with fill and stroke, renderer support and its own Timeline rows — an
       engine feature in its own right, being done on a branch off this one.
-    - **Mask editing.** A finished mask's vertices and handles cannot be dragged, so the
-      `Alt`-drag that re-links a broken tangent pair only exists while a point is being
-      *placed*. The Pen tools' add/delete/convert vertex variants are the same piece of work.
+    - **Mask editing.** A finished mask's **points** can be selected and dragged with the
+      Selection tool (K-222); its **handles** cannot, so the `Alt`-drag that re-links a broken
+      tangent pair only exists while a point is being *placed*. The Pen tools'
+      add/delete/convert vertex variants are the same piece of work, as is dragging a whole
+      path by one of its segments.
     - **Mask paths cannot be keyframed** (docs/03 has them as animatable), and there is no
       mask **mode** (add/subtract/intersect) — every mask adds.
     - **Mask feather** has neither a control nor a renderer path.
-- **Pen tools** - click-to-place mask drawing, and the four vertex/feather variants.
-- **Type**, **Paint** (brush/clone stamp/eraser), **Roto** (roto brush/refine edge),
-    **Puppet**, **Camera** - no engine side yet; these are roadmap features
-    ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
+- **Type** - horizontal type is built (K-223, K-224): a click makes a text layer where you point or
+    edits the one you clicked, typing previews rather than writing, and the document lands as
+    one undo step when the edit ends. Still owed:
+    - **Vertical type**, which needs `lumit-text` to lay a line out downwards.
+    - **True glyph metrics across the bridge.** The caret is placed by the same half-an-em-per
+      -character estimate the bridge anchors a text layer with, so the two agree with each
+      other and neither agrees with the rasteriser. A measured advance width would replace
+      both sums at once.
+    - **Multiple lines, and a character panel** — font, tracking, leading, alignment: the
+      document is one styled run (docs/03 §9.1) and the renderer draws one line.
+    - **Per-character and per-word text animators**, the feature the owner named as later.
+    - Clicking a text layer to edit it needs the layer to have a box, so a text layer with a
+      keyframed position cannot be clicked into (the same rule the gizmo follows).
+- **Paint** (brush/clone stamp/eraser) - **nothing at all in the engine**: there is no stroke
+    model in the document, no op to add one, and no renderer path to draw one. It is a
+    feature of the same size as shape layers, and belongs with them on the engine branch. The
+    toolbar's stroke colour and width are held and shown disabled until it exists; the three
+    tools wear their proper brush-ring pointers (K-224) and say what is missing when clicked.
+    The ring is drawn from the stroke width because there is no separate brush size yet — a
+    real paint feature would bring its own brush settings (size, hardness, opacity, flow).
+- **Roto** (roto brush/refine edge), **Puppet**, **Camera** - no engine side yet; these are
+    roadmap features ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
 - **Snapping** is a switch nothing reads (docs/07 §4.5 specifies the behaviour).
 - **The workspace strip shows no preset after a restart** - `Workspace.activePreset` is
     session-only, because the stored layout is the user's own by then and may no longer

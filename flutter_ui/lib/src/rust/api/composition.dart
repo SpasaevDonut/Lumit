@@ -5,6 +5,7 @@
 
 import '../api.dart';
 import '../frb_generated.dart';
+import 'assets.dart';
 import 'effect.dart';
 import 'export.dart';
 import 'footage.dart';
@@ -506,6 +507,26 @@ class CompositionReference {
               scale: scale,
               layer: layer,
               effects: effects);
+
+  /// Ask for `frame` with `layer`'s text document replaced by `document` —
+  /// the same live path as the two above, for the Type tool (K-223).
+  ///
+  /// Typing is the one edit where the provisional value changes many times a
+  /// second and the document must *not*: a `set_text` per keystroke would be
+  /// an undo step per keystroke. So the tool previews as it types and writes
+  /// once, when the edit ends.
+  void renderFrameWithTextPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required BridgeTextDocument document}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithTextPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              document: document);
 
   /// Ask for `frame` with `layer`'s transform replaced by `transform` — the
   /// same live-drag path as [`Self::render_frame_with_preview`], for the

@@ -1,11 +1,13 @@
-// The shape tools over the picture: the drag that draws a mask, and the
-// polygon tool's point-by-point path (K-220, docs/07 §2.3).
+// The shape tools and the Pen over the picture: the drag that draws a mask, and
+// the Pen's point-by-point path (K-220, K-221, docs/07 §2.3).
 //
 // **In plain terms.** With a shape tool in hand and a layer selected, dragging
 // over the picture draws a mask on that layer — a rectangle, a rounded
-// rectangle, an ellipse or a star, between the two corners you dragged, with
-// Shift keeping it square. The polygon tool is different: it builds a path a
-// point at a time, and clicking its first point again closes and applies it.
+// rectangle, an ellipse, a polygon or a star, between the two corners you
+// dragged, with Shift keeping it square. The **Pen** is different: it builds a
+// path a point at a time, and clicking its first point again closes and applies
+// it. (That gesture was briefly on the polygon tool; it is After Effects' pen,
+// and it belongs on the Pen — K-221.)
 //
 // **What it does with nothing selected.** Nothing — and it says so. After
 // Effects would make a *shape layer* there, which Lumit's engine has no such
@@ -23,7 +25,9 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
+import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
+import 'viewer_tool_cursor.dart';
 import 'viewer_shapes.dart';
 
 /// The shape tools over the picture.
@@ -69,16 +73,23 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   /// shape.
   Offset? _downAt;
 
-  /// The polygon being built, and the pointer that is drawing its next edge.
-  PolygonDraft _draft = const PolygonDraft();
-  Offset? _polyPointer;
+  /// The path being built with the Pen, and the pointer drawing its next edge.
+  PathDraft _draft = const PathDraft();
+  Offset? _penPointer;
+
+  /// Where the pointer is, for the drawn cursor (K-224). Tracked for every
+  /// shape tool, not only the Pen, because every one of them wears one.
+  Offset? _pointer;
 
   /// The handle being pulled out of the vertex just placed, if the click that
   /// placed it turned into a drag.
   Offset? _handleFrom;
   Offset? _handleTo;
 
-  bool get _isPolygon => widget.tool == ToolMode.shapePolygon;
+  /// Whether the Pen is in hand. Only the Pen itself builds a path; its four
+  /// siblings (add/delete/convert vertex, mask feather) edit a *finished* one,
+  /// which is not built (docs/TODO.md).
+  bool get _isPen => widget.tool == ToolMode.pen;
 
   @override
   void initState() {
@@ -92,14 +103,14 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     super.dispose();
   }
 
-  /// Escape abandons a polygon in progress; Backspace takes back its last
-  /// point. Both are what every path tool does, and both are why a half-drawn
-  /// path is never a trap.
+  /// Escape abandons a path in progress; Backspace takes back its last point.
+  /// Both are what every path tool does, and both are why a half-drawn path is
+  /// never a trap.
   bool _onKey(KeyEvent event) {
-    if (!widget.active || !_isPolygon || _draft.isEmpty) return false;
+    if (!widget.active || !_isPen || _draft.isEmpty) return false;
     if (event is! KeyDownEvent) return false;
     if (event.logicalKey == LogicalKeyboardKey.escape) {
-      setState(() => _draft = const PolygonDraft());
+      setState(() => _draft = const PathDraft());
       return true;
     }
     if (event.logicalKey == LogicalKeyboardKey.backspace) {
@@ -127,37 +138,57 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   @override
   Widget build(BuildContext context) {
     if (!widget.active) return const SizedBox.shrink();
+    final t = ThemeScope.of(context).theme;
     final target = _target;
     return Positioned.fill(
       child: MouseRegion(
-        cursor: SystemMouseCursors.precise,
-        onHover: _isPolygon
-            ? (event) => setState(() => _polyPointer = event.localPosition)
-            : null,
-        onExit: _isPolygon ? (_) => setState(() => _polyPointer = null) : null,
+        // Hidden, because the drawn pointer below replaces it (K-224): the
+        // eyedropper's crosshair, badged with this tool's own icon.
+        cursor: SystemMouseCursors.none,
+        onEnter: (event) => setState(() => _pointer = event.localPosition),
+        onHover: (event) => setState(() {
+          _pointer = event.localPosition;
+          // The Pen also draws the edge it would place next, from the last
+          // point placed to here.
+          if (_isPen) _penPointer = event.localPosition;
+        }),
+        onExit: (_) => setState(() {
+          _pointer = null;
+          _penPointer = null;
+        }),
         child: Listener(
           onPointerDown: (event) => _downAt = event.localPosition,
           child: GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTapUp: _isPolygon ? _onPolygonTap : null,
+            onTapUp: _isPen ? _onPenTap : null,
             onPanStart: _onPanStart,
             onPanUpdate: _onPanUpdate,
             onPanEnd: (_) => _onPanEnd(),
             onPanCancel: _onPanCancel,
-            child: CustomPaint(
-              painter: _ShapePreviewPainter(
-                tool: widget.tool,
-                box: target,
-                from: _from,
-                to: _to,
-                square: HardwareKeyboard.instance.isShiftPressed,
-                draft: _draft,
-                polyPointer: _polyPointer,
-                handleFrom: _handleFrom,
-                handleTo: _handleTo,
-                accent: widget.accent,
+            child: Stack(children: [
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: _ShapePreviewPainter(
+                    tool: widget.tool,
+                    box: target,
+                    from: _from,
+                    to: _to,
+                    square: HardwareKeyboard.instance.isShiftPressed,
+                    draft: _draft,
+                    penPointer: _penPointer,
+                    handleFrom: _handleFrom,
+                    handleTo: _handleTo,
+                    accent: widget.accent,
+                  ),
+                ),
               ),
-            ),
+              ToolPointer(
+                at: _pointer,
+                tool: widget.tool,
+                mark: t.textPrimary,
+                outline: t.surface0,
+              ),
+            ]),
           ),
         ),
       ),
@@ -168,7 +199,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
   void _onPanStart(DragStartDetails details) {
     final at = _downAt ?? details.localPosition;
-    if (_isPolygon) {
+    if (_isPen) {
       // A click that became a drag: the vertex lands where the press was, and
       // the drag pulls its handles out.
       setState(() {
@@ -185,9 +216,9 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
   void _onPanUpdate(DragUpdateDetails details) {
     setState(() {
-      if (_isPolygon) {
+      if (_isPen) {
         _handleTo = details.localPosition;
-        _polyPointer = details.localPosition;
+        _penPointer = details.localPosition;
       } else {
         _to = details.localPosition;
       }
@@ -195,7 +226,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   }
 
   void _onPanEnd() {
-    if (_isPolygon) {
+    if (_isPen) {
       _finishHandleDrag();
       return;
     }
@@ -232,11 +263,11 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
         _handleTo = null;
       });
 
-  // --- The polygon ----------------------------------------------------------
+  // --- The Pen --------------------------------------------------------------
 
   /// A plain click: place a corner, or close the path when it lands on the
   /// first point.
-  void _onPolygonTap(TapUpDetails details) {
+  void _onPenTap(TapUpDetails details) {
     final box = _target;
     if (box == null) {
       _sayNoLayer();
@@ -252,7 +283,7 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
           screenScale: box.map.viewScale * box.map.sx,
         )) {
       final path = _draft.vertices;
-      setState(() => _draft = const PolygonDraft());
+      setState(() => _draft = const PathDraft());
       _commit(box, path);
       return;
     }
@@ -309,8 +340,8 @@ class _ShapePreviewPainter extends CustomPainter {
   final Offset? from;
   final Offset? to;
   final bool square;
-  final PolygonDraft draft;
-  final Offset? polyPointer;
+  final PathDraft draft;
+  final Offset? penPointer;
   final Offset? handleFrom;
   final Offset? handleTo;
   final Color accent;
@@ -322,7 +353,7 @@ class _ShapePreviewPainter extends CustomPainter {
     required this.to,
     required this.square,
     required this.draft,
-    required this.polyPointer,
+    required this.penPointer,
     required this.handleFrom,
     required this.handleTo,
     required this.accent,
@@ -367,7 +398,7 @@ class _ShapePreviewPainter extends CustomPainter {
         canvas.drawCircle(at, i == 0 ? 5 : 3, Paint()..color = accent);
       }
       // The edge that would be drawn if the pointer clicked now.
-      final pointer = polyPointer;
+      final pointer = penPointer;
       if (pointer != null) {
         final last = draft.vertices.last;
         canvas.drawLine(
