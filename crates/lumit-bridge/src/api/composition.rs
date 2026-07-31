@@ -426,6 +426,55 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
+    /// Create a new inner composition containing `layer` and nest it as a Precomp layer.
+    #[frb(sync)]
+    pub fn precompose_layer(
+        &self,
+        layer: &LayerReference,
+        name: Option<String>,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::model::{Composition, LinearColour, MotionBlur, ProjectItem};
+        use lumit_core::Op;
+
+        let outer_comp = self.composition()?;
+        let target_item = layer.item()?;
+        let comp_name = name.unwrap_or_else(|| format!("{}_Precomp", target_item.name));
+        let inner_id = Uuid::now_v7();
+
+        let inner_comp = Composition {
+            id: inner_id,
+            name: comp_name,
+            width: outer_comp.width,
+            height: outer_comp.height,
+            frame_rate: outer_comp.frame_rate,
+            duration: outer_comp.duration,
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers: vec![target_item],
+            markers: Vec::new(),
+            motion_blur: MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        };
+
+        let proj = self.project()?;
+        let proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+        let doc = proj.store.snapshot();
+
+        proj.store
+            .commit(Op::AddItem {
+                index: doc.items.len(),
+                item: Box::new(ProjectItem::Composition(inner_comp)),
+            })
+            .map_err(BridgeError::OpError)?;
+        drop(proj);
+
+        let inner_ref = CompositionReference {
+            project: self.project,
+            id: inner_id,
+        };
+        self.add_precomp_layer(&inner_ref)
+    }
+
     /// Add a Text layer with the "Text" starter document, centred.
     #[frb(sync)]
     pub fn add_text_layer(&self) -> Result<LayerReference, BridgeError> {

@@ -105,9 +105,19 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
     if (ui == null) return;
     ui.togglePlayRequest.removeListener(_onTogglePlayRequest);
     ui.playheadFrame.removeListener(_onPlayheadChanged);
+    ui.resetZoomTrigger.removeListener(_onResetZoom);
   }
 
   void _onTogglePlayRequest() => _togglePlay();
+
+  void _onResetZoom() {
+    if (mounted) {
+      setState(() {
+        _zoom = null;
+        _pan = Offset.zero;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -117,6 +127,7 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb> {
       _boundUi = ui;
       ui.togglePlayRequest.addListener(_onTogglePlayRequest);
       ui.playheadFrame.addListener(_onPlayheadChanged);
+      ui.resetZoomTrigger.addListener(_onResetZoom);
       _changes?.cancel();
       _changes = Provider.of<LumitState>(context, listen: false)
           .onChange
@@ -963,24 +974,28 @@ class _SelectionOverlayState extends State<_SelectionOverlay> {
   /// The layer↔screen map, or null when the layer's transform is animated in a
   /// way this overlay cannot represent as a single position.
   ViewerLayerMap? _mapFor(LayerReference layer, BridgeCompSize size) {
-    final tf = layer.getTransform();
-    double? still(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : null;
+    try {
+      final tf = layer.getTransform();
+      double? still(BridgeScalar s) => s is BridgeScalar_Static ? s.field0 : null;
 
-    final px = still(tf.positionX);
-    final py = still(tf.positionY);
-    if (px == null || py == null) return null;
+      final px = still(tf.positionX);
+      final py = still(tf.positionY);
+      if (px == null || py == null) return null;
 
-    return ViewerLayerMap.of(
-      positionX: px,
-      positionY: py,
-      anchorX: still(tf.anchorX) ?? 0,
-      anchorY: still(tf.anchorY) ?? 0,
-      scaleXPercent: still(tf.scaleX) ?? 100,
-      scaleYPercent: still(tf.scaleY) ?? 100,
-      rotationDegrees: still(tf.rotation) ?? 0,
-      origin: widget.fitted.topLeft,
-      viewScale: size.width == 0 ? 1 : widget.fitted.width / size.width,
-    );
+      return ViewerLayerMap.of(
+        positionX: px,
+        positionY: py,
+        anchorX: still(tf.anchorX) ?? 0,
+        anchorY: still(tf.anchorY) ?? 0,
+        scaleXPercent: still(tf.scaleX) ?? 100,
+        scaleYPercent: still(tf.scaleY) ?? 100,
+        rotationDegrees: still(tf.rotation) ?? 0,
+        origin: widget.fitted.topLeft,
+        viewScale: size.width == 0 ? 1 : widget.fitted.width / size.width,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Comp-pixel position for the current drag.
@@ -993,26 +1008,28 @@ class _SelectionOverlayState extends State<_SelectionOverlay> {
       _throttle.request(() => _sendPreview(layer, map));
 
   void _sendPreview(LayerReference layer, ViewerLayerMap map) {
-    final (x, y) = _moved(map);
-    final tf = layer.getTransform();
-    widget.comp.renderFrameWithTransformPreview(
-      frame: BigInt.from(widget.uiState.playheadFrame.value),
-      scale: widget.uiState.viewerScale,
-      layer: layer,
-      transform: BridgeTransform(
-        anchorX: tf.anchorX,
-        anchorY: tf.anchorY,
-        positionX: BridgeScalar.static_(x),
-        positionY: BridgeScalar.static_(y),
-        positionZ: tf.positionZ,
-        scaleX: tf.scaleX,
-        scaleY: tf.scaleY,
-        rotation: tf.rotation,
-        rotationX: tf.rotationX,
-        rotationY: tf.rotationY,
-        opacity: tf.opacity,
-      ),
-    );
+    try {
+      final (x, y) = _moved(map);
+      final tf = layer.getTransform();
+      widget.comp.renderFrameWithTransformPreview(
+        frame: BigInt.from(widget.uiState.playheadFrame.value),
+        scale: widget.uiState.viewerScale,
+        layer: layer,
+        transform: BridgeTransform(
+          anchorX: tf.anchorX,
+          anchorY: tf.anchorY,
+          positionX: BridgeScalar.static_(x),
+          positionY: BridgeScalar.static_(y),
+          positionZ: tf.positionZ,
+          scaleX: tf.scaleX,
+          scaleY: tf.scaleY,
+          rotation: tf.rotation,
+          rotationX: tf.rotationX,
+          rotationY: tf.rotationY,
+          opacity: tf.opacity,
+        ),
+      );
+    } catch (_) {}
   }
 
   /// Two ops, because x and y are separate properties in the model — an

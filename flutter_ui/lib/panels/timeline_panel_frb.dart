@@ -718,6 +718,90 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     if (action == 'reveal.animated') {
       return _revealTap();
     }
+    if (action != null &&
+        (action.startsWith('reveal.') || action == 'layer.retime.enable')) {
+      final ui = Provider.of<LumitUiState>(context, listen: false);
+      final layer = ui.selectedLayer.value;
+      if (layer != null) {
+        final id = layer.internallayerId.toString();
+        final shift = HardwareKeyboard.instance.isShiftPressed;
+        final targetProp = switch (action) {
+          'reveal.position' => 'position',
+          'reveal.scale' => 'scale',
+          'reveal.rotation' => 'rotation',
+          'reveal.opacity' => 'opacity',
+          'reveal.anchor' => 'anchor',
+          'reveal.effects' => 'effects',
+          'reveal.masks' => 'masks',
+          'reveal.volume' => 'volume',
+          'layer.retime.enable' || 'reveal.retime' => 'retime',
+          _ => null,
+        };
+
+        if (targetProp != null) {
+          setState(() {
+            _open.add(id);
+
+            if (targetProp == 'effects') {
+              if (_open.contains('$id/effects')) {
+                _open.remove('$id/effects');
+              } else {
+                _open.add('$id/effects');
+              }
+            } else if (targetProp == 'masks') {
+              if (_open.contains('$id/masks')) {
+                _open.remove('$id/masks');
+              } else {
+                _open.add('$id/masks');
+              }
+            } else if (targetProp == 'volume') {
+              if (_open.contains('$id/audio')) {
+                _open.remove('$id/audio');
+              } else {
+                _open.add('$id/audio');
+              }
+            } else if (targetProp == 'retime') {
+              if (_open.contains('$id/retime')) {
+                _open.remove('$id/retime');
+              } else {
+                _open.add('$id/retime');
+              }
+            } else {
+              // Transform properties (position, scale, rotation, opacity, anchor)
+              final propPath = '$id/transform/$targetProp';
+              final groupPath = '$id/transform';
+
+              if (_open.contains(groupPath)) {
+                // Whole group is open. Repeated press closes group & solo props
+                _open.remove(groupPath);
+                for (final p
+                    in ['position', 'scale', 'rotation', 'opacity', 'anchor']) {
+                  _open.remove('$id/transform/$p');
+                }
+              } else if (_open.contains(propPath)) {
+                // Same prop was soloed. Repeated press expands whole Transform group!
+                _open.add(groupPath);
+              } else {
+                // Not soloed yet
+                if (!shift) {
+                  // Single key without Shift: solo ONLY this property
+                  _open.remove(groupPath);
+                  for (final p
+                      in ['position', 'scale', 'rotation', 'opacity', 'anchor']) {
+                    _open.remove('$id/transform/$p');
+                  }
+                }
+                _open.add(propPath);
+              }
+            }
+          });
+          if (action == 'layer.retime.enable') {
+            return false;
+          }
+          return true;
+        }
+      }
+    }
     if (action == 'graph.ease' ||
         action == 'graph.ease.in' ||
         action == 'graph.ease.out') {

@@ -366,6 +366,7 @@ class LumitUiState extends ChangeNotifier {
 
   DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
+  ValueNotifier<Panel?> maximizedPanel = ValueNotifier(null);
 
   /// The appearance the shell is drawing in.
   ///
@@ -586,6 +587,13 @@ class LumitUiState extends ChangeNotifier {
   void armDropper(DropperArm arm) {
     dropperPatch.value = null;
     dropper.value = arm;
+  }
+
+  /// Trigger to reset viewer zoom to Fit mode.
+  final ValueNotifier<int> resetZoomTrigger = ValueNotifier(0);
+
+  void requestZoomFit() {
+    resetZoomTrigger.value++;
   }
 
   /// Put the dropper away, picked or not.
@@ -841,8 +849,8 @@ class _LumitAppViewState extends State<LumitAppView> {
 
   bool _handleKey(KeyEvent event) {
     if (!mounted) return false;
-    return _onKey(
-            context.read<LumitState>(), context.read<LumitUiState>(), event) ==
+    return _onKey(context.read<LumitState>(), context.read<LumitUiState>(),
+            event, context) ==
         KeyEventResult.handled;
   }
 
@@ -891,7 +899,8 @@ class _LumitAppViewState extends State<LumitAppView> {
   /// Only the ones whose engine calls exist on this bridge; the rest are on the
   /// menus. A field with focus is left alone, or every letter typed into a
   /// layer name would also be a command.
-  KeyEventResult _onKey(LumitState state, LumitUiState ui, KeyEvent event) {
+  KeyEventResult _onKey(
+      LumitState state, LumitUiState ui, KeyEvent event, BuildContext context) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
@@ -991,6 +1000,70 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           layer.delete();
           ui.selectedLayer.value = null;
+          state.notifyDocumentChanged();
+        }
+      case 'layer.split':
+        final layer = ui.selectedLayer.value;
+        if (layer == null) {
+          handled = false;
+        } else {
+          final dup = layer.splitAt(frame: ui.playheadFrame.value);
+          if (dup != null) {
+            ui.selectedLayer.value = dup;
+          }
+          state.notifyDocumentChanged();
+        }
+      case 'panel.maximise':
+        ui.requestZoomFit();
+        if (ui.maximizedPanel.value != null) {
+          ui.maximizedPanel.value = null;
+        } else {
+          ui.maximizedPanel.value = ui.activePanel.value ?? Panel.viewer;
+        }
+      case 'layer.precompose':
+        final layer = ui.selectedLayer.value;
+        if (layer == null || comp == null || project == null) {
+          handled = false;
+        } else {
+          final dup = comp.precomposeLayer(
+              project: project, layer: layer, name: null);
+          if (dup != null) {
+            ui.selectedLayer.value = dup;
+            state.notifyDocumentChanged();
+          }
+        }
+      case 'palette.open':
+        openCommandPaletteFrb(context, state);
+      case 'layer.move.in':
+        final layer = ui.selectedLayer.value;
+        if (layer == null) {
+          handled = false;
+        } else {
+          layer.moveInTo(frame: ui.playheadFrame.value);
+          state.notifyDocumentChanged();
+        }
+      case 'layer.move.out':
+        final layer = ui.selectedLayer.value;
+        if (layer == null) {
+          handled = false;
+        } else {
+          layer.moveOutTo(frame: ui.playheadFrame.value);
+          state.notifyDocumentChanged();
+        }
+      case 'layer.trim.in':
+        final layer = ui.selectedLayer.value;
+        if (layer == null) {
+          handled = false;
+        } else {
+          layer.trimInTo(frame: ui.playheadFrame.value);
+          state.notifyDocumentChanged();
+        }
+      case 'layer.trim.out':
+        final layer = ui.selectedLayer.value;
+        if (layer == null) {
+          handled = false;
+        } else {
+          layer.trimOutTo(frame: ui.playheadFrame.value);
           state.notifyDocumentChanged();
         }
       // A bound action this shell has no call for yet — the menus carry those.

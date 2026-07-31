@@ -528,15 +528,17 @@ pub fn default_keymap() -> Keymap {
         row(Global, "Mod+Shift+Z", "edit.redo"),
         row(Global, "Mod+S", "file.save"),
         row(Global, "`", "panel.maximise"),
+        row(Global, "Alt+/", "panel.maximise"),
         row(Global, "Shift+F3", "graph.toggle"),
         // Retime is app-wide, not Timeline-scoped: the shell runs it whatever
         // panel is fronted, and Composition ▸ Enable Retime carries the same
         // command. Mod+Alt+T is After Effects' own Time Remap chord, and it is
         // also one Windows cannot steal — the briefly-shipped Alt+Shift+T was
         // a misremembering (K-200, superseding that half of K-198), and it
-        // collided with the Windows input-language switch anyway. One chord,
-        // like every other action; anyone who wants a second can bind it.
+        // collided with the Windows input-language switch anyway. Mod+Shift+T
+        // is also bound for muscle memory.
         row(Global, "Mod+Alt+T", "layer.retime.enable"),
+        row(Global, "Mod+Shift+T", "layer.retime.enable"),
         // --- Tools ---
         row(Tools, "V", "tool.select"),
         row(Tools, "H", "tool.hand"),
@@ -779,6 +781,47 @@ mod tests {
             "the shipped default must not ship with clashes"
         );
         assert!(after_effects_preset().conflicts().is_empty());
+    }
+
+    #[test]
+    fn ae_shortcuts_are_bound_and_resolve() {
+        let km = default_keymap();
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("Alt+/")),
+            Some(&"panel.maximise".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("Mod+Shift+T")),
+            Some(&"layer.retime.enable".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("Mod+Shift+P")),
+            Some(&"palette.open".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("Mod+Shift+D")),
+            Some(&"layer.split".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("Mod+Shift+C")),
+            Some(&"layer.precompose".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("[")),
+            Some(&"layer.move.in".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("]")),
+            Some(&"layer.move.out".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("Alt+[")),
+            Some(&"layer.trim.in".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("Alt+]")),
+            Some(&"layer.trim.out".into())
+        );
     }
 
     #[test]

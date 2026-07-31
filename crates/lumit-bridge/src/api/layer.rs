@@ -848,6 +848,141 @@ impl LayerReference {
         })
     }
 
+    /// Split the layer at `frame`, or cut sequence clip at `frame` if sequence.
+    /// Returns the new duplicated layer reference if a layer split occurred.
+    /// Atomic single undo step. The upper (later) part of the split is placed
+    /// above the lower (earlier) part in the layer stack, matching AE.
+    #[frb(sync)]
+    pub fn split_at(&self, frame: i64) -> Result<Option<LayerReference>, BridgeError> {
+        let comp = self.composition()?;
+        let time = comp.frame_rate.time_of_frame(frame).map_err(|_| BridgeError::InvalidTime)?.0;
+        let item = self.item()?;
+
+        if let lumit_core::model::LayerKind::Sequence { .. } = item.kind {
+            if self.cut_clip_at(frame).is_ok() {
+                return Ok(None);
+            }
+        }
+
+        if time > item.in_point.0 && time < item.out_point.0 {
+            let layer_index = comp.layers.iter().position(|l| l.id == self.layer_id).ok_or(BridgeError::InvalidLayer)?;
+
+            let mut dup_item = item.clone();
+            dup_item.id = uuid::Uuid::now_v7();
+            dup_item.in_point = lumit_core::time::CompTime(time);
+            dup_item.out_point = item.out_point;
+            dup_item.matte = None;
+            dup_item.parent = None;
+
+            let dup_id = dup_item.id;
+
+            let op_trim_orig = lumit_core::Op::SetLayerSpan {
+                comp: self.comp_id,
+                layer: self.layer_id,
+                in_point: item.in_point,
+                out_point: lumit_core::time::CompTime(time),
+                start_offset: item.start_offset,
+            };
+
+            let op_add_dup = lumit_core::Op::AddLayer {
+                comp: self.comp_id,
+                index: layer_index,
+                layer: Box::new(dup_item),
+            };
+
+            self.commit(lumit_core::Op::Batch {
+                ops: vec![op_trim_orig, op_add_dup],
+            })?;
+
+            return Ok(Some(LayerReference::new(self.project_id, self.comp_id, dup_id)));
+        }
+        Ok(None)
+    }
+
+    /// Move the layer so its in point sits at `frame`.
+    #[frb(sync)]
+    pub fn move_in_to(&self, frame: i64) -> Result<(), BridgeError> {
+        let comp = self.composition()?;
+        let target_time = comp.frame_rate.time_of_frame(frame).map_err(|_| BridgeError::InvalidTime)?.0;
+        let item = self.item()?;
+        let in_r = item.in_point.0;
+        let out_r = item.out_point.0;
+        let offset_r = item.start_offset.0;
+
+        let duration = out_r.checked_sub(in_r).map_err(|_| BridgeError::InvalidTime)?;
+        let delta = target_time.checked_sub(in_r).map_err(|_| BridgeError::InvalidTime)?;
+        let new_out = target_time.checked_add(duration).map_err(|_| BridgeError::InvalidTime)?;
+        let new_offset = offset_r.checked_add(delta).map_err(|_| BridgeError::InvalidTime)?;
+
+        self.commit(lumit_core::Op::SetLayerSpan {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            in_point: lumit_core::time::CompTime(target_time),
+            out_point: lumit_core::time::CompTime(new_out),
+            start_offset: lumit_core::time::CompTime(new_offset),
+        })
+    }
+
+    /// Move the layer so its out point sits at `frame`.
+    #[frb(sync)]
+    pub fn move_out_to(&self, frame: i64) -> Result<(), BridgeError> {
+        let comp = self.composition()?;
+        let target_time = comp.frame_rate.time_of_frame(frame).map_err(|_| BridgeError::InvalidTime)?.0;
+        let item = self.item()?;
+        let in_r = item.in_point.0;
+        let out_r = item.out_point.0;
+        let offset_r = item.start_offset.0;
+
+        let duration = out_r.checked_sub(in_r).map_err(|_| BridgeError::InvalidTime)?;
+        let new_in = target_time.checked_sub(duration).map_err(|_| BridgeError::InvalidTime)?;
+        let delta = new_in.checked_sub(in_r).map_err(|_| BridgeError::InvalidTime)?;
+        let new_offset = offset_r.checked_add(delta).map_err(|_| BridgeError::InvalidTime)?;
+
+        self.commit(lumit_core::Op::SetLayerSpan {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            in_point: lumit_core::time::CompTime(new_in),
+            out_point: lumit_core::time::CompTime(target_time),
+            start_offset: lumit_core::time::CompTime(new_offset),
+        })
+    }
+
+    /// Trim the layer's in point to `frame`.
+    #[frb(sync)]
+    pub fn trim_in_to(&self, frame: i64) -> Result<(), BridgeError> {
+        let comp = self.composition()?;
+        let target_time = comp.frame_rate.time_of_frame(frame).map_err(|_| BridgeError::InvalidTime)?.0;
+        let item = self.item()?;
+        if target_time >= item.out_point.0 {
+            return Err(BridgeError::InvalidTime);
+        }
+        self.commit(lumit_core::Op::SetLayerSpan {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            in_point: lumit_core::time::CompTime(target_time),
+            out_point: item.out_point,
+            start_offset: item.start_offset,
+        })
+    }
+
+    /// Trim the layer's out point to `frame`.
+    #[frb(sync)]
+    pub fn trim_out_to(&self, frame: i64) -> Result<(), BridgeError> {
+        let comp = self.composition()?;
+        let target_time = comp.frame_rate.time_of_frame(frame).map_err(|_| BridgeError::InvalidTime)?.0;
+        let item = self.item()?;
+        if target_time <= item.in_point.0 {
+            return Err(BridgeError::InvalidTime);
+        }
+        self.commit(lumit_core::Op::SetLayerSpan {
+            comp: self.comp_id,
+            layer: self.layer_id,
+            in_point: item.in_point,
+            out_point: lumit_core::time::CompTime(target_time),
+            start_offset: item.start_offset,
+        })
+    }
+
     /// This layer's blend mode, as an index into [`list_blend_modes`].
     #[frb(sync)]
     pub fn get_blend(&self) -> Result<u32, BridgeError> {

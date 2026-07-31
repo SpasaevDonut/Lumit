@@ -285,16 +285,36 @@ List<LayerFoldRow> layerFoldRows({
     rows.add(FoldRetimeRow(retime, depth: 1));
   }
 
-  final transformOpen = open.contains(transformPath(id));
-  rows.add(FoldGroupRow(
-    path: transformPath(id),
-    label: 'Transform',
-    open: transformOpen,
-    depth: 1,
-  ));
-  if (transformOpen) {
+  final transformGroupOpen = open.contains(transformPath(id));
+  bool anyTransformChildOpen = transformGroupOpen;
+  if (!anyTransformChildOpen) {
+    for (final p in ['anchor', 'position', 'scale', 'rotation', 'opacity']) {
+      if (open.contains('$id/transform/$p')) {
+        anyTransformChildOpen = true;
+        break;
+      }
+    }
+  }
+
+  if (anyTransformChildOpen) {
+    rows.add(FoldGroupRow(
+      path: transformPath(id),
+      label: 'Transform',
+      open: transformGroupOpen,
+      depth: 1,
+    ));
     for (final group in transformGroups(threeD: info.switches.threeD)) {
-      rows.add(FoldTransformRow(group, info.transform, depth: 2));
+      final key = switch (group.label) {
+        'Anchor point' => 'anchor',
+        'Position' => 'position',
+        'Scale' => 'scale',
+        'Rotation' || 'Rotation x' || 'Rotation y' => 'rotation',
+        'Opacity' => 'opacity',
+        _ => '',
+      };
+      if (transformGroupOpen || open.contains('$id/transform/$key')) {
+        rows.add(FoldTransformRow(group, info.transform, depth: 2));
+      }
     }
   }
 

@@ -528,3 +528,65 @@ Future<void> saveProjectFrb(
   }
   app.notifyDocumentChanged();
 }
+
+/// Open the command palette from anywhere in the UI.
+Future<void> openCommandPaletteFrb(
+  BuildContext context,
+  LumitState app,
+) async {
+  final project = app.project;
+  final ui = Provider.of<LumitUiState>(context, listen: false);
+  await showCommandPaletteFrb(
+    context: context,
+    commands: [
+      PaletteCommand(
+        label: 'New project',
+        category: 'File',
+        run: app.newProject,
+      ),
+      if (project != null) ...[
+        PaletteCommand(
+          label: 'Undo',
+          category: 'Edit',
+          shortcut: 'Ctrl+Z',
+          run: () {
+            project.undo();
+            app.notifyDocumentChanged();
+          },
+        ),
+        PaletteCommand(
+          label: 'Redo',
+          category: 'Edit',
+          shortcut: 'Ctrl+Shift+Z',
+          run: () {
+            project.redo();
+            app.notifyDocumentChanged();
+          },
+        ),
+        for (final (comp, name) in app.comps())
+          PaletteCommand(
+            label: name,
+            category: 'Comp',
+            run: () => ui.setSelectedComp(comp),
+          ),
+        for (final effect in listEffects())
+          PaletteCommand(
+            label: effect.label,
+            category: 'Effect',
+            run: () => ui.selectedLayer.value?.addEffect(name: effect.name),
+          ),
+      ],
+      for (final panel in Panel.values)
+        PaletteCommand(
+          label: panel.title,
+          category: 'Panel',
+          run: () => ui.activePanel.value = panel,
+        ),
+      PaletteCommand(
+        label: 'Settings…',
+        category: 'File',
+        run: () => showSettingsWindowFrb(context),
+      ),
+    ],
+  );
+}

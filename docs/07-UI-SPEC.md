@@ -1186,7 +1186,7 @@ them away the day dispatch started going through the keymap.
 | Global | `Ctrl+K` | Composition settings |
 | Global | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
 | Global | `Alt+Shift+1…9` | Switch workspace |
-| Global | `` ` `` | Maximise / restore panel under pointer |
+| Global | `` ` `` / `Alt+/` | Maximise / restore panel under pointer |
 | Tools | `V` | Selection tool |
 | Tools | `H` | Hand (pan) — also held-`Space` drag in the Viewer |
 | Tools | `Z` | Zoom tool (`Alt` to zoom out) |
@@ -1203,7 +1203,7 @@ them away the day dispatch started going through the keymap.
 | Timeline | `Ctrl+Shift+D` | Split layer / cut clip at playhead |
 | Timeline | `Ctrl+D` | Duplicate selection |
 | Timeline | `Ctrl+Shift+C` | Precompose |
-| Global | `Ctrl+Alt+T` | Give the selected layer a Retime, or take it away (K-197, narrowed to this one chord by K-200 — AE's own, and one Windows cannot steal; the Composition-menu route is K-198) |
+| Global | `Ctrl+Alt+T` / `Ctrl+Shift+T` | Give the selected layer a Retime, or take it away (K-197, narrowed by K-200; `Ctrl+Shift+T` also bound) |
 | Timeline | `=` / `-` | Zoom time in / out (`Ctrl+wheel` at pointer) |
 | Timeline | `\` | Toggle full-comp zoom / previous zoom |
 | Timeline | `Enter` | Rename selected layer |
