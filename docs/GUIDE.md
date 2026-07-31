@@ -5784,3 +5784,24 @@ every test of the bar passed: they were all built from solids.
 Both rules now round the same way, so the width in the name is the width the
 pixels really were. A footnote worth having: resizing the window by less than a
 percent no longer re-decodes the footage either.
+
+**The sound that waited and never came back.** Every-frame playback shows every
+frame however long each one takes, so on a heavy stretch the picture falls
+behind the clock. Lumit's answer is to let the sound wait where it is, rather
+than let it run on and drift away from a picture that cannot keep up.
+
+Waiting was right. Never coming back was not. The clock stops reporting the
+moment the sound stops, and the only test that could have started it again read
+that clock — so once the sound had stopped, nothing could ever decide to start
+it. One slow frame took the sound away for the rest of the run, even after the
+picture returned to full speed, and the only way to get it back was to stop
+playback and press play again.
+
+The position the clock holds while it waits is exactly what was needed: the
+sound waits at the moment it reached, and the picture walks forward to meet it.
+When the frame being shown catches up to that moment, the sound starts itself.
+
+The two limits are deliberately different numbers — it waits when the picture is
+half a second behind, and starts again only when the picture is level. A single
+limit would start and stop the sound at every frame near it, which is worse than
+either answer on its own.
