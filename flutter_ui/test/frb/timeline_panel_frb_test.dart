@@ -2258,6 +2258,54 @@ void main() {
         );
       }
     });
+
+    testWidgets('clicking anywhere on outline row selects layer, but twirl does not', (tester) async {
+      final p = withComp();
+      final lower = p.comp.addSolidLayer();
+      final upper = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      expect(p.uiState.selectedLayer.value, isNull);
+
+      // 1. Pointer down on row body (empty space on left side of timeline) selects upper
+      var g = await tester.startGesture(tester.getCenter(find.byKey(ValueKey<String>('tl-rowbody-${upper.internallayerId}'))));
+      await tester.pump();
+      expect(p.uiState.selectedLayer.value?.internallayerId, upper.internallayerId);
+      await g.up();
+      await tester.pump(kDoubleTapTimeout * 2);
+
+      // 2. Click twirl on lower layer toggles fold, but does NOT change selection to lower
+      await tester.tap(find.byKey(ValueKey<String>('tl-twirl-${lower.internallayerId}')));
+      await tester.pump();
+      expect(p.uiState.selectedLayer.value?.internallayerId, upper.internallayerId,
+          reason: 'twirling lower layer must not change active selection from upper');
+    });
+
+    testWidgets('Control-clicking layers on timeline outline toggles multi-selection', (tester) async {
+      final p = withComp();
+      final lower = p.comp.addSolidLayer();
+      final upper = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      // 1. Select upper
+      var g = await tester.startGesture(tester.getCenter(find.byKey(ValueKey<String>('tl-rowbody-${upper.internallayerId}'))));
+      await tester.pump();
+      await g.up();
+      await tester.pump(kDoubleTapTimeout * 2);
+
+      expect(p.uiState.selectedLayers.value.map((l) => l.internallayerId), contains(upper.internallayerId));
+
+      // 2. Control-click lower
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft, physicalKey: PhysicalKeyboardKey.controlLeft);
+      g = await tester.startGesture(tester.getCenter(find.byKey(ValueKey<String>('tl-rowbody-${lower.internallayerId}'))));
+      await tester.pump();
+      await g.up();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft, physicalKey: PhysicalKeyboardKey.controlLeft);
+      await tester.pump(kDoubleTapTimeout * 2);
+
+      final selectedIds = p.uiState.selectedLayers.value.map((l) => l.internallayerId).toSet();
+      expect(selectedIds, containsAll([upper.internallayerId, lower.internallayerId]));
+    });
   }, skip: !engineAvailable);
 }
 

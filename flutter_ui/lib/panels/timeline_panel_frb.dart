@@ -453,62 +453,54 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     });
   }
 
-  void _selectLayer(LumitUiState ui, LayerReference? layer, {List<BridgeLayerEntry>? allLayers}) {
-    void update() {
-      if (layer == null) {
-        _anchorLayer = null;
-        ui.selectedLayer.value = null;
-        ui.selectedLayers.value = [];
-        return;
-      }
-
-      final ctrl = HardwareKeyboard.instance.isControlPressed ||
-          HardwareKeyboard.instance.isMetaPressed;
-      final shift = HardwareKeyboard.instance.isShiftPressed;
-
-      final currentList = List<LayerReference>.from(ui.selectedLayers.value);
-
-      if (ctrl) {
-        final exists = currentList.any((l) => l.internallayerId == layer.internallayerId);
-        if (exists) {
-          currentList.removeWhere((l) => l.internallayerId == layer.internallayerId);
-        } else {
-          currentList.add(layer);
+  void _selectLayer(LumitUiState ui, LayerReference? layer, {List<BridgeLayerEntry>? allLayers}) => setState(() {
+        if (layer == null) {
+          _anchorLayer = null;
+          ui.selectedLayer.value = null;
+          ui.selectedLayers.value = [];
+          return;
         }
-        _anchorLayer = layer;
-        ui.selectedLayers.value = currentList;
-        ui.selectedLayer.value = currentList.isNotEmpty ? currentList.last : null;
-      } else if (shift && allLayers != null) {
-        final anchor = _anchorLayer ?? (currentList.isNotEmpty ? currentList.first : layer);
-        final anchorId = anchor.internallayerId;
-        final targetId = layer.internallayerId;
-        int idx1 = allLayers.indexWhere((e) => e.layer.internallayerId == anchorId);
-        int idx2 = allLayers.indexWhere((e) => e.layer.internallayerId == targetId);
 
-        if (idx1 != -1 && idx2 != -1) {
-          final start = idx1 < idx2 ? idx1 : idx2;
-          final end = idx1 < idx2 ? idx2 : idx1;
-          final range = allLayers.sublist(start, end + 1).map((e) => e.layer).toList();
-          ui.selectedLayers.value = range;
-          ui.selectedLayer.value = layer;
+        final ctrl = HardwareKeyboard.instance.isControlPressed ||
+            HardwareKeyboard.instance.isMetaPressed;
+        final shift = HardwareKeyboard.instance.isShiftPressed;
+
+        final currentList = List<LayerReference>.from(ui.selectedLayers.value);
+
+        if (ctrl) {
+          final exists = currentList.any((l) => l.internallayerId == layer.internallayerId);
+          if (exists) {
+            currentList.removeWhere((l) => l.internallayerId == layer.internallayerId);
+          } else {
+            currentList.add(layer);
+          }
+          _anchorLayer = layer;
+          ui.selectedLayers.value = currentList;
+          ui.selectedLayer.value = currentList.isNotEmpty ? currentList.last : null;
+        } else if (shift && allLayers != null) {
+          final anchor = _anchorLayer ?? (currentList.isNotEmpty ? currentList.first : layer);
+          final anchorId = anchor.internallayerId;
+          final targetId = layer.internallayerId;
+          int idx1 = allLayers.indexWhere((e) => e.layer.internallayerId == anchorId);
+          int idx2 = allLayers.indexWhere((e) => e.layer.internallayerId == targetId);
+
+          if (idx1 != -1 && idx2 != -1) {
+            final start = idx1 < idx2 ? idx1 : idx2;
+            final end = idx1 < idx2 ? idx2 : idx1;
+            final range = allLayers.sublist(start, end + 1).map((e) => e.layer).toList();
+            ui.selectedLayers.value = range;
+            ui.selectedLayer.value = layer;
+          } else {
+            _anchorLayer = layer;
+            ui.selectedLayers.value = [layer];
+            ui.selectedLayer.value = layer;
+          }
         } else {
           _anchorLayer = layer;
           ui.selectedLayers.value = [layer];
           ui.selectedLayer.value = layer;
         }
-      } else {
-        _anchorLayer = layer;
-        ui.selectedLayers.value = [layer];
-        ui.selectedLayer.value = layer;
-      }
-    }
-
-    if (mounted) {
-      setState(update);
-    } else {
-      update();
-    }
-  }
+      });
 
   /// Fill in any layer's has-audio answer we do not have, off the build.
   void _refreshAudio(List<BridgeLayerEntry> layers) {
@@ -1201,6 +1193,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                       ? null
                       : (axis.xOf(work.start), axis.xOf(work.end));
 
+                  final selectedIds = <Object>{
+                    if (ui.selectedLayer.value != null) ui.selectedLayer.value!.internallayerId,
+                    for (final l in ui.selectedLayers.value) l.internallayerId,
+                  };
+
                   // **Not** wrapped in a playhead listener. Every layer row and
                   // every bar used to rebuild each time the playhead moved —
                   // sixty times a second during playback, growing with the layer
@@ -1293,8 +1290,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                     blockHeights: blockHeights,
                                                     groupOrder: _groupOrder,
                                                     widths: _groupWidths,
-                                                    selected:
-                                                        ui.selectedLayer.value,
+                                                    selectedIds: selectedIds,
                                                     highlighted: _highlighted,
                                                     selectedProperties:
                                                         _selectedProperties,
@@ -1576,6 +1572,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                 child: _LayerArea(
                                                   comp: comp,
                                                   layers: layers,
+                                                  selectedIds: selectedIds,
                                                   layerDrag: _layerDrag,
                                                   blockHeights: blockHeights,
                                                   open: _open,
@@ -3032,7 +3029,7 @@ class _Outline extends StatelessWidget {
   /// (docs/07 §4.2) — rows draw their cells to match the header's.
   final List<TimelineGroup> groupOrder;
   final Map<TimelineGroup, double> widths;
-  final LayerReference? selected;
+  final Set<Object> selectedIds;
   final String? highlighted;
 
   /// The selected properties' fold paths, in selection order: each is a
@@ -3063,7 +3060,7 @@ class _Outline extends StatelessWidget {
     required this.layers,
     required this.groupOrder,
     required this.widths,
-    required this.selected,
+    required this.selectedIds,
     required this.highlighted,
     required this.selectedProperties,
     required this.graphColours,
@@ -3105,11 +3102,7 @@ class _Outline extends StatelessWidget {
             index: i,
             count: layers.length,
             // A local compare, not a bridge call: both ids already sit here.
-            selected: Provider.of<LumitUiState>(context)
-                    .selectedLayers
-                    .value
-                    .any((l) => l.internallayerId == layers[i].layer.internallayerId) ||
-                selected?.internallayerId == layers[i].layer.internallayerId,
+            selected: selectedIds.contains(layers[i].layer.internallayerId),
             // A layer marks itself when its fold was last touched, and when
             // a selected property is one of its own (docs/07 §4.3).
             highlighted: highlighted ==
@@ -3267,6 +3260,8 @@ class _OutlineRowState extends State<_OutlineRow> {
     widget.onChanged();
   }
 
+  bool _ignoreSelect = false;
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
@@ -3274,20 +3269,22 @@ class _OutlineRowState extends State<_OutlineRow> {
     // (K-184).
     final info = widget.entry.info;
 
-    return Builder(
-      builder: (context) => Listener(
-        onPointerDown: (event) {
-          if (event.buttons == kPrimaryButton) widget.onSelect();
-        },
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: () {},
-          onSecondaryTapDown: (d) => _showRowMenu(context, d.globalPosition),
-          child: Container(
-            // No drop line: the rows themselves move to where they would land,
-            // so a line marking the same slot said it twice.
-            child: _rowBody(context, t, info),
-          ),
+    return Listener(
+      onPointerDown: (event) {
+        if (_ignoreSelect) {
+          _ignoreSelect = false;
+          return;
+        }
+        if (event.buttons == kPrimaryButton) widget.onSelect();
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () {},
+        onSecondaryTapDown: (d) => _showRowMenu(context, d.globalPosition),
+        child: Container(
+          // No drop line: the rows themselves move to where they would land,
+          // so a line marking the same slot said it twice.
+          child: _rowBody(context, t, info),
         ),
       ),
     );
@@ -3387,18 +3384,21 @@ class _OutlineRowState extends State<_OutlineRow> {
         // want to look at one layer's values while another is selected.
         LumitTooltip(
           message: widget.open ? 'Fold the properties away' : 'Properties',
-          child: GestureDetector(
-            key: ValueKey<String>('tl-twirl-$id'),
-            behavior: HitTestBehavior.opaque,
-            onTap: widget.onToggleOpen,
-            child: SizedBox(
-              width: 16,
-              height: _rowHeight,
-              child: Center(
-                child: lumitIcon(
-                  widget.open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
-                  size: iconSize,
-                  color: widget.open ? t.textPrimary : t.textMuted,
+          child: Listener(
+            onPointerDown: (_) => _ignoreSelect = true,
+            child: GestureDetector(
+              key: ValueKey<String>('tl-twirl-$id'),
+              behavior: HitTestBehavior.opaque,
+              onTap: widget.onToggleOpen,
+              child: SizedBox(
+                width: 16,
+                height: _rowHeight,
+                child: Center(
+                  child: lumitIcon(
+                    widget.open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                    size: iconSize,
+                    color: widget.open ? t.textPrimary : t.textMuted,
+                  ),
                 ),
               ),
             ),
@@ -3734,6 +3734,7 @@ class _OutlineRowState extends State<_OutlineRow> {
 class _LayerArea extends StatelessWidget {
   final CompositionReference comp;
   final List<BridgeLayerEntry> layers;
+  final Set<Object> selectedIds;
 
   /// Which layers are twirled open in the outline. Read only to leave the same
   /// room their property rows take, so a bar never drifts away from its name.
@@ -3810,6 +3811,7 @@ class _LayerArea extends StatelessWidget {
   const _LayerArea({
     required this.comp,
     required this.layers,
+    required this.selectedIds,
     required this.open,
     required this.hasAudio,
     required this.peaks,
@@ -3977,57 +3979,56 @@ class _LayerArea extends StatelessWidget {
                                         drag: layerDrag,
                                         heights: blockHeights,
                                         index: i,
-                                        child: Builder(builder: (context) {
-                                          final uiState = Provider.of<LumitUiState>(context);
-                                          final isSel = uiState.selectedLayers.value.any((l) => l.internallayerId == layers[i].layer.internallayerId) ||
-                                              uiState.selectedLayer.value?.internallayerId == layers[i].layer.internallayerId;
-                                          return Container(
-                                            color: isSel ? t.selectionFill : null,
-                                            child: Column(
-                                              crossAxisAlignment:
-                                                  CrossAxisAlignment.stretch,
-                                              children: [
-                                                _Bar(
+                                        child: Container(
+                                          color: selectedIds.contains(
+                                                  layers[i].layer.internallayerId)
+                                              ? t.selectionFill
+                                              : null,
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                              _Bar(
+                                                key: ValueKey<String>(
+                                                    'tl-bar-${layers[i].layer.internallayerId}'),
+                                                comp: comp,
+                                                entry: layers[i],
+                                                axis: axis,
+                                                razor: razor,
+                                                selected: selectedIds.contains(
+                                                    layers[i].layer.internallayerId),
+                                                playheadFrame: () =>
+                                                    playhead.value,
+                                                onSelect: () =>
+                                                    onSelect(layers[i].layer),
+                                                onChanged: onChanged,
+                                                dragPreview: dragPreview,
+                                                bounds: bounds[layers[i]
+                                                        .layer
+                                                        .internallayerId
+                                                        .toString()] ??
+                                                    BarBounds.free,
+                                              ),
+                                              if (open.contains(layers[i]
+                                                  .layer
+                                                  .internallayerId
+                                                  .toString()))
+                                                Column(
                                                   key: ValueKey<String>(
-                                                      'tl-bar-${layers[i].layer.internallayerId}'),
-                                                  comp: comp,
-                                                  entry: layers[i],
-                                                  axis: axis,
-                                                  razor: razor,
-                                                  selected: isSel,
-                                                  playheadFrame: () =>
-                                                      playhead.value,
-                                                  onSelect: () =>
-                                                      onSelect(layers[i].layer),
-                                                  onChanged: onChanged,
-                                                  dragPreview: dragPreview,
-                                                  bounds: bounds[layers[i]
-                                                          .layer
-                                                          .internallayerId
-                                                          .toString()] ??
-                                                      BarBounds.free,
+                                                      'tl-lanes-${layers[i].layer.internallayerId}'),
+                                                  children: [
+                                                    for (final row
+                                                        in _rowsOf(layers[i]))
+                                                      SizedBox(
+                                                        height: _rowHeight,
+                                                        child: _lane(
+                                                            t, layers[i], row),
+                                                      ),
+                                                  ],
                                                 ),
-                                                if (open.contains(layers[i]
-                                                    .layer
-                                                    .internallayerId
-                                                    .toString()))
-                                                  Column(
-                                                    key: ValueKey<String>(
-                                                        'tl-lanes-${layers[i].layer.internallayerId}'),
-                                                    children: [
-                                                      for (final row
-                                                          in _rowsOf(layers[i]))
-                                                        SizedBox(
-                                                          height: _rowHeight,
-                                                          child: _lane(
-                                                              t, layers[i], row),
-                                                        ),
-                                                    ],
-                                                  ),
-                                              ],
-                                            ),
-                                          );
-                                        }),
+                                            ],
+                                          ),
+                                        ),
                                       ),
                                   ],
                                 ),
