@@ -610,25 +610,39 @@ fn zero_copy_wants_bgra() -> bool {
     ))
 }
 
-/// Ask the disk tier for a frame that playback will want soon.
+/// Put a frame playback will want soon onto the graphics card **before** it is
+/// due — the "ahead of the playhead" half of docs/06 §5.1.
 ///
-/// **Why the lead time is the whole point.** A read off disk goes to the IO
-/// thread, and the frame it brings back arrives one or two turns of the worker
-/// loop later. [`prepare_frame`] asks for a frame at the moment it must show it,
-/// thus the bytes always come too late for that frame and it is composited
-/// again. Playback then gets no good from a span that is parked on disk, which
-/// is most of what the disk tier holds after a project is re-opened.
+/// # Why each rung needs its own lead time
 ///
-/// This asks for the frames that playback will reach in a moment, at the same
-/// time as the decodes for those frames go to the prefetch thread. The bytes
-/// arrive, [`collect_disk_loads`] puts them on the card, and playback finds the
-/// frame already there.
+/// The ring renders ahead of the clock, thus a frame is composited before it is
+/// shown. What was *not* ahead of anything was the trip up the ladder. Both
+/// lower rungs were climbed at the moment the frame was wanted, inside the
+/// render turn:
 ///
-/// Nothing here waits and nothing here is expensive: naming a frame is a hash of
-/// the composition, and the watermark in [`play_one_frame`] names each coming
-/// frame once for each pass of playback.
+/// * **From memory** the climb is an upload, and an upload is quick — but it
+///   happened on the worker thread in the middle of the turn that had to
+///   produce the frame, so it was paid out of that frame's budget rather than
+///   out of the slack the ring exists to bank.
+/// * **From disk** the climb is a message to another thread, and the bytes come
+///   back one or two turns of the loop later. Asked for at the moment the frame
+///   was due, they always arrived too late for it, and playback composited the
+///   frame from the beginning instead — so a span sitting in a file was worth
+///   nothing to the pass that went over it.
+///
+/// This does both in advance, over the same look-ahead window whose source
+/// decodes are already posted. By the time the ring reaches the frame it is a
+/// hit on the card and no composite happens at all.
+///
+/// Nothing here waits. A frame that cannot be named yet is left alone, a copy
+/// that has not arrived is simply not there yet, and the ordinary path composites
+/// as it always did.
+///
+/// Returns whether it did work the caller should count: an upload happened.
+/// Asking the disk for a copy is a message to another thread and costs this one
+/// nothing, thus it does not count.
 #[frb(ignore)]
-fn request_disk_lead(
+fn line_up_frame(
     renderer: &mut lumit_render::HeadlessRenderer,
     disk: &lumit_render::diskio::DiskIo,
     disk_wanted: &mut std::collections::HashMap<u128, lumit_render::FrameProvenance>,
@@ -636,32 +650,54 @@ fn request_disk_lead(
     comp: Uuid,
     frame: u64,
     quality: lumit_render::Quality,
-) {
+) -> bool {
     let bgra = zero_copy_wants_bgra();
     let Some(key) = renderer.frame_key(document, comp, frame, quality) else {
-        // Not nameable yet (footage still being probed), thus not on disk under
-        // any name either.
-        return;
+        // Not nameable yet (footage still being probed), thus not held anywhere
+        // under any name either.
+        return false;
     };
+    if renderer.has_frame_texture(key, bgra) {
+        // Already where it needs to be.
+        return false;
+    }
+    let provenance = lumit_render::FrameProvenance {
+        comp,
+        frame,
+        scale_q: lumit_render::preview_scale_q(quality),
+    };
+    // Memory first: it is one upload away, which is cheaper than a file and far
+    // cheaper than a composite. Doing it now means the render turn finds a hit.
+    if let Some(held) = crate::framecache::held(key) {
+        // Only the order it came down in can go back up: the other order would
+        // show with red and blue swapped.
+        if held.bgra == bgra {
+            return renderer
+                .upload_frame_texture(lumit_render::Promotion {
+                    key,
+                    bgra,
+                    width: held.width,
+                    height: held.height,
+                    bytes: &held.bytes,
+                    cost_ms: held.cost_ms,
+                    provenance,
+                })
+                .is_some();
+        }
+    }
     if !wants_disk_lead(
-        renderer.has_frame_texture(key, bgra),
+        false,
         crate::framecache::contains(key),
         disk.contains(key),
         disk_wanted.contains_key(&key),
     ) {
-        return;
+        return false;
     }
-    disk_wanted.insert(
-        key,
-        lumit_render::FrameProvenance {
-            comp,
-            frame,
-            scale_q: lumit_render::preview_scale_q(quality),
-        },
-    );
+    disk_wanted.insert(key, provenance);
     _ = disk
         .tx
         .send(lumit_render::diskio::Cmd::Load { hash: key, bgra });
+    false
 }
 
 /// Whether a coming frame is worth a read off disk.
@@ -684,14 +720,17 @@ fn wants_disk_lead(on_card: bool, in_memory: bool, on_disk: bool, already_asked:
 /// 1. **Already on the card** — [`HeadlessRenderer::render_prepared`] answers
 ///    from its own cache without compositing.
 /// 2. **Held in memory** — uploaded straight back into a texture, which is a
-///    fraction of a composite and the reason the RAM tier exists at all.
+///    fraction of a composite and the reason the RAM tier exists at all. During
+///    playback this has usually happened already, in advance
+///    ([`line_up_frame`]); what is left here is the frame nobody looked ahead
+///    for — a scrub, or the first frame of a pass.
 /// 3. **Parked on disk** — *asked for*, never waited on. A disk read plus
 ///    decompression is not something to hold the preview open for, so the frame
 ///    is composited now and the copy off disk lands a turn or two later, in time
 ///    for the next visit. This is what makes reopening a project warm up as you
 ///    scrub rather than only where the fill has reached. Playback does not wait
 ///    for that second visit: it asks for the coming frames in advance
-///    ([`request_disk_lead`]), thus a parked span plays from the card.
+///    ([`line_up_frame`]), thus a parked span plays from the card.
 /// 4. **Composited**, and banked on the way past.
 #[frb(ignore)]
 fn prepare_frame(
@@ -855,6 +894,11 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     // — the far side of where you now are. It still terminates: the walk is
     // bounded, and every frame in the window ends up held.
     let window = (budget / frame_bytes).max(1);
+    // Frames the disk holds are asked for as the walk passes them, and the walk
+    // carries on. A load is a message to another thread, thus queueing several
+    // costs nothing here — and by the time the fill comes round again they have
+    // arrived and gone onto the card, which is what makes a re-opened project
+    // warm up by *reading* rather than by rendering everything a second time.
     for frame in crate::playback::fill_order(anchor, first, last).take(window) {
         // Naming the frame is what tells the fill whether there is anything to
         // do — and under content keying the name is the same one every tier files
@@ -864,6 +908,35 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             .frame_key(&document, comp_ref.id, frame, quality)
         {
             if state.renderer.has_frame_texture(key, bgra) {
+                continue;
+            }
+            // **Held below: climb it, do not make it again.** The fill has no
+            // deadline — that is what makes it the fill — thus a frame that
+            // already exists in memory or in a file must never be composited
+            // afresh. `prepare_frame` below would do that for a parked frame:
+            // it asks for the copy and composites anyway, which is right when a
+            // frame is due *now* and wrong here. After a re-opened project this
+            // is the difference between reading a session's cache back and
+            // rendering the whole of it a second time.
+            if crate::framecache::contains(key) || state.disk.contains(key) {
+                let uploaded = line_up_frame(
+                    &mut state.renderer,
+                    &state.disk,
+                    &mut state.disk_wanted,
+                    &document,
+                    comp_ref.id,
+                    frame,
+                    quality,
+                );
+                // An upload is this turn's work, exactly as a render would be:
+                // a request arriving mid-fill then waits for one frame, not for
+                // a window's worth. Asking the disk costs this thread nothing,
+                // so the walk carries on queueing those.
+                if uploaded {
+                    _ = stream.add(WorkerResponse::CacheFilled);
+                    state.fill_exhausted = false;
+                    return;
+                }
                 continue;
             }
         }
@@ -876,6 +949,12 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         }
         return;
     }
+    // Nothing left for the fill to *make*. Copies may still be on their way up
+    // from disk, and the fill does not wait for them by spinning: walking the
+    // window again means naming every frame in it again, which is real work to
+    // do while the answer is on another thread. What wakes it instead is the
+    // copy landing — `collect_disk_loads` clears this the moment one reaches
+    // the card, and the fill then finds it held and moves on to the next.
     state.fill_exhausted = true;
 }
 
@@ -1520,7 +1599,7 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                 // asked for when it is shown always comes too late and is
                 // composited again. Asked for now, it is on the card before
                 // playback gets there.
-                request_disk_lead(
+                _ = line_up_frame(
                     &mut state.renderer,
                     &state.disk,
                     &mut state.disk_wanted,
@@ -2882,7 +2961,11 @@ mod bar_strip_tests {
     use super::{refine_bar_strip, sample_bar_strip, wants_disk_lead};
 
     /// Playback asks the disk tier for a frame in advance, and only when the
-    /// read is of use.
+    /// read is of use — the last rung, reached only when the ones above it
+    /// cannot answer. The rung above is memory, and it is climbed in advance
+    /// too: `line_up_frame` uploads a held frame to the card before the frame is
+    /// due, thus by the time this predicate is asked, "in memory" has already
+    /// been dealt with and only a genuine file read is left.
     ///
     /// **Why this matters.** A read off disk arrives one or two turns of the
     /// worker loop after it is asked for. A frame asked for at the moment it

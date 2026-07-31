@@ -438,6 +438,65 @@ void main() {
     /// and the ones in the way were far off and stale. What it keeps now is a
     /// window around the playhead — so the frames near where you *are* end up
     /// held and the ones near where you *were* are the ones evicted for them.
+    /// **A frame held in memory climbs back onto the card on its own.**
+    ///
+    /// The rungs of the ladder used to be climbed at the moment a frame was
+    /// wanted — inside the turn that had to produce it. The climb from memory is
+    /// only an upload, but it was paid out of that frame's budget instead of out
+    /// of the slack the idle fill and the ring exist to bank. It is done in
+    /// advance now (`line_up_frame`), and this pins the visible consequence: a
+    /// frame pushed off the card and held in memory comes *back* to the card
+    /// without anything asking for it, and without being composited again.
+    testWidgets('a frame held in memory is put back on the card on its own',
+        (tester) async {
+      final p = freshProject();
+      final comp = _stampComp(p.state.project!, 'Scene');
+      p.uiState.setSelectedComp(comp);
+
+      // Room for two frames, so banking a few pushes the earlier ones off the
+      // card and into memory — which is the state this test is about.
+      const room = (160 * 90 * 4 + 64) * 2;
+      setVramCacheBudget(bytes: BigInt.from(room));
+      addTearDown(() => setVramCacheBudget(bytes: BigInt.from(512 << 20)));
+
+      await tester.pumpWidget(hostPanel(
+        child: const ViewerPanelFrb(),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(700, 500),
+      ));
+      await tester.pump();
+
+      List<int> tiers() =>
+          comp.cachedFrames(frames: BigInt.from(40), scale: 1.0);
+
+      // Let the fill work around frame 0 until the frames near it are banked
+      // and the ones behind have been pushed down into memory.
+      await tester.runAsync(() async {
+        for (var i = 0; i < 80; i++) {
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+          if (tiers()[1] == 2 && tiers()[2] == 2) return;
+        }
+        fail('the fill never warmed the frames around frame 0');
+      });
+
+      // Everything the fill has touched reads as held — on the card or one
+      // upload away, which is what tier 2 means. The point is that it STAYS
+      // that way while the fill carries on displacing things: a frame that
+      // falls to memory is climbed back up rather than re-rendered, so the bar
+      // never goes backwards.
+      final held = tiers().where((t) => t == 2).length;
+      await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 600)));
+      expect(
+        tiers().where((t) => t == 2).length,
+        greaterThanOrEqualTo(held),
+        reason: 'frames that fell to memory were climbed back, not lost',
+      );
+      expect(cacheStats().entries.toInt(), greaterThan(0),
+          reason: 'and memory is holding the ones that left the card');
+    });
+
     testWidgets('the fill follows the playhead even when the cache is full',
         (tester) async {
       final p = freshProject();
@@ -505,7 +564,6 @@ void main() {
       // asserting on them here would be asserting on which worker spoke most
       // recently.
     });
-
 
     /// The idle fill (K-187): show a frame, leave the engine alone for a
     /// moment, and it banks the frames around the playhead on its own —

@@ -4934,3 +4934,26 @@ new frames, not after it. Waiting for the fill to finish sounds tidier, but on a
 long composition the fill has frames to make for as long as the memory lasts —
 so "after the fill" would have meant "never", which is exactly how long the disk
 tier stayed empty.
+
+**Climbing the ladder before the frame is due.** Rendering runs ahead of the
+clock, so a frame is usually made before it is shown. Fetching one that already
+exists did not: whichever rung it was sitting on, it was climbed at the moment
+the frame was wanted, inside the turn that had to deliver it.
+
+From memory that is one upload — quick, but it came out of that frame's own
+budget instead of out of the slack that running ahead exists to build up. From
+disk it was worse than slow, it was useless: the read goes to another thread and
+the bytes come back a moment later, so a copy asked for at the instant the frame
+was due always arrived after it had gone past, and the frame was composited from
+scratch anyway.
+
+Both are now fetched over the same window of coming frames that source decodes
+already use. By the time playback reaches the frame it is a texture on the card
+and nothing is composited at all.
+
+The idle fill follows the same rule, and it matters most right after the backup
+above has done its work: **the fill never re-renders a frame it already has
+somewhere.** It has no deadline — that is the whole point of it — so a frame in
+memory or in a file is fetched, not made. Without that rule, opening yesterday's
+project would walk a full disk cache and render every frame of it again, which is
+precisely what the cache exists to prevent.

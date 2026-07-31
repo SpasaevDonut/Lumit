@@ -356,7 +356,15 @@ is read back off the card and lands in RAM and on disk, and a frame held below i
 straight back into a texture rather than composited again. What the tiers hold is
 **final comp frames only** — node-output caching is the evaluator's, and is not built.
 
-**"Ahead of the playhead" is what makes the disk tier count during playback.** A read off disk
+**"Ahead of the playhead" applies to BOTH lower rungs, and neither used to.** The ring renders
+ahead of the clock, so a frame is composited before it is shown — but the trip *up* the ladder
+was made at the moment the frame was wanted, inside the turn that had to produce it. From memory
+that is an upload: quick, but paid out of the frame's own budget rather than out of the slack the
+ring exists to bank. From disk it is worse — see below. Both rungs are now climbed over the same
+look-ahead window whose source decodes are already posted, so by the time the ring reaches the
+frame it is a hit on the card and no composite happens at all.
+
+**And the disk rung is what makes the tier count during playback.** A read off disk
 goes to the IO thread, and the bytes come back one or two turns of the worker loop later. A
 frame asked for at the moment it must be shown thus always arrives too late, and playback
 composites it again — a span parked on disk was then worth nothing to playback, which is most
@@ -528,6 +536,15 @@ memory and to disk. The copy is the same non-blocking read-back an eviction uses
 by the same in-flight ceiling, thus it can never compete with the picture. A frame that has been
 copied down is marked as held below, so the day it *is* pushed out it goes without being read a
 second time.
+
+The idle fill obeys the same rule, and it matters most immediately after the backup has done its
+job: **the fill never composites a frame that is already held below.** It has no deadline — that
+is what makes it the fill — so a frame that exists in memory or in a file is climbed rather than
+made again. Without this, re-opening a project would walk a full disk cache and re-render every
+frame of it, which is the exact opposite of what the cache is for. An upload counts as that
+turn's work, so a request arriving mid-fill still waits at most one frame; asking the disk for a
+copy costs this thread nothing, so the walk queues those as it passes and the copies land while
+it is idle.
 
 The backup runs **alongside** the fill rather than after it. On a long composition the fill has
 frames to make for as long as the budget lasts, so "when the fill is finished" would mean
