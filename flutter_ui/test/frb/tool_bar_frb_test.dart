@@ -38,6 +38,31 @@ void main() {
       return p;
     }
 
+    /// **The tool options fit the strip it was shrunk to** (K-230 made it 30px
+    /// tall). They are the only things on the bar taller than an icon — a
+    /// colour well and a number field — so they are what a shorter strip breaks
+    /// first, and an overflow stripe is not a design.
+    testWidgets('the armed tool options fit the shortened strip',
+        (tester) async {
+      final p = await mount(tester);
+
+      for (final (tool, what) in [
+        (ToolMode.typeHorizontal, 'the Type tool shows a fill and a size'),
+        (ToolMode.shapeRectangle, 'a shape tool shows a fill and a stroke'),
+      ]) {
+        p.uiState.tools.select(tool);
+        await tester.pump();
+
+        expect(tester.takeException(), isNull, reason: what);
+        expect(find.text('Fill'), findsOneWidget, reason: what);
+        // The strip is the height it says it is, options and all.
+        expect(
+          tester.getSize(find.byType(LumitToolBarFrb)).height,
+          toolBarHeight,
+        );
+      }
+    });
+
     testWidgets('every tool group has a button', (tester) async {
       await mount(tester);
       for (final group in toolBarOrder) {
