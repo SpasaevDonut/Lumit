@@ -329,6 +329,18 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
   edit a *finished* path and are not built.
 - A mask's path is stored in **layer space**, so it travels with the layer's transform.
 - Every selected layer's masks MUST be outlined on the picture, with a mark on each vertex.
+- **A mask's points can be edited with the Selection tool** while the layer controls are shown
+  (K-222). Each vertex is drawn as a small square, filled when it is selected. A click takes
+  the point under the pointer (`Shift` adds to or removes from the set); a **marquee** that
+  catches any of the selected layers' vertices takes **those**, leaving the layer selection
+  alone, and one that catches none is the layer sweep of §2.3. Dragging a selected point moves
+  every selected point, each in **its own layer's** space so a set spanning differently
+  transformed layers still travels together on screen. The order a press is resolved in MUST
+  be: scale/rotation handle, then mask point of a *selected* layer, then layer body, then
+  empty space. The marquee MUST settle the selection on release rather than clearing it on
+  press — otherwise the press would drop the layer whose points the sweep is about to gather.
+  Bezier **handles** on a finished path are not editable yet, and mask paths cannot be
+  keyframed.
 - Masks appear in the layer's Timeline twirl-down under a **Masks** heading — above Effects,
   because a mask gates the layer's alpha before its effects run (docs/06 render order) — and
   the heading appears only once the layer has one, exactly as Effects does. Each row carries
@@ -341,8 +353,8 @@ bar's switch. Not built: the anchor-point centre handle, snapping of any kind, p
 and 3D gizmos, scale and rotation of a *multiple* selection about a shared box (a multiple
 selection moves, and shows a box per layer), and motion paths (§2.4). A layer whose position
 is keyframed draws no box: there is no single value for a drag to add to. **Masks can be
-drawn, listed, inverted, faded and deleted, but not yet edited** — no vertex or handle on a
-finished mask can be dragged, and mask paths cannot be keyframed.
+drawn, listed, inverted, faded, deleted, and their points selected and moved** (K-222); their
+bezier **handles** cannot be dragged, and mask paths cannot be keyframed.
 
 ### 2.4 Motion paths
 

@@ -96,8 +96,9 @@ the transparency grid and wheel zoom about the cursor have landed. Still missing
 flyouts, shortcuts and the two switches at its right-hand end landed 2026-07-31. What is
 armed is a *tool*; what each tool then does is the backlog:
 - **Selection** - built (K-215): click, Shift-click, marquee, body drag, the scale
-    handles and the rotation bar. What is left is on the gizmo rather than the tool —
-    see the layer-controls list below.
+    handles and the rotation bar, plus a selected layer's **mask points** — click, sweep and
+    drag (K-222). What is left is on the gizmo rather than the tool — see the layer-controls
+    list below.
 - **Hand** - built (K-215): the grab pointer, and a drag that pans the view and never
     the layer.
 - **Zoom** - built (K-216): the lens pointer (and its zoom-out twin under `Alt`), click
@@ -127,9 +128,11 @@ armed is a *tool*; what each tool then does is the backlog:
       one, because `LayerKind` has no Shape variant. A shape layer needs a new layer kind, a
       geometry model with fill and stroke, renderer support and its own Timeline rows — an
       engine feature in its own right, being done on a branch off this one.
-    - **Mask editing.** A finished mask's vertices and handles cannot be dragged, so the
-      `Alt`-drag that re-links a broken tangent pair only exists while a point is being
-      *placed*. The Pen tools' add/delete/convert vertex variants are the same piece of work.
+    - **Mask editing.** A finished mask's **points** can be selected and dragged with the
+      Selection tool (K-222); its **handles** cannot, so the `Alt`-drag that re-links a broken
+      tangent pair only exists while a point is being *placed*. The Pen tools'
+      add/delete/convert vertex variants are the same piece of work, as is dragging a whole
+      path by one of its segments.
     - **Mask paths cannot be keyframed** (docs/03 has them as animatable), and there is no
       mask **mode** (add/subtract/intersect) — every mask adds.
     - **Mask feather** has neither a control nor a renderer path.

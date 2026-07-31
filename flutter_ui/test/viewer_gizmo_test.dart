@@ -25,6 +25,7 @@ void main() {
     double rotation = 0,
     Offset origin = Offset.zero,
     double viewScale = 1,
+    List<BridgeMask> masks = const [],
   }) =>
       LayerBox(
         layer: LayerReference(
@@ -48,6 +49,31 @@ void main() {
         draggable: true,
         scalable: true,
         rotationDegrees: rotation,
+        masks: masks,
+      );
+
+  /// A square mask in the layer's own coordinates, all corners.
+  BridgeMask squareMask({
+    double left = 20,
+    double top = 20,
+    double side = 60,
+  }) =>
+      BridgeMask(
+        id: UuidValue.fromString(const Uuid().v4()),
+        name: 'Rectangle',
+        vertices: [
+          for (final (x, y) in [
+            (left, top),
+            (left + side, top),
+            (left + side, top + side),
+            (left, top + side),
+          ])
+            BridgeVertex(
+                x: x, y: y, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+        ],
+        closed: true,
+        inverted: false,
+        opacity: 100,
       );
 
   group('What a point is inside', () {
@@ -102,6 +128,66 @@ void main() {
       final caught =
           layersInsideRect([top, under], const Rect.fromLTRB(0, 0, 600, 400));
       expect(caught.map((b) => b.id).toList(), [top.id, under.id]);
+    });
+  });
+
+  /// A mask's own points (K-222): with the Selection tool and the wireframes
+  /// on, every vertex of every mask is a thing you can aim at, sweep up and
+  /// drag. The arithmetic that decides *which* is here.
+  group('A mask\'s points', () {
+    test('sit where the layer\'s map puts them, not where the path says', () {
+      // The layer is 200x100 at (300, 200), so its own origin is at (200, 150)
+      // on screen and a vertex at (20, 20) lands at (220, 170).
+      final b = box(masks: [squareMask()]);
+      final points = maskPointsOf(b);
+      expect(points.length, 4);
+      expect(points.first.at, const Offset(220, 170));
+      expect(points.first.index, 0);
+      expect(points[2].at, const Offset(280, 230));
+    });
+
+    test('travel with the layer\'s rotation', () {
+      final b = box(rotation: 90, masks: [squareMask()]);
+      // The vertex sits 80 left and 30 above the anchor; a quarter turn puts
+      // it 30 right and 80 above instead.
+      final at = maskPointsOf(b).first.at;
+      expect(at.dx, closeTo(330, 1e-9));
+      expect(at.dy, closeTo(120, 1e-9));
+    });
+
+    test('a press near one names it, and one far away names nothing', () {
+      final b = box(masks: [squareMask()]);
+      final hit = maskPointAt([b], const Offset(223, 172));
+      expect(hit, isNotNull);
+      expect(hit!.index, 0);
+      expect(hit.key, maskPointKey(b.id, b.masks.single.id, 0));
+      expect(maskPointAt([b], const Offset(250, 200)), isNull,
+          reason: 'the middle of the mask is not one of its points');
+    });
+
+    test('the nearest wins when two are close together', () {
+      final b = box(masks: [squareMask(side: 8)]);
+      // The four vertices are 8 px apart; a press to the right of the second
+      // one must name the second, not the first.
+      expect(maskPointAt([b], const Offset(229, 170))!.index, 1);
+      expect(maskPointAt([b], const Offset(221, 170))!.index, 0);
+    });
+
+    test('a sweep gathers every point inside it and no others', () {
+      final b = box(masks: [squareMask()]);
+      // The top edge only: the two points at y = 170, not the two at y = 230.
+      final caught =
+          maskPointsInRect([b], const Rect.fromLTRB(200, 150, 300, 200));
+      expect(caught, {
+        maskPointKey(b.id, b.masks.single.id, 0),
+        maskPointKey(b.id, b.masks.single.id, 1),
+      });
+      expect(maskPointsInRect([b], const Rect.fromLTRB(0, 0, 10, 10)), isEmpty);
+    });
+
+    test('a layer with no mask has no points to catch', () {
+      expect(maskPointsOf(box()), isEmpty);
+      expect(maskPointAt([box()], const Offset(300, 200)), isNull);
     });
   });
 

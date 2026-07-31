@@ -35,6 +35,7 @@ import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/state.dart';
 import 'package:lumit_flutter/widgets/dropper_overlay.dart';
+import 'package:uuid/uuid.dart';
 
 import 'frb_test_support.dart';
 
@@ -1077,6 +1078,79 @@ void main() {
       expect(masks.single.vertices, hasLength(5),
           reason: 'a polygon is a shape you drag out, not a path you build '
               '(K-221)');
+    });
+
+    /// Mask points are editable on the picture (K-222): they draw as squares on
+    /// the path, a marquee gathers them, and dragging moves them.
+    testWidgets('a mask\'s points can be swept up and dragged', (tester) async {
+      final p = withLayer();
+      // A small rectangle mask in the middle of the comp, so its points sit
+      // well inside the picture.
+      p.layer.addMask(
+        mask: BridgeMask(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Rectangle',
+          vertices: const [
+            BridgeVertex(
+                x: 860, y: 440, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 1060, y: 440, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 1060, y: 640, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+            BridgeVertex(
+                x: 860, y: 640, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0),
+          ],
+          closed: true,
+          inverted: false,
+          opacity: 100,
+        ),
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final before = p.layer.getMasks().single.vertices;
+      final fitted = fittedRect(tester, p.comp);
+      // Where the mask's top-left point is on screen: layer space maps 1:1 to
+      // the comp here, so it is the fitted rect scaled.
+      Offset onScreen(double x, double y) => Offset(
+            fitted.left + x / 1920 * fitted.width,
+            fitted.top + y / 1080 * fitted.height,
+          );
+
+      // Sweep the top two points only, starting from empty space *outside* the
+      // picture: a press inside a selected layer moves that layer, which is
+      // what the Selection tool has always done (K-215) and what After Effects
+      // does. The surround is the empty part a marquee starts from.
+      final panel = tester.getRect(find.byType(ViewerPanelFrb));
+      final gesture = await tester.startGesture(panel.topLeft + const Offset(2, 2));
+      await tester.pump();
+      await gesture.moveTo(onScreen(1000, 480));
+      await tester.pump();
+      await gesture.moveTo(onScreen(1100, 500));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+      // Nothing has moved yet — a sweep only chooses.
+      expect(p.layer.getMasks().single.vertices.first.x, before.first.x);
+
+      // Now drag one of the caught points; both should travel.
+      final drag = await tester.startGesture(onScreen(860, 440));
+      await tester.pump();
+      // Past the framework's pan slop, which is larger than the touch slop.
+      for (var i = 0; i < 10; i++) {
+        await drag.moveBy(const Offset(6, 0));
+        await tester.pump();
+      }
+      await drag.up();
+      await tester.pumpAndSettle();
+
+      final after = p.layer.getMasks().single.vertices;
+      expect(after[0].x, greaterThan(before[0].x),
+          reason: 'the swept top-left point moved');
+      expect(after[1].x, greaterThan(before[1].x),
+          reason: 'and so did the other one the sweep caught');
+      expect(after[3].x, closeTo(before[3].x, 0.001),
+          reason: 'the points the sweep missed stayed put');
     });
 
     testWidgets('a missing footage layer raises the badge', (tester) async {

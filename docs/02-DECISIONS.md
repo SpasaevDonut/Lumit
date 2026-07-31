@@ -3812,3 +3812,49 @@ Pen's.
 `ToolMode.ready` flags still said otherwise, so every tooltip claimed "not built yet" over a
 tool that drew masks. `ready` is a promise about what a tooltip says (K-214) and it was
 lying; a test now pins the set.
+
+**K-222 · DECIDED · A mask's points are things you can aim at, sweep up and drag.** From the
+owner (2026-07-31): "if you have the selection tool and wireframes enabled, if you have a
+layer that's a shape or has a mask, you should be able to see the individual points that make
+it up. And if you do the drag selection I mentioned it should select any point inside it so
+you can alter and drag them about."
+
+**What a press means, in one order.** Over the picture with the Selection tool the pointer
+has more and more things under it, so the order they are tried in is the whole design: a
+**scale or rotation handle** first (it sits on the box's edge, where the body also is), then a
+**mask point** of a *selected* layer, then the **layer** under the pointer, then empty space.
+Points come before the body because they are drawn on top of it and are much smaller; they
+come after the handles because a handle is the coarser target and losing it would be worse.
+Only *selected* layers' points are tried: a stray vertex of some layer underneath must never
+steal a press meant for the picture.
+
+**The marquee gathers points when there are points to gather.** A sweep from empty space that
+catches any of the selected layers' vertices selects **those**, and the layer selection is
+left alone; a sweep that catches none is the layer sweep it has always been. That is one
+gesture doing two jobs, decided by what is actually under it — which is what After Effects
+does, and what makes "select some points and move them" a single fluid thing rather than a
+mode.
+
+**Which forced the selection to be decided on release, not on press.** The old marquee cleared
+the selection the moment it began. That is invisible when it is layers being swept, and fatal
+when it is points: the press would drop the very layer whose points the sweep was about to
+gather. So the band now leaves the selection alone while it is drawn and settles it on
+release — which also keeps the boxes on screen while the user is aiming, and is the better
+behaviour on its own terms.
+
+**A drag moves each point in its own layer's space.** The pointer's travel is a *screen*
+delta; each mask is written in its layer's coordinates. The delta is therefore mapped through
+each layer's own inverse (two points on the picture, subtracted, so scale and rotation are
+undone exactly) before it is added — so a selection spanning two layers with different
+transforms still moves together on screen. One `set_mask` per mask, which is one undo step per
+mask, the same rule the razor follows for a multi-layer cut.
+
+**No live preview while points are dragged.** The dragged points follow the pointer as drawn
+marks, and the picture catches up on release. The preview path (K-183) patches one layer's
+*transform* into a clone of the document; a mask path has no room in it, and inventing one for
+a gesture this short is not worth a second preview shape. The marks moving is enough feedback
+to aim with.
+
+**Handles are not points.** A vertex's two bezier handles cannot be dragged yet, and neither
+can a mask path be keyframed. Both are in TODO.md. This decision is about the *positions* of
+the points, which is the half that makes a drawn mask correctable.

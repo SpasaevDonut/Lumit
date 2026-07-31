@@ -5038,3 +5038,38 @@ still saying no, so every one of their tooltips claimed the tool did nothing whi
 it was busily drawing masks. That flag is a promise about what the interface tells
 you, so a wrong one is not a cosmetic bug; there is now a test that pins the whole
 set of built tools, which will fail the next time one ships out of step.
+
+### Moving a mask's points (K-222)
+
+A mask you have drawn is only half a tool until you can correct it. With the
+Selection tool in hand and the layer controls showing, every vertex of every
+selected layer's mask is drawn as a small square, and those squares are things
+you can aim at: click one to take it, `Shift`-click to add or remove, or sweep a
+rectangle from empty space to take every point inside it. Drag any selected point
+and the whole set moves.
+
+**One gesture, two meanings, decided by what is under it.** The rubber band that
+has always selected *layers* now selects *points* when there are points in it —
+and only when the points belong to a layer that is already selected. If it
+catches none, it is the layer sweep it always was. That is how After Effects
+behaves, and it is why there is no "point mode" to switch into.
+
+**The subtle bit: when the selection is decided.** The band used to clear the
+selection the instant you pressed. Harmless when it was layers being swept —
+fatal for points, because the press would drop the very layer whose points you
+were about to gather. So the band now leaves everything alone while you drag it
+and settles the selection when you let go. As a side effect the boxes stay on
+screen while you aim, which is better anyway.
+
+**Why the maths is per layer.** Your mouse moves a certain number of pixels *on
+the screen*; a mask is written in its layer's own coordinates, which may be
+scaled and turned. So the travel is put through each layer's inverse map before
+it is added to the point — two points on the picture, subtracted — which means a
+selection spanning two layers with quite different transforms still moves
+together under the pointer, as it appears to.
+
+The picture itself catches up when you let go rather than following live: the
+live-preview path patches a layer's *transform* into a copy of the document, and
+a mask path does not fit through it. The marks moving is enough to aim by. What
+is still owed: a vertex's two **bezier handles** cannot be dragged, and mask paths
+cannot be keyframed.
