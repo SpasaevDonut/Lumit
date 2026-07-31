@@ -136,6 +136,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgePoint dco_decode_box_autoadd_bridge_point(dynamic raw);
 
   @protected
+  BridgeProjectCacheLocation
+      dco_decode_box_autoadd_bridge_project_cache_location(dynamic raw);
+
+  @protected
   BridgeRational dco_decode_box_autoadd_bridge_rational(dynamic raw);
 
   @protected
@@ -211,6 +215,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeBezierSide dco_decode_bridge_bezier_side(dynamic raw);
 
   @protected
+  BridgeCacheLocation dco_decode_bridge_cache_location(dynamic raw);
+
+  @protected
   BridgeCacheStats dco_decode_bridge_cache_stats(dynamic raw);
 
   @protected
@@ -230,6 +237,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeCompSize dco_decode_bridge_comp_size(dynamic raw);
+
+  @protected
+  BridgeDiskCacheStats dco_decode_bridge_disk_cache_stats(dynamic raw);
 
   @protected
   BridgeEffectInfo dco_decode_bridge_effect_info(dynamic raw);
@@ -317,6 +327,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgePresetInfo dco_decode_bridge_preset_info(dynamic raw);
+
+  @protected
+  BridgeProjectCacheLocation dco_decode_bridge_project_cache_location(
+      dynamic raw);
 
   @protected
   BridgeRational dco_decode_bridge_rational(dynamic raw);
@@ -508,6 +522,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMediaInfo? dco_decode_opt_box_autoadd_bridge_media_info(dynamic raw);
 
   @protected
+  BridgeProjectCacheLocation?
+      dco_decode_opt_box_autoadd_bridge_project_cache_location(dynamic raw);
+
+  @protected
   BridgeRenderedFrame? dco_decode_opt_box_autoadd_bridge_rendered_frame(
       dynamic raw);
 
@@ -658,6 +676,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgePoint sse_decode_box_autoadd_bridge_point(SseDeserializer deserializer);
 
   @protected
+  BridgeProjectCacheLocation
+      sse_decode_box_autoadd_bridge_project_cache_location(
+          SseDeserializer deserializer);
+
+  @protected
   BridgeRational sse_decode_box_autoadd_bridge_rational(
       SseDeserializer deserializer);
 
@@ -749,6 +772,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeBezierSide sse_decode_bridge_bezier_side(SseDeserializer deserializer);
 
   @protected
+  BridgeCacheLocation sse_decode_bridge_cache_location(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeCacheStats sse_decode_bridge_cache_stats(SseDeserializer deserializer);
 
   @protected
@@ -769,6 +796,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeCompSize sse_decode_bridge_comp_size(SseDeserializer deserializer);
+
+  @protected
+  BridgeDiskCacheStats sse_decode_bridge_disk_cache_stats(
+      SseDeserializer deserializer);
 
   @protected
   BridgeEffectInfo sse_decode_bridge_effect_info(SseDeserializer deserializer);
@@ -867,6 +898,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgePresetInfo sse_decode_bridge_preset_info(SseDeserializer deserializer);
+
+  @protected
+  BridgeProjectCacheLocation sse_decode_bridge_project_cache_location(
+      SseDeserializer deserializer);
 
   @protected
   BridgeRational sse_decode_bridge_rational(SseDeserializer deserializer);
@@ -1086,6 +1121,11 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeProjectCacheLocation?
+      sse_decode_opt_box_autoadd_bridge_project_cache_location(
+          SseDeserializer deserializer);
+
+  @protected
   BridgeRenderedFrame? sse_decode_opt_box_autoadd_bridge_rendered_frame(
       SseDeserializer deserializer);
 
@@ -1245,6 +1285,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgePoint self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_project_cache_location(
+      BridgeProjectCacheLocation self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_rational(
       BridgeRational self, SseSerializer serializer);
 
@@ -1340,6 +1384,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeBezierSide self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_cache_location(
+      BridgeCacheLocation self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_cache_stats(
       BridgeCacheStats self, SseSerializer serializer);
 
@@ -1364,6 +1412,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_comp_size(
       BridgeCompSize self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_disk_cache_stats(
+      BridgeDiskCacheStats self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_effect_info(
@@ -1476,6 +1528,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_preset_info(
       BridgePresetInfo self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_project_cache_location(
+      BridgeProjectCacheLocation self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_rational(
@@ -1710,6 +1766,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_bridge_media_info(
       BridgeMediaInfo? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_bridge_project_cache_location(
+      BridgeProjectCacheLocation? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_bridge_rendered_frame(

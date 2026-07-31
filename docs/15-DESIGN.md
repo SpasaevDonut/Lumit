@@ -380,19 +380,24 @@ Sequence layer show thumbnails/waveforms.
 The cache bar is a thin stripe under the time ruler showing which frames are cached, per
 tier. Cached is *good news* — quiet and cool, never alarming.
 
-Two of Nebula's tiers ship today (the VRAM tier is future, docs/06 §5.6). Both runs draw as a
-2px band beneath the ruler:
+All three of Nebula's tiers ship (K-214, docs/06 §5.6). Every run draws as a 2px band beneath
+the ruler:
 
-| Tier | Token | Value | Meaning |
+| State | Token | Value | Meaning |
 |---|---|---|---|
-| RAM cache | `success` | `#5fcfae` (mint) | in memory, plays right now |
-| Disk cache | `cache_disk` | `#5f93b8` (steel blue) | parked on disk, promotable |
+| Held, this resolution | `success` | `#5fcfae` (mint) | on the card or in memory: plays right now |
+| Held, coarser | `success` at 40% | dimmed mint | held, but would be re-rendered at this size |
+| On disk, this resolution | `cache_disk` | `#5f93b8` (steel blue) | parked on disk, promotable |
+| On disk, coarser | `cache_disk` at 40% | dimmed steel blue | parked, and coarser than shown |
 | Uncached | — | (no bar) | neutral — the normal starting state |
 
 Mint reads as hot (playable now); the disk tier's cooler blue marks frames that are one
-promotion away (docs/06 §5.6). The fuller design — a VRAM tier and tiers differing in *both*
-brightness and fill height, so the bar reads without colour vision — lands with the VRAM cache
-tier and its dedicated tonal ramp; until then the mint/blue hue split carries the distinction.
+promotion away (docs/06 §5.6). The card's tier and memory's share one colour deliberately:
+they answer the same question — *does this frame play now?* — and a frame in memory is one
+upload from the screen. Which of the two holds it is the status line's cache meter's business,
+where each tier has its own bar. The fuller design — tiers differing in *both* brightness and
+fill height, so the bar reads without colour vision — lands with a dedicated tonal ramp; until
+then the mint/blue hue split plus the dimming carries the distinction.
 Per the household no-punishment rule, **uncached is neutral, never alarming** — no amber, no
 red, no pulsing. An uncached timeline is the normal starting state of every project, not a
 failure.

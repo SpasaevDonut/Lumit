@@ -149,6 +149,20 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  /// As [setCacheBudgetBytes], for the frames parked on disk.
+  void setDiskBudgetBytes(int bytes) {
+    performance.diskBudgetBytes = bytes;
+    save();
+  }
+
+  /// Remember where the disk cache should live: the engine's own location name,
+  /// and the folder for the custom one (null for the other two).
+  void setDiskCacheLocation(String location, String? folder) {
+    performance.diskCacheLocation = location;
+    performance.diskCacheFolder = folder;
+    save();
+  }
+
   /// The project last opened or saved with a path, restored on the next launch
   /// (the egui frontend reopens the last project the same way). Null until a
   /// project has been opened or saved to a file. This is only the *file*;

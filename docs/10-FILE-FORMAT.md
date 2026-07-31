@@ -82,18 +82,45 @@ the media index are built; `proxies/`, `peaks/`, and `flow/` are planned
 ([TODO.md](TODO.md)). What exists today:
 
 ```
-<project>.lum-cache/
-└── frames/            # rendered frame cache, LZ4 .kfr files (06-RENDER-PIPELINE.md tier 3)
-
 <global cache root>/
+├── frames/<project-uuid>/         # rendered frame cache (06 §5.4), the default location
+│   ├── frames/                    #   LZ4 .kfr files, sharded by the first two hex chars
+│   ├── index.bin                  #   the index snapshot: hash, size, cost, last use, quality
+│   └── index.log                  #   changes since that snapshot, replayed at open
 ├── media-index/       # frame indexes for exact long-GOP seeking, shared across projects
 └── <project-uuid>/journal/ops.jsonl # the crash-recovery journal (§4)
+
+<project>.lum-cache/   # the same frame cache, when the user asks for it beside the project
+├── frames/
+├── index.bin
+└── index.log
 ```
 
 The intended full per-project layout (`<cache root>/<project-uuid>/` with `disk-cache/`,
 `proxies/`, `peaks/`, `flow/`, `index/`) is the design direction; audio peaks are currently
-computed on demand rather than stored, and the frame cache sits in a `.lum-cache/` sidecar
-beside the project rather than under the global root.
+computed on demand rather than stored.
+
+**Where the frame cache sits is the user's choice (K-214, docs/07 §15):** under the global
+root keyed by the document's uuid (the default), in a `<project>.lum-cache/` sidecar beside the
+project file, or under a folder the user picks. The global root is the platform's own cache
+directory, resolved by `directories::ProjectDirs` exactly as the journal and media index resolve
+theirs, so one Lumit folder serves all three: `%LOCALAPPDATA%\Lumit\Lumit\cache` on Windows
+(**local**, never roaming — a cache this size must not follow a domain profile over the
+network), `~/Library/Caches/dev.Lumit.Lumit` on macOS, and `$XDG_CACHE_HOME/lumit` (default
+`~/.cache/lumit`) on Linux. The cache directory, not the temp directory: these survive a
+reboot, and may be reclaimed by the operating system under disk pressure — which is correct for
+a folder deletable at any time. The sidecar cannot be the default because it
+needs the project to *have* a file, and a project caches from the moment it is created — the
+document uuid is inside the `.lum` and survives every save, so the global-root folder still
+finds its frames after a save and a reopen.
+
+The choice is application-wide by default and **may be made per project** (K-215), in which case
+it is a field on the document (`cache_location`) and therefore inside `project.json`: it travels
+with a copy of the project and survives being opened on another machine, which a setting in one
+machine's settings file cannot. Absent when the project follows the application, so a project
+that has never been given a place of its own gains no line for it and an older build reads the
+file unchanged (§1.1's forward-compatibility rule). Nothing is moved when the choice changes —
+the frames in the old folder simply stop being addressed.
 
 Rules, binding:
 - The global cache root defaults under the user's local app-data and is configurable with a

@@ -6,6 +6,8 @@
 // reset to the default on every launch. The keymap blob in `Workspace` is the
 // same arrangement: the settings file ferries it, Rust decides what it does.
 
+import 'package:lumit_flutter/src/rust/api/cache.dart';
+
 /// Which of the two playback behaviours the Viewer uses (docs/13 §B5).
 ///
 /// Mirrors the engine's `BridgePlaybackMode`. Held separately rather than using
@@ -40,16 +42,36 @@ class PerformanceSettings {
   /// [cacheBudgetBytes].
   int? vramBudgetBytes;
 
+  /// The disk frame cache's budget in bytes. Null as for [cacheBudgetBytes].
+  int? diskBudgetBytes;
+
+  /// Where parked frames live, as the engine's own enum name
+  /// (`appData` / `besideProject` / `custom`). Null means the engine's default.
+  /// The frontend never interprets it beyond showing the choice — it hands the
+  /// name back on the next launch.
+  String? diskCacheLocation;
+
+  /// The folder chosen for the `custom` location. Null when none has been
+  /// picked, in which case the engine keeps its default rather than pointing
+  /// the tier at nothing.
+  String? diskCacheFolder;
+
   PerformanceSettings({
     this.playback = PlaybackMode.adaptive,
     this.cacheBudgetBytes,
     this.vramBudgetBytes,
+    this.diskBudgetBytes,
+    this.diskCacheLocation,
+    this.diskCacheFolder,
   });
 
   Map<String, dynamic> toJson() => {
         'playback': playback.name,
         if (cacheBudgetBytes != null) 'cache_budget_bytes': cacheBudgetBytes,
         if (vramBudgetBytes != null) 'vram_budget_bytes': vramBudgetBytes,
+        if (diskBudgetBytes != null) 'disk_budget_bytes': diskBudgetBytes,
+        if (diskCacheLocation != null) 'disk_cache_location': diskCacheLocation,
+        if (diskCacheFolder != null) 'disk_cache_folder': diskCacheFolder,
       };
 
   factory PerformanceSettings.fromJson(Map<String, dynamic> j) =>
@@ -65,10 +87,27 @@ class PerformanceSettings {
         // is not a positive whole number is treated as absent.
         cacheBudgetBytes: _positiveInt(j['cache_budget_bytes']),
         vramBudgetBytes: _positiveInt(j['vram_budget_bytes']),
+        diskBudgetBytes: _positiveInt(j['disk_budget_bytes']),
+        diskCacheLocation: _nonEmpty(j['disk_cache_location']),
+        diskCacheFolder: _nonEmpty(j['disk_cache_folder']),
       );
 }
 
 int? _positiveInt(Object? v) => v is int && v > 0 ? v : null;
+
+String? _nonEmpty(Object? v) => v is String && v.isNotEmpty ? v : null;
+
+/// The engine's cache-location enum from the name stored in the settings file.
+///
+/// By name, not by index: the settings file outlives any particular build, and
+/// a reordered enum would otherwise silently move a user's cache to a different
+/// folder. An unknown name — an older or newer build — falls back to the
+/// application's own folder, which always works.
+BridgeCacheLocation cacheLocationFromName(String name) =>
+    BridgeCacheLocation.values.firstWhere(
+      (l) => l.name == name,
+      orElse: () => BridgeCacheLocation.appData,
+    );
 
 /// Interface (Settings → Interface): UI scale and tooltips (K-117).
 class InterfaceSettings {

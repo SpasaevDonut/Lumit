@@ -195,16 +195,31 @@ class BridgeSharedFrameInfo {
   final int width;
   final int height;
 
+  /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+  /// 4 Quarter.
+  ///
+  /// Carried on the frame in place of being asked for. Two Viewer widgets
+  /// showed the tier, and each one asked the engine for it in its `build()` —
+  /// two calls across the boundary for each frame of playback, for a number
+  /// that only changes when a frame is made. The frame that changes it now
+  /// brings it.
+  final int tier;
+
   const BridgeSharedFrameInfo({
     required this.handle,
     required this.frame,
     required this.width,
     required this.height,
+    required this.tier,
   });
 
   @override
   int get hashCode =>
-      handle.hashCode ^ frame.hashCode ^ width.hashCode ^ height.hashCode;
+      handle.hashCode ^
+      frame.hashCode ^
+      width.hashCode ^
+      height.hashCode ^
+      tier.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -214,7 +229,8 @@ class BridgeSharedFrameInfo {
           handle == other.handle &&
           frame == other.frame &&
           width == other.width &&
-          height == other.height;
+          height == other.height &&
+          tier == other.tier;
 }
 
 class BridgeSharedFrameInfoLinux {
@@ -235,6 +251,16 @@ class BridgeSharedFrameInfoLinux {
   /// The DRM modifier (`DRM_FORMAT_MOD_LINEAR` = 0 on the linear-tiling path).
   final BigInt modifier;
 
+  /// The preview tier this frame was made at: 1 Full, 2 Half, 3 Third,
+  /// 4 Quarter.
+  ///
+  /// Carried on the frame in place of being asked for. Two Viewer widgets
+  /// showed the tier, and each one asked the engine for it in its `build()` —
+  /// two calls across the boundary for each frame of playback, for a number
+  /// that only changes when a frame is made. The frame that changes it now
+  /// brings it.
+  final int tier;
+
   const BridgeSharedFrameInfoLinux({
     required this.fd,
     required this.frame,
@@ -244,6 +270,7 @@ class BridgeSharedFrameInfoLinux {
     required this.offset,
     required this.drmFourcc,
     required this.modifier,
+    required this.tier,
   });
 
   @override
@@ -255,7 +282,8 @@ class BridgeSharedFrameInfoLinux {
       stride.hashCode ^
       offset.hashCode ^
       drmFourcc.hashCode ^
-      modifier.hashCode;
+      modifier.hashCode ^
+      tier.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -269,7 +297,8 @@ class BridgeSharedFrameInfoLinux {
           stride == other.stride &&
           offset == other.offset &&
           drmFourcc == other.drmFourcc &&
-          modifier == other.modifier;
+          modifier == other.modifier &&
+          tier == other.tier;
 }
 
 class ScopedChange {
