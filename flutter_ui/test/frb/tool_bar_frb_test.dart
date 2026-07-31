@@ -131,6 +131,66 @@ void main() {
       expect(find.text('Fill'), findsNothing);
     });
 
+    /// A group with nothing built in it is on the strip and cannot be pressed
+    /// (K-226): the gap should be visible rather than remembered.
+    testWidgets('a group with nothing built cannot be armed', (tester) async {
+      final p = await mount(tester);
+
+      final roto = find.byKey(const ValueKey('tool-roto'));
+      await tester.ensureVisible(roto);
+      await tester.pumpAndSettle();
+      await tester.tap(roto);
+      await tester.pump();
+      expect(p.uiState.tools.tool, ToolMode.select,
+          reason: 'the Roto tools have no engine behind them yet');
+
+      final puppet = find.byKey(const ValueKey('tool-puppet'));
+      await tester.ensureVisible(puppet);
+      await tester.pumpAndSettle();
+      await tester.tap(puppet);
+      await tester.pump();
+      expect(p.uiState.tools.tool, ToolMode.select);
+
+      // And the button offers no flyout to get in by the side door.
+      await tester.tapAt(
+        tester.getCenter(puppet),
+        buttons: kSecondaryButton,
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tool-flyout-puppetPosition')),
+          findsNothing);
+    });
+
+    testWidgets('an unbuilt member of a mixed group is listed but inert',
+        (tester) async {
+      final p = await mount(tester);
+
+      final pen = find.byKey(const ValueKey('tool-pen'));
+      await tester.ensureVisible(pen);
+      await tester.pumpAndSettle();
+      await tester.tapAt(tester.getCenter(pen), buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tool-flyout-penMaskFeather')),
+          findsOneWidget,
+          reason: 'listed, so the gap is visible');
+      expect(find.text('Not built'), findsWidgets);
+
+      await tester.tap(find.byKey(const ValueKey('tool-flyout-penMaskFeather')));
+      await tester.pumpAndSettle();
+      expect(p.uiState.tools.tool, ToolMode.select,
+          reason: 'and inert, so picking it does nothing');
+    });
+
+    testWidgets('the camera tools can be armed', (tester) async {
+      final p = await mount(tester);
+      final camera = find.byKey(const ValueKey('tool-camera'));
+      await tester.ensureVisible(camera);
+      await tester.pumpAndSettle();
+      await tester.tap(camera);
+      await tester.pump();
+      expect(p.uiState.tools.tool.group, ToolGroup.camera);
+    });
+
     testWidgets('every tool group names a chord the engine knows',
         (tester) async {
       final p = await mount(tester);

@@ -39,11 +39,12 @@ void main() {
     });
 
     test('the memory survives arming another group and coming back', () {
-      final tools = ToolsState()..select(ToolMode.penMaskFeather);
+      // A built member, because an unbuilt one cannot be armed at all (K-226).
+      final tools = ToolsState()..select(ToolMode.shapeStar);
       tools.select(ToolMode.hand);
 
-      tools.selectGroup(ToolGroup.pen);
-      expect(tools.tool, ToolMode.penMaskFeather,
+      tools.selectGroup(ToolGroup.shape);
+      expect(tools.tool, ToolMode.shapeStar,
           reason: 'pressing the button gives back the tool you last had');
     });
   });
@@ -116,9 +117,10 @@ void main() {
       // armed tool and does the work. Selection selects and drags (K-215),
       // Hand pans, Zoom magnifies (K-216), Rotation turns (K-217), Anchor
       // point pans behind and the Razor cuts (K-218), the five shape tools
-      // draw masks and the Pen builds one (K-220, K-221), and horizontal type
-      // makes and edits text layers (K-223); everything else is a cursor and a
-      // place to build into.
+      // draw masks and the Pen builds one (K-220, K-221), horizontal type makes
+      // and edits text layers (K-223), and the three camera tools move the
+      // active camera (K-227); everything else is on the strip and disabled
+      // (K-226).
       expect(ToolMode.values.where((t) => t.ready).toSet(), {
         ToolMode.select,
         ToolMode.hand,
@@ -133,6 +135,9 @@ void main() {
         ToolMode.shapeStar,
         ToolMode.pen,
         ToolMode.typeHorizontal,
+        ToolMode.cameraOrbit,
+        ToolMode.cameraPan,
+        ToolMode.cameraDolly,
       });
     });
   });
@@ -172,6 +177,56 @@ void main() {
       expect(tools.strokeWidth, 2);
       tools.strokeWidth = -4;
       expect(tools.strokeWidth, 0);
+    });
+  });
+
+  /// A tool that is not built cannot be armed (K-226) — by click, by flyout or
+  /// by chord. The refusal lives here rather than in the button because there
+  /// are three ways in and only one of them is a button.
+  group('What cannot be armed', () {
+    test('an unbuilt tool is refused, and the armed one is left alone', () {
+      final tools = ToolsState();
+      var notices = 0;
+      tools.addListener(() => notices++);
+
+      tools.select(ToolMode.rotoBrush);
+      expect(tools.tool, ToolMode.select, reason: 'nothing changed');
+      expect(notices, 0, reason: 'and nobody was told anything had');
+
+      tools.select(ToolMode.hand);
+      expect(tools.tool, ToolMode.hand);
+    });
+
+    test('a chord on a group with nothing built does nothing', () {
+      final tools = ToolsState();
+      tools.cycleGroup(ToolGroup.puppet);
+      expect(tools.tool, ToolMode.select);
+      tools.cycleGroup(ToolGroup.roto);
+      expect(tools.tool, ToolMode.select);
+    });
+
+    test('a chord cycles only the built members of a mixed group', () {
+      final tools = ToolsState();
+      // The Pen's four editing siblings are unbuilt, so its chord arms the Pen
+      // and stays there rather than stepping onto a tool that does nothing.
+      tools.cycleGroup(ToolGroup.pen);
+      expect(tools.tool, ToolMode.pen);
+      tools.cycleGroup(ToolGroup.pen);
+      expect(tools.tool, ToolMode.pen);
+
+      // Type's vertical member is unbuilt, so the same applies.
+      tools.cycleGroup(ToolGroup.type);
+      expect(tools.tool, ToolMode.typeHorizontal);
+      tools.cycleGroup(ToolGroup.type);
+      expect(tools.tool, ToolMode.typeHorizontal);
+    });
+
+    test('a group whose first member is unbuilt opens on one that works', () {
+      final tools = ToolsState();
+      expect(ToolMode.builtMembersOf(ToolGroup.roto), isEmpty);
+      expect(tools.memberOf(ToolGroup.type), ToolMode.typeHorizontal);
+      // A group with nothing built still names a member for its button to draw.
+      expect(tools.memberOf(ToolGroup.puppet), ToolMode.puppetPosition);
     });
   });
 

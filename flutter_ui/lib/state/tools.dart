@@ -97,9 +97,13 @@ enum ToolMode {
   puppetOverlap(ToolGroup.puppet, 'Puppet overlap pin', LumitIcon.puppetOverlap),
   puppetBend(ToolGroup.puppet, 'Puppet bend pin', LumitIcon.puppetBend),
 
-  cameraOrbit(ToolGroup.camera, 'Orbit camera', LumitIcon.cameraOrbit),
-  cameraPan(ToolGroup.camera, 'Pan camera', LumitIcon.cameraPan),
-  cameraDolly(ToolGroup.camera, 'Dolly camera', LumitIcon.cameraDolly);
+  // Moving the composition's active camera by dragging on the picture
+  // (K-227): orbit round what it is looking at, track across, dolly in.
+  cameraOrbit(ToolGroup.camera, 'Orbit camera', LumitIcon.cameraOrbit,
+      ready: true),
+  cameraPan(ToolGroup.camera, 'Track camera', LumitIcon.cameraPan, ready: true),
+  cameraDolly(ToolGroup.camera, 'Dolly camera', LumitIcon.cameraDolly,
+      ready: true);
 
   const ToolMode(this.group, this.label, this.icon, {this.ready = false});
 
@@ -117,6 +121,11 @@ enum ToolMode {
   /// Every tool in [group], in declaration order — which is flyout order.
   static List<ToolMode> membersOf(ToolGroup group) =>
       ToolMode.values.where((m) => m.group == group).toList(growable: false);
+
+  /// The members of [group] that do something today (K-226). Empty for a group
+  /// nothing in which is built, which is what makes its button disabled.
+  static List<ToolMode> builtMembersOf(ToolGroup group) =>
+      membersOf(group).where((m) => m.ready).toList(growable: false);
 }
 
 /// The keymap action each group answers to (docs/07 §15, K-199). The engine
@@ -239,11 +248,24 @@ class ToolsState extends ChangeNotifier {
   }
 
   /// Which member of [group] its button currently stands for.
+  ///
+  /// The first *built* one where there is one, so a group with a working tool
+  /// under a not-yet-built first member (the Pen's editing siblings, vertical
+  /// type) opens on the one that works.
   ToolMode memberOf(ToolGroup group) =>
-      _lastUsed[group] ?? ToolMode.membersOf(group).first;
+      _lastUsed[group] ??
+      (ToolMode.builtMembersOf(group).firstOrNull ??
+          ToolMode.membersOf(group).first);
 
-  /// Arm [tool]. Its group remembers it as the member to show.
+  /// Arm [tool], if it is a tool that does anything (K-226).
+  ///
+  /// A tool whose behaviour is not built cannot be armed — by click, by flyout
+  /// or by chord. It stays on the strip, drawn disabled, because the tool set
+  /// *is* the specification and a missing button teaches the wrong shape of the
+  /// application; but arming one would have handed the user a pointer that does
+  /// nothing, which is worse than a button that visibly cannot be pressed.
   void select(ToolMode tool) {
+    if (!tool.ready) return;
     _lastUsed[tool.group] = tool;
     if (_tool == tool) return;
     _tool = tool;
@@ -261,13 +283,16 @@ class ToolsState extends ChangeNotifier {
   /// walks rectangle → rounded rectangle → ellipse → polygon → star → rectangle
   /// without ever opening the flyout.
   void cycleGroup(ToolGroup group) {
-    final members = ToolMode.membersOf(group);
+    // Only the built ones are in the walk (K-226): a chord that stepped onto a
+    // tool that does nothing would be a chord that appears to do nothing.
+    final members = ToolMode.builtMembersOf(group);
+    if (members.isEmpty) return;
     if (_tool.group != group || members.length == 1) {
       selectGroup(group);
       return;
     }
-    final next = members[(members.indexOf(_tool) + 1) % members.length];
-    select(next);
+    final at = members.indexOf(_tool);
+    select(members[at < 0 ? 0 : (at + 1) % members.length]);
   }
 
   /// Run a keymap action if it is one of the toolbar's, and say whether it was.

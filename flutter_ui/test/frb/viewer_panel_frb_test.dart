@@ -24,7 +24,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
-import 'package:lumit_flutter/panels/viewer_tool_cursor.dart';
 import 'package:lumit_flutter/panels/viewer_zoom.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/tools.dart';
@@ -1264,22 +1263,76 @@ void main() {
       expect(layer.getText()!.text, 'Retitled');
     });
 
-    /// The painting tools (K-224): each wears a brush ring with its own badge,
-    /// and a click says what is missing rather than being swallowed.
-    testWidgets('a paint tool wears a ring and says why nothing is painted',
+    /// The painting tools are on the strip and cannot be armed (K-226): there
+    /// are no paint strokes in the engine yet, and a tool that arms and then
+    /// does nothing reads as a broken application.
+    testWidgets('a painting tool cannot be armed while nothing paints',
         (tester) async {
       final p = withLayer();
       p.uiState.tools.select(ToolMode.brush);
       await mount(tester, p);
+      expect(p.uiState.tools.tool, ToolMode.select);
+    });
 
-      expect(find.byType(ViewerPaintPointerLayer), findsOneWidget);
+    /// The camera tools (K-227): a drag moves the composition's active camera,
+    /// and with no camera the tool says so rather than swallowing the gesture.
+    testWidgets('the camera tools orbit, track and dolly the active camera',
+        (tester) async {
+      final p = withLayer();
+      final camera = p.comp.addCameraLayer();
+      p.uiState.model.refresh();
+      p.uiState.tools.select(ToolMode.cameraOrbit);
+      await mount(tester, p);
+
+      double still(dynamic s) => (s as dynamic).field0 as double;
+      final before = camera.getTransform();
+      final centre = fittedRect(tester, p.comp).center;
+
+      Future<void> drag(Offset by) async {
+        final gesture = await tester.startGesture(centre);
+        await tester.pump();
+        for (var i = 0; i < 6; i++) {
+          await gesture.moveBy(by / 6);
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+      }
+
+      // Orbit: the rotations change and the point being looked at does not.
+      await drag(const Offset(120, 0));
+      var after = camera.getTransform();
+      expect(still(after.rotationY), isNot(still(before.rotationY)));
+      expect(still(after.positionX), closeTo(still(before.positionX), 0.001),
+          reason: 'an orbit swings round what the camera looks at');
+
+      // Track: the position moves, the rotations do not.
+      p.uiState.tools.select(ToolMode.cameraPan);
+      await tester.pump();
+      final beforeTrack = camera.getTransform();
+      await drag(const Offset(0, 90));
+      after = camera.getTransform();
+      expect(still(after.positionY), isNot(still(beforeTrack.positionY)));
+      expect(still(after.rotationY), closeTo(still(beforeTrack.rotationY), 1e-9));
+
+      // Dolly: it moves along the view axis.
+      p.uiState.tools.select(ToolMode.cameraDolly);
+      await tester.pump();
+      final beforeDolly = camera.getTransform();
+      await drag(const Offset(150, 0));
+      after = camera.getTransform();
+      expect(still(after.positionZ), greaterThan(still(beforeDolly.positionZ)));
+    });
+
+    testWidgets('a camera drag with no camera says what to do instead',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.cameraOrbit);
+      await mount(tester, p);
 
       await tester.tapAt(fittedRect(tester, p.comp).center);
       await tester.pumpAndSettle();
-      expect(p.state.notice.value?.message, contains('not built yet'),
-          reason: 'the engine has no paint strokes (docs/TODO.md)');
-      expect(p.state.notice.value?.message, contains('Brush'),
-          reason: 'and it names the tool in hand');
+      expect(p.state.notice.value?.message, contains('add a camera layer'));
     });
 
     testWidgets('a missing footage layer raises the badge', (tester) async {

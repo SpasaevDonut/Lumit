@@ -194,14 +194,23 @@ that quietly did nothing would be the same lie an unbuilt tool without its toolt
   whose behaviour is not built yet MUST say so in that tooltip rather than being hidden: the
   tool set above is the specification, and a strip missing half of it teaches the wrong shape
   of the application.
+- **A tool whose behaviour is not built MUST NOT be armable** (K-226). Its button and its
+  flyout row are drawn disabled, and the button, the row and the keyboard chord all decline
+  together — the refusal belongs to the state that holds the armed tool, because there are
+  three ways in and only one of them is a button. A group with nothing built in it takes no
+  click at all and offers no flyout; a group's chord cycles only its built members, and a group
+  whose first member is unbuilt opens on one that works. A tool you can pick that then does
+  nothing reads as a broken application; shown, disabled and labelled is the honest version of
+  showing it.
 
 **Implementation status (2026-07-31).** The strip, the groups, the flyouts, the shortcuts,
 the tool options area, the snapping switch and the workspace strip are built. Built tools:
 Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), the five shape
-tools and the Pen (§2.3.1), and Horizontal type (§2.3.2). Not built, and changing only the
-pointer: vertical type, the Pen's four editing siblings, all of Paint, Roto, Puppet and
-Camera. Each tool's behaviour is tracked separately in [TODO.md](TODO.md); the snapping
-switch is likewise a switch nothing reads yet.
+tools and the Pen (§2.3.1), Horizontal type (§2.3.2), and the three camera tools (§2.3.5).
+**Disabled** (K-226 — shown, not armable): vertical type, the Pen's four editing siblings, the
+Roto tools and the Puppet pins. The painting tools are built on the engine branch and stay
+disabled here until it lands. Each tool's behaviour is tracked separately in
+[TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
 
 ---
 
@@ -408,6 +417,7 @@ as the Rotation, Anchor point and Razor tools already do.
 | Brush, Clone stamp, Eraser | A **ring** the size of the stroke that would be left, a dot at its centre, badged with the tool's icon |
 | Horizontal type | The system **I-beam** |
 | Vertical type | A drawn I-beam, **turned a quarter turn** |
+| Orbit, Track, Dolly camera | The crosshair badged with the tool's icon (§2.3.5) |
 | Rotation | A curved arrow leaning round the anchor (§2.3) |
 | Anchor point | The anchor's ring-and-cross (§2.3) |
 | Razor | The blade and its cut line (§4.4) |
@@ -419,6 +429,34 @@ as the Rotation, Anchor point and Razor tools already do.
   scale, clamped so a hairline is still visible and a very wide brush does not fill the window.
 - **Nothing is painted.** The painting tools have a pointer and a notice naming what is
   missing; the engine has no paint strokes ([TODO.md](TODO.md)).
+
+### 2.3.5 The camera tools (K-227)
+
+- The three camera tools act on the **active camera** — the topmost visible camera layer whose
+  span covers the playhead — regardless of the selection, because the camera is what the
+  composition is being looked *through* rather than a thing that has been picked. With no
+  camera at all the tool MUST say so.
+- Lumit's camera has no separate point of interest: its **position is the point it is looking
+  at** (that plane renders 1:1 and centred) and the eye sits its *zoom* — the focal distance —
+  behind that, along the camera's forward axis. So:
+  - **Orbit** changes the rotations only, swinging the eye round the point being looked at.
+    Dragging up MUST lift the camera over the top (tilting it to look down). The pitch MUST be
+    clamped just short of the poles rather than wrapped: one pixel past straight down flips the
+    picture over.
+  - **Track** slides the position along the camera's own right and up axes, *against* the drag,
+    so the picture follows the pointer as it does under the Hand tool. The Viewer's
+    magnification MUST be undone, so the picture keeps up with the pointer.
+  - **Dolly** slides the position along the forward axis by a fraction of the distance already
+    in hand, so a wide shot covers ground and a close-up creeps.
+- `Shift` locks an orbit or a track to one axis.
+- The camera's axes MUST be built the way the compositor builds its matrix (`Ry · Rx · Rz`), or
+  a tool sends the camera sideways when it is asked for forward.
+- The **gizmo** marks the point the camera is looking at, and the Orbit tool draws the circle it
+  swings round. Each tool wears the drawn pointer of §2.3.3, badged with its own icon.
+- A camera whose placement is keyframed is left alone — there is no single value for a drag to
+  add to, the same rule §2.3's gizmo follows.
+- Not built: a **point of interest** (After Effects' two-node camera), the **Unified Camera**
+  tool, and depth-of-field handles on the picture.
 
 ### 2.4 Motion paths
 

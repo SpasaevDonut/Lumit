@@ -60,7 +60,7 @@ import 'viewer_gizmo.dart';
 import 'viewer_layer_map.dart';
 import 'viewer_rotate.dart';
 import 'viewer_shape_layer.dart';
-import 'viewer_tool_cursor.dart';
+import 'viewer_camera.dart';
 import 'viewer_type.dart';
 import 'viewer_zoom.dart';
 
@@ -683,17 +683,6 @@ class _Stage extends StatelessWidget {
                 accent: t.accent,
                 onChanged: onChanged,
               ),
-              // The painting tools: their own pointers, and a notice saying
-              // why nothing is painted (K-224).
-              ViewerPaintPointerLayer(
-                active: uiState.tools.tool.group == ToolGroup.paint,
-                tool: uiState.tools.tool,
-                state: Provider.of<LumitState>(context, listen: false),
-                uiState: uiState,
-                viewScale: compSize.width == 0
-                    ? 1.0
-                    : fitted.width / compSize.width,
-              ),
               // The Anchor point tool: its own pointer, and a drag that slides
               // the pivot while the picture stays still (K-218).
               ViewerAnchorLayer(
@@ -715,6 +704,24 @@ class _Stage extends StatelessWidget {
                 boxes: _boxes(),
                 mark: t.textPrimary,
                 outline: t.surface0,
+                onChanged: onChanged,
+              ),
+              // The camera tools: a drag orbits, tracks or dollies the comp's
+              // active camera (K-227).
+              ViewerCameraLayer(
+                active: uiState.tools.tool.group == ToolGroup.camera,
+                tool: uiState.tools.tool,
+                comp: comp,
+                state: Provider.of<LumitState>(context, listen: false),
+                uiState: uiState,
+                fitted: fitted,
+                compSize: Size(
+                  compSize.width.toDouble(),
+                  compSize.height.toDouble(),
+                ),
+                mark: t.textPrimary,
+                outline: t.surface0,
+                accent: t.accent,
                 onChanged: onChanged,
               ),
               // Over the layer controls, and inert unless the Zoom tool is

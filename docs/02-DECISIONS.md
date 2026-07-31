@@ -3958,3 +3958,73 @@ platform ships, and none of these are on it. The three tools that already needed
 Rotation, Anchor point and Razor — hide the system pointer over the picture and paint their
 own; these do the same, through one shared pointer widget rather than a fourth private
 painter.
+
+**K-226 · DECIDED · A tool that is not built cannot be armed. It stays on the strip, drawn
+disabled.** From the owner (2026-07-31): "I think we'd be better off just disabling that in the
+toolbar for now… it'd be better to see what we still need to add rather than removing it and
+forgetting about the code."
+
+**Which is a correction to K-214's honesty rule, not a reversal of it.** K-214 put every
+specified tool on the strip and had the unbuilt ones say so in a tooltip. That was right about
+*showing* them and wrong about *arming* them: a tool you can pick that then does nothing reads
+as a broken application, and the tooltip is only read by someone who already suspected. Shown,
+disabled and labelled is the honest version of the same idea — the strip still teaches the
+shape of the application, and nothing in it lies.
+
+**Disabled means disabled everywhere.** `ToolsState.select` refuses an unbuilt tool, so the
+button, the flyout row and the keyboard chord all decline together; a group's chord cycles only
+its built members; and a group with nothing built in it takes no click at all. The state is the
+gate rather than the widget, because there are three ways in and only one of them is a button.
+
+**The flag is `ToolMode.ready`, which already existed.** No second list to keep in step: a tool
+becomes armable the moment its behaviour lands, in the same commit, and the test that pins the
+built set (K-221) now pins what is *arming-able* too. This is also what keeps the two branches
+straight — paint is built on the engine branch and not on this one, and each branch's toolbar
+follows its own flags without either being edited to suit the other.
+
+**What is disabled today:** the Roto tools and the Puppet pins (both engine features of their
+own size, at the owner's direction), the Pen's four editing siblings, and vertical type.
+
+**K-227 · DECIDED · The camera tools move the composition's active camera by dragging on the
+picture.** From the owner (2026-07-31): "Camera, make this like after effects implementation
+along with any gizmo's etc and custom cursors if necessary."
+
+**What Lumit's camera is, which decides what the tools can be.** A camera layer holds a
+position, three rotations and a *zoom* — the focal distance in composition pixels. The plane at
+the camera's own position renders 1:1 and centred, so **the position is the point the camera is
+looking at**, and the eye sits `zoom` behind it along the camera's forward axis. Everything
+follows:
+
+* **Orbit** changes the rotations and leaves the position alone. Because the eye is derived
+  from both, it swings round the point being looked at — a true orbit, with no separate pivot
+  to store.
+* **Track** slides the position along the camera's own right and up axes, so the eye travels
+  with it and the picture slides under the pointer, the same sense the Hand tool has.
+* **Dolly** slides the position along the forward axis, moving the eye and what it looks at
+  together, in or out of the scene, by a fraction of the distance already in hand — so a dolly
+  across a wide shot covers ground and one in a close-up creeps.
+
+**The axes are built the compositor's way** (`Ry · Rx · Rz`, lumit-gpu's `camera_matrix`). This
+is the one piece of frontend arithmetic that has to agree with the renderer exactly: a tool
+that moved the camera along a different set of axes would send it sideways when asked for
+forward. It is unit-tested against hand-computed cases rather than by dragging.
+
+**Dragging up lifts the camera over the top** — which means tilting it to look *down*, a
+negative x rotation in a frame where +y is down the screen. Getting that backwards is the
+classic inverted orbit, so it has its own test. The pitch is clamped just short of the poles
+rather than wrapped: past straight down the next pixel flips the picture over.
+
+**The gizmo is the pivot.** While a camera tool is armed the point the camera is looking at is
+marked, and while orbiting the circle it swings round is drawn faintly. That point projects to
+the middle of the frame by construction, which is worth saying plainly: what the camera looks
+at is the middle of the picture.
+
+**They act on the active camera, not the selection.** The topmost visible camera layer whose
+span covers the playhead — the one the renderer looks through — because the camera is what you
+are looking *through* rather than a thing you have picked. With no camera at all the tool says
+so. A camera whose placement is keyframed is left alone, the same rule the layer gizmo follows:
+there is no single value for a drag to add to.
+
+**No point of interest, and no unified camera tool.** After Effects' two-node camera has a
+separate point of interest, and its Unified Camera tool switches between the three by mouse
+button. Both are in TODO.md; neither changes the three tools above.

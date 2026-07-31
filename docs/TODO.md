@@ -119,7 +119,8 @@ armed is a *tool*; what each tool then does is the backlog:
     for square (polygon and star being the regular figures inscribed in the box). Masks list
     in the layer's twirl-down under a Masks heading, invert, fade and delete, and are
     outlined on the picture.
-- **Pen** - built (K-221): the path builder — click for a corner, click-drag for mirrored
+- **Pen** - built (K-221), with its four editing siblings disabled on the strip (K-226): the
+    path builder — click for a corner, click-drag for mirrored
     bezier handles, `Alt` to break the pair, click the first point to close and apply. Its
     four siblings (add/delete/convert vertex, mask feather) edit a finished path; see mask
     editing below.
@@ -156,8 +157,22 @@ armed is a *tool*; what each tool then does is the backlog:
     tools wear their proper brush-ring pointers (K-224) and say what is missing when clicked.
     The ring is drawn from the stroke width because there is no separate brush size yet — a
     real paint feature would bring its own brush settings (size, hardness, opacity, flow).
-- **Roto** (roto brush/refine edge), **Puppet**, **Camera** - no engine side yet; these are
-    roadmap features ([16-ROADMAP.md](16-ROADMAP.md)) that now have a place to appear in.
+- **Camera** - built (K-227): orbit, track and dolly the active camera by dragging, with the
+    pivot marked and `Shift` locking an axis. Still owed:
+    - **A point of interest** (After Effects' two-node camera): the model has position and
+      rotation only, so the orbit pivot is the point the camera already looks at rather than a
+      pinnable one. Adding it is an engine change (`LayerKind::Camera`, docs/03).
+    - **The Unified Camera tool** — one tool with the three gestures on the three mouse
+      buttons.
+    - **Depth-of-field controls on the picture** (focus distance, aperture), and a camera whose
+      placement is **keyframed** cannot be dragged (no single value to add to).
+    - A camera drag writes five properties, so it is five undo steps: there is no batched
+      transform op (see the gizmo's note above).
+- **Roto** (roto brush/refine edge) and **Puppet** - **disabled on the strip** (K-226) until
+    there is an engine behind them; both are roadmap features of their own size
+    ([16-ROADMAP.md](16-ROADMAP.md)). Roto wants a segmentation model and a per-frame stroke
+    propagation; Puppet wants a mesh, pins and a deformer in the renderer. They stay visible and
+    unarmable so the gap is on the strip rather than in someone's memory.
 - **Snapping** is a switch nothing reads (docs/07 §4.5 specifies the behaviour).
 - **The workspace strip shows no preset after a restart** - `Workspace.activePreset` is
     session-only, because the stored layout is the user's own by then and may no longer

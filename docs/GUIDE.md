@@ -5170,3 +5170,66 @@ turned a quarter turn, which tells you which way the line will run before you
 type anything. And the point you click is now the *start* of the line rather
 than its middle: the new layer's anchor begins at the left end of the baseline,
 so the words run to the right of where you clicked and sit on it.
+
+### A tool you cannot pick, and why that is the honest option (K-226)
+
+Every tool in the specification is on the strip, including the ones nothing is
+built behind. Until now those could be armed: you would pick the Roto brush, drag
+on the picture, and nothing would happen. The tooltip said so, but a tooltip is
+read by someone who already suspects something is wrong.
+
+So an unbuilt tool is now **shown, greyed and unpickable**. The button declines,
+the flyout row declines, and the keyboard shortcut declines, because the refusal
+lives in the state that holds the armed tool rather than in the button — there
+are three ways to arm a tool and only one of them is a button. A group with
+nothing built in it (Roto, Puppet) cannot be pressed at all; a group with a
+mixture (the Pen, whose four editing siblings are unbuilt) opens on one that
+works and cycles only through those.
+
+The flag driving this is the same `ready` flag the tooltips already used, so
+nothing has to be kept in step by hand: a tool becomes pickable in the commit
+that makes it do something.
+
+### Moving the camera by dragging (K-227)
+
+A 3D composition is looked at through a **camera layer**, and the three camera
+tools move it with the mouse instead of by typing numbers into the Timeline.
+
+**The trick is what Lumit's camera numbers mean.** A camera has a position,
+three rotations and a *zoom* — the focal distance, in composition pixels. The
+plane sitting at the camera's own position is the one that renders at exactly
+1:1 and centred, which is another way of saying **the camera's position is the
+point it is looking at**; the eye itself sits `zoom` behind that, along the way
+the camera is pointed. Once you see that, the three tools are almost trivial:
+
+- **Orbit** changes only the rotations. The eye is worked out from the position
+  *and* the rotations, so turning the camera swings the eye round the point it is
+  looking at — a real orbit, with no extra pivot to store anywhere.
+- **Track** slides the position along the camera's own left-right and up-down
+  axes. The eye goes with it, so the picture slides under your pointer the way it
+  does under the Hand tool.
+- **Dolly** slides the position along the way the camera is pointed, taking the
+  eye and the subject in or out together. How far a pixel of drag goes is a
+  fraction of how far away things already are, so a wide shot covers ground and a
+  close-up creeps.
+
+**One thing had to match the renderer exactly**: the camera's three axes are
+built in the same order the compositor builds its matrix (`Ry · Rx · Rz`). Get
+that wrong and asking for "forward" sends the camera sideways — so the axes have
+their own tests against hand-computed cases.
+
+**And one classic bug has its own test**: dragging *up* has to lift the camera
+over the top, which means tilting it to look *down*. Every application that gets
+this backwards is described as having an inverted camera. The pitch also stops
+just short of straight down instead of wrapping, because one pixel past the pole
+flips the whole picture over.
+
+While a camera tool is in hand, the point the camera is looking at is marked on
+the picture, and the Orbit tool draws the faint circle it swings around. That
+point is always the middle of the frame — which is worth saying out loud, because
+it is the same statement as "the camera looks at the middle of the picture".
+
+What is missing: a separate **point of interest** (After Effects' two-node
+camera, where the pivot is a thing you can move on its own), the **Unified
+Camera** tool that puts all three gestures on the three mouse buttons, and
+depth-of-field handles on the picture.
