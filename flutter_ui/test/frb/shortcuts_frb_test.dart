@@ -50,6 +50,23 @@ void main() {
       expect(asked, 1, reason: 'space reached the transport');
     });
 
+    /// `Ctrl+Shift+P` was bound with nothing answering it. It asks the menu bar
+    /// for the palette rather than building a list of commands of its own.
+    testWidgets('Ctrl+Shift+P asks for the command palette', (tester) async {
+      final p = await mount(tester);
+      var asked = 0;
+      p.uiState.paletteRequest.addListener(() => asked++);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      expect(asked, 1);
+    });
+
     /// **The recurring space-bar funeral.** Menus, popups and the palette all
     /// live in the Overlay outside the shell's focus scope; any of them could
     /// walk focus away for good, and every shortcut died until something was

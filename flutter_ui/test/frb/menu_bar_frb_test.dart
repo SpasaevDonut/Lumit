@@ -451,6 +451,27 @@ void main() {
       expect(p.uiState.selectedComp?.internalid, comp.internalid);
     });
 
+    /// **`Ctrl+Shift+P` was bound to nothing.** The palette's list of commands
+    /// is declared beside the menu items so the two cannot drift apart, so the
+    /// shortcut asks *this* bar for the palette rather than assembling a second
+    /// list of its own — which is the drift that note exists to prevent.
+    testWidgets('the palette shortcut opens the menu bar\'s own palette',
+        (tester) async {
+      final p = await mount(tester);
+      expect(find.byKey(const ValueKey('palette-query')), findsNothing);
+
+      p.uiState.requestPalette();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('palette-query')), findsOneWidget);
+      // The same list the menu route builds, not a shorter copy.
+      await tester.enterText(
+          find.byKey(const ValueKey('palette-query')), 'composition');
+      await tester.pump();
+      expect(find.byKey(const ValueKey('palette-item-New composition')),
+          findsOneWidget);
+    });
+
     /// The four shipped workspace presets (docs/07 §1.6): each rearranges the
     /// dock to its factory layout; the same panel inventory throughout, and a
     /// distinct arrangement per preset.

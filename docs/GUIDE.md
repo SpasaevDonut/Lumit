@@ -4683,3 +4683,51 @@ the lesson is bigger: **a performance test that cannot reproduce the conditions
 it is guarding does not merely fail to catch the bug, it certifies that the bug
 is not there.** When a budget reads zero, check that it can read non-zero: break
 the thing on purpose and watch the number move.
+
+### Precompose, and why the new comp is the same length as the old one
+
+**Precompose (`Ctrl+Shift+C`) takes some layers out of a composition, puts them
+in a composition of their own, and drops that composition back in their place.**
+It is how a shot with forty layers becomes a shot with four, and it is how you
+give a group of layers one blur, one fade, one anything — the effect goes on the
+layer that stands for the group.
+
+The whole move happens in the engine, as one batch, so one press of undo puts the
+layers back exactly where they were. That matters more than it sounds: the move
+is really four edits (make a comp, file it in the Compositions folder, take the
+layers out, put a new layer in), and an undo that only reversed the last of them
+would leave the project in a state the user never asked for.
+
+**The new composition is as long as the one it came out of, and every packed
+layer keeps the exact in point, out point and start offset it already had.** That
+is the whole trick to precompose not disturbing anything: because the inner comp
+runs on the same clock as the outer one, and the layer standing for it spans the
+whole thing, the picture at any frame is the picture that was there before the
+key was pressed. It is tempting to trim the new comp to the span the selected
+layers actually occupy — it looks tidier — but that moves every packed layer to a
+different moment inside its new home, and then the two have to be shifted back
+against each other to look the same. After Effects does not do it either.
+
+A packed layer might be parented to a layer that stayed behind. Nothing is done
+about that on purpose: the engine already reads a parent it cannot find in the
+comp as no parent at all, so the link simply stops mattering, which is the same
+thing clearing it would achieve with more code.
+
+### Reveal keys, and the difference between a label and a name
+
+**`P`, `S`, `R`, `T` and `A` open one property of the selected layers and nothing
+else** — Position, Scale, Rotation, Opacity, Anchor point, the shortcuts every
+After Effects user has in their fingers. `E` and `M` do the same for Effects and
+Masks, `Shift+L` for the sound. Pressing the key again shuts the layer.
+
+The Timeline remembers which fold-outs are open as a set of **paths** — strings
+like `<layer>/transform/positionX` — and the reveal keys work by putting exactly
+one of those in the set. The path is built from the *engine's* name for the
+property (`positionX`), never from the words on screen ("Position"). This is a
+small thing that would have been an annoying bug: labels are user-facing text and
+get reworded, and a reveal key keyed to the wording would have quietly stopped
+working the day someone renamed a row, with nothing failing to say so.
+
+One row and nothing else also means the Retime row above Transform steps aside
+while a reveal is in force. "Show me Scale" that showed Scale *and* Retime would
+be answering a question nobody asked.

@@ -468,7 +468,9 @@ impl BridgeTransform {
     }
 }
 
-#[derive(Debug)]
+// Three ids and nothing else, so a copy is as good as the original — which is
+// what lets a caller pass the same reference to a list and keep using it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[frb]
 pub struct LayerReference {
     #[frb(name = "internalprojectId")]

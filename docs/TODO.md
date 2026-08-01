@@ -30,6 +30,21 @@ These sit above everything else: they are what the editor feels like in the hand
     `sample_scalar` per animated row plus one `time_of_frame`. Batch per frame if
     it ever bites, the way `time_of_frame` already was.
     (`bridge_call_budget_test.dart` is the gate.)
+- **A frame gives the card one command buffer per layer, where one would do.**
+    Measured 2026-07-31: submits per frame = layers + 2 (3 at one layer, 10 at
+    eight, 34 at thirty-two). Every pass in `lumit-gpu` makes and submits its own
+    encoder (`composite.rs`, `fx/*`, the display pass), yet all of a frame's
+    passes are in order on one queue, so they can be encoded once and handed over
+    once. Each submit is a round trip to the driver, a cost that does not depend
+    on the card - which is why this is worth doing even though it cannot be
+    *timed* on a software rasteriser. It takes
+    [impl/playback-scheduler.md](impl/playback-scheduler.md) §2's one-submit-thread
+    rule further rather than conflicting with it. The shape: pass a
+    `&mut wgpu::CommandEncoder` down the realise walk and submit once at the top,
+    leaving the read-backs (`start_readback8`) and shared-texture copies alone -
+    both need their own submission to be waited on. **Re-measure on real hardware
+    either side**: the stopwatch that found it was on the dropped worker-pool
+    branch, and a change made for a number needs the number.
 
 ---
 
@@ -292,11 +307,10 @@ texture on a third device with no keyed mutex to wait on. Fix with a
 handshake. Wants a Windows machine to write it on.
 
 **Playback scheduler - what remains**
-([impl/playback-scheduler.md](impl/playback-scheduler.md)): the worker pool and
-in-render epoch tokens (composites are serial on one worker thread, so
-cancellation latency is one frame's render rather than §1's 15 ms - the tokens
-only mean something once renders leave that thread), and §6's real-window benches
-(A/V drift over 10 minutes, the underrun ladder). Re-run
+([impl/playback-scheduler.md](impl/playback-scheduler.md)): in-render epoch tokens
+(composites are serial on one worker thread, so cancellation latency is one
+frame's render rather than §1's 15 ms), and §6's real-window benches (A/V drift
+over 10 minutes, the underrun ladder). Re-run
 `integration_test/playback_bench_test.dart` to price the stack; it needs a
 1080p60 fixture and a Windows device, so it is run by hand.
 
@@ -315,6 +329,9 @@ setting nothing reads.
     this and verifies the DMA-BUF path at the same time.
 - **The Flutter suite runs at `--concurrency=1`** - the mitigation for the
     order-dependent tests above, not the fix.
+- **Registering a texture cannot happen in a widget test**, so
+    `integration_test/shared_texture_test.dart`, run by hand on a real window, is
+    the only coverage of that path.
 
 **Threading / platform:**
 - **Move footage probing off-thread** - synchronous today; needs a probe worker
@@ -380,6 +397,17 @@ list, not a re-statement of the roadmap.
 
 Recorded so they are not re-proposed as gaps:
 
+- **The render worker pool, measured and deliberately not built (2026-07-31).**
+    [impl/playback-scheduler.md](impl/playback-scheduler.md) §2 reserves GPU
+    submits to one thread, so the only work a pool could take is the processor
+    half of a frame - naming it, planning the decode, building the draw list.
+    That half measured **0.03 ms at 32 animated layers against 200 ms for the
+    whole frame**, or 0.015%, and it is an absolute CPU cost that does not shrink
+    on a faster card, so its share only falls on real hardware. Spreading it over
+    threads saves nothing at any layer count. The same measurement found the
+    command-buffer item under *Now*, which is where the win actually is. Anyone
+    reaching for the pool again should re-run the stopwatch first: if the
+    processor half has not grown, this entry still stands.
 - **Rotation gizmo affordance** - the previous frontend never offered one; not a
     regression.
 - The two recorded behavioural deviations (export queue-snapshot timing;
