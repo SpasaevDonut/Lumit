@@ -280,6 +280,37 @@ pub(crate) fn put_demoted(key: FrameKey, frame: &lumit_render::DemotedFrame, byt
     });
 }
 
+/// File a frame that has just come back OFF disk (docs/06 §5.1's way up). The
+/// bytes are on their way to the graphics card in the same breath; keeping a
+/// share here means the next pass over this frame is an upload from memory
+/// rather than another file read — without it, a comp larger than the VRAM
+/// budget re-read every frame from disk on every single pass, and the IO
+/// thread's throughput became the playback rate.
+pub(crate) fn put_loaded(
+    key: FrameKey,
+    width: u32,
+    height: u32,
+    bgra: bool,
+    cost_ms: u32,
+    provenance: Provenance,
+    bytes: Arc<Vec<u8>>,
+) {
+    with_cache(|c| {
+        c.put(
+            key,
+            Entry {
+                width,
+                height,
+                bytes,
+                bgra,
+                cost_ms,
+                provenance,
+                last_used: 0,
+            },
+        );
+    });
+}
+
 /// One held frame, ready to be put back on the graphics card.
 pub(crate) struct HeldFrame {
     pub width: u32,
@@ -881,6 +912,24 @@ mod tests {
         assert_eq!(*up.bytes, vec![1, 2, 3, 4], "and kept as it came down");
         assert!(up.bgra);
         assert_eq!(up.cost_ms, 9, "with the cost that earned it its place");
+        clear();
+    }
+
+    /// A frame read back off disk is held in memory as well as uploaded — so
+    /// the NEXT pass over it is an upload from here, not another file read.
+    /// Without this, a comp larger than the VRAM budget re-read every frame
+    /// from disk on every pass, and the IO thread's rate became the playback
+    /// rate.
+    #[test]
+    fn a_disk_load_is_banked_in_memory_for_the_next_pass() {
+        let comp = uuid::Uuid::now_v7();
+        clear();
+        let bytes = Arc::new(vec![9u8; 16]);
+        put_loaded(A, 2, 2, true, 16, at(comp, 3, 1000), bytes);
+        let up = held(A).expect("held for the next promotion");
+        assert_eq!(*up.bytes, vec![9u8; 16]);
+        assert!(up.bgra, "in the order it will go up in");
+        assert_eq!(up.cost_ms, 16, "dear enough to keep");
         clear();
     }
 

@@ -508,6 +508,40 @@ impl HeadlessRenderer {
         )
     }
 
+    /// Probe anything new in `doc` so a batch of [`Self::frame_key_presynced`]
+    /// calls can run against a settled probe cache. [`Self::frame_key`] does
+    /// this itself, per call — which rebuilds the footage map every time, and a
+    /// consumer naming hundreds of frames of the SAME document (the cache bar,
+    /// the playback look-ahead) was paying that rebuild per frame. Call this
+    /// once per document, then name as many frames as needed. `slate` is the
+    /// comp's dimensions, exactly as a render would pass them.
+    pub fn presync_items(&mut self, doc: &Document, slate: (u32, u32)) {
+        self.sync_items(doc, slate);
+    }
+
+    /// [`Self::frame_key`] against the probes already gathered — no probing, no
+    /// footage-map rebuild, and thus `&self`. Only correct after
+    /// [`Self::presync_items`] was called for this document; an unprobed source
+    /// simply makes the frame unnameable (`None`), never wrongly named, so a
+    /// caller that forgets the presync renders live rather than mis-caching.
+    #[must_use]
+    pub fn frame_key_presynced(
+        &self,
+        doc: &Document,
+        comp_id: Uuid,
+        frame: u64,
+        quality: Quality,
+    ) -> Option<u128> {
+        let comp = doc.comp(comp_id)?;
+        crate::cache::frame_key(
+            doc,
+            comp,
+            frame as usize,
+            quality,
+            &ProbeView(&self.probe_cache),
+        )
+    }
+
     /// Composite one interactive frame and return the display-encoded GPU
     /// texture — the shared body of both interactive entry points. The texture
     /// is at the comp's dimensions times the preview scale (`quality`'s
