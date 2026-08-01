@@ -35,7 +35,6 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
-import '../shell/precompose_dialog_frb.dart';
 import '../state/comp_model.dart';
 import '../state/comp_time.dart';
 import '../state/drag_payloads.dart';
@@ -689,25 +688,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     return true;
   }
 
-  /// `Ctrl+Shift+C`: pack the selection into a comp of its own (docs/07 §4.4).
-  ///
-  /// The whole move is the engine's — one batch, one undo step — so all this
-  /// does is hand it the selection and put the layer it gets back in the
-  /// selection's place, because the Precomp layer is what the user is now
-  /// working on.
-  bool _precomposeSelection(LumitUiState ui) {
-    final comp = ui.selectedComp;
-    final layers = ui.selectedLayers.value;
-    if (comp == null || layers.isEmpty) return false;
-    showPrecomposeDialogFrb(
-      context: context,
-      comp: comp,
-      selectedLayers: layers,
-      ui: ui,
-      workspace: ui.workspace,
-    );
-    return true;
-  }
+
 
   /// `[` and `]`: move the selected layers so that end lands on the playhead;
   /// with `Alt`, trim that end to it instead (docs/07 §4.4).
@@ -975,9 +956,6 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
     if (action == 'layer.split') {
       return _splitSelectionAtPlayhead(ui);
-    }
-    if (action == 'layer.precompose') {
-      return _precomposeSelection(ui);
     }
     if (action == 'layer.move.in' ||
         action == 'layer.move.out' ||

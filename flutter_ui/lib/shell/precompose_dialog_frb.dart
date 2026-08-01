@@ -13,6 +13,8 @@ import '../main.dart';
 import '../state/workspace.dart';
 import '../widgets/controls.dart';
 
+bool _isPrecomposeShowing = false;
+
 /// Show the Pre-compose dialogue and execute precompose on confirm.
 Future<void> showPrecomposeDialogFrb({
   required BuildContext context,
@@ -21,58 +23,63 @@ Future<void> showPrecomposeDialogFrb({
   required LumitUiState ui,
   required Workspace workspace,
 }) async {
-  if (selectedLayers.isEmpty) return;
+  if (_isPrecomposeShowing || selectedLayers.isEmpty) return;
+  _isPrecomposeShowing = true;
 
-  final compInfo = comp.getSettings();
-  final parentCompName = compInfo.name;
-  final firstLayerName = selectedLayers.first.getName();
+  try {
+    final compInfo = comp.getSettings();
+    final parentCompName = compInfo.name;
+    final firstLayerName = selectedLayers.first.getName();
 
-  final defaultName = selectedLayers.length == 1
-      ? '$firstLayerName Comp 1'
-      : 'Clips Comp 1';
+    final defaultName = selectedLayers.length == 1
+        ? '$firstLayerName Comp 1'
+        : 'Clips Comp 1';
 
-  await showLumitModal<void>(
-    context: context,
-    builder: (close) => _PrecomposeBody(
-      parentCompName: parentCompName,
-      firstLayerName: firstLayerName,
-      selectedCount: selectedLayers.length,
-      defaultName: defaultName,
-      initialMoveAttributes: workspace.precomposeMoveAttributes,
-      initialAdjustDuration: workspace.precomposeAdjustDuration,
-      initialOpenNewComp: workspace.precomposeOpenNewComp,
-      onConfirm: (name, moveAttributes, adjustDuration, openNewComp) async {
-        // Save user's working preferences for precompose
-        workspace.setPrecomposeSettings(
-          moveAttributes: moveAttributes,
-          adjustDuration: adjustDuration,
-          openNewComp: openNewComp,
-        );
+    await showLumitModal<void>(
+      context: context,
+      builder: (close) => _PrecomposeBody(
+        parentCompName: parentCompName,
+        firstLayerName: firstLayerName,
+        selectedCount: selectedLayers.length,
+        defaultName: defaultName,
+        initialMoveAttributes: workspace.precomposeMoveAttributes,
+        initialAdjustDuration: workspace.precomposeAdjustDuration,
+        initialOpenNewComp: workspace.precomposeOpenNewComp,
+        onConfirm: (name, moveAttributes, adjustDuration, openNewComp) async {
+          // Save user's working preferences for precompose
+          workspace.setPrecomposeSettings(
+            moveAttributes: moveAttributes,
+            adjustDuration: adjustDuration,
+            openNewComp: openNewComp,
+          );
 
-        final layerIds = selectedLayers.map((l) => l.internallayerId).toList();
-        final leaveAttributes = !moveAttributes && selectedLayers.length == 1;
+          final layerIds = selectedLayers.map((l) => l.internallayerId).toList();
+          final leaveAttributes = !moveAttributes && selectedLayers.length == 1;
 
-        final newPrecompLayer = comp.precompose(
-          layerIds: layerIds,
-          name: name,
-          leaveAttributes: leaveAttributes,
-          adjustDuration: adjustDuration,
-        );
+          final newPrecompLayer = comp.precompose(
+            layerIds: layerIds,
+            name: name,
+            leaveAttributes: leaveAttributes,
+            adjustDuration: adjustDuration,
+          );
 
-        ui.setSelection([newPrecompLayer]);
-        ui.notifyListeners();
+          ui.setSelection([newPrecompLayer]);
+          ui.notifyListeners();
 
-        if (openNewComp) {
-          final sourceItem = newPrecompLayer.getSourceItem();
-          if (sourceItem case ItemReference_Composition(:final field0)) {
-            ui.setSelectedComp(field0);
+          if (openNewComp) {
+            final sourceItem = newPrecompLayer.getSourceItem();
+            if (sourceItem case ItemReference_Composition(:final field0)) {
+              ui.setSelectedComp(field0);
+            }
           }
-        }
-        close(null);
-      },
-      onCancel: () => close(null),
-    ),
-  );
+          close(null);
+        },
+        onCancel: () => close(null),
+      ),
+    );
+  } finally {
+    _isPrecomposeShowing = false;
+  }
 }
 
 class _PrecomposeBody extends StatefulWidget {
