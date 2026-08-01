@@ -167,6 +167,10 @@ class LumitMenuBarFrb extends StatelessWidget {
             _Item.divider(),
             _Item('Settings…', () => showSettingsWindowFrb(context)),
           ]),
+          // Nothing to look at: it is here so `Ctrl+Shift+P` opens the same
+          // palette this bar builds, rather than the shell building a second
+          // one from a list that would drift out of step with these menus.
+          _PaletteHotkey(onRequested: () => _palette(context)),
         ],
       ),
     );
@@ -402,6 +406,45 @@ class _Item {
   _Item.submenu(this.label, this.children)
       : onPressed = null,
         isDivider = false;
+}
+
+/// Watches [LumitUiState.paletteRequest] and opens the palette when the
+/// shortcut bumps it. Draws nothing; it exists only to hold the subscription,
+/// so the menu bar itself stays a plain stateless widget.
+class _PaletteHotkey extends StatefulWidget {
+  final VoidCallback onRequested;
+
+  const _PaletteHotkey({required this.onRequested});
+
+  @override
+  State<_PaletteHotkey> createState() => _PaletteHotkeyState();
+}
+
+class _PaletteHotkeyState extends State<_PaletteHotkey> {
+  ValueNotifier<int>? _bound;
+
+  @override
+  Widget build(BuildContext context) {
+    // `read`, not `watch`: this widget draws nothing, so a rebuild per change
+    // of the shell state would be pure cost. The state itself outlives the
+    // window, so the notifier it hands over never changes under us.
+    final requests = context.read<LumitUiState>().paletteRequest;
+    if (requests != _bound) {
+      _bound?.removeListener(_open);
+      _bound = requests..addListener(_open);
+    }
+    return const SizedBox.shrink();
+  }
+
+  void _open() {
+    if (mounted) widget.onRequested();
+  }
+
+  @override
+  void dispose() {
+    _bound?.removeListener(_open);
+    super.dispose();
+  }
 }
 
 class _MenuButton extends StatelessWidget {

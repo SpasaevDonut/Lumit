@@ -18,8 +18,7 @@ though it is a dense professional tool rather than a web app.
 ### 1.1 Inherited unchanged
 
 - **Semantic tokens only.** Every colour in the application comes from a named theme token.
-  Since egui is not CSS, the token layer is a Rust struct (§4) rather than `theme.css`, but the
-  rule is identical: a hex literal in widget code is a lint failure. The sole sanctioned
+  The token layer is a struct (§4) rather than `theme.css`, but the rule is identical: a hex literal in widget code is a lint failure. The sole sanctioned
   exception, per the household rule, is the application icon / favicon set.
 - **Type stack.** Schibsted Grotesk for display (wordmark, workspace titles, dialog headings);
   Source Serif 4 for rare accent lines (about box, empty states); Inter for body and panel
@@ -182,7 +181,7 @@ same neutral rule since they sit beside the Viewer in the Colour workspace.
 
 ### 4.1 The theme struct
 
-egui has no cascade, so the token layer is a plain struct, constructed once per theme and
+There is no cascade, so the token layer is a plain struct, constructed once per theme and
 passed by reference. Shape (illustrative — exact module layout per
 [05-ARCHITECTURE.md](05-ARCHITECTURE.md)):
 
@@ -263,8 +262,8 @@ Binding rules:
 - Derived alphas (e.g. `accent` @ 16% selection fill) are computed in the theme constructor and
   stored as their own fields — widget code does not do colour arithmetic either.
 - The app icon is the sole hex exception, mirroring the household favicon rule.
-- egui's own `Visuals` is populated *from* `Theme` in one place, so stock egui widgets agree
-  with custom ones.
+- The toolkit's own default styling is populated *from* `Theme` in one place, so stock
+  widgets agree with custom ones.
 
 ### 4.2 Household → Rust mapping
 
@@ -428,7 +427,7 @@ failure.
   grab target stays ≥24px wide (§7.2) whatever the head draws.
 - **Focus ring** (the household `ring-clay` equivalent): every focusable control shows a 1px
   `accent` stroke offset 1px outside its bounds when keyboard-focused. Focus is never
-  invisible; egui's `Visuals` focus stroke is set from this token so stock widgets comply.
+  invisible; the toolkit's focus stroke is set from this token so stock widgets comply.
 - **Drop targets** (asset drags, panel docking, clip insertion points): 1.5px dashed `accent`
   border + `accent` @ 10% fill; an insertion caret between clips is a 2px `accent` line. Dock
   previews use the same treatment at panel scale.
@@ -485,7 +484,7 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
 - **The user controls tempo.** Nothing auto-advances, no scroll hijack, no easing applied to
   scroll or zoom. Timeline zoom tracks the wheel/gesture 1:1.
 - Micro-motion (hover fills, panel tab underlines, drawer/menu entrances, drop-target
-  pulses) uses egui's animation utilities with spring-like ease-out, **≤150ms**, transform
+  pulses) uses spring-like ease-out, **≤150ms**, transform
   and opacity only. One signature interaction, per the household budget: the drag ghost —
   clips and assets in flight lag the cursor slightly and settle with a single small
   overshoot on drop.
@@ -494,9 +493,8 @@ section's 4/8/12/16px scale) does not vary by shape; only radius, gap, inset and
   cut), **None** (springs don't mount — animation times set to zero, drag ghosts pin to the
   cursor, drop-target pulses become static fills; the OS's own reduced-motion request maps
   onto this tier). Any meaning carried by motion is also carried by colour or text at every
-  tier. Backed by one lever over egui's own animation timing, so it reaches what egui's
-  internals animate today (collapsing headers, resizable-panel expand/collapse, scrollbar
-  fade, dialog fade-in) — it does not retroactively animate Lumit's own menus/dropdowns, which
+  tier. Backed by one lever over the toolkit's own animation timing, so it reaches what the
+  toolkit animates internally — it does not retroactively animate Lumit's own menus/dropdowns, which
   have no animation of their own yet regardless of this setting.
 - **Playback is not motion.** The Viewer playing at 60fps, scrub feedback, progressive
   preview refinement, and waveform scrolling are *content*, exempt from all of the above,
@@ -607,8 +605,8 @@ Viewer included, cards identically; there is no exemption (an earlier option —
 Viewer flush as a deliberate exception — was considered and rejected: consistency won, and
 K-074's "no top bit" rule is specifically about the tab bar, not panel margins, so it isn't
 affected either way). A stated, permanent limitation: stacked tab-bar containers (a group of
-panels sharing tabs) stay square-cornered under Round — `egui_tiles` 0.12.0's `Behavior` trait
-has no hook to round a tab bar's own container, and patching the crate for this alone isn't
+panels sharing tabs) stay square-cornered under Round — the docking container offers no hook
+to round a tab bar's own container, and patching it for this alone isn't
 planned.
 
 ## 13. New-panel checklist
@@ -688,8 +686,8 @@ shown while the application boots:
 - **Layer-type colour user overrides.** AE users expect per-layer label colours. If Lumit
   offers them, the picker SHOULD be a curated muted swatch set derived from §6.1, not a free
   colour wheel — otherwise the Timeline's calm is one preset pack away from destruction.
-- **egui text rendering at 11px.** K-012 flags text polish as a known egui risk; if 11px mono
-  kickers render poorly on Windows ClearType, the dense scale may need to shift to 12/13/14px.
+- **Text rendering at 11px.** K-012 flags text polish as a known risk; if 11px mono kickers
+  render poorly on Windows ClearType, the dense scale may need to shift to 12/13/14px.
   Decide after the first Timeline prototype.
 - **Wide-gamut / HDR Viewer output.** When the Viewer gains HDR output, the neutrality zone
   rules need restating in display-referred terms; the SDR spec here deliberately ignores it.

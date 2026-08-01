@@ -426,6 +426,136 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
+    /// Pack `layers` into a new composition and put that comp back in their
+    /// place as a Precomp layer — `Ctrl+Shift+C` (docs/07 §4.4).
+    ///
+    /// The new comp inherits this one's size, rate, duration and background
+    /// silently, which is what K-068 asks of a comp created inside an active
+    /// one. Inheriting the *duration* is also what makes the move a no-op for
+    /// timing: every packed layer keeps the in point, out point and start
+    /// offset it already had, and the Precomp layer spans the whole comp, so
+    /// the picture at any frame is the picture that was there before. Trimming
+    /// the new comp to the selection's own span would move every packed layer
+    /// to a new moment, and After Effects does not do that either.
+    ///
+    /// The layers go in at the depth of the topmost one, so a precompose in
+    /// the middle of a stack does not send it to the front.
+    ///
+    /// One [`Op::Batch`], so one undo step puts the layers back (K-068).
+    ///
+    /// A packed layer whose parent or matte stayed behind keeps the id it
+    /// pointed at, and the engine reads a link it cannot resolve as no link —
+    /// the parent chain stops there (`layer_parent_chain`). Nothing dangles
+    /// into a crash, and clearing them here would only spell the same result.
+    #[frb(sync)]
+    pub fn precompose(
+        &self,
+        layers: &[LayerReference],
+        name: Option<String>,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::model::{Composition, MotionBlur, ProjectItem};
+        use lumit_core::ops::AutoFolderKind;
+        use lumit_core::Op;
+
+        let comp = self.composition()?;
+        let doc = self.document()?;
+
+        let wanted: Vec<Uuid> = layers.iter().map(|l| l.layer_id).collect();
+        // Read in stack order, not selection order, so the packed comp holds
+        // the layers the way the timeline showed them.
+        let packed: Vec<lumit_core::model::Layer> = comp
+            .layers
+            .iter()
+            .filter(|l| wanted.contains(&l.id))
+            .cloned()
+            .collect();
+        if packed.is_empty() {
+            return Err(BridgeError::InvalidLayer);
+        }
+        // What is actually removed is what was actually found: a reference to a
+        // layer of some other comp would otherwise fail the batch on its way
+        // through `RemoveLayer` and lose the whole precompose with it.
+        let packed_ids: Vec<Uuid> = packed.iter().map(|l| l.id).collect();
+
+        // Every packed layer sits at or below this index, so the slot is still
+        // a valid one once the batch's removals have run.
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| packed_ids.contains(&l.id))
+            .unwrap_or(0);
+
+        let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
+            let existing = doc
+                .items
+                .iter()
+                .filter(
+                    |i| matches!(i, ProjectItem::Composition(c) if c.name.starts_with("Pre-comp ")),
+                )
+                .count();
+            format!("Pre-comp {}", existing + 1)
+        });
+
+        let inner = Composition {
+            id: Uuid::now_v7(),
+            name: name.clone(),
+            width: comp.width,
+            height: comp.height,
+            frame_rate: comp.frame_rate,
+            duration: comp.duration,
+            background: comp.background,
+            work_area: None,
+            layers: packed,
+            markers: Vec::new(),
+            motion_blur: MotionBlur::default(),
+            extra: serde_json::Map::new(),
+        };
+        let inner_id = inner.id;
+
+        // Comps auto-file into the Compositions folder, however they are made
+        // (K-068) — a precomp that landed at the project root would be the one
+        // comp the habit missed.
+        let (folder, mut ops) =
+            crate::edits::ensure_auto_folder_ops(&doc, AutoFolderKind::Compositions);
+        let queued = ops
+            .iter()
+            .filter(|o| matches!(o, Op::AddItem { .. }))
+            .count();
+        ops.push(Op::AddItem {
+            index: doc.items.len() + queued,
+            item: Box::new(ProjectItem::Composition(inner)),
+        });
+        ops.push(crate::edits::file_into_folder_op(&doc, folder, inner_id));
+
+        for id in &packed_ids {
+            ops.push(Op::RemoveLayer {
+                comp: self.id,
+                layer: *id,
+            });
+        }
+
+        let layer = crate::edits::base_layer(
+            name,
+            lumit_core::model::LayerKind::Precomp { comp: inner_id },
+            comp.duration.0,
+            crate::edits::centred_transform(
+                f64::from(comp.width),
+                f64::from(comp.height),
+                comp.width,
+                comp.height,
+            ),
+        );
+        let layer_id = layer.id;
+        ops.push(Op::AddLayer {
+            comp: self.id,
+            index,
+            layer: Box::new(layer),
+        });
+
+        self.commit(Op::Batch { ops })?;
+        Ok(LayerReference::new(self.project, self.id, layer_id))
+    }
+
     /// Add a Text layer with the "Text" starter document, centred.
     #[frb(sync)]
     pub fn add_text_layer(&self) -> Result<LayerReference, BridgeError> {

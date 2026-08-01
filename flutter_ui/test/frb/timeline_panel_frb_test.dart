@@ -1355,6 +1355,225 @@ void main() {
           reason: 'a layer with nothing animated stays shut');
     });
 
+    /// **The reveal keys went nowhere.** `P`, `S`, `R`, `T` and `A` were bound
+    /// in the Timeline context with no handler to answer them (docs/07 §4.3),
+    /// so the only way to see one property was to twirl the whole Transform
+    /// group open and read past the other four.
+    testWidgets('P reveals Position alone, and a second press shuts the layer',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.setSelection([layer]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
+      await tester.pump();
+      expect(find.text('Position'), findsAtLeastNWidgets(1));
+      expect(find.text('Scale'), findsNothing,
+          reason: 'a solo shows the one property it names');
+      expect(find.text('Opacity'), findsNothing);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyP);
+      await tester.pump();
+      expect(find.text('Position'), findsNothing,
+          reason: 'the key is a toggle, as AE\'s is');
+    });
+
+    /// A reveal names one row, so the Retime row above Transform stands down
+    /// with the rest — "show me Scale" that also showed Retime would be
+    /// answering a question nobody asked.
+    testWidgets('a reveal stands the Retime row down with the others',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.toggleRetimeProperty();
+      p.uiState.setSelection([layer]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      // Twirled open the ordinary way, the Retime row is there (docs/07 §4.3).
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      expect(find.text('Retime'), findsAtLeastNWidgets(1));
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyS);
+      await tester.pump();
+      expect(find.text('Scale'), findsAtLeastNWidgets(1));
+      expect(find.text('Retime'), findsNothing);
+    });
+
+    /// **`Ctrl+Shift+C` was bound and unanswered.** Precompose is one engine
+    /// call and one undo step; the panel's part is to hand it the selection and
+    /// take the layer it gets back (docs/07 §4.4).
+    testWidgets('Ctrl+Shift+C packs the selection into a comp of its own',
+        (tester) async {
+      final p = withComp();
+      final lower = p.comp.addSolidLayer();
+      final upper = p.comp.addSolidLayer();
+      p.comp.addSolidLayer();
+      p.uiState.setSelection([upper, lower]);
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+
+      final after = p.comp.getLayers();
+      expect(after.length, 2, reason: 'two layers became one Precomp layer');
+      final packed = p.uiState.selectedLayer.value;
+      expect(packed, isNotNull);
+      expect(after.map((l) => l.internallayerId),
+          contains(packed!.internallayerId),
+          reason: 'the new layer is what the user is now working on');
+      expect(p.uiState.selectedLayers.value.length, 1);
+    });
+
+    /// **`[` and `]` were bound and unanswered too.** They move the layer so
+    /// that end lands on the playhead; with `Alt` they trim it there instead,
+    /// under the same rules the bar's own drag follows.
+    testWidgets('[ moves the layer to the playhead and Alt+] trims it there',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      final before = layer.getSpan();
+      final length = before.outPoint.num / before.outPoint.den -
+          before.inPoint.num / before.inPoint.den;
+      p.uiState.setSelection([layer]);
+      p.uiState.playheadFrame.value = 20;
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.bracketLeft);
+      await tester.pumpAndSettle();
+      final moved = layer.getSpan();
+      final at20 = p.comp.timeOfFrame(frame: 20);
+      expect(moved.inPoint.num / moved.inPoint.den,
+          closeTo(at20.num / at20.den, 1e-9),
+          reason: 'the in point is on the playhead');
+      expect(
+          moved.outPoint.num / moved.outPoint.den -
+              moved.inPoint.num / moved.inPoint.den,
+          closeTo(length, 1e-9),
+          reason: 'a move keeps the length; only a trim changes it');
+
+      p.uiState.playheadFrame.value = 30;
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.bracketRight);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pumpAndSettle();
+      final trimmed = layer.getSpan();
+      final at30 = p.comp.timeOfFrame(frame: 30);
+      expect(trimmed.outPoint.num / trimmed.outPoint.den,
+          closeTo(at30.num / at30.den, 1e-9),
+          reason: 'the out point is on the playhead');
+      expect(trimmed.inPoint, moved.inPoint,
+          reason: 'a trim moves one end, not both');
+    });
+
+    /// **Ctrl+click toggled the layer in and straight back out.** Selection ran
+    /// twice for one click — once on the row's pointer-down and once on its tap
+    /// — which is invisible for a plain click and exactly wrong for a toggle.
+    testWidgets('Ctrl+click adds a layer to the selection and takes it out',
+        (tester) async {
+      final p = withComp();
+      final lower = p.comp.addSolidLayer();
+      final upper = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${upper.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(p.uiState.selectedLayers.value.length, 1);
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${lower.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(
+          p.uiState.selectedLayerIds,
+          containsAll(<UuidValue>[
+            upper.internallayerId,
+            lower.internallayerId
+          ]));
+
+      // And out again: the same click on a chosen layer un-chooses it.
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${lower.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      expect(p.uiState.selectedLayerIds, <UuidValue>{upper.internallayerId});
+    });
+
+    /// Shift extends the selection along the stack, the way it extends a
+    /// property selection along the visible rows (docs/07 §4.3).
+    testWidgets('Shift+click extends the selection down the stack',
+        (tester) async {
+      final p = withComp();
+      final bottom = p.comp.addSolidLayer();
+      final middle = p.comp.addSolidLayer();
+      final top = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${top.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${bottom.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+      expect(
+          p.uiState.selectedLayerIds,
+          <UuidValue>{
+            top.internallayerId,
+            middle.internallayerId,
+            bottom.internallayerId
+          },
+          reason: 'everything between the two ends, inclusive');
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          bottom.internallayerId,
+          reason: 'the layer just clicked is the one commands act on');
+    });
+
+    /// Twirling a layer open is not choosing it: the properties belong to that
+    /// layer whether or not it is the one being worked on.
+    testWidgets('the twirl opens a fold without taking the selection',
+        (tester) async {
+      final p = withComp();
+      final lower = p.comp.addSolidLayer();
+      final upper = p.comp.addSolidLayer();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-name-${upper.internallayerId}')));
+      await tester.pump(const Duration(milliseconds: 400));
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${lower.internallayerId}')));
+      await tester.pump();
+      expect(find.byKey(ValueKey<String>('tl-lanes-${lower.internallayerId}')),
+          findsOneWidget,
+          reason: 'the fold opened');
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          upper.internallayerId,
+          reason: 'and the selection stayed where it was');
+
+      // Nor does hiding a layer choose it: the switch groups are controls.
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-visible-${lower.internallayerId}')));
+      await tester.pump();
+      expect(p.uiState.selectedLayer.value?.internallayerId,
+          upper.internallayerId);
+    });
+
     /// Selecting keyframes on a lane selects the property they belong to, so
     /// the outline follows what was boxed (docs/07 §4.3).
     testWidgets('boxing keyframes on a lane selects their property',

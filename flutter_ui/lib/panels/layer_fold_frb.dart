@@ -252,8 +252,7 @@ bool moveLaneKey({
 /// `startsWith` is the whole of the "is this my ancestor" test.
 String foldRowPath(String layerId, LayerFoldRow row) => switch (row) {
       FoldGroupRow(:final path) => path,
-      FoldTransformRow(:final group) =>
-        '${transformPath(layerId)}/${group.axes.first.prop.name}',
+      FoldTransformRow(:final group) => transformGroupPath(layerId, group),
       FoldEffectParamRow(:final info, :final param) =>
         '${effectPath(layerId, info.id.toString())}/${param.id}',
       FoldVolumeRow() => '${audioPath(layerId)}/volume',
@@ -274,6 +273,14 @@ String retimePath(String layerId) => '$layerId/retime';
 
 /// The path of a layer's Transform group in the open set.
 String transformPath(String layerId) => '$layerId/transform';
+
+/// The path of one Transform row — Position, Scale, Rotation and the rest.
+///
+/// Named after the group's first axis rather than its label, because the label
+/// is what the row *says* and the axis is what it *is*: renaming "Anchor point"
+/// would otherwise quietly unbind the `A` key from the row it reveals.
+String transformGroupPath(String layerId, TransformGroup group) =>
+    '${transformPath(layerId)}/${group.axes.first.prop.name}';
 
 /// The path of a layer's Effects group.
 String effectsPath(String layerId) => '$layerId/effects';
@@ -311,22 +318,32 @@ List<LayerFoldRow> layerFoldRows({
   final info = entry.info;
   final rows = <LayerFoldRow>[];
 
+  // A reveal key (`P`, `S`, `R`, `T`, `A`) leaves exactly one Transform row
+  // open and the group itself shut — "show me Position" means Position, not
+  // Position among five others. That is a *solo*, and it is read here rather
+  // than passed in because the lanes build their rows from this same list and
+  // must leave room for the same ones (docs/07 §4.3).
+  final transformOpen = open.contains(transformPath(id));
+  final groups = transformGroups(threeD: info.switches.threeD);
+  final soloed = !transformOpen &&
+      groups.any((g) => open.contains(transformGroupPath(id, g)));
+
   // Retime first, above everything (docs/07 §4.3): it decides *which* frame of
   // the source the rest of the fold-out then transforms. A layer that has not
-  // been given one shows no row rather than a dead control.
-  if (info.retime case final retime?) {
+  // been given one shows no row rather than a dead control — and it stands
+  // down while a solo is in force, for the same reason the other four rows do.
+  if (info.retime case final retime? when !soloed) {
     rows.add(FoldRetimeRow(retime, depth: 1));
   }
 
-  final transformOpen = open.contains(transformPath(id));
   rows.add(FoldGroupRow(
     path: transformPath(id),
     label: 'Transform',
     open: transformOpen,
     depth: 1,
   ));
-  if (transformOpen) {
-    for (final group in transformGroups(threeD: info.switches.threeD)) {
+  for (final group in groups) {
+    if (transformOpen || open.contains(transformGroupPath(id, group))) {
       rows.add(FoldTransformRow(group, info.transform, depth: 2));
     }
   }

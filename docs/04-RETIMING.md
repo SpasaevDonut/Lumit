@@ -11,27 +11,21 @@ redefined, here.
 The key words MUST, MUST NOT, SHOULD, SHOULD NOT, and MAY are to be interpreted as described
 in RFC 2119.
 
-**Implementation status (2026-07-24).** The Retime **engine** (`lumit-core :: retime`) is fully
-built and tested - the segment model, both graph lenses' maths, the beat-sync covenant,
-razor/split, overrun detection, reverse gating, and Rate<->Map conversion. The Flutter graph
-editor exposes all three lenses. What is **not yet wired** is a set of UI affordances and
-keyboard commands: freeze-at-playhead, the Hold preset button, RATE/MAP type chips, kink
-badges, the graph overrun band, compensating Alt-drag, copy/paste of a retime, outward-trim
-extending the map, and the retime keyboard shortcuts in §12. Precomp layers do not carry a
-Retime (only Footage does). These gaps are tracked in [TODO.md](TODO.md); §12's command list
-is the intended surface, not the current one.
+## 0. The current Retime surface (K-197)
 
-**Restarted as a property (K-197, 2026-07-28).** The frontend's Retime is no longer this
-segment model at all. A layer carries `retime: Option<Property>` — an ordinary keyframable
-scalar whose value is the source time in seconds, the AE Time Remap shape — given to a layer
-with **Ctrl+Alt+T** (or Composition ▸ Enable Retime — K-198, K-200) and shown
-as a single row above Transform in the Timeline's fold-out,
-with exactly the graph options every other property has and **nothing else**: no lenses, no
-ease presets, no freeze, no interpolation policy on that path. Everything specified below
-remains canonical for the segment engine, which still evaluates for documents that carry one
-(`Layer::source_time_at` prefers the property and falls back to it), and is where the richer
-affordances return when they are built on top of the property. Until then, read this
-document as the destination rather than the current frontend.
+**Retime was restarted as an ordinary property.** A layer carries
+`retime: Option<Property>` — a keyframable scalar whose value is the source time in seconds,
+the AE Time Remap shape — given with **Ctrl+Alt+T** or Composition ▸ Enable Retime (K-198,
+K-200) and drawn as a single row above Transform in the Timeline's fold-out. It has exactly
+the graph options every other property has and **nothing else**: no lenses, no ease presets,
+no freeze, no interpolation policy on that path. That parity is the rule, not a temporary
+state — Retime-specific affordances return only as they are built on top of the property.
+
+**Sections 1–13 below specify the segment engine**, which remains canonical: it still
+evaluates for any document carrying one, and it is where the richer affordances come from
+when they return. Read those sections as the destination and as the engine's contract, not as
+a description of the current frontend. Which of the two survives is the first entry under
+**Open questions** at the foot of this document, and [TODO.md](TODO.md) tracks every gap.
 
 ---
 
@@ -73,9 +67,10 @@ A Retime is a function *f* from **local time** to **source time**:
 layer duration. Speed is d*f*/dt: 1.0 = normal, 0 = freeze, negative = reverse. The UI shows
 speed as a percentage.
 
-All boundary times and source positions are exact rationals (`Rational { num: i64, den: u64 }`,
-always normalised — number policy in [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)
-§time-types). Per-sample evaluation during rendering is f64; the rational store exists so that
+All boundary times and source positions are exact rationals (the type and its normalisation
+invariant are [impl/rational-time.md](impl/rational-time.md); the policy is
+[14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §2). Per-sample evaluation during
+rendering is f64; the rational store exists so that
 *edits and cuts* are exact, and so that identical inputs always hash identically for the cache
 (§11.7).
 
@@ -733,24 +728,30 @@ constant-factor mechanisms. The mapping, for when an importer exists:
 
 ## Open questions
 
-1. **Expression-driven Retime.** Should a later version allow an expression slot on the
+1. **Which Retime survives (K-197).** A layer can be retimed two ways today: the property of
+   §0, and the segment store of §§1–13 (`LayerKind::Footage::retime`, still the fallback in
+   `Layer::source_time_at`, still edited by the Source card's speed/reverse/frames rows).
+   Either the property grows what is worth keeping from the segment model and the store is
+   deleted, or the two are reconciled into one. **Two ways to retime one layer is the state
+   to leave, not to extend** — decide this before building anything further on either.
+2. **Expression-driven Retime.** Should a later version allow an expression slot on the
    retime store (AE parity: expressions on Time Remap, `loopOut` source loops)? Requires
    defining exactness and cache semantics for a scripted map; deliberately excluded from v1
    (§11.6).
-2. **Loop-past-end as an opt-in.** Overrun always holds (§7.2). Community Vegas habits
+3. **Loop-past-end as an opt-in.** Overrun always holds (§7.2). Community Vegas habits
    include deliberate loop-past-end; is an explicit per-clip "loop source" interpretation
    toggle (visibly distinct from overrun) worth adding, or is `loopOut`-style scripting the
    right home?
-3. **Compensated-edit affordance.** Alt-drag pins the next boundary (§9.2). Should there be
+4. **Compensated-edit affordance.** Alt-drag pins the next boundary (§9.2). Should there be
    a "pin all downstream boundaries" mode (solving across multiple segments), or does that
    reintroduce the AE speed-graph opacity this design removes?
-4. **Fitted-conversion threshold.** The quarter-source-frame warning threshold (§5.2) is a
+5. **Fitted-conversion threshold.** The quarter-source-frame warning threshold (§5.2) is a
    first guess; validate against real Twixtor-era projects during the prototype.
-5. **Blend phase quantisation.** 1/1024 phase steps (§11.7) trade cache hits against banding
+6. **Blend phase quantisation.** 1/1024 phase steps (§11.7) trade cache hits against banding
    in long slow ramps; confirm with perceptual testing, and whether Flow needs finer phase.
-6. **Nested-comp exact evaluation by default.** §10 defaults continuous sampling of nested
+7. **Nested-comp exact evaluation by default.** §10 defaults continuous sampling of nested
    comps to on; confirm there is no pathological interaction with nested caches before
    locking, since it multiplies distinct evaluation times.
-7. **Audio preview under ramps.** v1 mutes nothing automatically (audio simply is not
+8. **Audio preview under ramps.** v1 mutes nothing automatically (audio simply is not
    retimed); should a clip with non-unity Retime offer a one-click "mute linked audio"
    affordance when the Composer lands, or is that already moot given montage practice?

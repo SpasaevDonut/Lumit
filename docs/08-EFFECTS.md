@@ -2,7 +2,7 @@
 
 **Status: implementation-ready.** Specifies the effect model and the built-in effect suite
 (K-064, K-019). Terminology per [01-GLOSSARY.md](01-GLOSSARY.md); render semantics per
-[06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md); plugin-hosted effects (OFX, KFX) per
+[06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md); plugin-hosted effects (OFX, LFX) per
 [12-PLUGINS.md](12-PLUGINS.md). The goal of Tier 1 is blunt: a new montage editor MUST need
 zero third-party plugins to achieve the core genre look.
 
@@ -131,10 +131,11 @@ A WGSL change without a matching reference change MUST fail CI.
 
 ### 2.1 Working space
 
-All effects operate on **scene-linear, premultiplied-alpha fp16** buffers (fp32 when the
-comp opts in, K-026). Effects MUST NOT assume display-referred input: values above 1.0 are
-legal and meaningful (glow depends on them). Effects MUST NOT clip highlights except where
-clipping is the documented behaviour of a parameter.
+All effects operate in the working space defined by
+[06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.1: scene-linear, premultiplied alpha, at
+the project-wide depth (K-069). Effects MUST NOT assume display-referred input: values
+above 1.0 are legal and meaningful (glow depends on them). Effects MUST NOT clip highlights
+except where clipping is the documented behaviour of a parameter.
 
 ### 2.2 Unpremultiplied exceptions
 
@@ -1474,7 +1475,7 @@ mask parameters, "composite on original", effect-only precomps).
    engine motion blur, but a new concept in the data model). Decide with
    [03-DATA-MODEL.md](03-DATA-MODEL.md).
 4. **Preset licensing.** Ship-with preset library licence (GPLv3 data? CC0?) affects
-   whether community packs can embed ours. CC0 recommended; needs Mack's sign-off.
+   whether community packs can embed ours. CC0 recommended; needs the owner's sign-off.
 5. **fp16 oracle tolerances.** The per-cost-class tolerance defaults in §1.6 are
    placeholders until the first three effects are implemented on both NVIDIA and AMD and
    real cross-vendor deltas are measured.

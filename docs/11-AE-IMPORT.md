@@ -1,11 +1,9 @@
 # After Effects import
 
-**Status: specification only - not yet implemented (roadmap Phase 4).** None of the AE import
-described here exists in code today: there is no Bridge panel, no `.aep` parser, no Lottie
-importer, and no fidelity report. Only the *foundations* an importer would target exist -
-AE-compatible keyframe maths, Time-Remap->Retime conversion, and Placeholder-effect
-round-tripping. This document is the design to build against when Phase 4 begins; the concrete
-build is tracked in [TODO.md](TODO.md). It implements K-060 (import strategy), and leans on
+**Status: specification only - not yet implemented (roadmap Phase 4).** Only the
+*foundations* an importer would target exist: AE-compatible keyframe maths,
+Time-Remap→Retime conversion, and Placeholder-effect round-tripping. This document
+implements K-060 (import strategy), and leans on
 K-025 (AE-compatible keyframe maths) and K-021 (Retime) in [02-DECISIONS.md](02-DECISIONS.md). Terminology follows
 [01-GLOSSARY.md](01-GLOSSARY.md) exactly; After Effects' own feature names appear in quotes
 when describing AE itself. RFC-2119 keywords (MUST, SHOULD, MAY) are binding.
@@ -302,10 +300,10 @@ A placeholder is an inert effect node that:
 - is **never lost**: saving a `.lum` project preserves placeholders and their `ae`
   namespace data byte-for-byte, so a project can be opened, edited around, saved, and the
   placeholder data survives indefinitely. If a later Lumit version (or an installed OFX/
-  KFX effect registered as an upgrade target in `ae-effect-map.toml`) gains a mapping, the
+  LFX effect registered as an upgrade target in `ae-effect-map.toml`) gains a mapping, the
   user is offered — never forced — a per-instance upgrade.
 
-The same mechanism serves missing OFX/KFX plugins at project-open time
+The same mechanism serves missing OFX/LFX plugins at project-open time
 ([12-PLUGINS.md](12-PLUGINS.md) §1), so "placeholder" is one concept everywhere.
 
 ---
@@ -386,7 +384,7 @@ opens.
   Adobe's SDK explicitly states it neither supports nor recommends third-party hosts, and
   the SDK licence plus plugin vendors' host-locked activation make the legal exposure real
   while the same vendors already ship OFX builds. Lumit routes all plugin demand through
-  OFX and KFX ([12-PLUGINS.md](12-PLUGINS.md)) — see K-061.
+  OFX and LFX ([12-PLUGINS.md](12-PLUGINS.md)) — see K-061.
 - **`.ffx` preset files.** Closed RIFX-family binary, no complete public parser, version-
   drifting. Mitigation: apply the preset inside AE and export with the Bridge — presets
   become ordinary properties. Native `.ffx` reading MAY be revisited if the direct-parse

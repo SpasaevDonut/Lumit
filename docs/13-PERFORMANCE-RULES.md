@@ -178,17 +178,15 @@ Device loss is routine, not exceptional. Windows resets the driver on any GPU pa
 
 ## 6. Rules for effect authors
 
-Binding for built-in WGSL effects and for plugins (KFX and OFX,
+Binding for built-in WGSL effects and for plugins (LFX and OFX,
 [12-PLUGINS.md](12-PLUGINS.md)); the host enforces what it can and sandboxes the rest.
 Full API contract in [08-EFFECTS.md](08-EFFECTS.md).
 
-- **Declare a cost class**: `trivial` (fused per-pixel), `local` (bounded neighbourhood,
-  declared radius), `global` (whole-frame reach, e.g. FFT blur), `temporal` (samples other
-  frames), `iterative` (cost scales with a parameter). The scheduler uses cost classes for
-  concurrency, tiling, and degradation decisions; an undeclared effect is treated as
-  `global`+`iterative` — the most pessimistic.
-- **Support ROI**: implement `roi_in = f(roi_out)` honestly (06 §2.1). Claiming less reach than
-  the kernel uses produces tile seams and is a correctness bug; claiming a whole-frame
+- **Declare your traits honestly** — cost class, ROI expansion, temporal window, alpha mode,
+  cancellation points, randomness ([08-EFFECTS.md](08-EFFECTS.md) §1.3, which owns the
+  vocabulary). The scheduler plans concurrency, tiling and degradation from them; an
+  undeclared effect is treated as the most pessimistic case. Claiming less reach than the
+  kernel uses produces tile seams and is a correctness bug; claiming a whole-frame
   dependency when untrue forfeits the biggest optimisation in the pipeline.
 - **Support cancellation checkpoints**: check the epoch token between passes and between tiles;
   a single uninterruptible span SHOULD stay under ~10 ms of GPU work on the reference desktop.
@@ -196,11 +194,12 @@ Full API contract in [08-EFFECTS.md](08-EFFECTS.md).
   size; allocate scratch only through the host. The governor denies dispatches that exceed the
   declaration; exceeding it at runtime is a validation failure in dev builds.
 - **Ship the CPU reference implementation** (K-019): it is the GPU version's test oracle and
-  the fallback for §4 step 6. GPU and CPU outputs MUST match within a stated tolerance.
-- **Be deterministic**: all randomness from host-provided seeds; no wall-clock, no global
-  state. Same inputs, same output, always — the cache (06 §5.2) and deterministic export
-  depend on it.
-- **Declare thread safety** (KFX/OFX): a non-thread-safe plugin serialises its own node only;
+  the fallback for §4 step 6. GPU and CPU outputs MUST match within the tolerance
+  [08-EFFECTS.md](08-EFFECTS.md) §1.6 states for it.
+- **Be deterministic** ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §3): the content
+  cache (06 §5.2) and deterministic export both depend on it, so a breach here is a
+  performance defect as well as a correctness one.
+- **Declare thread safety** (LFX/OFX): a non-thread-safe plugin serialises its own node only;
   the host keeps the rest of the graph parallel and out-of-process plugins cannot take the
   application down.
 
