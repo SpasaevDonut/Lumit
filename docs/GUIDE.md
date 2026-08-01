@@ -5028,3 +5028,36 @@ working the day someone renamed a row, with nothing failing to say so.
 One row and nothing else also means the Retime row above Transform steps aside
 while a reveal is in force. "Show me Scale" that showed Scale *and* Retime would
 be answering a question nobody asked.
+
+### The menu bar, and why it lists things that do not work (K-242)
+
+Open any menu in Lumit and you will see rows greyed out with "(Not implemented)" after them.
+That is on purpose. The menus describe the finished application, not today's build.
+
+The reason is testing. If a menu only listed what works, then a command you could not find would
+be ambiguous — is it missing, is it somewhere else, is it broken? Listing everything answers
+that at a glance: if a row is there and marked, nobody has built it yet; if it is there and
+greyed out with no mark, it exists but the document is not ready for it (no project open, no
+layer selected). And when someone does build one of those commands, there is already a row
+waiting for it, so nobody has to re-argue where it goes.
+
+**One list, drawn two ways.** Windows and Linux put an application's menus inside its window.
+macOS puts them along the top of the screen, in the system menu bar, and expects About and
+Settings to live in a menu named after the application. Lumit does both — but it only has one
+list of menu items. A function called `lumitMenus` builds that list as plain data (a label, a
+shortcut, whether the row is live, whether it is ticked), and then either the in-window bar or
+macOS's own menu system draws it. If there were two lists, one of them would quietly fall behind
+the other; there is one, so it cannot.
+
+**The shortcuts are not written in the menus.** A row does not say "Ctrl+S". It says "the action
+called `file.save`", and the menu asks the keymap what that action is bound to right now. So if
+you rebind Save in Settings ▸ Keymap, the menu changes to match without anyone updating it — and
+a menu can never teach you a shortcut that does nothing, because the same table answers both the
+menu and the keyboard.
+
+**Closing a panel is just rearranging.** The Window menu lists every panel with a tick beside
+it. Ticking one off does not set a "hidden" flag anywhere; it takes the panel out of the
+workspace arrangement, which is the thing Lumit already saves to disk when you drag panels
+about. So a panel you close stays closed after a restart, and no new setting had to be invented
+for it. The one rule is that the last panel cannot be closed — an empty workspace would have no
+menu to get anything back from except this one, and that is a trap rather than a feature.

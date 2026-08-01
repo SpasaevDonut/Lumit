@@ -14,6 +14,7 @@ import 'package:lumit_flutter/shell/comp_settings_frb.dart';
 import 'package:lumit_flutter/shell/precompose_dialog_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
+import 'package:lumit_flutter/shell/settings_window_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/shell/tool_bar_frb.dart';
 import 'package:lumit_flutter/src/rust/api/cache.dart';
@@ -1220,6 +1221,39 @@ class _LumitAppViewState extends State<LumitAppView> {
             workspace: ui.workspace,
           );
         }
+      // The rest of the menu bar's own commands (K-242). Each calls the very
+      // function its menu row calls, so there is one implementation of "open a
+      // project" rather than a keyboard's copy of one.
+      case 'file.new':
+        state.newProject();
+      case 'file.open':
+        openProjectFrb(state);
+      case 'file.save.as':
+        saveProjectFrb(state, forcePicker: true);
+      case 'file.import':
+        importFootageFrb(state);
+      case 'file.export':
+        if (comp == null) {
+          handled = false;
+        } else {
+          exportFrb(context);
+        }
+      case 'comp.new':
+        if (project == null) {
+          handled = false;
+        } else {
+          newCompositionFrb(context, state);
+        }
+      case 'edit.select.all':
+        if (comp == null) {
+          handled = false;
+        } else {
+          ui.setSelection(comp.getLayers());
+        }
+      case 'edit.deselect.all':
+        ui.clearSelection();
+      case 'app.settings':
+        showSettingsWindowFrb(context);
       case 'file.save':
         // Ctrl+S goes through exactly the same call the File menu's Save does
         // (K-203) — a shortcut with its own path to disk is a second save to

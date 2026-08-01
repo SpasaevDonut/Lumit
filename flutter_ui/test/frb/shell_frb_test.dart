@@ -69,8 +69,12 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('open-settings')));
       await tester.pumpAndSettle();
 
-      // General opens first, and states facts about this build.
-      expect(find.textContaining('lumit-bridge'), findsOneWidget);
+      // General opens first. What this build *is* is no longer stated here —
+      // that is Help ▸ About Lumit now (K-242); Settings is for what you
+      // change, and a version number is not that.
+      expect(find.textContaining('lumit-bridge'), findsNothing);
+      expect(find.byKey(const ValueKey('settings-reset-workspace')),
+          findsOneWidget);
 
       // The engine's own readouts and buttons live on Performance (K-193).
       await tester.tap(find.byKey(const ValueKey('settings-page-performance')));

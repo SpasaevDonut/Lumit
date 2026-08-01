@@ -4641,3 +4641,47 @@ parent and never had a background to paint.
 motion blur) still clears to the comp's own background, because that stack *is* the comp being
 viewed, held at another time. The regression test is in `build_tests.rs`, on the same case that
 already guarded collapse on and off.
+
+**K-242 · DECIDED · The menu bar is the whole application, listed — and on macOS it is the
+system's.** The bar was three menus and a Window heading, which is what the port had time for.
+It is now the nine After Effects menus (File, Edit, Composition, Layer, Effect, Animation, View,
+Window, Help) with the commands each of them will carry, whether or not those commands exist
+yet. A command that is specified and unbuilt is *listed*, marked "(Not implemented)" and drawn
+disabled.
+
+**Why list what does not work.** Two reasons, both about testing. The shape of the finished
+application is visible while it is being built, so a tester knows whether a command is missing
+or broken rather than guessing; and every unbuilt command has a place waiting for it, so
+building one is filling a row in rather than deciding where it goes. The alternative — a short
+menu that grows — hides the plan and re-opens the placement argument once per command.
+
+**One tree, two renderers.** `lumitMenus` returns the bar as data: labels, keymap action ids,
+enablement, ticks. Windows and Linux draw it in the window; macOS hands the same tree to
+`PlatformMenuBar`, so the menus appear in the Mac menu bar like every other Mac application's,
+with About and Settings lifted into the application menu as Apple's guidelines ask. Neither
+renderer holds a list of its own, which is the only arrangement in which the two cannot drift
+apart. iOS and Android are not targets (K-174 is a desktop decision), so there is no third case.
+
+**Shortcuts come from the keymap, never from the menu.** A row names an action id and shows
+whatever chord `lumit-keymap` currently binds to it, so a rebind in Settings ▸ Keymap changes
+the menus too and a menu can never teach a chord that does nothing. Nine new actions joined the
+shipped table for commands that already worked and had no chord — `file.new` (`Ctrl+Alt+N`),
+`file.open`, `file.save.as`, `file.import`, `file.export` (`Ctrl+Alt+M`), `comp.new` (`Ctrl+N`),
+`edit.select.all`, `edit.deselect.all`, and `app.settings` (`Ctrl+Alt+;`). After Effects' own
+chords where it has one: `Ctrl+N` makes a composition there and `Ctrl+Alt+N` a project, which is
+the pair anyone arriving from AE has in their fingers. Each is dispatched in the shell through
+the very function its menu row calls, so a shortcut and its menu item cannot become two
+implementations (the K-203 rule, applied to the rest of the bar).
+
+**Settings is under Edit, and About is under Help.** Preferences-under-Edit is what every
+Windows and Linux application those users know does; macOS moves both rows into the application
+menu, which is what every application *those* users know does. About left Settings ▸ General
+altogether: Settings is for what you change, and a version number is not that.
+
+**Window lists every panel with a tick.** Toggling one adds or drops its pane in the dock, which
+is also what makes it persist — what is stored is the arrangement, so a panel closed today is
+closed after a restart with no new state to keep. The last panel standing cannot be hidden: an
+empty dock has no way back.
+
+**Composition ▸ Add to export queue, not "render queue"** (glossary §9 — *export*, never
+*render*, for anything the user sees).

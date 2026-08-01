@@ -80,7 +80,16 @@ impl ActionId {
             "comp.settings" => "Composition settings",
             "edit.undo" => "Undo",
             "edit.redo" => "Redo",
+            "edit.select.all" => "Select every layer",
+            "edit.deselect.all" => "Deselect everything",
+            "file.new" => "New project",
+            "file.open" => "Open a project",
             "file.save" => "Save the project",
+            "file.save.as" => "Save the project somewhere else",
+            "file.import" => "Import footage",
+            "file.export" => "Export the composition",
+            "comp.new" => "New composition",
+            "app.settings" => "Open Settings",
             "panel.maximise" => "Maximise the panel under the pointer",
             "graph.toggle" => "Show or hide the graph editor",
             // Tools.
@@ -533,6 +542,20 @@ pub fn default_keymap() -> Keymap {
         row(Global, "Mod+Z", "edit.undo"),
         row(Global, "Mod+Shift+Z", "edit.redo"),
         row(Global, "Mod+S", "file.save"),
+        // The rest of the menu bar's own commands (K-242). After Effects'
+        // chords where it has one and Lumit has not already spent the key:
+        // Mod+N makes a *composition* there and Mod+Alt+N a project, which is
+        // the pair anyone arriving from AE has in their fingers. Settings is
+        // AE's Preferences chord for the same reason.
+        row(Global, "Mod+Alt+N", "file.new"),
+        row(Global, "Mod+O", "file.open"),
+        row(Global, "Mod+Shift+S", "file.save.as"),
+        row(Global, "Mod+I", "file.import"),
+        row(Global, "Mod+Alt+M", "file.export"),
+        row(Global, "Mod+N", "comp.new"),
+        row(Global, "Mod+A", "edit.select.all"),
+        row(Global, "Mod+Shift+A", "edit.deselect.all"),
+        row(Global, "Mod+Alt+;", "app.settings"),
         row(Global, "`", "panel.maximise"),
         row(Global, "Shift+F3", "graph.toggle"),
         // Retime is app-wide, not Timeline-scoped: the shell runs it whatever

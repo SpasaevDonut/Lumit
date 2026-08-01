@@ -196,12 +196,8 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             ),
           ),
         ]),
-        _section(t, 'About', [
-          _row(t, 'Version', 'This build of Lumit.',
-              Text(_version(), style: t.small)),
-          for (final line in bootLog().skip(1))
-            _row(t, line, '', const SizedBox.shrink()),
-        ]),
+        // About used to sit here. It is Help ▸ About Lumit now (K-242):
+        // Settings is for what you change, and a version number is not that.
       ];
 
   List<Widget> _appearance(LumitTheme t, LumitUiState ui) => [
@@ -1005,9 +1001,6 @@ class _SettingsWindowState extends State<_SettingsWindow> {
   /// A round figure for a sentence: "32 GB", or megabytes when it is small.
   static String _gib(double mib) =>
       mib >= 1024 ? '${(mib / 1024).round()} GB' : '${mib.round()} MB';
-
-  /// The engine's own first boot-log line is the build banner.
-  static String _version() => bootLog().isEmpty ? 'unknown' : bootLog().first;
 
   static String _mib(int bytes) => (bytes / (1 << 20)).toStringAsFixed(0);
 

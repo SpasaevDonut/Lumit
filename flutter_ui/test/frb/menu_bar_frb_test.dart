@@ -127,16 +127,19 @@ void main() {
       await tester.pump();
 
       for (final item in [
-        'New project',
+        'New',
         'Open project…',
+        'Open recent',
         'Save',
         'Save as…',
-        'Import footage…',
+        'Import…',
+        'Export…',
+        'Close project (Not implemented)',
       ]) {
         expect(find.text(item), findsOneWidget, reason: 'File ▸ $item');
       }
       await dismiss(tester);
-      expect(find.text('New project'), findsNothing,
+      expect(find.text('New'), findsNothing,
           reason: 'the barrier closes the menu without choosing anything');
     });
 
@@ -197,7 +200,7 @@ void main() {
         footagePicker: () async => ['C:/clips/a.mov', 'C:/clips/b.mov'],
       );
 
-      await choose(tester, 'File', 'Import footage…');
+      await choose(tester, 'File', 'Import…');
       await tester.pump();
 
       final names = allItems(p.state)
@@ -214,7 +217,7 @@ void main() {
         savePicker: () async => null,
       );
 
-      await choose(tester, 'File', 'Import footage…');
+      await choose(tester, 'File', 'Import…');
       await tester.pump();
       expect(p.state.project!.getItems(), isEmpty);
 
@@ -320,7 +323,7 @@ void main() {
         footagePicker: () async => ['C:/clips/hero.mov'],
       );
       await makeComp(tester);
-      await choose(tester, 'File', 'Import footage…');
+      await choose(tester, 'File', 'Import…');
       await tester.pump();
       await choose(tester, 'File', 'Save');
       await settleFrb(tester, until: () => File(path).existsSync());
@@ -328,7 +331,7 @@ void main() {
           reason: 'nothing to open otherwise');
 
       // A new, empty project, then open the saved one over the top of it.
-      await choose(tester, 'File', 'New project');
+      await choose(tester, 'File', 'New');
       await tester.pump();
       expect(p.state.project!.getItems(), isEmpty);
 
@@ -345,20 +348,20 @@ void main() {
     /// The port shipped a menu with three items per menu where the previous
     /// frontend had layer creation, clip and marker commands, beat detection
     /// and a Window menu. Each of these reaches the document.
-    testWidgets('Composition creates every kind of layer', (tester) async {
+    testWidgets('Layer ▸ New creates every kind of layer', (tester) async {
       final p = await mount(tester);
       await makeComp(tester);
       final comp = p.uiState.selectedComp!;
 
       for (final item in [
-        'Add solid layer',
-        'Add text layer',
-        'Add camera layer',
-        'Add adjustment layer',
-        'Add sequence layer',
+        'Solid',
+        'Text',
+        'Camera',
+        'Adjustment',
+        'Sequence',
       ]) {
         final before = comp.getLayers().length;
-        await choose(tester, 'Composition', item);
+        await choose(tester, 'Layer', item, under: 'New');
         await tester.pump();
         expect(comp.getLayers(), hasLength(before + 1),
             reason: '$item added one');
@@ -372,7 +375,7 @@ void main() {
 
       // Pressing it must be a no-op rather than a crash — a disabled row that
       // throws when clicked is worse than one that is simply absent.
-      await choose(tester, 'Composition', 'Add solid layer');
+      await choose(tester, 'Layer', 'Solid', under: 'New');
       await tester.pump();
       expect(p.uiState.selectedComp, isNull);
     });
@@ -480,7 +483,7 @@ void main() {
       final p = await mount(tester);
 
       // The presets live under their own heading now (K-194).
-      await choose(tester, 'Window', 'Effects', under: 'Workspaces');
+      await choose(tester, 'Window', 'Effects', under: 'Workspace');
       await tester.pump();
       expect(panelsIn(p.uiState.split),
           panelsIn(presetLayout(WorkspacePreset.effects)));
@@ -488,13 +491,13 @@ void main() {
           isNot(presetLayout(WorkspacePreset.colour).toJson()),
           reason: 'the presets are genuinely different arrangements');
 
-      await choose(tester, 'Window', 'Audio', under: 'Workspaces');
+      await choose(tester, 'Window', 'Audio', under: 'Workspace');
       await tester.pump();
       expect(p.uiState.split.toJson(),
           presetLayout(WorkspacePreset.audio).toJson());
 
       // Reset still means the default (Edit) arrangement.
-      await choose(tester, 'Window', 'Reset workspace', under: 'Workspaces');
+      await choose(tester, 'Window', 'Reset workspace', under: 'Workspace');
       await tester.pump();
       expect(panelsIn(p.uiState.split), panelsIn(defaultLayout()));
     });
@@ -506,10 +509,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey<String>('menu-Window')));
       await tester.pump();
       expect(find.text('Command palette…'), findsOneWidget);
-      expect(find.text('Settings…'), findsOneWidget);
-      // The arrangements sit behind their own heading now (K-194), so the
-      // Window menu is four rows rather than eight.
-      expect(find.text('Workspaces'), findsOneWidget);
+      // The arrangements sit behind their own heading (K-194), and Settings
+      // moved to Edit where every Windows application keeps it (K-242).
+      expect(find.text('Workspace'), findsOneWidget);
+      expect(find.text('Settings…'), findsNothing);
       expect(find.text('Reset workspace'), findsNothing,
           reason: 'reset lives with the arrangements it undoes');
       await dismiss(tester);
@@ -520,10 +523,136 @@ void main() {
         [DockPane(Panel.viewer), DockPane(Panel.timeline)],
         [0.5, 0.5],
       );
-      await choose(tester, 'Window', 'Reset workspace', under: 'Workspaces');
+      await choose(tester, 'Window', 'Reset workspace', under: 'Workspace');
       await tester.pump();
       expect(panelsIn(p.uiState.split), panelsIn(defaultLayout()),
           reason: 'the default arrangement is back');
+    });
+
+    /// The bar is the shape of the finished application, not of today's build
+    /// (K-242): a command that is specified and unbuilt is still listed, marked
+    /// and disabled, so nobody has to guess whether it is missing or broken.
+    testWidgets('unbuilt commands are listed, marked and disabled',
+        (tester) async {
+      await mount(tester);
+      final t = LumitTheme.forScheme(LumitColorScheme.dark, ThemeShape.sharp);
+
+      await tester.tap(find.byKey(const ValueKey<String>('menu-Animation')));
+      await tester.pump();
+      expect(find.text('Keyframe velocity… (Not implemented)'), findsOneWidget);
+      expect(
+        tester
+            .widget<Text>(find.text('Keyframe velocity… (Not implemented)'))
+            .style
+            ?.color,
+        t.textDisabled,
+      );
+      await dismiss(tester);
+
+      // Every menu the specification names is on the bar, in its order.
+      for (final title in [
+        'File',
+        'Edit',
+        'Composition',
+        'Layer',
+        'Effect',
+        'Animation',
+        'View',
+        'Window',
+        'Help',
+      ]) {
+        expect(find.byKey(ValueKey<String>('menu-$title')), findsOneWidget,
+            reason: '$title is on the bar');
+      }
+    });
+
+    /// Shortcuts are the engine's (K-199): a row shows whatever the keymap
+    /// currently binds to its action, so a rebind changes the menus too.
+    testWidgets('a row teaches the chord its action answers to', (tester) async {
+      final p = await mount(tester);
+
+      await tester.tap(find.byKey(const ValueKey<String>('menu-File')));
+      await tester.pump();
+      expect(find.text('Ctrl+S'), findsOneWidget, reason: 'Save');
+      expect(find.text('Ctrl+Shift+S'), findsOneWidget, reason: 'Save as');
+      expect(find.text('Ctrl+Alt+N'), findsOneWidget, reason: 'New');
+      await dismiss(tester);
+
+      // The row reads the live keymap rather than a chord of its own: the
+      // engine is the only place a binding is written down (K-199).
+      expect(p.uiState.keymap.chordFor('file.save'), 'Ctrl+S');
+      expect(p.uiState.keymap.rawChordFor('file.save'), 'Mod+S');
+    });
+
+    /// The Window menu's panel list: ticked when the panel is in the
+    /// arrangement, and clicking one adds or drops it. Persistence comes free
+    /// — what is stored is the arrangement, and this changes the arrangement.
+    testWidgets('the Window menu ticks the panels and toggles them',
+        (tester) async {
+      final p = await mount(tester);
+      expect(panelsIn(p.uiState.split), contains(Panel.scopes));
+
+      await choose(tester, 'Window', Panel.scopes.title);
+      await tester.pump();
+      expect(panelsIn(p.uiState.split), isNot(contains(Panel.scopes)),
+          reason: 'the tick came off and the panel went with it');
+      expect(p.uiState.workspace.toJson()['dock'].toString(),
+          isNot(contains(Panel.scopes.name)),
+          reason: 'the stored arrangement is what persists it');
+
+      await choose(tester, 'Window', Panel.scopes.title);
+      await tester.pump();
+      expect(panelsIn(p.uiState.split), contains(Panel.scopes),
+          reason: 'and back again');
+    });
+
+    testWidgets('Help ▸ About Lumit opens the About window', (tester) async {
+      await mount(tester);
+      await choose(tester, 'Help', 'About Lumit');
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('about-close')), findsOneWidget);
+      // What Settings ▸ General used to say, said here instead (K-242).
+      expect(find.textContaining('lumit-bridge'), findsOneWidget);
+    });
+
+    /// The Effect menu is the browser as a menu: a submenu per category, each
+    /// effect applying to *every* selected layer, and the whole thing dead with
+    /// nothing selected.
+    testWidgets('the Effect menu applies to every selected layer',
+        (tester) async {
+      final p = await mount(tester);
+      await makeComp(tester);
+      final comp = p.uiState.selectedComp!;
+
+      // Nothing selected: the rows are there and do nothing.
+      await choose(tester, 'Effect', 'Gaussian blur', under: 'Blur & sharpen');
+      await tester.pump();
+      expect(comp.getLayers(), isEmpty);
+
+      final a = comp.addSolidLayer();
+      final b = comp.addSolidLayer();
+      p.uiState.setSelection([a, b]);
+      await tester.pump();
+
+      await choose(tester, 'Effect', 'Gaussian blur', under: 'Blur & sharpen');
+      await tester.pump();
+      expect(a.getEffects().single.name(), 'blur');
+      expect(b.getEffects().single.name(), 'blur',
+          reason: 'every selected layer, not just the primary (K-217)');
+    });
+
+    testWidgets('Open recent lists what the workspace remembers',
+        (tester) async {
+      final p = await mount(tester);
+      p.uiState.workspace.rememberProject('C:/projects/yesterday.lum');
+      p.state.notifyDocumentChanged();
+      await tester.pump();
+
+      await tester.tap(find.byKey(const ValueKey<String>('menu-File')));
+      await tester.pump();
+      await tester.tap(find.text('Open recent'));
+      await tester.pump();
+      expect(find.text('C:/projects/yesterday.lum'), findsOneWidget);
     });
   }, skip: !engineAvailable);
 }

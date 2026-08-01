@@ -132,4 +132,34 @@ void main() {
       expect(chordLabel(''), '');
     });
   });
+
+  group('chords as macOS menu activators', () {
+    test('the modifiers and the key come back out again', () {
+      final a = activatorForChord('Mod+Shift+Z')!;
+      expect(a.trigger, LogicalKeyboardKey.keyZ);
+      expect(a.meta, isTrue, reason: 'Mod is Cmd on the only platform asking');
+      expect(a.shift, isTrue);
+      expect(a.alt, isFalse);
+
+      final b = activatorForChord('Mod+Alt+;')!;
+      expect(b.trigger, LogicalKeyboardKey.semicolon);
+      expect(b.alt, isTrue);
+    });
+
+    test('the named keys and the awkward ones survive', () {
+      expect(activatorForChord('Space')!.trigger, LogicalKeyboardKey.space);
+      expect(activatorForChord('Shift+PageDown')!.trigger,
+          LogicalKeyboardKey.pageDown);
+      // A chord whose key *is* the separator must not split into nothing. It
+      // is the numpad key, as `*` is for markers — the main row's `+` is
+      // Shift+= and a different chord.
+      expect(activatorForChord('Mod++')!.trigger, LogicalKeyboardKey.numpadAdd);
+    });
+
+    test('a chord we cannot spell shows nothing rather than the wrong thing',
+        () {
+      expect(activatorForChord(''), isNull);
+      expect(activatorForChord('Mod+NotAKey'), isNull);
+    });
+  });
 }
