@@ -174,13 +174,13 @@ class _ViewerPaintLayerState extends State<ViewerPaintLayer> {
     final tools = widget.uiState.tools;
     final box = _target;
     return Positioned.fill(
-      child: MouseRegion(
-        // Hidden, because the ring below replaces it: a system arrow inside the
-        // brush ring would read as two pointers (K-226).
-        cursor: SystemMouseCursors.none,
-        onEnter: (e) => setState(() => _pointer = e.localPosition),
-        onHover: (e) => setState(() => _pointer = e.localPosition),
-        onExit: (_) => setState(() => _pointer = null),
+      // Hidden, because the ring below replaces it: a system arrow inside the
+      // brush ring would read as two pointers (K-226). Through the shared
+      // region rather than a `MouseRegion` of its own, so the clone stamp's
+      // `Alt`-click cannot bring the arrow back beside the ring (K-235) — the
+      // fault the Zoom tool had, and this had for the same reason.
+      child: DrawnPointerRegion(
+        onPointer: (at) => setState(() => _pointer = at),
         child: Listener(
           onPointerDown: (event) => _downAt = event.localPosition,
           child: GestureDetector(
@@ -197,12 +197,8 @@ class _ViewerPaintLayerState extends State<ViewerPaintLayer> {
                     painter: _StrokePainter(
                       stroke: _stroke,
                       width: tools.brushSize * widget.viewScale,
-                      colour: Color.from(
-                        alpha: tools.brushOpacity / 100,
-                        red: tools.fill.r.clamp(0.0, 1.0),
-                        green: tools.fill.g.clamp(0.0, 1.0),
-                        blue: tools.fill.b.clamp(0.0, 1.0),
-                      ),
+                      colour:
+                          colourOf(tools.fill, opacity: tools.brushOpacity / 100),
                       erasing: widget.tool == ToolMode.eraser,
                       hairline: t.hairlineStrong,
                       cloneSource: _isClone && box != null && _cloneSource != null

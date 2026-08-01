@@ -15,6 +15,7 @@
 // ([ToolMode.ready] says which are which, and the toolbar says so in the
 // tooltip rather than hiding the button).
 
+import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/foundation.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
 
@@ -170,6 +171,20 @@ class ToolColour {
   @override
   int get hashCode => Object.hash(r, g, b);
 }
+
+/// A tool colour as something a canvas can paint with.
+///
+/// The document's colours are scene-linear and may sit outside 0..1 (an HDR
+/// tint, a lift), which `Color` cannot hold — so they are clamped here, at the
+/// one point where a number becomes a pixel on the overlay. This is a *preview*
+/// of a colour, not the colour itself: what the engine finally draws is the
+/// unclamped value.
+Color colourOf(ToolColour c, {double opacity = 1}) => Color.from(
+      alpha: opacity,
+      red: c.r.clamp(0.0, 1.0),
+      green: c.g.clamp(0.0, 1.0),
+      blue: c.b.clamp(0.0, 1.0),
+    );
 
 /// Which tool is armed, which member each group would arm, and the toolbar's
 /// own switches.

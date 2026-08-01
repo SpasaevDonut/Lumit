@@ -4719,6 +4719,75 @@ wiggle), gradient fills, dashed strokes, joins and caps other than round, animat
 paths, and dragging a shape's points on the picture the way mask points can be
 dragged.
 
+### A picture that would not change, and why (K-238)
+
+Painting worked. The stroke crossed the bridge, the renderer drew it, and the
+tests said so. It simply never appeared on screen — and nothing you did brought
+it back.
+
+The cause is worth understanding, because it will come up again. Lumit gives
+every finished frame a **name**: a hash of everything that went into it, so two
+frames with the same name are guaranteed to be the same picture and one can
+stand in for the other. That is what makes scrubbing feel light — you are mostly
+looking at frames that have already been drawn. It also means that if the name
+does not notice a change, the change is invisible: the application looks at the
+name, finds a frame already filed under it, and shows you that one.
+
+The name knew about a layer's masks. Nobody had told it about a layer's **paint**.
+So a brush drag changed nothing as far as the name was concerned, every cached
+frame stayed valid, and the mark you had just made was never drawn. Moving
+something else in the composition would have brought it back, because that
+changes the name for other reasons — which is why it looked so arbitrary.
+
+Two things follow from the fix. The clone stamp and the eraser were never broken
+either; all three painting tools were writing strokes that were then hidden by
+the same cache. And the hashing is done **only when a layer actually has paint**,
+so every layer that has none keeps the name it already had and no frame banked by
+an earlier version is thrown away.
+
+### Drawing what you are about to make (K-238)
+
+A shape tool used to show you the outline of what you were dragging — but only
+when a layer was selected, because it asked *that layer* where to put the points
+on screen. With nothing selected there was no layer to ask, so it drew nothing at
+all. That is precisely the case that makes a **shape layer**, which is most of
+the reason to pick up a shape tool: you dragged blind and the shape appeared when
+you let go.
+
+The preview asks for a **space** now rather than a layer — a pair of maps, one
+each way — and there is always a space, because the composition has a placement
+of its own. Same drawing, same geometry; the only question was ever which
+coordinates the path is built in.
+
+While that was open, the preview started showing the **shape** rather than its
+outline: filled in the toolbar's own fill, outlined in its stroke, at half
+opacity. The swatches now answer "what colour is this going to be?" before the
+shape exists, which they could not do when the only thing on screen was a thin
+accent line. Half opacity and not full, because a solid preview looks exactly
+like a shape that is already there, and this one is not — nothing is in the
+document until you let go.
+
+A drag on a layer that *is* selected still previews in the accent colour. That
+one is making a **mask**, and a mask has no colour: it decides which pixels show.
+Filling it in the shape colour would promise something that never arrives.
+
+### Selecting something that is no longer there (K-238)
+
+A selection looks like a highlight. It is really the answer to a question every
+tool asks: *which layer am I acting on?*
+
+Draw a shape layer and it becomes selected, so the next drag draws a mask on it —
+that is the whole gesture, and it is what After Effects does. Now press undo. The
+layer goes, but its name stayed in the selection, so the next drag still believed
+a layer was selected, tried to draw a mask on one that no longer existed, and did
+nothing whatsoever. The tool had stopped working and there was nothing on screen
+to say why.
+
+The rule now is that the selection cannot name a layer the composition does not
+have. It is answered in one place, from the list of layers itself, rather than at
+each of the several points where a layer can disappear — undo is only the easiest
+way to reach that state; deleting a layer gets there too.
+
 ### One gesture, one undo step (K-230)
 
 The document is a stack of small, exactly reversible **ops**, and `Ctrl+Z` undoes

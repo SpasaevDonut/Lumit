@@ -90,36 +90,49 @@ class LumitToolBarFrb extends StatelessWidget {
         builder: (context, _) => Row(
           children: [
             const SizedBox(width: 4),
-            // Scrolls rather than overflowing: a narrow window has less width
-            // than thirteen tools want, and an overflow stripe is not a design.
-            // Flexible rather than Expanded so the options beside it get their
-            // share of the room instead of being squeezed to nothing (K-227).
-            Flexible(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final group in toolBarOrder)
-                      _ToolButton(group: group, tools: ui.tools),
+            // The tools and their options take the whole left-hand end, so the
+            // workspace strip is held against the *right* edge where docs/07
+            // §1.4 puts it. Expanded rather than letting the two scroll views
+            // size themselves: a loose Flexible only takes the width it needs,
+            // which left the workspace buttons sitting immediately beside the
+            // last tool with the free space stranded past them.
+            Expanded(
+              child: Row(
+                children: [
+                  // Scrolls rather than overflowing: a narrow window has less
+                  // width than thirteen tools want, and an overflow stripe is
+                  // not a design. Flexible so the options beside it get their
+                  // share of the room instead of being squeezed to nothing
+                  // (K-227).
+                  Flexible(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final group in toolBarOrder)
+                            _ToolButton(group: group, tools: ui.tools),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // The armed tool's own options, when it has any (K-225):
+                  // After Effects puts them here, and the strip is empty for
+                  // the tools that draw nothing.
+                  if (toolOptionsFor(ui.tools.tool) != ToolOptions.none) ...[
+                    const _ToolBarDivider(),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: _ToolOptions(
+                          tools: ui.tools,
+                          shows: toolOptionsFor(ui.tools.tool),
+                        ),
+                      ),
+                    ),
                   ],
-                ),
+                ],
               ),
             ),
-            // The armed tool's own options, when it has any (K-225): After
-            // Effects puts them here, and the strip is empty for the tools
-            // that draw nothing.
-            if (toolOptionsFor(ui.tools.tool) != ToolOptions.none) ...[
-              const _ToolBarDivider(),
-              Flexible(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: _ToolOptions(
-                    tools: ui.tools,
-                    shows: toolOptionsFor(ui.tools.tool),
-                  ),
-                ),
-              ),
-            ],
             const _ToolBarDivider(),
             const _WorkspaceStrip(),
             const SizedBox(width: 6),

@@ -1727,6 +1727,49 @@ void main() {
       expect(p.uiState.selectedLayerIds, contains(shape.internallayerId));
     });
 
+    /// Undo a shape layer and the next drag must draw another one.
+    ///
+    /// It did not. Making a shape layer *selects* it, so the next drag masks
+    /// it — the gesture's whole point. Undo then removed the layer but left its
+    /// id in the selection, so the tool still believed a layer was selected and
+    /// tried to add a mask to one that no longer existed. The engine refused,
+    /// the refusal was swallowed, and the drag did nothing at all.
+    testWidgets('a shape can be drawn again after undoing the last one',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.shapeRectangle);
+      await mount(tester, p);
+
+      final before = p.comp.getLayers().length;
+      final fitted = fittedRect(tester, p.comp);
+      Future<void> drawAt(Offset centre) async {
+        final gesture = await tester.startGesture(centre);
+        await tester.pump();
+        await gesture.moveBy(const Offset(40, 30));
+        await tester.pump();
+        await gesture.moveBy(const Offset(40, 30));
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+      }
+
+      await drawAt(fitted.center);
+      expect(p.comp.getLayers().length, before + 1);
+
+      p.state.project!.undo();
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().length, before,
+          reason: 'the undo took the shape layer back');
+
+      await drawAt(fitted.center - const Offset(30, 20));
+      expect(p.comp.getLayers().length, before + 1,
+          reason: 'the next drag draws another shape layer, and does not try '
+              'to mask the one the undo removed');
+      expect(p.comp.getLayers().first.getKind(), BridgeLayerKind.shape);
+    });
+
     testWidgets('a shape layer takes the toolbar\'s stroke when it has a width',
         (tester) async {
       final p = withLayer();

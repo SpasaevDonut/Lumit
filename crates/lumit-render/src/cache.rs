@@ -397,6 +397,126 @@ mod tests {
     }
 
     /// The work area defaults to the whole comp and is otherwise read in
+    /// A paint stroke is part of the layer's picture, so it must retire the
+    /// frames that were named before it existed.
+    ///
+    /// It did not. The key hashed a layer's masks but never its paint, so a
+    /// brush drag changed no name, every cached frame stayed valid, and the
+    /// stroke was invisible until something else in the comp moved — which is
+    /// exactly the report: "after letting go the line you drew disappears and
+    /// nothing makes it reappear".
+    #[test]
+    fn a_paint_stroke_retires_the_frames_it_changes() {
+        use lumit_core::paint::{PaintMode, PaintStroke};
+        let (doc, comp, item) = footage_comp();
+        let (q, probes) = (Quality::default(), probed(item));
+        let before = frame_key(&doc, &comp, 0, q, &probes).unwrap();
+
+        let stroke = |width: f64| PaintStroke {
+            id: Uuid::from_u128(7),
+            name: "Brush 1".into(),
+            points: vec![(1.0, 2.0), (30.0, 40.0)],
+            colour: lumit_core::model::LinearColour([1.0, 0.0, 0.0, 1.0]),
+            width,
+            hardness: 1.0,
+            opacity: 100.0,
+            mode: PaintMode::Paint,
+            clone_offset: (0.0, 0.0),
+            extra: serde_json::Map::new(),
+        };
+
+        let mut painted = comp.clone();
+        painted.layers[0].paint = vec![stroke(12.0)];
+        let with_paint = frame_key(&doc, &painted, 0, q, &probes).unwrap();
+        assert_ne!(
+            with_paint, before,
+            "a stroke changes the picture, so it must change the frame's name"
+        );
+
+        // And the stroke's own settings are content too: widening a brush
+        // repaints, so it cannot land on the name the thinner one holds.
+        let mut wider = comp.clone();
+        wider.layers[0].paint = vec![stroke(24.0)];
+        assert_ne!(
+            frame_key(&doc, &wider, 0, q, &probes).unwrap(),
+            with_paint,
+            "a stroke's width is part of what it draws"
+        );
+
+        // A layer with no paint must hash exactly as it always did, so adding
+        // this did not throw away every frame banked before it.
+        let mut unpainted = comp.clone();
+        unpainted.layers[0].paint = Vec::new();
+        assert_eq!(
+            frame_key(&doc, &unpainted, 0, q, &probes).unwrap(),
+            before,
+            "an unpainted layer keeps the name it had"
+        );
+    }
+
+    /// A shape layer's art is its whole picture, so editing it must retire the
+    /// frames drawn from the old art. Nothing hashed `contents`, so recolouring
+    /// or reshaping a shape layer showed the frame it had before.
+    #[test]
+    fn editing_a_shape_layers_art_retires_its_frames() {
+        use lumit_core::shape::ShapeItem;
+        let (doc, comp, item) = footage_comp();
+        let (q, probes) = (Quality::default(), probed(item));
+
+        let art = |red: f32| ShapeItem {
+            id: Uuid::from_u128(9),
+            name: "Rectangle".into(),
+            path: lumit_core::mask::BezierPath {
+                vertices: vec![
+                    vertex(0.0, 0.0),
+                    vertex(60.0, 0.0),
+                    vertex(60.0, 40.0),
+                    vertex(0.0, 40.0),
+                ],
+                closed: true,
+            },
+            fill: Some(lumit_core::model::LinearColour([red, 0.0, 0.0, 1.0])),
+            stroke: None,
+            stroke_width: 0.0,
+            opacity: 100.0,
+            extra: serde_json::Map::new(),
+        };
+
+        let mut shaped = comp.clone();
+        shaped.layers[0].kind = lumit_core::model::LayerKind::Shape {
+            contents: vec![art(1.0)],
+        };
+        let red = frame_key(&doc, &shaped, 0, q, &probes).unwrap();
+
+        let mut recoloured = shaped.clone();
+        recoloured.layers[0].kind = lumit_core::model::LayerKind::Shape {
+            contents: vec![art(0.25)],
+        };
+        assert_ne!(
+            frame_key(&doc, &recoloured, 0, q, &probes).unwrap(),
+            red,
+            "a shape's fill colour is its picture"
+        );
+
+        let mut emptied = shaped.clone();
+        emptied.layers[0].kind = lumit_core::model::LayerKind::Shape {
+            contents: Vec::new(),
+        };
+        assert_ne!(
+            frame_key(&doc, &emptied, 0, q, &probes).unwrap(),
+            red,
+            "deleting the art changes the picture"
+        );
+    }
+
+    fn vertex(x: f64, y: f64) -> lumit_core::mask::Vertex {
+        lumit_core::mask::Vertex {
+            pos: (x, y),
+            tan_in: (0.0, 0.0),
+            tan_out: (0.0, 0.0),
+        }
+    }
+
     /// frames, with the end always after the start.
     #[test]
     fn the_work_area_defaults_to_the_whole_comp() {

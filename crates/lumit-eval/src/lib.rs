@@ -548,6 +548,21 @@ fn feed_layer(
         }
     }
 
+    // Paint: strokes are stamped into the layer's own pixels before its masks
+    // gate them (K-227), so they are content in exactly the way masks are — a
+    // brush drag must retire the frames that were named before it.
+    //
+    // Hashed only when the layer carries paint, unlike masks above, which feed
+    // a `nomask` marker either way. That is deliberate: an unpainted layer —
+    // which is nearly every layer in nearly every project — has to keep the
+    // name it already had, or adding this would have thrown away every frame
+    // banked by an earlier version.
+    if !layer.paint.is_empty() {
+        h.update(b"paint");
+        let json = serde_json::to_string(&layer.paint).unwrap_or_default();
+        h.update(json.as_bytes());
+    }
+
     // Masks: static paths are plain data (animated paths will evaluate here).
     if layer.masks.is_empty() {
         h.update(b"nomask");

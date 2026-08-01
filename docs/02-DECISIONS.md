@@ -4522,3 +4522,62 @@ of edit and each is one undo step.
 caps other than round, fill rules other than the mask rasteriser's, animated paths, and editing
 a shape layer's points on the picture (K-224 edits *mask* points; the same gesture over shape
 contents is the next piece).
+
+**K-238 · DECIDED · What the shape and paint tools were getting wrong, in one pass.** From the
+owner (2026-08-01), on using them for the first time. Every item is a correction to K-227 and
+K-237 rather than a new capability, so they are recorded together.
+
+**A stroke was invisible, and the cache was why.** A frame is named by a hash of everything
+that went into it, and two frames with the same name are the same picture (K-214). The name
+hashed a layer's masks and never its **paint** — so a brush drag changed no name, every cached
+frame stayed valid, and the mark never appeared. Nothing could make it appear either, short of
+moving something else in the composition: the report was "after letting go the line you drew
+disappears and nothing makes it reappear", and that is exactly right. Paint is stamped into the
+layer's own pixels, so it is content in precisely the way masks are. Hashed only when a layer
+*has* paint, so an unpainted layer keeps the name it already had and no frame banked by an
+earlier version is thrown away. A shape layer's `contents` were already hashed; that now has a
+test of its own so it cannot quietly stop being.
+
+**This is what made the clone stamp and the eraser look unbuilt.** Neither had a fault of its
+own. All three painting tools wrote strokes the renderer drew and the cache then hid.
+
+**A tool must not act on a layer that has gone.** Making a shape layer selects it, so the next
+drag masks it — the point of the gesture. Undo removed the layer and left its id in the
+selection, so the next drag still believed a layer was selected, tried to mask one that no
+longer existed, and did nothing at all: the tool had stopped working with nothing on screen to
+say why. The selection now drops layers the model no longer has, answered once from the model
+rather than at each of the several places a layer can vanish. Undo is only the easiest way to
+see it — deleting a layer reaches the same state.
+
+**A tool draws what it is about to make, translucently.** The shape preview asked the *selected
+layer* to place its points, so the half of the gesture that makes a shape layer — nothing
+selected — previewed nothing at all: you dragged blind and the shape appeared on release. The
+preview takes a coordinate space now rather than a layer, and there is always one: the
+composition's when there is no layer. It is drawn **filled**, in the toolbar's own fill and
+stroke at half opacity, so the swatches finally answer "what colour is this going to be?"
+before the shape exists. Half opacity rather than full, because a solid preview is
+indistinguishable from a shape that is already there. A drag on a *selected* layer still
+previews in the accent: a mask has no colour of its own — it cuts — and promising a fill that
+will never appear is worse than an outline. The Pen's closing ring had the same layer-shaped
+hole and is answered the same way.
+
+**One drag of a stroke's opacity is one undo step.** The row was written from the mask row as it
+stood *before* K-234 fixed exactly this, so it committed on every tick and `Ctrl+Z` walked back
+a single percent at a time — which reads as undo not working. Staged and committed once on
+release, like every other dragged value in the Timeline.
+
+**Hiding the system pointer is the shared region's job, not each tool's.** Alt is the key
+Windows reserves for the window menu, and pressing it brings the arrow back beside a drawn
+pointer (K-235). The Zoom tool had a fix for this; the painting tools did not, so the clone
+stamp's `Alt`-click — the gesture that *sets its source* — put a second pointer inside the
+brush ring. The fix moved into `DrawnPointerRegion`, so every tool that draws its own pointer
+has it, and on **any** key rather than a list of the ones a platform might reserve.
+
+**The workspace strip is held against the right-hand end** (docs/07 §1.4). It drifted in beside
+the last tool when the options strip arrived: the tools took a *loose* Flexible, which claims
+only the width it needs, so the free space was stranded past the workspace buttons rather than
+in front of them.
+
+**Still owed, and not part of this:** editing a shape's or a stroke's points on the picture the
+way K-224 edits a mask's, and dragging a vertex's bezier **handles** — which no path in Lumit
+can do yet, mask included. Both are named in TODO.md.

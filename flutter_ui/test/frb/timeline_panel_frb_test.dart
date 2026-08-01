@@ -498,6 +498,59 @@ void main() {
       expect(layer.getPaint().single.opacity, 40);
     });
 
+    /// **A stroke's opacity was not undoable.** The same fault the mask row had
+    /// under K-234, and for the same reason: the row was written from the mask
+    /// row as it stood *before* that fix, so it committed on every tick of the
+    /// drag. A drag left a stack of near-identical ops and one `Ctrl+Z` backed
+    /// out a single percent, which reads as undo not working at all.
+    testWidgets('dragging a stroke opacity is ONE undo step', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+
+      final id = layer.getPaint().single.id;
+      final field = find.byKey(ValueKey<String>('tl-stroke-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(layer.getPaint().single.opacity, lessThan(100),
+          reason: 'the drag reached the stroke');
+
+      p.state.project!.undo();
+      expect(layer.getPaint().single.opacity, 100,
+          reason: 'ONE undo returns the opacity it had before the drag');
+    });
+
     /// A shape layer lists its art under a Contents heading, above Masks and
     /// Effects — the order the picture is built in (K-237).
     testWidgets('a shape layer grows a Contents heading in its twirl-down',

@@ -145,6 +145,33 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
+    /// **The workspace strip belongs at the right-hand end** (docs/07 §1.4,
+    /// K-238), after a divider, not beside the last tool.
+    ///
+    /// It drifted left when the tool options arrived: the tools took a *loose*
+    /// Flexible, which claims only the width it needs, so the free space was
+    /// stranded past the workspace buttons instead of in front of them and the
+    /// whole right-hand group sat wherever the tools happened to end.
+    testWidgets('the workspace strip is held against the right-hand end',
+        (tester) async {
+      final p = await mount(tester);
+      final bar = tester.getRect(find.byType(LumitToolBarFrb));
+      final last = tester.getRect(
+          find.byKey(const ValueKey('workspace-audio')));
+      expect(bar.right - last.right, lessThan(40),
+          reason: 'the last workspace button ends where the bar does');
+
+      // And it stays there when the armed tool grows an options strip, which
+      // is the change that moved it in the first place.
+      p.uiState.tools.select(ToolMode.brush);
+      await tester.pumpAndSettle();
+      final withOptions = tester.getRect(
+          find.byKey(const ValueKey('workspace-audio')));
+      expect(bar.right - withOptions.right, lessThan(40),
+          reason: "the tool options push nothing off the bar's right end");
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets('the workspace strip rearranges the panels', (tester) async {
       final p = await mount(tester);
       expect(p.uiState.workspace.activePreset, isNull,

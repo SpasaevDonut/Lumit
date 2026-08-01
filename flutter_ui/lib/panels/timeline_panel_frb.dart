@@ -2582,7 +2582,7 @@ class _ShapeItemRow extends StatelessWidget {
 ///
 /// The same shape as [_MaskRow], and for the same reason: the engine takes the
 /// whole stroke, so every edit is "this stroke, with one field changed".
-class _StrokeRow extends StatelessWidget {
+class _StrokeRow extends StatefulWidget {
   final LayerReference layer;
   final BridgeStroke stroke;
   final ValueColumn valueColumn;
@@ -2594,6 +2594,22 @@ class _StrokeRow extends StatelessWidget {
     required this.valueColumn,
     required this.onChanged,
   });
+
+  @override
+  State<_StrokeRow> createState() => _StrokeRowState();
+}
+
+class _StrokeRowState extends State<_StrokeRow> {
+  /// The opacity a drag is part way through, or null when nothing is dragging.
+  ///
+  /// Without this the field committed on every tick of the drag, so pulling a
+  /// stroke's opacity across wrote dozens of ops and `Ctrl+Z` walked back one
+  /// hair at a time — the reading was "undo doesn't work". One gesture is one
+  /// op and one undo step (K-230), the same as the mask row above.
+  double? _staged;
+
+  LayerReference get layer => widget.layer;
+  BridgeStroke get stroke => widget.stroke;
 
   void _write({double? opacity}) {
     try {
@@ -2611,10 +2627,15 @@ class _StrokeRow extends StatelessWidget {
           cloneOffsetY: stroke.cloneOffsetY,
         ),
       );
-      onChanged();
+      widget.onChanged();
     } catch (_) {
       // The stroke or its layer went away between the draw and the click.
     }
+  }
+
+  void _commitOpacity(num v) {
+    setState(() => _staged = null);
+    _write(opacity: v.toDouble());
   }
 
   /// The icon says which of the three tools made it, so a list of marks can be
@@ -2640,19 +2661,25 @@ class _StrokeRow extends StatelessWidget {
                 style: t.body, overflow: TextOverflow.ellipsis),
           ),
           SizedBox(
-            width: valueColumn.width,
+            width: widget.valueColumn.width,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 SizedBox(
                   width: 56,
+                  // Staged like every other dragged value here: the drag shows
+                  // live and commits once on release, so it is one op and one
+                  // undo step.
                   child: DragValueField(
                     key: ValueKey<String>('tl-stroke-opacity-${stroke.id}'),
-                    value: stroke.opacity,
+                    value: _staged ?? stroke.opacity,
                     min: 0,
                     max: 100,
                     suffix: '%',
-                    onChanged: (v) => _write(opacity: v.toDouble()),
+                    onChanged: _commitOpacity,
+                    onChangeLive: (v) => setState(() => _staged = v.toDouble()),
+                    onChangeEnd: _commitOpacity,
+                    onDragCancel: () => setState(() => _staged = null),
                   ),
                 ),
               ],
@@ -2675,7 +2702,7 @@ class _StrokeRow extends StatelessWidget {
             close(null);
             try {
               layer.deleteStroke(id: stroke.id);
-              onChanged();
+              widget.onChanged();
             } catch (_) {}
           },
           child: const Text('Delete stroke'),
