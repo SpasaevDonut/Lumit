@@ -623,8 +623,6 @@ impl CompositionReference {
         self.commit(Op::Batch { ops })?;
 
         Ok(LayerReference::new(self.project, self.id, precomp_layer_id))
-    }ew(self.project, self.id, precomp_layer_id))
->>>>>>> fcff7db (feat(ui): add Pre-compose dialog on Ctrl+Shift+C with settings persistence)
     }
 
     /// Add a Text layer with the "Text" starter document, centred.

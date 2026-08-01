@@ -8541,7 +8541,6 @@ fn pde_ffi_dispatcher_sync_impl(
 181 => wire__crate__api__cache__viewer_transport_impl(ptr, rust_vec_len, data_len),
 182 => wire__crate__api__cache__vram_cache_stats_impl(ptr, rust_vec_len, data_len),
 183 => wire__crate__api__composition__composition_reference_precompose_impl(ptr, rust_vec_len, data_len),
->>>>>>> fcff7db (feat(ui): add Pre-compose dialog on Ctrl+Shift+C with settings persistence)
                         _ => unreachable!(),
                     }
 }
