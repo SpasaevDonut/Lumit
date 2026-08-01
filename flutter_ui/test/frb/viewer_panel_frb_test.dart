@@ -24,6 +24,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/viewer_gizmo.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
+import 'package:lumit_flutter/panels/viewer_paint.dart';
 import 'package:lumit_flutter/panels/viewer_zoom.dart';
 import 'package:lumit_flutter/state/dropper.dart';
 import 'package:lumit_flutter/state/tools.dart';
@@ -1274,27 +1275,35 @@ void main() {
       expect(xs.reduce((a, b) => a > b ? a : b), lessThan(1920));
     });
 
-    testWidgets('a shape drag with nothing selected says what to do instead',
+    /// The Pen with nothing selected makes a shape layer too (K-237): the same
+    /// path, and the only difference is what it will belong to.
+    testWidgets('the Pen with nothing selected closes onto a shape layer',
         (tester) async {
       final p = withLayer();
       p.uiState.clearSelection();
-      p.uiState.tools.select(ToolMode.shapeRectangle);
+      p.uiState.tools.select(ToolMode.pen);
       await mount(tester, p);
 
       final fitted = fittedRect(tester, p.comp);
-      final gesture = await tester.startGesture(fitted.center);
-      await tester.pump();
-      await gesture.moveBy(const Offset(40, 30));
-      await tester.pump();
-      await gesture.moveBy(const Offset(40, 30));
-      await tester.pump();
-      await gesture.up();
+      final first = fitted.center;
+      await tester.tapAt(first);
+      await tester.pumpAndSettle();
+      await tester.tapAt(first + const Offset(80, 0));
+      await tester.pumpAndSettle();
+      await tester.tapAt(first + const Offset(80, 60));
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().length, 1, reason: 'still being drawn');
+
+      // Clicking the first point again closes the path and applies it.
+      await tester.tapAt(first);
       await tester.pumpAndSettle();
 
-      expect(p.layer.getMasks(), isEmpty);
-      expect(p.state.notice.value?.message, contains('Select a layer'),
-          reason: 'silence would look like a broken tool (shape layers are '
-              'not built — docs/TODO.md)');
+      final layers = p.comp.getLayers();
+      expect(layers.length, 2);
+      expect(layers.first.getKind(), BridgeLayerKind.shape);
+      expect(layers.first.getShapeContents().single.vertices, hasLength(3));
+      expect(p.layer.getMasks(), isEmpty,
+          reason: 'the layer that was not selected was not masked');
     });
 
     testWidgets('the Pen places points and closes on the first one',
@@ -1572,15 +1581,233 @@ void main() {
       expect(layer.getText()!.text, 'Retitled');
     });
 
-    /// The painting tools are on the strip and cannot be armed (K-228): there
-    /// are no paint strokes in the engine yet, and a tool that arms and then
-    /// does nothing reads as a broken application.
-    testWidgets('a painting tool cannot be armed while nothing paints',
+    /// Painting (K-227): a drag on the selected layer leaves a stroke, and one
+    /// drag is one stroke and one undo step.
+    testWidgets('a brush drag paints a stroke on the selected layer',
         (tester) async {
       final p = withLayer();
       p.uiState.tools.select(ToolMode.brush);
       await mount(tester, p);
-      expect(p.uiState.tools.tool, ToolMode.select);
+
+      expect(find.byType(ViewerPaintLayer), findsOneWidget);
+      expect(p.layer.getPaint(), isEmpty);
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(10, 4));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final strokes = p.layer.getPaint();
+      expect(strokes, hasLength(1), reason: 'one drag, one stroke');
+      expect(strokes.single.name, startsWith('Brush'));
+      expect(strokes.single.mode, BridgePaintMode.paint);
+      expect(strokes.single.points.length, greaterThan(1),
+          reason: 'the path the pointer took, not one dab');
+      expect(strokes.single.width, p.uiState.tools.brushSize);
+
+      // The stroke is in layer coordinates: the middle of the picture is the
+      // middle of a comp-sized layer.
+      final size = p.comp.getSize();
+      expect(strokes.single.points.first.x,
+          closeTo(size.width / 2, size.width * 0.02));
+
+      p.state.project!.undo();
+      p.uiState.model.refresh();
+      expect(p.layer.getPaint(), isEmpty, reason: 'one undo step');
+    });
+
+    testWidgets('the eraser and the clone stamp commit their own modes',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.tools.select(ToolMode.eraser);
+      await mount(tester, p);
+      final fitted = fittedRect(tester, p.comp);
+
+      Future<void> paintAt(Offset from) async {
+        final gesture = await tester.startGesture(from);
+        await tester.pump();
+        for (var i = 0; i < 6; i++) {
+          await gesture.moveBy(const Offset(9, 0));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+      }
+
+      await paintAt(fitted.center);
+      expect(p.layer.getPaint().single.mode, BridgePaintMode.erase);
+
+      // The clone stamp refuses to stamp until it has been given a source.
+      p.uiState.tools.select(ToolMode.cloneStamp);
+      await tester.pump();
+      await paintAt(fitted.center + const Offset(0, 40));
+      expect(p.layer.getPaint(), hasLength(1),
+          reason: 'no source yet, so nothing was stamped');
+      expect(p.state.notice.value?.message, contains('clone source'));
+
+      // Alt-click sets it, and then the stroke lands with the offset it implies.
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.tapAt(fitted.center - const Offset(80, 0));
+      await tester.pumpAndSettle();
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await paintAt(fitted.center + const Offset(0, 40));
+
+      final strokes = p.layer.getPaint();
+      expect(strokes, hasLength(2));
+      expect(strokes.last.mode, BridgePaintMode.clone);
+      expect(strokes.last.cloneOffsetX, lessThan(0),
+          reason: 'the source was to the left of where the stroke began');
+    });
+
+    testWidgets('painting with nothing selected says what to do instead',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.brush);
+      await mount(tester, p);
+
+      final gesture = await tester.startGesture(fittedRect(tester, p.comp).center);
+      await tester.pump();
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(9, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(p.layer.getPaint(), isEmpty);
+      expect(p.state.notice.value?.message, contains('Select a layer to paint'));
+    });
+
+    /// The other half of the shape tools' gesture (K-237): with nothing
+    /// selected they make a **shape layer** rather than saying they cannot.
+    testWidgets('a shape drag with nothing selected makes a shape layer',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.shapeRectangle);
+      await mount(tester, p);
+
+      final before = p.comp.getLayers().length;
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      await gesture.moveBy(const Offset(40, 30));
+      await tester.pump();
+      await gesture.moveBy(const Offset(40, 30));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final layers = p.comp.getLayers();
+      expect(layers.length, before + 1, reason: 'one drag, one shape layer');
+      final shape = layers.first;
+      expect(shape.getKind(), BridgeLayerKind.shape,
+          reason: 'and it is at the top of the stack');
+      final contents = shape.getShapeContents();
+      expect(contents, hasLength(1));
+      expect(contents.single.name, 'Rectangle');
+      expect(contents.single.vertices, hasLength(4));
+      expect(contents.single.fill, isNotNull,
+          reason: "it takes the toolbar's fill");
+
+      // The art lands where it was drawn: the drag began at the middle of the
+      // picture, so the layer's position is the middle of the comp.
+      final size = p.comp.getSize();
+      double still(dynamic s) => (s as dynamic).field0 as double;
+      expect(still(shape.getTransform().positionX),
+          closeTo(size.width / 2, size.width * 0.02));
+
+      // And the new layer is what is selected, so the next drag masks it.
+      expect(p.uiState.selectedLayerIds, contains(shape.internallayerId));
+    });
+
+    /// Undo a shape layer and the next drag must draw another one.
+    ///
+    /// It did not. Making a shape layer *selects* it, so the next drag masks
+    /// it — the gesture's whole point. Undo then removed the layer but left its
+    /// id in the selection, so the tool still believed a layer was selected and
+    /// tried to add a mask to one that no longer existed. The engine refused,
+    /// the refusal was swallowed, and the drag did nothing at all.
+    testWidgets('a shape can be drawn again after undoing the last one',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools.select(ToolMode.shapeRectangle);
+      await mount(tester, p);
+
+      final before = p.comp.getLayers().length;
+      final fitted = fittedRect(tester, p.comp);
+      Future<void> drawAt(Offset centre) async {
+        final gesture = await tester.startGesture(centre);
+        await tester.pump();
+        await gesture.moveBy(const Offset(40, 30));
+        await tester.pump();
+        await gesture.moveBy(const Offset(40, 30));
+        await tester.pump();
+        await gesture.up();
+        await tester.pumpAndSettle();
+      }
+
+      await drawAt(fitted.center);
+      expect(p.comp.getLayers().length, before + 1);
+
+      p.state.project!.undo();
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().length, before,
+          reason: 'the undo took the shape layer back');
+
+      await drawAt(fitted.center - const Offset(30, 20));
+      expect(p.comp.getLayers().length, before + 1,
+          reason: 'the next drag draws another shape layer, and does not try '
+              'to mask the one the undo removed');
+      expect(p.comp.getLayers().first.getKind(), BridgeLayerKind.shape);
+    });
+
+    testWidgets('a shape layer takes the toolbar\'s stroke when it has a width',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.clearSelection();
+      p.uiState.tools
+        ..select(ToolMode.shapeEllipse)
+        ..strokeWidth = 6;
+      await mount(tester, p);
+
+      final fitted = fittedRect(tester, p.comp);
+      final gesture = await tester.startGesture(fitted.center);
+      await tester.pump();
+      await gesture.moveBy(const Offset(50, 40));
+      await tester.pump();
+      await gesture.moveBy(const Offset(30, 20));
+      await tester.pump();
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final item = p.comp.getLayers().first.getShapeContents().single;
+      expect(item.stroke, isNotNull);
+      expect(item.strokeWidth, 6);
+
+      // With no width there is no outline to draw. (The selection is cleared
+      // first: the layer just made is selected, so another drag would mask it
+      // rather than make a second shape layer.)
+      p.uiState.clearSelection();
+      p.uiState.tools.strokeWidth = 0;
+      await tester.pump();
+      final second = await tester.startGesture(fitted.topLeft + const Offset(20, 20));
+      await tester.pump();
+      await second.moveBy(const Offset(40, 40));
+      await tester.pump();
+      await second.moveBy(const Offset(20, 20));
+      await tester.pump();
+      await second.up();
+      await tester.pumpAndSettle();
+      expect(p.comp.getLayers().first.getShapeContents().single.stroke, isNull);
     });
 
     /// The camera tools (K-229): a drag moves the composition's active camera,

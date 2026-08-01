@@ -67,14 +67,22 @@ These are v1-scope surfaces it does not yet match.
 - **Razor** - a Sequence layer's eased ramps refuse a cut (`UncuttableClip`), and
     its **clips'** own speed maps get no key at the cut the way a layer's Retime
     does.
-- **Shape layers** - with nothing selected the Pen says "select a layer" because
-    `LayerKind` has no Shape variant. Needs a layer kind, a geometry model with
-    fill and stroke, renderer support and its own Timeline rows: an engine
-    feature in its own right.
-- **Mask editing** - a mask's points drag, its **handles** do not, so the
-    `Alt`-drag that re-links a broken tangent pair exists only while placing a
-    point. Same work as the Pen's add/delete/convert-vertex siblings and dragging
-    a whole path by a segment.
+- **Shape layers** - built (K-237, [impl/shape-layers.md](impl/shape-layers.md)):
+    with nothing selected a shape tool or the Pen makes a layer holding the art,
+    in the toolbar's fill and stroke, listed in the Timeline under Contents.
+    Still owed: nested groups and the shape **modifiers** (repeater, trim paths,
+    wiggle, offset paths), gradient fills, dashed strokes, joins and caps other
+    than round, animated paths, and dragging a shape's points on the picture the
+    way a mask's drag.
+- **Path editing on the picture** - a *mask's* points drag (K-224); a **shape
+    layer's** and a **stroke's** do not, so art can be drawn but not reshaped
+    without redrawing it. No path's bezier **handles** can be dragged either, so
+    the `Alt`-drag that re-links a broken tangent pair exists only while a point
+    is being *placed*. One piece of work with the Pen's add/delete/convert-vertex
+    siblings and dragging a whole path by a segment: all of them edit a path that
+    already exists, and none of them can today.
+- **Wireframes over a shape layer's own art** - a shape layer draws the box its
+    art fills, like every other layer, rather than the paths inside it.
 - **Mask paths cannot be keyframed** ([03-DATA-MODEL.md](03-DATA-MODEL.md) has
     them as animatable); there is no mask **mode** (add/subtract/intersect) -
     every mask adds; **mask feather** has neither a control nor a renderer path.
@@ -84,10 +92,18 @@ These are v1-scope surfaces it does not yet match.
     all three); multiple lines and a character panel (font, tracking, leading,
     alignment - the document is one styled run, [03-DATA-MODEL.md](03-DATA-MODEL.md)
     §9.1); per-character and per-word animators.
-- **Paint** (brush/clone stamp/eraser) - **nothing in the engine**: no stroke
-    model, no op, no renderer path. Same size as shape layers and belongs beside
-    them. A real paint feature brings its own brush settings (size, hardness,
-    opacity, flow); the toolbar's ring is drawn from the stroke width meanwhile.
+- **Paint** (brush/clone stamp/eraser) - built (K-227, [impl/paint.md](impl/paint.md)):
+    strokes are stored as the gesture in layer space and stamped into the layer's
+    pixels before its masks, with the brush's size, hardness and opacity on the
+    toolbar, a Paint heading in the Timeline, and one undo step per stroke. Still
+    owed: **pressure and tilt** from a tablet, **brush shapes** other than round,
+    **spacing** and **scatter**; **write-on** (a stroke's own start and end times,
+    which is what makes paint animate in After Effects - nothing in the model
+    yet); **per-stroke blending modes**; painting in **Layer view** rather than on
+    the composite; **a GPU stamping path** (the rasteriser is a CPU loop beside
+    the mask one, and it changes the rasteriser, not the stored stroke); and
+    **paint on a Precomp layer's nested pixels**, which never come back to the
+    CPU, so a stroke on one currently marks nothing.
 - **Camera** - a separate point of interest (AE's two-node camera) is an engine
     change; the Unified Camera tool; depth-of-field handles on the picture; a
     keyframed camera cannot be dragged (no single value to add to); a drag

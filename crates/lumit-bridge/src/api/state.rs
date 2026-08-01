@@ -287,6 +287,8 @@ pub(crate) fn op_scope(op: &lumit_core::Op) -> (Option<Uuid>, Option<Uuid>, bool
         Op::SetLayerSpan { comp, layer, .. }
         | Op::RenameLayer { comp, layer, .. }
         | Op::SetLayerMasks { comp, layer, .. }
+        | Op::SetLayerPaint { comp, layer, .. }
+        | Op::SetShapeContents { comp, layer, .. }
         | Op::SetLayerEffects { comp, layer, .. }
         | Op::SetLayerFx { comp, layer, .. }
         | Op::SetLayerThreeD { comp, layer, .. }

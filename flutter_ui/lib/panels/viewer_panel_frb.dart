@@ -63,6 +63,7 @@ import 'viewer_rotate.dart';
 import 'viewer_shape_layer.dart';
 import 'viewer_tool_cursor.dart';
 import 'viewer_camera.dart';
+import 'viewer_paint.dart';
 import 'viewer_type.dart';
 import 'viewer_zoom.dart';
 
@@ -754,6 +755,12 @@ class _Stage extends StatelessWidget {
                 state: Provider.of<LumitState>(context, listen: false),
                 uiState: uiState,
                 boxes: _boxes(),
+                comp: comp,
+                fitted: fitted,
+                compSize: Size(
+                  compSize.width.toDouble(),
+                  compSize.height.toDouble(),
+                ),
                 accent: t.accent,
                 onChanged: onChanged,
               ),
@@ -772,6 +779,19 @@ class _Stage extends StatelessWidget {
                   compSize.height.toDouble(),
                 ),
                 accent: t.accent,
+                onChanged: onChanged,
+              ),
+              // The painting tools: a drag paints a stroke on the selected
+              // layer (K-227), under the brush ring K-226 gave them.
+              ViewerPaintLayer(
+                active: uiState.tools.tool.group == ToolGroup.paint,
+                tool: uiState.tools.tool,
+                state: Provider.of<LumitState>(context, listen: false),
+                uiState: uiState,
+                boxes: _boxes(),
+                viewScale: compSize.width == 0
+                    ? 1.0
+                    : fitted.width / compSize.width,
                 onChanged: onChanged,
               ),
               // The Anchor point tool: its own pointer, and a drag that slides

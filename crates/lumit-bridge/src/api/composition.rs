@@ -591,6 +591,47 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
+    /// Add a Shape layer holding `contents`, at the top of the stack (K-237).
+    ///
+    /// The art is in the layer's own coordinates, and the layer is placed so
+    /// that art lands where it was drawn: the anchor sits on the art's own
+    /// top-left corner and Position carries it to the same place in the comp.
+    /// A shape tool that dragged a rectangle across the picture therefore makes
+    /// a layer whose rectangle is exactly where the drag was.
+    #[frb(sync)]
+    pub fn add_shape_layer(
+        &self,
+        name: String,
+        contents: Vec<crate::api::layer::BridgeShapeItem>,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::anim::Property;
+        use lumit_core::model::TransformGroup;
+
+        if contents.is_empty() || contents.iter().any(|i| i.vertices.len() < 2) {
+            return Err(BridgeError::EmptyPath);
+        }
+        let comp = self.composition()?;
+        let items: Vec<lumit_core::shape::ShapeItem> =
+            contents.iter().map(|i| i.write_item()).collect();
+        // The art's own box: the layer's natural size, and where it sits.
+        let (x0, y0, _x1, _y1) =
+            lumit_core::shape::contents_bounds(&items).ok_or(BridgeError::EmptyPath)?;
+
+        let layer = crate::edits::base_layer(
+            name,
+            lumit_core::model::LayerKind::Shape { contents: items },
+            comp.duration.0,
+            TransformGroup {
+                anchor_x: Property::fixed(0.0),
+                anchor_y: Property::fixed(0.0),
+                position_x: Property::fixed(x0),
+                position_y: Property::fixed(y0),
+                ..TransformGroup::default()
+            },
+        );
+        self.add_at_top(layer)
+    }
+
     /// Add a text layer **where the Type tool clicked**, already holding the
     /// document it should hold, as one op (K-230).
     ///
@@ -1087,6 +1128,9 @@ impl CompositionReference {
             effects: Some(effects.iter().map(|i| i.get_effects()).collect()),
             transform: None,
             text: None,
+            paint: None,
+            contents: None,
+            masks: None,
         }))
     }
 
@@ -1222,6 +1266,9 @@ impl CompositionReference {
             effects: None,
             transform: Some(transform),
             text: None,
+            paint: None,
+            contents: None,
+            masks: None,
         }))
     }
 
@@ -1248,6 +1295,90 @@ impl CompositionReference {
             effects: None,
             transform: None,
             text: Some(document),
+            paint: None,
+            contents: None,
+            masks: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s paint replaced by `strokes` — the same
+    /// live path as the three above, for a stroke being dragged in the Timeline
+    /// (K-239).
+    ///
+    /// A stroke's opacity is committed once, on release, so the drag is one undo
+    /// step (K-238). Without a preview that also meant the picture did not move
+    /// until the button came up, which is the wrong half of the trade: a value
+    /// you drag has to show what it is doing. The whole list rides along rather
+    /// than one stroke's opacity, because paint is stored and committed as a
+    /// whole list, and a preview that took a different shape from the op would
+    /// be a second way to describe the same thing.
+    #[frb(sync)]
+    pub fn render_frame_with_paint_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        strokes: Vec<crate::api::layer::BridgeStroke>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: Some(strokes),
+            contents: None,
+            masks: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
+    /// layer's half of the call above (K-239).
+    #[frb(sync)]
+    pub fn render_frame_with_shape_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        contents: Vec<crate::api::layer::BridgeShapeItem>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: Some(contents),
+            masks: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s masks replaced by `masks` — the mask's
+    /// half of the two calls above (K-240).
+    #[frb(sync)]
+    pub fn render_frame_with_mask_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        masks: Vec<crate::api::layer::BridgeMask>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: Some(masks),
         }))
     }
 }

@@ -634,6 +634,38 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<Map<UuidValue, ({String text, double size})>> liveText =
       ValueNotifier(const {});
 
+  /// Forget layers that are no longer in the composition (K-238).
+  ///
+  /// **Why this is not merely tidy.** A selection is not only a highlight — it
+  /// is the answer to "which layer does this tool act on?". Undo a shape layer
+  /// and the layer went, but its id stayed selected, so the next shape drag
+  /// still believed a layer was selected and tried to draw a *mask* on one that
+  /// no longer existed. The engine refused, the refusal was swallowed, and the
+  /// drag did nothing: the tool had simply stopped working, with nothing on
+  /// screen to say why.
+  ///
+  /// Undo is only the easiest way to see it. Deleting a layer from the
+  /// Timeline, closing a comp, or any edit that removes a layer leaves the same
+  /// stale name behind, which is why this is answered once, here, from the
+  /// model — rather than at each of the places a layer can vanish.
+  ///
+  /// An empty model means nothing is loaded yet rather than everything has
+  /// gone, so the selection is left alone: clearing it there would drop the
+  /// selection on every rebind.
+  void _dropVanishedFromSelection() {
+    final held = selectedLayers.value;
+    if (held.isEmpty) return;
+    final live = model.heldLayers;
+    if (live.isEmpty) return;
+    final alive = {for (final entry in live) entry.layer.internallayerId};
+    final kept = [
+      for (final layer in held)
+        if (alive.contains(layer.internallayerId)) layer,
+    ];
+    if (kept.length == held.length) return;
+    setSelection(kept);
+  }
+
   /// Keep the list honest when something sets the primary on its own.
   void _syncSelection() {
     final primary = selectedLayer.value;
@@ -740,6 +772,11 @@ class LumitUiState extends ChangeNotifier {
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
     selectedLayer.addListener(_syncSelection);
+    // A layer that has gone must leave the selection with it (K-238). The
+    // model is the one place that knows which layers exist, so the pruning
+    // hangs off its refresh rather than off each of the several ways a layer
+    // can disappear.
+    model.addListener(_dropVanishedFromSelection);
     // The keymap: restored from the workspace if the user has changed one,
     // otherwise the engine's shipped defaults (K-199). Held here because
     // every keypress goes through it and the settings page edits it, so it
