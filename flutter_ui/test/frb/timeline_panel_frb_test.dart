@@ -551,6 +551,67 @@ void main() {
           reason: 'ONE undo returns the opacity it had before the drag');
     });
 
+    /// **A dragged stroke opacity shows while it is dragged** (K-239).
+    ///
+    /// Staging the drag made it one undo step (K-238) but stopped the picture
+    /// moving until the button came up — the wrong half of the bargain. The
+    /// tick previews and the release commits, so the row reads the value under
+    /// the pointer while the document still holds the old one.
+    testWidgets('a stroke opacity drag shows before it commits', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+
+      final id = layer.getPaint().single.id;
+      final field = find.byKey(ValueKey<String>('tl-stroke-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+
+      // Mid-drag: the row is showing the value under the pointer, and asking
+      // the engine to draw it — but nothing has been written.
+      expect(layer.getPaint().single.opacity, 100,
+          reason: 'a drag in flight writes nothing');
+      expect(
+          find.descendant(of: field, matching: find.textContaining('100%')),
+          findsNothing,
+          reason: 'the row shows the value being dragged, not the stored one');
+      expect(tester.takeException(), isNull,
+          reason: 'the preview request is a courtesy and never a crash');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(layer.getPaint().single.opacity, lessThan(100),
+          reason: 'the release is what commits');
+    });
+
     /// A shape layer lists its art under a Contents heading, above Masks and
     /// Effects — the order the picture is built in (K-237).
     testWidgets('a shape layer grows a Contents heading in its twirl-down',

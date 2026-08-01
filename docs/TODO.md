@@ -83,6 +83,10 @@ These are v1-scope surfaces it does not yet match.
     already exists, and none of them can today.
 - **Wireframes over a shape layer's own art** - a shape layer draws the box its
     art fills, like every other layer, rather than the paths inside it.
+- **A mask's opacity drag has no live preview** - it stages and commits once on
+    release (K-234), so it is one undo step, but the picture does not move until
+    the button comes up. Paint and shape contents preview through the
+    clone-and-patch render path (K-239); a mask wants the same door.
 - **Mask paths cannot be keyframed** ([03-DATA-MODEL.md](03-DATA-MODEL.md) has
     them as animatable); there is no mask **mode** (add/subtract/intersect) -
     every mask adds; **mask feather** has neither a control nor a renderer path.

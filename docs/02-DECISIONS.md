@@ -4581,3 +4581,32 @@ in front of them.
 **Still owed, and not part of this:** editing a shape's or a stroke's points on the picture the
 way K-224 edits a mask's, and dragging a vertex's bezier **handles** — which no path in Lumit
 can do yet, mask included. Both are named in TODO.md.
+
+**K-239 · DECIDED · A value you drag has to show what it is doing.** K-238 made a stroke's
+opacity one op per drag by staging it and committing on release. That fixed undo and broke the
+other half: the picture did not move until the button came up, which the owner reported at once
+and is the wrong bargain. Both halves are the requirement — **the tick previews and the release
+commits** — which is the division the Type tool (K-225) and the transform rows already use.
+
+**Through the same door, not a new one.** The render request already carries provisional
+effects, a provisional transform and a provisional text document, all patched onto a *clone* of
+the document so nothing is committed. Paint and a shape layer's contents join them. Anything
+that can be dragged and cannot be committed per tick needs this, so the list will keep growing;
+what matters is that there is one path and one place where a drag's provisional value meets the
+renderer.
+
+**The whole list rides along, not one item's opacity.** Paint and shape contents are stored and
+committed as whole lists (`SetLayerPaint`, `SetShapeContents`). A preview shaped differently
+from the op would be a second description of the same thing, and the two would drift.
+
+**The shape row had the fault K-238 fixed on the stroke row.** It committed on every tick, so a
+shape item's opacity was never one undo step. It is staged and previewed now, and the two rows
+match — they were always meant to be the same row with a different noun.
+
+**A cancelled drag asks for the picture back.** Releasing a drag that never ticked, or a gesture
+the framework cancels, leaves the screen showing a value nobody committed. The row re-previews
+the document's own value rather than waiting for the next thing to redraw it.
+
+**Not done here, and named in TODO.md:** the *mask* row stages without previewing, so its
+opacity drag has the fault this fixes, and a mask preview wants the same clone-and-patch path
+these three now share.

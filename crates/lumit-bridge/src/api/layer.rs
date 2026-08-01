@@ -211,7 +211,7 @@ impl BridgeStroke {
     /// wrongly for ever after is clamped here rather than trusted, exactly as
     /// a mask's opacity is.
     #[frb(ignore)]
-    fn write(&self) -> lumit_core::paint::PaintStroke {
+    pub(crate) fn write(&self) -> lumit_core::paint::PaintStroke {
         lumit_core::paint::PaintStroke {
             id: self.id,
             name: self.name.clone(),

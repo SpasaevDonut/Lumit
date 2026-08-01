@@ -564,6 +564,30 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
           that: this, frame: frame, scale: scale, mode: mode);
 
+  /// Ask for `frame` with `layer`'s paint replaced by `strokes` — the same
+  /// live path as the three above, for a stroke being dragged in the Timeline
+  /// (K-239).
+  ///
+  /// A stroke's opacity is committed once, on release, so the drag is one undo
+  /// step (K-238). Without a preview that also meant the picture did not move
+  /// until the button came up, which is the wrong half of the trade: a value
+  /// you drag has to show what it is doing. The whole list rides along rather
+  /// than one stroke's opacity, because paint is stored and committed as a
+  /// whole list, and a preview that took a different shape from the op would
+  /// be a second way to describe the same thing.
+  void renderFrameWithPaintPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeStroke> strokes}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithPaintPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              strokes: strokes);
+
   /// Ask for `frame` with `layer`'s effect stack replaced by `effects` — the
   /// live drag path, which never touches the document.
   void renderFrameWithPreview(
@@ -578,6 +602,21 @@ class CompositionReference {
               scale: scale,
               layer: layer,
               effects: effects);
+
+  /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
+  /// layer's half of the call above (K-239).
+  void renderFrameWithShapePreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeShapeItem> contents}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithShapePreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              contents: contents);
 
   /// Ask for `frame` with `layer`'s text document replaced by `document` —
   /// the same live path as the two above, for the Type tool (K-225).

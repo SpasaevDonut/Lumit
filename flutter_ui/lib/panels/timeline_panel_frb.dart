@@ -51,6 +51,7 @@ export 'timeline_extras_frb.dart' show rulerLabelStepSeconds, rulerLabelOf;
 import 'placeholder.dart';
 import 'graph_editor_frb.dart';
 import 'graph_maths.dart';
+import 'package:lumit_flutter/state/preview_throttle.dart';
 import 'timeline_extras_frb.dart';
 import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
@@ -2124,12 +2125,14 @@ class _FoldRow extends StatelessWidget {
           onLabelTap: () => onSelectProperty(path),
         ),
       FoldShapeRow(:final item) => _ShapeItemRow(
+          comp: comp,
           layer: layer,
           item: item,
           valueColumn: valueColumn,
           onChanged: onChanged,
         ),
       FoldStrokeRow(:final stroke) => _StrokeRow(
+          comp: comp,
           layer: layer,
           stroke: stroke,
           valueColumn: valueColumn,
@@ -2481,18 +2484,81 @@ class _MaskRowState extends State<_MaskRow> {
 ///
 /// The same shape as the mask and stroke rows: the engine takes the whole
 /// contents list, so every edit is "the list, with this item changed".
-class _ShapeItemRow extends StatelessWidget {
+class _ShapeItemRow extends StatefulWidget {
   final LayerReference layer;
   final BridgeShapeItem item;
   final ValueColumn valueColumn;
   final VoidCallback onChanged;
+
+  /// The composition, for the live preview a drag shows (K-239).
+  final CompositionReference comp;
 
   const _ShapeItemRow({
     required this.layer,
     required this.item,
     required this.valueColumn,
     required this.onChanged,
+    required this.comp,
   });
+
+  @override
+  State<_ShapeItemRow> createState() => _ShapeItemRowState();
+}
+
+class _ShapeItemRowState extends State<_ShapeItemRow> {
+  /// The opacity a drag is part way through, or null when nothing is dragging.
+  /// Without it the field committed on every tick, so one drag was a stack of
+  /// ops and `Ctrl+Z` backed out a hair (K-238, K-239).
+  double? _staged;
+
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  LayerReference get layer => widget.layer;
+  BridgeShapeItem get item => widget.item;
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Show the opacity the drag is passing through without writing it (K-239),
+  /// exactly as the stroke row above does.
+  void _preview(double opacity) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() {
+      try {
+        widget.comp.renderFrameWithShapePreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: layer,
+          contents: [
+            for (final i in layer.getShapeContents())
+              if (i.id == item.id) _withOpacity(i, opacity) else i,
+          ],
+        );
+      } catch (_) {
+        // A preview is a courtesy; the drag carries on without it.
+      }
+    });
+  }
+
+  static BridgeShapeItem _withOpacity(BridgeShapeItem i, double opacity) =>
+      BridgeShapeItem(
+        id: i.id,
+        name: i.name,
+        vertices: i.vertices,
+        closed: i.closed,
+        fill: i.fill,
+        stroke: i.stroke,
+        strokeWidth: i.strokeWidth,
+        opacity: opacity,
+      );
+
+  void _commitOpacity(num v) {
+    setState(() => _staged = null);
+    _write(opacity: v.toDouble());
+  }
 
   /// Write the contents back with this item changed, or dropped.
   void _write({double? opacity, bool delete = false}) {
@@ -2514,7 +2580,7 @@ class _ShapeItemRow extends StatelessWidget {
             ),
       ];
       layer.setShapeContents(contents: contents);
-      onChanged();
+      widget.onChanged();
     } catch (_) {
       // The item or its layer went away between the draw and the click.
     }
@@ -2535,19 +2601,31 @@ class _ShapeItemRow extends StatelessWidget {
                 Text(item.name, style: t.body, overflow: TextOverflow.ellipsis),
           ),
           SizedBox(
-            width: valueColumn.width,
+            width: widget.valueColumn.width,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 SizedBox(
                   width: 56,
+                  // Staged and previewed, like every other dragged value here:
+                  // the drag shows live and commits once on release, so it is
+                  // one op and one undo step.
                   child: DragValueField(
                     key: ValueKey<String>('tl-shape-opacity-${item.id}'),
-                    value: item.opacity,
+                    value: _staged ?? item.opacity,
                     min: 0,
                     max: 100,
                     suffix: '%',
-                    onChanged: (v) => _write(opacity: v.toDouble()),
+                    onChanged: _commitOpacity,
+                    onChangeLive: (v) {
+                      setState(() => _staged = v.toDouble());
+                      _preview(v.toDouble());
+                    },
+                    onChangeEnd: _commitOpacity,
+                    onDragCancel: () {
+                      setState(() => _staged = null);
+                      _preview(item.opacity);
+                    },
                   ),
                 ),
               ],
@@ -2588,11 +2666,15 @@ class _StrokeRow extends StatefulWidget {
   final ValueColumn valueColumn;
   final VoidCallback onChanged;
 
+  /// The composition, for the live preview a drag shows (K-239).
+  final CompositionReference comp;
+
   const _StrokeRow({
     required this.layer,
     required this.stroke,
     required this.valueColumn,
     required this.onChanged,
+    required this.comp,
   });
 
   @override
@@ -2608,8 +2690,62 @@ class _StrokeRowState extends State<_StrokeRow> {
   /// op and one undo step (K-230), the same as the mask row above.
   double? _staged;
 
+  /// Keeps the drag's preview requests to about one render apart, as every
+  /// other dragged value does.
+  final PreviewThrottle _throttle = PreviewThrottle();
+
   LayerReference get layer => widget.layer;
   BridgeStroke get stroke => widget.stroke;
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Show the opacity a drag is passing through, without writing it (K-239).
+  ///
+  /// Staging alone made the drag one undo step (K-238) but left the picture
+  /// still until the button came up, which is the wrong half of the bargain: a
+  /// value you drag has to show what it is doing. So the tick previews and the
+  /// release commits — the same division the Type tool and the transform rows
+  /// already use.
+  ///
+  /// The *whole* stroke list is sent, with this one stroke's opacity replaced,
+  /// because paint is stored and committed as a whole list. A preview shaped
+  /// differently from the op would be a second description of the same thing.
+  void _preview(double opacity) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() {
+      try {
+        widget.comp.renderFrameWithPaintPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: layer,
+          strokes: [
+            for (final s in layer.getPaint())
+              if (s.id == stroke.id) _withOpacity(s, opacity) else s,
+          ],
+        );
+      } catch (_) {
+        // A preview is a courtesy; the drag carries on without it.
+      }
+    });
+  }
+
+  static BridgeStroke _withOpacity(BridgeStroke s, double opacity) =>
+      BridgeStroke(
+        id: s.id,
+        name: s.name,
+        points: s.points,
+        colour: s.colour,
+        width: s.width,
+        hardness: s.hardness,
+        opacity: opacity,
+        mode: s.mode,
+        cloneOffsetX: s.cloneOffsetX,
+        cloneOffsetY: s.cloneOffsetY,
+      );
 
   void _write({double? opacity}) {
     try {
@@ -2677,9 +2813,17 @@ class _StrokeRowState extends State<_StrokeRow> {
                     max: 100,
                     suffix: '%',
                     onChanged: _commitOpacity,
-                    onChangeLive: (v) => setState(() => _staged = v.toDouble()),
+                    onChangeLive: (v) {
+                      setState(() => _staged = v.toDouble());
+                      _preview(v.toDouble());
+                    },
                     onChangeEnd: _commitOpacity,
-                    onDragCancel: () => setState(() => _staged = null),
+                    onDragCancel: () {
+                      setState(() => _staged = null);
+                      // The picture is showing a value nobody committed; put
+                      // the document's own back on screen.
+                      _preview(stroke.opacity);
+                    },
                   ),
                 ),
               ],

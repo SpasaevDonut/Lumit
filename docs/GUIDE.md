@@ -4788,6 +4788,35 @@ have. It is answered in one place, from the list of layers itself, rather than a
 each of the several points where a layer can disappear — undo is only the easiest
 way to reach that state; deleting a layer gets there too.
 
+### Showing a value you are dragging, without writing it (K-239)
+
+Two things are wanted from a dragged value and they pull against each other.
+Undo should treat the whole drag as **one** action — not one step per hair of
+pointer movement — and the picture should move **while** you drag, or you are
+guessing.
+
+Committing on every tick gives you the second and ruins the first: `Ctrl+Z` then
+walks back one percent at a time, which reads as undo being broken. Committing
+only on release gives you the first and ruins the second: the picture sits still
+until you let go. Lumit had just traded one for the other on a paint stroke's
+opacity, which is how this got noticed.
+
+The answer is that the two are different jobs. Every tick asks for a **preview**:
+the frame is drawn from a *copy* of the project with that one value replaced, so
+nothing is written, no undo step exists, and those pixels are never cached —
+they are of a value the document never held. The release writes once, for real.
+
+That path already existed for effect parameters, for a dragged transform and for
+what is being typed. Paint strokes and shape layers' art now use it too. Anything
+that can be dragged but must not be committed per tick needs the same thing, so
+expect the list to grow; what matters is that there is one path rather than one
+per feature.
+
+One small thing falls out of it. If a drag is cancelled — the gesture is
+interrupted, or you release without ever moving — the screen is showing a value
+nobody committed, so the row asks for the document's own value back rather than
+waiting for something else to redraw it.
+
 ### One gesture, one undo step (K-230)
 
 The document is a stack of small, exactly reversible **ops**, and `Ctrl+Z` undoes
