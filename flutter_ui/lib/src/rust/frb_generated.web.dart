@@ -117,6 +117,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeColour dco_decode_box_autoadd_bridge_colour(dynamic raw);
 
   @protected
+  BridgeColourRgba dco_decode_box_autoadd_bridge_colour_rgba(dynamic raw);
+
+  @protected
   BridgeCompSettings dco_decode_box_autoadd_bridge_comp_settings(dynamic raw);
 
   @protected
@@ -163,6 +166,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeScopeTrace dco_decode_box_autoadd_bridge_scope_trace(dynamic raw);
 
   @protected
+  BridgeShapeItem dco_decode_box_autoadd_bridge_shape_item(dynamic raw);
+
+  @protected
   BridgeSharedFrameInfo dco_decode_box_autoadd_bridge_shared_frame_info(
       dynamic raw);
 
@@ -175,6 +181,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeSpan dco_decode_box_autoadd_bridge_span(dynamic raw);
+
+  @protected
+  BridgeStroke dco_decode_box_autoadd_bridge_stroke(dynamic raw);
 
   @protected
   BridgeTextDocument dco_decode_box_autoadd_bridge_text_document(dynamic raw);
@@ -316,6 +325,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMediaInfo dco_decode_bridge_media_info(dynamic raw);
 
   @protected
+  BridgePaintMode dco_decode_bridge_paint_mode(dynamic raw);
+
+  @protected
   BridgeParamInfo dco_decode_bridge_param_info(dynamic raw);
 
   @protected
@@ -371,6 +383,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeScopeTrace dco_decode_bridge_scope_trace(dynamic raw);
 
   @protected
+  BridgeShapeItem dco_decode_bridge_shape_item(dynamic raw);
+
+  @protected
   BridgeSharedFrameInfo dco_decode_bridge_shared_frame_info(dynamic raw);
 
   @protected
@@ -385,6 +400,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeSpan dco_decode_bridge_span(dynamic raw);
+
+  @protected
+  BridgeStroke dco_decode_bridge_stroke(dynamic raw);
+
+  @protected
+  BridgeStrokePoint dco_decode_bridge_stroke_point(dynamic raw);
 
   @protected
   BridgeTextDocument dco_decode_bridge_text_document(dynamic raw);
@@ -486,6 +507,15 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<BridgeScalar> dco_decode_list_bridge_scalar(dynamic raw);
 
   @protected
+  List<BridgeShapeItem> dco_decode_list_bridge_shape_item(dynamic raw);
+
+  @protected
+  List<BridgeStroke> dco_decode_list_bridge_stroke(dynamic raw);
+
+  @protected
+  List<BridgeStrokePoint> dco_decode_list_bridge_stroke_point(dynamic raw);
+
+  @protected
   List<BridgeTransformProp> dco_decode_list_bridge_transform_prop(dynamic raw);
 
   @protected
@@ -527,6 +557,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   UuidValue? dco_decode_opt_Uuid(dynamic raw);
+
+  @protected
+  BridgeColourRgba? dco_decode_opt_box_autoadd_bridge_colour_rgba(dynamic raw);
 
   @protected
   BridgeCompSettings? dco_decode_opt_box_autoadd_bridge_comp_settings(
@@ -667,6 +700,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeColourRgba sse_decode_box_autoadd_bridge_colour_rgba(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeCompSettings sse_decode_box_autoadd_bridge_comp_settings(
       SseDeserializer deserializer);
 
@@ -725,6 +762,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeShapeItem sse_decode_box_autoadd_bridge_shape_item(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeSharedFrameInfo sse_decode_box_autoadd_bridge_shared_frame_info(
       SseDeserializer deserializer);
 
@@ -739,6 +780,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeSpan sse_decode_box_autoadd_bridge_span(SseDeserializer deserializer);
+
+  @protected
+  BridgeStroke sse_decode_box_autoadd_bridge_stroke(
+      SseDeserializer deserializer);
 
   @protected
   BridgeTextDocument sse_decode_box_autoadd_bridge_text_document(
@@ -900,6 +945,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeMediaInfo sse_decode_bridge_media_info(SseDeserializer deserializer);
 
   @protected
+  BridgePaintMode sse_decode_bridge_paint_mode(SseDeserializer deserializer);
+
+  @protected
   BridgeParamInfo sse_decode_bridge_param_info(SseDeserializer deserializer);
 
   @protected
@@ -961,6 +1009,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeScopeTrace sse_decode_bridge_scope_trace(SseDeserializer deserializer);
 
   @protected
+  BridgeShapeItem sse_decode_bridge_shape_item(SseDeserializer deserializer);
+
+  @protected
   BridgeSharedFrameInfo sse_decode_bridge_shared_frame_info(
       SseDeserializer deserializer);
 
@@ -976,6 +1027,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgeSpan sse_decode_bridge_span(SseDeserializer deserializer);
+
+  @protected
+  BridgeStroke sse_decode_bridge_stroke(SseDeserializer deserializer);
+
+  @protected
+  BridgeStrokePoint sse_decode_bridge_stroke_point(
+      SseDeserializer deserializer);
 
   @protected
   BridgeTextDocument sse_decode_bridge_text_document(
@@ -1094,6 +1152,18 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<BridgeShapeItem> sse_decode_list_bridge_shape_item(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeStroke> sse_decode_list_bridge_stroke(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeStrokePoint> sse_decode_list_bridge_stroke_point(
+      SseDeserializer deserializer);
+
+  @protected
   List<BridgeTransformProp> sse_decode_list_bridge_transform_prop(
       SseDeserializer deserializer);
 
@@ -1140,6 +1210,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   UuidValue? sse_decode_opt_Uuid(SseDeserializer deserializer);
+
+  @protected
+  BridgeColourRgba? sse_decode_opt_box_autoadd_bridge_colour_rgba(
+      SseDeserializer deserializer);
 
   @protected
   BridgeCompSettings? sse_decode_opt_box_autoadd_bridge_comp_settings(
@@ -1290,6 +1364,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeColour self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_colour_rgba(
+      BridgeColourRgba self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_comp_settings(
       BridgeCompSettings self, SseSerializer serializer);
 
@@ -1350,6 +1428,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeScopeTrace self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_bridge_shape_item(
+      BridgeShapeItem self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_bridge_shared_frame_info(
       BridgeSharedFrameInfo self, SseSerializer serializer);
 
@@ -1364,6 +1446,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_bridge_span(
       BridgeSpan self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_bridge_stroke(
+      BridgeStroke self, SseSerializer serializer);
 
   @protected
   void sse_encode_box_autoadd_bridge_text_document(
@@ -1543,6 +1629,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeMediaInfo self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_paint_mode(
+      BridgePaintMode self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_param_info(
       BridgeParamInfo self, SseSerializer serializer);
 
@@ -1612,6 +1702,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeScopeTrace self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_shape_item(
+      BridgeShapeItem self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_shared_frame_info(
       BridgeSharedFrameInfo self, SseSerializer serializer);
 
@@ -1629,6 +1723,13 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_bridge_span(BridgeSpan self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_stroke(BridgeStroke self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_stroke_point(
+      BridgeStrokePoint self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_text_document(
@@ -1753,6 +1854,18 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       List<BridgeScalar> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_shape_item(
+      List<BridgeShapeItem> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_stroke(
+      List<BridgeStroke> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_stroke_point(
+      List<BridgeStrokePoint> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_bridge_transform_prop(
       List<BridgeTransformProp> self, SseSerializer serializer);
 
@@ -1805,6 +1918,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_opt_Uuid(UuidValue? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_bridge_colour_rgba(
+      BridgeColourRgba? self, SseSerializer serializer);
 
   @protected
   void sse_encode_opt_box_autoadd_bridge_comp_settings(

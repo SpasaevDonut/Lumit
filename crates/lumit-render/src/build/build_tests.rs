@@ -37,6 +37,7 @@ fn footage_geometry_uses_native_size_not_decoded_size() {
         retime: None,
         blend: Default::default(),
         masks: Vec::new(),
+        paint: Vec::new(),
         effects: Vec::new(),
         switches: Switches::default(),
         extra: serde_json::Map::new(),
@@ -110,6 +111,7 @@ fn collapsed_precomp_splices_inner_draws_with_parent_placement() {
         retime: None,
         blend: Default::default(),
         masks: Vec::new(),
+        paint: Vec::new(),
         effects: Vec::new(),
         switches: Switches::default(),
         extra: serde_json::Map::new(),
@@ -222,6 +224,7 @@ fn patch_layer_prop_overrides_the_previewed_value() {
         retime: None,
         blend: Default::default(),
         masks: Vec::new(),
+        paint: Vec::new(),
         effects: Vec::new(),
         switches: Switches::default(),
         extra: serde_json::Map::new(),
@@ -287,6 +290,7 @@ fn a_live_adjustment_layer_emits_a_staging_draw() {
         retime: None,
         blend: Default::default(),
         masks: Vec::new(),
+        paint: Vec::new(),
         effects: Vec::new(),
         switches: Switches::default(),
         extra: serde_json::Map::new(),
@@ -356,3 +360,81 @@ fn a_live_adjustment_layer_emits_a_staging_draw() {
 }
 
 // --- K-119: Settings → Export filename template ------------------------
+
+/// A paint stroke is stamped into the layer's own pixels before its masks gate
+/// them (K-227) — the render side of the feature, checked where the pixels are
+/// actually made rather than through a GPU nobody has on CI.
+#[test]
+fn a_paint_stroke_reaches_the_layers_pixels() {
+    let solid_id = Uuid::now_v7();
+    let mut layer = Layer {
+        id: Uuid::now_v7(),
+        name: "solid".into(),
+        kind: LayerKind::Solid { def: solid_id },
+        in_point: CompTime(Rational::ZERO),
+        out_point: CompTime(Rational::new(10, 1).unwrap()),
+        start_offset: CompTime(Rational::ZERO),
+        transform: TransformGroup::default(),
+        matte: None,
+        parent: None,
+        label: 0,
+        volume_db: lumit_core::anim::Property::zero(),
+        retime: None,
+        blend: Default::default(),
+        masks: Vec::new(),
+        paint: Vec::new(),
+        effects: Vec::new(),
+        switches: Switches::default(),
+        extra: serde_json::Map::new(),
+    };
+    let mut stroke = lumit_core::paint::PaintStroke::new("Brush 1", vec![(20.0, 20.0)]);
+    stroke.width = 10.0;
+    stroke.colour = LinearColour([1.0, 0.0, 0.0, 1.0]);
+    layer.paint.push(stroke);
+
+    let painted = Composition {
+        id: Uuid::now_v7(),
+        name: "Comp".into(),
+        width: 40,
+        height: 40,
+        frame_rate: FrameRate::new(60, 1).unwrap(),
+        duration: Duration(Rational::new(10, 1).unwrap()),
+        background: LinearColour::BLACK,
+        work_area: None,
+        layers: vec![layer],
+        markers: Vec::new(),
+        motion_blur: Default::default(),
+        extra: serde_json::Map::new(),
+    };
+    let mut doc = Document::new();
+    doc.items.push(lumit_core::model::ProjectItem::Solid(
+        lumit_core::model::SolidDef {
+            id: solid_id,
+            name: "White".into(),
+            colour: LinearColour([1.0, 1.0, 1.0, 1.0]),
+            width: 40,
+            height: 40,
+            extra: serde_json::Map::new(),
+        },
+    ));
+    doc.items
+        .push(lumit_core::model::ProjectItem::Composition(painted.clone()));
+
+    let map: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
+    let mut visited = vec![painted.id];
+    let draws = build_comp_draws(&doc, &painted, 0.0, &map, &mut visited);
+    assert_eq!(draws.len(), 1);
+    let DrawSource::Pixels { rgba, tex_w, .. } = &draws[0].source else {
+        panic!("a solid draws pixels");
+    };
+    assert_eq!(
+        *tex_w, 40,
+        "a painted solid is rasterised at its real size, not as an 8x8 tile"
+    );
+    let px = |x: u32, y: u32| {
+        let i = ((y * tex_w + x) as usize) * 4;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    };
+    assert_eq!(px(20, 20), [255, 0, 0], "the stroke is in the picture");
+    assert_eq!(px(2, 2), [255, 255, 255], "and the solid elsewhere");
+}

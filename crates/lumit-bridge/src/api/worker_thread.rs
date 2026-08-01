@@ -1473,6 +1473,17 @@ pub struct RenderCompRequestWithPreview {
     /// writes the layer once, when the edit ends; this is what keeps the
     /// picture in step in the meantime without an undo step per keystroke.
     pub text: Option<crate::api::assets::BridgeTextDocument>,
+    /// A layer's whole paint list, while one of its strokes is being dragged
+    /// (K-239). The same reason as `text` above: a stroke's opacity is one op
+    /// per drag, not one per tick, so the picture is kept in step by previewing
+    /// rather than by writing.
+    pub paint: Option<Vec<crate::api::layer::BridgeStroke>>,
+    /// A shape layer's whole art list, while one of its items is being dragged
+    /// (K-239). The same reason as `paint` above.
+    pub contents: Option<Vec<crate::api::layer::BridgeShapeItem>>,
+    /// A layer's whole mask list, while one of them is being dragged (K-240).
+    /// The same reason as `paint` and `contents` above.
+    pub masks: Option<Vec<crate::api::layer::BridgeMask>>,
 }
 
 #[frb(ignore)]
@@ -2162,6 +2173,20 @@ fn render_comp_with_preview(
     }
     if let Some(document) = req.text {
         apply_text_preview(&mut comp.layers[index].kind, document);
+    }
+    if let Some(paint) = req.paint {
+        comp.layers[index].paint = paint.into_iter().map(|s| s.write()).collect();
+    }
+    if let Some(masks) = req.masks {
+        comp.layers[index].masks = masks.into_iter().map(|m| m.write()).collect();
+    }
+    if let Some(items) = req.contents {
+        // Only a shape layer has art; a stale request against another kind
+        // renders the layer as it stands rather than failing the frame, which
+        // is the same courtesy `apply_text_preview` gives.
+        if let lumit_core::model::LayerKind::Shape { contents } = &mut comp.layers[index].kind {
+            *contents = items.into_iter().map(|i| i.write_item()).collect();
+        }
     }
     if let Some(transform) = &req.transform {
         // The preview's keys arrive on the composition's clock like every other
@@ -3167,6 +3192,53 @@ mod tests {
         let mut other = LayerKind::Adjustment;
         super::apply_text_preview(&mut other, typed);
         assert!(matches!(other, LayerKind::Adjustment));
+    }
+
+    /// A dragged stroke previews through the same door the typed word does
+    /// (K-239): the whole paint list rides along with the render request and
+    /// lands on a clone, so the picture moves while the document does not.
+    ///
+    /// What this pins is the *conversion*. The preview carries bridge strokes
+    /// and the renderer wants engine ones, so the values have to survive the
+    /// crossing — including the clamping `write` does, which is the reason the
+    /// preview and the commit cannot each convert in their own way.
+    #[test]
+    fn a_paint_preview_carries_the_strokes_across() {
+        use crate::api::assets::BridgeColourRgba;
+        use crate::api::layer::{BridgePaintMode, BridgeStroke, BridgeStrokePoint};
+
+        let stroke = BridgeStroke {
+            id: uuid::Uuid::from_u128(3),
+            name: "Brush 1".into(),
+            points: vec![
+                BridgeStrokePoint { x: 4.0, y: 5.0 },
+                BridgeStrokePoint { x: 40.0, y: 50.0 },
+            ],
+            colour: BridgeColourRgba {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
+            width: 12.0,
+            hardness: 0.8,
+            // Mid-drag values are provisional, so an out-of-range one must be
+            // clamped rather than rendered — the same rule the commit follows.
+            opacity: 140.0,
+            mode: BridgePaintMode::Paint,
+            clone_offset_x: 0.0,
+            clone_offset_y: 0.0,
+        };
+
+        let written = stroke.write();
+        assert_eq!(written.name, "Brush 1");
+        assert_eq!(written.points.len(), 2);
+        assert_eq!(written.points[1], (40.0, 50.0));
+        assert_eq!(written.width, 12.0);
+        assert!(
+            written.opacity <= 100.0,
+            "a provisional opacity is clamped, not rendered as it arrived"
+        );
     }
 }
 

@@ -343,6 +343,70 @@ Masks apply in order before the effect stack ([06-RENDER-PIPELINE.md](06-RENDER-
 (`None|Add|Subtract|Intersect|Lighten|Darken|Difference` — v1 is **Add only**), and `feather` /
 `expansion`. Variable-width feather is post-v1; the model will reserve per-vertex feather data.
 
+### 7.1 Paint strokes (K-227)
+
+```rust
+struct PaintStroke {
+    id: Uuid,
+    name: String,
+    points: Vec<(f64, f64)>,          // layer space, in the order drawn
+    colour: LinearColour,
+    width: f64,                       // brush diameter, layer pixels
+    hardness: f64,                    // 0 fully soft .. 1 hard edge
+    opacity: f64,                     // 0..100
+    mode: PaintMode,                  // Paint | Erase | Clone
+    clone_offset: (f64, f64),         // Clone: where the pixels come from
+}
+```
+
+A stroke stores the **gesture**, never the pixels: it is re-stamped at whatever resolution the
+frame is rendered at, so a stroke painted at a quarter preview exports at full size, and every
+setting stays changeable. The path is a **polyline** rather than a `BezierPath` — a stroke is a
+record of a drag, not a shape edited vertex by vertex — and it is thinned before it is stored
+(samples closer than two screen pixels dropped, first and last always kept).
+
+Strokes are stamped into the layer's own raster **before** its masks gate it and before its
+effects run ([06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md)). `Clone` reads the raster as it was
+before *any* stroke in the pass was stamped, so a clone never picks up paint laid down beside
+it. The op is `SetLayerPaint` — the whole list, exactly invertible, like `SetLayerMasks`.
+
+**Future:** pressure and tilt, non-round brush shapes, spacing and scatter, write-on (per-stroke
+start and end times), per-stroke blending modes, and a GPU stamping path. None of them changes
+the shape above.
+
+### 7.2 Shape layers (K-237)
+
+```rust
+LayerKind::Shape { contents: Vec<ShapeItem> }
+
+struct ShapeItem {
+    id: Uuid,
+    name: String,
+    path: BezierPath,                 // the mask's path type, unchanged
+    fill: Option<LinearColour>,       // None draws no fill
+    stroke: Option<LinearColour>,     // None, or a zero width, draws no outline
+    stroke_width: f64,                // layer pixels
+    opacity: f64,                     // 0..100
+}
+```
+
+A shape layer's art **is** its picture: vector paths rasterised at whatever resolution the
+frame is rendered at, so they stay crisp at any scale. The path type is the mask's, deliberately
+— a shape's path and a mask's path differ in what they do, not in what they are.
+
+The list is **flat**: After Effects' nested groups exist to carry its shape modifiers (repeater,
+trim paths, wiggle), and none of those are built.
+
+**The layer's natural size is the box its art fills**, bounding the curves by their control
+points, and it *changes as the art is edited* — the only layer kind whose size is not fixed by
+its source. Anything caching a layer's size must key on the document revision.
+
+The op is `SetShapeContents` — the whole list, exactly invertible, like `SetLayerMasks` and
+`SetLayerPaint`.
+
+**Future:** nested groups and the shape modifiers, gradient fills, dashed strokes, joins and
+caps other than round, and animated paths.
+
 ## 8. Effects
 
 ```rust
