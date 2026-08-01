@@ -2151,6 +2151,16 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   fast-forwards to catch up. The last two milliseconds before each due time are also waited
   out precisely (a busy wait) rather than slept, because an operating-system sleep is only
   as accurate as its timer, and oversleeping by one timer tick is a whole frame at 100 fps.
+  On Windows that timer matters even before the busy wait: its default tick is about
+  16 milliseconds — *twice* a 120 fps frame — so every paced sleep overshot its due time and
+  a 120 fps comp could only manage ~85. The playback thread now asks Windows for
+  1-millisecond timing when it starts (`timeBeginPeriod`, the request every media
+  application makes), which is also what stops presents jittering by several milliseconds
+  at 60 fps. That jitter had a second victim: the sound. The audio minder stops the sound
+  when a picture arrives "late", and its allowance was a quarter of the frame period —
+  2 ms at 120 fps, inside ordinary scheduler noise, so the sound kept stopping over
+  pictures that looked perfectly smooth. The allowance now never shrinks below a few
+  milliseconds, because the ear judges slip in milliseconds, not in frames.
 - **Frames get their names from a memo (`lumit-bridge::names`)** — every cached frame is
   filed under a fingerprint of everything that goes into it, and computing that fingerprint
   means walking the whole composition at that frame's time. Cheap once; not cheap when the
@@ -2183,7 +2193,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   smaller while playback runs, and most names come from the memo above anyway. While
   playing, a frame already known to be parked on disk at the right size also skips the
   three extra "is a coarser version held?" checks — the stripe may briefly show blue where
-  dimmed green was strictly truer, and it firms up the moment playback stops.
+  dimmed green was strictly truer, and it firms up the moment playback stops. The stripe
+  also greens **live** now: the sweep walks forward from the playhead, so the frames
+  playback had just banked — always just behind it — were the last thing it reached, and
+  the stripe sat frozen until you paused. Banking a frame now paints its own slot in the
+  strip directly (the bank knows exactly which frame it filed), and each publish of the
+  strip nudges the interface to redraw — the old wiring only nudged it when the *idle*
+  cache fill banked something, which is precisely the thing that never happens during
+  playback.
 - **The stress project and speed benchmarks (`lumit-project::fixtures`, docs 13)** — the
   promise that Lumit stays responsive on huge projects needs something huge to test against.
   There's now a builder that makes a deliberately enormous project on demand — hundreds of

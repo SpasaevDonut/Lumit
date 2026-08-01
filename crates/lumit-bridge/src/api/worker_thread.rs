@@ -92,6 +92,10 @@ pub struct WorkerState {
     /// composition converges to per-frame truth instead of staying sampled.
     bar_strip: Vec<u8>,
     bar_refined_to: u64,
+    /// True when a frame was painted straight into the strip since the last
+    /// publish ([`mark_banked`]) — what tells the publish to nudge the
+    /// frontend even though the sweep itself wrote nothing new.
+    bar_dirty: bool,
     /// When the strip was last published — see [`BAR_MIN_INTERVAL`].
     bar_published_at: std::time::Instant,
     /// True when the idle fill has nothing left to do (everything near the
@@ -222,9 +226,10 @@ struct BarFingerprint {
 
 /// Apply cross-thread cache controls, move frames between the tiers, and keep
 /// the meters and the cache bar fresh — run once per worker loop turn, cheap
-/// when nothing changed (a handful of atomic loads).
+/// when nothing changed (a handful of atomic loads). `stream` carries the
+/// cache-bar's redraw nudge (see [`publish_cache_bar`]).
 #[frb(ignore)]
-fn sync_caches(state: &mut WorkerState) {
+fn sync_caches(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     // Nothing here clears a tier because the document changed. It used to: the
     // frames were named by position, so a committed edit did not rename any of
     // them and the only safe answer was to throw them all away. They are named
@@ -261,7 +266,7 @@ fn sync_caches(state: &mut WorkerState) {
     sync_disk(state);
     drain_demotions(state);
     collect_disk_loads(state);
-    publish_cache_bar(state);
+    publish_cache_bar(state, stream);
 }
 
 /// Keep the disk tier pointed at the right folder and inside its budget, and
@@ -422,6 +427,14 @@ fn collect_disk_loads(state: &mut WorkerState) {
             });
         if promoted.is_some() {
             state.fill_exhausted = false;
+            mark_banked(
+                state.published_bar,
+                &mut state.bar_strip,
+                &mut state.bar_dirty,
+                want.provenance.comp,
+                want.provenance.frame,
+                want.provenance.scale_q,
+            );
         }
     }
 }
@@ -437,6 +450,45 @@ const DISK_PROMOTION_COST_MS: u32 = 16;
 /// room over for the IO thread to be mid-queue; each ask is one message, so
 /// over-asking costs a few reads at worst, never a stall.
 const DISK_PRE_ASK: u64 = 32;
+
+/// Paint one just-banked frame straight into the worker's strip, when the
+/// strip being shown is of that composition at that scale.
+///
+/// This is what turns frames green WHILE playback lays them down. The sweep
+/// walks forward from the playhead and wraps, so the frames playback just
+/// banked — always just *behind* the playhead — are the last it reaches, and
+/// the stripe sat visibly unchanged until a pause let the sweep catch up. The
+/// bank itself knows exactly which frame it filed; telling the strip directly
+/// costs one array write against the sweep's comp hash per frame.
+///
+/// Takes the fields rather than the whole worker state, because two of its
+/// callers run while the playback state is borrowed and the borrow checker is
+/// right to insist the paths stay disjoint.
+#[frb(ignore)]
+fn mark_banked(
+    published: Option<BarFingerprint>,
+    strip: &mut [u8],
+    dirty: &mut bool,
+    comp: Uuid,
+    frame: u64,
+    scale_q: u16,
+) {
+    let Some(fingerprint) = published else {
+        return;
+    };
+    if fingerprint.comp != comp || fingerprint.scale_q != scale_q {
+        return;
+    }
+    let Ok(slot) = usize::try_from(frame) else {
+        return;
+    };
+    if let Some(value) = strip.get_mut(slot) {
+        if *value != 2 {
+            *value = 2;
+            *dirty = true;
+        }
+    }
+}
 
 /// Compute and publish the cache bar's per-frame strip (docs/06 §5.6).
 ///
@@ -458,7 +510,7 @@ const DISK_PRE_ASK: u64 = 32;
 /// The refinement walk starts at the frame last shown and wraps, so the part of
 /// the bar the user is actually looking at is the part that firms up first.
 #[frb(ignore)]
-fn publish_cache_bar(state: &mut WorkerState) {
+fn publish_cache_bar(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     let Some((comp_id, frames, scale_q)) = crate::framecache::bar::wanted() else {
         return;
     };
@@ -536,6 +588,11 @@ fn publish_cache_bar(state: &mut WorkerState) {
     // the whole of `state`, and holding a borrow of one of its fields across that
     // is what the borrow checker is for.
     let mut strip = std::mem::take(&mut state.bar_strip);
+    // What the strip held going in, so the publish below knows whether this
+    // turn's sweep changed anything the frontend should redraw for. Direct
+    // paints since the last publish are already in `strip`; `bar_dirty` is
+    // what remembers those.
+    let before = strip.clone();
     // A sweep in progress finishes before any restart. During playback the
     // holdings move constantly — every promoted frame is an insert — and
     // restarting the sweep on each movement meant it started from zero at
@@ -571,7 +628,17 @@ fn publish_cache_bar(state: &mut WorkerState) {
     }
     state.bar_strip = strip;
     state.bar_refined_to = refined_to;
+    let pixels_changed = state.bar_dirty || state.bar_strip != before;
+    state.bar_dirty = false;
     crate::framecache::bar::publish(comp_id, scale_q, state.bar_strip.clone());
+    // Nudge the frontend when the strip's PIXELS moved. The bar widget redraws
+    // only when it hears this (`cacheChanged` in Dart) — and until now nothing
+    // said it during playback, so the stripe stayed exactly as it was at the
+    // press of play and only caught up at the pause, when the idle fill's own
+    // nudges resumed.
+    if pixels_changed {
+        _ = stream.add(WorkerResponse::CacheFilled);
+    }
 }
 
 /// What the bar should draw for one frame: `0` nothing, `1` held coarser, `2`
@@ -858,6 +925,14 @@ fn prepare_frame(
                             provenance,
                         })
                 {
+                    mark_banked(
+                        state.published_bar,
+                        &mut state.bar_strip,
+                        &mut state.bar_dirty,
+                        comp,
+                        frame,
+                        provenance.scale_q,
+                    );
                     return Ok(prepared);
                 }
             }
@@ -881,9 +956,22 @@ fn prepare_frame(
     }
     // Named once, above: hashing the composition again here would be the same
     // walk twice per frame.
-    state
+    let prepared = state
         .renderer
-        .render_prepared_named(document, comp, frame, quality, bgra, name)
+        .render_prepared_named(document, comp, frame, quality, bgra, name);
+    // A nameable frame that rendered was banked in the same breath: the strip
+    // hears it now rather than when the sweep next comes past.
+    if prepared.is_ok() && name.is_some() {
+        mark_banked(
+            state.published_bar,
+            &mut state.bar_strip,
+            &mut state.bar_dirty,
+            comp,
+            frame,
+            lumit_render::preview_scale_q(quality),
+        );
+    }
+    prepared
 }
 
 /// Copy ONE held frame down to disk while the editor is idle — so a session
@@ -1014,22 +1102,31 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             // is the difference between reading a session's cache back and
             // rendering the whole of it a second time.
             if crate::framecache::contains(key) || state.disk.contains(key) {
+                let provenance = lumit_render::FrameProvenance {
+                    comp: comp_ref.id,
+                    frame,
+                    scale_q: lumit_render::preview_scale_q(quality),
+                };
                 let uploaded = line_up_frame(
                     &mut state.renderer,
                     &state.disk,
                     &mut state.disk_wanted,
                     key,
-                    lumit_render::FrameProvenance {
-                        comp: comp_ref.id,
-                        frame,
-                        scale_q: lumit_render::preview_scale_q(quality),
-                    },
+                    provenance,
                 );
                 // An upload is this turn's work, exactly as a render would be:
                 // a request arriving mid-fill then waits for one frame, not for
                 // a window's worth. Asking the disk costs this thread nothing,
                 // so the walk carries on queueing those.
                 if uploaded {
+                    mark_banked(
+                        state.published_bar,
+                        &mut state.bar_strip,
+                        &mut state.bar_dirty,
+                        comp_ref.id,
+                        frame,
+                        provenance.scale_q,
+                    );
                     _ = stream.add(WorkerResponse::CacheFilled);
                     state.fill_exhausted = false;
                     return;
@@ -1394,7 +1491,7 @@ fn chase_audio(playback: &mut Playback, frame: u64, since_present: Option<std::t
     let period = std::time::Duration::from_secs_f64(1.0 / fps);
     // The first picture of a run has nothing to be measured against, thus it
     // counts as on time rather than as evidence of a slow one.
-    let on_time = since_present.is_none_or(|gap| gap <= period.mul_f64(LATE_ENOUGH_TO_STOP));
+    let on_time = since_present.is_none_or(|gap| gap <= on_time_limit(period));
     playback.on_time_run = if on_time {
         playback.on_time_run.saturating_add(1)
     } else {
@@ -1459,6 +1556,24 @@ fn audio_chase(held: bool, on_time: bool, run: u32) -> AudioChase {
 /// rate anybody would call correct: at 24 fps it makes 52 ms the limit, which is
 /// 19 pictures a second. Slower than that and the sound stops.
 const LATE_ENOUGH_TO_STOP: f64 = 1.25;
+
+/// The floor under the quarter-period allowance, and why proportional alone is
+/// wrong: at 120 fps a quarter of the period is two milliseconds, which is
+/// inside the jitter of an ordinary scheduler wake — the sound stopped over
+/// pictures that were holding the rate to the eye. The ear judges A/V slip in
+/// milliseconds, not in frames, so the allowance never shrinks below a fixed
+/// few of them however fast the composition runs.
+const MIN_AUDIO_SLACK: std::time::Duration = std::time::Duration::from_millis(5);
+
+/// The gap between two pictures beyond which the later one counts late:
+/// the comp period plus a quarter of it, floored at [`MIN_AUDIO_SLACK`].
+#[frb(ignore)]
+fn on_time_limit(period: std::time::Duration) -> std::time::Duration {
+    period
+        + period
+            .mul_f64(LATE_ENOUGH_TO_STOP - 1.0)
+            .max(MIN_AUDIO_SLACK)
+}
 
 /// How many pictures in a row must arrive on time before the sound starts again.
 ///
@@ -1578,6 +1693,34 @@ pub struct RenderCompRequestWithPreview {
     pub text: Option<crate::api::assets::BridgeTextDocument>,
 }
 
+/// Ask the operating system for 1 ms sleep granularity (Windows; a no-op
+/// elsewhere, where sleeps are already fine-grained).
+///
+/// The worker paces presents with short sleeps, and Windows rounds a sleep UP
+/// to the system timer's next tick — by default ~15.6 ms apart. That is twice
+/// a 120 fps frame period: every sleep-then-present overshot its due time, the
+/// present grid re-anchored, and the achieved rate fell to whatever the timer
+/// allowed (~85 of 120 in practice; at 60 fps the grid held but presents
+/// jittered by several milliseconds, which is what kept stopping the sound).
+/// One millisecond is the granularity every media application requests; the
+/// setting is process-wide and lives for the process, exactly as it does in
+/// any NLE. A refusal is harmless — pacing then leans on the spin window
+/// alone.
+#[cfg(windows)]
+#[frb(ignore)]
+fn raise_timer_resolution() {
+    // SAFETY: `timeBeginPeriod` touches no memory owned by this program; it
+    // adjusts a scheduler setting and reports acceptance or refusal in its
+    // return value, which is ignored because a refusal leaves nothing to do.
+    unsafe {
+        let _ = windows::Win32::Media::timeBeginPeriod(1);
+    }
+}
+
+#[cfg(not(windows))]
+#[frb(ignore)]
+fn raise_timer_resolution() {}
+
 #[frb(ignore)]
 pub fn run_worker(project: ProjectReference, stream: WorkerResponseStream) {
     let (send_to_worker, receive_from_app) = std::sync::mpsc::channel::<WorkerRequest>();
@@ -1606,6 +1749,7 @@ fn worker_loop(
 ) {
     println!("Worker thread started");
     let mut stream = stream;
+    raise_timer_resolution();
 
     // No renderer means no Viewer, but the editor itself stays usable — the
     // worker just stops instead of taking the process down with it.
@@ -1647,6 +1791,7 @@ fn worker_loop(
         published_bar: None,
         bar_strip: Vec::new(),
         bar_refined_to: 0,
+        bar_dirty: false,
         bar_published_at: std::time::Instant::now() - BAR_MIN_INTERVAL,
         fill_exhausted: true,
         backup_exhausted: true,
@@ -1655,7 +1800,7 @@ fn worker_loop(
     };
 
     loop {
-        sync_caches(&mut state);
+        sync_caches(&mut state, &mut stream);
 
         // While playing the worker has work of its own, so it must not block on
         // the channel — it takes whatever has arrived and gets on with the next
@@ -1922,17 +2067,28 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                         },
                     );
                     if let Some(key) = name {
-                        _ = line_up_frame(
+                        let provenance = lumit_render::FrameProvenance {
+                            comp: comp_id,
+                            frame: future,
+                            scale_q: lumit_render::preview_scale_q(quality),
+                        };
+                        let uploaded = line_up_frame(
                             &mut state.renderer,
                             &state.disk,
                             &mut state.disk_wanted,
                             key,
-                            lumit_render::FrameProvenance {
-                                comp: comp_id,
-                                frame: future,
-                                scale_q: lumit_render::preview_scale_q(quality),
-                            },
+                            provenance,
                         );
+                        if uploaded {
+                            mark_banked(
+                                state.published_bar,
+                                &mut state.bar_strip,
+                                &mut state.bar_dirty,
+                                comp_id,
+                                future,
+                                provenance.scale_q,
+                            );
+                        }
                     }
                 }
                 if ahead_to >= from {
@@ -3419,9 +3575,75 @@ mod tests {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod bar_strip_tests {
     use super::{
-        audio_chase, refine_bar_strip, sample_bar_strip, wants_disk_lead, AudioChase,
-        AUDIO_REALTIME_FRAMES,
+        audio_chase, mark_banked, on_time_limit, refine_bar_strip, sample_bar_strip,
+        wants_disk_lead, AudioChase, BarFingerprint, AUDIO_REALTIME_FRAMES,
     };
+
+    /// **The stripe greens while playback lays frames down.** The sweep walks
+    /// forward from the playhead, so the frames playback just banked — behind
+    /// it — were the last it reached, and the stripe sat unchanged until a
+    /// pause. A banked frame is painted straight into the strip instead; the
+    /// paint only lands when the strip being shown is of that comp at that
+    /// scale, and only sets the dirty flag when it actually changed a pixel
+    /// (the flag is what nudges the frontend to redraw).
+    #[test]
+    fn a_banked_frame_paints_its_own_strip_slot() {
+        let comp = uuid::Uuid::now_v7();
+        let fingerprint = BarFingerprint {
+            comp,
+            frames: 4,
+            scale_q: 1000,
+            revision: 0,
+            vram_version: 0,
+            ram_entries: 0,
+            disk_entries: 0,
+        };
+        let mut strip = vec![0u8, 0, 0, 0];
+        let mut dirty = false;
+
+        mark_banked(Some(fingerprint), &mut strip, &mut dirty, comp, 2, 1000);
+        assert_eq!(strip, vec![0, 0, 2, 0], "the banked frame reads held");
+        assert!(dirty, "a changed pixel asks for a redraw");
+
+        // The same frame again changes nothing, so it asks for nothing.
+        dirty = false;
+        mark_banked(Some(fingerprint), &mut strip, &mut dirty, comp, 2, 1000);
+        assert!(!dirty, "an unchanged pixel is not a redraw");
+
+        // Another comp, another scale, a frame past the strip, no strip at
+        // all: each is left alone rather than painting the wrong stripe.
+        mark_banked(
+            Some(fingerprint),
+            &mut strip,
+            &mut dirty,
+            uuid::Uuid::now_v7(),
+            1,
+            1000,
+        );
+        mark_banked(Some(fingerprint), &mut strip, &mut dirty, comp, 1, 500);
+        mark_banked(Some(fingerprint), &mut strip, &mut dirty, comp, 99, 1000);
+        mark_banked(None, &mut strip, &mut dirty, comp, 1, 1000);
+        assert_eq!(strip, vec![0, 0, 2, 0]);
+        assert!(!dirty);
+    }
+
+    /// The audio chase's lateness allowance is a quarter of the frame period —
+    /// floored at a few milliseconds, because at high comp rates a quarter
+    /// period shrinks inside ordinary scheduler jitter and the sound stopped
+    /// over pictures that were holding the rate to the eye.
+    #[test]
+    fn the_on_time_allowance_never_shrinks_inside_scheduler_jitter() {
+        let at = |fps: f64| on_time_limit(std::time::Duration::from_secs_f64(1.0 / fps));
+        // 24 fps: the proportional allowance stands (41.7 + 10.4 ms).
+        assert!((at(24.0).as_secs_f64() - (1.25 / 24.0)).abs() < 1e-9);
+        // 120 fps: a quarter period would be ~2 ms; the floor holds instead
+        // (8.3 + 5 ms), so one scheduler tick of jitter is not "late".
+        let limit = at(120.0).as_secs_f64();
+        assert!(
+            (limit - (1.0 / 120.0 + 0.005)).abs() < 1e-9,
+            "floored allowance, got {limit}"
+        );
+    }
 
     /// **The sound stops the moment the picture stops keeping time, and comes
     /// back to the picture once the picture has held the rate.**
