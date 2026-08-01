@@ -769,8 +769,13 @@ class LumitUiState extends ChangeNotifier {
   StreamSubscription? sub;
   StreamSubscription? _changes;
 
+  /// The session's engine-facing state. Held because the comp list it caches
+  /// is what says which comps still exist (K-184).
+  final LumitState _app;
+
   LumitUiState(LumitState state, {Workspace? workspace})
-      : workspace = workspace ?? (Workspace()..load()) {
+      : _app = state,
+        workspace = workspace ?? (Workspace()..load()) {
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
@@ -780,6 +785,9 @@ class LumitUiState extends ChangeNotifier {
     // hangs off its refresh rather than off each of the several ways a layer
     // can disappear.
     model.addListener(_dropVanishedFromSelection);
+    // And the same for the comp the model itself is bound to: it can be undone
+    // out of existence while it is the one being looked at.
+    model.addListener(_frontLiveCompIfFrontedOneHasGone);
     // The keymap: restored from the workspace if the user has changed one,
     // otherwise the engine's shipped defaults (K-199). Held here because
     // every keypress goes through it and the settings page edits it, so it
@@ -896,13 +904,74 @@ class LumitUiState extends ChangeNotifier {
   /// only closes the tab — the comp stays in the project.
   final List<UuidValue> openComps = [];
 
+  /// The comp fronted before this one, so a comp that vanishes under the user
+  /// can put them back where they came from rather than somewhere arbitrary.
+  UuidValue? _previousComp;
+
   void setSelectedComp(CompositionReference? reference) {
     if (reference != null && !openComps.contains(reference.internalid)) {
       openComps.add(reference.internalid);
     }
+    if (reference?.internalid != _selectedComp?.internalid) {
+      _previousComp = _selectedComp?.internalid;
+    }
     _selectedComp = reference;
     model.bind(reference);
     notifyListeners();
+  }
+
+  /// **A comp can be taken out from under the user.** Pre-compose, step into
+  /// the new comp, undo: the layer comes back and the comp it pointed at stops
+  /// existing, with the Timeline still fronting it. Every panel then reads a
+  /// comp the engine has never heard of, which is what put a bridge error on
+  /// screen where the timeline should be.
+  ///
+  /// So the same rule the layer selection follows (K-238) applies to the
+  /// fronted comp: what has gone cannot stay fronted. Where to go instead, in
+  /// order — the comp the user was in before this one, if it is still there;
+  /// else the nearest open tab, left first and then right; else nothing
+  /// fronted at all, which is the state the shell starts in and draws fine.
+  void _frontLiveCompIfFrontedOneHasGone() {
+    if (!model.compGone) return;
+    final gone = _selectedComp!.internalid;
+    final known = {
+      for (final (comp, _) in _app.comps()) comp.internalid: comp,
+    };
+    final where = openComps.indexOf(gone);
+    final at = where < 0 ? 0 : where;
+    openComps.remove(gone);
+
+    // Where the user came from, then leftwards from where the gone tab stood,
+    // then rightwards — after the removal the tab that stood at `at` is the
+    // right-hand neighbour.
+    final order = <UuidValue?>[
+      _previousComp,
+      for (var i = at - 1; i >= 0; i--) openComps[i],
+      for (var i = at; i < openComps.length; i++) openComps[i],
+    ];
+    CompositionReference? next;
+    for (final id in order) {
+      final candidate = id == null ? null : known[id];
+      // Asked of the engine, not of the cached item walk: the walk is only
+      // re-read when the change stream says the tree moved, and this runs on
+      // the model's refresh, which can be the earlier of the two. Fronting a
+      // comp that is *also* gone would land straight back here.
+      if (candidate != null && _stillThere(candidate)) {
+        next = candidate;
+        break;
+      }
+    }
+    _previousComp = null;
+    setSelectedComp(next);
+  }
+
+  bool _stillThere(CompositionReference comp) {
+    try {
+      comp.getSettings();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Close a comp's Timeline tab. When the closed tab was fronted, [fallback]

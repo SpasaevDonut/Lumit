@@ -11,6 +11,7 @@ import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/project_item.dart';
 
 import 'package:lumit_flutter/state/tools.dart';
 
@@ -100,6 +101,63 @@ void main() {
       await tester.pump();
       expect(p.uiState.selectedComp, isNull);
       expect(find.textContaining('Open a composition'), findsOneWidget);
+    });
+
+    /// **The bridge error where the Timeline should be.** Pre-compose, step
+    /// into the new comp, undo: the layers come back and the comp they were
+    /// packed into stops existing — with the Timeline still fronting it, every
+    /// panel read a comp the engine had never heard of. What has gone cannot
+    /// stay fronted, so the user goes back where they came from.
+    testWidgets('undoing away the fronted comp goes back to the previous one',
+        (tester) async {
+      final p = withComp();
+      p.comp.addSolidLayer();
+      final packed = p.comp.precompose(
+        layerIds: [p.comp.getLayers().single.internallayerId],
+        name: 'Packed',
+        leaveAttributes: false,
+        adjustDuration: false,
+      );
+      final inner = switch (packed.getSourceItem()!) {
+        ItemReference_Composition(:final field0) => field0,
+        _ => throw StateError('a Precomp layer draws from a composition'),
+      };
+      p.uiState.setSelectedComp(inner);
+      await mount(tester, p);
+      expect(p.uiState.selectedComp?.internalid, inner.internalid);
+
+      p.state.project!.undo();
+      p.uiState.model.refresh();
+      await tester.pump();
+
+      expect(p.uiState.selectedComp?.internalid, p.comp.internalid,
+          reason: 'the comp the user came from fronts again');
+      expect(find.byKey(ValueKey<String>('tl-tab-${inner.internalid}')),
+          findsNothing, reason: 'and the tab it had goes with it');
+      expect(tester.takeException(), isNull);
+    });
+
+    /// With nowhere to go back to — the comp the user came from has gone too
+    /// — the nearest open tab takes over, looking left before right.
+    testWidgets('a vanished comp falls back to the nearest open tab',
+        (tester) async {
+      final p = withComp();
+      final second = p.state.project!.newComposition(name: 'Titles');
+      p.uiState.setSelectedComp(second);
+      final third = p.state.project!.newComposition(name: 'Doomed');
+      p.uiState.setSelectedComp(third);
+      await mount(tester, p);
+
+      // Both the fronted comp and the one the user came from go.
+      for (final comp in [second, third]) {
+        ItemReference.composition(comp).delete();
+      }
+      p.uiState.model.refresh();
+      await tester.pump();
+
+      expect(p.uiState.selectedComp?.internalid, p.comp.internalid,
+          reason: 'the nearest tab still standing, to the left');
+      expect(tester.takeException(), isNull);
     });
 
     testWidgets('search narrows the outline to matching rows', (tester) async {

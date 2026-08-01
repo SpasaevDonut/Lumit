@@ -152,6 +152,32 @@ void main() {
     expect(it.workspace.precomposeOpenNewComp, isTrue);
   });
 
+  /// The name label sits on one line beside its field, and the duration
+  /// checkbox is indented under the choices it qualifies rather than sitting
+  /// flush with them.
+  testWidgets('the name asks on one line and the duration sits under the '
+      'choices', (tester) async {
+    await open(tester);
+
+    final label = find.text('New composition name');
+    final labelBox = tester.getSize(label);
+    final oneLine = tester.renderObject<RenderBox>(label).getMaxIntrinsicHeight(
+          double.infinity,
+        );
+    expect(labelBox.height, oneLine, reason: 'the label does not wrap');
+
+    final adjust = tester.getTopLeft(
+        find.byKey(const ValueKey('precompose-adjust-duration')));
+    final move =
+        tester.getTopLeft(find.byKey(const ValueKey('precompose-move')));
+    expect(adjust.dx, greaterThan(move.dx),
+        reason: 'indented under the attribute choices');
+
+    // A label that will not wrap can still overflow its row, which Flutter
+    // reports as an exception rather than by drawing anything wrong.
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('cancelling changes nothing', (tester) async {
     final it = await open(tester);
 

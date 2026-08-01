@@ -100,6 +100,14 @@ class CompModel extends ChangeNotifier {
   List<BridgeLayerEntry> get heldLayers => _model?.layers ?? const [];
   BigInt? get heldRevision => _revision;
 
+  /// The comp this model is bound to has gone — deleted, or undone out of
+  /// existence — rather than merely being empty. A comp that is *there* always
+  /// reads as a model, even with no layers in it, so the pair below says
+  /// exactly one thing: something is fronted, and the engine has never heard
+  /// of it. Whoever fronted it is the one that has to move on ([_freshen]
+  /// already refuses to throw), and this is how they find out for free.
+  bool get compGone => _comp != null && _model == null;
+
   /// Point the model at [comp] (or null) and read it.
   void bind(CompositionReference? comp) {
     _comp = comp;

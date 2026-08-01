@@ -166,7 +166,7 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     return FloatSurface(
-      width: 420,
+      width: 440,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -179,12 +179,12 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
               textAlign: TextAlign.center,
             ),
           ),
+          // The label and its field share one line: the name is short, and a
+          // wrapped label beside a box reads as two questions rather than one.
           Row(
             children: [
-              SizedBox(
-                width: 120,
-                child: Text('New composition name', style: t.small),
-              ),
+              Text('New composition name', style: t.small, softWrap: false),
+              const SizedBox(width: 8),
               Expanded(
                 child: HouseTextField(
                   key: const ValueKey('precompose-name'),
@@ -204,13 +204,9 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
             enabled: _single,
             onPick: () => setState(() => _moveAttributes = false),
             label: "Leave all attributes in '${widget.parentCompName}'",
-            caption: _single
-                ? "The new composition holds '${widget.layerName}' on its own, "
-                    'and becomes the source of the layer standing here — so the '
-                    'transform, effects and masks keep acting on it from this '
-                    'composition.'
-                : 'Only available for a single layer: a stack has no one layer '
-                    'for its attributes to stay on.',
+            caption: 'Use this option to create a new intermediate composition '
+                "with only '${widget.layerName}' in it. The new composition "
+                'will become the source to the current layer.',
           ),
           const SizedBox(height: 12),
           _choice(
@@ -220,16 +216,21 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
             enabled: true,
             onPick: () => setState(() => _moveAttributes = true),
             label: 'Move all attributes into the new composition',
-            caption: 'The selected layers move whole — transforms, effects, '
-                'masks and all — into a composition of their own.',
+            caption: 'Use this option to place the currently selected layers '
+                'together into a new intermediate composition.',
           ),
           const SizedBox(height: 14),
-          _check(
-            t,
-            key: 'precompose-adjust-duration',
-            value: _adjustDuration,
-            onChanged: (v) => setState(() => _adjustDuration = v),
-            label: 'Adjust the duration to the span of the selected layers',
+          // Indented under the choices above: it qualifies the new composition
+          // they make, rather than standing beside them as a third choice.
+          Padding(
+            padding: const EdgeInsets.only(left: 22),
+            child: _check(
+              t,
+              key: 'precompose-adjust-duration',
+              value: _adjustDuration,
+              onChanged: (v) => setState(() => _adjustDuration = v),
+              label: 'Adjust the duration to the span of the selected layers',
+            ),
           ),
           const SizedBox(height: 8),
           _check(
@@ -308,7 +309,17 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
             ),
             Padding(
               padding: const EdgeInsets.only(left: 22, top: 4),
-              child: Text(caption, style: t.caption.copyWith(height: 1.3)),
+              child: Text(
+                caption,
+                style: t.caption.copyWith(
+                  height: 1.3,
+                  // A dimmed explanation under a dimmed choice: it describes
+                  // something that is not on offer for this selection.
+                  color: enabled
+                      ? t.textMuted
+                      : t.textMuted.withValues(alpha: 0.5),
+                ),
+              ),
             ),
           ],
         ),

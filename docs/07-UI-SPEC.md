@@ -663,6 +663,13 @@ touching the file (K-024):
 One Timeline panel; one tab per open comp. Left: the layer outline. Right: time ruler and
 lane area. The divider is draggable.
 
+**A comp that stops existing cannot stay fronted.** Deleting the fronted comp, or undoing the
+pre-compose that made it while standing inside it, leaves the panels pointed at something the
+engine no longer has. The Timeline MUST front something else instead, in this order: the comp
+the user was in before this one, if it is still there; else the nearest open tab, looking left
+before right; else nothing at all, which is the state the panel already draws a placeholder
+for. This has a regression test.
+
 ### 4.1 Time ruler region
 
 Top to bottom: **markers ribbon**, **time ruler**, **work area bar**, **cache bar**, then
