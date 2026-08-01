@@ -20,6 +20,7 @@ import 'package:lumit_flutter/panels/layer_fold_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/state/timeline_columns.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -385,6 +386,39 @@ void main() {
           reason: 'ONE undo returns the opacity it had before the drag');
     });
 
+    /// **A mask opacity drag shows while it is dragged** (K-240). The last of
+    /// the three whole-list rows to preview: K-234 staged it so the drag was one
+    /// undo step, which left the picture still until the button came up, and
+    /// K-239 fixed exactly that for paint and shape art.
+    testWidgets('a mask opacity drag shows before it commits', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      final field = find.byKey(ValueKey<String>('tl-mask-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+
+      expect(layer.getMasks().single.opacity, 100,
+          reason: 'a drag in flight writes nothing');
+      expect(
+          find.descendant(of: field, matching: find.textContaining('100%')),
+          findsNothing,
+          reason: 'the row shows the value being dragged, not the stored one');
+      expect(tester.takeException(), isNull,
+          reason: 'the preview request is a courtesy and never a crash');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.opacity, lessThan(100),
+          reason: 'the release is what commits');
+    });
+
     /// **A mask row is a property row (K-234).** It joins the same selection
     /// every other row is in, so it lights up, the heading holding it marks
     /// itself, and Delete has something to act on.
@@ -441,6 +475,226 @@ void main() {
           reason: 'and its layer is still there');
       expect(find.text('Masks'), findsNothing,
           reason: 'the heading goes with the last mask under it');
+    });
+
+    /// Paint strokes list under their own heading, between Masks and Effects —
+    /// the order the picture is built in (K-227).
+    testWidgets('a painted layer grows a Paint heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      final twirl =
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}'));
+      await tester.tap(twirl);
+      await tester.pumpAndSettle();
+      expect(find.text('Paint'), findsNothing,
+          reason: 'an empty heading is a promise the row cannot keep');
+
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await tester.pumpAndSettle();
+
+      expect(find.text('Paint'), findsOneWidget);
+      await tester.tap(find.byKey(
+          ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+      expect(find.text('Brush 1'), findsOneWidget);
+
+      // And the row's opacity writes through to the document.
+      final stroke = layer.getPaint().single;
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-stroke-opacity-${stroke.id}')), '40');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(layer.getPaint().single.opacity, 40);
+    });
+
+    /// **A stroke's opacity was not undoable.** The same fault the mask row had
+    /// under K-234, and for the same reason: the row was written from the mask
+    /// row as it stood *before* that fix, so it committed on every tick of the
+    /// drag. A drag left a stack of near-identical ops and one `Ctrl+Z` backed
+    /// out a single percent, which reads as undo not working at all.
+    testWidgets('dragging a stroke opacity is ONE undo step', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+
+      final id = layer.getPaint().single.id;
+      final field = find.byKey(ValueKey<String>('tl-stroke-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect(layer.getPaint().single.opacity, lessThan(100),
+          reason: 'the drag reached the stroke');
+
+      p.state.project!.undo();
+      expect(layer.getPaint().single.opacity, 100,
+          reason: 'ONE undo returns the opacity it had before the drag');
+    });
+
+    /// **A dragged stroke opacity shows while it is dragged** (K-239).
+    ///
+    /// Staging the drag made it one undo step (K-238) but stopped the picture
+    /// moving until the button came up — the wrong half of the bargain. The
+    /// tick previews and the release commits, so the row reads the value under
+    /// the pointer while the document still holds the old one.
+    testWidgets('a stroke opacity drag shows before it commits', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      layer.addStroke(
+        stroke: BridgeStroke(
+          id: UuidValue.fromString(const Uuid().v4()),
+          name: 'Brush 1',
+          points: const [
+            BridgeStrokePoint(x: 10, y: 10),
+            BridgeStrokePoint(x: 40, y: 25),
+          ],
+          colour: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+          width: 20,
+          hardness: 0.8,
+          opacity: 100,
+          mode: BridgePaintMode.paint,
+          cloneOffsetX: 0,
+          cloneOffsetY: 0,
+        ),
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-group-${layer.internallayerId}/paint')));
+      await tester.pumpAndSettle();
+
+      final id = layer.getPaint().single.id;
+      final field = find.byKey(ValueKey<String>('tl-stroke-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+
+      // Mid-drag: the row is showing the value under the pointer, and asking
+      // the engine to draw it — but nothing has been written.
+      expect(layer.getPaint().single.opacity, 100,
+          reason: 'a drag in flight writes nothing');
+      expect(
+          find.descendant(of: field, matching: find.textContaining('100%')),
+          findsNothing,
+          reason: 'the row shows the value being dragged, not the stored one');
+      expect(tester.takeException(), isNull,
+          reason: 'the preview request is a courtesy and never a crash');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(layer.getPaint().single.opacity, lessThan(100),
+          reason: 'the release is what commits');
+    });
+
+    /// A shape layer lists its art under a Contents heading, above Masks and
+    /// Effects — the order the picture is built in (K-237).
+    testWidgets('a shape layer grows a Contents heading in its twirl-down',
+        (tester) async {
+      final p = withComp();
+      BridgeVertex corner(double x, double y) => BridgeVertex(
+          x: x, y: y, tanInX: 0, tanInY: 0, tanOutX: 0, tanOutY: 0);
+      final layer = p.comp.addShapeLayer(
+        name: 'Rectangle',
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: 'Rectangle',
+            vertices: [
+              corner(0, 0),
+              corner(60, 0),
+              corner(60, 40),
+              corner(0, 40),
+            ],
+            closed: true,
+            fill: const BridgeColourRgba(r: 1, g: 0, b: 0, a: 1),
+            stroke: null,
+            strokeWidth: 0,
+            opacity: 100,
+          ),
+        ],
+      );
+      p.uiState.model.refresh();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pumpAndSettle();
+      expect(find.text('Contents'), findsOneWidget);
+
+      await tester.tap(find.byKey(
+          ValueKey<String>('tl-group-${layer.internallayerId}/contents')));
+      await tester.pumpAndSettle();
+      expect(find.text('Rectangle'), findsWidgets);
+
+      // The row's opacity writes through to the document.
+      final item = layer.getShapeContents().single;
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(ValueKey<String>('tl-shape-opacity-${item.id}')), '30');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pumpAndSettle();
+      expect(layer.getShapeContents().single.opacity, 30);
     });
 
     testWidgets('without a composition it says so', (tester) async {

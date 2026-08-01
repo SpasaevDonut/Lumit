@@ -22,6 +22,7 @@
 // own [lumitIcon] set, and drawing one on a canvas would mean a second copy of
 // every glyph.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
@@ -43,7 +44,7 @@ import '../icons/icons.dart';
 /// [onPointer] is given the position in this widget's own coordinates, and null
 /// when the pointer has left — which is what a drawn pointer should draw
 /// nothing for.
-class DrawnPointerRegion extends StatelessWidget {
+class DrawnPointerRegion extends StatefulWidget {
   final ValueChanged<Offset?> onPointer;
 
   /// The system cursor underneath. Hidden for everything that draws its own,
@@ -60,16 +61,86 @@ class DrawnPointerRegion extends StatelessWidget {
   });
 
   @override
+  State<DrawnPointerRegion> createState() => _DrawnPointerRegionState();
+}
+
+class _DrawnPointerRegionState extends State<DrawnPointerRegion> {
+  /// Which mouse the events are arriving from, for the cursor request below.
+  int? _device;
+
+  /// Whether the pointer is over this region at all — there is nothing to hide
+  /// when it is not.
+  bool _inside = false;
+
+  @override
+  void initState() {
+    super.initState();
+    HardwareKeyboard.instance.addHandler(_onKey);
+  }
+
+  @override
+  void dispose() {
+    HardwareKeyboard.instance.removeHandler(_onKey);
+    super.dispose();
+  }
+
+  /// Every key, because the point is not *which* key it was (K-235).
+  ///
+  /// Alt is the one that does this on Windows — it is the key reserved for the
+  /// window menu, and pressing it takes the pointer's own state with it — but a
+  /// tool has no business enumerating the keys a platform might reserve. Any
+  /// key that brought the arrow back is a key worth hiding it after.
+  ///
+  /// Never consumed: this only watches.
+  bool _onKey(KeyEvent event) {
+    _hideSystemCursorAgain();
+    return false;
+  }
+
+  /// Ask the platform to hide the pointer again (K-235).
+  ///
+  /// The arrow comes back and sits beside the drawn pointer, which is two
+  /// pointers — exactly what hiding the system one is for. Flutter will not
+  /// re-apply a cursor by itself here, because it only does so when the answer
+  /// *changes*, and "hidden" to "hidden" is no change at all.
+  ///
+  /// So the same request Flutter's own cursor manager makes is made directly,
+  /// for the device the pointer events are arriving from. Nothing in the widget
+  /// tree moves — giving the region a new identity to force the question
+  /// instead rebuilds the gesture detector under it and drops any drag in
+  /// flight.
+  void _hideSystemCursorAgain() {
+    if (widget.cursor != SystemMouseCursors.none) return;
+    final device = _device;
+    if (device == null || !_inside) return;
+    SystemChannels.mouseCursor.invokeMethod<void>(
+      'activateSystemCursor',
+      <String, dynamic>{'device': device, 'kind': 'none'},
+    );
+  }
+
+  void _at(PointerEvent event) {
+    _device = event.device;
+    widget.onPointer(event.localPosition);
+  }
+
+  @override
   Widget build(BuildContext context) => MouseRegion(
-        cursor: cursor,
+        cursor: widget.cursor,
         // The enter is the `MouseRegion`'s alone: it fires when the panel
         // appears under a pointer that is not moving, which no move event would.
-        onEnter: (event) => onPointer(event.localPosition),
-        onExit: (_) => onPointer(null),
+        onEnter: (event) {
+          _inside = true;
+          _at(event);
+        },
+        onExit: (_) {
+          _inside = false;
+          widget.onPointer(null);
+        },
         child: Listener(
-          onPointerHover: (event) => onPointer(event.localPosition),
-          onPointerMove: (event) => onPointer(event.localPosition),
-          child: child,
+          onPointerHover: _at,
+          onPointerMove: _at,
+          child: widget.child,
         ),
       );
 }

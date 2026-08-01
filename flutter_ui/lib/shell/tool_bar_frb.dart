@@ -90,26 +90,49 @@ class LumitToolBarFrb extends StatelessWidget {
         builder: (context, _) => Row(
           children: [
             const SizedBox(width: 4),
-            // Scrolls rather than overflowing: a narrow window has less width
-            // than thirteen tools want, and an overflow stripe is not a design.
+            // The tools and their options take the whole left-hand end, so the
+            // workspace strip is held against the *right* edge where docs/07
+            // §1.4 puts it. Expanded rather than letting the two scroll views
+            // size themselves: a loose Flexible only takes the width it needs,
+            // which left the workspace buttons sitting immediately beside the
+            // last tool with the free space stranded past them.
             Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (final group in toolBarOrder)
-                      _ToolButton(group: group, tools: ui.tools),
+              child: Row(
+                children: [
+                  // Scrolls rather than overflowing: a narrow window has less
+                  // width than thirteen tools want, and an overflow stripe is
+                  // not a design. Flexible so the options beside it get their
+                  // share of the room instead of being squeezed to nothing
+                  // (K-227).
+                  Flexible(
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (final group in toolBarOrder)
+                            _ToolButton(group: group, tools: ui.tools),
+                        ],
+                      ),
+                    ),
+                  ),
+                  // The armed tool's own options, when it has any (K-225):
+                  // After Effects puts them here, and the strip is empty for
+                  // the tools that draw nothing.
+                  if (toolOptionsFor(ui.tools.tool) != ToolOptions.none) ...[
+                    const _ToolBarDivider(),
+                    Flexible(
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: _ToolOptions(
+                          tools: ui.tools,
+                          shows: toolOptionsFor(ui.tools.tool),
+                        ),
+                      ),
+                    ),
                   ],
-                ),
+                ],
               ),
             ),
-            // The armed tool's own options, when it has any (K-225): After
-            // Effects puts them here, and the strip is empty for the tools
-            // that draw nothing.
-            if (toolOptionsFor(ui.tools.tool) != ToolOptions.none) ...[
-              const _ToolBarDivider(),
-              _ToolOptions(tools: ui.tools, shows: toolOptionsFor(ui.tools.tool)),
-            ],
             const _ToolBarDivider(),
             const _WorkspaceStrip(),
             const SizedBox(width: 6),
@@ -127,17 +150,21 @@ enum ToolOptions {
   /// Fill and size: what the Type tool sets a new line in (K-225).
   type,
 
-  /// Fill and stroke: what a shape tool *would* draw with. Held and shown,
-  /// because they are the same two settings the Type tool uses and hiding them
-  /// would make the pair look like it only half exists — but the stroke half is
-  /// drawn disabled, since nothing in the engine strokes anything yet.
+  /// Fill and stroke: what a shape tool draws with. Both live since shape
+  /// layers landed (K-237) — a shape layer's art carries a fill colour, a
+  /// stroke colour and a stroke width, and a width of zero draws no outline.
   shape,
+
+  /// The brush: the colour it lays down, and its size, hardness and opacity
+  /// (K-227). All four live — painting is built.
+  paint,
 }
 
 /// The options [tool] shows on the toolbar.
 ToolOptions toolOptionsFor(ToolMode tool) => switch (tool.group) {
       ToolGroup.type => ToolOptions.type,
-      ToolGroup.shape || ToolGroup.pen || ToolGroup.paint => ToolOptions.shape,
+      ToolGroup.paint => ToolOptions.paint,
+      ToolGroup.shape || ToolGroup.pen => ToolOptions.shape,
       _ => ToolOptions.none,
     };
 
@@ -158,7 +185,35 @@ class _ToolOptions extends StatelessWidget {
           onPicked: (colour) => tools.fill = colour,
         ),
         const SizedBox(width: 6),
-        if (shows == ToolOptions.type)
+        if (shows == ToolOptions.paint) ...[
+          _Number(
+            label: 'Size',
+            tip: 'Brush size, in layer pixels',
+            value: tools.brushSize,
+            min: 1,
+            max: 2000,
+            suffix: ' px',
+            onChanged: (v) => tools.brushSize = v,
+          ),
+          _Number(
+            label: 'Hardness',
+            tip: 'How hard the brush\'s edge is',
+            value: tools.brushHardness,
+            min: 0,
+            max: 100,
+            suffix: '%',
+            onChanged: (v) => tools.brushHardness = v,
+          ),
+          _Number(
+            label: 'Opacity',
+            tip: 'How opaque the mark it leaves is',
+            value: tools.brushOpacity,
+            min: 0,
+            max: 100,
+            suffix: '%',
+            onChanged: (v) => tools.brushOpacity = v,
+          ),
+        ] else if (shows == ToolOptions.type)
           SizedBox(
             width: 62,
             child: LumitTooltip(
@@ -173,40 +228,71 @@ class _ToolOptions extends StatelessWidget {
             ),
           )
         else ...[
-          // Disabled rather than absent: the tools that would use a stroke are
-          // on the strip, so the setting they would use should be visible and
-          // visibly not working yet (docs/TODO.md).
-          LumitTooltip(
-            message: 'Stroke — not built yet: nothing in the engine strokes a '
-                'path',
-            child: Opacity(
-              opacity: 0.4,
-              child: _Swatch(
-                label: 'Stroke',
-                colour: tools.stroke,
-                onPicked: null,
-              ),
-            ),
+          _Swatch(
+            label: 'Stroke',
+            colour: tools.stroke,
+            onPicked: (colour) => tools.stroke = colour,
           ),
           const SizedBox(width: 6),
-          LumitTooltip(
-            message: 'Stroke width — not built yet',
-            child: Opacity(
-              opacity: 0.4,
-              child: SizedBox(
-                width: 58,
-                child: DragValueField(
-                  value: tools.strokeWidth,
-                  min: 0,
-                  max: 1000,
-                  suffix: ' px',
-                  onChanged: (_) {},
-                ),
-              ),
-            ),
+          _Number(
+            label: 'Width',
+            tip: 'Outline width of a new shape, in pixels. Zero draws none.',
+            value: tools.strokeWidth,
+            min: 0,
+            max: 1000,
+            suffix: ' px',
+            onChanged: (v) => tools.strokeWidth = v,
           ),
         ],
       ],
+    );
+  }
+}
+
+/// A labelled number on the options strip.
+class _Number extends StatelessWidget {
+  final String label;
+  final String tip;
+  final double value;
+  final double min;
+  final double max;
+  final String suffix;
+  final ValueChanged<double> onChanged;
+
+  const _Number({
+    required this.label,
+    required this.tip,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.suffix,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: LumitTooltip(
+        message: tip,
+        child: Row(
+          children: [
+            Text(label, style: t.small.copyWith(color: t.textSecondary)),
+            const SizedBox(width: 5),
+            SizedBox(
+              width: 58,
+              child: DragValueField(
+                value: value,
+                min: min,
+                max: max,
+                suffix: suffix,
+                onChanged: (v) => onChanged(v.toDouble()),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

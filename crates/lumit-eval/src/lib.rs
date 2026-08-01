@@ -548,6 +548,21 @@ fn feed_layer(
         }
     }
 
+    // Paint: strokes are stamped into the layer's own pixels before its masks
+    // gate them (K-227), so they are content in exactly the way masks are — a
+    // brush drag must retire the frames that were named before it.
+    //
+    // Hashed only when the layer carries paint, unlike masks above, which feed
+    // a `nomask` marker either way. That is deliberate: an unpainted layer —
+    // which is nearly every layer in nearly every project — has to keep the
+    // name it already had, or adding this would have thrown away every frame
+    // banked by an earlier version.
+    if !layer.paint.is_empty() {
+        h.update(b"paint");
+        let json = serde_json::to_string(&layer.paint).unwrap_or_default();
+        h.update(json.as_bytes());
+    }
+
     // Masks: static paths are plain data (animated paths will evaluate here).
     if layer.masks.is_empty() {
         h.update(b"nomask");
@@ -813,6 +828,17 @@ fn feed_source(
             // hashed at the layer level like any other layer's.
             h.update(b"adjust");
         }
+        LayerKind::Shape { contents } => {
+            // The art *is* the layer, so the art is what the key hashes: a
+            // moved vertex or a recoloured fill must retire the cached frames
+            // that drew the old one. Serialised rather than hashed field by
+            // field, so a new field on a shape item cannot quietly stop
+            // counting.
+            h.update(b"shape/");
+            if let Ok(json) = serde_json::to_vec(contents) {
+                h.update(&json);
+            }
+        }
         LayerKind::Null => {
             // No source of its own and no pixels. Only its transform matters,
             // and the caller hashes that at the layer level like every other
@@ -893,6 +919,7 @@ mod tests {
             retime: None,
             blend: Default::default(),
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: Vec::new(),
             switches: Switches::default(),
             extra: serde_json::Map::new(),
