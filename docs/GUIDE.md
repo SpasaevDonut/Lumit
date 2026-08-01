@@ -1946,6 +1946,7 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   it as a matte) — then the switch dims to say "set, but overridden". The undoable
   switch lives in ops like every edit; the cache knows collapse changes pixels, so
   toggling it re-renders.
+- **Pre-composing layers (`Ctrl+Shift+C`)** — select one or more layers and press `Ctrl+Shift+C` (or choose `Layer ▸ Pre-compose…`) to package them into a new composition. Before creating the precomp, a dialogue prompts for the new composition name, whether to leave attributes on the parent layer or move them into the new comp, whether to adjust the comp duration to the time span of the selected layers, and whether to open the new composition. Your choices are automatically remembered for next time.
 - **Blend modes** — the full After Effects colour set (T24): Normal; the darken group
   (Darken, Multiply, Colour burn, Linear burn, Darker colour); the lighten group (Add,
   Lighten, Screen, Colour dodge, Lighter colour); the contrast group (Overlay, Soft light,

@@ -642,6 +642,52 @@ class HouseCheckbox extends StatelessWidget {
   }
 }
 
+class HouseRadio extends StatelessWidget {
+  final bool selected;
+  final bool enabled;
+  final VoidCallback? onChanged;
+
+  const HouseRadio({
+    super.key,
+    required this.selected,
+    this.enabled = true,
+    this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final borderColor = !enabled
+        ? t.textMuted.withOpacity(0.4)
+        : (selected ? t.accent : t.hairlineStrong);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled ? onChanged : null,
+      child: Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(
+          color: t.surface3,
+          shape: BoxShape.circle,
+          border: Border.all(color: borderColor, width: 1.5),
+        ),
+        alignment: Alignment.center,
+        child: selected
+            ? Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: enabled ? t.accent : t.textMuted,
+                  shape: BoxShape.circle,
+                ),
+              )
+            : null,
+      ),
+    );
+  }
+}
+
 class _TickPainter extends CustomPainter {
   final Color color;
   const _TickPainter(this.color);

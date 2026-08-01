@@ -114,6 +114,13 @@ class Workspace extends ChangeNotifier {
   /// the middle of a themed shell is a thing people want to turn off.
   bool themedViewerSurround = false;
 
+  /// Working preferences for the Pre-compose dialogue (Ctrl+Shift+C).
+  /// Default: Move attributes = true, Adjust duration = true, Open new comp = false.
+  /// If changed by the user, saved straight to the workspace store.
+  bool precomposeMoveAttributes = true;
+  bool precomposeAdjustDuration = true;
+  bool precomposeOpenNewComp = false;
+
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
 
@@ -294,6 +301,18 @@ class Workspace extends ChangeNotifier {
     save();
   }
 
+  void setPrecomposeSettings({
+    required bool moveAttributes,
+    required bool adjustDuration,
+    required bool openNewComp,
+  }) {
+    precomposeMoveAttributes = moveAttributes;
+    precomposeAdjustDuration = adjustDuration;
+    precomposeOpenNewComp = openNewComp;
+    notifyListeners();
+    save();
+  }
+
   void setScheme(LumitColorScheme s) {
     colorScheme = s;
     recompose();
@@ -425,6 +444,9 @@ class Workspace extends ChangeNotifier {
         'custom_theme': customThemeName,
         'themed_scopes': themedScopes,
         'themed_viewer_surround': themedViewerSurround,
+        'precompose_move_attributes': precomposeMoveAttributes,
+        'precompose_adjust_duration': precomposeAdjustDuration,
+        'precompose_open_new_comp': precomposeOpenNewComp,
         'last_project_path': lastProjectPath,
         'sessions': {
           for (final e in sessions.entries) e.key: e.value.toJson(),
@@ -468,6 +490,9 @@ class Workspace extends ChangeNotifier {
         j['custom_theme'] is String ? j['custom_theme'] as String : null;
     themedScopes = j['themed_scopes'] == true;
     themedViewerSurround = j['themed_viewer_surround'] == true;
+    precomposeMoveAttributes = j['precompose_move_attributes'] as bool? ?? true;
+    precomposeAdjustDuration = j['precompose_adjust_duration'] as bool? ?? true;
+    precomposeOpenNewComp = j['precompose_open_new_comp'] as bool? ?? false;
     lastProjectPath = j['last_project_path'] is String
         ? j['last_project_path'] as String
         : null;

@@ -1392,6 +1392,19 @@ footage on that button (§3.1).
 layer keeps its timing, and nothing plays faster or slower — the comp is simply shown at more
 (or fewer) frames per second. This has a regression test on both sides of the bridge.
 
+### 13.4 The Pre-compose dialogue
+
+Triggered from `Ctrl+Shift+C` in the Timeline context, or from `Layer ▸ Pre-compose…`.
+When one or more layers are selected, it opens a configuration modal asking for:
+- **New composition name**: text field prefilled with a default name.
+- **Attribute handling**:
+  - *Leave all attributes in '[Comp Name]'*: available only when exactly one layer is selected. Leaves transform, effects, masks, and retime on the parent comp's Precomp layer.
+  - *Move all attributes into the new composition*: moves selected layers with all attributes into the new composition. Forced when >1 layers are selected.
+- **Adjust composition duration to the time span of the selected layers**: checkbox (default: checked). Sets the new comp's duration to the bounding span of the selected layers.
+- **Open New Composition**: checkbox (default: unchecked). Opens the newly created composition upon creation.
+
+The user's selections for attribute mode, duration adjustment, and opening preference are persisted in workspace settings across launches.
+
 ---
 
 ## 14. Interaction and accessibility rules

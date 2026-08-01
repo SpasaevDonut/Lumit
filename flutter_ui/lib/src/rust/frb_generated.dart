@@ -168,6 +168,14 @@ abstract class BridgeLibApi extends BaseApi {
   LayerReference crateApiCompositionCompositionReferenceAddPrecompLayer(
       {required CompositionReference that, required CompositionReference comp});
 
+  LayerReference crateApiCompositionCompositionReferencePrecompose({
+    required CompositionReference that,
+    required List<UuidValue> layerIds,
+    required String name,
+    required bool leaveAttributes,
+    required bool adjustDuration,
+  });
+
   LayerReference crateApiCompositionCompositionReferenceAddSequenceLayer(
       {required CompositionReference that});
 
@@ -1357,6 +1365,49 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
           const TaskConstMeta(
             debugName: "composition_reference_add_precomp_layer",
             argNames: ["that", "comp"],
+          );
+
+  @override
+  LayerReference crateApiCompositionCompositionReferencePrecompose({
+    required CompositionReference that,
+    required List<UuidValue> layerIds,
+    required String name,
+    required bool leaveAttributes,
+    required bool adjustDuration,
+  }) {
+    return handler.executeSync(SyncTask(
+      callFfi: () {
+        final serializer = SseSerializer(generalizedFrbRustBinding);
+        sse_encode_box_autoadd_composition_reference(that, serializer);
+        sse_encode_list_Uuid(layerIds, serializer);
+        sse_encode_String(name, serializer);
+        sse_encode_bool(leaveAttributes, serializer);
+        sse_encode_bool(adjustDuration, serializer);
+        return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 183)!;
+      },
+      codec: SseCodec(
+        decodeSuccessData: sse_decode_layer_reference,
+        decodeErrorData:
+            sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
+      ),
+      constMeta:
+          kCrateApiCompositionCompositionReferencePrecomposeConstMeta,
+      argValues: [that, layerIds, name, leaveAttributes, adjustDuration],
+      apiImpl: this,
+    ));
+  }
+
+  TaskConstMeta
+      get kCrateApiCompositionCompositionReferencePrecomposeConstMeta =>
+          const TaskConstMeta(
+            debugName: "composition_reference_precompose",
+            argNames: [
+              "that",
+              "layerIds",
+              "name",
+              "leaveAttributes",
+              "adjustDuration"
+            ],
           );
 
   @override
@@ -10513,6 +10564,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_bridge_preset_info(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_Uuid(List<UuidValue> self, SseSerializer serializer) {
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_Uuid(item, serializer);
     }
   }
 

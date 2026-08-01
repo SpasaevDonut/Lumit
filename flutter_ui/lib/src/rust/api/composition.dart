@@ -295,6 +295,22 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceAddPrecompLayer(
               that: this, comp: comp);
 
+  /// Precompose one or more layers into a new composition.
+  LayerReference precompose({
+    required List<UuidValue> layerIds,
+    required String name,
+    required bool leaveAttributes,
+    required bool adjustDuration,
+  }) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferencePrecompose(
+        that: this,
+        layerIds: layerIds,
+        name: name,
+        leaveAttributes: leaveAttributes,
+        adjustDuration: adjustDuration,
+      );
+
   /// Add an empty Sequence layer — a clip row spanning the comp.
   LayerReference addSequenceLayer() => BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceAddSequenceLayer(

@@ -11,6 +11,7 @@ import 'package:lumit_flutter/panels/panels_frb.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/viewer_texture_controller.dart';
 import 'package:lumit_flutter/shell/comp_settings_frb.dart';
+import 'package:lumit_flutter/shell/precompose_dialog_frb.dart';
 import 'package:lumit_flutter/shell/dock_widget.dart';
 import 'package:lumit_flutter/shell/menu_bar_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
@@ -1095,6 +1096,19 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           layer.duplicate();
           state.notifyDocumentChanged();
+        }
+      case 'layer.precompose':
+        final layers = ui.selectedLayers.value;
+        if (comp == null || layers.isEmpty) {
+          handled = false;
+        } else {
+          showPrecomposeDialogFrb(
+            context: context,
+            comp: comp,
+            selectedLayers: layers,
+            ui: ui,
+            workspace: ui.workspace,
+          );
         }
       case 'file.save':
         // Ctrl+S goes through exactly the same call the File menu's Save does
