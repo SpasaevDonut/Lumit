@@ -1417,6 +1417,35 @@ footage on that button (§3.1).
 layer keeps its timing, and nothing plays faster or slower — the comp is simply shown at more
 (or fewer) frames per second. This has a regression test on both sides of the bridge.
 
+### 13.4 The Pre-compose dialogue
+
+`Ctrl+Shift+C` in the Timeline, or `Layer ▸ Pre-compose…`, packs the selected layers into a
+comp of their own and puts that comp back in their place as a Precomp layer. Both commands are
+live only with a comp open and something selected in it; the menu item greys out otherwise.
+
+The dialogue asks two questions the engine cannot answer for the user, and one convenience:
+
+- **New composition name**, prefilled from the first selected layer. Blank falls back to the
+  engine's own `Pre-comp N`.
+- **Where the attributes go**, as an exclusive pair:
+  - *Leave all attributes in '\<this comp\>'* — the layer moves into the new comp stripped back
+    to its source, and its transform, effects, masks, Retime, blend mode and switches stay
+    behind on the Precomp layer, each of them once. Offered only for a single layer: a stack
+    has no one layer for its attributes to stay on, so with more than one selected the choice
+    is shown disabled and Move is the answer. The engine refuses the combination too.
+  - *Move all attributes into the new composition* — the selected layers move whole.
+- **Adjust the duration to the span of the selected layers** (default: on). The new comp's
+  duration becomes the selection's own span, the packed layers shift back to start at zero
+  inside it, and the Precomp layer covers the stretch the selection covered — so the picture
+  does not move. Off, the new comp is as long as this one and no layer changes time at all.
+- **Open the new composition** (default: off).
+
+The whole move is one undo step, and the new comp auto-files into the Compositions folder like
+any other (K-068). The three answers are remembered in the workspace across launches; the
+attribute choice is remembered but overridden by a multiple selection, which can only move. A
+refusal from the engine leaves the dialogue open saying so, rather than closing on a move that
+did not happen.
+
 ---
 
 ## 14. Interaction and accessibility rules

@@ -1984,8 +1984,9 @@ fn a_composition_nests_into_another_but_not_into_itself() {
     assert_eq!(outer.get_layers().expect("layers").len(), 1);
 }
 
-/// Precompose packs the chosen layers into a new comp and leaves one Precomp
-/// layer where the topmost of them stood — timing untouched, one undo step.
+/// Precompose moving every attribute: the chosen layers go into a new comp as
+/// they were, one Precomp layer stands where the topmost of them stood, timing
+/// is untouched, and the whole move is one undo step.
 #[test]
 fn precompose_packs_the_chosen_layers_and_leaves_one_precomp_behind() {
     use crate::api::layer::BridgeLayerKind;
@@ -2001,7 +2002,12 @@ fn precompose_packs_the_chosen_layers_and_leaves_one_precomp_behind() {
         .collect();
 
     let packed = comp
-        .precompose(&[middle, bottom], None)
+        .precompose(
+            vec![middle.layer_id, bottom.layer_id],
+            String::new(),
+            false,
+            false,
+        )
         .expect("precomposed");
 
     // The two go, the untouched one stays, and the new layer takes the deeper
@@ -2050,19 +2056,104 @@ fn precompose_refuses_nothing_and_survives_a_stray_reference() {
     let theirs = other.add_solid_layer().expect("solid");
 
     assert!(matches!(
-        comp.precompose(&[], None),
+        comp.precompose(Vec::new(), String::new(), false, false),
         Err(BridgeError::InvalidLayer)
     ));
     assert!(matches!(
-        comp.precompose(&[theirs], None),
+        comp.precompose(vec![theirs.layer_id], String::new(), false, false),
         Err(BridgeError::InvalidLayer)
     ));
 
     // The stray one is dropped; the layer that *is* here still packs.
-    comp.precompose(&[mine, theirs], Some("Packed".into()))
-        .expect("precomposed");
+    comp.precompose(
+        vec![mine.layer_id, theirs.layer_id],
+        "Packed".into(),
+        false,
+        false,
+    )
+    .expect("precomposed");
     assert_eq!(comp.get_layers().expect("layers").len(), 1);
     assert_eq!(other.get_layers().expect("layers").len(), 1);
+}
+
+/// Leaving the attributes behind: the layer moves into the new comp stripped
+/// back to its source, and the Precomp layer standing in its place carries the
+/// effect stack — once, never on both, which would apply it twice.
+#[test]
+fn precompose_leaving_attributes_keeps_them_on_the_precomp_layer_only() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let solid = comp.add_solid_layer().expect("solid");
+    solid.add_effect("blur".into()).expect("effect");
+    let second = comp.add_solid_layer().expect("solid");
+    // Two layers have no single layer to leave the attributes on, so this is
+    // refused outright rather than applied to one of them.
+    assert!(matches!(
+        comp.precompose(
+            vec![solid.layer_id, second.layer_id],
+            "Both".into(),
+            true,
+            false
+        ),
+        Err(BridgeError::InvalidLayer)
+    ));
+    second.delete().expect("delete");
+
+    let packed = comp
+        .precompose(vec![solid.layer_id], "Blurred".into(), true, false)
+        .expect("precomposed");
+
+    assert_eq!(packed.get_effects().expect("effects").len(), 1);
+
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    let inside = inner.get_layers().expect("layers");
+    assert_eq!(inside.len(), 1);
+    assert!(inside[0].get_effects().expect("effects").is_empty());
+}
+
+/// Adjusting the duration trims the new comp to the selection's own span: the
+/// packed layer starts at zero inside it, and the Precomp layer covers exactly
+/// the stretch the selection covered, so the picture does not move.
+#[test]
+fn precompose_adjusting_the_duration_trims_the_new_comp_to_the_selection() {
+    use crate::api::effect::BridgeRational;
+    use crate::api::layer::BridgeSpan;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let solid = comp.add_solid_layer().expect("solid");
+    // Two seconds of a thirty-second comp, starting at five.
+    let span = BridgeSpan {
+        in_point: BridgeRational { num: 5, den: 1 },
+        out_point: BridgeRational { num: 7, den: 1 },
+        start_offset: BridgeRational { num: 5, den: 1 },
+    };
+    solid.set_span(span).expect("span");
+
+    let packed = comp
+        .precompose(vec![solid.layer_id], "Trimmed".into(), false, true)
+        .expect("precomposed");
+
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    // Two seconds at the comp's rate, not the parent's thirty.
+    assert_eq!(
+        inner.duration_frames().expect("frames"),
+        2 * comp.duration_frames().expect("frames") / 30
+    );
+    // The packed layer moved back to the start of its new home.
+    let inside = inner.get_layers().expect("layers")[0]
+        .get_span()
+        .expect("span");
+    assert_eq!(inside.in_point, BridgeRational { num: 0, den: 1 });
+    assert_eq!(inside.out_point, BridgeRational { num: 2, den: 1 });
+    assert_eq!(inside.start_offset, BridgeRational { num: 0, den: 1 });
+    // And the Precomp layer stands over the moment the selection stood over,
+    // with the offset that lines inner time zero up with it.
+    assert_eq!(packed.get_span().expect("span"), span);
 }
 
 // --- The shell: boot log, tier, autosave and recovery ---------------------

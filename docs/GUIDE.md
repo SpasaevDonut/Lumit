@@ -1946,6 +1946,21 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   it as a matte) — then the switch dims to say "set, but overridden". The undoable
   switch lives in ops like every edit; the cache knows collapse changes pixels, so
   toggling it re-renders.
+- **Pre-composing (`Ctrl+Shift+C`)** — the opposite move to collapse: take layers you
+  already have and wrap them in a comp of their own, which then sits in their place as
+  a single Precomp layer. Useful when a group has grown into one thing you want to
+  treat as one thing — blur it, mask it, move it, all at once.
+
+  A dialogue asks first, because two of the choices genuinely change what you get. The
+  first is where the **attributes** go: a layer's transform, effects and masks can
+  travel into the new comp with it, or stay behind on the Precomp layer standing in its
+  place. Staying behind is the one you want when you are wrapping a layer so that
+  something can act on it *from the outside* — but it only makes sense for a single
+  layer, since a group of layers has no one layer for the attributes to stay on, so with
+  several selected the option greys out. The second is whether the new comp is as long
+  as the one it came out of, or trimmed to just the stretch the selected layers cover.
+  Either way nothing moves in time: trimming shifts the packed layers back by exactly as
+  much as it moves the Precomp layer forward. Your answers are remembered for next time.
 - **Blend modes** — the full After Effects colour set (T24): Normal; the darken group
   (Darken, Multiply, Colour burn, Linear burn, Darker colour); the lighten group (Add,
   Lighten, Screen, Colour dodge, Lighter colour); the contrast group (Overlay, Soft light,

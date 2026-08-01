@@ -23,6 +23,7 @@ import '../state/file_dialogs.dart';
 import '../widgets/controls.dart';
 import 'command_palette_frb.dart';
 import 'comp_settings_frb.dart';
+import 'precompose_dialog_frb.dart';
 import 'export_dialog_frb.dart';
 import 'recovery_dialog_frb.dart';
 import 'settings_window_frb.dart';
@@ -119,6 +120,10 @@ class LumitMenuBarFrb extends StatelessWidget {
               _retimeLabel(context),
               _onSelectedLayer(context, (l) => app.toggleRetime(l)),
             ),
+            _Item(
+              'Pre-compose…',
+              _onPrecompose(context),
+            ),
             _Item.divider(),
             _Item('Cut clip at playhead',
                 _onComp(context, (c) => _cutAtPlayhead(context, c))),
@@ -195,6 +200,22 @@ class LumitMenuBarFrb extends StatelessWidget {
     final layer = context.read<LumitUiState>().selectedLayer.value;
     if (layer == null) return null;
     return () => run(layer);
+  }
+
+  /// Pre-compose… is live only with a comp open and something selected in it —
+  /// the menu says so by greying out rather than by failing when pressed.
+  VoidCallback? _onPrecompose(BuildContext context) {
+    final ui = context.read<LumitUiState>();
+    final comp = ui.selectedComp;
+    final layers = ui.selectedLayers.value;
+    if (comp == null || layers.isEmpty) return null;
+    return () => showPrecomposeDialogFrb(
+          context: context,
+          comp: comp,
+          selectedLayers: layers,
+          ui: ui,
+          workspace: ui.workspace,
+        );
   }
 
   /// What the Retime item says: the command names what it will do, so a layer

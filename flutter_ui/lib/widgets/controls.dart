@@ -642,6 +642,56 @@ class HouseCheckbox extends StatelessWidget {
   }
 }
 
+/// One of a set of choices, where the set is exclusive — the dot beside a
+/// sentence. [HouseCheckbox] is the independent one; this is the one that says
+/// "this, and therefore not that". Disabled it still shows which way the
+/// choice fell, dimmed, rather than going blank.
+class HouseRadio extends StatelessWidget {
+  final bool selected;
+  final bool enabled;
+  final VoidCallback? onChanged;
+
+  const HouseRadio({
+    super.key,
+    required this.selected,
+    this.enabled = true,
+    this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final borderColor = !enabled
+        ? t.textMuted.withValues(alpha: 0.4)
+        : (selected ? t.accent : t.hairlineStrong);
+
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled ? onChanged : null,
+      child: Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(
+          color: t.surface3,
+          shape: BoxShape.circle,
+          border: Border.all(color: borderColor, width: 1.5),
+        ),
+        alignment: Alignment.center,
+        child: selected
+            ? Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: enabled ? t.accent : t.textMuted,
+                  shape: BoxShape.circle,
+                ),
+              )
+            : null,
+      ),
+    );
+  }
+}
+
 class _TickPainter extends CustomPainter {
   final Color color;
   const _TickPainter(this.color);

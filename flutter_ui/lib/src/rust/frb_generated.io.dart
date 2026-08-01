@@ -459,6 +459,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<UuidValue> dco_decode_list_Uuid(dynamic raw);
+
+  @protected
   List<BridgeAutosave> dco_decode_list_bridge_autosave(dynamic raw);
 
   @protected
@@ -1090,6 +1093,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<String> sse_decode_list_String(SseDeserializer deserializer);
+
+  @protected
+  List<UuidValue> sse_decode_list_Uuid(SseDeserializer deserializer);
 
   @protected
   List<BridgeAutosave> sse_decode_list_bridge_autosave(
@@ -1790,6 +1796,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_Uuid(List<UuidValue> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_autosave(

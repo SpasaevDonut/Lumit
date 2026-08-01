@@ -528,31 +528,49 @@ class CompositionReference {
         that: this,
       );
 
-  /// Pack `layers` into a new composition and put that comp back in their
-  /// place as a Precomp layer — `Ctrl+Shift+C` (docs/07 §4.4).
+  /// Pack `layer_ids` into a new composition and put that comp back in their
+  /// place as a Precomp layer — the Pre-compose dialogue's one call
+  /// (`Ctrl+Shift+C`, docs/07 §13.4).
   ///
-  /// The new comp inherits this one's size, rate, duration and background
-  /// silently, which is what K-068 asks of a comp created inside an active
-  /// one. Inheriting the *duration* is also what makes the move a no-op for
-  /// timing: every packed layer keeps the in point, out point and start
-  /// offset it already had, and the Precomp layer spans the whole comp, so
-  /// the picture at any frame is the picture that was there before. Trimming
-  /// the new comp to the selection's own span would move every packed layer
-  /// to a new moment, and After Effects does not do that either.
+  /// The new comp inherits this one's size, rate, background and — unless
+  /// `adjust_duration` asks otherwise — its duration too, which is what K-068
+  /// asks of a comp created inside an active one.
+  ///
+  /// `leave_attributes` is the dialogue's first choice, and only ever offered
+  /// for a single layer: the layer moves into the new comp stripped back to
+  /// its source, and its transform, effects, masks, retime, blend and
+  /// switches stay behind on the Precomp layer, so the picture is unchanged
+  /// but the attributes now act on the nested comp. Asking for it with more
+  /// than one layer is refused rather than half-applied. Without it every
+  /// layer moves whole, and the Precomp layer is a plain centred one.
+  ///
+  /// `adjust_duration` trims the new comp to the selection's own span: its
+  /// duration becomes `max(out) - min(in)`, every packed layer shifts back by
+  /// `min(in)`, and the Precomp layer spans that same stretch with a start
+  /// offset that lines inner time zero up with it. Without it the new comp is
+  /// as long as this one and nothing moves in time at all: every packed layer
+  /// keeps the times it had, and the Precomp layer spans the whole comp.
   ///
   /// The layers go in at the depth of the topmost one, so a precompose in
-  /// the middle of a stack does not send it to the front.
-  ///
-  /// One [`Op::Batch`], so one undo step puts the layers back (K-068).
+  /// the middle of a stack does not send it to the front. The comp auto-files
+  /// into the Compositions folder however it was made (K-068), and the whole
+  /// move is one [`Op::Batch`], so one undo step puts the layers back.
   ///
   /// A packed layer whose parent or matte stayed behind keeps the id it
   /// pointed at, and the engine reads a link it cannot resolve as no link —
   /// the parent chain stops there (`layer_parent_chain`). Nothing dangles
   /// into a crash, and clearing them here would only spell the same result.
   LayerReference precompose(
-          {required List<LayerReference> layers, String? name}) =>
+          {required List<UuidValue> layerIds,
+          required String name,
+          required bool leaveAttributes,
+          required bool adjustDuration}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferencePrecompose(
-          that: this, layers: layers, name: name);
+          that: this,
+          layerIds: layerIds,
+          name: name,
+          leaveAttributes: leaveAttributes,
+          adjustDuration: adjustDuration);
 
   /// Ask for `frame` at `scale` — 1.0 meaning "shown at comp resolution".
   /// Below 1.0 the engine decodes and composites smaller, which is how a

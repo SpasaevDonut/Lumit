@@ -1551,11 +1551,12 @@ void main() {
       expect(find.text('Retime'), findsNothing);
     });
 
-    /// **`Ctrl+Shift+C` was bound and unanswered.** Precompose is one engine
-    /// call and one undo step; the panel's part is to hand it the selection and
-    /// take the layer it gets back (docs/07 §4.4).
-    testWidgets('Ctrl+Shift+C packs the selection into a comp of its own',
-        (tester) async {
+    /// **`Ctrl+Shift+C` belongs to the shell now.** Precompose asks two
+    /// questions before it packs anything (docs/07 §13.4), so the panel no
+    /// longer answers the key itself — it declines, and the shell's dialogue
+    /// takes it. What matters here is that the panel does not quietly pack the
+    /// selection on its own, which is what it used to do.
+    testWidgets('Ctrl+Shift+C is left for the shell to answer', (tester) async {
       final p = withComp();
       final lower = p.comp.addSolidLayer();
       final upper = p.comp.addSolidLayer();
@@ -1571,14 +1572,10 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       await tester.pumpAndSettle();
 
-      final after = p.comp.getLayers();
-      expect(after.length, 2, reason: 'two layers became one Precomp layer');
-      final packed = p.uiState.selectedLayer.value;
-      expect(packed, isNotNull);
-      expect(after.map((l) => l.internallayerId),
-          contains(packed!.internallayerId),
-          reason: 'the new layer is what the user is now working on');
-      expect(p.uiState.selectedLayers.value.length, 1);
+      expect(p.comp.getLayers().length, 3,
+          reason: 'nothing was packed without the dialogue being answered');
+      expect(p.uiState.selectedLayers.value.length, 2,
+          reason: 'and the selection is untouched');
     });
 
     /// **`[` and `]` were bound and unanswered too.** They move the layer so

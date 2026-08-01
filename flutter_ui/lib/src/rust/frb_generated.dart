@@ -246,8 +246,10 @@ abstract class BridgeLibApi extends BaseApi {
 
   LayerReference crateApiCompositionCompositionReferencePrecompose(
       {required CompositionReference that,
-      required List<LayerReference> layers,
-      String? name});
+      required List<UuidValue> layerIds,
+      required String name,
+      required bool leaveAttributes,
+      required bool adjustDuration});
 
   void crateApiCompositionCompositionReferenceRenderFrame(
       {required CompositionReference that,
@@ -2028,14 +2030,18 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   @override
   LayerReference crateApiCompositionCompositionReferencePrecompose(
       {required CompositionReference that,
-      required List<LayerReference> layers,
-      String? name}) {
+      required List<UuidValue> layerIds,
+      required String name,
+      required bool leaveAttributes,
+      required bool adjustDuration}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_composition_reference(that, serializer);
-        sse_encode_list_layer_reference(layers, serializer);
-        sse_encode_opt_String(name, serializer);
+        sse_encode_list_Uuid(layerIds, serializer);
+        sse_encode_String(name, serializer);
+        sse_encode_bool(leaveAttributes, serializer);
+        sse_encode_bool(adjustDuration, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 49)!;
       },
       codec: SseCodec(
@@ -2044,7 +2050,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
             sse_decode_Auto_Owned_RustOpaque_flutter_rust_bridgefor_generatedRustAutoOpaqueInnerBridgeError,
       ),
       constMeta: kCrateApiCompositionCompositionReferencePrecomposeConstMeta,
-      argValues: [that, layers, name],
+      argValues: [that, layerIds, name, leaveAttributes, adjustDuration],
       apiImpl: this,
     ));
   }
@@ -2053,7 +2059,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       get kCrateApiCompositionCompositionReferencePrecomposeConstMeta =>
           const TaskConstMeta(
             debugName: "composition_reference_precompose",
-            argNames: ["that", "layers", "name"],
+            argNames: [
+              "that",
+              "layerIds",
+              "name",
+              "leaveAttributes",
+              "adjustDuration"
+            ],
           );
 
   @override
@@ -7408,6 +7420,19 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
+  List<UuidValue> dco_decode_list_Uuid(dynamic raw) {
+    // Codec=Dco (DartCObject based), see doc to use other codecs
+    const kUuidSizeInBytes = 16;
+    final bytes = dco_decode_list_prim_u_8_strict(raw);
+    return List.generate(
+      bytes.lengthInBytes ~/ kUuidSizeInBytes,
+      (i) => UuidValue.fromByteList(
+          Uint8List.view(bytes.buffer, i * kUuidSizeInBytes, kUuidSizeInBytes)),
+      growable: false,
+    );
+  }
+
+  @protected
   List<BridgeAutosave> dco_decode_list_bridge_autosave(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     return (raw as List<dynamic>).map(dco_decode_bridge_autosave).toList();
@@ -9232,6 +9257,18 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var ans_ = <String>[];
     for (var idx_ = 0; idx_ < len_; ++idx_) {
       ans_.add(sse_decode_String(deserializer));
+    }
+    return ans_;
+  }
+
+  @protected
+  List<UuidValue> sse_decode_list_Uuid(SseDeserializer deserializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+
+    var len_ = sse_decode_i_32(deserializer);
+    var ans_ = <UuidValue>[];
+    for (var idx_ = 0; idx_ < len_; ++idx_) {
+      ans_.add(sse_decode_Uuid(deserializer));
     }
     return ans_;
   }
@@ -11083,6 +11120,15 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_i_32(self.length, serializer);
     for (final item in self) {
       sse_encode_String(item, serializer);
+    }
+  }
+
+  @protected
+  void sse_encode_list_Uuid(List<UuidValue> self, SseSerializer serializer) {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    sse_encode_i_32(self.length, serializer);
+    for (final item in self) {
+      sse_encode_Uuid(item, serializer);
     }
   }
 

@@ -426,22 +426,33 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
-    /// Pack `layers` into a new composition and put that comp back in their
-    /// place as a Precomp layer — `Ctrl+Shift+C` (docs/07 §4.4).
+    /// Pack `layer_ids` into a new composition and put that comp back in their
+    /// place as a Precomp layer — the Pre-compose dialogue's one call
+    /// (`Ctrl+Shift+C`, docs/07 §13.4).
     ///
-    /// The new comp inherits this one's size, rate, duration and background
-    /// silently, which is what K-068 asks of a comp created inside an active
-    /// one. Inheriting the *duration* is also what makes the move a no-op for
-    /// timing: every packed layer keeps the in point, out point and start
-    /// offset it already had, and the Precomp layer spans the whole comp, so
-    /// the picture at any frame is the picture that was there before. Trimming
-    /// the new comp to the selection's own span would move every packed layer
-    /// to a new moment, and After Effects does not do that either.
+    /// The new comp inherits this one's size, rate, background and — unless
+    /// `adjust_duration` asks otherwise — its duration too, which is what K-068
+    /// asks of a comp created inside an active one.
+    ///
+    /// `leave_attributes` is the dialogue's first choice, and only ever offered
+    /// for a single layer: the layer moves into the new comp stripped back to
+    /// its source, and its transform, effects, masks, retime, blend and
+    /// switches stay behind on the Precomp layer, so the picture is unchanged
+    /// but the attributes now act on the nested comp. Asking for it with more
+    /// than one layer is refused rather than half-applied. Without it every
+    /// layer moves whole, and the Precomp layer is a plain centred one.
+    ///
+    /// `adjust_duration` trims the new comp to the selection's own span: its
+    /// duration becomes `max(out) - min(in)`, every packed layer shifts back by
+    /// `min(in)`, and the Precomp layer spans that same stretch with a start
+    /// offset that lines inner time zero up with it. Without it the new comp is
+    /// as long as this one and nothing moves in time at all: every packed layer
+    /// keeps the times it had, and the Precomp layer spans the whole comp.
     ///
     /// The layers go in at the depth of the topmost one, so a precompose in
-    /// the middle of a stack does not send it to the front.
-    ///
-    /// One [`Op::Batch`], so one undo step puts the layers back (K-068).
+    /// the middle of a stack does not send it to the front. The comp auto-files
+    /// into the Compositions folder however it was made (K-068), and the whole
+    /// move is one [`Op::Batch`], so one undo step puts the layers back.
     ///
     /// A packed layer whose parent or matte stayed behind keeps the id it
     /// pointed at, and the engine reads a link it cannot resolve as no link —
@@ -450,42 +461,84 @@ impl CompositionReference {
     #[frb(sync)]
     pub fn precompose(
         &self,
-        layers: &[LayerReference],
-        name: Option<String>,
+        layer_ids: Vec<Uuid>,
+        name: String,
+        leave_attributes: bool,
+        adjust_duration: bool,
     ) -> Result<LayerReference, BridgeError> {
         use lumit_core::model::{Composition, MotionBlur, ProjectItem};
         use lumit_core::ops::AutoFolderKind;
+        use lumit_core::time::CompTime;
         use lumit_core::Op;
 
         let comp = self.composition()?;
         let doc = self.document()?;
 
-        let wanted: Vec<Uuid> = layers.iter().map(|l| l.layer_id).collect();
         // Read in stack order, not selection order, so the packed comp holds
-        // the layers the way the timeline showed them.
+        // the layers the way the timeline showed them. What is actually packed
+        // is what was actually found: an id belonging to some other comp would
+        // otherwise fail the batch on its way through `RemoveLayer` and lose
+        // the whole precompose with it.
         let packed: Vec<lumit_core::model::Layer> = comp
             .layers
             .iter()
-            .filter(|l| wanted.contains(&l.id))
+            .filter(|l| layer_ids.contains(&l.id))
             .cloned()
             .collect();
         if packed.is_empty() {
             return Err(BridgeError::InvalidLayer);
         }
-        // What is actually removed is what was actually found: a reference to a
-        // layer of some other comp would otherwise fail the batch on its way
-        // through `RemoveLayer` and lose the whole precompose with it.
-        let packed_ids: Vec<Uuid> = packed.iter().map(|l| l.id).collect();
+        // Leaving the attributes behind means there is one layer for them to
+        // act on. Asked for a stack, the dialogue offers Move instead, and the
+        // engine refuses rather than picking a layer for the user.
+        if leave_attributes && packed.len() > 1 {
+            return Err(BridgeError::InvalidLayer);
+        }
 
         // Every packed layer sits at or below this index, so the slot is still
         // a valid one once the batch's removals have run.
         let index = comp
             .layers
             .iter()
-            .position(|l| packed_ids.contains(&l.id))
+            .position(|l| packed.iter().any(|p| p.id == l.id))
             .unwrap_or(0);
 
-        let name = name.filter(|n| !n.trim().is_empty()).unwrap_or_else(|| {
+        // The selection's own span, and the shift that brings it back to zero
+        // inside the new comp. Without `adjust_duration` the shift is nothing
+        // and the span is the whole comp, which is what leaves timing alone.
+        let min_in = packed
+            .iter()
+            .map(|l| l.in_point)
+            .min()
+            .unwrap_or(CompTime::ZERO);
+        let max_out = packed
+            .iter()
+            .map(|l| l.out_point)
+            .max()
+            .unwrap_or(CompTime(comp.duration.0));
+        let span = max_out
+            .delta(min_in)
+            .map_err(|_| BridgeError::InvalidTime)?;
+        let (duration, shift, precomp_in, precomp_out) =
+            if adjust_duration && !span.0.is_zero() && !span.0.is_negative() {
+                (span, min_in, min_in, max_out)
+            } else {
+                (
+                    comp.duration,
+                    CompTime::ZERO,
+                    CompTime::ZERO,
+                    CompTime(comp.duration.0),
+                )
+            };
+        // Time moves as a whole: a layer's in point, out point and start
+        // offset all step back by the same amount, so a packed layer plays the
+        // same footage at the same moment of the Precomp layer as before.
+        let shift_back = |t: CompTime| -> Result<CompTime, BridgeError> {
+            t.sub_dur(lumit_core::time::Duration(shift.0))
+                .map_err(|_| BridgeError::InvalidTime)
+        };
+
+        let name = if name.trim().is_empty() {
             let existing = doc
                 .items
                 .iter()
@@ -494,7 +547,36 @@ impl CompositionReference {
                 )
                 .count();
             format!("Pre-comp {}", existing + 1)
-        });
+        } else {
+            name.trim().to_string()
+        };
+
+        let mut inner_layers = Vec::with_capacity(packed.len());
+        for src in &packed {
+            let mut layer = src.clone();
+            if leave_attributes {
+                // Stripped back to its source: the attributes are staying
+                // behind on the Precomp layer, and a copy on both would apply
+                // each of them twice.
+                layer.transform = crate::edits::centred_transform(
+                    f64::from(comp.width),
+                    f64::from(comp.height),
+                    comp.width,
+                    comp.height,
+                );
+                layer.effects.clear();
+                layer.masks.clear();
+                layer.retime = None;
+                layer.blend = Default::default();
+                layer.switches = Default::default();
+                layer.parent = None;
+                layer.matte = None;
+            }
+            layer.in_point = shift_back(src.in_point)?;
+            layer.out_point = shift_back(src.out_point)?;
+            layer.start_offset = shift_back(src.start_offset)?;
+            inner_layers.push(layer);
+        }
 
         let inner = Composition {
             id: Uuid::now_v7(),
@@ -502,10 +584,10 @@ impl CompositionReference {
             width: comp.width,
             height: comp.height,
             frame_rate: comp.frame_rate,
-            duration: comp.duration,
+            duration,
             background: comp.background,
             work_area: None,
-            layers: packed,
+            layers: inner_layers,
             markers: Vec::new(),
             motion_blur: MotionBlur::default(),
             extra: serde_json::Map::new(),
@@ -527,24 +609,42 @@ impl CompositionReference {
         });
         ops.push(crate::edits::file_into_folder_op(&doc, folder, inner_id));
 
-        for id in &packed_ids {
+        for layer in &packed {
             ops.push(Op::RemoveLayer {
                 comp: self.id,
-                layer: *id,
+                layer: layer.id,
             });
         }
 
-        let layer = crate::edits::base_layer(
+        let mut layer = crate::edits::base_layer(
             name,
             lumit_core::model::LayerKind::Precomp { comp: inner_id },
-            comp.duration.0,
-            crate::edits::centred_transform(
-                f64::from(comp.width),
-                f64::from(comp.height),
-                comp.width,
-                comp.height,
-            ),
+            precomp_out.0,
+            if leave_attributes {
+                packed[0].transform.clone()
+            } else {
+                crate::edits::centred_transform(
+                    f64::from(comp.width),
+                    f64::from(comp.height),
+                    comp.width,
+                    comp.height,
+                )
+            },
         );
+        layer.in_point = precomp_in;
+        layer.out_point = precomp_out;
+        // Inner time zero is the moment the new comp starts in this one, so a
+        // trimmed comp needs the offset to line the two up; an untrimmed one
+        // starts at zero and needs none.
+        layer.start_offset = shift;
+        if leave_attributes {
+            let src = &packed[0];
+            layer.effects = src.effects.clone();
+            layer.masks = src.masks.clone();
+            layer.retime = src.retime.clone();
+            layer.blend = src.blend;
+            layer.switches = src.switches.clone();
+        }
         let layer_id = layer.id;
         ops.push(Op::AddLayer {
             comp: self.id,
