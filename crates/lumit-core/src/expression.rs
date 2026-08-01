@@ -1,8 +1,10 @@
 use std::{eprintln, println};
 
 use crate::{Document, Rational};
-use rhai::{Dynamic, Engine, Scope};
+use rhai::{Dynamic, Engine, Scope, exported_module};
 use uuid::Uuid;
+
+mod math;
 
 pub struct ExpressionContext<'a> {
     pub document: &'a Document,
@@ -10,8 +12,18 @@ pub struct ExpressionContext<'a> {
     pub layer: Option<Uuid>,
 }
 
+fn make_engine() -> Engine {
+    let mut engine = Engine::new();
+    let math = exported_module!(math::math);
+
+    engine.register_global_module(math.into());
+
+    engine
+}
+
 pub fn evaluate(expression: &String, time: f64, context: Option<&ExpressionContext>) -> f64 {
-    let engine = Engine::new();
+
+    let engine = make_engine();
 
     let mut scope = Scope::new();
 
@@ -38,7 +50,7 @@ pub fn evaluate_range(
     end: f64,
     samples: i64,
 ) -> Vec<f64> {
-    let engine = Engine::new();
+    let engine = make_engine();
 
     let mut scope = Scope::new();
 
@@ -103,6 +115,11 @@ fn convert_result(result: Result<Dynamic, Box<rhai::EvalAltResult>>) -> f64 {
             -1.0
         }
     }
+}
+
+pub fn get_api_metadata() -> String {
+    let engine = make_engine();
+    engine.gen_fn_metadata_to_json(false).unwrap()
 }
 
 fn apply_context_to_scope(scope: &mut Scope<'_>, context: &ExpressionContext<'_>) {

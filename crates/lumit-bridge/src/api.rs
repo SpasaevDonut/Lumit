@@ -21,6 +21,7 @@ pub mod shell;
 pub mod solid;
 pub mod state;
 pub mod system;
+pub mod expressions;
 
 mod worker_thread;
 

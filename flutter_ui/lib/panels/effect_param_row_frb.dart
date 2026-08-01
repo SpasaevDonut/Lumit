@@ -17,6 +17,7 @@
 // the first preview tick killed the handles and the rest of the gesture threw.
 
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/data/expressions_metadata.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -240,7 +241,9 @@ class EffectParamRowFrb extends StatelessWidget {
             scalar: field0,
             setExpression: () {
               var sampled = sampleScalarWithContext(
-                  scalar: field0, time: timeOfFrame(comp, frame), layer: currentLayer);
+                  scalar: field0,
+                  time: timeOfFrame(comp, frame),
+                  layer: currentLayer);
 
               _set(BridgeEffectValue.float(
                   BridgeScalar.expression(sampled.toString())));
@@ -581,7 +584,6 @@ class EffectStackEditor {
   /// The value a row should *show*, which during a drag is the staged one.
   BridgeEffectValue? stagedValue(UuidValue effect, String param) {
     final staged = _staged;
-    print("Got staged value: $staged");
     if (staged == null) return null;
     return staged.effect == effect && staged.param == param
         ? staged.value
@@ -613,7 +615,6 @@ class EffectStackEditor {
     required int frame,
     required double scale,
   }) {
-    print("Setting staged value");
     _staged = (effect: effect, param: param, value: value);
     // The stack is read *inside* the closure: a held tick must send the newest
     // staged value, not the one that was current when it was held.
@@ -683,8 +684,8 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
   double value = 0.0;
   late ValueNotifier<int> playhead;
 
-
   String lastText = "";
+
   @override
   void initState() {
     playhead = Provider.of<LumitUiState>(context, listen: false).playheadFrame;
@@ -804,6 +805,36 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
             width: double.infinity,
             style: t.mono,
             submitOnLostFocus: true,
+            getSuggestions: (text) {
+              var items = ExpressionsMetadata.api.functions
+                  .map((i) => AutofillSuggestion(i, i.name));
+
+              return items.where((i) => i.word.startsWith(text)).toList();
+            },
+            suggestionBuilder: (suggestion) {
+              var data = suggestion.value as FunctionDef;
+              return Row(
+                spacing: 8,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    data.name,
+                    style: t.mono.copyWith(color: t.accent),
+                  ),
+                  Text(
+                    data.signature.replaceFirst(data.name, ""),
+                    style: t.mono,
+                  ),
+                  Column(
+                      children: data.docComments
+                          .map((i) => Text(
+                                i.replaceFirst("///", ""),
+                                style: t.small
+                              ))
+                          .toList()),
+                ],
+              );
+            },
             onSubmitted: (value) {
               print("Expression committed: $value");
               widget
