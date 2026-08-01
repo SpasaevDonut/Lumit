@@ -382,7 +382,6 @@ class LumitUiState extends ChangeNotifier {
 
   DockSplit get split => workspace.dock;
   ValueNotifier<Panel?> activePanel = ValueNotifier(null);
-  ValueNotifier<Panel?> maximizedPanel = ValueNotifier(null);
 
   /// A finer selection's claim on Delete (K-234), set by the Timeline while it
   /// is mounted and cleared when it goes.
@@ -416,6 +415,17 @@ class LumitUiState extends ChangeNotifier {
   final ValueNotifier<int> togglePlayRequest = ValueNotifier(0);
 
   void requestTogglePlay() => togglePlayRequest.value++;
+
+  /// Bumped when `Ctrl+Shift+P` asks for the command palette.
+  ///
+  /// A notifier for the same reason as [togglePlayRequest]: the palette's list
+  /// of commands is the menu bar's, declared beside the menu items so the two
+  /// cannot drift into different ideas of what "New composition" does. The
+  /// shortcut asks for the palette rather than building a second list of its
+  /// own — which would be exactly the drift that note warns about.
+  final ValueNotifier<int> paletteRequest = ValueNotifier(0);
+
+  void requestPalette() => paletteRequest.value++;
 
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
@@ -686,13 +696,6 @@ class LumitUiState extends ChangeNotifier {
     dropper.value = arm;
   }
 
-  /// Trigger to reset viewer zoom to Fit mode.
-  final ValueNotifier<int> resetZoomTrigger = ValueNotifier(0);
-
-  void requestZoomFit() {
-    resetZoomTrigger.value++;
-  }
-
   /// Put the dropper away, picked or not.
   void disarmDropper() {
     dropper.value = null;
@@ -844,6 +847,7 @@ class LumitUiState extends ChangeNotifier {
     selectedLayer.dispose();
     selectedLayers.dispose();
     activePanel.dispose();
+    paletteRequest.dispose();
     super.dispose();
   }
 
@@ -951,8 +955,8 @@ class _LumitAppViewState extends State<LumitAppView> {
 
   bool _handleKey(KeyEvent event) {
     if (!mounted) return false;
-    return _onKey(context.read<LumitState>(), context.read<LumitUiState>(),
-            event, context) ==
+    return _onKey(
+            context.read<LumitState>(), context.read<LumitUiState>(), event) ==
         KeyEventResult.handled;
   }
 
@@ -1004,8 +1008,7 @@ class _LumitAppViewState extends State<LumitAppView> {
   /// Only the ones whose engine calls exist on this bridge; the rest are on the
   /// menus. A field with focus is left alone, or every letter typed into a
   /// layer name would also be a command.
-  KeyEventResult _onKey(
-      LumitState state, LumitUiState ui, KeyEvent event, BuildContext context) {
+  KeyEventResult _onKey(LumitState state, LumitUiState ui, KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
@@ -1081,6 +1084,10 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           state.toggleRetime(layer);
         }
+      case 'palette.open':
+        // The menu bar owns the palette's list of commands, so the key asks
+        // for it rather than assembling a second one (docs/07 §12).
+        ui.requestPalette();
       case 'layer.duplicate':
         final layer = ui.selectedLayer.value;
         if (layer == null) {
@@ -1133,23 +1140,6 @@ class _LumitAppViewState extends State<LumitAppView> {
           ui.clearSelection();
           state.notifyDocumentChanged();
         }
-      case 'layer.split':
-        final layer = ui.selectedLayer.value;
-        if (layer == null) {
-          handled = false;
-        } else {
-          layer.splitAt(frame: ui.playheadFrame.value);
-          state.notifyDocumentChanged();
-        }
-      case 'panel.maximise':
-        ui.requestZoomFit();
-        if (ui.maximizedPanel.value != null) {
-          ui.maximizedPanel.value = null;
-        } else {
-          ui.maximizedPanel.value = ui.activePanel.value ?? Panel.viewer;
-        }
-      case 'palette.open':
-        openCommandPaletteFrb(context, state);
       // A bound action this shell has no call for yet — the menus carry those.
       // Ignored rather than swallowed, so the key still reaches whatever else
       // wants it.

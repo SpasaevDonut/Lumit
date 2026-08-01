@@ -1984,6 +1984,87 @@ fn a_composition_nests_into_another_but_not_into_itself() {
     assert_eq!(outer.get_layers().expect("layers").len(), 1);
 }
 
+/// Precompose packs the chosen layers into a new comp and leaves one Precomp
+/// layer where the topmost of them stood — timing untouched, one undo step.
+#[test]
+fn precompose_packs_the_chosen_layers_and_leaves_one_precomp_behind() {
+    use crate::api::layer::BridgeLayerKind;
+
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let bottom = comp.add_solid_layer().expect("solid");
+    let middle = comp.add_solid_layer().expect("solid");
+    let top = comp.add_solid_layer().expect("solid");
+    let spans: Vec<_> = [&bottom, &middle, &top]
+        .iter()
+        .map(|l| l.get_span().expect("span"))
+        .collect();
+
+    let packed = comp
+        .precompose(&[middle, bottom], None)
+        .expect("precomposed");
+
+    // The two go, the untouched one stays, and the new layer takes the deeper
+    // pair's place rather than jumping to the front of the stack.
+    let after = comp.get_layers().expect("layers");
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[0].layer_id, top.layer_id);
+    assert_eq!(after[1].layer_id, packed.layer_id);
+    assert_eq!(packed.get_kind().expect("kind"), BridgeLayerKind::Precomp);
+    assert_eq!(packed.get_name().expect("name"), "Pre-comp 1");
+
+    // The new comp holds them in stack order, at the times they always had,
+    // and is as long as the comp it came out of — so nothing moved in time.
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    let inside = inner.get_layers().expect("layers");
+    assert_eq!(inside.len(), 2);
+    assert_eq!(inside[0].layer_id, middle.layer_id);
+    assert_eq!(inside[1].layer_id, bottom.layer_id);
+    assert_eq!(inside[0].get_span().expect("span"), spans[1]);
+    assert_eq!(inside[1].get_span().expect("span"), spans[0]);
+    assert_eq!(
+        inner.duration_frames().expect("frames"),
+        comp.duration_frames().expect("frames")
+    );
+    assert_eq!(packed.get_span().expect("span"), spans[2]);
+
+    // One batch, so one undo puts all three layers back where they were.
+    project.undo().expect("undo");
+    let back = comp.get_layers().expect("layers");
+    assert_eq!(back.len(), 3);
+    assert_eq!(back[0].layer_id, top.layer_id);
+    assert_eq!(back[1].layer_id, middle.layer_id);
+    assert_eq!(back[2].layer_id, bottom.layer_id);
+}
+
+/// Precompose refuses an empty selection, and ignores a reference to a layer
+/// of some other comp rather than losing the whole batch to it.
+#[test]
+fn precompose_refuses_nothing_and_survives_a_stray_reference() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let other = project.new_composition("Other".into(), None).expect("comp");
+    let mine = comp.add_solid_layer().expect("solid");
+    let theirs = other.add_solid_layer().expect("solid");
+
+    assert!(matches!(
+        comp.precompose(&[], None),
+        Err(BridgeError::InvalidLayer)
+    ));
+    assert!(matches!(
+        comp.precompose(&[theirs], None),
+        Err(BridgeError::InvalidLayer)
+    ));
+
+    // The stray one is dropped; the layer that *is* here still packs.
+    comp.precompose(&[mine, theirs], Some("Packed".into()))
+        .expect("precomposed");
+    assert_eq!(comp.get_layers().expect("layers").len(), 1);
+    assert_eq!(other.get_layers().expect("layers").len(), 1);
+}
+
 // --- The shell: boot log, tier, autosave and recovery ---------------------
 
 /// The boot log states facts and no more. It must never claim a GPU adapter,

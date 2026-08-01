@@ -227,19 +227,9 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
     if (ui == null) return;
     ui.togglePlayRequest.removeListener(_onTogglePlayRequest);
     ui.playheadFrame.removeListener(_onPlayheadChanged);
-    ui.resetZoomTrigger.removeListener(_onResetZoom);
   }
 
   void _onTogglePlayRequest() => _togglePlay();
-
-  void _onResetZoom() {
-    if (mounted) {
-      setState(() {
-        _zoom = null;
-        _pan = Offset.zero;
-      });
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -249,7 +239,6 @@ class _ViewerPanelFrbState extends State<ViewerPanelFrb>
       _boundUi = ui;
       ui.togglePlayRequest.addListener(_onTogglePlayRequest);
       ui.playheadFrame.addListener(_onPlayheadChanged);
-      ui.resetZoomTrigger.addListener(_onResetZoom);
       _changes?.cancel();
       _changes = Provider.of<LumitState>(context, listen: false)
           .onChange
@@ -1304,6 +1293,7 @@ ColorFilter? channelFilterFor(ViewerChannel channel) => switch (channel) {
           0, 0, 0, 0, 255,
         ]),
     };
+
 
 /// The part of the transparency board worth painting: what is both picture and
 /// panel (K-230).

@@ -97,26 +97,18 @@ class _HierarchyPanelFrbState extends State<HierarchyPanelFrb> {
         name: info.name,
         kind: kind,
         depth: depth,
-        selected: ui.selectedLayers.value
-                .any((l) => l.internallayerId == layer.internallayerId) ||
-            ui.selectedLayer.value?.internallayerId == layer.internallayerId,
+        // The whole selection, not just the primary (K-217): a layer chosen in
+        // the Timeline with Ctrl held reads as chosen here too, or the two
+        // panels would be showing two different answers to one question.
+        selected: ui.selectedLayerIds.contains(layer.internallayerId),
         expandable: nested != null,
         open: open,
         onTap: () => setState(() {
-          final ctrl = HardwareKeyboard.instance.isControlPressed ||
-              HardwareKeyboard.instance.isMetaPressed;
-          if (ctrl) {
-            final list = List<LayerReference>.from(ui.selectedLayers.value);
-            if (list.any((l) => l.internallayerId == layer.internallayerId)) {
-              list.removeWhere((l) => l.internallayerId == layer.internallayerId);
-            } else {
-              list.add(layer);
-            }
-            ui.selectedLayers.value = list;
-            ui.selectedLayer.value = list.isNotEmpty ? list.last : null;
+          final keys = HardwareKeyboard.instance;
+          if (keys.isControlPressed || keys.isMetaPressed) {
+            ui.toggleSelected(layer);
           } else {
-            ui.selectedLayers.value = [layer];
-            ui.selectedLayer.value = layer;
+            ui.setSelection([layer]);
           }
         }),
         onToggle: nested == null

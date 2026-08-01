@@ -167,6 +167,10 @@ class LumitMenuBarFrb extends StatelessWidget {
             _Item.divider(),
             _Item('Settings…', () => showSettingsWindowFrb(context)),
           ]),
+          // Nothing to look at: it is here so `Ctrl+Shift+P` opens the same
+          // palette this bar builds, rather than the shell building a second
+          // one from a list that would drift out of step with these menus.
+          _PaletteHotkey(onRequested: () => _palette(context)),
         ],
       ),
     );
@@ -404,6 +408,45 @@ class _Item {
         isDivider = false;
 }
 
+/// Watches [LumitUiState.paletteRequest] and opens the palette when the
+/// shortcut bumps it. Draws nothing; it exists only to hold the subscription,
+/// so the menu bar itself stays a plain stateless widget.
+class _PaletteHotkey extends StatefulWidget {
+  final VoidCallback onRequested;
+
+  const _PaletteHotkey({required this.onRequested});
+
+  @override
+  State<_PaletteHotkey> createState() => _PaletteHotkeyState();
+}
+
+class _PaletteHotkeyState extends State<_PaletteHotkey> {
+  ValueNotifier<int>? _bound;
+
+  @override
+  Widget build(BuildContext context) {
+    // `read`, not `watch`: this widget draws nothing, so a rebuild per change
+    // of the shell state would be pure cost. The state itself outlives the
+    // window, so the notifier it hands over never changes under us.
+    final requests = context.read<LumitUiState>().paletteRequest;
+    if (requests != _bound) {
+      _bound?.removeListener(_open);
+      _bound = requests..addListener(_open);
+    }
+    return const SizedBox.shrink();
+  }
+
+  void _open() {
+    if (mounted) widget.onRequested();
+  }
+
+  @override
+  void dispose() {
+    _bound?.removeListener(_open);
+    super.dispose();
+  }
+}
+
 class _MenuButton extends StatelessWidget {
   final String title;
   final List<_Item> items;
@@ -527,66 +570,4 @@ Future<void> saveProjectFrb(
     app.postNotice('Could not save the project', error: true);
   }
   app.notifyDocumentChanged();
-}
-
-/// Open the command palette from anywhere in the UI.
-Future<void> openCommandPaletteFrb(
-  BuildContext context,
-  LumitState app,
-) async {
-  final project = app.project;
-  final ui = Provider.of<LumitUiState>(context, listen: false);
-  await showCommandPaletteFrb(
-    context: context,
-    commands: [
-      PaletteCommand(
-        label: 'New project',
-        category: 'File',
-        run: app.newProject,
-      ),
-      if (project != null) ...[
-        PaletteCommand(
-          label: 'Undo',
-          category: 'Edit',
-          shortcut: 'Ctrl+Z',
-          run: () {
-            project.undo();
-            app.notifyDocumentChanged();
-          },
-        ),
-        PaletteCommand(
-          label: 'Redo',
-          category: 'Edit',
-          shortcut: 'Ctrl+Shift+Z',
-          run: () {
-            project.redo();
-            app.notifyDocumentChanged();
-          },
-        ),
-        for (final (comp, name) in app.comps())
-          PaletteCommand(
-            label: name,
-            category: 'Comp',
-            run: () => ui.setSelectedComp(comp),
-          ),
-        for (final effect in listEffects())
-          PaletteCommand(
-            label: effect.label,
-            category: 'Effect',
-            run: () => ui.selectedLayer.value?.addEffect(name: effect.name),
-          ),
-      ],
-      for (final panel in Panel.values)
-        PaletteCommand(
-          label: panel.title,
-          category: 'Panel',
-          run: () => ui.activePanel.value = panel,
-        ),
-      PaletteCommand(
-        label: 'Settings…',
-        category: 'File',
-        run: () => showSettingsWindowFrb(context),
-      ),
-    ],
-  );
 }
