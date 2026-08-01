@@ -2137,6 +2137,53 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   project changes — dropping old history only limits how far back you can rewind. (Crash
   recovery is separate and unaffected: every edit is also written to a journal on disc as it
   happens, independently of this in-memory limit.)
+- **Playback keeps time on a grid, not a stopwatch (`lumit-bridge::playback`)** — in
+  every-frame mode each picture used to be allowed out "one frame period after the last one
+  actually went out". That sounds right and is quietly wrong: every present is a little late
+  (the thread wakes a moment after its alarm, the loop has bookkeeping), and measuring from
+  the *actual* last present meant each frame's lateness was added to the next frame's
+  schedule, forever. A 60 fps comp could never truly play at 60 — it settled around 55,
+  cached or not, and the faster the comp the worse the shortfall. Now the due times sit on a
+  fixed grid, one period apart: a present that goes out a millisecond late leaves the next
+  one due at the *grid* time, so the small latenesses are absorbed instead of accumulating.
+  Only a genuine stall (more than a whole period late) moves the grid, and then playback
+  carries on at rate from where it is — every-frame still never skips a picture and never
+  fast-forwards to catch up. The last two milliseconds before each due time are also waited
+  out precisely (a busy wait) rather than slept, because an operating-system sleep is only
+  as accurate as its timer, and oversleeping by one timer tick is a whole frame at 100 fps.
+- **Frames get their names from a memo (`lumit-bridge::names`)** — every cached frame is
+  filed under a fingerprint of everything that goes into it, and computing that fingerprint
+  means walking the whole composition at that frame's time. Cheap once; not cheap when the
+  cache bar names hundreds of frames per redraw and playback names every frame it looks
+  ahead to. The memo remembers each answer, keyed by composition, frame and preview size,
+  and forgets everything the instant an edit lands (an edit renames an unknown set of
+  frames, so remembering across one would be guessing). The result: during playback of an
+  unchanged project, naming a frame costs a lookup instead of a walk — which is most of what
+  made the timeline's cache stripe expensive to keep fresh while playing.
+- **The disk cache is asked early, and given a moment (`lumit-bridge` worker)** — a frame
+  parked on disk takes a few loop turns to come back (read the file, decompress it), so a
+  frame asked for at the instant it's needed *always* arrives too late, and used to be
+  re-rendered from scratch even though a perfect copy sat in a file. Two fixes. First,
+  pressing play now asks the disk for the first stretch of frames *before* the first render
+  starts, so the reads run while playback is still warming up. Second, in every-frame mode,
+  if the next frame's copy has been asked for and is on its way, the renderer waits up to a
+  twentieth of a second for it rather than re-rendering — every-frame promises every frame,
+  not any particular arrival time, and the copy is far cheaper than the render. (Adaptive
+  mode never waits; it keeps chasing the clock.) And a frame that comes back off disk now
+  keeps a copy in the memory tier too, so the *next* pass over the same span climbs from
+  memory instead of reading the same files again — before this, a comp bigger than the
+  graphics card's cache re-read its files on every single pass, and the disk's speed became
+  the playback speed.
+- **The cache stripe redraws without stealing playback's deadline (`lumit-bridge` worker)** —
+  the coloured stripe over the timeline is computed on the same thread that renders playback
+  frames. It used to restart its full sweep every half-second during playback (because every
+  promoted frame changes what the caches hold, and any change restarted it), naming up to a
+  thousand frames in one go — a visible hitch, rhythmically, all through playback of cached
+  material. Now a sweep in progress finishes before any restart, the per-turn chunk is
+  smaller while playback runs, and most names come from the memo above anyway. While
+  playing, a frame already known to be parked on disk at the right size also skips the
+  three extra "is a coarser version held?" checks — the stripe may briefly show blue where
+  dimmed green was strictly truer, and it firms up the moment playback stops.
 - **The stress project and speed benchmarks (`lumit-project::fixtures`, docs 13)** — the
   promise that Lumit stays responsive on huge projects needs something huge to test against.
   There's now a builder that makes a deliberately enormous project on demand — hundreds of

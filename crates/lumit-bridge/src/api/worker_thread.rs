@@ -59,10 +59,16 @@ pub struct WorkerState {
     /// is the thread that has both halves of every hand-off: the renderer whose
     /// evictions fall to disk, and the frame keys to file them under.
     disk: lumit_render::diskio::DiskIo,
-    /// Disk frames asked for and not yet arrived, with the position each was
-    /// asked for — a frame off disk carries only its name, and putting it back
-    /// on the card records where it sits.
-    disk_wanted: std::collections::HashMap<u128, lumit_render::FrameProvenance>,
+    /// Disk frames asked for and not yet arrived: the position each was asked
+    /// for (a frame off disk carries only its name, and putting it back on the
+    /// card records where it sits), and when it was asked — every-frame
+    /// playback gives a young ask a bounded moment to land before compositing
+    /// the frame anyway ([`crate::playback::wait_for_disk`]).
+    disk_wanted: std::collections::HashMap<u128, DiskWant>,
+    /// The frame-name memo ([`crate::names::NameCache`]): a name is a hash of
+    /// the whole composition at that frame, and the bar, the look-ahead and
+    /// the fill all ask for the same ones — each is computed once per edit.
+    names: crate::names::NameCache,
     /// The disk budget last applied, the clear count last honoured, and the
     /// location epoch last opened — all arriving as atomics from the settings
     /// ops (see [`crate::framecache::disk`]).
@@ -105,6 +111,36 @@ pub struct WorkerState {
     /// one layer at a time and a pointer drag asks for the same one on every
     /// move.
     layer_sample: Option<LayerSample>,
+}
+
+/// One outstanding ask to the disk tier: where the frame sits (for the upload
+/// that follows) and when it was asked (for the bounded grace).
+#[frb(ignore)]
+struct DiskWant {
+    provenance: lumit_render::FrameProvenance,
+    asked: std::time::Instant,
+}
+
+/// Name one frame through the worker's memo: computed at most once per
+/// document revision however many consumers ask, served as a lookup after
+/// that. [`lumit_render::HeadlessRenderer::presync_items`] must have run for
+/// this document first — an unprobed source makes the frame unnameable
+/// (`None`), never wrongly named.
+#[frb(ignore)]
+fn frame_name(
+    state: &mut WorkerState,
+    document: &lumit_core::Document,
+    revision: u64,
+    comp: Uuid,
+    frame: u64,
+    quality: lumit_render::Quality,
+) -> Option<u128> {
+    let WorkerState {
+        renderer, names, ..
+    } = state;
+    names.get_or_compute(revision, comp, frame, quality.tag(), || {
+        renderer.frame_key_presynced(document, comp, frame, quality)
+    })
 }
 
 /// One soloed-layer render, held for the dropper (see [`sample_layer_alone`]).
@@ -150,6 +186,14 @@ const BAR_MAX_SAMPLES: u64 = 1024;
 /// truth within a second or two of standing still — and no single turn costs more
 /// than the first pass did.
 const BAR_REFINE_PER_TURN: u64 = 1024;
+
+/// The same, while playback is running. The sweep shares the thread that
+/// renders frames; with the name memo ([`crate::names::NameCache`]) most of a
+/// sweep is lookups, but right after an edit every name is a full comp hash,
+/// and a thousand of those in one turn is several frames of deadline. Small
+/// here — the strip still refreshes end to end within a few publish intervals
+/// on any composition a bar can usefully draw.
+const BAR_REFINE_PER_TURN_PLAYING: u64 = 256;
 
 /// The coarser preview scales worth probing for the bar's dimmed state: the
 /// adaptive tiers the realtime controller actually drops to (Half, Third,
@@ -344,11 +388,25 @@ fn drain_demotions(state: &mut WorkerState) {
 fn collect_disk_loads(state: &mut WorkerState) {
     let loaded: Vec<_> = state.disk.loaded.try_iter().collect();
     for frame in loaded {
-        let Some(provenance) = state.disk_wanted.remove(&frame.hash) else {
+        let Some(want) = state.disk_wanted.remove(&frame.hash) else {
             // Nobody is waiting for it any more (a comp switch, a clear); the
             // frame is still on disk and will be asked for again if wanted.
             continue;
         };
+        // A share stays in memory as well as going up to the card: when the
+        // comp is bigger than the VRAM budget, the next pass over this frame
+        // otherwise read the same file again — every pass, for ever — and the
+        // IO thread's rate became the playback rate.
+        let bytes = std::sync::Arc::new(frame.bytes);
+        crate::framecache::put_loaded(
+            frame.hash,
+            frame.width,
+            frame.height,
+            frame.bgra,
+            DISK_PROMOTION_COST_MS,
+            want.provenance,
+            bytes.clone(),
+        );
         let promoted = state
             .renderer
             .upload_frame_texture(lumit_render::Promotion {
@@ -356,11 +414,11 @@ fn collect_disk_loads(state: &mut WorkerState) {
                 bgra: frame.bgra,
                 width: frame.width,
                 height: frame.height,
-                bytes: &frame.bytes,
+                bytes: &bytes,
                 // Dear enough to hold on to: a frame that reached disk was worth
                 // reading back, and re-rendering it is what this saved.
                 cost_ms: DISK_PROMOTION_COST_MS,
-                provenance,
+                provenance: want.provenance,
             });
         if promoted.is_some() {
             state.fill_exhausted = false;
@@ -373,6 +431,12 @@ fn collect_disk_loads(state: &mut WorkerState) {
 /// — so it is stated: a frame that earned its way to disk is dear enough that
 /// the store should not throw it out ahead of a trivial one.
 const DISK_PROMOTION_COST_MS: u32 = 16;
+
+/// How many coming frames' disk copies are asked for before the first render
+/// turn of a run (`start_playback`). Sized past the deepest ring (16) with
+/// room over for the IO thread to be mid-queue; each ask is one message, so
+/// over-asking costs a few reads at worst, never a stall.
+const DISK_PRE_ASK: u64 = 32;
 
 /// Compute and publish the cache bar's per-frame strip (docs/06 §5.6).
 ///
@@ -436,9 +500,9 @@ fn publish_cache_bar(state: &mut WorkerState) {
     if !changed && state.bar_refined_to >= frames {
         return;
     }
-    if document.comp(comp_id).is_none() {
+    let Some((comp_w, comp_h)) = document.comp(comp_id).map(|c| (c.width, c.height)) else {
         return;
-    }
+    };
     // Whether every frame's *name* may have changed, as against merely which of
     // them are held. A different composition, length, scale or document revision
     // renames frames, so the strip means nothing and is rebuilt; a frame merely
@@ -454,6 +518,15 @@ fn publish_cache_bar(state: &mut WorkerState) {
     let scale = f32::from(scale_q) / 1000.0;
     let quality = quality_for(scale);
     let stride = frames.div_ceil(BAR_MAX_SAMPLES).max(1);
+    let playing = state.playback.is_some();
+    let per_turn = if playing {
+        BAR_REFINE_PER_TURN_PLAYING
+    } else {
+        BAR_REFINE_PER_TURN
+    };
+    // Every name below is of this one snapshot: probe it once, so the memo's
+    // misses are hashes and nothing else (see `frame_name`).
+    state.renderer.presync_items(&document, (comp_w, comp_h));
 
     // Naming one frame needs the renderer, the document and the three tiers; the
     // walk over frames needs none of them. Split so the walk can be tested
@@ -463,15 +536,29 @@ fn publish_cache_bar(state: &mut WorkerState) {
     // the whole of `state`, and holding a borrow of one of its fields across that
     // is what the borrow checker is for.
     let mut strip = std::mem::take(&mut state.bar_strip);
-    let mut refined_to = if changed { 0 } else { state.bar_refined_to };
+    // A sweep in progress finishes before any restart. During playback the
+    // holdings move constantly — every promoted frame is an insert — and
+    // restarting the sweep on each movement meant it started from zero at
+    // every publish and never converged: the whole strip was renamed from
+    // scratch, on the render thread, for as long as playback promoted frames.
+    // Only a COMPLETED sweep restarts to pick up moved holdings; renamed
+    // frames rebuild outright below regardless.
+    let mut refined_to = if changed && state.bar_refined_to >= frames {
+        0
+    } else {
+        state.bar_refined_to
+    };
     let rebuild = renamed || strip.len() != frames as usize;
     let anchor = match &state.last_shown {
         Some((comp, frame, _)) if comp.id == comp_id => *frame % frames,
         _ => 0,
     };
     {
-        let mut tier_of =
-            |frame: u64| frame_tier(state, &document, comp_id, frame, quality, scale, bgra);
+        let mut tier_of = |frame: u64| {
+            frame_tier(
+                state, &document, revision, comp_id, frame, quality, scale, bgra, playing,
+            )
+        };
         if rebuild {
             let sampled = sample_bar_strip(frames, stride, &mut tier_of);
             strip = sampled.tiers;
@@ -479,13 +566,7 @@ fn publish_cache_bar(state: &mut WorkerState) {
         } else {
             // Names are the same but holdings may have moved: sweep again from
             // the anchor, keeping the strip on screen while it refreshes.
-            refined_to = refine_bar_strip(
-                &mut strip,
-                anchor,
-                refined_to,
-                BAR_REFINE_PER_TURN,
-                &mut tier_of,
-            );
+            refined_to = refine_bar_strip(&mut strip, anchor, refined_to, per_turn, &mut tier_of);
         }
     }
     state.bar_strip = strip;
@@ -496,27 +577,40 @@ fn publish_cache_bar(state: &mut WorkerState) {
 /// What the bar should draw for one frame: `0` nothing, `1` held coarser, `2`
 /// held at this scale, `3` on disk coarser, `4` on disk at this scale. Playable
 /// beats promotable — a frame both held and parked reads as held.
+///
+/// Names go through the memo ([`frame_name`]); the caller has presynced the
+/// document. `fast` is set while playback runs: the walk then shares the
+/// render thread's deadline, so a frame parked at this scale is reported as
+/// such without paying the three coarser probes (a comp hash apiece on a memo
+/// miss) — the one answer that changes is the rare frame both parked at scale
+/// and held coarser, which reads blue for a publish instead of dimmed green.
+#[allow(clippy::too_many_arguments)]
 #[frb(ignore)]
 fn frame_tier(
     state: &mut WorkerState,
     document: &lumit_core::Document,
+    revision: u64,
     comp: Uuid,
     frame: u64,
     quality: lumit_render::Quality,
     scale: f32,
     bgra: bool,
+    fast: bool,
 ) -> u8 {
     let mut on_disk_at_scale = false;
-    if let Some(key) = state.renderer.frame_key(document, comp, frame, quality) {
+    if let Some(key) = frame_name(state, document, revision, comp, frame, quality) {
         if state.renderer.has_frame_texture(key, bgra) || crate::framecache::contains(key) {
             return 2;
         }
         on_disk_at_scale = state.disk.contains(key);
     }
+    if fast && on_disk_at_scale {
+        return 4;
+    }
     let mut on_disk_coarser = false;
     for factor in BAR_COARSE_TIERS {
         let coarser = quality_for(scale * factor);
-        let Some(key) = state.renderer.frame_key(document, comp, frame, coarser) else {
+        let Some(key) = frame_name(state, document, revision, comp, frame, coarser) else {
             continue;
         };
         if state.renderer.has_frame_texture(key, bgra) || crate::framecache::contains(key) {
@@ -634,9 +728,10 @@ fn zero_copy_wants_bgra() -> bool {
 /// decodes are already posted. By the time the ring reaches the frame it is a
 /// hit on the card and no composite happens at all.
 ///
-/// Nothing here waits. A frame that cannot be named yet is left alone, a copy
-/// that has not arrived is simply not there yet, and the ordinary path composites
-/// as it always did.
+/// Nothing here waits. A copy that has not arrived is simply not there yet,
+/// and the ordinary path composites as it always did. The caller names the
+/// frame (through the memo, [`frame_name`]) — a frame that cannot be named yet
+/// is not held anywhere under any name, so there is nothing to line up.
 ///
 /// Returns whether it did work the caller should count: an upload happened.
 /// Asking the disk for a copy is a message to another thread and costs this one
@@ -645,27 +740,15 @@ fn zero_copy_wants_bgra() -> bool {
 fn line_up_frame(
     renderer: &mut lumit_render::HeadlessRenderer,
     disk: &lumit_render::diskio::DiskIo,
-    disk_wanted: &mut std::collections::HashMap<u128, lumit_render::FrameProvenance>,
-    document: &lumit_core::Document,
-    comp: Uuid,
-    frame: u64,
-    quality: lumit_render::Quality,
+    disk_wanted: &mut std::collections::HashMap<u128, DiskWant>,
+    key: u128,
+    provenance: lumit_render::FrameProvenance,
 ) -> bool {
     let bgra = zero_copy_wants_bgra();
-    let Some(key) = renderer.frame_key(document, comp, frame, quality) else {
-        // Not nameable yet (footage still being probed), thus not held anywhere
-        // under any name either.
-        return false;
-    };
     if renderer.has_frame_texture(key, bgra) {
         // Already where it needs to be.
         return false;
     }
-    let provenance = lumit_render::FrameProvenance {
-        comp,
-        frame,
-        scale_q: lumit_render::preview_scale_q(quality),
-    };
     // Memory first: it is one upload away, which is cheaper than a file and far
     // cheaper than a composite. Doing it now means the render turn finds a hit.
     if let Some(held) = crate::framecache::held(key) {
@@ -693,7 +776,13 @@ fn line_up_frame(
     ) {
         return false;
     }
-    disk_wanted.insert(key, provenance);
+    disk_wanted.insert(
+        key,
+        DiskWant {
+            provenance,
+            asked: std::time::Instant::now(),
+        },
+    );
     _ = disk
         .tx
         .send(lumit_render::diskio::Cmd::Load { hash: key, bgra });
@@ -775,7 +864,13 @@ fn prepare_frame(
             Some(_) => {}
             None => {
                 if state.disk.contains(key) && !state.disk_wanted.contains_key(&key) {
-                    state.disk_wanted.insert(key, provenance);
+                    state.disk_wanted.insert(
+                        key,
+                        DiskWant {
+                            provenance,
+                            asked: std::time::Instant::now(),
+                        },
+                    );
                     _ = state
                         .disk
                         .tx
@@ -842,7 +937,7 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
         state.fill_exhausted = true;
         return;
     };
-    let document = {
+    let (document, revision) = {
         let Ok(document) = state.project.state() else {
             state.fill_exhausted = true;
             return;
@@ -851,7 +946,7 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             state.fill_exhausted = true;
             return;
         };
-        document.store.snapshot()
+        (document.store.snapshot(), document.store.revision())
     };
     let Some(comp) = document.comp(comp_ref.id) else {
         state.fill_exhausted = true;
@@ -899,14 +994,14 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     // costs nothing here — and by the time the fill comes round again they have
     // arrived and gone onto the card, which is what makes a re-opened project
     // warm up by *reading* rather than by rendering everything a second time.
+    // The window's names are all of this one snapshot: probe it once, then
+    // each name is computed at most once per edit (see `frame_name`).
+    state.renderer.presync_items(&document, (cw, ch));
     for frame in crate::playback::fill_order(anchor, first, last).take(window) {
         // Naming the frame is what tells the fill whether there is anything to
         // do — and under content keying the name is the same one every tier files
         // it under, so a frame already held anywhere is skipped without a render.
-        if let Some(key) = state
-            .renderer
-            .frame_key(&document, comp_ref.id, frame, quality)
-        {
+        if let Some(key) = frame_name(state, &document, revision, comp_ref.id, frame, quality) {
             if state.renderer.has_frame_texture(key, bgra) {
                 continue;
             }
@@ -923,10 +1018,12 @@ fn idle_fill(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
                     &mut state.renderer,
                     &state.disk,
                     &mut state.disk_wanted,
-                    &document,
-                    comp_ref.id,
-                    frame,
-                    quality,
+                    key,
+                    lumit_render::FrameProvenance {
+                        comp: comp_ref.id,
+                        frame,
+                        scale_q: lumit_render::preview_scale_q(quality),
+                    },
                 );
                 // An upload is this turn's work, exactly as a render would be:
                 // a request arriving mid-fill then waits for one frame, not for
@@ -1030,9 +1127,15 @@ struct Playback {
     /// as no mix is loaded to be master instead.
     from: u64,
     started: std::time::Instant,
-    /// When the last frame was shown, for every-frame's pacing. `None`
-    /// before the first present of a run.
+    /// When the last frame was shown — the gap between presents is what the
+    /// audio chase judges the picture's rate by. `None` before the first
+    /// present of a run.
     last_presented: Option<std::time::Instant>,
+    /// When the next every-frame present falls due — a GRID, stepped by one
+    /// comp period per present ([`crate::playback::next_present_due`]), so
+    /// loop overhead never compounds into a slower rate. `None` before the
+    /// first present of a run; adaptive mode paces on the clock instead.
+    next_present_due: Option<std::time::Instant>,
     /// Frames rendered ahead of the clock, oldest first, waiting to be shown.
     ring: std::collections::VecDeque<(u64, lumit_render::PreparedFrame)>,
     /// Recent render costs, sizing the ring (`capacity()`).
@@ -1119,10 +1222,13 @@ impl Playback {
     /// vsync, and losing it made a 60 fps comp play at several hundred.
     ///
     /// * **Every-frame** shows every frame in order (the mode's promise), so it
-    ///   is always the front — but no sooner than one comp period since the
-    ///   last present. It may fall behind (a heavy comp plays slow); it is
-    ///   never allowed to run ahead, however full the cache fills the ring
-    ///   (K-171: "replays at full speed" means the comp's own rate).
+    ///   is always the front — but no sooner than its due time on the present
+    ///   grid ([`crate::playback::next_present_due`]). It may fall behind (a
+    ///   heavy comp plays slow); it is never allowed to run ahead, however
+    ///   full the cache fills the ring (K-171: "replays at full speed" means
+    ///   the comp's own rate). The grid, not a stopwatch from the last actual
+    ///   present: a stopwatch added every scrap of loop lateness to every
+    ///   frame, so a 60 fps comp could never actually play at 60.
     /// * **Adaptive** keeps time: the NEWEST queued frame the clock has
     ///   reached (docs/impl/playback-scheduler.md §4). The caller drops the
     ///   older entries — the clock has passed them, and showing them would
@@ -1132,13 +1238,10 @@ impl Playback {
             return None;
         }
         match self.mode {
-            BridgePlaybackMode::EveryFrame => {
-                let period = std::time::Duration::from_secs_f64(1.0 / self.fps);
-                match &self.last_presented {
-                    Some(at) if at.elapsed() < period => None,
-                    _ => Some(0),
-                }
-            }
+            BridgePlaybackMode::EveryFrame => match self.next_present_due {
+                Some(due) if std::time::Instant::now() < due => None,
+                _ => Some(0),
+            },
             BridgePlaybackMode::Adaptive => {
                 let clock = self.elapsed_seconds();
                 queued
@@ -1156,9 +1259,9 @@ impl Playback {
         let &front = queued.first()?;
         match self.mode {
             BridgePlaybackMode::EveryFrame => {
-                let period = std::time::Duration::from_secs_f64(1.0 / self.fps);
-                let since = self.last_presented?.elapsed();
-                period.checked_sub(since).filter(|d| !d.is_zero())
+                let due = self.next_present_due?;
+                let now = std::time::Instant::now();
+                (due > now).then(|| due - now)
             }
             BridgePlaybackMode::Adaptive => {
                 let due = front as f64 / self.fps;
@@ -1523,6 +1626,7 @@ fn worker_loop(
         last_shown: None,
         disk: lumit_render::diskio::spawn(),
         disk_wanted: std::collections::HashMap::new(),
+        names: crate::names::NameCache::default(),
         // Zero and "never opened", so the first sync applies whatever the
         // settings hold and opens the folder for the project that is loaded —
         // see the note on `applied_vram_budget` below.
@@ -1678,8 +1782,20 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             // How long since the last picture went out, measured before this
             // one is stamped: the gap IS the frame rate the user is watching,
             // and it is what says whether the sound can run alongside.
-            let since_present = playback.last_presented.map(|at| at.elapsed());
-            playback.last_presented = Some(std::time::Instant::now());
+            let now = std::time::Instant::now();
+            let since_present = playback.last_presented.map(|at| now - at);
+            playback.last_presented = Some(now);
+            if matches!(playback.mode, BridgePlaybackMode::EveryFrame) {
+                // Step the present grid: the next frame is due one comp period
+                // after this one was SCHEDULED, not after it went out, so the
+                // rate holds however untidy each individual present is.
+                let period = std::time::Duration::from_secs_f64(1.0 / playback.fps.max(1.0));
+                playback.next_present_due = Some(crate::playback::next_present_due(
+                    playback.next_present_due,
+                    now,
+                    period,
+                ));
+            }
             // Playback moves the playhead: keep the idle fill's anchor with
             // it, so a stop resumes filling from where the user actually is.
             state.last_shown = Some((playback.comp.clone(), frame, playback.scale));
@@ -1698,15 +1814,15 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
 
     // Render ahead while the ring has room and frames remain.
     if playback.ring.len() < playback.capacity() {
-        if let Some(frame) = playback.advance() {
-            let document = {
+        if playback.next <= playback.last {
+            let (document, revision) = {
                 let Ok(document) = state.project.state() else {
                     return;
                 };
                 let Ok(document) = document.read() else {
                     return;
                 };
-                document.store.snapshot()
+                (document.store.snapshot(), document.store.revision())
             };
             // The adaptive tier applies at RENDER time — the whole point of a
             // coarser tier is a cheaper composite (K-186), so it must be in
@@ -1718,92 +1834,152 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             } else {
                 playback.scale
             };
-            // Post the COMING frames' source decodes to the decode-ahead
-            // thread before this frame's render occupies the loop, so those
-            // decodes and this composite run at the same time. The watermark
-            // posts each frame once per run; an adaptive skip jumps it
-            // forward with the playhead.
-            let ahead_to = frame
-                .saturating_add(crate::playback::PREFETCH_AHEAD)
-                .min(playback.last);
-            let from = playback
-                .prefetched_to
-                .map_or(frame + 1, |posted| posted + 1)
-                .max(frame + 1);
-            let comp_ahead = playback.comp.id;
-            for future in from..=ahead_to {
-                let wants = state.renderer.prefetch_wants(
-                    &document,
-                    playback.comp.id,
-                    future,
-                    quality_for(effective),
-                );
-                for want in wants {
-                    state.prefetcher.request(want);
-                }
-                // And ask the disk tier for the coming frames at the same time.
-                // A read off disk takes a turn or two of the loop, thus a frame
-                // asked for when it is shown always comes too late and is
-                // composited again. Asked for now, it is on the card before
-                // playback gets there.
-                _ = line_up_frame(
-                    &mut state.renderer,
-                    &state.disk,
-                    &mut state.disk_wanted,
-                    &document,
-                    comp_ahead,
-                    future,
-                    quality_for(effective),
-                );
-            }
-            if ahead_to >= from {
-                playback.prefetched_to = Some(ahead_to);
-            }
+            let quality = quality_for(effective);
+            let comp_id = playback.comp.id;
             // BGRA on the Windows shared-texture path (ANGLE only opens BGRA
             // surfaces); RGBA everywhere else.
             let bgra = zero_copy_wants_bgra();
-            let started = std::time::Instant::now();
-            let (comp_id, quality) = (playback.comp.id, quality_for(effective));
-            let rendered = prepare_frame(
-                state, &document, comp_id, frame, quality, bgra,
-                // Committed document: a warm span plays from the VRAM cache
-                // and every rendered frame warms it for the next pass.
-                true,
-            );
-            let cost = started.elapsed().as_secs_f64();
-            // `prepare_frame` borrowed the whole worker, so the playback state
-            // has to be picked up again to file the result.
-            let Some(playback) = &mut state.playback else {
-                return;
-            };
-            match rendered {
-                Ok(prepared) => {
-                    playback.ring.push_back((frame, prepared));
-                    playback.costs.push(cost);
-                    // Tell the realtime controller what that frame cost, so
-                    // playback can drop to a coarser preview when this machine
-                    // cannot hold the composition's rate (K-171). Here because
-                    // this is the only place that knows both halves: what the
-                    // worker measured, and whether the clock has run away from
-                    // it regardless (`observed_cost`).
-                    if matches!(playback.mode, BridgePlaybackMode::Adaptive) {
-                        crate::realtime::observe(
-                            playback.observed_cost(cost),
-                            playback.fps,
-                            crate::realtime::tier_scale(tier),
+            // Every name asked for below — the disk grace, the look-ahead —
+            // is of this one snapshot: probe it once, so the memo's misses
+            // are hashes and nothing else (see `frame_name`).
+            if let Some(comp) = document.comp(comp_id) {
+                state
+                    .renderer
+                    .presync_items(&document, (comp.width, comp.height));
+            }
+            // Every-frame only: when the NEXT frame's bytes are on their way
+            // up from disk, hold the composite a bounded moment — the copy is
+            // far cheaper than making the frame again, and every-frame
+            // promises every frame, not any particular arrival time
+            // ([`crate::playback::wait_for_disk`]). Adaptive keeps chasing
+            // its clock instead.
+            if matches!(playback.mode, BridgePlaybackMode::EveryFrame) {
+                let peek = playback.next;
+                let name =
+                    state
+                        .names
+                        .get_or_compute(revision, comp_id, peek, quality.tag(), || {
+                            state
+                                .renderer
+                                .frame_key_presynced(&document, comp_id, peek, quality)
+                        });
+                if let Some(key) = name {
+                    if !state.renderer.has_frame_texture(key, bgra)
+                        && !crate::framecache::contains(key)
+                    {
+                        let asked_ago =
+                            state.disk_wanted.get(&key).map(|want| want.asked.elapsed());
+                        if crate::playback::wait_for_disk(asked_ago) {
+                            // A sliver of sleep, not a spin: the copy is
+                            // collected at the top of the next turn, and a
+                            // stop arriving mid-wait is still seen promptly.
+                            std::thread::sleep(std::time::Duration::from_micros(500));
+                            return;
+                        }
+                        if asked_ago.is_some() {
+                            // The read never came (the file has gone from
+                            // under the session): composite below, and stop
+                            // counting the ask as pending.
+                            state.disk_wanted.remove(&key);
+                        }
+                    }
+                }
+            }
+            if let Some(frame) = playback.advance() {
+                // Post the COMING frames' source decodes to the decode-ahead
+                // thread before this frame's render occupies the loop, so those
+                // decodes and this composite run at the same time. The watermark
+                // posts each frame once per run; an adaptive skip jumps it
+                // forward with the playhead.
+                let ahead_to = frame
+                    .saturating_add(crate::playback::PREFETCH_AHEAD)
+                    .min(playback.last);
+                let from = playback
+                    .prefetched_to
+                    .map_or(frame + 1, |posted| posted + 1)
+                    .max(frame + 1);
+                for future in from..=ahead_to {
+                    let wants = state
+                        .renderer
+                        .prefetch_wants(&document, comp_id, future, quality);
+                    for want in wants {
+                        state.prefetcher.request(want);
+                    }
+                    // And climb the tiers for the coming frames at the same
+                    // time: a frame held in memory goes up to the card now, a
+                    // parked one is asked for now — a read off disk takes a
+                    // turn or two of the loop, thus a frame asked for when it
+                    // is shown always comes too late and is composited again.
+                    let name = state.names.get_or_compute(
+                        revision,
+                        comp_id,
+                        future,
+                        quality.tag(),
+                        || {
+                            state
+                                .renderer
+                                .frame_key_presynced(&document, comp_id, future, quality)
+                        },
+                    );
+                    if let Some(key) = name {
+                        _ = line_up_frame(
+                            &mut state.renderer,
+                            &state.disk,
+                            &mut state.disk_wanted,
+                            key,
+                            lumit_render::FrameProvenance {
+                                comp: comp_id,
+                                frame: future,
+                                scale_q: lumit_render::preview_scale_q(quality),
+                            },
                         );
                     }
                 }
-                Err(err) => {
-                    // A frame that will not render stops playback rather than
-                    // spinning on it — the alternative is a silent loop burning
-                    // a core on a comp that cannot be drawn.
-                    eprintln!("Playback stopped: {err}");
-                    state.playback = None;
-                    _ = stream.add(WorkerResponse::PlaybackEnded);
+                if ahead_to >= from {
+                    playback.prefetched_to = Some(ahead_to);
                 }
+                let started = std::time::Instant::now();
+                let rendered = prepare_frame(
+                    state, &document, comp_id, frame, quality, bgra,
+                    // Committed document: a warm span plays from the VRAM cache
+                    // and every rendered frame warms it for the next pass.
+                    true,
+                );
+                let cost = started.elapsed().as_secs_f64();
+                // `prepare_frame` borrowed the whole worker, so the playback state
+                // has to be picked up again to file the result.
+                let Some(playback) = &mut state.playback else {
+                    return;
+                };
+                match rendered {
+                    Ok(prepared) => {
+                        playback.ring.push_back((frame, prepared));
+                        playback.costs.push(cost);
+                        // Tell the realtime controller what that frame cost, so
+                        // playback can drop to a coarser preview when this machine
+                        // cannot hold the composition's rate (K-171). Here because
+                        // this is the only place that knows both halves: what the
+                        // worker measured, and whether the clock has run away from
+                        // it regardless (`observed_cost`).
+                        if matches!(playback.mode, BridgePlaybackMode::Adaptive) {
+                            crate::realtime::observe(
+                                playback.observed_cost(cost),
+                                playback.fps,
+                                crate::realtime::tier_scale(tier),
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        // A frame that will not render stops playback rather than
+                        // spinning on it — the alternative is a silent loop burning
+                        // a core on a comp that cannot be drawn.
+                        eprintln!("Playback stopped: {err}");
+                        state.playback = None;
+                        _ = stream.add(WorkerResponse::PlaybackEnded);
+                    }
+                }
+                return;
             }
-            return;
         }
         // Nothing left to schedule: playback ends once the ring has drained.
         if playback.ring.is_empty() {
@@ -1818,7 +1994,19 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
     // acted on promptly — the loop simply comes back round.
     let queued: Vec<u64> = playback.ring.iter().map(|(frame, _)| *frame).collect();
     if let Some(wait) = playback.wait_until_present(&queued) {
-        std::thread::sleep(wait.min(std::time::Duration::from_millis(4)));
+        // The last stretch before the due time is spun, not slept: an OS sleep
+        // is only as fine as the system timer, and oversleeping the due time by
+        // one timer tick is a whole frame at 100 fps. The spin is bounded by
+        // the same 2 ms, so a stop arriving mid-wait is still seen promptly.
+        const SPIN: std::time::Duration = std::time::Duration::from_millis(2);
+        if wait > SPIN {
+            std::thread::sleep((wait - SPIN).min(std::time::Duration::from_millis(4)));
+        } else {
+            let due = std::time::Instant::now() + wait;
+            while std::time::Instant::now() < due {
+                std::hint::spin_loop();
+            }
+        }
     }
 }
 
@@ -1887,12 +2075,14 @@ fn present_ring_frame(
 /// nothing moved.
 #[frb(ignore)]
 fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), BridgeError> {
-    let document = {
+    let (document, revision) = {
         let document = state.project.state()?;
         let document = document.read().map_err(|_| BridgeError::ReadFailed)?;
-        document.store.snapshot()
+        (document.store.snapshot(), document.store.revision())
     };
     let comp = document.comp(req.comp.id).ok_or(BridgeError::InvalidComp)?;
+    let comp_id = req.comp.id;
+    let (comp_w, comp_h) = (comp.width, comp.height);
     let fps = comp.frame_rate.fps();
     // The same derivation `CompositionReference::duration_frames` uses: the
     // document stores a length in seconds, and the count is that read at the
@@ -1903,6 +2093,52 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
     let last = frames.max(1).saturating_sub(1) as u64;
 
     let from = if req.from >= last { 0 } else { req.from };
+
+    // Ask the disk tier for the first stretch NOW, before the first render
+    // turn. The ring fills by rendering back-to-back at the start of a run, so
+    // a lead measured from the render head is no lead at all there — a parked
+    // span's copies always arrived just after their frames had been composited
+    // from scratch, and the start of every pass was paid for twice. Asked
+    // here, the IO thread works through the span while the pre-roll runs, and
+    // every-frame's bounded grace bridges the first few frames. A fresh run
+    // starts at Full (the reset below), so the names are at the plain scale.
+    let quality = quality_for(req.scale);
+    let bgra = zero_copy_wants_bgra();
+    state.renderer.presync_items(&document, (comp_w, comp_h));
+    let ask_to = from.saturating_add(DISK_PRE_ASK).min(last);
+    for frame in from..=ask_to {
+        let name = state
+            .names
+            .get_or_compute(revision, comp_id, frame, quality.tag(), || {
+                state
+                    .renderer
+                    .frame_key_presynced(&document, comp_id, frame, quality)
+            });
+        let Some(key) = name else { continue };
+        if wants_disk_lead(
+            state.renderer.has_frame_texture(key, bgra),
+            crate::framecache::contains(key),
+            state.disk.contains(key),
+            state.disk_wanted.contains_key(&key),
+        ) {
+            state.disk_wanted.insert(
+                key,
+                DiskWant {
+                    provenance: lumit_render::FrameProvenance {
+                        comp: comp_id,
+                        frame,
+                        scale_q: lumit_render::preview_scale_q(quality),
+                    },
+                    asked: std::time::Instant::now(),
+                },
+            );
+            _ = state
+                .disk
+                .tx
+                .send(lumit_render::diskio::Cmd::Load { hash: key, bgra });
+        }
+    }
+
     state.playback = Some(Playback {
         comp: req.comp,
         pending_audio: Some(req.audio),
@@ -1914,6 +2150,7 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
         from,
         started: std::time::Instant::now(),
         last_presented: None,
+        next_present_due: None,
         ring: std::collections::VecDeque::new(),
         costs: crate::playback::CostWindow::default(),
         prefetched_to: None,
@@ -2687,6 +2924,7 @@ mod tests {
             from: 0,
             started: std::time::Instant::now(),
             last_presented: None,
+            next_present_due: None,
             ring: std::collections::VecDeque::new(),
             costs: crate::playback::CostWindow::default(),
             prefetched_to: None,
@@ -2773,19 +3011,24 @@ mod tests {
     /// without the present gate the mode replayed cached spans many times
     /// faster than realtime: "it zooms through those parts". Fails without the
     /// per-present pacing.
+    ///
+    /// The gate is the present GRID (`next_present_due`), not a stopwatch from
+    /// the last actual present — the stopwatch added every scrap of loop
+    /// lateness to every frame, and a 60 fps comp could never actually play at
+    /// 60 (the drift itself is pinned in `crate::playback`'s tests).
     #[test]
     fn every_frame_playback_never_presents_faster_than_realtime() {
         let mut p = playback(BridgePlaybackMode::EveryFrame, 100);
         let queued = [0u64, 1, 2];
 
         // The first frame of a run is due immediately — nothing has been shown
-        // yet, so there is nothing to be early against. And it is the FRONT:
+        // yet, so there is no grid to be early against. And it is the FRONT:
         // every-frame shows every frame, in order, never the newest.
         assert_eq!(p.present_choice(&queued), Some(0));
 
-        // A frame shown just now: the next present is a sixtieth of a second
-        // away, however full of cached frames the ring already is.
-        p.last_presented = Some(std::time::Instant::now());
+        // The next present is not due for ten milliseconds, however full of
+        // cached frames the ring already is.
+        p.next_present_due = Some(std::time::Instant::now() + std::time::Duration::from_millis(10));
         assert_eq!(
             p.present_choice(&queued),
             None,
@@ -2793,23 +3036,25 @@ mod tests {
         );
         let wait = p
             .wait_until_present(&queued)
-            .expect("a frame shown just now means the next one is not due");
-        // The upper bound carries a nanosecond of slack: `Duration` rounds
-        // 1/60 s up at nanosecond precision, so an exact `<=` fails on the
-        // untouched period.
+            .expect("not due yet means there is a wait to sit out");
         assert!(
-            wait.as_secs_f64() > 0.010 && wait.as_secs_f64() <= 1.0 / 60.0 + 1e-6,
-            "waits out the rest of the frame period, no more: {wait:?}"
+            wait.as_secs_f64() > 0.005 && wait.as_secs_f64() <= 0.010 + 1e-6,
+            "waits out the rest of the schedule, no more: {wait:?}"
         );
 
         // A present that is already overdue happens now. Late is allowed;
         // making it later is not.
-        p.last_presented = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
+        p.next_present_due = Some(std::time::Instant::now() - std::time::Duration::from_millis(50));
         assert_eq!(
             p.present_choice(&queued),
             Some(0),
             "already behind, so the front goes out immediately — it never \
              tries to catch up and never adds to the delay"
+        );
+        assert_eq!(
+            p.wait_until_present(&queued),
+            None,
+            "an overdue present has no wait left"
         );
     }
 
