@@ -642,6 +642,10 @@ class HouseCheckbox extends StatelessWidget {
   }
 }
 
+/// One of a set of choices, where the set is exclusive — the dot beside a
+/// sentence. [HouseCheckbox] is the independent one; this is the one that says
+/// "this, and therefore not that". Disabled it still shows which way the
+/// choice fell, dimmed, rather than going blank.
 class HouseRadio extends StatelessWidget {
   final bool selected;
   final bool enabled;
@@ -658,7 +662,7 @@ class HouseRadio extends StatelessWidget {
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
     final borderColor = !enabled
-        ? t.textMuted.withOpacity(0.4)
+        ? t.textMuted.withValues(alpha: 0.4)
         : (selected ? t.accent : t.hairlineStrong);
 
     return GestureDetector(

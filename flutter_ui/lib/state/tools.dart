@@ -15,6 +15,7 @@
 // ([ToolMode.ready] says which are which, and the toolbar says so in the
 // tooltip rather than hiding the button).
 
+import 'package:flutter/painting.dart' show Color;
 import 'package:flutter/foundation.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
 
@@ -58,9 +59,8 @@ enum ToolMode {
   razor(ToolGroup.razor, 'Razor', LumitIcon.razor, ready: true),
 
   // The shape tools draw a mask on the selected layer, or a shape layer with
-  // nothing selected — AE's rule, and the reason they are one group. The shape
-  // layer half needs an engine layer kind that does not exist (K-222), so with
-  // nothing selected they say so rather than acting.
+  // nothing selected — AE's rule, and the reason they are one group. Both
+  // halves are built: the mask half since K-222, the shape layer since K-237.
   shapeRectangle(ToolGroup.shape, 'Rectangle', LumitIcon.rectangle,
       ready: true),
   shapeRoundedRectangle(
@@ -85,9 +85,12 @@ enum ToolMode {
       ready: true),
   typeVertical(ToolGroup.type, 'Vertical type', LumitIcon.textVertical),
 
-  brush(ToolGroup.paint, 'Brush', LumitIcon.brush),
-  cloneStamp(ToolGroup.paint, 'Clone stamp', LumitIcon.cloneStamp),
-  eraser(ToolGroup.paint, 'Eraser', LumitIcon.eraser),
+  // Painting on a layer (K-227): the brush lays the fill colour down, the
+  // eraser rubs through to transparent, and the clone stamp copies from an
+  // Alt-clicked source elsewhere on the same layer.
+  brush(ToolGroup.paint, 'Brush', LumitIcon.brush, ready: true),
+  cloneStamp(ToolGroup.paint, 'Clone stamp', LumitIcon.cloneStamp, ready: true),
+  eraser(ToolGroup.paint, 'Eraser', LumitIcon.eraser, ready: true),
 
   rotoBrush(ToolGroup.roto, 'Roto brush', LumitIcon.rotoBrush),
   refineEdge(ToolGroup.roto, 'Refine edge', LumitIcon.refineEdge),
@@ -169,6 +172,20 @@ class ToolColour {
   int get hashCode => Object.hash(r, g, b);
 }
 
+/// A tool colour as something a canvas can paint with.
+///
+/// The document's colours are scene-linear and may sit outside 0..1 (an HDR
+/// tint, a lift), which `Color` cannot hold — so they are clamped here, at the
+/// one point where a number becomes a pixel on the overlay. This is a *preview*
+/// of a colour, not the colour itself: what the engine finally draws is the
+/// unclamped value.
+Color colourOf(ToolColour c, {double opacity = 1}) => Color.from(
+      alpha: opacity,
+      red: c.r.clamp(0.0, 1.0),
+      green: c.g.clamp(0.0, 1.0),
+      blue: c.b.clamp(0.0, 1.0),
+    );
+
 /// Which tool is armed, which member each group would arm, and the toolbar's
 /// own switches.
 ///
@@ -212,13 +229,11 @@ class ToolsState extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// The **stroke** the drawing tools would use, and its width in pixels.
+  /// The **stroke** a shape layer's art is outlined in, and how wide that
+  /// outline is in layer pixels (K-237).
   ///
-  /// Held, shown and remembered — and nothing reads them yet. A stroke needs
-  /// something to draw it round: a shape layer's outline or a paint stroke,
-  /// neither of which the engine has (docs/TODO.md). The toolbar draws both
-  /// controls disabled rather than pretending, for the same reason
-  /// [ToolMode.ready] exists.
+  /// Live since shape layers landed: a width of zero draws no outline, which is
+  /// how a fill-only shape is made.
   ToolColour _stroke = ToolColour.black;
   ToolColour get stroke => _stroke;
   set stroke(ToolColour value) {
@@ -227,12 +242,49 @@ class ToolsState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// The stroke as the bridge wants it, for a shape layer's outline (K-237).
+  BridgeColourRgba get strokeRgba =>
+      BridgeColourRgba(r: _stroke.r, g: _stroke.g, b: _stroke.b, a: 1);
+
   double _strokeWidth = 2;
   double get strokeWidth => _strokeWidth;
   set strokeWidth(double value) {
     final next = value.clamp(0.0, 1000.0);
     if (_strokeWidth == next) return;
     _strokeWidth = next;
+    notifyListeners();
+  }
+
+  /// The **brush**: how wide a paint stroke is in layer pixels, how hard its
+  /// edge is and how opaque the mark it leaves (K-227). Its own settings rather
+  /// than the shape tools' stroke, because a brush is a different thing that
+  /// happens to have a width — and because these three are live while the
+  /// stroke pair is not.
+  double _brushSize = 20;
+  double get brushSize => _brushSize;
+  set brushSize(double value) {
+    final next = value.clamp(1.0, 2000.0);
+    if (_brushSize == next) return;
+    _brushSize = next;
+    notifyListeners();
+  }
+
+  /// 0 is a brush that fades all the way from its centre, 100 a hard edge.
+  double _brushHardness = 80;
+  double get brushHardness => _brushHardness;
+  set brushHardness(double value) {
+    final next = value.clamp(0.0, 100.0);
+    if (_brushHardness == next) return;
+    _brushHardness = next;
+    notifyListeners();
+  }
+
+  double _brushOpacity = 100;
+  double get brushOpacity => _brushOpacity;
+  set brushOpacity(double value) {
+    final next = value.clamp(0.0, 100.0);
+    if (_brushOpacity == next) return;
+    _brushOpacity = next;
     notifyListeners();
   }
 

@@ -1946,7 +1946,21 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   it as a matte) — then the switch dims to say "set, but overridden". The undoable
   switch lives in ops like every edit; the cache knows collapse changes pixels, so
   toggling it re-renders.
-- **Pre-composing layers (`Ctrl+Shift+C`)** — select one or more layers and press `Ctrl+Shift+C` (or choose `Layer ▸ Pre-compose…`) to package them into a new composition. Before creating the precomp, a dialogue prompts for the new composition name, whether to leave attributes on the parent layer or move them into the new comp, whether to adjust the comp duration to the time span of the selected layers, and whether to open the new composition. Your choices are automatically remembered for next time.
+- **Pre-composing (`Ctrl+Shift+C`)** — the opposite move to collapse: take layers you
+  already have and wrap them in a comp of their own, which then sits in their place as
+  a single Precomp layer. Useful when a group has grown into one thing you want to
+  treat as one thing — blur it, mask it, move it, all at once.
+
+  A dialogue asks first, because two of the choices genuinely change what you get. The
+  first is where the **attributes** go: a layer's transform, effects and masks can
+  travel into the new comp with it, or stay behind on the Precomp layer standing in its
+  place. Staying behind is the one you want when you are wrapping a layer so that
+  something can act on it *from the outside* — but it only makes sense for a single
+  layer, since a group of layers has no one layer for the attributes to stay on, so with
+  several selected the option greys out. The second is whether the new comp is as long
+  as the one it came out of, or trimmed to just the stretch the selected layers cover.
+  Either way nothing moves in time: trimming shifts the packed layers back by exactly as
+  much as it moves the Precomp layer forward. Your answers are remembered for next time.
 - **Blend modes** — the full After Effects colour set (T24): Normal; the darken group
   (Darken, Multiply, Colour burn, Linear burn, Darker colour); the lighten group (Add,
   Lighten, Screen, Colour dodge, Lighter colour); the contrast group (Overlay, Soft light,
@@ -4584,9 +4598,9 @@ shift, and afterwards the layer scales and turns about itself.
 
 **Tool options.** The toolbar shows what the armed tool draws with: a fill swatch
 and size for type, fill, stroke and stroke width for shapes and the Pen. The
-stroke controls are deliberately disabled — nothing in the engine strokes
-anything yet — shown rather than hidden for the same reason unbuilt tools are
-shown.
+stroke controls were disabled when they first appeared, because nothing in the
+engine stroked anything; a shape layer's outline (K-237, below) is the thing that
+made them mean something, and they paint now.
 
 ### Moving the camera by dragging (K-229)
 
@@ -4615,6 +4629,213 @@ past the pole flips the picture over.
 
 Still missing: a separate point of interest (AE's two-node camera), the Unified
 Camera tool, and depth-of-field handles on the picture.
+
+### Painting: what a brush stroke actually is (K-227)
+
+Drag a brush over the picture and Lumit keeps **the drag, not the paint**. What
+goes into the project is the path your pointer took — in the layer's own
+coordinates — with the colour, the width, how hard the edge is, how opaque the
+mark is, and which tool made it. Every time that frame is drawn, the stroke is
+stamped again at whatever size the frame is being rendered at.
+
+That one decision buys three things. Painting on a quarter-size preview and
+exporting at full size gives a *full-size* stroke, not a blurry small one.
+Changing a stroke's colour next week is a number, not a repaint. And undo removes
+one stroke, because a stroke is one thing rather than a smear of changed pixels.
+
+**The three tools.** The brush lays down the toolbar's fill colour. The eraser
+takes the layer's transparency away — the colour underneath is untouched, which
+is why lowering an erase's opacity later brings the picture back. The clone stamp
+copies from somewhere else on the same layer: `Alt`-click sets the place it
+copies *from*, and then painting carries that offset along with you. It is how a
+boom mic or a blemish gets painted out.
+
+**The trap in cloning, and how it is avoided.** A clone that read the picture as
+it is being painted would sample its own output a few dabs back and smear it
+across the frame. So a clone reads a copy of the layer taken *before any stroke
+in that pass was stamped*. The copy is only made when something actually clones —
+copying a 4K layer is not free.
+
+**Why the brush is a chain of dabs.** A round brush is stamped along the path
+every quarter of its radius, and where two dabs overlap the coverage takes the
+*greater* of the two rather than adding them. Adding would make the middle of a
+slow stroke solid and its ends thin — the classic wobbly-line artefact. The
+stroke's own opacity is applied once, at the end, so a half-opaque stroke is
+evenly half-opaque all the way along.
+
+**Where paint sits in the picture.** Strokes go into the layer's own pixels
+*before* its masks gate them and before its effects run. So a mask can cut away
+part of what you painted, and a blur blurs it — both the obvious meanings. Two
+side effects fall out of that: a plain solid, which is normally stored as a tiny
+8×8 tile and stretched, gets rasterised at its real size once it has paint on it
+(a brush needs pixels to mark); and paint on a collapsed precomp layer forces the
+precomp to be rendered separately, exactly as a mask already does.
+
+**Where to find your strokes afterwards.** In the Timeline, a painted layer grows
+a **Paint** heading in its twirl-down, between Masks and Effects — the order the
+picture is built in. Each row is named for the tool that made it, carries its
+opacity, and its menu deletes it. `Backspace` while painting takes the last stroke
+back; `Escape` abandons one mid-drag.
+
+**What is not built.** Pressure and tilt from a tablet, brushes that are not
+round, spacing and scatter, write-on (a stroke that draws itself on over time),
+per-stroke blending modes, and painting in Layer view. There is also no GPU path
+yet — the stamping is a plain loop over pixels on the CPU, next door to the mask
+rasteriser. That last one is the only one that would change the code rather than
+add to it, and it changes how a stroke is *drawn*, not what a stroke *is*, which
+is why the storage was settled first.
+
+### Shape layers: art that is numbers, not pixels (K-237)
+
+Until now the shape tools could only draw a **mask** — a path *on* another
+layer, deciding which of its pixels show. Drag one with nothing selected and it
+apologised. Now it makes a **shape layer**: a layer whose picture *is* the path.
+A rectangle, an ellipse, a drawn path, filled and outlined, stored as numbers, so
+it stays crisp at any size and every part of it stays changeable.
+
+**Nothing about the drawing changed.** The path a shape tool produces is exactly
+the path it always produced — the same maths, the same vertex type across the
+bridge. A mask's path and a shape's path differ in what they *do*, not in what
+they are, which is why this landed without touching the tools' geometry at all.
+
+**How it is drawn.** A fill goes through the *mask* rasteriser: the same
+scanline walk that decides which pixels a mask gates decides which pixels a fill
+covers. An outline goes through the *paint* rasteriser: an outline is a brush run
+along the path, which is precisely what a paint stroke is. Two pieces of the
+engine that already existed, each doing the job it was written for, instead of a
+third one that could disagree with both.
+
+**The trap, which was known in advance.** Every other kind of layer has a size
+fixed by whatever it came from: a clip's frame size, a solid's dimensions, a
+comp's. A shape layer's size is the box its art fills — and that box *moves the
+moment you edit the art*. The cache that remembers layer sizes keys on the
+document's revision, so it follows; the note that planned this feature flagged it
+as the thing to watch, and it was.
+
+Both sides measure that box the same way: by the paths' **control points**
+rather than the curves themselves. A curve never leaves the hull of its own
+control points, so the box is always correct and occasionally a little generous —
+a few transparent pixels, and never a shape clipped by its own frame.
+
+**Where the art goes.** A new shape layer lands exactly where you drew it, at the
+top of the stack, and becomes the selection — so drawing a second shape while the
+first is still selected draws a *mask on it*, which is what After Effects does
+and what makes the two halves of the gesture feel like one tool. The art lists in
+the Timeline under a **Contents** heading, above Masks and Effects, because that
+is the order the picture is built in.
+
+**And the stroke swatches finally do something.** They were on the toolbar and
+greyed since the Type tool landed, because nothing in the engine outlined
+anything. A shape layer's art does, so they paint now: set a width of zero and
+you get a fill with no outline.
+
+What is missing: nested groups and the shape modifiers (repeater, trim paths,
+wiggle), gradient fills, dashed strokes, joins and caps other than round, animated
+paths, and dragging a shape's points on the picture the way mask points can be
+dragged.
+
+### A picture that would not change, and why (K-238)
+
+Painting worked. The stroke crossed the bridge, the renderer drew it, and the
+tests said so. It simply never appeared on screen — and nothing you did brought
+it back.
+
+The cause is worth understanding, because it will come up again. Lumit gives
+every finished frame a **name**: a hash of everything that went into it, so two
+frames with the same name are guaranteed to be the same picture and one can
+stand in for the other. That is what makes scrubbing feel light — you are mostly
+looking at frames that have already been drawn. It also means that if the name
+does not notice a change, the change is invisible: the application looks at the
+name, finds a frame already filed under it, and shows you that one.
+
+The name knew about a layer's masks. Nobody had told it about a layer's **paint**.
+So a brush drag changed nothing as far as the name was concerned, every cached
+frame stayed valid, and the mark you had just made was never drawn. Moving
+something else in the composition would have brought it back, because that
+changes the name for other reasons — which is why it looked so arbitrary.
+
+Two things follow from the fix. The clone stamp and the eraser were never broken
+either; all three painting tools were writing strokes that were then hidden by
+the same cache. And the hashing is done **only when a layer actually has paint**,
+so every layer that has none keeps the name it already had and no frame banked by
+an earlier version is thrown away.
+
+### Drawing what you are about to make (K-238)
+
+A shape tool used to show you the outline of what you were dragging — but only
+when a layer was selected, because it asked *that layer* where to put the points
+on screen. With nothing selected there was no layer to ask, so it drew nothing at
+all. That is precisely the case that makes a **shape layer**, which is most of
+the reason to pick up a shape tool: you dragged blind and the shape appeared when
+you let go.
+
+The preview asks for a **space** now rather than a layer — a pair of maps, one
+each way — and there is always a space, because the composition has a placement
+of its own. Same drawing, same geometry; the only question was ever which
+coordinates the path is built in.
+
+While that was open, the preview started showing the **shape** rather than its
+outline: filled in the toolbar's own fill, outlined in its stroke, at half
+opacity. The swatches now answer "what colour is this going to be?" before the
+shape exists, which they could not do when the only thing on screen was a thin
+accent line. Half opacity and not full, because a solid preview looks exactly
+like a shape that is already there, and this one is not — nothing is in the
+document until you let go.
+
+A drag on a layer that *is* selected still previews in the accent colour. That
+one is making a **mask**, and a mask has no colour: it decides which pixels show.
+Filling it in the shape colour would promise something that never arrives.
+
+### Selecting something that is no longer there (K-238)
+
+A selection looks like a highlight. It is really the answer to a question every
+tool asks: *which layer am I acting on?*
+
+Draw a shape layer and it becomes selected, so the next drag draws a mask on it —
+that is the whole gesture, and it is what After Effects does. Now press undo. The
+layer goes, but its name stayed in the selection, so the next drag still believed
+a layer was selected, tried to draw a mask on one that no longer existed, and did
+nothing whatsoever. The tool had stopped working and there was nothing on screen
+to say why.
+
+The rule now is that the selection cannot name a layer the composition does not
+have. It is answered in one place, from the list of layers itself, rather than at
+each of the several points where a layer can disappear — undo is only the easiest
+way to reach that state; deleting a layer gets there too.
+
+### Showing a value you are dragging, without writing it (K-239)
+
+Two things are wanted from a dragged value and they pull against each other.
+Undo should treat the whole drag as **one** action — not one step per hair of
+pointer movement — and the picture should move **while** you drag, or you are
+guessing.
+
+Committing on every tick gives you the second and ruins the first: `Ctrl+Z` then
+walks back one percent at a time, which reads as undo being broken. Committing
+only on release gives you the first and ruins the second: the picture sits still
+until you let go. Lumit had just traded one for the other on a paint stroke's
+opacity, which is how this got noticed.
+
+The answer is that the two are different jobs. Every tick asks for a **preview**:
+the frame is drawn from a *copy* of the project with that one value replaced, so
+nothing is written, no undo step exists, and those pixels are never cached —
+they are of a value the document never held. The release writes once, for real.
+
+That path already existed for effect parameters, for a dragged transform and for
+what is being typed. Paint strokes and shape layers' art now use it too. Anything
+that can be dragged but must not be committed per tick needs the same thing, so
+expect the list to grow; what matters is that there is one path rather than one
+per feature.
+
+One small thing falls out of it. If a drag is cancelled — the gesture is
+interrupted, or you release without ever moving — the screen is showing a value
+nobody committed, so the row asks for the document's own value back rather than
+waiting for something else to redraw it.
+
+All three of the Timeline's whole-list rows work this way now: a mask's opacity,
+a paint stroke's and a shape item's (K-240). They are the same row with a
+different noun, and the third one joining without anything new having to be
+designed for it is the sign the shape was right.
 
 ### One gesture, one undo step (K-230)
 

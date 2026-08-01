@@ -202,13 +202,12 @@ class LumitMenuBarFrb extends StatelessWidget {
     return () => run(layer);
   }
 
+  /// Pre-compose… is live only with a comp open and something selected in it —
+  /// the menu says so by greying out rather than by failing when pressed.
   VoidCallback? _onPrecompose(BuildContext context) {
     final ui = context.read<LumitUiState>();
     final comp = ui.selectedComp;
-    var layers = ui.selectedLayers.value;
-    if (layers.isEmpty && ui.selectedLayer.value != null) {
-      layers = [ui.selectedLayer.value!];
-    }
+    final layers = ui.selectedLayers.value;
     if (comp == null || layers.isEmpty) return null;
     return () => showPrecomposeDialogFrb(
           context: context,

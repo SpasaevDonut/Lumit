@@ -1984,47 +1984,176 @@ fn a_composition_nests_into_another_but_not_into_itself() {
     assert_eq!(outer.get_layers().expect("layers").len(), 1);
 }
 
+/// Precompose moving every attribute: the chosen layers go into a new comp as
+/// they were, one Precomp layer stands where the topmost of them stood, timing
+/// is untouched, and the whole move is one undo step.
 #[test]
-fn precompose_single_layer_leave_attributes() {
+fn precompose_packs_the_chosen_layers_and_leaves_one_precomp_behind() {
     use crate::api::layer::BridgeLayerKind;
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Main".into(), None).expect("comp");
-    let layer1 = comp.add_solid_layer("Solid 1".into(), 100, 100, [1.0, 0.0, 0.0, 1.0]).expect("layer");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let bottom = comp.add_solid_layer().expect("solid");
+    let middle = comp.add_solid_layer().expect("solid");
+    let top = comp.add_solid_layer().expect("solid");
+    let spans: Vec<_> = [&bottom, &middle, &top]
+        .iter()
+        .map(|l| l.get_span().expect("span"))
+        .collect();
 
-    let precomp_layer = comp
-        .precompose(vec![layer1.id], "Clips Comp 1".into(), true, true)
-        .expect("precompose");
+    let packed = comp
+        .precompose(
+            vec![middle.layer_id, bottom.layer_id],
+            String::new(),
+            false,
+            false,
+        )
+        .expect("precomposed");
 
-    assert_eq!(precomp_layer.get_kind().expect("kind"), BridgeLayerKind::Precomp);
-    assert_eq!(precomp_layer.get_name().expect("name"), "Clips Comp 1");
+    // The two go, the untouched one stays, and the new layer takes the deeper
+    // pair's place rather than jumping to the front of the stack.
+    let after = comp.get_layers().expect("layers");
+    assert_eq!(after.len(), 2);
+    assert_eq!(after[0].layer_id, top.layer_id);
+    assert_eq!(after[1].layer_id, packed.layer_id);
+    assert_eq!(packed.get_kind().expect("kind"), BridgeLayerKind::Precomp);
+    assert_eq!(packed.get_name().expect("name"), "Pre-comp 1");
 
-    let layers = comp.get_layers().expect("layers");
-    assert_eq!(layers.len(), 1);
-    assert_eq!(layers[0].id, precomp_layer.id);
+    // The new comp holds them in stack order, at the times they always had,
+    // and is as long as the comp it came out of — so nothing moved in time.
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    let inside = inner.get_layers().expect("layers");
+    assert_eq!(inside.len(), 2);
+    assert_eq!(inside[0].layer_id, middle.layer_id);
+    assert_eq!(inside[1].layer_id, bottom.layer_id);
+    assert_eq!(inside[0].get_span().expect("span"), spans[1]);
+    assert_eq!(inside[1].get_span().expect("span"), spans[0]);
+    assert_eq!(
+        inner.duration_frames().expect("frames"),
+        comp.duration_frames().expect("frames")
+    );
+    assert_eq!(packed.get_span().expect("span"), spans[2]);
+
+    // One batch, so one undo puts all three layers back where they were.
+    project.undo().expect("undo");
+    let back = comp.get_layers().expect("layers");
+    assert_eq!(back.len(), 3);
+    assert_eq!(back[0].layer_id, top.layer_id);
+    assert_eq!(back[1].layer_id, middle.layer_id);
+    assert_eq!(back[2].layer_id, bottom.layer_id);
 }
 
+/// Precompose refuses an empty selection, and ignores a reference to a layer
+/// of some other comp rather than losing the whole batch to it.
 #[test]
-fn precompose_multiple_layers_move_attributes() {
-    use crate::api::layer::BridgeLayerKind;
+fn precompose_refuses_nothing_and_survives_a_stray_reference() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let other = project.new_composition("Other".into(), None).expect("comp");
+    let mine = comp.add_solid_layer().expect("solid");
+    let theirs = other.add_solid_layer().expect("solid");
+
+    assert!(matches!(
+        comp.precompose(Vec::new(), String::new(), false, false),
+        Err(BridgeError::InvalidLayer)
+    ));
+    assert!(matches!(
+        comp.precompose(vec![theirs.layer_id], String::new(), false, false),
+        Err(BridgeError::InvalidLayer)
+    ));
+
+    // The stray one is dropped; the layer that *is* here still packs.
+    comp.precompose(
+        vec![mine.layer_id, theirs.layer_id],
+        "Packed".into(),
+        false,
+        false,
+    )
+    .expect("precomposed");
+    assert_eq!(comp.get_layers().expect("layers").len(), 1);
+    assert_eq!(other.get_layers().expect("layers").len(), 1);
+}
+
+/// Leaving the attributes behind: the layer moves into the new comp stripped
+/// back to its source, and the Precomp layer standing in its place carries the
+/// effect stack — once, never on both, which would apply it twice.
+#[test]
+fn precompose_leaving_attributes_keeps_them_on_the_precomp_layer_only() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let solid = comp.add_solid_layer().expect("solid");
+    solid.add_effect("blur".into()).expect("effect");
+    let second = comp.add_solid_layer().expect("solid");
+    // Two layers have no single layer to leave the attributes on, so this is
+    // refused outright rather than applied to one of them.
+    assert!(matches!(
+        comp.precompose(
+            vec![solid.layer_id, second.layer_id],
+            "Both".into(),
+            true,
+            false
+        ),
+        Err(BridgeError::InvalidLayer)
+    ));
+    second.delete().expect("delete");
+
+    let packed = comp
+        .precompose(vec![solid.layer_id], "Blurred".into(), true, false)
+        .expect("precomposed");
+
+    assert_eq!(packed.get_effects().expect("effects").len(), 1);
+
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    let inside = inner.get_layers().expect("layers");
+    assert_eq!(inside.len(), 1);
+    assert!(inside[0].get_effects().expect("effects").is_empty());
+}
+
+/// Adjusting the duration trims the new comp to the selection's own span: the
+/// packed layer starts at zero inside it, and the Precomp layer covers exactly
+/// the stretch the selection covered, so the picture does not move.
+#[test]
+fn precompose_adjusting_the_duration_trims_the_new_comp_to_the_selection() {
+    use crate::api::effect::BridgeRational;
+    use crate::api::layer::BridgeSpan;
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Main".into(), None).expect("comp");
-    let layer1 = comp.add_solid_layer("Solid 1".into(), 100, 100, [1.0, 0.0, 0.0, 1.0]).expect("layer");
-    let layer2 = comp.add_text_layer().expect("layer");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let solid = comp.add_solid_layer().expect("solid");
+    // Two seconds of a thirty-second comp, starting at five.
+    let span = BridgeSpan {
+        in_point: BridgeRational { num: 5, den: 1 },
+        out_point: BridgeRational { num: 7, den: 1 },
+        start_offset: BridgeRational { num: 5, den: 1 },
+    };
+    solid.set_span(span).expect("span");
 
-    // leave_attributes=true with >1 layers must fail
-    assert!(comp.precompose(vec![layer1.id, layer2.id], "SubComp".into(), true, true).is_err());
+    let packed = comp
+        .precompose(vec![solid.layer_id], "Trimmed".into(), false, true)
+        .expect("precomposed");
 
-    let precomp_layer = comp
-        .precompose(vec![layer1.id, layer2.id], "SubComp".into(), false, true)
-        .expect("precompose");
-
-    assert_eq!(precomp_layer.get_kind().expect("kind"), BridgeLayerKind::Precomp);
-    assert_eq!(precomp_layer.get_name().expect("name"), "SubComp");
-
-    let layers = comp.get_layers().expect("layers");
-    assert_eq!(layers.len(), 1);
+    let Some(ItemReference::Composition(inner)) = packed.get_source_item().expect("source") else {
+        panic!("a Precomp layer's source is a composition");
+    };
+    // Two seconds at the comp's rate, not the parent's thirty.
+    assert_eq!(
+        inner.duration_frames().expect("frames"),
+        2 * comp.duration_frames().expect("frames") / 30
+    );
+    // The packed layer moved back to the start of its new home.
+    let inside = inner.get_layers().expect("layers")[0]
+        .get_span()
+        .expect("span");
+    assert_eq!(inside.in_point, BridgeRational { num: 0, den: 1 });
+    assert_eq!(inside.out_point, BridgeRational { num: 2, den: 1 });
+    assert_eq!(inside.start_offset, BridgeRational { num: 0, den: 1 });
+    // And the Precomp layer stands over the moment the selection stood over,
+    // with the offset that lines inner time zero up with it.
+    assert_eq!(packed.get_span().expect("span"), span);
 }
 
 // --- The shell: boot log, tier, autosave and recovery ---------------------
@@ -2301,6 +2430,326 @@ fn concurrent_project_creation_and_editing_does_not_deadlock() {
     for thread in threads {
         thread.join().expect("no thread panicked or hung");
     }
+}
+
+// --- Shape layers (K-237) -------------------------------------------------
+
+use crate::api::layer::BridgeLayerKind;
+
+fn shape_item(name: &str, x: f64, y: f64, side: f64) -> crate::api::layer::BridgeShapeItem {
+    use crate::api::layer::{BridgeShapeItem, BridgeVertex};
+    let corner = |x: f64, y: f64| BridgeVertex {
+        x,
+        y,
+        tan_in_x: 0.0,
+        tan_in_y: 0.0,
+        tan_out_x: 0.0,
+        tan_out_y: 0.0,
+    };
+    BridgeShapeItem {
+        id: Uuid::now_v7(),
+        name: name.into(),
+        vertices: vec![
+            corner(x, y),
+            corner(x + side, y),
+            corner(x + side, y + side),
+            corner(x, y + side),
+        ],
+        closed: true,
+        fill: Some(crate::api::assets::BridgeColourRgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        }),
+        stroke: None,
+        stroke_width: 0.0,
+        opacity: 100.0,
+    }
+}
+
+/// A shape tool with nothing selected makes one of these, and it lands where
+/// the art was drawn.
+#[test]
+fn a_shape_layer_is_made_from_its_art_and_placed_where_it_was_drawn() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    let shape = comp
+        .add_shape_layer(
+            "Rectangle".into(),
+            vec![shape_item("Rectangle", 200.0, 100.0, 50.0)],
+        )
+        .expect("a shape layer");
+
+    assert_eq!(shape.get_kind().expect("kind"), BridgeLayerKind::Shape);
+    let contents = shape.get_shape_contents().expect("contents");
+    assert_eq!(contents.len(), 1);
+    assert_eq!(contents[0].name, "Rectangle");
+    assert_eq!(contents[0].vertices.len(), 4);
+
+    // Anchored on the art's own corner and positioned at it, so the rectangle
+    // is where it was drawn.
+    let tf = shape.get_transform().expect("transform");
+    let still = |s: &BridgeScalar| match s {
+        BridgeScalar::Static(v) => *v,
+        _ => panic!("a fresh layer is not keyframed"),
+    };
+    assert_eq!(still(&tf.anchor_x), 0.0);
+    assert_eq!(still(&tf.position_x), 200.0);
+    assert_eq!(still(&tf.position_y), 100.0);
+
+    // It is at the top of the stack, where After Effects puts a new shape.
+    let layers = comp.get_layers().expect("layers");
+    assert_eq!(layers.first().map(|l| l.id()), Some(shape.id()));
+}
+
+#[test]
+fn shape_contents_are_replaced_as_a_whole_and_undone_in_one_step() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let shape = comp
+        .add_shape_layer("Art".into(), vec![shape_item("Rectangle", 0.0, 0.0, 10.0)])
+        .expect("a shape layer");
+
+    let mut contents = shape.get_shape_contents().expect("contents");
+    contents.push(shape_item("Second", 40.0, 40.0, 10.0));
+    shape.set_shape_contents(contents).expect("set");
+    assert_eq!(shape.get_shape_contents().expect("contents").len(), 2);
+
+    project.undo().expect("undone");
+    assert_eq!(
+        shape.get_shape_contents().expect("contents").len(),
+        1,
+        "one edit, one undo step"
+    );
+}
+
+#[test]
+fn shape_contents_ride_the_read_model() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let shape = comp
+        .add_shape_layer("Art".into(), vec![shape_item("Rectangle", 0.0, 0.0, 10.0)])
+        .expect("a shape layer");
+
+    let model = comp.get_model().expect("model");
+    let entry = model
+        .layers
+        .iter()
+        .find(|l| l.layer.id() == shape.id())
+        .expect("the layer");
+    assert_eq!(entry.info.shape_contents.len(), 1);
+    assert_eq!(entry.info.kind, BridgeLayerKind::Shape);
+
+    // Every other kind answers with an empty list rather than an error.
+    assert!(layer.get_shape_contents().expect("contents").is_empty());
+}
+
+#[test]
+fn a_shape_layer_refuses_art_that_is_not_a_shape() {
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+
+    assert!(matches!(
+        comp.add_shape_layer("Nothing".into(), Vec::new()),
+        Err(BridgeError::EmptyPath)
+    ));
+
+    let mut thin = shape_item("Line", 0.0, 0.0, 10.0);
+    thin.vertices.truncate(1);
+    assert!(matches!(
+        comp.add_shape_layer("Thin".into(), vec![thin]),
+        Err(BridgeError::EmptyPath)
+    ));
+
+    // And a layer that is not a shape refuses the edit rather than growing art.
+    assert!(matches!(
+        layer.set_shape_contents(vec![shape_item("Rectangle", 0.0, 0.0, 10.0)]),
+        Err(BridgeError::NotShape)
+    ));
+}
+
+// --- Paint: strokes on a layer (K-227) ------------------------------------
+
+fn stroke(name: &str, points: &[(f64, f64)]) -> crate::api::layer::BridgeStroke {
+    use crate::api::layer::{BridgePaintMode, BridgeStroke, BridgeStrokePoint};
+    BridgeStroke {
+        id: Uuid::now_v7(),
+        name: name.into(),
+        points: points
+            .iter()
+            .map(|&(x, y)| BridgeStrokePoint { x, y })
+            .collect(),
+        colour: crate::api::assets::BridgeColourRgba {
+            r: 1.0,
+            g: 0.0,
+            b: 0.0,
+            a: 1.0,
+        },
+        width: 12.0,
+        hardness: 0.8,
+        opacity: 100.0,
+        mode: BridgePaintMode::Paint,
+        clone_offset_x: 0.0,
+        clone_offset_y: 0.0,
+    }
+}
+
+/// A brush drag is one stroke, one op and one undo step — which is what
+/// `Ctrl+Z` after painting has to mean.
+#[test]
+fn a_stroke_is_added_read_back_and_undone_in_one_step() {
+    let (project, layer) = project_with_layer();
+    assert!(layer.get_paint().expect("paint").is_empty());
+
+    layer
+        .add_stroke(stroke("Brush 1", &[(10.0, 10.0), (40.0, 25.0)]))
+        .expect("added");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].name, "Brush 1");
+    assert_eq!(strokes[0].points.len(), 2);
+    assert_eq!(strokes[0].points[1].x, 40.0);
+    assert_eq!(strokes[0].width, 12.0);
+
+    project.undo().expect("undone");
+    assert!(
+        layer.get_paint().expect("paint").is_empty(),
+        "one stroke, one undo step"
+    );
+    project.redo().expect("redone");
+    assert_eq!(layer.get_paint().expect("paint").len(), 1);
+}
+
+/// Strokes are carried in the read model beside the masks (K-184), so the
+/// Timeline can list them without asking per row per frame.
+#[test]
+fn strokes_ride_the_read_model() {
+    let (project, layer) = project_with_layer();
+    layer
+        .add_stroke(stroke("Brush 1", &[(1.0, 2.0)]))
+        .expect("added");
+
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    let model = comp.get_model().expect("model");
+    let entry = model
+        .layers
+        .iter()
+        .find(|l| l.layer.id() == layer.id())
+        .expect("the layer");
+    assert_eq!(entry.info.paint.len(), 1);
+    assert_eq!(entry.info.paint[0].name, "Brush 1");
+}
+
+#[test]
+fn a_stroke_is_edited_and_deleted_by_id() {
+    let (_project, layer) = project_with_layer();
+    let first = stroke("Brush 1", &[(0.0, 0.0)]);
+    let second = stroke("Brush 2", &[(5.0, 5.0)]);
+    layer.add_stroke(first.clone()).expect("added");
+    layer.add_stroke(second.clone()).expect("added");
+
+    let mut edited = first.clone();
+    edited.name = "Renamed".into();
+    edited.width = 40.0;
+    layer.set_stroke(edited).expect("set");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(
+        strokes[0].name, "Renamed",
+        "the one named, not the last one"
+    );
+    assert_eq!(strokes[0].width, 40.0);
+    assert_eq!(strokes[1].name, "Brush 2");
+
+    layer.delete_stroke(first.id).expect("deleted");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].id, second.id);
+
+    // A stale reference is a calm error, not an edit landing on whatever sits
+    // at that index now.
+    assert!(matches!(
+        layer.delete_stroke(first.id),
+        Err(BridgeError::NoSuchStroke)
+    ));
+    assert!(matches!(
+        layer.set_stroke(first),
+        Err(BridgeError::NoSuchStroke)
+    ));
+}
+
+#[test]
+fn the_last_stroke_can_be_taken_back() {
+    let (_project, layer) = project_with_layer();
+    assert!(
+        matches!(layer.delete_last_stroke(), Err(BridgeError::NoSuchStroke)),
+        "nothing painted, nothing to take back"
+    );
+    layer
+        .add_stroke(stroke("Brush 1", &[(0.0, 0.0)]))
+        .expect("added");
+    layer
+        .add_stroke(stroke("Brush 2", &[(1.0, 1.0)]))
+        .expect("added");
+    layer.delete_last_stroke().expect("taken back");
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 1);
+    assert_eq!(strokes[0].name, "Brush 1");
+}
+
+/// A gesture with nothing in it is refused rather than stored: it would be a
+/// Timeline row with nothing behind it, exactly as an empty mask would be.
+#[test]
+fn a_stroke_with_no_points_is_refused() {
+    let (_project, layer) = project_with_layer();
+    assert!(matches!(
+        layer.add_stroke(stroke("Nothing", &[])),
+        Err(BridgeError::EmptyStroke)
+    ));
+    assert!(layer.get_paint().expect("paint").is_empty());
+}
+
+/// Numbers that would render wrongly for ever after are clamped at the seam,
+/// as a mask's opacity is.
+#[test]
+fn absurd_stroke_numbers_are_clamped_at_the_bridge() {
+    let (_project, layer) = project_with_layer();
+    let mut wild = stroke("Wild", &[(0.0, 0.0)]);
+    wild.opacity = 4000.0;
+    wild.hardness = -3.0;
+    wild.width = 1e9;
+    layer.add_stroke(wild).expect("added");
+    let got = &layer.get_paint().expect("paint")[0];
+    assert_eq!(got.opacity, 100.0);
+    assert_eq!(got.hardness, 0.0);
+    assert_eq!(got.width, 10_000.0);
+}
+
+/// The three modes and a clone's offset survive the crossing unchanged.
+#[test]
+fn every_paint_mode_round_trips() {
+    use crate::api::layer::BridgePaintMode;
+
+    let (_project, layer) = project_with_layer();
+    for mode in [
+        BridgePaintMode::Paint,
+        BridgePaintMode::Erase,
+        BridgePaintMode::Clone,
+    ] {
+        let mut s = stroke("Mark", &[(2.0, 2.0)]);
+        s.mode = mode;
+        s.clone_offset_x = -20.0;
+        s.clone_offset_y = 7.5;
+        layer.add_stroke(s).expect("added");
+    }
+    let strokes = layer.get_paint().expect("paint");
+    assert_eq!(strokes.len(), 3);
+    assert_eq!(strokes[0].mode, BridgePaintMode::Paint);
+    assert_eq!(strokes[1].mode, BridgePaintMode::Erase);
+    assert_eq!(strokes[2].mode, BridgePaintMode::Clone);
+    assert_eq!(strokes[2].clone_offset_x, -20.0);
+    assert_eq!(strokes[2].clone_offset_y, 7.5);
 }
 
 // --- Assets: what a layer is made of --------------------------------------

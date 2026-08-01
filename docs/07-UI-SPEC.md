@@ -164,12 +164,12 @@ empty for the tools that draw nothing:
 | Armed tool | Options |
 |---|---|
 | Type | **Fill** swatch, **size** in pixels |
-| Shape, Pen, Paint | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels |
+| Brush, Clone stamp, Eraser | **Fill** swatch, brush **size**, **hardness**, **opacity** (K-227) |
+| Shape, Pen | **Fill** swatch, **Stroke** swatch, **stroke width** in pixels — all live (K-237) |
 
-Fill and size say what the next thing drawn is made with, and both are session state like the
-armed tool itself. Stroke and stroke width MUST be shown **disabled** until something strokes
-a path: neither a shape layer's outline nor a paint stroke exists in the engine, and a control
-that quietly did nothing would be the same lie an unbuilt tool without its tooltip would be.
+Every option is session state, like the armed tool itself, and every one is live: fill and size
+say what the next thing drawn is made with, and the stroke pair outlines a new shape layer's art
+(K-237 — a width of zero draws no outline).
 
 **Behaviour.**
 
@@ -202,12 +202,10 @@ that quietly did nothing would be the same lie an unbuilt tool without its toolt
 **Implementation status (2026-07-31).** The strip, the groups, the flyouts, the shortcuts,
 the tool options area and the workspace strip are built. Built tools:
 Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), the five shape
-tools and the Pen (§2.3.1), Horizontal type (§2.3.2), and the three camera tools (§2.3.5).
-**Disabled** (K-228 — shown, not armable): vertical type, the Pen's four editing siblings, the
-Roto tools and the Puppet pins. The painting tools are built on the engine branch and stay
-disabled here until it lands. Each tool's behaviour is tracked separately in
-[TODO.md](TODO.md).
-
+tools and the Pen (§2.3.1), Horizontal type (§2.3.2), the three painting tools (§2.3.4) and the
+three camera tools (§2.3.5). **Disabled** (K-228 — shown, not armable): vertical type, the Pen's
+four editing siblings, the Roto tools and the Puppet pins. Each tool's behaviour is tracked
+separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
 ---
 
 ## 2. Viewer
@@ -372,9 +370,12 @@ The bar MUST remain one row; overflow collapses from the right into a chevron me
 
 ### 2.3.1 The shape tools and masks (K-222)
 
-- With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected
-  After Effects makes a *shape layer*; Lumit's engine has no such layer kind yet, so the tool
-  MUST say what to do instead rather than doing nothing quietly (TODO.md tracks the kind).
+- With a layer **selected**, a shape tool draws a **mask** on it. With **nothing** selected it
+  makes a **shape layer** at the top of the composition (K-237), holding the art it drew, in the
+  toolbar's fill and — when the width is not zero — its stroke. The new layer MUST land where
+  the art was drawn and MUST become the selection, so the next drag masks it.
+- A shape layer's art lists in its Timeline twirl-down under a **Contents** heading, above Masks
+  and Effects: the art is the picture, the masks gate it, the effects process it.
 - **All five shape tools drag out** between two opposite corners of the shape's box —
   whichever way round the drag went — with `Shift` keeping the box square. Rectangle and
   rounded rectangle fill the box; ellipse is inscribed in it; polygon and star are the regular
@@ -488,7 +489,7 @@ only: no tool gains a gesture on a button it did not already handle.
 | Tool | Pointer |
 |---|---|
 | Shape, Pen | The **crosshair** the eyedropper uses, badged with the tool's own icon down and to the right |
-| Brush, Clone stamp, Eraser | A **ring** the size of the stroke that would be left, a dot at its centre, badged with the tool's icon |
+| Brush, Clone stamp, Eraser | A **ring** the size of the stroke it would leave, a dot at its centre, badged with the tool's icon |
 | Horizontal type | The system **I-beam** |
 | Vertical type | A drawn I-beam, **turned a quarter turn** |
 | Orbit, Track, Dolly camera | The crosshair badged with the tool's icon (§2.3.5) |
@@ -504,8 +505,32 @@ only: no tool gains a gesture on a button it did not already handle.
   shape being dragged out.
 - The brush ring MUST follow the **magnification**: a width in picture pixels drawn at picture
   scale, clamped so a hairline is still visible and a very wide brush does not fill the window.
-- **Nothing is painted.** The painting tools have a pointer and a notice naming what is
-  missing; the engine has no paint strokes ([TODO.md](TODO.md)).
+- The brush ring MUST be the **brush size** (§2.3.4), so what is under the pointer is the mark
+  about to be made.
+
+### 2.3.4 The painting tools (K-227)
+
+- With a painting tool armed, a drag over the picture leaves a **stroke on the selected layer**.
+  With nothing selected the tool MUST say so rather than swallowing the press.
+- **Brush** lays down the toolbar's **fill** colour; **Eraser** takes the layer's alpha away;
+  **Clone stamp** copies from elsewhere on the same layer. The clone stamp MUST refuse to stamp
+  until `Alt`-click has set its source, and MUST mark that source on the picture.
+- One drag is **one stroke and one undo step**. The stroke is drawn on the overlay while the
+  pointer is down and committed once on release. `Escape` abandons a stroke in flight;
+  `Backspace` takes the last committed one back.
+- The brush's **size, hardness and opacity** sit on the toolbar beside the fill swatch (§1.7)
+  and are live. They are the brush's own three, not the shape tools' fill and stroke pair
+  (§1.7) — a brush is a different thing that happens to have a width.
+- A stroke is stored as the **gesture** in layer coordinates, so it re-stamps at whatever
+  resolution the frame is rendered at and every setting stays changeable
+  ([03-DATA-MODEL.md](03-DATA-MODEL.md) §7.1).
+- Strokes list in the layer's Timeline twirl-down under a **Paint** heading, between Masks and
+  Effects — the order the picture is built in — each row named for the tool that made it, with
+  its opacity and a menu that deletes it. The heading appears only once there is a stroke.
+- Not built: pressure and tilt, non-round brushes, spacing and scatter, write-on (per-stroke
+  start and end times), per-stroke blending modes, and painting in Layer view rather than on the
+  composite.
+
 
 ### 2.3.5 The camera tools (K-229)
 
@@ -1394,16 +1419,32 @@ layer keeps its timing, and nothing plays faster or slower — the comp is simpl
 
 ### 13.4 The Pre-compose dialogue
 
-Triggered from `Ctrl+Shift+C` in the Timeline context, or from `Layer ▸ Pre-compose…`.
-When one or more layers are selected, it opens a configuration modal asking for:
-- **New composition name**: text field prefilled with a default name.
-- **Attribute handling**:
-  - *Leave all attributes in '[Comp Name]'*: available only when exactly one layer is selected. Leaves transform, effects, masks, and retime on the parent comp's Precomp layer.
-  - *Move all attributes into the new composition*: moves selected layers with all attributes into the new composition. Forced when >1 layers are selected.
-- **Adjust composition duration to the time span of the selected layers**: checkbox (default: checked). Sets the new comp's duration to the bounding span of the selected layers.
-- **Open New Composition**: checkbox (default: unchecked). Opens the newly created composition upon creation.
+`Ctrl+Shift+C` in the Timeline, or `Layer ▸ Pre-compose…`, packs the selected layers into a
+comp of their own and puts that comp back in their place as a Precomp layer. Both commands are
+live only with a comp open and something selected in it; the menu item greys out otherwise.
 
-The user's selections for attribute mode, duration adjustment, and opening preference are persisted in workspace settings across launches.
+The dialogue asks two questions the engine cannot answer for the user, and one convenience:
+
+- **New composition name**, prefilled from the first selected layer. Blank falls back to the
+  engine's own `Pre-comp N`.
+- **Where the attributes go**, as an exclusive pair:
+  - *Leave all attributes in '\<this comp\>'* — the layer moves into the new comp stripped back
+    to its source, and its transform, effects, masks, Retime, blend mode and switches stay
+    behind on the Precomp layer, each of them once. Offered only for a single layer: a stack
+    has no one layer for its attributes to stay on, so with more than one selected the choice
+    is shown disabled and Move is the answer. The engine refuses the combination too.
+  - *Move all attributes into the new composition* — the selected layers move whole.
+- **Adjust the duration to the span of the selected layers** (default: on). The new comp's
+  duration becomes the selection's own span, the packed layers shift back to start at zero
+  inside it, and the Precomp layer covers the stretch the selection covered — so the picture
+  does not move. Off, the new comp is as long as this one and no layer changes time at all.
+- **Open the new composition** (default: off).
+
+The whole move is one undo step, and the new comp auto-files into the Compositions folder like
+any other (K-068). The three answers are remembered in the workspace across launches; the
+attribute choice is remembered but overridden by a multiple selection, which can only move. A
+refusal from the engine leaves the dialogue open saying so, rather than closing on a move that
+did not happen.
 
 ---
 

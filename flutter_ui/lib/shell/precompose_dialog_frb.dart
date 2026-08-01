@@ -1,21 +1,30 @@
-// The Pre-compose dialog (Ctrl+Shift+C / layer.precompose).
+// The Pre-compose dialogue (Ctrl+Shift+C, or Layer ▸ Pre-compose…).
 //
-// Prompts the user before creating a new intermediate composition from one or
-// more selected layers. Remembers attribute mode, duration adjustment, and
-// open new comp choices in the workspace settings.
+// Packing layers into a comp of their own is one engine call, but it asks two
+// questions first that only the user can answer (docs/07 §13.4): whether the
+// attributes travel with the layer or stay behind on the Precomp layer, and
+// whether the new comp is as long as this one or only as long as the selection.
+// Both answers are remembered in the workspace, because a person who works one
+// way tends to keep working that way.
+//
+// Leaving the attributes behind only means anything for a single layer — there
+// is no one layer for a stack's transforms to stay on — so with more than one
+// selected the choice is disabled and Move is the answer. The engine refuses
+// the impossible combination too; this is the same rule said early enough to
+// keep the dialogue honest.
 
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
+import 'package:uuid/uuid.dart';
 
 import '../main.dart';
 import '../state/workspace.dart';
+import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
-bool _isPrecomposeShowing = false;
-
-/// Show the Pre-compose dialogue and execute precompose on confirm.
+/// Show the dialogue and, on confirm, precompose. Returns when it closes.
 Future<void> showPrecomposeDialogFrb({
   required BuildContext context,
   required CompositionReference comp,
@@ -23,102 +32,86 @@ Future<void> showPrecomposeDialogFrb({
   required LumitUiState ui,
   required Workspace workspace,
 }) async {
-  var layers = selectedLayers;
-  if (layers.isEmpty && ui.selectedLayer.value != null) {
-    layers = [ui.selectedLayer.value!];
-  }
-  if (layers.isEmpty) return;
-  if (_isPrecomposeShowing) return;
+  if (selectedLayers.isEmpty) return;
 
-  _isPrecomposeShowing = true;
+  // The same layer twice is a selection quirk, not two layers: it would make
+  // the engine refuse a single-layer Leave, and pack a duplicate on Move.
+  final seen = <UuidValue>{};
+  final layers = [
+    for (final l in selectedLayers)
+      if (seen.add(l.internallayerId)) l,
+  ];
 
-  try {
-    final compInfo = comp.getSettings();
-    final parentCompName = compInfo.name;
-    final firstLayerName = layers.first.getName();
-
-    final defaultName = layers.length == 1
-        ? '$firstLayerName Comp 1'
-        : 'Clips Comp 1';
-
-    await showLumitModal<void>(
-      context: context,
-      builder: (close) => _PrecomposeBody(
-        parentCompName: parentCompName,
-        firstLayerName: firstLayerName,
-        selectedCount: layers.length,
-        defaultName: defaultName,
-        initialMoveAttributes: workspace.precomposeMoveAttributes,
-        initialAdjustDuration: workspace.precomposeAdjustDuration,
-        initialOpenNewComp: workspace.precomposeOpenNewComp,
-        onConfirm: (name, moveAttributes, adjustDuration, openNewComp) async {
-          // Save user's working preferences for precompose
-          workspace.setPrecomposeSettings(
-            moveAttributes: moveAttributes,
+  await showLumitModal<void>(
+    context: context,
+    builder: (close) => _PrecomposeBody(
+      parentCompName: comp.getSettings().name,
+      layerName: layers.first.getName(),
+      selectedCount: layers.length,
+      defaultName: '${layers.first.getName()} Comp',
+      initialMoveAttributes: workspace.precomposeMoveAttributes,
+      initialAdjustDuration: workspace.precomposeAdjustDuration,
+      initialOpenNewComp: workspace.precomposeOpenNewComp,
+      onConfirm: (name, moveAttributes, adjustDuration, openNewComp) {
+        workspace.setPrecomposeSettings(
+          moveAttributes: moveAttributes,
+          adjustDuration: adjustDuration,
+          openNewComp: openNewComp,
+        );
+        final LayerReference precomp;
+        try {
+          precomp = comp.precompose(
+            layerIds: [for (final l in layers) l.internallayerId],
+            name: name,
+            leaveAttributes: !moveAttributes && layers.length == 1,
             adjustDuration: adjustDuration,
-            openNewComp: openNewComp,
           );
-
-          final uniqueLayerIds = <UuidValue>{};
-          final layerIds = <UuidValue>[];
-          for (final l in layers) {
-            if (uniqueLayerIds.add(l.internallayerId)) {
-              layerIds.add(l.internallayerId);
-            }
+        } catch (_) {
+          // The dialogue stays open saying so, rather than closing on a move
+          // that never happened.
+          return 'Those layers could not be pre-composed.';
+        }
+        // The Precomp layer is what the user is now working on.
+        ui.setSelection([precomp]);
+        ui.model.refresh();
+        if (openNewComp) {
+          if (precomp.getSourceItem() case ItemReference_Composition(
+            :final field0,
+          )) {
+            ui.setSelectedComp(field0);
           }
-
-          final leaveAttributes = !moveAttributes && layerIds.length == 1;
-
-          try {
-            final newPrecompLayer = comp.precompose(
-              layerIds: layerIds,
-              name: name,
-              leaveAttributes: leaveAttributes,
-              adjustDuration: adjustDuration,
-            );
-
-            ui.setSelection([newPrecompLayer]);
-            ui.notifyListeners();
-
-            if (openNewComp) {
-              final sourceItem = newPrecompLayer.getSourceItem();
-              if (sourceItem case ItemReference_Composition(:final field0)) {
-                ui.setSelectedComp(field0);
-              }
-            }
-          } catch (e) {
-            debugPrint('Precompose failed: $e');
-          } finally {
-            close(null);
-          }
-        },
-        onCancel: () => close(null),
-      ),
-    );
-  } finally {
-    _isPrecomposeShowing = false;
-  }
+        }
+        close(null);
+        return null;
+      },
+      onCancel: () => close(null),
+    ),
+  );
 }
+
+/// `onConfirm` returns null when the move went through, or the sentence to
+/// show when it did not — the dialogue stays open on a refusal.
+typedef _Confirm = String? Function(
+  String name,
+  bool moveAttributes,
+  bool adjustDuration,
+  bool openNewComp,
+);
 
 class _PrecomposeBody extends StatefulWidget {
   final String parentCompName;
-  final String firstLayerName;
+  final String layerName;
   final int selectedCount;
   final String defaultName;
   final bool initialMoveAttributes;
   final bool initialAdjustDuration;
   final bool initialOpenNewComp;
-  final void Function(
-    String name,
-    bool moveAttributes,
-    bool adjustDuration,
-    bool openNewComp,
-  ) onConfirm;
+  final _Confirm onConfirm;
   final VoidCallback onCancel;
 
   const _PrecomposeBody({
     required this.parentCompName,
-    required this.firstLayerName,
+    required this.layerName,
     required this.selectedCount,
     required this.defaultName,
     required this.initialMoveAttributes,
@@ -133,259 +126,214 @@ class _PrecomposeBody extends StatefulWidget {
 }
 
 class _PrecomposeBodyState extends State<_PrecomposeBody> {
-  late final TextEditingController _nameController;
+  late final TextEditingController _name;
   late bool _moveAttributes;
   late bool _adjustDuration;
   late bool _openNewComp;
+  String? _refusal;
+
+  bool get _single => widget.selectedCount == 1;
 
   @override
   void initState() {
     super.initState();
-    _nameController = TextEditingController(text: widget.defaultName);
-    // If >1 layers are selected, "Leave attributes" is impossible, so force move
-    _moveAttributes = widget.selectedCount > 1 ? true : widget.initialMoveAttributes;
+    _name = TextEditingController(text: widget.defaultName);
+    // Remembered, except where the selection makes the remembered answer
+    // impossible: a stack always moves.
+    _moveAttributes = _single ? widget.initialMoveAttributes : true;
     _adjustDuration = widget.initialAdjustDuration;
     _openNewComp = widget.initialOpenNewComp;
   }
 
   @override
   void dispose() {
-    _nameController.dispose();
+    _name.dispose();
     super.dispose();
   }
 
-  void _submit() {
-    final name = _nameController.text.trim().isEmpty
-        ? widget.defaultName
-        : _nameController.text.trim();
-    widget.onConfirm(name, _moveAttributes, _adjustDuration, _openNewComp);
+  void _confirm() {
+    final typed = _name.text.trim();
+    final refusal = widget.onConfirm(
+      typed.isEmpty ? widget.defaultName : typed,
+      _moveAttributes,
+      _adjustDuration,
+      _openNewComp,
+    );
+    if (refusal != null && mounted) setState(() => _refusal = refusal);
   }
 
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final isSingleLayer = widget.selectedCount == 1;
-
     return FloatSurface(
-      width: 440,
+      width: 420,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Header with Title and Close button
           Padding(
-            padding: const EdgeInsets.only(left: 12, top: 8, right: 8, bottom: 12),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Pre-compose',
-                    style: t.bodyPrimary.copyWith(fontWeight: FontWeight.bold),
-                  ),
-                ),
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: widget.onCancel,
-                  child: Padding(
-                    padding: const EdgeInsets.all(4),
-                    child: Text('✕', style: t.small.copyWith(color: t.textMuted)),
-                  ),
-                ),
-              ],
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Pre-compose',
+              style: t.bodyPrimary,
+              textAlign: TextAlign.center,
             ),
           ),
-
-          // Name row
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              children: [
-                Text(
-                  'New composition name:',
-                  style: t.small,
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: HouseTextField(
-                    key: const ValueKey('precompose-name-input'),
-                    controller: _nameController,
-                    width: double.infinity,
-                    autofocus: true,
-                    onSubmitted: (_) => _submit(),
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Radio option 1: Leave all attributes
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: isSingleLayer
-                  ? () => setState(() => _moveAttributes = false)
-                  : null,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      HouseRadio(
-                        key: const ValueKey('precompose-radio-leave'),
-                        selected: !_moveAttributes,
-                        enabled: isSingleLayer,
-                        onChanged: () => setState(() => _moveAttributes = false),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          "Leave all attributes in '${widget.parentCompName}'",
-                          style: t.small.copyWith(
-                            color: isSingleLayer ? t.textPrimary : t.textMuted,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 22, top: 4),
-                    child: Text(
-                      "Use this option to create a new intermediate composition with only "
-                      "'${widget.firstLayerName}' in it. The new composition will become the "
-                      "source to the current layer.",
-                      style: t.caption.copyWith(
-                        color: isSingleLayer ? t.textMuted : t.textMuted.withOpacity(0.5),
-                        height: 1.3,
-                      ),
-                    ),
-                  ),
-                ],
+          Row(
+            children: [
+              SizedBox(
+                width: 120,
+                child: Text('New composition name', style: t.small),
               ),
-            ),
-          ),
-
-          const SizedBox(height: 16),
-
-          // Radio option 2: Move all attributes
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => setState(() => _moveAttributes = true),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      HouseRadio(
-                        key: const ValueKey('precompose-radio-move'),
-                        selected: _moveAttributes,
-                        enabled: true,
-                        onChanged: () => setState(() => _moveAttributes = true),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          'Move all attributes into the new composition',
-                          style: t.small.copyWith(color: t.textPrimary),
-                        ),
-                      ),
-                    ],
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(left: 22, top: 4),
-                    child: Text(
-                      'Use this option to place the currently selected layers together into '
-                      'a new intermediate composition.',
-                      style: t.caption.copyWith(color: t.textMuted, height: 1.3),
-                    ),
-                  ),
-                ],
+              Expanded(
+                child: HouseTextField(
+                  key: const ValueKey('precompose-name'),
+                  controller: _name,
+                  width: double.infinity,
+                  autofocus: true,
+                  onSubmitted: (_) => _confirm(),
+                ),
               ),
-            ),
+            ],
           ),
-
+          const SizedBox(height: 14),
+          _choice(
+            t,
+            key: 'precompose-leave',
+            selected: !_moveAttributes,
+            enabled: _single,
+            onPick: () => setState(() => _moveAttributes = false),
+            label: "Leave all attributes in '${widget.parentCompName}'",
+            caption: _single
+                ? "The new composition holds '${widget.layerName}' on its own, "
+                    'and becomes the source of the layer standing here — so the '
+                    'transform, effects and masks keep acting on it from this '
+                    'composition.'
+                : 'Only available for a single layer: a stack has no one layer '
+                    'for its attributes to stay on.',
+          ),
           const SizedBox(height: 12),
-
-          // Checkbox 1: Adjust duration
-          Padding(
-            padding: const EdgeInsets.only(left: 38, right: 16),
-            child: Row(
-              children: [
-                HouseCheckbox(
-                  key: const ValueKey('precompose-checkbox-adjust-duration'),
-                  value: _adjustDuration,
-                  onChanged: (v) => setState(() => _adjustDuration = v),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => setState(() => _adjustDuration = !_adjustDuration),
-                    child: Text(
-                      'Adjust composition duration to the time span of the selected layers',
-                      style: t.small,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          _choice(
+            t,
+            key: 'precompose-move',
+            selected: _moveAttributes,
+            enabled: true,
+            onPick: () => setState(() => _moveAttributes = true),
+            label: 'Move all attributes into the new composition',
+            caption: 'The selected layers move whole — transforms, effects, '
+                'masks and all — into a composition of their own.',
           ),
-
+          const SizedBox(height: 14),
+          _check(
+            t,
+            key: 'precompose-adjust-duration',
+            value: _adjustDuration,
+            onChanged: (v) => setState(() => _adjustDuration = v),
+            label: 'Adjust the duration to the span of the selected layers',
+          ),
           const SizedBox(height: 8),
-
-          // Checkbox 2: Open New Composition
-          Padding(
-            padding: const EdgeInsets.only(left: 16, right: 16),
-            child: Row(
-              children: [
-                HouseCheckbox(
-                  key: const ValueKey('precompose-checkbox-open-new-comp'),
-                  value: _openNewComp,
-                  onChanged: (v) => setState(() => _openNewComp = v),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: GestureDetector(
-                    onTap: () => setState(() => _openNewComp = !_openNewComp),
-                    child: Text(
-                      'Open New Composition',
-                      style: t.small,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+          _check(
+            t,
+            key: 'precompose-open-new-comp',
+            value: _openNewComp,
+            onChanged: (v) => setState(() => _openNewComp = v),
+            label: 'Open the new composition',
           ),
-
-          const SizedBox(height: 20),
-
-          // Bottom Actions (OK and Cancel)
-          Padding(
-            padding: const EdgeInsets.only(left: 16, right: 16, bottom: 12),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                HouseButton(
-                  key: const ValueKey('precompose-confirm-ok'),
-                  onPressed: _submit,
-                  child: Text('OK', style: t.small),
-                ),
-                const SizedBox(width: 8),
-                HouseButton(
-                  key: const ValueKey('precompose-cancel'),
-                  onPressed: widget.onCancel,
-                  child: Text('Cancel', style: t.small),
-                ),
-              ],
+          if (_refusal != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                _refusal!,
+                key: const ValueKey('precompose-refusal'),
+                style: t.small.copyWith(color: t.textMuted),
+              ),
             ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              HouseButton(
+                key: const ValueKey('precompose-confirm'),
+                onPressed: _confirm,
+                child: const Text('Pre-compose'),
+              ),
+              const SizedBox(width: 8),
+              HouseButton(
+                key: const ValueKey('precompose-cancel'),
+                onPressed: widget.onCancel,
+                child: const Text('Cancel'),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+
+  /// One radio choice: the button, its sentence, and the explanation under it.
+  /// The whole block is the target, so the sentence is as clickable as the dot.
+  Widget _choice(
+    LumitTheme t, {
+    required String key,
+    required bool selected,
+    required bool enabled,
+    required VoidCallback onPick,
+    required String label,
+    required String caption,
+  }) =>
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: enabled ? onPick : null,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                HouseRadio(
+                  key: ValueKey(key),
+                  selected: selected,
+                  enabled: enabled,
+                  onChanged: onPick,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    label,
+                    style: t.small.copyWith(
+                      color: enabled ? t.textPrimary : t.textMuted,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            Padding(
+              padding: const EdgeInsets.only(left: 22, top: 4),
+              child: Text(caption, style: t.caption.copyWith(height: 1.3)),
+            ),
+          ],
+        ),
+      );
+
+  Widget _check(
+    LumitTheme t, {
+    required String key,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+    required String label,
+  }) =>
+      GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onChanged(!value),
+        child: Row(
+          children: [
+            HouseCheckbox(
+              key: ValueKey(key),
+              value: value,
+              onChanged: onChanged,
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text(label, style: t.small)),
+          ],
+        ),
+      );
 }

@@ -3591,7 +3591,6 @@ the old folder simply stop being addressed, and that folder is deletable at any 
 
 **Not done, and deliberately: nothing about this is in the pull request for K-214.** the owner asked
 for these on a branch of their own so the reviewable change stays the one that was reviewed.
-
 **K-216 · DECIDED · The toolbar is one strip under the menu bar, and it ships with the whole
 tool set whether or not each tool works yet.** From the owner (2026-07-31): the toolbar had
 no counterpart at all on the Flutter frontend — the egui shell's tool row did not survive the
@@ -4075,6 +4074,64 @@ Rotation, Anchor point and Razor — hide the system pointer over the picture an
 own; these do the same, through one shared pointer widget rather than a fourth private
 painter.
 
+**K-227 · DECIDED · Painting is a list of strokes on a layer, stamped into its pixels before
+its masks gate them.** From the owner (2026-07-31): "please implement the brush stuff". K-226
+gave the three painting tools their pointers and an honest notice; this gives them something
+to do.
+
+**What is stored is the gesture, never the pixels.** A stroke is the path the pointer took in
+the layer's own coordinates, plus its colour, width, hardness, opacity and mode — and it is
+re-stamped at whatever resolution the frame is being rendered at. So painting at a quarter
+preview and exporting at full size gives a full-size stroke rather than a blurry quarter-size
+one, and every setting stays changeable afterwards. Storing a painted bitmap would have been
+less code and a dead end: it fixes the resolution, fixes the colour, and cannot be undone
+stroke by stroke.
+
+**A polyline, not a bezier.** Masks and shape layers are the bezier things; a stroke is a
+record of a gesture nobody edits vertex by vertex. It is thinned on the way out — samples
+closer than two screen pixels are dropped, first and last always kept — because a slow drag
+raises hundreds of events a second and a thousand-point path costs the renderer for nothing
+anyone can see.
+
+**Three modes, one shape of thing.** Paint lays the colour down, Erase takes alpha away, and
+Clone copies from elsewhere on the *same* layer by a fixed offset. Clone reads a copy of the
+raster taken **before any stroke in the pass is stamped**, so it never picks up paint laid
+down beside it — the alternative smears its own output across the picture. The clone stamp
+refuses to stamp until `Alt`-click has set its source, and says so, rather than stamping
+nothing.
+
+**Where it lands in the picture.** Strokes are stamped into the layer's own raster, before
+its masks gate it and before its effects run — so "mask off the part I painted" and "blur what
+I painted" both mean the obvious thing. Two consequences: a flat solid is no longer rasterised
+as an 8×8 tile once it has paint on it (a brush needs pixels to mark), and paint on a collapsed
+Precomp layer forces the nested intermediate, exactly as a mask does.
+
+**One drag is one stroke is one undo step.** `SetLayerPaint` replaces the whole list and is
+exactly invertible, the same shape as `SetLayerMasks`: an add, a delete, a rename and a
+recolour are one kind of edit. `Escape` abandons a stroke in flight; `Backspace` takes the last
+one back.
+
+**The brush gets its own three settings, and they are live.** Size, hardness and opacity sit
+on the toolbar beside the fill swatch whenever a painting tool is armed. They are *not* the
+shape tools' stroke pair — a brush is a different thing that happens to have a width, and
+K-225's stroke controls stay disabled because nothing still strokes a path. The brush colour
+**is** the fill: a fill is what a tool lays down.
+
+**Strokes list in the Timeline** under a Paint heading between Masks and Effects — the order
+the picture is built in — with each row named for the tool that made it, carrying its opacity
+and a menu that deletes it. The heading appears only once the layer has a stroke, exactly as
+Masks and Effects do.
+
+**CPU, and deliberately so for now.** The stamping is a scanline loop beside the mask
+rasteriser, which is where the layer's pixels already are. A GPU path (a stroke as a
+tessellated ribbon, or a compute stamp) is the right long-term answer for a stroke being
+painted live at 4K, and it changes nothing about what is stored — which is the point of
+deciding the storage first. Paint on a Precomp layer's *nested* pixels is not built for the
+same reason: those pixels never come back to the CPU.
+
+**Not built, and named so nobody assumes otherwise:** pressure and tilt, brush shapes other
+than round, spacing and scatter, write-on (a stroke's own start and end times), painting in
+Layer view rather than on the composite, and per-stroke blending modes.
 **K-228 · DECIDED · A tool that is not built cannot be armed. It stays on the strip, drawn
 disabled.** From the owner (2026-07-31): "I think we'd be better off just disabling that in the
 toolbar for now… it'd be better to see what we still need to add rather than removing it and
@@ -4410,3 +4467,160 @@ which is exactly the report — "hovering that area still shows a button that ca
 The padding fits the strip now, and the test measures the *label*, not the button: a control
 that is laid out and hit-tests correctly can still be unreadable, and only the text's own height
 says so.
+**K-237 · DECIDED · A shape layer is a list of paths with a fill and a stroke, and its size is
+the box its art fills.** The other half of K-222's gesture: with nothing selected the shape
+tools now make a layer instead of saying they cannot, which is what the owner asked for when
+the shape tools were specified.
+
+**The path type is the mask's, unchanged.** One `BezierPath` in the document, one rasteriser,
+one vertex type across the bridge. A shape's path and a mask's path differ in what they *do*,
+not in what they are — which is why the shape tools and the Pen could draw a shape layer's art
+with the same geometry they had been drawing masks with since the day they landed. Nothing in
+`viewer_shapes.dart` changed.
+
+**Flat contents, not nested groups.** `LayerKind::Shape { contents: Vec<ShapeItem> }`, each
+item a path plus a fill colour, a stroke colour and a stroke width. After Effects' nested
+groups exist to carry its shape *modifiers* — repeater, trim paths, wiggle — and none of those
+are built; a group hierarchy with nothing to put in it is a data model designed around a
+feature nobody has written.
+
+**A fill is the mask rasteriser; a stroke is the paint rasteriser.** The fill's coverage comes
+from `mask::rasterise`, the same scanline walk with the same subsamples that decides which
+pixels a mask gates. The outline is a `PaintStroke` run along the flattened path — the widened
+path K-227 already had. Two rasterisers already in the engine, each doing what it was written
+to do, instead of a third that could disagree with both.
+
+**The layer's size is its art's bounding box, and it moves.** Every kind built so far has a
+size fixed by its source: a clip's frame size, a solid's dimensions, a comp's. A shape layer's
+changes as the art is edited, which was the trap named in the plan note — `LayerBoundsCache`
+keys on the document revision so it follows, and both sides now bound the curve by its
+**control points** (a cubic never leaves its own control hull) so the box on screen is the box
+the picture was drawn into.
+
+**A new shape layer lands where the art was drawn**: the anchor sits on the art's own top-left
+corner and Position carries it there, so a rectangle dragged across the picture appears exactly
+under the drag. It is added at the top of the stack and selected, so the next drag masks it —
+which is the behaviour that makes "draw a shape, then draw another" work without a trip to the
+Timeline.
+
+**The stroke controls are live at last.** K-225 put a stroke swatch and a width on the toolbar
+and drew them disabled, because nothing in the engine stroked anything. A shape layer's art
+does, so they now paint: a width of zero draws no outline, which is how a fill-only shape is
+made. The Type tool's options are unchanged.
+
+**Contents list in the Timeline** under a Contents heading, *above* Masks and Effects — a shape
+layer's art is its picture, the masks gate that picture, and the effects process it, which is
+the order docs/06 builds a layer in. The heading appears only once there is art, exactly as
+Masks and Paint do.
+
+**One op, `SetShapeContents`, replacing the whole list** — the third of the same shape after
+`SetLayerMasks` and `SetLayerPaint`. An add, a delete, a recolour and a path edit are one kind
+of edit and each is one undo step.
+
+**Not built, and named so nobody assumes otherwise:** nested groups and the shape modifiers
+(repeater, trim paths, wiggle, offset paths), gradient fills, dashed strokes, line joins and
+caps other than round, fill rules other than the mask rasteriser's, animated paths, and editing
+a shape layer's points on the picture (K-224 edits *mask* points; the same gesture over shape
+contents is the next piece).
+
+**K-238 · DECIDED · What the shape and paint tools were getting wrong, in one pass.** From the
+owner (2026-08-01), on using them for the first time. Every item is a correction to K-227 and
+K-237 rather than a new capability, so they are recorded together.
+
+**A stroke was invisible, and the cache was why.** A frame is named by a hash of everything
+that went into it, and two frames with the same name are the same picture (K-214). The name
+hashed a layer's masks and never its **paint** — so a brush drag changed no name, every cached
+frame stayed valid, and the mark never appeared. Nothing could make it appear either, short of
+moving something else in the composition: the report was "after letting go the line you drew
+disappears and nothing makes it reappear", and that is exactly right. Paint is stamped into the
+layer's own pixels, so it is content in precisely the way masks are. Hashed only when a layer
+*has* paint, so an unpainted layer keeps the name it already had and no frame banked by an
+earlier version is thrown away. A shape layer's `contents` were already hashed; that now has a
+test of its own so it cannot quietly stop being.
+
+**This is what made the clone stamp and the eraser look unbuilt.** Neither had a fault of its
+own. All three painting tools wrote strokes the renderer drew and the cache then hid.
+
+**A tool must not act on a layer that has gone.** Making a shape layer selects it, so the next
+drag masks it — the point of the gesture. Undo removed the layer and left its id in the
+selection, so the next drag still believed a layer was selected, tried to mask one that no
+longer existed, and did nothing at all: the tool had stopped working with nothing on screen to
+say why. The selection now drops layers the model no longer has, answered once from the model
+rather than at each of the several places a layer can vanish. Undo is only the easiest way to
+see it — deleting a layer reaches the same state.
+
+**A tool draws what it is about to make, translucently.** The shape preview asked the *selected
+layer* to place its points, so the half of the gesture that makes a shape layer — nothing
+selected — previewed nothing at all: you dragged blind and the shape appeared on release. The
+preview takes a coordinate space now rather than a layer, and there is always one: the
+composition's when there is no layer. It is drawn **filled**, in the toolbar's own fill and
+stroke at half opacity, so the swatches finally answer "what colour is this going to be?"
+before the shape exists. Half opacity rather than full, because a solid preview is
+indistinguishable from a shape that is already there. A drag on a *selected* layer still
+previews in the accent: a mask has no colour of its own — it cuts — and promising a fill that
+will never appear is worse than an outline. The Pen's closing ring had the same layer-shaped
+hole and is answered the same way.
+
+**One drag of a stroke's opacity is one undo step.** The row was written from the mask row as it
+stood *before* K-234 fixed exactly this, so it committed on every tick and `Ctrl+Z` walked back
+a single percent at a time — which reads as undo not working. Staged and committed once on
+release, like every other dragged value in the Timeline.
+
+**Hiding the system pointer is the shared region's job, not each tool's.** Alt is the key
+Windows reserves for the window menu, and pressing it brings the arrow back beside a drawn
+pointer (K-235). The Zoom tool had a fix for this; the painting tools did not, so the clone
+stamp's `Alt`-click — the gesture that *sets its source* — put a second pointer inside the
+brush ring. The fix moved into `DrawnPointerRegion`, so every tool that draws its own pointer
+has it, and on **any** key rather than a list of the ones a platform might reserve.
+
+**The workspace strip is held against the right-hand end** (docs/07 §1.4). It drifted in beside
+the last tool when the options strip arrived: the tools took a *loose* Flexible, which claims
+only the width it needs, so the free space was stranded past the workspace buttons rather than
+in front of them.
+
+**Still owed, and not part of this:** editing a shape's or a stroke's points on the picture the
+way K-224 edits a mask's, and dragging a vertex's bezier **handles** — which no path in Lumit
+can do yet, mask included. Both are named in TODO.md.
+
+**K-239 · DECIDED · A value you drag has to show what it is doing.** K-238 made a stroke's
+opacity one op per drag by staging it and committing on release. That fixed undo and broke the
+other half: the picture did not move until the button came up, which the owner reported at once
+and is the wrong bargain. Both halves are the requirement — **the tick previews and the release
+commits** — which is the division the Type tool (K-225) and the transform rows already use.
+
+**Through the same door, not a new one.** The render request already carries provisional
+effects, a provisional transform and a provisional text document, all patched onto a *clone* of
+the document so nothing is committed. Paint and a shape layer's contents join them. Anything
+that can be dragged and cannot be committed per tick needs this, so the list will keep growing;
+what matters is that there is one path and one place where a drag's provisional value meets the
+renderer.
+
+**The whole list rides along, not one item's opacity.** Paint and shape contents are stored and
+committed as whole lists (`SetLayerPaint`, `SetShapeContents`). A preview shaped differently
+from the op would be a second description of the same thing, and the two would drift.
+
+**The shape row had the fault K-238 fixed on the stroke row.** It committed on every tick, so a
+shape item's opacity was never one undo step. It is staged and previewed now, and the two rows
+match — they were always meant to be the same row with a different noun.
+
+**A cancelled drag asks for the picture back.** Releasing a drag that never ticked, or a gesture
+the framework cancels, leaves the screen showing a value nobody committed. The row re-previews
+the document's own value rather than waiting for the next thing to redraw it.
+
+**Not done here, and named in TODO.md:** the *mask* row stages without previewing, so its
+opacity drag has the fault this fixes, and a mask preview wants the same clone-and-patch path
+these three now share.
+
+**K-240 · DECIDED · The mask row previews too, and the pattern is closed.** The last of the
+three whole-list rows to get what K-239 gave paint and shape art: the tick previews, the release
+commits. K-234 had staged it, so the drag was already one undo step; what was missing was the
+picture moving while the drag was in flight.
+
+**Nothing new was designed for it.** A mask list joins paint and contents on the same
+clone-and-patch render request, converted by the same `write` the commit uses. That is the point
+of recording it: the three rows are one row with a different noun, and the third one arriving
+without inventing anything is the evidence that the shape was right.
+
+**What this closes.** Every whole-list property the Timeline can drag — a mask's opacity, a
+stroke's, a shape item's — is now one op, one undo step, and live on the picture. A property
+added to this family later has one path to join rather than a choice to make.

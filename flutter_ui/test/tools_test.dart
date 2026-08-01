@@ -118,9 +118,9 @@ void main() {
       // Hand pans, Zoom magnifies (K-218), Rotation turns (K-219), Anchor
       // point pans behind and the Razor cuts (K-220), the five shape tools
       // draw masks and the Pen builds one (K-222, K-223), horizontal type makes
-      // and edits text layers (K-225), and the three camera tools move the
-      // active camera (K-229); everything else is on the strip and disabled
-      // (K-228).
+      // and edits text layers (K-225), the three painting tools paint, erase and
+      // clone (K-227), and the three camera tools move the active camera
+      // (K-229); everything else is on the strip and disabled (K-228).
       expect(ToolMode.values.where((t) => t.ready).toSet(), {
         ToolMode.select,
         ToolMode.hand,
@@ -135,6 +135,9 @@ void main() {
         ToolMode.shapeStar,
         ToolMode.pen,
         ToolMode.typeHorizontal,
+        ToolMode.brush,
+        ToolMode.cloneStamp,
+        ToolMode.eraser,
         ToolMode.cameraOrbit,
         ToolMode.cameraPan,
         ToolMode.cameraDolly,
@@ -177,6 +180,29 @@ void main() {
       expect(tools.strokeWidth, 2);
       tools.strokeWidth = -4;
       expect(tools.strokeWidth, 0);
+    });
+
+    /// The brush's own three settings (K-227) — separate from the shape tools'
+    /// stroke, because a brush is a different thing that happens to have a
+    /// width, and because these are live while that pair is not.
+    test('the brush has its own size, hardness and opacity', () {
+      final tools = ToolsState();
+      expect(tools.brushSize, 20);
+      expect(tools.brushHardness, 80);
+      expect(tools.brushOpacity, 100);
+
+      var notices = 0;
+      tools.addListener(() => notices++);
+      tools.brushSize = 0;
+      expect(tools.brushSize, 1, reason: 'a brush of no size marks nothing');
+      tools.brushSize = 1e9;
+      expect(tools.brushSize, 2000);
+      tools.brushHardness = 200;
+      expect(tools.brushHardness, 100);
+      tools.brushOpacity = -5;
+      expect(tools.brushOpacity, 0);
+      tools.brushOpacity = 0;
+      expect(notices, 4, reason: 'one notice per real change');
     });
   });
 

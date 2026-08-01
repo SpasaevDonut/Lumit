@@ -426,13 +426,38 @@ impl CompositionReference {
         self.add_at_top(layer)
     }
 
-    /// Precompose one or more layers into a new composition (docs/07 §13.4, K-068).
+    /// Pack `layer_ids` into a new composition and put that comp back in their
+    /// place as a Precomp layer — the Pre-compose dialogue's one call
+    /// (`Ctrl+Shift+C`, docs/07 §13.4).
     ///
-    /// `layer_ids` are the layers in `self` to precompose.
-    /// `name` is the name of the new composition.
-    /// `leave_attributes` leaves transform/effects/masks/retime on the new Precomp layer in `self`
-    /// (only valid when `layer_ids.len() == 1`).
-    /// `adjust_duration` sets the new comp's duration to the time span of the selected layers.
+    /// The new comp inherits this one's size, rate, background and — unless
+    /// `adjust_duration` asks otherwise — its duration too, which is what K-068
+    /// asks of a comp created inside an active one.
+    ///
+    /// `leave_attributes` is the dialogue's first choice, and only ever offered
+    /// for a single layer: the layer moves into the new comp stripped back to
+    /// its source, and its transform, effects, masks, retime, blend and
+    /// switches stay behind on the Precomp layer, so the picture is unchanged
+    /// but the attributes now act on the nested comp. Asking for it with more
+    /// than one layer is refused rather than half-applied. Without it every
+    /// layer moves whole, and the Precomp layer is a plain centred one.
+    ///
+    /// `adjust_duration` trims the new comp to the selection's own span: its
+    /// duration becomes `max(out) - min(in)`, every packed layer shifts back by
+    /// `min(in)`, and the Precomp layer spans that same stretch with a start
+    /// offset that lines inner time zero up with it. Without it the new comp is
+    /// as long as this one and nothing moves in time at all: every packed layer
+    /// keeps the times it had, and the Precomp layer spans the whole comp.
+    ///
+    /// The layers go in at the depth of the topmost one, so a precompose in
+    /// the middle of a stack does not send it to the front. The comp auto-files
+    /// into the Compositions folder however it was made (K-068), and the whole
+    /// move is one [`Op::Batch`], so one undo step puts the layers back.
+    ///
+    /// A packed layer whose parent or matte stayed behind keeps the id it
+    /// pointed at, and the engine reads a link it cannot resolve as no link —
+    /// the parent chain stops there (`layer_parent_chain`). Nothing dangles
+    /// into a crash, and clearing them here would only spell the same result.
     #[frb(sync)]
     pub fn precompose(
         &self,
@@ -442,194 +467,193 @@ impl CompositionReference {
         adjust_duration: bool,
     ) -> Result<LayerReference, BridgeError> {
         use lumit_core::model::{Composition, MotionBlur, ProjectItem};
-        use lumit_core::ops::{AutoFolderKind, Op};
+        use lumit_core::ops::AutoFolderKind;
+        use lumit_core::time::CompTime;
+        use lumit_core::Op;
 
-        let mut layer_ids = layer_ids;
-        layer_ids.sort();
-        layer_ids.dedup();
+        let comp = self.composition()?;
+        let doc = self.document()?;
 
-        if layer_ids.is_empty() {
+        // Read in stack order, not selection order, so the packed comp holds
+        // the layers the way the timeline showed them. What is actually packed
+        // is what was actually found: an id belonging to some other comp would
+        // otherwise fail the batch on its way through `RemoveLayer` and lose
+        // the whole precompose with it.
+        let packed: Vec<lumit_core::model::Layer> = comp
+            .layers
+            .iter()
+            .filter(|l| layer_ids.contains(&l.id))
+            .cloned()
+            .collect();
+        if packed.is_empty() {
             return Err(BridgeError::InvalidLayer);
         }
-        if leave_attributes && layer_ids.len() > 1 {
-            return Err(BridgeError::InvalidLayer);
-        }
-
-        let parent_comp = self.composition()?;
-        let bridge_state = self.project()?;
-        let state = bridge_state.write().map_err(|_| BridgeError::WriteFailed)?;
-        let doc = state.store.snapshot();
-
-        let mut target_layers = Vec::new();
-        let mut top_index = usize::MAX;
-        for (idx, layer) in parent_comp.layers.iter().enumerate() {
-            if layer_ids.contains(&layer.id) {
-                target_layers.push(layer.clone());
-                if idx < top_index {
-                    top_index = idx;
-                }
-            }
-        }
-        if target_layers.len() != layer_ids.len() {
+        // Leaving the attributes behind means there is one layer for them to
+        // act on. Asked for a stack, the dialogue offers Move instead, and the
+        // engine refuses rather than picking a layer for the user.
+        if leave_attributes && packed.len() > 1 {
             return Err(BridgeError::InvalidLayer);
         }
 
-        let min_in = target_layers
+        // Every packed layer sits at or below this index, so the slot is still
+        // a valid one once the batch's removals have run.
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| packed.iter().any(|p| p.id == l.id))
+            .unwrap_or(0);
+
+        // The selection's own span, and the shift that brings it back to zero
+        // inside the new comp. Without `adjust_duration` the shift is nothing
+        // and the span is the whole comp, which is what leaves timing alone.
+        let min_in = packed
             .iter()
             .map(|l| l.in_point)
             .min()
-            .unwrap_or(lumit_core::time::CompTime::ZERO);
-        let max_out = target_layers
+            .unwrap_or(CompTime::ZERO);
+        let max_out = packed
             .iter()
             .map(|l| l.out_point)
             .max()
-            .unwrap_or(lumit_core::time::CompTime(parent_comp.duration.0));
-
-        let new_comp_duration = if adjust_duration && max_out > min_in {
-            max_out.delta(min_in).unwrap_or(parent_comp.duration)
-        } else {
-            parent_comp.duration
+            .unwrap_or(CompTime(comp.duration.0));
+        let span = max_out
+            .delta(min_in)
+            .map_err(|_| BridgeError::InvalidTime)?;
+        let (duration, shift, precomp_in, precomp_out) =
+            if adjust_duration && !span.0.is_zero() && !span.0.is_negative() {
+                (span, min_in, min_in, max_out)
+            } else {
+                (
+                    comp.duration,
+                    CompTime::ZERO,
+                    CompTime::ZERO,
+                    CompTime(comp.duration.0),
+                )
+            };
+        // Time moves as a whole: a layer's in point, out point and start
+        // offset all step back by the same amount, so a packed layer plays the
+        // same footage at the same moment of the Precomp layer as before.
+        let shift_back = |t: CompTime| -> Result<CompTime, BridgeError> {
+            t.sub_dur(lumit_core::time::Duration(shift.0))
+                .map_err(|_| BridgeError::InvalidTime)
         };
 
-        let comp_name = if name.trim().is_empty() {
+        let name = if name.trim().is_empty() {
             let existing = doc
                 .items
                 .iter()
-                .filter(|i| matches!(i, lumit_core::model::ProjectItem::Composition(_)))
+                .filter(
+                    |i| matches!(i, ProjectItem::Composition(c) if c.name.starts_with("Pre-comp ")),
+                )
                 .count();
-            format!("Comp {}", existing + 1)
+            format!("Pre-comp {}", existing + 1)
         } else {
             name.trim().to_string()
         };
 
-        let new_comp_id = Uuid::now_v7();
-        let mut new_comp = Composition {
-            id: new_comp_id,
-            name: comp_name.clone(),
-            width: parent_comp.width,
-            height: parent_comp.height,
-            frame_rate: parent_comp.frame_rate,
-            duration: new_comp_duration,
-            background: parent_comp.background,
-            layers: Vec::new(),
+        let mut inner_layers = Vec::with_capacity(packed.len());
+        for src in &packed {
+            let mut layer = src.clone();
+            if leave_attributes {
+                // Stripped back to its source: the attributes are staying
+                // behind on the Precomp layer, and a copy on both would apply
+                // each of them twice.
+                layer.transform = crate::edits::centred_transform(
+                    f64::from(comp.width),
+                    f64::from(comp.height),
+                    comp.width,
+                    comp.height,
+                );
+                layer.effects.clear();
+                layer.masks.clear();
+                layer.retime = None;
+                layer.blend = Default::default();
+                layer.switches = Default::default();
+                layer.parent = None;
+                layer.matte = None;
+            }
+            layer.in_point = shift_back(src.in_point)?;
+            layer.out_point = shift_back(src.out_point)?;
+            layer.start_offset = shift_back(src.start_offset)?;
+            inner_layers.push(layer);
+        }
+
+        let inner = Composition {
+            id: Uuid::now_v7(),
+            name: name.clone(),
+            width: comp.width,
+            height: comp.height,
+            frame_rate: comp.frame_rate,
+            duration,
+            background: comp.background,
             work_area: None,
+            layers: inner_layers,
             markers: Vec::new(),
             motion_blur: MotionBlur::default(),
             extra: serde_json::Map::new(),
         };
+        let inner_id = inner.id;
 
-        let time_shift = if adjust_duration {
-            min_in
-        } else {
-            lumit_core::time::CompTime::ZERO
-        };
-
-        if leave_attributes && target_layers.len() == 1 {
-            let src_layer = &target_layers[0];
-            let mut inner_layer = src_layer.clone();
-            inner_layer.id = Uuid::now_v7();
-            inner_layer.transform = crate::edits::centred_transform(
-                f64::from(parent_comp.width),
-                f64::from(parent_comp.height),
-                parent_comp.width,
-                parent_comp.height,
-            );
-            inner_layer.effects.clear();
-            inner_layer.masks.clear();
-            inner_layer.retime = None;
-            inner_layer.in_point = lumit_core::time::CompTime(src_layer.in_point.0.checked_sub(time_shift.0).unwrap_or(src_layer.in_point.0));
-            inner_layer.out_point = lumit_core::time::CompTime(src_layer.out_point.0.checked_sub(time_shift.0).unwrap_or(src_layer.out_point.0));
-            inner_layer.start_offset = lumit_core::time::CompTime(src_layer.start_offset.0.checked_sub(time_shift.0).unwrap_or(src_layer.start_offset.0));
-
-            new_comp.layers.push(inner_layer);
-        } else {
-            for src_layer in &target_layers {
-                let mut inner_layer = src_layer.clone();
-                inner_layer.in_point = lumit_core::time::CompTime(src_layer.in_point.0.checked_sub(time_shift.0).unwrap_or(src_layer.in_point.0));
-                inner_layer.out_point = lumit_core::time::CompTime(src_layer.out_point.0.checked_sub(time_shift.0).unwrap_or(src_layer.out_point.0));
-                inner_layer.start_offset = lumit_core::time::CompTime(src_layer.start_offset.0.checked_sub(time_shift.0).unwrap_or(src_layer.start_offset.0));
-                new_comp.layers.push(inner_layer);
-            }
-        }
-
-        let mut ops: Vec<Op> = Vec::new();
-
-        let (folder_id, folder_ops) = crate::edits::ensure_auto_folder_ops(&doc, AutoFolderKind::Compositions);
-        ops.extend(folder_ops);
-
-        let new_comp_uuid = new_comp.id;
+        // Comps auto-file into the Compositions folder, however they are made
+        // (K-068) — a precomp that landed at the project root would be the one
+        // comp the habit missed.
+        let (folder, mut ops) =
+            crate::edits::ensure_auto_folder_ops(&doc, AutoFolderKind::Compositions);
+        let queued = ops
+            .iter()
+            .filter(|o| matches!(o, Op::AddItem { .. }))
+            .count();
         ops.push(Op::AddItem {
-            index: doc.items.len(),
-            item: Box::new(ProjectItem::Composition(new_comp)),
+            index: doc.items.len() + queued,
+            item: Box::new(ProjectItem::Composition(inner)),
         });
-        ops.push(crate::edits::file_into_folder_op(&doc, folder_id, new_comp_uuid));
+        ops.push(crate::edits::file_into_folder_op(&doc, folder, inner_id));
 
-        let precomp_layer_id = Uuid::now_v7();
-        let precomp_layer = if leave_attributes && target_layers.len() == 1 {
-            let src_layer = &target_layers[0];
-            let (in_pt, out_pt, start_off) = if adjust_duration {
-                (min_in, max_out, min_in)
-            } else {
-                (src_layer.in_point, src_layer.out_point, src_layer.start_offset)
-            };
-            let mut layer = crate::edits::base_layer(
-                comp_name,
-                lumit_core::model::LayerKind::Precomp { comp: new_comp_id },
-                out_pt.0,
-                src_layer.transform.clone(),
-            );
-            layer.id = precomp_layer_id;
-            layer.in_point = in_pt;
-            layer.out_point = out_pt;
-            layer.start_offset = start_off;
-            layer.effects = src_layer.effects.clone();
-            layer.masks = src_layer.masks.clone();
-            layer.retime = src_layer.retime.clone();
-            layer.switches = src_layer.switches.clone();
-            layer
-        } else {
-            let (in_pt, out_pt, start_off) = if adjust_duration {
-                (min_in, max_out, min_in)
-            } else {
-                (lumit_core::time::CompTime::ZERO, lumit_core::time::CompTime(parent_comp.duration.0), lumit_core::time::CompTime::ZERO)
-            };
-            let mut layer = crate::edits::base_layer(
-                comp_name,
-                lumit_core::model::LayerKind::Precomp { comp: new_comp_id },
-                out_pt.0,
-                crate::edits::centred_transform(
-                    f64::from(parent_comp.width),
-                    f64::from(parent_comp.height),
-                    parent_comp.width,
-                    parent_comp.height,
-                ),
-            );
-            layer.id = precomp_layer_id;
-            layer.in_point = in_pt;
-            layer.out_point = out_pt;
-            layer.start_offset = start_off;
-            layer
-        };
-
-        for layer in &target_layers {
+        for layer in &packed {
             ops.push(Op::RemoveLayer {
                 comp: self.id,
                 layer: layer.id,
             });
         }
 
-        let insert_idx = top_index.min(parent_comp.layers.len().saturating_sub(target_layers.len()));
+        let mut layer = crate::edits::base_layer(
+            name,
+            lumit_core::model::LayerKind::Precomp { comp: inner_id },
+            precomp_out.0,
+            if leave_attributes {
+                packed[0].transform.clone()
+            } else {
+                crate::edits::centred_transform(
+                    f64::from(comp.width),
+                    f64::from(comp.height),
+                    comp.width,
+                    comp.height,
+                )
+            },
+        );
+        layer.in_point = precomp_in;
+        layer.out_point = precomp_out;
+        // Inner time zero is the moment the new comp starts in this one, so a
+        // trimmed comp needs the offset to line the two up; an untrimmed one
+        // starts at zero and needs none.
+        layer.start_offset = shift;
+        if leave_attributes {
+            let src = &packed[0];
+            layer.effects = src.effects.clone();
+            layer.masks = src.masks.clone();
+            layer.retime = src.retime.clone();
+            layer.blend = src.blend;
+            layer.switches = src.switches.clone();
+        }
+        let layer_id = layer.id;
         ops.push(Op::AddLayer {
             comp: self.id,
-            index: insert_idx,
-            layer: Box::new(precomp_layer),
+            index,
+            layer: Box::new(layer),
         });
 
-        drop(state);
-
         self.commit(Op::Batch { ops })?;
-
-        Ok(LayerReference::new(self.project, self.id, precomp_layer_id))
+        Ok(LayerReference::new(self.project, self.id, layer_id))
     }
 
     /// Add a Text layer with the "Text" starter document, centred.
@@ -661,6 +685,47 @@ impl CompositionReference {
                 anchor_y: Property::fixed(size * 0.5),
                 position_x: Property::fixed(f64::from(comp.width) * 0.5),
                 position_y: Property::fixed(f64::from(comp.height) * 0.5),
+                ..TransformGroup::default()
+            },
+        );
+        self.add_at_top(layer)
+    }
+
+    /// Add a Shape layer holding `contents`, at the top of the stack (K-237).
+    ///
+    /// The art is in the layer's own coordinates, and the layer is placed so
+    /// that art lands where it was drawn: the anchor sits on the art's own
+    /// top-left corner and Position carries it to the same place in the comp.
+    /// A shape tool that dragged a rectangle across the picture therefore makes
+    /// a layer whose rectangle is exactly where the drag was.
+    #[frb(sync)]
+    pub fn add_shape_layer(
+        &self,
+        name: String,
+        contents: Vec<crate::api::layer::BridgeShapeItem>,
+    ) -> Result<LayerReference, BridgeError> {
+        use lumit_core::anim::Property;
+        use lumit_core::model::TransformGroup;
+
+        if contents.is_empty() || contents.iter().any(|i| i.vertices.len() < 2) {
+            return Err(BridgeError::EmptyPath);
+        }
+        let comp = self.composition()?;
+        let items: Vec<lumit_core::shape::ShapeItem> =
+            contents.iter().map(|i| i.write_item()).collect();
+        // The art's own box: the layer's natural size, and where it sits.
+        let (x0, y0, _x1, _y1) =
+            lumit_core::shape::contents_bounds(&items).ok_or(BridgeError::EmptyPath)?;
+
+        let layer = crate::edits::base_layer(
+            name,
+            lumit_core::model::LayerKind::Shape { contents: items },
+            comp.duration.0,
+            TransformGroup {
+                anchor_x: Property::fixed(0.0),
+                anchor_y: Property::fixed(0.0),
+                position_x: Property::fixed(x0),
+                position_y: Property::fixed(y0),
                 ..TransformGroup::default()
             },
         );
@@ -1163,6 +1228,9 @@ impl CompositionReference {
             effects: Some(effects.iter().map(|i| i.get_effects()).collect()),
             transform: None,
             text: None,
+            paint: None,
+            contents: None,
+            masks: None,
         }))
     }
 
@@ -1298,6 +1366,9 @@ impl CompositionReference {
             effects: None,
             transform: Some(transform),
             text: None,
+            paint: None,
+            contents: None,
+            masks: None,
         }))
     }
 
@@ -1324,6 +1395,90 @@ impl CompositionReference {
             effects: None,
             transform: None,
             text: Some(document),
+            paint: None,
+            contents: None,
+            masks: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s paint replaced by `strokes` — the same
+    /// live path as the three above, for a stroke being dragged in the Timeline
+    /// (K-239).
+    ///
+    /// A stroke's opacity is committed once, on release, so the drag is one undo
+    /// step (K-238). Without a preview that also meant the picture did not move
+    /// until the button came up, which is the wrong half of the trade: a value
+    /// you drag has to show what it is doing. The whole list rides along rather
+    /// than one stroke's opacity, because paint is stored and committed as a
+    /// whole list, and a preview that took a different shape from the op would
+    /// be a second way to describe the same thing.
+    #[frb(sync)]
+    pub fn render_frame_with_paint_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        strokes: Vec<crate::api::layer::BridgeStroke>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: Some(strokes),
+            contents: None,
+            masks: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
+    /// layer's half of the call above (K-239).
+    #[frb(sync)]
+    pub fn render_frame_with_shape_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        contents: Vec<crate::api::layer::BridgeShapeItem>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: Some(contents),
+            masks: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s masks replaced by `masks` — the mask's
+    /// half of the two calls above (K-240).
+    #[frb(sync)]
+    pub fn render_frame_with_mask_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        masks: Vec<crate::api::layer::BridgeMask>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: Some(masks),
         }))
     }
 }

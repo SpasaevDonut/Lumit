@@ -757,6 +757,9 @@ pub fn collapse_state(doc: &Document, comp: &Composition, layer: &Layer, lt: f64
         })
     });
     let forced = !layer.masks.is_empty()
+        // Paint is stamped into the layer's own raster (K-227), which splicing
+        // a collapsed precomp never produces.
+        || !layer.paint.is_empty()
         // §1.4: any live effect on the Precomp layer itself — its stack runs
         // on the nested comp's raster, which splicing never produces.
         || (layer.switches.fx && layer.effects.iter().any(|e| e.enabled))
@@ -809,6 +812,17 @@ pub enum LayerKind {
     /// masks and effect stack apply to the accumulated composite of every layer
     /// beneath it, within its span. A comp-sized container for effects.
     Adjustment,
+    /// Vector art as the layer's own picture (docs/03-DATA-MODEL.md §7.2,
+    /// K-237): one or more paths, each with a fill and a stroke, drawn at
+    /// whatever resolution the frame is rendered at.
+    ///
+    /// The paths are `mask::BezierPath` — the same path type a mask uses, and
+    /// deliberately so: a shape layer's path and a mask's path differ in what
+    /// they *do*, not in what they are.
+    Shape {
+        #[serde(default)]
+        contents: Vec<crate::shape::ShapeItem>,
+    },
     /// A Null layer (docs/01-GLOSSARY.md): an invisible layer with no source
     /// and no size, carrying only a transform, so other layers can be parented
     /// to it and moved as a rig. It never draws. Masks and effects can be added
@@ -1036,6 +1050,10 @@ pub struct Layer {
     /// (docs/06-RENDER-PIPELINE.md render order).
     #[serde(default)]
     pub masks: Vec<crate::mask::Mask>,
+    /// Paint strokes stamped into the layer's own pixels, before its masks
+    /// gate them and before its effects run (docs/03 §7.1, K-227).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paint: Vec<crate::paint::PaintStroke>,
     /// The ordered effect stack (docs/03 §8; applied top-to-bottom after
     /// masks, before transform — docs/06 render order).
     #[serde(default)]
@@ -1714,6 +1732,7 @@ mod tests {
             retime: None,
             blend: BlendMode::Normal,
             masks: Vec::new(),
+            paint: Vec::new(),
             effects: Vec::new(),
             switches: Switches {
                 visible,

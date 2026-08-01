@@ -42,11 +42,22 @@ For a visual layer at comp time `t`, the compiled subgraph is, in order:
 
 1. **Source** — fetch or rasterise the layer source at the resolved source time. For footage:
    decode, colour-interpret, linearise, premultiply (§3). For text/shape/solid: rasterise
-   vectors at the working raster size.
+   vectors at the working raster size. A **shape layer** (K-237,
+   [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.2) has no asset at all: its contents are rasterised
+   into their own bounding box, which is also the layer's natural size — the one kind whose size
+   moves when it is edited. Each item is filled through the mask rasteriser and then outlined
+   through the paint rasteriser, in list order.
 2. **Retime** — for a Footage layer, the retime map converts layer time to source time and the
    layer's frame-interpolation policy (nearest / blend / flow) synthesises non-integer source
    frames ([04-RETIMING.md](04-RETIMING.md)). Overrun holds the boundary frame. Retime affects
    only source fetch; keyframes on masks, effects, and transform remain in layer/comp time.
+2.5. **Paint** — the layer's paint strokes (K-227, [03-DATA-MODEL.md](03-DATA-MODEL.md) §7.1)
+   are stamped into its raster in the order they were made: brush strokes lay colour down,
+   eraser strokes take alpha away, clone strokes copy from the raster **as it was before any
+   stroke in the pass** was stamped. Paint happens before masks, so a mask gates the painted
+   picture and effects see it. A layer with paint on it is rasterised at its real size (a flat
+   solid is otherwise an 8×8 tile), and paint on a Precomp layer forces the nested intermediate
+   exactly as a mask does. Stamping is on the CPU today; a GPU path changes nothing above it.
 3. **Masks** — bezier paths combined top-to-bottom by mode (add, subtract, intersect, lighten,
    darken, difference, none), each with feather, expansion, opacity, inversion. Masks gate the
    layer's alpha before any effect runs, so effects see the masked image.

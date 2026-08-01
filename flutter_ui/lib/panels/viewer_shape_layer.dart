@@ -9,12 +9,11 @@
 // it. (That gesture was briefly on the polygon tool; it is After Effects' pen,
 // and it belongs on the Pen — K-223.)
 //
-// **What it does with nothing selected.** Nothing — and it says so. After
-// Effects would make a *shape layer* there, which Lumit's engine has no such
-// thing as yet (`LayerKind` has no Shape variant, docs/TODO.md). Rather than
-// quietly doing nothing, or inventing something that only looks like a shape
-// layer, the status line says what to do instead. That is the honest state of
-// it until the engine grows the kind.
+// **What it does with nothing selected.** Makes a *shape layer* — the art
+// itself rather than a hole in someone else's picture (K-237). It is the same
+// gesture and the same geometry; the only difference is which thing the path
+// ends up belonging to, and therefore which coordinates it is built in: the
+// layer's when there is one, the composition's when there is not.
 //
 // The geometry is in viewer_shapes.dart and is pure; this is the gesture and
 // the drawing.
@@ -22,8 +21,10 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/state/tools.dart';
+import 'package:uuid/uuid.dart';
 
 import '../widgets/controls.dart';
 import 'viewer_gizmo.dart';
@@ -36,6 +37,13 @@ import 'viewer_shapes.dart';
 /// [withinClosingDistance]), so the mark is honest about the target it stands
 /// for rather than being a decoration near it.
 const double closingRingRadius = 10;
+
+/// How solid a tool draws the thing it is about to make (K-238).
+///
+/// Shared by the shape tools and the Pen so every preview reads the same way.
+/// Low enough that the picture underneath still shows — which is what says the
+/// shape is not there yet — and high enough to answer "what colour is this?".
+const double previewOpacity = 0.5;
 
 /// The shape tools over the picture.
 class ViewerShapeLayer extends StatefulWidget {
@@ -50,6 +58,15 @@ class ViewerShapeLayer extends StatefulWidget {
   /// map that turns the pointer into layer coordinates.
   final List<LayerBox> boxes;
 
+  /// The composition, for the shape layer a drag makes when nothing is
+  /// selected (K-237).
+  final CompositionReference comp;
+
+  /// Where the picture sits on screen, and the comp's own size — the two that
+  /// turn a pointer into composition pixels when there is no layer to ask.
+  final Rect fitted;
+  final Size compSize;
+
   final Color accent;
 
   final VoidCallback onChanged;
@@ -61,6 +78,9 @@ class ViewerShapeLayer extends StatefulWidget {
     required this.state,
     required this.uiState,
     required this.boxes,
+    required this.comp,
+    required this.fitted,
+    required this.compSize,
     required this.accent,
     required this.onChanged,
   });
@@ -145,17 +165,20 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   /// clicked, and either the path closed or it grew a point you did not want.
   /// The mark is the answer to "how close do I need to be" — the first vertex
   /// grows a ring, and the pointer says a click will close rather than place.
+  /// Answered through [_space], so the ring appears whether the path is
+  /// becoming a mask or a shape layer — it used to need a selected layer, so
+  /// the half of the gesture that makes a shape layer had no closing mark.
   bool get _wouldClose {
     if (!_isPen || !_draft.canClose) return false;
     final at = _penPointer;
-    final box = _target;
     final start = _draft.first;
-    if (at == null || box == null || start == null) return false;
-    final p = box.map.layerOf(at);
+    if (at == null || start == null) return false;
+    final box = _target;
     return withinClosingDistance(
-      (p.dx, p.dy),
+      _space.ofScreen(at),
       start,
-      screenScale: box.map.viewScale * box.map.sx,
+      screenScale:
+          box == null ? _screenScale : box.map.viewScale * box.map.sx,
     );
   }
 
@@ -168,11 +191,47 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     return null;
   }
 
-  /// The one thing this tool cannot do yet, said out loud rather than by
-  /// silence (docs/TODO.md: shape layers need an engine layer kind).
-  void _sayNoLayer() => widget.state.postNotice(
-        'Select a layer to draw a mask on — shape layers are not built yet',
+  /// A point on screen in the composition's own pixels — what a shape layer's
+  /// art is built in when there is no layer to ask (K-237).
+  (double, double) _compPoint(Offset at) {
+    final scale = widget.compSize.width == 0
+        ? 1.0
+        : widget.fitted.width / widget.compSize.width;
+    return (
+      (at.dx - widget.fitted.left) / scale,
+      (at.dy - widget.fitted.top) / scale,
+    );
+  }
+
+  /// The space the art being drawn lives in, and how to get it back on screen
+  /// (K-238).
+  ///
+  /// The preview used to be drawn only when a layer was selected, because it
+  /// asked that layer's map to place every point. With nothing selected — the
+  /// case that makes a *shape layer*, which is most of the reason to reach for
+  /// a shape tool — there was no map, so nothing was drawn: you dragged and saw
+  /// nothing until you let go. The composition's own placement is the map in
+  /// that case, and it is the same one `_compPoint` inverts.
+  ShapeSpace get _space {
+    final box = _target;
+    if (box != null) {
+      return ShapeSpace(
+        toScreen: box.map.toScreen,
+        ofScreen: (at) {
+          final p = box.map.layerOf(at);
+          return (p.dx, p.dy);
+        },
       );
+    }
+    final scale = _screenScale;
+    return ShapeSpace(
+      toScreen: (x, y) => Offset(
+        widget.fitted.left + x * scale,
+        widget.fitted.top + y * scale,
+      ),
+      ofScreen: _compPoint,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -202,9 +261,22 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
             child: Stack(children: [
               Positioned.fill(
                 child: CustomPaint(
-                  painter: _ShapePreviewPainter(
+                  painter: ShapePreviewPainter(
                     tool: widget.tool,
-                    box: target,
+                    space: _space,
+                    // What the art would be committed with. A mask has no
+                    // colour of its own — it cuts — so a drag on a selected
+                    // layer previews in the accent instead of promising a fill
+                    // that will never appear.
+                    fill: target == null
+                        ? colourOf(widget.uiState.tools.fill)
+                        : widget.accent,
+                    stroke: target == null
+                        ? colourOf(widget.uiState.tools.stroke)
+                        : null,
+                    strokeWidth: target == null
+                        ? widget.uiState.tools.strokeWidth * _screenScale
+                        : 0,
                     from: _from,
                     to: _to,
                     square: HardwareKeyboard.instance.isShiftPressed,
@@ -280,7 +352,14 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 
     final box = _target;
     if (box == null) {
-      _sayNoLayer();
+      // Nothing selected: After Effects' other half of this gesture — a new
+      // shape layer at the top of the composition (K-237).
+      _commitShapeLayer(shapePath(
+        tool: widget.tool,
+        from: _compPoint(from),
+        to: _compPoint(to),
+        square: HardwareKeyboard.instance.isShiftPressed,
+      ));
       return;
     }
     final a = box.map.layerOf(from);
@@ -307,26 +386,41 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
   /// first point.
   void _onPenTap(TapUpDetails details) {
     final box = _target;
-    if (box == null) {
-      _sayNoLayer();
-      return;
-    }
-    final at = box.map.layerOf(details.localPosition);
+    // The path is built in the layer's coordinates when there is a layer, and
+    // in the composition's when there is not — the same path either way, and
+    // the difference is only which thing it will belong to (K-237).
+    final at = box == null
+        ? _compPoint(details.localPosition)
+        : () {
+            final p = box.map.layerOf(details.localPosition);
+            return (p.dx, p.dy);
+          }();
     final start = _draft.first;
     if (start != null &&
         _draft.canClose &&
         withinClosingDistance(
-          (at.dx, at.dy),
+          at,
           start,
-          screenScale: box.map.viewScale * box.map.sx,
+          screenScale: box == null
+              ? _screenScale
+              : box.map.viewScale * box.map.sx,
         )) {
       final path = _draft.vertices;
       setState(() => _draft = const PathDraft());
-      _commit(box, path);
+      if (box == null) {
+        _commitShapeLayer(path);
+      } else {
+        _commit(box, path);
+      }
       return;
     }
-    setState(() => _draft = _draft.withCorner((at.dx, at.dy)));
+    setState(() => _draft = _draft.withCorner(at));
   }
+
+  /// How many screen pixels one composition pixel covers.
+  double get _screenScale => widget.compSize.width == 0
+      ? 1.0
+      : widget.fitted.width / widget.compSize.width;
 
   /// A click that turned into a drag: the vertex is placed where the press was
   /// and its handles are pulled out to the pointer.
@@ -339,20 +433,60 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
     });
     final box = _target;
     if (from == null || to == null) return;
-    if (box == null) {
-      _sayNoLayer();
-      return;
-    }
-    final at = box.map.layerOf(from);
-    final handle = box.map.layerOf(to);
+    final at = box == null
+        ? _compPoint(from)
+        : () {
+            final p = box.map.layerOf(from);
+            return (p.dx, p.dy);
+          }();
+    final handle = box == null
+        ? _compPoint(to)
+        : () {
+            final p = box.map.layerOf(to);
+            return (p.dx, p.dy);
+          }();
     setState(() => _draft = _draft.withBezier(
-          (at.dx, at.dy),
-          (handle.dx, handle.dy),
+          at,
+          handle,
           independent: HardwareKeyboard.instance.isAltPressed,
         ));
   }
 
   // --- Committing -----------------------------------------------------------
+
+  /// A new shape layer holding this art, at the top of the composition — what a
+  /// shape tool or the Pen does with nothing selected (K-237).
+  ///
+  /// The art takes the toolbar's fill, and its stroke when one has a width: the
+  /// two swatches that had nothing to paint until there were shape layers.
+  void _commitShapeLayer(List<BridgeVertex> path) {
+    if (path.length < 2) return;
+    final tools = widget.uiState.tools;
+    final name = shapeMaskName(widget.tool);
+    try {
+      final layer = widget.comp.addShapeLayer(
+        name: name,
+        contents: [
+          BridgeShapeItem(
+            id: UuidValue.fromString(const Uuid().v4()),
+            name: name,
+            vertices: path,
+            // Always closed: a shape tool draws a closed figure, and the Pen
+            // commits only when its path has come back to its first point.
+            closed: true,
+            fill: tools.fillRgba,
+            stroke: tools.strokeWidth > 0 ? tools.strokeRgba : null,
+            strokeWidth: tools.strokeWidth,
+            opacity: 100,
+          ),
+        ],
+      );
+      widget.uiState.setSelection([layer]);
+      widget.onChanged();
+    } catch (_) {
+      widget.state.postNotice('Could not add a shape layer', error: true);
+    }
+  }
 
   void _commit(LayerBox box, List<BridgeVertex> path) {
     if (path.length < 2) return;
@@ -372,9 +506,31 @@ class _ViewerShapeLayerState extends State<ViewerShapeLayer> {
 }
 
 /// The shape being dragged, and the polygon being built.
-class _ShapePreviewPainter extends CustomPainter {
+/// Where the art being drawn lives, and how to put it on screen.
+///
+/// A shape tool draws in the selected layer's coordinates when there is one and
+/// in the composition's when there is not (K-237). Both are a pair of maps and
+/// nothing else, so the preview takes the pair rather than a layer it might not
+/// have — which is what used to leave the shape-layer half of the gesture with
+/// no preview at all.
+class ShapeSpace {
+  final Offset Function(double x, double y) toScreen;
+  final (double, double) Function(Offset at) ofScreen;
+
+  const ShapeSpace({required this.toScreen, required this.ofScreen});
+}
+
+class ShapePreviewPainter extends CustomPainter {
   final ToolMode tool;
-  final LayerBox? box;
+  final ShapeSpace space;
+
+  /// The fill and stroke the art would be committed with, so the preview shows
+  /// the shape rather than only its outline (K-238). Translucent, because it is
+  /// a shape that does not exist yet.
+  final Color fill;
+  final Color? stroke;
+  final double strokeWidth;
+
   final Offset? from;
   final Offset? to;
   final bool square;
@@ -387,9 +543,12 @@ class _ShapePreviewPainter extends CustomPainter {
   final bool closing;
   final Color accent;
 
-  const _ShapePreviewPainter({
+  const ShapePreviewPainter({
     required this.tool,
-    required this.box,
+    required this.space,
+    required this.fill,
+    required this.stroke,
+    required this.strokeWidth,
     required this.from,
     required this.to,
     required this.square,
@@ -403,40 +562,46 @@ class _ShapePreviewPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final stroke = Paint()
+    final outline = Paint()
       ..color = accent
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1;
 
-    final layer = box;
     // The dragged shape, drawn as the real path rather than as its bounding
     // box: an ellipse being dragged should look like an ellipse.
-    if (layer != null && from != null && to != null) {
-      final a = layer.map.layerOf(from!);
-      final b = layer.map.layerOf(to!);
+    if (from != null && to != null) {
       final path = shapePath(
         tool: tool,
-        from: (a.dx, a.dy),
-        to: (b.dx, b.dy),
+        from: space.ofScreen(from!),
+        to: space.ofScreen(to!),
         square: square,
       );
       if (path.isNotEmpty) {
-        canvas.drawPath(_screenPath(layer, path, closed: true), stroke);
+        final screen = _screenPath(path, closed: true);
+        _paintPreview(canvas, screen);
+        canvas.drawPath(screen, outline);
       }
     }
 
     if (draft.isEmpty && handleFrom == null) return;
 
-    if (layer != null && draft.vertices.isNotEmpty) {
+    if (draft.vertices.isNotEmpty) {
+      // A path still being built is previewed filled too, so what the Pen is
+      // making looks like what it will make. Closed for the fill even though
+      // the path is open — an unclosed run of points has no inside otherwise,
+      // and the shape it commits to will be closed.
+      if (draft.vertices.length > 2) {
+        _paintPreview(canvas, _screenPath(draft.vertices, closed: true));
+      }
       canvas.drawPath(
-        _screenPath(layer, draft.vertices, closed: false),
-        stroke,
+        _screenPath(draft.vertices, closed: false),
+        outline,
       );
       // Every placed vertex, and the first one larger: it is the one a click
       // has to land on to close the shape.
       for (var i = 0; i < draft.vertices.length; i++) {
         final v = draft.vertices[i];
-        final at = layer.map.toScreen(v.x, v.y);
+        final at = space.toScreen(v.x, v.y);
         canvas.drawCircle(at, i == 0 ? 5 : 3, Paint()..color = accent);
       }
       // Near enough to close: the first vertex grows a ring, and the pointer
@@ -450,7 +615,7 @@ class _ShapePreviewPainter extends CustomPainter {
           ..strokeWidth = 1.5;
         final first = draft.vertices.first;
         canvas.drawCircle(
-            layer.map.toScreen(first.x, first.y), closingRingRadius, ring);
+            space.toScreen(first.x, first.y), closingRingRadius, ring);
         final pointer = penPointer;
         if (pointer != null) {
           canvas.drawCircle(pointer, closingRingRadius * 0.6, ring);
@@ -474,9 +639,9 @@ class _ShapePreviewPainter extends CustomPainter {
       final landing = handleFrom ?? penPointer;
       if (landing != null) {
         final last = draft.vertices.last;
-        final from = layer.map.toScreen(last.x, last.y);
+        final from = space.toScreen(last.x, last.y);
         final out =
-            layer.map.toScreen(last.x + last.tanOutX, last.y + last.tanOutY);
+            space.toScreen(last.x + last.tanOutX, last.y + last.tanOutY);
         // The new vertex's *in* handle. A vertex with no handles yet — an
         // ordinary hover — has none, so the curve runs straight into it.
         final into = _incomingHandle(landing);
@@ -498,14 +663,41 @@ class _ShapePreviewPainter extends CustomPainter {
     final hTo = handleTo;
     if (hFrom != null && hTo != null) {
       final mirrored = hFrom * 2 - hTo;
-      canvas.drawLine(hFrom, hTo, stroke);
+      canvas.drawLine(hFrom, hTo, outline);
       if (!HardwareKeyboard.instance.isAltPressed) {
-        canvas.drawLine(hFrom, mirrored, stroke);
+        canvas.drawLine(hFrom, mirrored, outline);
         canvas.drawCircle(mirrored, 3, Paint()..color = accent);
       }
       canvas.drawCircle(hTo, 3, Paint()..color = accent);
       canvas.drawCircle(hFrom, 4, Paint()..color = accent);
     }
+  }
+
+  /// The shape as it would be committed — the fill, then the stroke — under the
+  /// accent outline that says it is still being drawn (K-238).
+  ///
+  /// **Translucent on purpose.** A solid preview is indistinguishable from a
+  /// shape that already exists, and this one does not: nothing is in the
+  /// document until the drag ends. Half opacity reads as "this is what you are
+  /// about to get" while still showing the colour, which is the thing the fill
+  /// swatch could not answer before.
+  void _paintPreview(Canvas canvas, Path path) {
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = fill.withValues(alpha: fill.a * previewOpacity)
+        ..style = PaintingStyle.fill,
+    );
+    final edge = stroke;
+    if (edge == null || strokeWidth <= 0) return;
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = edge.withValues(alpha: edge.a * previewOpacity)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth
+        ..strokeJoin = StrokeJoin.round,
+    );
   }
 
   /// The control point the edge *arrives* at [landing] through.
@@ -525,12 +717,11 @@ class _ShapePreviewPainter extends CustomPainter {
   /// A mask path in layer space, as a screen path — cubics between each pair of
   /// vertices, using their facing handles, which is exactly how the engine
   /// reads the same numbers.
-  Path _screenPath(LayerBox layer, List<BridgeVertex> vertices,
-      {required bool closed}) {
+  Path _screenPath(List<BridgeVertex> vertices, {required bool closed}) {
     final path = Path();
-    Offset at(BridgeVertex v) => layer.map.toScreen(v.x, v.y);
-    Offset out(BridgeVertex v) => layer.map.toScreen(v.x + v.tanOutX, v.y + v.tanOutY);
-    Offset into(BridgeVertex v) => layer.map.toScreen(v.x + v.tanInX, v.y + v.tanInY);
+    Offset at(BridgeVertex v) => space.toScreen(v.x, v.y);
+    Offset out(BridgeVertex v) => space.toScreen(v.x + v.tanOutX, v.y + v.tanOutY);
+    Offset into(BridgeVertex v) => space.toScreen(v.x + v.tanInX, v.y + v.tanInY);
 
     path.moveTo(at(vertices.first).dx, at(vertices.first).dy);
     for (var i = 1; i < vertices.length; i++) {
@@ -552,5 +743,5 @@ class _ShapePreviewPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(_ShapePreviewPainter old) => true;
+  bool shouldRepaint(ShapePreviewPainter old) => true;
 }

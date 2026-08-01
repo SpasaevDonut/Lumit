@@ -295,27 +295,24 @@ class CompositionReference {
           .crateApiCompositionCompositionReferenceAddPrecompLayer(
               that: this, comp: comp);
 
-  /// Precompose one or more layers into a new composition.
-  LayerReference precompose({
-    required List<UuidValue> layerIds,
-    required String name,
-    required bool leaveAttributes,
-    required bool adjustDuration,
-  }) =>
-      BridgeLib.instance.api
-          .crateApiCompositionCompositionReferencePrecompose(
-        that: this,
-        layerIds: layerIds,
-        name: name,
-        leaveAttributes: leaveAttributes,
-        adjustDuration: adjustDuration,
-      );
-
   /// Add an empty Sequence layer — a clip row spanning the comp.
   LayerReference addSequenceLayer() => BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceAddSequenceLayer(
         that: this,
       );
+
+  /// Add a Shape layer holding `contents`, at the top of the stack (K-237).
+  ///
+  /// The art is in the layer's own coordinates, and the layer is placed so
+  /// that art lands where it was drawn: the anchor sits on the art's own
+  /// top-left corner and Position carries it to the same place in the comp.
+  /// A shape tool that dragged a rectangle across the picture therefore makes
+  /// a layer whose rectangle is exactly where the drag was.
+  LayerReference addShapeLayer(
+          {required String name, required List<BridgeShapeItem> contents}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceAddShapeLayer(
+              that: this, name: name, contents: contents);
 
   /// Add a Solid layer backed by a fresh SolidDef filed in the Solids
   /// auto-folder — one batch, one undo step, matching the egui frontend. The
@@ -531,12 +528,50 @@ class CompositionReference {
         that: this,
       );
 
-  /// Pack `layers` into a new composition and put that comp back in their
-  /// place as a Precomp layer — `Ctrl+Shift+C` (docs/07 §4.4).
+  /// Pack `layer_ids` into a new composition and put that comp back in their
+  /// place as a Precomp layer — the Pre-compose dialogue's one call
+  /// (`Ctrl+Shift+C`, docs/07 §13.4).
   ///
-  /// The new comp inherits this one's size, rate, duration and background
-  /// silently, which is what K-068 asks of a comp created inside an active
-  /// one. Inheriting the *duration* is also what makes the move a no-op for
+  /// The new comp inherits this one's size, rate, background and — unless
+  /// `adjust_duration` asks otherwise — its duration too, which is what K-068
+  /// asks of a comp created inside an active one.
+  ///
+  /// `leave_attributes` is the dialogue's first choice, and only ever offered
+  /// for a single layer: the layer moves into the new comp stripped back to
+  /// its source, and its transform, effects, masks, retime, blend and
+  /// switches stay behind on the Precomp layer, so the picture is unchanged
+  /// but the attributes now act on the nested comp. Asking for it with more
+  /// than one layer is refused rather than half-applied. Without it every
+  /// layer moves whole, and the Precomp layer is a plain centred one.
+  ///
+  /// `adjust_duration` trims the new comp to the selection's own span: its
+  /// duration becomes `max(out) - min(in)`, every packed layer shifts back by
+  /// `min(in)`, and the Precomp layer spans that same stretch with a start
+  /// offset that lines inner time zero up with it. Without it the new comp is
+  /// as long as this one and nothing moves in time at all: every packed layer
+  /// keeps the times it had, and the Precomp layer spans the whole comp.
+  ///
+  /// The layers go in at the depth of the topmost one, so a precompose in
+  /// the middle of a stack does not send it to the front. The comp auto-files
+  /// into the Compositions folder however it was made (K-068), and the whole
+  /// move is one [`Op::Batch`], so one undo step puts the layers back.
+  ///
+  /// A packed layer whose parent or matte stayed behind keeps the id it
+  /// pointed at, and the engine reads a link it cannot resolve as no link —
+  /// the parent chain stops there (`layer_parent_chain`). Nothing dangles
+  /// into a crash, and clearing them here would only spell the same result.
+  LayerReference precompose(
+          {required List<UuidValue> layerIds,
+          required String name,
+          required bool leaveAttributes,
+          required bool adjustDuration}) =>
+      BridgeLib.instance.api.crateApiCompositionCompositionReferencePrecompose(
+          that: this,
+          layerIds: layerIds,
+          name: name,
+          leaveAttributes: leaveAttributes,
+          adjustDuration: adjustDuration);
+
   /// Ask for `frame` at `scale` — 1.0 meaning "shown at comp resolution".
   /// Below 1.0 the engine decodes and composites smaller, which is how a
   /// Viewer that is not filling the screen stays cheap.
@@ -546,6 +581,45 @@ class CompositionReference {
           required BridgePlaybackMode mode}) =>
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
           that: this, frame: frame, scale: scale, mode: mode);
+
+  /// Ask for `frame` with `layer`'s masks replaced by `masks` — the mask's
+  /// half of the two calls above (K-240).
+  void renderFrameWithMaskPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeMask> masks}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithMaskPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              masks: masks);
+
+  /// Ask for `frame` with `layer`'s paint replaced by `strokes` — the same
+  /// live path as the three above, for a stroke being dragged in the Timeline
+  /// (K-239).
+  ///
+  /// A stroke's opacity is committed once, on release, so the drag is one undo
+  /// step (K-238). Without a preview that also meant the picture did not move
+  /// until the button came up, which is the wrong half of the trade: a value
+  /// you drag has to show what it is doing. The whole list rides along rather
+  /// than one stroke's opacity, because paint is stored and committed as a
+  /// whole list, and a preview that took a different shape from the op would
+  /// be a second way to describe the same thing.
+  void renderFrameWithPaintPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeStroke> strokes}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithPaintPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              strokes: strokes);
 
   /// Ask for `frame` with `layer`'s effect stack replaced by `effects` — the
   /// live drag path, which never touches the document.
@@ -561,6 +635,21 @@ class CompositionReference {
               scale: scale,
               layer: layer,
               effects: effects);
+
+  /// Ask for `frame` with `layer`'s art replaced by `contents` — the shape
+  /// layer's half of the call above (K-239).
+  void renderFrameWithShapePreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeShapeItem> contents}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithShapePreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              contents: contents);
 
   /// Ask for `frame` with `layer`'s text document replaced by `document` —
   /// the same live path as the two above, for the Type tool (K-225).

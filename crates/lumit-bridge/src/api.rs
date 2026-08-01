@@ -95,6 +95,12 @@ pub enum BridgeError {
     EmptyPath,
     /// The edit named a mask this layer does not have.
     NoSuchMask,
+    /// A paint stroke with no points in it (K-227).
+    EmptyStroke,
+    /// No stroke of that id on this layer.
+    NoSuchStroke,
+    /// The layer is not a shape layer (K-237).
+    NotShape,
     /// The razor was pointed at a time outside the layer's span, or at one of
     /// its ends — either way there is no second layer to make.
     NothingToSplit,
@@ -178,6 +184,9 @@ impl fmt::Display for BridgeError {
             BridgeError::NoClipThere => write!(f, "No clip under the playhead"),
             BridgeError::EmptyPath => write!(f, "A mask needs at least two points"),
             BridgeError::NoSuchMask => write!(f, "No such mask on this layer"),
+            BridgeError::EmptyStroke => write!(f, "A paint stroke needs at least one point"),
+            BridgeError::NoSuchStroke => write!(f, "No such paint stroke on this layer"),
+            BridgeError::NotShape => write!(f, "That layer is not a shape layer"),
             BridgeError::NothingToSplit => {
                 write!(f, "That time is not inside the layer")
             }

@@ -16,8 +16,8 @@ import 'project_item.dart';
 import 'retime.dart';
 import 'solid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit_masks`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -127,6 +127,16 @@ class BridgeLayerInfo {
   /// cost K-184 exists to remove. Edits still go through `set_mask`.
   final List<BridgeMask> masks;
 
+  /// The layer's paint strokes (K-227), oldest first — carried for the same
+  /// reason the masks are: the Timeline lists them, and the Viewer needs to
+  /// know a layer has some without asking per frame.
+  final List<BridgeStroke> paint;
+
+  /// A shape layer's art (K-237), bottom first; empty on every other kind.
+  /// Carried for the same reason again — and for one more: the art *is* the
+  /// layer's size, so the Viewer's wireframe reads it here.
+  final List<BridgeShapeItem> shapeContents;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -144,6 +154,8 @@ class BridgeLayerInfo {
     this.matte,
     this.retime,
     required this.masks,
+    required this.paint,
+    required this.shapeContents,
   });
 
   @override
@@ -163,7 +175,9 @@ class BridgeLayerInfo {
       label.hashCode ^
       matte.hashCode ^
       retime.hashCode ^
-      masks.hashCode;
+      masks.hashCode ^
+      paint.hashCode ^
+      shapeContents.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -185,7 +199,9 @@ class BridgeLayerInfo {
           label == other.label &&
           matte == other.matte &&
           retime == other.retime &&
-          masks == other.masks;
+          masks == other.masks &&
+          paint == other.paint &&
+          shapeContents == other.shapeContents;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
@@ -197,6 +213,9 @@ enum BridgeLayerKind {
   solid,
   precomp,
   text,
+
+  /// Vector art as the layer's own picture (K-237).
+  shape,
   camera,
   sequence,
   adjustment,
@@ -367,6 +386,19 @@ class BridgeMatte {
           inverted == other.inverted;
 }
 
+/// What a paint stroke does to the pixels under it (K-227).
+enum BridgePaintMode {
+  /// Lay the stroke's colour down.
+  paint,
+
+  /// Take alpha away.
+  erase,
+
+  /// Copy from elsewhere on the same layer, by the stroke's clone offset.
+  clone,
+  ;
+}
+
 /// The groups a reveal should open on one layer. Effects are named
 /// individually, because the Effects group opens onto one row per effect and
 /// only the qualifying ones should unfold.
@@ -420,6 +452,65 @@ enum BridgeRevealKind {
   ;
 }
 
+/// One piece of vector art on a shape layer (K-237): a path, and how it is
+/// painted.
+///
+/// The path is `BridgeVertex`, the same vertices a mask crosses with: one path
+/// type in the document, drawn by two things.
+class BridgeShapeItem {
+  final UuidValue id;
+  final String name;
+  final List<BridgeVertex> vertices;
+  final bool closed;
+
+  /// The colour inside the path. `None` draws no fill.
+  final BridgeColourRgba? fill;
+
+  /// The outline's colour, and its width in layer pixels. `None` draws no
+  /// outline; a width of zero draws none either.
+  final BridgeColourRgba? stroke;
+  final double strokeWidth;
+
+  /// 0..100.
+  final double opacity;
+
+  const BridgeShapeItem({
+    required this.id,
+    required this.name,
+    required this.vertices,
+    required this.closed,
+    this.fill,
+    this.stroke,
+    required this.strokeWidth,
+    required this.opacity,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      vertices.hashCode ^
+      closed.hashCode ^
+      fill.hashCode ^
+      stroke.hashCode ^
+      strokeWidth.hashCode ^
+      opacity.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeShapeItem &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          vertices == other.vertices &&
+          closed == other.closed &&
+          fill == other.fill &&
+          stroke == other.stroke &&
+          strokeWidth == other.strokeWidth &&
+          opacity == other.opacity;
+}
+
 /// Where a layer sits on the comp timeline, in exact rational seconds.
 ///
 /// `start_offset` is where the layer's own time 0 falls, which is what a slip
@@ -449,6 +540,102 @@ class BridgeSpan {
           inPoint == other.inPoint &&
           outPoint == other.outPoint &&
           startOffset == other.startOffset;
+}
+
+/// One paint stroke on a layer (K-227): the path the pointer took, and how it
+/// was painted.
+///
+/// A **polyline**, not a bezier — a stroke is a record of a gesture rather than
+/// a shape to be edited vertex by vertex, which is the difference between this
+/// and [`BridgeMask`]. Layer space, like everything else that travels with a
+/// layer's transform.
+class BridgeStroke {
+  final UuidValue id;
+  final String name;
+  final List<BridgeStrokePoint> points;
+  final BridgeColourRgba colour;
+
+  /// The brush's diameter in layer pixels.
+  final double width;
+
+  /// 0 fully soft, 1 a hard edge.
+  final double hardness;
+
+  /// 0..100.
+  final double opacity;
+  final BridgePaintMode mode;
+
+  /// Where a clone's pixels are copied from, as an offset in layer pixels.
+  final double cloneOffsetX;
+  final double cloneOffsetY;
+
+  const BridgeStroke({
+    required this.id,
+    required this.name,
+    required this.points,
+    required this.colour,
+    required this.width,
+    required this.hardness,
+    required this.opacity,
+    required this.mode,
+    required this.cloneOffsetX,
+    required this.cloneOffsetY,
+  });
+
+  @override
+  int get hashCode =>
+      id.hashCode ^
+      name.hashCode ^
+      points.hashCode ^
+      colour.hashCode ^
+      width.hashCode ^
+      hardness.hashCode ^
+      opacity.hashCode ^
+      mode.hashCode ^
+      cloneOffsetX.hashCode ^
+      cloneOffsetY.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeStroke &&
+          runtimeType == other.runtimeType &&
+          id == other.id &&
+          name == other.name &&
+          points == other.points &&
+          colour == other.colour &&
+          width == other.width &&
+          hardness == other.hardness &&
+          opacity == other.opacity &&
+          mode == other.mode &&
+          cloneOffsetX == other.cloneOffsetX &&
+          cloneOffsetY == other.cloneOffsetY;
+}
+
+/// One point of a stroke's path, in layer pixels.
+///
+/// Named for the stroke rather than called `BridgePoint`, because that name is
+/// already an *animatable* point parameter on an effect — two quite different
+/// things, and the bridge's type names are flat across the whole seam.
+class BridgeStrokePoint {
+  final double x;
+  final double y;
+
+  const BridgeStrokePoint({
+    required this.x,
+    required this.y,
+  });
+
+  @override
+  int get hashCode => x.hashCode ^ y.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeStrokePoint &&
+          runtimeType == other.runtimeType &&
+          x == other.x &&
+          y == other.y;
 }
 
 /// A layer's whole transform, one scalar per property.
@@ -621,6 +808,21 @@ class LayerReference {
   void addMask({required BridgeMask mask}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceAddMask(that: this, mask: mask);
 
+  /// Add one piece of art on top of this shape layer's stack.
+  void addShapeItem({required BridgeShapeItem item}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceAddShapeItem(that: this, item: item);
+
+  /// Add `stroke` on top of this layer's paint.
+  ///
+  /// The whole list is committed, because that is the op the engine has and
+  /// it is exactly invertible (`SetLayerPaint`): one stroke is one undo step,
+  /// which is what `Ctrl+Z` after a brush drag has to mean.
+  ///
+  /// A stroke with no points is refused — there is no gesture in it, and it
+  /// would be a Timeline row with nothing behind it.
+  void addStroke({required BridgeStroke stroke}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceAddStroke(that: this, stroke: stroke);
+
   /// Whether this layer's source actually carries sound.
   ///
   /// What decides whether the Audio group appears under a layer at all
@@ -675,9 +877,20 @@ class LayerReference {
   void deleteClipAt({required PlatformInt64 frame}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceDeleteClipAt(that: this, frame: frame);
 
+  /// Take the last stroke off — the undo inside the tool, for a brush drag
+  /// that went wrong. Errors when there is nothing painted.
+  void deleteLastStroke() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceDeleteLastStroke(
+        that: this,
+      );
+
   /// Remove a mask by id.
   void deleteMask({required UuidValue id}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceDeleteMask(that: this, id: id);
+
+  /// Remove a stroke by id.
+  void deleteStroke({required UuidValue id}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceDeleteStroke(that: this, id: id);
 
   /// Copy this layer, inserting the copy directly above the original.
   ///
@@ -758,6 +971,12 @@ class LayerReference {
         that: this,
       );
 
+  /// This layer's paint strokes, oldest first (K-227).
+  List<BridgeStroke> getPaint() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetPaint(
+        that: this,
+      );
+
   /// This layer's transform parent, if any (K-103).
   UuidValue? getParent() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetParent(
@@ -776,6 +995,15 @@ class LayerReference {
   /// hides the row.
   BridgeScalar? getRetimeProperty() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetRetimeProperty(
+        that: this,
+      );
+
+  /// This shape layer's contents, bottom of the stack first (K-237).
+  ///
+  /// Empty on a layer that is not a shape, rather than an error: the Timeline
+  /// asks every row what it has to list, exactly as it asks about masks.
+  List<BridgeShapeItem> getShapeContents() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetShapeContents(
         that: this,
       );
 
@@ -1007,6 +1235,18 @@ class LayerReference {
   void setRetimeSpeed({required double percent}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetRetimeSpeed(that: this, percent: percent);
 
+  /// Replace this shape layer's whole contents.
+  ///
+  /// The whole list, exactly invertible (`SetShapeContents`), the same shape
+  /// of edit as a mask list or a paint list: an add, a delete, a recolour and
+  /// a path edit are one kind of thing and each is one undo step.
+  ///
+  /// A path of fewer than two vertices is refused, as a mask's is: it is not
+  /// a shape, and it would be a Timeline row with nothing behind it.
+  void setShapeContents({required List<BridgeShapeItem> contents}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetShapeContents(
+          that: this, contents: contents);
+
   /// Move or trim the layer. One op, so a drag that changes the in point and
   /// the start offset together — a slip edit — is still one undo step.
   ///
@@ -1016,6 +1256,12 @@ class LayerReference {
   /// that produced it.
   void setSpan({required BridgeSpan span}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetSpan(that: this, span: span);
+
+  /// Replace one stroke — its path, its colour, its width, its name. Named by
+  /// id, so a stale reference is a calm error rather than an edit landing on
+  /// whichever stroke happens to sit at that index now.
+  void setStroke({required BridgeStroke stroke}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceSetStroke(that: this, stroke: stroke);
 
   /// Set one switch. One op each, so each click is one undo step.
   void setSwitch({required BridgeLayerSwitch switch_, required bool on_}) =>

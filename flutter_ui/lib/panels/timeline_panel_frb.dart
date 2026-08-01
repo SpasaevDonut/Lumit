@@ -51,6 +51,7 @@ export 'timeline_extras_frb.dart' show rulerLabelStepSeconds, rulerLabelOf;
 import 'placeholder.dart';
 import 'graph_editor_frb.dart';
 import 'graph_maths.dart';
+import 'package:lumit_flutter/state/preview_throttle.dart';
 import 'timeline_extras_frb.dart';
 import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
@@ -687,8 +688,6 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     if (razorCut(targets, frame)) ui.model.refresh();
     return true;
   }
-
-
 
   /// `[` and `]`: move the selected layers so that end lands on the playhead;
   /// with `Alt`, trim that end to it instead (docs/07 §4.4).
@@ -2098,6 +2097,7 @@ class _FoldRow extends StatelessWidget {
           onChanged: onChanged,
         ),
       FoldMaskRow(:final mask) => _MaskRow(
+          comp: comp,
           layer: layer,
           mask: mask,
           valueColumn: valueColumn,
@@ -2106,6 +2106,20 @@ class _FoldRow extends StatelessWidget {
             onChanged();
           },
           onLabelTap: () => onSelectProperty(path),
+        ),
+      FoldShapeRow(:final item) => _ShapeItemRow(
+          comp: comp,
+          layer: layer,
+          item: item,
+          valueColumn: valueColumn,
+          onChanged: onChanged,
+        ),
+      FoldStrokeRow(:final stroke) => _StrokeRow(
+          comp: comp,
+          layer: layer,
+          stroke: stroke,
+          valueColumn: valueColumn,
+          onChanged: onChanged,
         ),
     };
   }
@@ -2313,11 +2327,15 @@ class _MaskRow extends StatefulWidget {
   final VoidCallback onChanged;
   final VoidCallback? onLabelTap;
 
+  /// The composition, for the live preview a drag shows (K-240).
+  final CompositionReference comp;
+
   const _MaskRow({
     required this.layer,
     required this.mask,
     required this.valueColumn,
     required this.onChanged,
+    required this.comp,
     this.onLabelTap,
   });
 
@@ -2331,6 +2349,50 @@ class _MaskRowState extends State<_MaskRow> {
   /// writing on every tick filled the undo stack with near-identical steps,
   /// and one undo backed out a single percent — which looked like nothing.
   double? _staged;
+
+  /// Keeps the drag's preview requests about one render apart, as every other
+  /// dragged value does.
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Show the opacity the drag is passing through without writing it (K-240).
+  ///
+  /// The last of the three rows to get this. Staging alone made the drag one
+  /// undo step (K-234) and left the picture still until the button came up;
+  /// paint and shape art were fixed under K-239 and this is the same fix, in
+  /// the same shape, through the same clone-and-patch render path.
+  void _preview(double opacity) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() {
+      try {
+        widget.comp.renderFrameWithMaskPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          masks: [
+            for (final m in widget.layer.getMasks())
+              if (m.id == widget.mask.id) _withOpacity(m, opacity) else m,
+          ],
+        );
+      } catch (_) {
+        // A preview is a courtesy; the drag carries on without it.
+      }
+    });
+  }
+
+  static BridgeMask _withOpacity(BridgeMask m, double opacity) => BridgeMask(
+        id: m.id,
+        name: m.name,
+        vertices: m.vertices,
+        closed: m.closed,
+        inverted: m.inverted,
+        opacity: opacity,
+      );
 
   /// Write the mask back with one field changed. The engine takes the whole
   /// mask, so this is the only shape an edit has.
@@ -2413,9 +2475,17 @@ class _MaskRowState extends State<_MaskRow> {
                     max: 100,
                     suffix: '%',
                     onChanged: _commitOpacity,
-                    onChangeLive: (v) => setState(() => _staged = v.toDouble()),
+                    onChangeLive: (v) {
+                      setState(() => _staged = v.toDouble());
+                      _preview(v.toDouble());
+                    },
                     onChangeEnd: _commitOpacity,
-                    onDragCancel: () => setState(() => _staged = null),
+                    onDragCancel: () {
+                      setState(() => _staged = null);
+                      // The picture is showing a value nobody committed; put
+                      // the document's own back on screen.
+                      _preview(widget.mask.opacity);
+                    },
                   ),
                 ),
               ],
@@ -2442,6 +2512,383 @@ class _MaskRowState extends State<_MaskRow> {
             } catch (_) {}
           },
           child: const Text('Delete mask'),
+        ),
+      ),
+    );
+  }
+}
+
+/// One piece of a shape layer's art in the Timeline (K-237): what it is called,
+/// how opaque it is, and the menu that deletes it.
+///
+/// The same shape as the mask and stroke rows: the engine takes the whole
+/// contents list, so every edit is "the list, with this item changed".
+class _ShapeItemRow extends StatefulWidget {
+  final LayerReference layer;
+  final BridgeShapeItem item;
+  final ValueColumn valueColumn;
+  final VoidCallback onChanged;
+
+  /// The composition, for the live preview a drag shows (K-239).
+  final CompositionReference comp;
+
+  const _ShapeItemRow({
+    required this.layer,
+    required this.item,
+    required this.valueColumn,
+    required this.onChanged,
+    required this.comp,
+  });
+
+  @override
+  State<_ShapeItemRow> createState() => _ShapeItemRowState();
+}
+
+class _ShapeItemRowState extends State<_ShapeItemRow> {
+  /// The opacity a drag is part way through, or null when nothing is dragging.
+  /// Without it the field committed on every tick, so one drag was a stack of
+  /// ops and `Ctrl+Z` backed out a hair (K-238, K-239).
+  double? _staged;
+
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  LayerReference get layer => widget.layer;
+  BridgeShapeItem get item => widget.item;
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Show the opacity the drag is passing through without writing it (K-239),
+  /// exactly as the stroke row above does.
+  void _preview(double opacity) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() {
+      try {
+        widget.comp.renderFrameWithShapePreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: layer,
+          contents: [
+            for (final i in layer.getShapeContents())
+              if (i.id == item.id) _withOpacity(i, opacity) else i,
+          ],
+        );
+      } catch (_) {
+        // A preview is a courtesy; the drag carries on without it.
+      }
+    });
+  }
+
+  static BridgeShapeItem _withOpacity(BridgeShapeItem i, double opacity) =>
+      BridgeShapeItem(
+        id: i.id,
+        name: i.name,
+        vertices: i.vertices,
+        closed: i.closed,
+        fill: i.fill,
+        stroke: i.stroke,
+        strokeWidth: i.strokeWidth,
+        opacity: opacity,
+      );
+
+  void _commitOpacity(num v) {
+    setState(() => _staged = null);
+    _write(opacity: v.toDouble());
+  }
+
+  /// Write the contents back with this item changed, or dropped.
+  void _write({double? opacity, bool delete = false}) {
+    try {
+      final contents = <BridgeShapeItem>[
+        for (final other in layer.getShapeContents())
+          if (other.id != item.id)
+            other
+          else if (!delete)
+            BridgeShapeItem(
+              id: other.id,
+              name: other.name,
+              vertices: other.vertices,
+              closed: other.closed,
+              fill: other.fill,
+              stroke: other.stroke,
+              strokeWidth: other.strokeWidth,
+              opacity: opacity ?? other.opacity,
+            ),
+      ];
+      layer.setShapeContents(contents: contents);
+      widget.onChanged();
+    } catch (_) {
+      // The item or its layer went away between the draw and the click.
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
+      child: Row(
+        children: [
+          lumitIcon(LumitIcon.rectangle, size: iconSize, color: t.textSecondary),
+          const SizedBox(width: 4),
+          Expanded(
+            child:
+                Text(item.name, style: t.body, overflow: TextOverflow.ellipsis),
+          ),
+          SizedBox(
+            width: widget.valueColumn.width,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                SizedBox(
+                  width: 56,
+                  // Staged and previewed, like every other dragged value here:
+                  // the drag shows live and commits once on release, so it is
+                  // one op and one undo step.
+                  child: DragValueField(
+                    key: ValueKey<String>('tl-shape-opacity-${item.id}'),
+                    value: _staged ?? item.opacity,
+                    min: 0,
+                    max: 100,
+                    suffix: '%',
+                    onChanged: _commitOpacity,
+                    onChangeLive: (v) {
+                      setState(() => _staged = v.toDouble());
+                      _preview(v.toDouble());
+                    },
+                    onChangeEnd: _commitOpacity,
+                    onDragCancel: () {
+                      setState(() => _staged = null);
+                      _preview(item.opacity);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _menu(BuildContext context, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 160,
+        child: MenuRow(
+          key: ValueKey<String>('tl-shape-delete-${item.id}'),
+          onPressed: () {
+            close(null);
+            _write(delete: true);
+          },
+          child: const Text('Delete shape'),
+        ),
+      ),
+    );
+  }
+}
+
+/// One paint stroke in the Timeline (K-227): what it is called, how opaque it
+/// is, and the menu that deletes it.
+///
+/// The same shape as [_MaskRow], and for the same reason: the engine takes the
+/// whole stroke, so every edit is "this stroke, with one field changed".
+class _StrokeRow extends StatefulWidget {
+  final LayerReference layer;
+  final BridgeStroke stroke;
+  final ValueColumn valueColumn;
+  final VoidCallback onChanged;
+
+  /// The composition, for the live preview a drag shows (K-239).
+  final CompositionReference comp;
+
+  const _StrokeRow({
+    required this.layer,
+    required this.stroke,
+    required this.valueColumn,
+    required this.onChanged,
+    required this.comp,
+  });
+
+  @override
+  State<_StrokeRow> createState() => _StrokeRowState();
+}
+
+class _StrokeRowState extends State<_StrokeRow> {
+  /// The opacity a drag is part way through, or null when nothing is dragging.
+  ///
+  /// Without this the field committed on every tick of the drag, so pulling a
+  /// stroke's opacity across wrote dozens of ops and `Ctrl+Z` walked back one
+  /// hair at a time — the reading was "undo doesn't work". One gesture is one
+  /// op and one undo step (K-230), the same as the mask row above.
+  double? _staged;
+
+  /// Keeps the drag's preview requests to about one render apart, as every
+  /// other dragged value does.
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  LayerReference get layer => widget.layer;
+  BridgeStroke get stroke => widget.stroke;
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Show the opacity a drag is passing through, without writing it (K-239).
+  ///
+  /// Staging alone made the drag one undo step (K-238) but left the picture
+  /// still until the button came up, which is the wrong half of the bargain: a
+  /// value you drag has to show what it is doing. So the tick previews and the
+  /// release commits — the same division the Type tool and the transform rows
+  /// already use.
+  ///
+  /// The *whole* stroke list is sent, with this one stroke's opacity replaced,
+  /// because paint is stored and committed as a whole list. A preview shaped
+  /// differently from the op would be a second description of the same thing.
+  void _preview(double opacity) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() {
+      try {
+        widget.comp.renderFrameWithPaintPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: layer,
+          strokes: [
+            for (final s in layer.getPaint())
+              if (s.id == stroke.id) _withOpacity(s, opacity) else s,
+          ],
+        );
+      } catch (_) {
+        // A preview is a courtesy; the drag carries on without it.
+      }
+    });
+  }
+
+  static BridgeStroke _withOpacity(BridgeStroke s, double opacity) =>
+      BridgeStroke(
+        id: s.id,
+        name: s.name,
+        points: s.points,
+        colour: s.colour,
+        width: s.width,
+        hardness: s.hardness,
+        opacity: opacity,
+        mode: s.mode,
+        cloneOffsetX: s.cloneOffsetX,
+        cloneOffsetY: s.cloneOffsetY,
+      );
+
+  void _write({double? opacity}) {
+    try {
+      layer.setStroke(
+        stroke: BridgeStroke(
+          id: stroke.id,
+          name: stroke.name,
+          points: stroke.points,
+          colour: stroke.colour,
+          width: stroke.width,
+          hardness: stroke.hardness,
+          opacity: opacity ?? stroke.opacity,
+          mode: stroke.mode,
+          cloneOffsetX: stroke.cloneOffsetX,
+          cloneOffsetY: stroke.cloneOffsetY,
+        ),
+      );
+      widget.onChanged();
+    } catch (_) {
+      // The stroke or its layer went away between the draw and the click.
+    }
+  }
+
+  void _commitOpacity(num v) {
+    setState(() => _staged = null);
+    _write(opacity: v.toDouble());
+  }
+
+  /// The icon says which of the three tools made it, so a list of marks can be
+  /// read at a glance.
+  LumitIcon get _icon => switch (stroke.mode) {
+        BridgePaintMode.erase => LumitIcon.eraser,
+        BridgePaintMode.clone => LumitIcon.cloneStamp,
+        BridgePaintMode.paint => LumitIcon.brush,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onSecondaryTapUp: (details) => _menu(context, details.globalPosition),
+      child: Row(
+        children: [
+          lumitIcon(_icon, size: iconSize, color: t.textSecondary),
+          const SizedBox(width: 4),
+          Expanded(
+            child: Text(stroke.name,
+                style: t.body, overflow: TextOverflow.ellipsis),
+          ),
+          SizedBox(
+            width: widget.valueColumn.width,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                SizedBox(
+                  width: 56,
+                  // Staged like every other dragged value here: the drag shows
+                  // live and commits once on release, so it is one op and one
+                  // undo step.
+                  child: DragValueField(
+                    key: ValueKey<String>('tl-stroke-opacity-${stroke.id}'),
+                    value: _staged ?? stroke.opacity,
+                    min: 0,
+                    max: 100,
+                    suffix: '%',
+                    onChanged: _commitOpacity,
+                    onChangeLive: (v) {
+                      setState(() => _staged = v.toDouble());
+                      _preview(v.toDouble());
+                    },
+                    onChangeEnd: _commitOpacity,
+                    onDragCancel: () {
+                      setState(() => _staged = null);
+                      // The picture is showing a value nobody committed; put
+                      // the document's own back on screen.
+                      _preview(stroke.opacity);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _menu(BuildContext context, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 160,
+        child: MenuRow(
+          key: ValueKey<String>('tl-stroke-delete-${stroke.id}'),
+          onPressed: () {
+            close(null);
+            try {
+              layer.deleteStroke(id: stroke.id);
+              widget.onChanged();
+            } catch (_) {}
+          },
+          child: const Text('Delete stroke'),
         ),
       ),
     );
