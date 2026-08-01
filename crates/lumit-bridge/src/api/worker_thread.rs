@@ -1268,9 +1268,39 @@ struct Playback {
     /// at once — if the clock has moved past a frame we have not drawn yet, the
     /// round trip cost more than its budget, wherever the time went.
     skipped: u64,
+    /// What recent presents cost — the copy plus the waits inside
+    /// [`present_ring_frame`] — beside `costs`' renders. The pace report's
+    /// numbers (see [`Self::report_pace`]).
+    present_costs: crate::playback::CostWindow,
+    /// When the pace was last printed, so the report stays sparse.
+    pace_reported: std::time::Instant,
 }
 
 impl Playback {
+    /// Print where a playback frame's time is going, at most every couple of
+    /// seconds — the stopwatch docs/TODO.md's "measure first" asks for before
+    /// the shared-texture present is rebuilt around GPU-side sync. The present
+    /// number is the one that decides it: it is the copy PLUS the full-queue
+    /// wait (`Maintain::Wait`) plus the D3D11 hop, so a present p95 of a
+    /// fraction of a millisecond says the rebuild would buy nothing, and one
+    /// of several says it is the next job. One line per interval is far below
+    /// the console traffic the worker already allows itself for errors.
+    fn report_pace(&mut self) {
+        const PACE_REPORT_EVERY: std::time::Duration = std::time::Duration::from_secs(2);
+        if self.pace_reported.elapsed() < PACE_REPORT_EVERY {
+            return;
+        }
+        self.pace_reported = std::time::Instant::now();
+        let ms = |cost: Option<f64>| cost.map_or(0.0, |secs| secs * 1000.0);
+        println!(
+            "Playback pace: present p95 {:.2} ms, render p95 {:.2} ms, ring {}, budget {:.2} ms",
+            ms(self.present_costs.p95()),
+            ms(self.costs.p95()),
+            self.ring.len(),
+            1000.0 / self.fps.max(1.0),
+        );
+    }
+
     /// Where playback has actually got to, in seconds.
     ///
     /// The audio clock is master once a mix is loaded; until then — while it is
@@ -1948,7 +1978,18 @@ fn play_one_frame(state: &mut WorkerState, stream: &mut WorkerResponseStream) {
             if matches!(playback.mode, BridgePlaybackMode::EveryFrame) {
                 chase_audio(playback, frame, since_present);
             }
+            let present_started = std::time::Instant::now();
             present_ring_frame(&mut state.renderer, frame, &prepared, stream);
+            // What the hand-off cost, and the sparse pace line it feeds — the
+            // number that says whether the present's full-queue wait is worth
+            // rebuilding (docs/TODO.md, "measure first").
+            let Some(playback) = &mut state.playback else {
+                return;
+            };
+            playback
+                .present_costs
+                .push(present_started.elapsed().as_secs_f64());
+            playback.report_pace();
             return;
         }
     }
@@ -2313,6 +2354,8 @@ fn start_playback(req: PlayRequest, state: &mut WorkerState) -> Result<(), Bridg
         audio_held_for_picture: false,
         on_time_run: 0,
         skipped: 0,
+        present_costs: crate::playback::CostWindow::default(),
+        pace_reported: std::time::Instant::now(),
     });
     // A fresh run starts optimistic at Full and walks down to whatever this
     // machine can actually hold, rather than inheriting the last run's verdict
@@ -3088,6 +3131,8 @@ mod tests {
             on_time_run: 0,
             pending_audio: None,
             skipped: 0,
+            present_costs: crate::playback::CostWindow::default(),
+            pace_reported: std::time::Instant::now(),
         }
     }
 
