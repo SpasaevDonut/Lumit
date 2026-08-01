@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/performance_view.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
