@@ -381,8 +381,18 @@ frame asked for at the moment it must be shown thus always arrives too late, and
 composites it again — a span parked on disk was then worth nothing to playback, which is most
 of what the disk tier holds after a project is re-opened. Playback asks for the frames of its
 look-ahead window instead, at the same time as it posts their source decodes, so the frame is
-on the card before playback reaches it. Nothing waits: a frame that has not arrived is
-composited as before.
+on the card before playback reaches it. Three refinements close the gaps that lead alone left
+open. Pressing play asks the disk for the first stretch of the run before the first render
+turn — at the start of a run the ring fills by rendering back-to-back, so a lead measured
+from the render head is no lead at all there. In **every-frame mode only**, a frame whose
+copy has been asked for and not yet arrived is given a bounded grace (tens of milliseconds)
+before being composited anyway: the mode promises every frame, not any particular arrival
+time, and the copy is far cheaper than the render. Adaptive playback never waits — it keeps
+chasing its clock, and a frame that has not arrived is composited as before. And a frame
+read back off disk is banked in the RAM tier as well as uploaded, so the next pass over the
+same span climbs from memory instead of reading the same files again — without that, a comp
+larger than the VRAM budget re-read its files on every pass and the IO thread's rate became
+the playback rate.
 
 **Two costs the ladder used to pay for each frame, and no longer pays.** The bytes of a frame
 are held in one allocation that the memory tier and the disk tier share, in place of a copy for

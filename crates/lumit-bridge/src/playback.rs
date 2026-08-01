@@ -79,6 +79,52 @@ pub(crate) fn lookahead_frames(p95_cost: Option<f64>, fps: f64) -> usize {
     frames.clamp(8, 16)
 }
 
+/// When the next every-frame present falls due, given when the one just shown
+/// was scheduled and when it actually went out.
+///
+/// The schedule is a GRID, not a stopwatch. The old rule — "at least one comp
+/// period since the last actual present" — re-anchored the clock at every
+/// present, so every scrap of loop overhead (the sleep waking a little late,
+/// the turn's bookkeeping) was added to every frame and never paid back: a
+/// 60 fps comp could not play faster than about 55, cached or not, and the
+/// shortfall grew with the rate. Keeping the due times on a grid means a
+/// present that goes out a millisecond late leaves the NEXT one due at the
+/// grid time, and the rate holds exactly.
+///
+/// A present more than one whole period late is a genuine stall, and there the
+/// grid is re-anchored at now instead: every-frame never skips a frame and
+/// never bursts faster than the comp's rate to catch up (K-171), so time lost
+/// to a stall stays lost — playback continues at rate from where it is.
+pub(crate) fn next_present_due(
+    scheduled: Option<std::time::Instant>,
+    now: std::time::Instant,
+    period: std::time::Duration,
+) -> std::time::Instant {
+    match scheduled {
+        Some(due) if now < due + period => due + period,
+        _ => now + period,
+    }
+}
+
+/// Whether the every-frame render turn should hold off compositing its next
+/// frame because a copy of it is on its way up from disk.
+///
+/// `asked_ago` is how long ago the disk tier was asked for the frame, `None`
+/// when it never was (nothing to wait for). A read plus decompression lands
+/// within a few loop turns; [`DISK_LOAD_GRACE`] bounds the wait so a load that
+/// never comes (file deleted underneath the session) degrades to a composite
+/// rather than a hang. Only every-frame playback waits at all — it promises
+/// every frame, not any particular arrival time — and only for frames not yet
+/// held anywhere above disk; adaptive playback keeps chasing its clock.
+pub(crate) fn wait_for_disk(asked_ago: Option<std::time::Duration>) -> bool {
+    asked_ago.is_some_and(|ago| ago < DISK_LOAD_GRACE)
+}
+
+/// How long a pending disk copy is given before the frame is composited
+/// anyway. Generous beside one read (a few milliseconds) so a queue of
+/// pre-asked loads can drain; tiny beside the composite it saves.
+pub(crate) const DISK_LOAD_GRACE: std::time::Duration = std::time::Duration::from_millis(50);
+
 /// The order idle cache-fill visits frames around the playhead (docs/06 §5.5,
 /// with the forward bias the owner asked for): two frames ahead for every one
 /// behind — you are about to watch forward, but a small rewind should be warm
@@ -190,6 +236,55 @@ mod tests {
         // killed the render worker outright.
         assert_eq!(fill_order(7, u64::MAX - 100, 363).count(), 0);
         assert_eq!(fill_order(0, 9, 4).count(), 0);
+    }
+
+    /// **The pacing-drift regression.** Presents are scheduled on a grid: a
+    /// present that goes out a little late (the sleep woke late, the turn had
+    /// bookkeeping) leaves the next one due at the grid time, so the overhead
+    /// is absorbed instead of compounding. Under the old
+    /// stopwatch-from-last-present rule each frame added its own lateness to
+    /// the schedule and a 60 fps comp could never actually play at 60.
+    #[test]
+    fn the_present_grid_absorbs_loop_overhead_instead_of_compounding_it() {
+        let period = std::time::Duration::from_micros(16_667);
+        let start = std::time::Instant::now();
+
+        // Ten frames, each presented 2 ms after its due time — the overhead the
+        // old rule accumulated. The grid must stay exactly period-spaced.
+        let mut due = next_present_due(None, start, period);
+        assert_eq!(due, start + period, "the first present anchors the grid");
+        for n in 2..=10u32 {
+            let presented = due + std::time::Duration::from_millis(2);
+            due = next_present_due(Some(due), presented, period);
+            assert_eq!(
+                due,
+                start + period * n,
+                "lateness within a period never moves the grid"
+            );
+        }
+
+        // A genuine stall — later than one whole period — re-anchors: every-frame
+        // never bursts to catch up (K-171), so lost time stays lost and playback
+        // continues at rate from where it is.
+        let stalled = due + period * 3;
+        let after = next_present_due(Some(due), stalled, period);
+        assert_eq!(after, stalled + period, "a stall re-anchors at now");
+    }
+
+    /// The bounded patience for a disk copy: wait while a young ask is in
+    /// flight, give up past the grace, and never wait for a frame nobody asked
+    /// the disk for.
+    #[test]
+    fn playback_waits_briefly_for_a_pending_disk_copy_and_no_longer() {
+        assert!(!wait_for_disk(None), "never asked: nothing to wait for");
+        assert!(
+            wait_for_disk(Some(std::time::Duration::from_millis(5))),
+            "a young ask is worth a moment — the read beats the composite"
+        );
+        assert!(
+            !wait_for_disk(Some(DISK_LOAD_GRACE)),
+            "past the grace the frame is composited, never hung on"
+        );
     }
 
     /// The impl note's clamp, pinned: never fewer than 8 frames of lookahead

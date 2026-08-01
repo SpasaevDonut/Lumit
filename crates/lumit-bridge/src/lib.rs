@@ -61,6 +61,7 @@ mod edits;
 mod export;
 mod framecache;
 mod media;
+mod names;
 mod playback;
 mod prefetch;
 mod realtime;
