@@ -98,6 +98,11 @@ the active quality), clipped to its own bounds, then behaves as footage in the p
 masked, effected, transformed like any raster layer. The nested comp is sampled at the parent's
 frame times; its own frame rate governs only its internal keyframe display.
 
+That intermediate is **transparent** where the nested comp's own layers do not cover it
+(K-241). A comp's background colour is the backdrop for looking at *that* comp, not a layer
+inside it, so it is painted only by the comp being viewed or exported — a Precomp layer carries
+the alpha its content has, and the parent's stack shows through the gaps.
+
 **Collapse** (the collapse switch on a Precomp layer) removes the intermediate:
 
 - Inner layers' transforms concatenate with the Precomp layer's transform into single matrices;

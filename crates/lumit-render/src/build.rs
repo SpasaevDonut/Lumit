@@ -539,17 +539,17 @@ pub fn build_comp_draws_at(
                 let nested_draws =
                     build_comp_draws_at(doc, nested, lt, frame_lt, pixels_by_layer, visited);
                 visited.pop();
-                let nbg = nested.background.0;
                 (
                     DrawSource::Nested {
                         width: nested.width,
                         height: nested.height,
-                        background: [
-                            f64::from(nbg[0]),
-                            f64::from(nbg[1]),
-                            f64::from(nbg[2]),
-                            f64::from(nbg[3]),
-                        ],
+                        // A nested comp's intermediate is transparent where
+                        // nothing covers it (K-241). A comp's background colour
+                        // is a viewing backdrop for the comp being looked at,
+                        // not a layer of its own, so filling the intermediate
+                        // with it would turn every gap in a Precomp into opaque
+                        // black and hide the parent's stack behind it.
+                        background: [0.0, 0.0, 0.0, 0.0],
                         draws: nested_draws,
                         camera: nested.camera_pose(lt),
                     },
