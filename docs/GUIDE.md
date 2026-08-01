@@ -2201,6 +2201,17 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   strip nudges the interface to redraw — the old wiring only nudged it when the *idle*
   cache fill banked something, which is precisely the thing that never happens during
   playback.
+- **The frame-rate readout in the Debug View (`flutter_ui/lib/panels/performance_view.dart`)** —
+  a small counter showing how fast the interface itself is drawing, which is how you tell "the
+  engine is presenting at rate" from "the window is keeping up with it". It **watches** frames
+  rather than asking for them: the engine reports what each finished frame cost, after the
+  fact, and the counter reads those reports. The first version instead asked to be woken after
+  every frame and redrew itself each time, which quietly pinned the whole interface at full
+  drawing rate whatever the editor was doing — the meter became a large part of what it was
+  measuring. It also hung every automated test that waits for the interface to go still,
+  because "still" was the one state it made impossible. Watching costs nothing when nothing is
+  moving, and the numbers on screen refresh five times a second rather than per frame, because
+  a readout redrawn per frame is one more thing drawing per frame.
 - **The stress project and speed benchmarks (`lumit-project::fixtures`, docs 13)** — the
   promise that Lumit stays responsive on huge projects needs something huge to test against.
   There's now a builder that makes a deliberately enormous project on demand — hundreds of
