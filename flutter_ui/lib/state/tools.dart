@@ -58,9 +58,8 @@ enum ToolMode {
   razor(ToolGroup.razor, 'Razor', LumitIcon.razor, ready: true),
 
   // The shape tools draw a mask on the selected layer, or a shape layer with
-  // nothing selected — AE's rule, and the reason they are one group. The shape
-  // layer half needs an engine layer kind that does not exist (K-222), so with
-  // nothing selected they say so rather than acting.
+  // nothing selected — AE's rule, and the reason they are one group. Both
+  // halves are built: the mask half since K-222, the shape layer since K-237.
   shapeRectangle(ToolGroup.shape, 'Rectangle', LumitIcon.rectangle,
       ready: true),
   shapeRoundedRectangle(
