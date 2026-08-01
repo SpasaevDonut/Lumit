@@ -205,7 +205,10 @@ class LumitMenuBarFrb extends StatelessWidget {
   VoidCallback? _onPrecompose(BuildContext context) {
     final ui = context.read<LumitUiState>();
     final comp = ui.selectedComp;
-    final layers = ui.selectedLayers.value;
+    var layers = ui.selectedLayers.value;
+    if (layers.isEmpty && ui.selectedLayer.value != null) {
+      layers = [ui.selectedLayer.value!];
+    }
     if (comp == null || layers.isEmpty) return null;
     return () => showPrecomposeDialogFrb(
           context: context,

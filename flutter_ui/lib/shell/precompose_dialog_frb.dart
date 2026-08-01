@@ -23,15 +23,21 @@ Future<void> showPrecomposeDialogFrb({
   required LumitUiState ui,
   required Workspace workspace,
 }) async {
-  if (_isPrecomposeShowing || selectedLayers.isEmpty) return;
+  var layers = selectedLayers;
+  if (layers.isEmpty && ui.selectedLayer.value != null) {
+    layers = [ui.selectedLayer.value!];
+  }
+  if (layers.isEmpty) return;
+  if (_isPrecomposeShowing) return;
+
   _isPrecomposeShowing = true;
 
   try {
     final compInfo = comp.getSettings();
     final parentCompName = compInfo.name;
-    final firstLayerName = selectedLayers.first.getName();
+    final firstLayerName = layers.first.getName();
 
-    final defaultName = selectedLayers.length == 1
+    final defaultName = layers.length == 1
         ? '$firstLayerName Comp 1'
         : 'Clips Comp 1';
 
@@ -40,7 +46,7 @@ Future<void> showPrecomposeDialogFrb({
       builder: (close) => _PrecomposeBody(
         parentCompName: parentCompName,
         firstLayerName: firstLayerName,
-        selectedCount: selectedLayers.length,
+        selectedCount: layers.length,
         defaultName: defaultName,
         initialMoveAttributes: workspace.precomposeMoveAttributes,
         initialAdjustDuration: workspace.precomposeAdjustDuration,
@@ -53,8 +59,8 @@ Future<void> showPrecomposeDialogFrb({
             openNewComp: openNewComp,
           );
 
-          final layerIds = selectedLayers.map((l) => l.internallayerId).toList();
-          final leaveAttributes = !moveAttributes && selectedLayers.length == 1;
+          final layerIds = layers.map((l) => l.internallayerId).toList();
+          final leaveAttributes = !moveAttributes && layers.length == 1;
 
           final newPrecompLayer = comp.precompose(
             layerIds: layerIds,

@@ -1098,7 +1098,10 @@ class _LumitAppViewState extends State<LumitAppView> {
           state.notifyDocumentChanged();
         }
       case 'layer.precompose':
-        final layers = ui.selectedLayers.value;
+        var layers = ui.selectedLayers.value;
+        if (layers.isEmpty && ui.selectedLayer.value != null) {
+          layers = [ui.selectedLayer.value!];
+        }
         if (comp == null || layers.isEmpty) {
           handled = false;
         } else {
