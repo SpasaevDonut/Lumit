@@ -67,9 +67,21 @@ enum SettingsPage {
   final String label;
 }
 
+/// The size the window opens at the first time (K-242). Bigger than the 700×460
+/// it was fixed at, because that was sized for the smallest laptop and left the
+/// Keymap table scrolling four rows at a time on anything larger; the corner
+/// grip takes it from here, and where it is left is remembered.
+const Size _settingsSize = Size(880, 640);
+
+/// Below this the sidebar and the widest setting row stop fitting side by side.
+const Size _settingsMinSize = Size(560, 380);
+
 Future<void> showSettingsWindowFrb(BuildContext context) =>
     showLumitModal<void>(
       context: context,
+      id: 'settings',
+      initialSize: _settingsSize,
+      minSize: _settingsMinSize,
       builder: (close) => _SettingsWindow(onClose: () => close(null)),
     );
 
@@ -95,10 +107,10 @@ class _SettingsWindowState extends State<_SettingsWindow> {
     final t = ThemeScope.of(context).theme;
     final ui = Provider.of<LumitUiState>(context);
 
+    // No width or height of its own: the window frame around it is what has the
+    // size, so the corner grip can change it (K-242).
     return FloatSurface(
-      width: 700,
-      child: SizedBox(
-        height: 460,
+      child: SizedBox.expand(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

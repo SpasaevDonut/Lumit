@@ -779,6 +779,9 @@ class LumitUiState extends ChangeNotifier {
     // Appearance and layout live in the workspace, so a change there is a
     // change here as far as any listening widget is concerned.
     this.workspace.addListener(notifyListeners);
+    // Floating windows read and write where they were left through this
+    // (K-242); the controls file has no other way to reach the store.
+    modalPlacementStore = this.workspace;
     selectedLayer.addListener(_syncSelection);
     // A layer that has gone must leave the selection with it (K-238). The
     // model is the one place that knows which layers exist, so the pruning

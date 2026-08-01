@@ -4641,3 +4641,40 @@ parent and never had a background to paint.
 motion blur) still clears to the comp's own background, because that stack *is* the comp being
 viewed, held at another time. The regression test is in `build_tests.rs`, on the same case that
 already guarded collapse on and off.
+
+---
+
+**K-242 · DECIDED · A floating window can be moved, the Settings window can be resized, and
+both are remembered.** The Settings window was 700×460 whatever the monitor, which is a size
+chosen for the smallest laptop and read as cramped on anything larger — the Keymap table
+scrolled a few rows at a time on a 1440p screen. And every window that floats over the shell
+was pinned to the centre, so anything it covered had to be closed for rather than moved off.
+
+**What it is.** One change in one place: `showLumitModal` (the funnel every floating window
+already went through) now puts the window in a frame that can be dragged, optionally resized,
+and optionally remembers where it was left.
+
+* **Moving** is by dragging any part of the window no control has claimed. A slider, a
+  scrolling list or a text selection wins the gesture over the window, so dragging a control
+  still does what the control does. No separate title bar to grab: the windows draw their own
+  titles in their own way, and a shared bar would have been a bigger change than the feature.
+* **Resizing** is from a grip in the bottom-right corner, for windows given a size — for now
+  the Settings window alone, which opens at 880×640 and clamps between 560×380 and the app
+  window. The corner grip is a *sibling* of the window rather than a child of it: two nested
+  drag detectors both join the gesture arena and neither one ends up moving anything.
+* **Remembering** is per window id in the machine-local workspace store, beside the dock
+  layout and the other working preferences — never in the project file. What is stored is an
+  **offset from the centre**, not a corner position: a place saved on a large monitor then
+  restored on a small one still lands on screen, and the window needs to know nothing about
+  its own size to open centred the first time. The offset is clamped so the middle of a window
+  can never leave the app window, whatever was stored and whatever the monitor.
+
+**What it is not.** These are not native OS windows: they do not leave the app window, do not
+appear in the taskbar, and cannot be dragged to a second monitor — that needs a second Flutter
+engine per window and every bridge stream reachable from it, which is a different job. They
+also stay **modal**: the dimmed backdrop and click-outside dismissal are unchanged. Moving one
+is for seeing what is behind it, not for working while it is open.
+
+The regression test is `flutter_ui/test/modal_window_test.dart`: dragging moves the window by
+exactly what was dragged, the grip resizes from the corner with the opposite edge staying put,
+the minimum and the app window bound the size, and a placement survives a store round trip.

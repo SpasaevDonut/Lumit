@@ -72,6 +72,42 @@ class SavedSession {
       );
 }
 
+/// Where a floating window was left (K-242): how far it was dragged from the
+/// centre of the app window, and how big it was made when it is one of the
+/// resizable ones. Stored as an offset from centre rather than as a corner
+/// position so a window opened on a smaller monitor than it was left on still
+/// lands somewhere sensible.
+class WindowPlacement {
+  final Offset offset;
+  final Size? size;
+
+  const WindowPlacement(this.offset, this.size);
+
+  Map<String, dynamic> toJson() => {
+        'dx': offset.dx,
+        'dy': offset.dy,
+        if (size != null) 'w': size!.width,
+        if (size != null) 'h': size!.height,
+      };
+
+  static WindowPlacement? fromJson(Map<String, dynamic> j) {
+    final dx = j['dx'], dy = j['dy'];
+    if (dx is! num || dy is! num) return null;
+    final w = j['w'], h = j['h'];
+    return WindowPlacement(
+      Offset(dx.toDouble(), dy.toDouble()),
+      w is num && h is num ? Size(w.toDouble(), h.toDouble()) : null,
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is WindowPlacement && other.offset == offset && other.size == size;
+
+  @override
+  int get hashCode => Object.hash(offset, size);
+}
+
 class Workspace extends ChangeNotifier {
   DockSplit dock = defaultLayout();
   LumitColorScheme colorScheme = LumitColorScheme.dark;
@@ -400,6 +436,18 @@ class Workspace extends ChangeNotifier {
   /// The saved session for the project at [path], or null when none is stored.
   SavedSession? sessionFor(String path) => sessions[path];
 
+  /// Where each floating window was left, keyed by the window's id (K-242).
+  final Map<String, WindowPlacement> windowPlacements = {};
+
+  /// Remember where a window was dragged or resized to. Written straight away
+  /// like the other deliberate acts here — moving a window happens once in a
+  /// while, not per frame — and a no-op when nothing actually changed.
+  void rememberWindow(String id, WindowPlacement placement) {
+    if (windowPlacements[id] == placement) return;
+    windowPlacements[id] = placement;
+    save();
+  }
+
   // --- Persistence ---------------------------------------------------------
 
   /// Somewhere other than the real settings file to read and write — set by
@@ -450,6 +498,9 @@ class Workspace extends ChangeNotifier {
         'last_project_path': lastProjectPath,
         'sessions': {
           for (final e in sessions.entries) e.key: e.value.toJson(),
+        },
+        'windows': {
+          for (final e in windowPlacements.entries) e.key: e.value.toJson(),
         },
       };
 
@@ -502,6 +553,16 @@ class Workspace extends ChangeNotifier {
       rawSessions.forEach((key, value) {
         if (key is String && value is Map) {
           sessions[key] = SavedSession.fromJson(value.cast<String, dynamic>());
+        }
+      });
+    }
+    windowPlacements.clear();
+    final rawWindows = j['windows'];
+    if (rawWindows is Map) {
+      rawWindows.forEach((key, value) {
+        if (key is String && value is Map) {
+          final p = WindowPlacement.fromJson(value.cast<String, dynamic>());
+          if (p != null) windowPlacements[key] = p;
         }
       });
     }

@@ -1453,6 +1453,25 @@ attribute choice is remembered but overridden by a multiple selection, which can
 refusal from the engine leaves the dialogue open saying so, rather than closing on a move that
 did not happen.
 
+### 13.5 Floating windows (K-242)
+
+Every window that floats over the shell — Settings, the theme editor, Export, Composition
+settings, New composition, Pre-compose — opens centred and **can be dragged anywhere in the
+app window** by any part of itself no control has claimed. Where it was left is remembered
+in the machine-local workspace store, keyed by the window, and restored on the next open —
+the same session and the next launch. The saved place is an offset from the centre, not a
+corner, so a window left near the edge of a large monitor still opens on screen on a small
+one; the offset is clamped so the middle of a window can never leave the app window.
+
+The **Settings window is resizable** from a grip in its bottom-right corner, and opens at
+880×640 rather than a size fixed for the smallest laptop. Its size is remembered with its
+position, and is clamped between 560×380 and the app window. Windows that ask one question
+(Pre-compose, confirmations) stay at their natural size — there is nothing in them to give
+more room to.
+
+These windows remain modal: a click on the dimmed backdrop dismisses. Moving one is for
+seeing what is behind it, not for working while it is open.
+
 ---
 
 ## 14. Interaction and accessibility rules

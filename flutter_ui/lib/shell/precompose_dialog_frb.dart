@@ -44,6 +44,7 @@ Future<void> showPrecomposeDialogFrb({
 
   await showLumitModal<void>(
     context: context,
+    id: 'precompose',
     builder: (close) => _PrecomposeBody(
       parentCompName: comp.getSettings().name,
       layerName: layers.first.getName(),
