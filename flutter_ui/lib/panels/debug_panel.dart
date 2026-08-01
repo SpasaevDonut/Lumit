@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/performance_view.dart';
 import 'package:lumit_flutter/widgets/controls.dart';
 
 class DebugPanel extends StatefulWidget {
@@ -16,6 +18,8 @@ class _DebugPanelState extends State<DebugPanel> {
   late List<StackTraceEntry> items;
   late List<MapEntry<String, FunctionCallStats>> stats;
   late Timer t;
+
+  
   @override
   void initState() {
     sub = debugInfo.onChange.stream.listen((_) => onChange());
@@ -76,6 +80,7 @@ class _DebugPanelState extends State<DebugPanel> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        PerformanceMonitor(),
         Text(
           "Statistics:",
           style: theme.body.copyWith(color: theme.textMuted),
