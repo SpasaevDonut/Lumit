@@ -30,6 +30,12 @@ class _PerformanceMonitorState extends State<PerformanceMonitor> {
   }
 
   void update(Duration duration) {
+    // A post-frame callback cannot be cancelled, so the chain stops itself:
+    // once the panel is out of the tree (every shell widget test tears it
+    // down), touching state or re-registering would throw on the next frame.
+    if (!mounted) {
+      return;
+    }
     if (previous != null) {
       final frameDuration = duration - previous!;
       timings.add(frameDuration);
