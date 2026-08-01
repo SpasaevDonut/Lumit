@@ -20,7 +20,7 @@ superseding entry (never edit history).
 3. For any code: `docs/14-ENGINEERING-RULES.md is the binding rulebook (typed rational
 time, no panics in engine crates, no locks across await/GPU/FFI, budgeted allocations,
 cancellation everywhere, determinism). docs/13-PERFORMANCE-RULES.md budgets gate merges.
-4. If this `CLAUDE.md` file is ever changed, also update the corresponding `AGENTS.md` file.
+4. If this `AGENTS.md` file is ever changed, also update the corresponding `CLAUDE.md` file.
 
 ## Repo shape
 
