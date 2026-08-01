@@ -4624,3 +4624,20 @@ without inventing anything is the evidence that the shape was right.
 **What this closes.** Every whole-list property the Timeline can drag — a mask's opacity, a
 stroke's, a shape item's — is now one op, one undo step, and live on the picture. A property
 added to this family later has one path to join rather than a choice to make.
+
+**K-241 · DECIDED · A nested comp's intermediate is transparent.** A Precomp layer's
+intermediate is cleared to nothing before its inner layers draw, whatever background colour the
+nested comp carries. Until now it was cleared to that colour, and since a new comp's background
+is opaque black, every Precomp arrived as a solid black rectangle: content that was see-through
+inside the nested comp painted black over the parent's stack.
+
+**A background colour is a viewing backdrop, not a layer.** It belongs to the comp you are
+looking at — the Viewer, and the export of that comp. A comp used *as a source* contributes its
+layers and their alpha, nothing else. That is also what After Effects does, and it is why
+collapse was never affected: a collapsed Precomp splices its inner draws straight into the
+parent and never had a background to paint.
+
+**Nothing else reads it differently.** The below-stack re-render (Posterize Time, accumulation
+motion blur) still clears to the comp's own background, because that stack *is* the comp being
+viewed, held at another time. The regression test is in `build_tests.rs`, on the same case that
+already guarded collapse on and off.

@@ -181,13 +181,20 @@ fn collapsed_precomp_splices_inner_draws_with_parent_placement() {
     );
     assert_eq!(draws[0].pre, Some(expect));
 
-    // Switch off → the Nested intermediate as before, no pre.
+    // Switch off → the Nested intermediate as before, no pre. The
+    // intermediate clears to nothing, never to the nested comp's own
+    // background colour (K-241): the nested comp here is opaque black, and a
+    // Precomp that painted that black over the parent's stack would be the
+    // "precomps go black where they should be see-through" bug.
     let mut off = parent.clone();
     off.layers[0].switches.collapse = false;
     let mut visited = vec![off.id];
     let draws = build_comp_draws(&doc, &off, 0.0, &map, &mut visited);
     assert_eq!(draws.len(), 1);
-    assert!(matches!(draws[0].source, DrawSource::Nested { .. }));
+    let DrawSource::Nested { background, .. } = &draws[0].source else {
+        panic!("an uncollapsed Precomp renders to an intermediate");
+    };
+    assert_eq!(*background, [0.0, 0.0, 0.0, 0.0]);
     assert!(draws[0].pre.is_none());
 
     // A mask on the Precomp layer forces the intermediate (§1.4) even
