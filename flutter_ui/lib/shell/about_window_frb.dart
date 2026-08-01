@@ -1,4 +1,4 @@
-// About Lumit — the window Help ▸ About Lumit opens (K-242).
+// About Lumit — the window Help ▸ About Lumit opens (K-244).
 //
 // It used to be a section at the bottom of Settings ▸ General, which is where
 // nobody looks for it: Settings is for things you change, and none of this is.

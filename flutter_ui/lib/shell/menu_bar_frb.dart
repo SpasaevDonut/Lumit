@@ -1,4 +1,4 @@
-// The menu bar: nine menus in the After Effects arrangement (K-242).
+// The menu bar: nine menus in the After Effects arrangement (K-244).
 //
 // **One tree, two renderers.** [lumitMenus] returns the whole bar as data —
 // labels, shortcuts, enablement, ticks — and nothing in it knows how a menu is
@@ -145,7 +145,7 @@ class LumitMenuBarFrb extends StatelessWidget {
       palette: () => _palette(context),
     );
 
-    // macOS puts menus in the system bar, not in the window (K-242). The bar
+    // macOS puts menus in the system bar, not in the window (K-244). The bar
     // itself draws nothing here; the hotkey holder still has to be in the tree.
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       return PlatformMenuBar(

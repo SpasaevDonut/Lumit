@@ -120,7 +120,7 @@ final Map<String, LogicalKeyboardKey> _keysByName = {
 };
 
 /// A chord as macOS's own menu bar wants it: a [SingleActivator] for the native
-/// `PlatformMenuItem` to draw beside its row (K-242).
+/// `PlatformMenuItem` to draw beside its row (K-244).
 ///
 /// Only the native menu needs this — everywhere else the keyboard is the
 /// engine's business and a chord is text. `Mod` becomes Cmd, because macOS is

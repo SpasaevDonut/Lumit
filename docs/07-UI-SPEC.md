@@ -206,9 +206,8 @@ tools and the Pen (§2.3.1), Horizontal type (§2.3.2), the three painting tools
 three camera tools (§2.3.5). **Disabled** (K-228 — shown, not armable): vertical type, the Pen's
 four editing siblings, the Roto tools and the Puppet pins. Each tool's behaviour is tracked
 separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
----
 
-### 1.8 The menu bar (K-242)
+### 1.8 The menu bar (K-244)
 
 The bar carries nine menus in this order: **File, Edit, Composition, Layer, Effect, Animation,
 View, Window, Help**. The arrangement is deliberately After Effects', for the same reason the
@@ -229,6 +228,8 @@ panel layout is.
 - **Effect** MUST offer one submenu per effect category, each item applying to *every* selected
   layer (K-217), and the whole menu MUST be disabled with nothing selected.
 - **File ▸ Open recent** lists the ten most recent project paths, newest first.
+
+---
 
 ## 2. Viewer
 
@@ -730,16 +731,36 @@ double-click-to-create and marker dragging are still to come.
 
 Default column order, all reorderable and hideable per workspace:
 
-**Opening a composition (K-191).** Double-clicking a comp in the Project panel opens it in
-the Timeline, which is what a double-click means everywhere; a comp is therefore renamed
-from its row menu (**Rename**) or its settings dialogue rather than by a second click on
-the row — every other item kind still renames on that second click. Dropping footage on a
-Timeline with nothing open raises the **New composition** dialogue, opened on the media's
-own size, rate and length, and the dropped items land in the finished comp as layers.
+**Opening an item (K-191, K-243).** A double-click — or a second click on a row that is
+already the whole selection — **opens** what it lands on, and what opening means is the
+item's own answer:
+
+- a **composition** fronts in the Timeline, which is what a double-click means everywhere;
+- **footage** raises the **New composition** dialogue on the selection, already the media's
+  own size, rate and length (the longest item wins when several are selected), with every
+  selected item landing in the finished comp as a layer — footage has no window of its own,
+  and a comp to put the clip in is what the gesture is asking for;
+- a **folder** shows or hides what is in it. A caret on the row says which it is, and a
+  search still looks inside a shut folder.
+
+Items are therefore renamed from the row menu (**Rename**) — and a comp also from its
+settings dialogue — rather than by a second click on the row. Dropping footage
+on a Timeline with nothing open raises the same **New composition** dialogue.
+
+**Opening a layer (K-243).** Double-clicking a layer in the Timeline outline opens it the
+same way: a **Precomp** layer fronts the comp it draws, and every other kind will open in a
+Viewer of its own once there is one to open — until then a double-click on one does nothing.
+It is never a rename; `Enter` is (§15) — and an inline rename commits when the pointer goes
+down anywhere else, not only on `Enter`.
+
+**A modal window's keys are its own (K-243).** Panel commands stand down while a dialogue is
+open. A dialogue's default action — Pre-compose in §13.4 — takes focus when the window opens,
+is drawn with the accent edge, and `Enter` presses it.
 
 1. **Index** (render order; bottom layer renders first).
 2. **Name / source toggle**: click the column header to flip between the user-given layer
-   name and the source name. Rename with `Enter` or double-click.
+   name and the source name. Rename with `Enter` (a double-click *opens* the layer,
+   K-243).
 3. **Switches** (glossary §2): visible, audible, solo, lock, shy, quality (draft/full),
    motion blur, adjustment, 3D, collapse (Precomp layers). One icon each; the comp-level
    shy filter button lives in the Timeline header. `Alt`-click a switch applies it
@@ -1474,6 +1495,25 @@ any other (K-068). The three answers are remembered in the workspace across laun
 attribute choice is remembered but overridden by a multiple selection, which can only move. A
 refusal from the engine leaves the dialogue open saying so, rather than closing on a move that
 did not happen.
+
+### 13.5 Floating windows (K-242)
+
+Every window that floats over the shell — Settings, the theme editor, Export, Composition
+settings, New composition, Pre-compose — opens centred and **can be dragged anywhere in the
+app window** by any part of itself no control has claimed. Where it was left is remembered
+in the machine-local workspace store, keyed by the window, and restored on the next open —
+the same session and the next launch. The saved place is an offset from the centre, not a
+corner, so a window left near the edge of a large monitor still opens on screen on a small
+one; the offset is clamped so the middle of a window can never leave the app window.
+
+The **Settings window is resizable** from a grip in its bottom-right corner, and opens at
+880×640 rather than a size fixed for the smallest laptop. Its size is remembered with its
+position, and is clamped between 560×380 and the app window. Windows that ask one question
+(Pre-compose, confirmations) stay at their natural size — there is nothing in them to give
+more room to.
+
+These windows remain modal: a click on the dimmed backdrop dismisses. Moving one is for
+seeing what is behind it, not for working while it is open.
 
 ---
 

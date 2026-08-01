@@ -61,6 +61,7 @@ Future<bool> showCompSettingsFrb({
 }) async {
   final applied = await showLumitModal<bool>(
     context: context,
+    id: 'comp-settings',
     builder: (close) => _CompSettingsBody(
       title: 'Composition settings',
       confirm: 'Save',
@@ -110,6 +111,7 @@ Future<CompositionReference?> showNewCompositionFrb({
   final name = project.nextCompName();
   return showLumitModal<CompositionReference>(
     context: context,
+    id: 'new-comp',
     builder: (close) => _CompSettingsBody(
       title: 'New composition',
       confirm: 'Create',

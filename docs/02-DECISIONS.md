@@ -4642,7 +4642,110 @@ motion blur) still clears to the comp's own background, because that stack *is* 
 viewed, held at another time. The regression test is in `build_tests.rs`, on the same case that
 already guarded collapse on and off.
 
-**K-242 · DECIDED · The menu bar is the whole application, listed — and on macOS it is the
+
+---
+
+**K-242 · DECIDED · A floating window can be moved, the Settings window can be resized, and
+both are remembered.** The Settings window was 700×460 whatever the monitor, which is a size
+chosen for the smallest laptop and read as cramped on anything larger — the Keymap table
+scrolled a few rows at a time on a 1440p screen. And every window that floats over the shell
+was pinned to the centre, so anything it covered had to be closed for rather than moved off.
+
+**What it is.** One change in one place: `showLumitModal` (the funnel every floating window
+already went through) now puts the window in a frame that can be dragged, optionally resized,
+and optionally remembers where it was left.
+
+* **Moving** is by dragging any part of the window no control has claimed. A slider, a
+  scrolling list or a text selection wins the gesture over the window, so dragging a control
+  still does what the control does. No separate title bar to grab: the windows draw their own
+  titles in their own way, and a shared bar would have been a bigger change than the feature.
+* **Resizing** is from a grip in the bottom-right corner, for windows given a size — for now
+  the Settings window alone, which opens at 880×640 and clamps between 560×380 and the app
+  window. The corner grip is a *sibling* of the window rather than a child of it: two nested
+  drag detectors both join the gesture arena and neither one ends up moving anything.
+* **Remembering** is per window id in the machine-local workspace store, beside the dock
+  layout and the other working preferences — never in the project file. What is stored is an
+  **offset from the centre**, not a corner position: a place saved on a large monitor then
+  restored on a small one still lands on screen, and the window needs to know nothing about
+  its own size to open centred the first time. The offset is clamped so the middle of a window
+  can never leave the app window, whatever was stored and whatever the monitor.
+
+**What it is not.** These are not native OS windows: they do not leave the app window, do not
+appear in the taskbar, and cannot be dragged to a second monitor — that needs a second Flutter
+engine per window and every bridge stream reachable from it, which is a different job. They
+also stay **modal**: the dimmed backdrop and click-outside dismissal are unchanged. Moving one
+is for seeing what is behind it, not for working while it is open.
+
+The regression test is `flutter_ui/test/modal_window_test.dart`: dragging moves the window by
+exactly what was dragged, the grip resizes from the corner with the opposite edge staying put,
+the minimum and the app window bound the size, and a placement survives a store round trip.
+
+---
+
+**K-243 · DECIDED · A double-click opens; `Enter` renames.** Double-clicking a layer in the
+Timeline opened an inline rename, and a second click on a footage row in the Project panel did
+the same. That is the wrong verb on both: a double-click means *open this* in every editor,
+and K-191 had already made it mean that for a composition — which left the application saying
+two different things with one gesture depending on what was under the pointer.
+
+**One rule, and the item answers it.** A double-click opens what it lands on:
+
+* a **composition** fronts in the Timeline (K-191, unchanged);
+* a **Precomp layer** fronts the comp it draws — the same answer the Project panel and the
+  Hierarchy already gave for the comp itself;
+* **footage** raises New composition on the selection, already the media's size, rate and
+  length, with the selected items landing in the comp as layers. Footage has no window of its
+  own, and the thing wanted from a clip just double-clicked is a comp to put it in. The
+  dialogue was already able to do this — it is what dropping footage on the New composition
+  button does — so this is a second door onto one funnel, not a second implementation;
+* a **folder** shows or hides what is in it — opening a folder *is* seeing inside it. It
+  keeps a caret so a shut one does not read as an empty one, every row reserves the caret's
+  width so a child still lines up one step right of the folder holding it, and a search
+  looks inside a shut folder because otherwise searching would depend on where the twirls
+  were left. Which folders are shut is session state, like the search text, not the
+  document's business;
+* **every other layer kind** does nothing yet. It should open that layer in a Viewer of its
+  own, and there is no such Viewer to open; a double-click that half-worked would be worse
+  than one that waits.
+
+**Renaming is `Enter`**, which docs/07 §15 has bound to `layer.rename` in the Timeline since
+the keymap was written and nothing had ever handled. The row that the selected layer is on
+opens its own editor, driven by a notifier the panel sets — a rename must not rebuild the
+whole table (K-208's reasoning, K-231's budget). A locked layer still refuses, as it did when
+a double-click was the way in. Renaming a comp or a footage item stays on the row menu, and a
+comp also on its settings dialogue.
+
+**Three things had to be true for `Enter` to work at all**, and each was a bug of its own:
+
+1. **A dialogue's keys are its own.** The panels register their commands on the hardware
+   keyboard rather than by holding focus, so nothing about an open window stopped the
+   Timeline hearing a keypress meant for it — the Pre-compose dialogue's `Enter` renamed the
+   layer behind the window. `showLumitModal` now says whether a modal is up
+   (`lumitModalOpen`) and the Timeline's handler stands down while one is. The count is kept
+   by the windows themselves as they mount and unmount, not by the open and close calls: a
+   window can also leave by having its tree taken down under it, and a count only the close
+   path decremented would stick above zero and leave the keyboard dead for the session.
+2. **Pre-compose is the dialogue's default action.** It takes focus when the window opens and
+   `Enter` presses it wherever that focus sits, drawn with the accent edge docs/15 §2 keeps
+   for exactly this. The name field no longer takes focus on open, which is the cost: typing
+   a name is now one click into the field.
+3. **Clicking away finishes an edit and keeps it.** The Timeline's rename only committed on
+   `Enter`; a click anywhere else left the field open and the typing was lost. It commits on
+   the tap outside now, the way the Project panel's rename already did — the same
+   `onTapOutside` hook, added to the shared `HouseTextField` so every inline editor gets it.
+   The test harness gained the `TapRegionSurface` the application has from its `MaterialApp`,
+   without which that hook never fires and no test could have seen this.
+
+The regression tests are in `timeline_panel_frb_test.dart` (Enter renames the selected layer,
+a locked layer refuses, clicking elsewhere commits, a double-clicked Precomp fronts its comp,
+a double-clicked anything else does nothing), `project_panel_frb_test.dart` (a second click on
+footage makes a comp of it, on a folder opens and shuts it, a search still looks inside a shut
+one, the row menu renames, and none of it falls through to the empty-area import),
+`precompose_dialog_frb_test.dart` (Enter presses Pre-compose) and `modal_window_test.dart`
+(a window says it is open, and stops saying so however it leaves).
+
+---
+**K-244 · DECIDED · The menu bar is the whole application, listed — and on macOS it is the
 system's.** The bar was three menus and a Window heading, which is what the port had time for.
 It is now the nine After Effects menus (File, Edit, Composition, Layer, Effect, Animation, View,
 Window, Help) with the commands each of them will carry, whether or not those commands exist
@@ -4685,3 +4788,4 @@ empty dock has no way back.
 
 **Composition ▸ Add to export queue, not "render queue"** (glossary §9 — *export*, never
 *render*, for anything the user sees).
+

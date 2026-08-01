@@ -70,7 +70,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // General opens first. What this build *is* is no longer stated here —
-      // that is Help ▸ About Lumit now (K-242); Settings is for what you
+      // that is Help ▸ About Lumit now (K-244); Settings is for what you
       // change, and a version number is not that.
       expect(find.textContaining('lumit-bridge'), findsNothing);
       expect(find.byKey(const ValueKey('settings-reset-workspace')),

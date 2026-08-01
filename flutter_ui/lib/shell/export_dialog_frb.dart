@@ -74,6 +74,7 @@ Future<void> showExportDialogFrb({
 }) =>
     showLumitModal<void>(
       context: context,
+      id: 'export',
       builder: (close) => _ExportDialog(
         comp: comp,
         picker: picker,

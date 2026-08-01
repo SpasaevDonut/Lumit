@@ -29,6 +29,7 @@ import '../widgets/controls.dart';
 Future<void> showThemeEditorFrb(BuildContext context, LumitUiState ui) =>
     showLumitModal<void>(
       context: context,
+      id: 'theme-editor',
       builder: (close) => _ThemeEditor(ui: ui, onClose: () => close(null)),
     );
 

@@ -821,6 +821,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// budget (docs/13).
   final ValueNotifier<LayerDrag?> _layerDrag = ValueNotifier(null);
 
+  /// The layer `Enter` has asked to rename (K-243). A notifier for the same
+  /// reason the drag is one: only the row it names has anything to do, and
+  /// rebuilding the whole table to tell it would be the panel's budget spent
+  /// on a text field.
+  final ValueNotifier<UuidValue?> _renameRequest = ValueNotifier(null);
+
   /// The outline's and the lanes' vertical scrolls, linked both ways so the
   /// two halves of the table stay one table; the lanes' side owns the visible
   /// scrollbar. In graph view the outline scrolls alone.
@@ -916,6 +922,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// keeps its keys.
   bool _onKey(KeyEvent event) {
     if (event is! KeyDownEvent || !mounted) return false;
+    // A dialogue is up: its keys are its own (K-243). These commands are
+    // registered on the hardware keyboard rather than on focus, so without
+    // this the Pre-compose dialogue's `Enter` also renamed the layer behind it.
+    if (lumitModalOpen) return false;
     final focused = FocusManager.instance.primaryFocus?.context;
     if (focused != null &&
         (focused.widget is EditableText ||
@@ -952,6 +962,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
     if (action == 'reveal.animated') {
       return _revealTap();
+    }
+    // Enter renames the selected layer in place (docs/07 §15, K-243): the row
+    // it names opens its own editor, which is why this sets a value rather
+    // than reaching into a row.
+    if (action == 'layer.rename') {
+      final layer = ui.selectedLayer.value;
+      if (layer == null) return false;
+      _renameRequest.value = layer.internallayerId;
+      return true;
     }
     if (action == 'layer.split') {
       return _splitSelectionAtPlayhead(ui);
@@ -1176,6 +1195,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     _boundTools?.removeListener(_onToolChanged);
     _barDrag.dispose();
     _layerDrag.dispose();
+    _renameRequest.dispose();
     _vOutline.dispose();
     _vLane.dispose();
     _hLane.dispose();
@@ -1473,6 +1493,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                     comp: comp,
                                                     layers: layers,
                                                     layerDrag: _layerDrag,
+                                                    renameRequest:
+                                                        _renameRequest,
                                                     blockHeights: blockHeights,
                                                     groupOrder: _groupOrder,
                                                     widths: _groupWidths,
@@ -3863,6 +3885,9 @@ class _Outline extends StatelessWidget {
   final ValueNotifier<LayerDrag?> layerDrag;
   final List<double> blockHeights;
 
+  /// The layer `Enter` has just asked to rename (K-243).
+  final ValueNotifier<UuidValue?> renameRequest;
+
   const _Outline({
     required this.comp,
     required this.layers,
@@ -3884,6 +3909,7 @@ class _Outline extends StatelessWidget {
     required this.onChanged,
     required this.layerDrag,
     required this.blockHeights,
+    required this.renameRequest,
   });
 
   @override
@@ -3923,6 +3949,7 @@ class _Outline extends StatelessWidget {
             onSelect: () => onSelect(layers[i].layer),
             onChanged: onChanged,
             layerDrag: layerDrag,
+            renameRequest: renameRequest,
             blockHeights: blockHeights,
           ),
           // The fold-out, from the same list the lanes leave room for.
@@ -3994,6 +4021,11 @@ class _OutlineRow extends StatefulWidget {
   /// the outline move with it (K-208).
   final ValueNotifier<LayerDrag?> layerDrag;
 
+  /// The layer the panel has just been asked to rename (`Enter`, K-243), or
+  /// null. A notifier rather than a rebuild because only the one row it names
+  /// has anything to do about it.
+  final ValueNotifier<UuidValue?> renameRequest;
+
   /// Every block's height, as the stack stood when the panel last built —
   /// what a drag's travel is measured against, so the answer does not depend
   /// on rows the drag is itself moving.
@@ -4015,6 +4047,7 @@ class _OutlineRow extends StatefulWidget {
     required this.onSelect,
     required this.onChanged,
     required this.layerDrag,
+    required this.renameRequest,
     required this.blockHeights,
   });
 
@@ -4023,7 +4056,7 @@ class _OutlineRow extends StatefulWidget {
 }
 
 class _OutlineRowState extends State<_OutlineRow> {
-  /// The inline rename, entered by double-clicking the name.
+  /// The inline rename, entered with `Enter` on the selected layer.
   TextEditingController? _rename;
 
   /// How far this row has been dragged since the lift, in pixels down.
@@ -4052,17 +4085,43 @@ class _OutlineRowState extends State<_OutlineRow> {
   int get count => widget.count;
 
   @override
+  void initState() {
+    super.initState();
+    widget.renameRequest.addListener(_maybeRename);
+  }
+
+  @override
   void dispose() {
+    widget.renameRequest.removeListener(_maybeRename);
     _rename?.dispose();
     super.dispose();
   }
 
+  /// `Enter` on the selected layer names this row: open the editor on it.
+  /// A locked layer keeps its name, the same as it did when a double-click was
+  /// what opened the editor — lock means no edits.
+  void _maybeRename() {
+    if (!mounted || _rename != null) return;
+    if (widget.renameRequest.value != layer.internallayerId) return;
+    if (widget.entry.info.switches.locked) return;
+    setState(() => _rename = TextEditingController(text: widget.entry.info.name));
+  }
+
   void _commitRename() {
+    // Both ways out of the editor can land here for one edit — submitting and
+    // then losing the pointer — and the row can be gone by the time the second
+    // arrives. Either way there is nothing left to commit.
+    if (!mounted || _rename == null) return;
     final text = _rename?.text.trim() ?? '';
     setState(() {
       _rename?.dispose();
       _rename = null;
     });
+    // Clear the request this row answered, so pressing Enter again on the same
+    // layer opens the editor a second time rather than seeing no change.
+    if (widget.renameRequest.value == layer.internallayerId) {
+      widget.renameRequest.value = null;
+    }
     if (text.isEmpty || text == widget.entry.info.name) return;
     layer.rename(name: text);
     widget.onChanged();
@@ -4366,9 +4425,30 @@ class _OutlineRowState extends State<_OutlineRow> {
     );
   }
 
-  /// The name, or the rename editor a double-click turns it into. Submitting
-  /// commits; clicking anywhere else commits too (the field loses the row).
-  /// A locked layer's name does not open the editor: lock means no edits.
+  /// The comp a Precomp layer draws, if it is still in the document.
+  CompositionReference? _sourceComp() {
+    try {
+      final source = layer.getSourceItem();
+      return source is ItemReference_Composition ? source.field0 : null;
+    } catch (_) {
+      // A layer that has gone: nothing to open, and never a crash.
+      return null;
+    }
+  }
+
+  /// Double-clicking a layer opens it (K-243). A Precomp opens the comp it
+  /// draws, the way it does in the Project panel and the Hierarchy; every other
+  /// kind will open in a Viewer of its own once there is one to open, and until
+  /// then does nothing. It no longer renames — `Enter` does that.
+  void _openLayer() {
+    final comp = _sourceComp();
+    if (comp == null) return;
+    Provider.of<LumitUiState>(context, listen: false).setSelectedComp(comp);
+  }
+
+  /// The name, or the rename editor `Enter` turns it into. Submitting commits;
+  /// clicking anywhere else commits too (the field loses the row). A locked
+  /// layer's name does not open the editor: lock means no edits.
   Widget _name(LumitTheme t, String id, BridgeLayerInfo info) {
     final editor = _rename;
     if (editor != null) {
@@ -4377,16 +4457,15 @@ class _OutlineRowState extends State<_OutlineRow> {
         controller: editor,
         autofocus: true,
         onSubmitted: (_) => _commitRename(),
+        // Clicking anywhere else finishes the edit and keeps what was typed.
+        // It used to leave the field open and lose the change (K-243).
+        onTapOutside: _commitRename,
       );
     }
     return GestureDetector(
       key: ValueKey<String>('tl-name-$id'),
       behavior: HitTestBehavior.opaque,
-      onDoubleTap: info.switches.locked
-          ? null
-          : () => setState(() {
-                _rename = TextEditingController(text: info.name);
-              }),
+      onDoubleTap: _openLayer,
       child: SizedBox(
         height: _rowHeight,
         child: Align(

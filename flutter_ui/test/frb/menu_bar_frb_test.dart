@@ -510,7 +510,7 @@ void main() {
       await tester.pump();
       expect(find.text('Command palette…'), findsOneWidget);
       // The arrangements sit behind their own heading (K-194), and Settings
-      // moved to Edit where every Windows application keeps it (K-242).
+      // moved to Edit where every Windows application keeps it (K-244).
       expect(find.text('Workspace'), findsOneWidget);
       expect(find.text('Settings…'), findsNothing);
       expect(find.text('Reset workspace'), findsNothing,
@@ -530,7 +530,7 @@ void main() {
     });
 
     /// The bar is the shape of the finished application, not of today's build
-    /// (K-242): a command that is specified and unbuilt is still listed, marked
+    /// (K-244): a command that is specified and unbuilt is still listed, marked
     /// and disabled, so nobody has to guess whether it is missing or broken.
     testWidgets('unbuilt commands are listed, marked and disabled',
         (tester) async {
@@ -611,7 +611,7 @@ void main() {
       await choose(tester, 'Help', 'About Lumit');
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('about-close')), findsOneWidget);
-      // What Settings ▸ General used to say, said here instead (K-242).
+      // What Settings ▸ General used to say, said here instead (K-244).
       expect(find.textContaining('lumit-bridge'), findsOneWidget);
     });
 

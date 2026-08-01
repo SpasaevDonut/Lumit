@@ -5029,7 +5029,53 @@ One row and nothing else also means the Retime row above Transform steps aside
 while a reveal is in force. "Show me Scale" that showed Scale *and* Retime would
 be answering a question nobody asked.
 
-### The menu bar, and why it lists things that do not work (K-242)
+### Windows you can move, and how one remembers where it was (K-242)
+
+The Settings window, Export, Composition settings and the rest all float over the
+shell, and they all come from a **single function** — `showLumitModal` in
+`flutter_ui/lib/widgets/controls.dart`. Each one only says what goes *inside* the
+window; the frame around it, the dimmed backdrop behind it, and now the moving and
+resizing, are that one function's job. That is why "make the windows movable" was a
+change in one file rather than in eleven: the funnel already existed.
+
+**Moving.** The window sits in the centre of the screen and carries an *offset*
+from there — "40 pixels right, 20 up" — rather than an absolute position. Dragging
+adds to the offset. Storing it that way means the window needs to know nothing
+about how big it is in order to open in the middle, and a position saved on your
+1440p monitor still opens on screen if the app is later run on a laptop. The offset
+is clamped so the *middle* of the window can never leave the app window: however far
+you fling it, there is always something left to grab.
+
+There is no title bar to drag by. Instead the whole window is draggable, and
+Flutter's **gesture arena** sorts out the conflict: when a pointer press could
+belong to several things, they compete, and the more specific one wins. Press on a
+slider and the slider wins, so it slides; press on a scrolling list and the list
+wins, so it scrolls; press on empty chrome and nothing else wants it, so the window
+moves. This is also why the resize grip in the corner is built as a *sibling* of the
+window rather than as something inside it — two drag handlers nested one inside the
+other both join the arena for the same press and, in this case, neither ended up
+moving anything at all. As siblings the topmost one simply takes the corner.
+
+**One trap worth knowing**, because it is the kind of thing that looks like it works
+until it does not: several pointer movements can arrive between two drawn frames. A
+handler that adds the movement to *the value it was drawn with* would use the same
+stale starting point for all of them, and the window would travel a fraction of the
+distance you dragged. Each movement has to be added to the live value instead. The
+regression test drags by a known amount and insists the window moved by exactly
+that, which is what caught it.
+
+**Remembering.** Each window has an id — `settings`, `export`, `comp-settings` — and
+where it was left is written into the workspace store, the same machine-local JSON
+file that holds the panel layout and the theme. It is written when a drag ends, not
+while it is happening, so a move costs one small file write rather than one per
+frame. Nothing about this is in the project file: where you like your Settings
+window is about your machine, not about the film.
+
+Only the Settings window can be *resized* so far. It asked for it — it was fixed at
+a size chosen for a small laptop — and it is the one window with enough inside it
+for the extra room to matter.
+
+### The menu bar, and why it lists things that do not work (K-244)
 
 Open any menu in Lumit and you will see rows greyed out with "(Not implemented)" after them.
 That is on purpose. The menus describe the finished application, not today's build.
@@ -5061,3 +5107,4 @@ workspace arrangement, which is the thing Lumit already saves to disk when you d
 about. So a panel you close stays closed after a restart, and no new setting had to be invented
 for it. The one rule is that the last panel cannot be closed — an empty workspace would have no
 menu to get anything back from except this one, and that is a trap rather than a feature.
+

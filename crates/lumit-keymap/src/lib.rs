@@ -542,7 +542,7 @@ pub fn default_keymap() -> Keymap {
         row(Global, "Mod+Z", "edit.undo"),
         row(Global, "Mod+Shift+Z", "edit.redo"),
         row(Global, "Mod+S", "file.save"),
-        // The rest of the menu bar's own commands (K-242). After Effects'
+        // The rest of the menu bar's own commands (K-244). After Effects'
         // chords where it has one and Lumit has not already spent the key:
         // Mod+N makes a *composition* there and Mod+Alt+N a project, which is
         // the pair anyone arriving from AE has in their fingers. Settings is
