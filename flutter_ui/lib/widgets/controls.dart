@@ -4,6 +4,7 @@
 
 import 'dart:async';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
@@ -440,9 +441,10 @@ class HouseTextField extends StatefulWidget {
   State<HouseTextField> createState() => _HouseTextFieldState();
 }
 
-class _HouseTextFieldState extends State<HouseTextField> {
+class _HouseTextFieldState extends State<HouseTextField>
+    implements TextSelectionGestureDetectorBuilderDelegate {
   final FocusNode _focus = FocusNode();
-
+  final GlobalKey<EditableTextState> textFieldKey = GlobalKey();
   @override
   void initState() {
     super.initState();
@@ -475,26 +477,41 @@ class _HouseTextFieldState extends State<HouseTextField> {
         children: [
           if (hint != null && widget.controller.text.isEmpty)
             Text(hint, style: t.body.copyWith(color: t.textMuted)),
-          EditableText(
-            controller: widget.controller,
-            focusNode: _focus,
-            autofocus: widget.autofocus,
-            style: widget.style ?? t.bodyPrimary,
-            cursorColor: t.accent,
-            backgroundCursorColor: t.surface2,
-            selectionColor: t.accent.withValues(alpha: 0.5),
-            onSubmitted: widget.onSubmitted,
-            onTapOutside: (event) {
-              if (widget.submitOnLostFocus) {
-                widget.onSubmitted?.call(widget.controller.text);
-                _focus.unfocus();
-              }
-            },
-          ),
+  
+          TextSelectionGestureDetectorBuilder(delegate: this)
+              .buildGestureDetector(
+            child: EditableText(
+              key: textFieldKey,
+              controller: widget.controller,
+              focusNode: _focus,
+              autofocus: widget.autofocus,
+              style: widget.style ?? t.bodyPrimary,
+              cursorColor: t.accent,
+              backgroundCursorColor: t.surface2,
+              selectionColor: t.accent.withValues(alpha: 0.5),
+              onSubmitted: widget.onSubmitted,
+              selectionControls: desktopTextSelectionHandleControls,
+              onTapOutside: (event) {
+                if (widget.submitOnLostFocus) {
+                  widget.onSubmitted?.call(widget.controller.text);
+                  _focus.unfocus();
+                }
+              },
+            ),
+          )
         ],
       ),
     );
   }
+
+  @override
+  GlobalKey<EditableTextState> get editableTextKey => textFieldKey;
+
+  @override
+  bool get forcePressEnabled => false;
+
+  @override
+  bool get selectionEnabled => true;
 }
 
 /// A menu row that opens a submenu beside it (K-194).
@@ -943,10 +960,10 @@ class HouseContextMenu extends StatelessWidget {
   Widget build(BuildContext context) {
     return MouseRegion(
         child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
-          child: child,
-        ));
+      behavior: HitTestBehavior.translucent,
+      onSecondaryTapDown: (d) => _contextMenu(context, d.globalPosition),
+      child: child,
+    ));
   }
 
   void _contextMenu(BuildContext context, Offset globalPos) {
