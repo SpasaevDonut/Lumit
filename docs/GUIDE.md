@@ -4817,6 +4817,11 @@ interrupted, or you release without ever moving — the screen is showing a valu
 nobody committed, so the row asks for the document's own value back rather than
 waiting for something else to redraw it.
 
+All three of the Timeline's whole-list rows work this way now: a mask's opacity,
+a paint stroke's and a shape item's (K-240). They are the same row with a
+different noun, and the third one joining without anything new having to be
+designed for it is the sign the shape was right.
+
 ### One gesture, one undo step (K-230)
 
 The document is a stack of small, exactly reversible **ops**, and `Ctrl+Z` undoes

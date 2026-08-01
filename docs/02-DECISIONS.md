@@ -4610,3 +4610,17 @@ the document's own value rather than waiting for the next thing to redraw it.
 **Not done here, and named in TODO.md:** the *mask* row stages without previewing, so its
 opacity drag has the fault this fixes, and a mask preview wants the same clone-and-patch path
 these three now share.
+
+**K-240 · DECIDED · The mask row previews too, and the pattern is closed.** The last of the
+three whole-list rows to get what K-239 gave paint and shape art: the tick previews, the release
+commits. K-234 had staged it, so the drag was already one undo step; what was missing was the
+picture moving while the drag was in flight.
+
+**Nothing new was designed for it.** A mask list joins paint and contents on the same
+clone-and-patch render request, converted by the same `write` the commit uses. That is the point
+of recording it: the three rows are one row with a different noun, and the third one arriving
+without inventing anything is the evidence that the shape was right.
+
+**What this closes.** Every whole-list property the Timeline can drag — a mask's opacity, a
+stroke's, a shape item's — is now one op, one undo step, and live on the picture. A property
+added to this family later has one path to join rather than a choice to make.

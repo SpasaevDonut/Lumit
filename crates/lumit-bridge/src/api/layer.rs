@@ -279,7 +279,7 @@ impl BridgeMask {
     /// The engine's mask this describes. `id` is kept, so an edit names the
     /// mask it came from; a caller making a *new* mask sends a fresh uuid.
     #[frb(ignore)]
-    fn write(&self) -> lumit_core::mask::Mask {
+    pub(crate) fn write(&self) -> lumit_core::mask::Mask {
         lumit_core::mask::Mask {
             id: self.id,
             name: self.name.clone(),

@@ -1130,6 +1130,7 @@ impl CompositionReference {
             text: None,
             paint: None,
             contents: None,
+            masks: None,
         }))
     }
 
@@ -1267,6 +1268,7 @@ impl CompositionReference {
             text: None,
             paint: None,
             contents: None,
+            masks: None,
         }))
     }
 
@@ -1295,6 +1297,7 @@ impl CompositionReference {
             text: Some(document),
             paint: None,
             contents: None,
+            masks: None,
         }))
     }
 
@@ -1327,6 +1330,7 @@ impl CompositionReference {
             text: None,
             paint: Some(strokes),
             contents: None,
+            masks: None,
         }))
     }
 
@@ -1350,6 +1354,31 @@ impl CompositionReference {
             text: None,
             paint: None,
             contents: Some(contents),
+            masks: None,
+        }))
+    }
+
+    /// Ask for `frame` with `layer`'s masks replaced by `masks` — the mask's
+    /// half of the two calls above (K-240).
+    #[frb(sync)]
+    pub fn render_frame_with_mask_preview(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        masks: Vec<crate::api::layer::BridgeMask>,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: Some(masks),
         }))
     }
 }

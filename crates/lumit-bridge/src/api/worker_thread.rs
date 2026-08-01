@@ -1481,6 +1481,9 @@ pub struct RenderCompRequestWithPreview {
     /// A shape layer's whole art list, while one of its items is being dragged
     /// (K-239). The same reason as `paint` above.
     pub contents: Option<Vec<crate::api::layer::BridgeShapeItem>>,
+    /// A layer's whole mask list, while one of them is being dragged (K-240).
+    /// The same reason as `paint` and `contents` above.
+    pub masks: Option<Vec<crate::api::layer::BridgeMask>>,
 }
 
 #[frb(ignore)]
@@ -2173,6 +2176,9 @@ fn render_comp_with_preview(
     }
     if let Some(paint) = req.paint {
         comp.layers[index].paint = paint.into_iter().map(|s| s.write()).collect();
+    }
+    if let Some(masks) = req.masks {
+        comp.layers[index].masks = masks.into_iter().map(|m| m.write()).collect();
     }
     if let Some(items) = req.contents {
         // Only a shape layer has art; a stale request against another kind

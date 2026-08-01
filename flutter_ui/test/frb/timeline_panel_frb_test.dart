@@ -386,6 +386,39 @@ void main() {
           reason: 'ONE undo returns the opacity it had before the drag');
     });
 
+    /// **A mask opacity drag shows while it is dragged** (K-240). The last of
+    /// the three whole-list rows to preview: K-234 staged it so the drag was one
+    /// undo step, which left the picture still until the button came up, and
+    /// K-239 fixed exactly that for paint and shape art.
+    testWidgets('a mask opacity drag shows before it commits', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await openMaskRow(tester, p, layer, 'Ellipse');
+
+      final id = layer.getMasks().single.id;
+      final field = find.byKey(ValueKey<String>('tl-mask-opacity-$id'));
+      final gesture = await tester.startGesture(tester.getCenter(field));
+      await tester.pump();
+      for (var i = 0; i < 20; i++) {
+        await gesture.moveBy(const Offset(-3, 0));
+        await tester.pump();
+      }
+
+      expect(layer.getMasks().single.opacity, 100,
+          reason: 'a drag in flight writes nothing');
+      expect(
+          find.descendant(of: field, matching: find.textContaining('100%')),
+          findsNothing,
+          reason: 'the row shows the value being dragged, not the stored one');
+      expect(tester.takeException(), isNull,
+          reason: 'the preview request is a courtesy and never a crash');
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      expect(layer.getMasks().single.opacity, lessThan(100),
+          reason: 'the release is what commits');
+    });
+
     /// **A mask row is a property row (K-234).** It joins the same selection
     /// every other row is in, so it lights up, the heading holding it marks
     /// itself, and Delete has something to act on.

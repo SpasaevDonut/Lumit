@@ -2115,6 +2115,7 @@ class _FoldRow extends StatelessWidget {
           onChanged: onChanged,
         ),
       FoldMaskRow(:final mask) => _MaskRow(
+          comp: comp,
           layer: layer,
           mask: mask,
           valueColumn: valueColumn,
@@ -2344,11 +2345,15 @@ class _MaskRow extends StatefulWidget {
   final VoidCallback onChanged;
   final VoidCallback? onLabelTap;
 
+  /// The composition, for the live preview a drag shows (K-240).
+  final CompositionReference comp;
+
   const _MaskRow({
     required this.layer,
     required this.mask,
     required this.valueColumn,
     required this.onChanged,
+    required this.comp,
     this.onLabelTap,
   });
 
@@ -2362,6 +2367,50 @@ class _MaskRowState extends State<_MaskRow> {
   /// writing on every tick filled the undo stack with near-identical steps,
   /// and one undo backed out a single percent — which looked like nothing.
   double? _staged;
+
+  /// Keeps the drag's preview requests about one render apart, as every other
+  /// dragged value does.
+  final PreviewThrottle _throttle = PreviewThrottle();
+
+  @override
+  void dispose() {
+    _throttle.cancel();
+    super.dispose();
+  }
+
+  /// Show the opacity the drag is passing through without writing it (K-240).
+  ///
+  /// The last of the three rows to get this. Staging alone made the drag one
+  /// undo step (K-234) and left the picture still until the button came up;
+  /// paint and shape art were fixed under K-239 and this is the same fix, in
+  /// the same shape, through the same clone-and-patch render path.
+  void _preview(double opacity) {
+    final ui = Provider.of<LumitUiState>(context, listen: false);
+    _throttle.request(() {
+      try {
+        widget.comp.renderFrameWithMaskPreview(
+          frame: BigInt.from(ui.playheadFrame.value),
+          scale: ui.viewerScale,
+          layer: widget.layer,
+          masks: [
+            for (final m in widget.layer.getMasks())
+              if (m.id == widget.mask.id) _withOpacity(m, opacity) else m,
+          ],
+        );
+      } catch (_) {
+        // A preview is a courtesy; the drag carries on without it.
+      }
+    });
+  }
+
+  static BridgeMask _withOpacity(BridgeMask m, double opacity) => BridgeMask(
+        id: m.id,
+        name: m.name,
+        vertices: m.vertices,
+        closed: m.closed,
+        inverted: m.inverted,
+        opacity: opacity,
+      );
 
   /// Write the mask back with one field changed. The engine takes the whole
   /// mask, so this is the only shape an edit has.
@@ -2444,9 +2493,17 @@ class _MaskRowState extends State<_MaskRow> {
                     max: 100,
                     suffix: '%',
                     onChanged: _commitOpacity,
-                    onChangeLive: (v) => setState(() => _staged = v.toDouble()),
+                    onChangeLive: (v) {
+                      setState(() => _staged = v.toDouble());
+                      _preview(v.toDouble());
+                    },
                     onChangeEnd: _commitOpacity,
-                    onDragCancel: () => setState(() => _staged = null),
+                    onDragCancel: () {
+                      setState(() => _staged = null);
+                      // The picture is showing a value nobody committed; put
+                      // the document's own back on screen.
+                      _preview(widget.mask.opacity);
+                    },
                   ),
                 ),
               ],

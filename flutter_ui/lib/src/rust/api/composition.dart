@@ -564,6 +564,21 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
           that: this, frame: frame, scale: scale, mode: mode);
 
+  /// Ask for `frame` with `layer`'s masks replaced by `masks` — the mask's
+  /// half of the two calls above (K-240).
+  void renderFrameWithMaskPreview(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required List<BridgeMask> masks}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithMaskPreview(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              masks: masks);
+
   /// Ask for `frame` with `layer`'s paint replaced by `strokes` — the same
   /// live path as the three above, for a stroke being dragged in the Timeline
   /// (K-239).
