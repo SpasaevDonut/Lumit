@@ -30,12 +30,14 @@ The crates that exist today (v1), then the ones the doc reserves for later:
 | `lumit-cache` | **Nebula**: the frame cache — RAM + disk tiers, content-hash keys, byte-budget eviction. |
 | `lumit-text` | Text rasterisation (v1: single run, embedded Inter). |
 | `lumit-project` | Serialisation: `.lum` container read/write, the operation journal, autosave. Spec: [10-FILE-FORMAT.md](10-FILE-FORMAT.md). |
+| `lumit-keymap` | The shortcut model: chords, contexts, actions, bindings, and clash resolution. No windowing code — the engine decides what a chord means (K-199). |
 | `lumit-render` | **The pixel pass** the eval graph will eventually own (K-178): media probing abstraction, decode planning, the decode worker and its decoded-frame cache, draw-list building, the GPU compositor, effect dispatch, frame naming and the cache tiers, export, and the headless renderer both frontends drive frame by frame. An engine crate — it names no frontend. |
 | `lumit-bridge` | The Flutter/Rust seam (K-174): a cdylib whose `api` module is the whole surface the Flutter frontend calls through `flutter_rust_bridge`. A frontend leaf, not an engine crate; since K-178 it depends on `lumit-render` and on **no frontend**. Spec: [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md). |
 
-The original egui shell (`lumit-ui`, launched by `lumit-app`) and the unused
-`lumit-keymap` shortcut model were deleted in K-182; git history (pre-K-182) is
-the parity reference for anything the Flutter frontend has not rebuilt yet.
+The original egui shell (`lumit-ui`, launched by `lumit-app`) was deleted in K-182; git
+history (pre-K-182) is the parity reference for anything the Flutter frontend has not
+rebuilt yet. `lumit-keymap` went with it as unused at the time and came back unchanged in
+K-199, when the shortcut editor was actually built.
 
 Reserved for later (no crate exists yet):
 
@@ -82,7 +84,7 @@ Inside the main process, threads have fixed roles:
 
 | Thread | Role |
 |---|---|
-| **UI thread** | winit events, egui, document edits, painting. Per K-017 it MUST NOT evaluate any node, decode any frame, run any expression, or block on any render. It reads results from latest-wins mailboxes and cache-status snapshots. |
+| **UI thread** | Frontend input events, document edits, painting. Per K-017 it MUST NOT evaluate any node, decode any frame, run any expression, or block on any render. It reads results from latest-wins mailboxes and cache-status snapshots. |
 | **Worker pool** | Work-stealing pool (`cores − 3` threads, min 2, per the pinned sizing in [impl/playback-scheduler.md](impl/playback-scheduler.md) §2), running evaluation-graph jobs. Two priority classes: *interactive* (current Viewer frame, scrub, audio-adjacent) and *background* (cache warming, thumbnails, proxy checks). Interactive always pre-empts at job boundaries. **Built:** `lumit-eval::pool` — a dedicated rayon pool behind bounded two-class queues, tested; the shell's per-job `thread::spawn`s migrate onto it as the pixel pass is wired. |
 | **Decode threads** | One per active media stream, owned by `lumit-media`, feeding bounded frame queues. Decode never runs on pool workers: long-GOP seeks stall unpredictably and would starve the pool. |
 | **IO threads** | Disk-cache read/write, project autosave journal appends, proxy/export file IO. |
@@ -176,14 +178,13 @@ On every document edit, `lumit-eval` incrementally recompiles the affected comp:
 
 ### 4.2 Content hashing
 
-Every node computes `H(node) = hash(node_type, algorithm_version,
-evaluated_params_at_local_time, local_time, quality, H(inputs…))` with a strong short hash
-(blake3). Hashes key the cache (K-016) — never timeline position. Consequences that fall out
-for free: two layers sharing footage plus the same first effects deduplicate to one subgraph
-(common-subexpression elimination by hash); a static subgraph hashes identically for every
-frame, so cross-frame reuse is a cache lookup. Effects that sample other frames (echo, flow
-retiming, temporal blur) MUST declare their temporal dependencies in the metadata pass so the
-sampled frames' hashes fold in. Full pipeline detail: [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md).
+Every node computes a content hash over its type, algorithm version, evaluated parameters,
+local time, quality and its inputs' hashes. Hashes key the cache (K-016) — never timeline
+position. The architectural consequence is that reuse needs no invalidation logic: identical
+subgraphs deduplicate and a static subgraph hashes identically every frame. Effects sampling
+other frames MUST declare their temporal dependencies in the metadata pass so the sampled
+frames' hashes fold in. The formula and its normative consequences are
+[06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §5.2.
 
 ---
 
@@ -206,11 +207,10 @@ sampled frames' hashes fold in. Full pipeline detail: [06-RENDER-PIPELINE.md](06
   they complete on IO/pool threads via mapped-buffer callbacks.
 - **Device-lost recovery** (Windows TDR is routine, not exceptional): all GPU objects belong
   to a device **epoch**. On `DeviceLost`, `lumit-gpu` tears down the epoch, recreates the
-  device, and replays the current request; RAM and disk cache tiers are the recovery data —
-  VRAM contents are never the only copy of anything the user would miss. No dispatch may
-  approach the ~2 s TDR window: kernels that scale with radius/area MUST macro-tile. Repeated
-  device loss (≥3/minute) drops the offending node — then the session — to CPU fallback with
-  a user-visible notice.
+  device, and replays the current request from the lower cache tiers — VRAM contents are
+  never the only copy of anything the user would miss. The TDR window, the macro-tiling
+  obligation and the repeated-loss ladder are
+  [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §5.
 - **CUDA per K-014**: optional per-node accelerators (optical flow first) via
   `wgpu as_hal` → `VK_KHR_external_memory/semaphore` → cudarc. CUDA is never a pipeline;
   **every CUDA-accelerated node MUST have a WGSL or CPU implementation** that produces
@@ -226,29 +226,15 @@ sampled frames' hashes fold in. Full pipeline detail: [06-RENDER-PIPELINE.md](06
 `lumit-media` wraps rsmpeg behind a `MediaSource` trait (open → probe → indexed frame
 server) so the binding choice stays swappable.
 
-**v1 status:** today `lumit-render` does one-shot **CPU** decode plus the frame index below. 
-The persistent decoder pool, hardware decode, proxies, and image sequences described in the 
-rest of this section are the intended design but **not yet built** (they sit in §1's "reserved 
-for later" table; tracked in [TODO.md](TODO.md)).
+The architectural commitments here are the `MediaSource` seam and the thread-ownership rule:
+**decode never runs on pool workers**, because long-GOP seeks stall unpredictably and would
+starve the pool. Decoders live on dedicated decode threads feeding bounded queues (§2), and
+proxy level is a dimension of the cache key.
 
-- **Frame index at import**: a background job builds, per footage item, the map of frame
-  number ↔ PTS ↔ nearest preceding keyframe offset. Exact long-GOP seeking is then: seek to
-  keyframe, decode forward comparing *output* PTS, flush codec buffers after seeks. Variable
-  frame rate is normalised to the item's timebase at import, with a user warning.
-- **Persistent decoder instances**: 1–2 decoders per active clip hold their GOP position; a
-  scrub within the GOP decodes forward, sequential playback never seeks. Decoders live on
-  dedicated decode threads feeding bounded queues (§2).
-- **Hardware decode** (K-013): ffmpeg hwaccel — D3D11VA/D3D12VA on Windows, VideoToolbox on
-  dev Macs — landing NV12/P010 in GPU memory, then **one GPU→GPU copy** into a wgpu texture
-  plus a WGSL pass (colour matrix + chroma upsample + linearise) into the working format.
-  Zero-copy import is a post-v1 optimisation tracked against wgpu's texture-import API, not a
-  v1 requirement.
-- **Proxies**: background generation (DNxHR/ProRes proxy or all-intra H.264) on IO/background
-  priority; the proxy toggle is global, and proxy level is a dimension of the cache key.
-- **Image sequences** are first-class footage items (`name.####.exr` patterns); EXR half maps
-  1:1 onto the fp16 working format; per-frame files decode in parallel on the pool.
-- **Encode** goes through ffmpeg's NVENC/AMF/QSV/VideoToolbox wrappers; the export pipeline
-  (including baking) is specified in [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md).
+The mechanics — the frame index and exact long-GOP seeking, persistent decoder instances,
+the hardware-decode path into wgpu, proxy generation, image sequences and encoder selection —
+are specified in [impl/media-io.md](impl/media-io.md), which is authoritative for them.
+[TODO.md](TODO.md) says which are built.
 
 ---
 

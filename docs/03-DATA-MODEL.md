@@ -20,12 +20,9 @@ Names are display strings only; renaming MUST never break a reference.
 
 ### 1.2 Time is rational
 
-Authoritative time is never floating point (see [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)).
-
-```rust
-struct RationalTime { num: i64, den: i64 }   // seconds = num / den 
-struct FrameRate    { num: u32, den: u32 }   // e.g. 60000/1001
-```
+Authoritative time is never floating point: it is an exact rational number of seconds, with
+a rational `FrameRate` beside it (the rule is [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)
+§2; the type and its arithmetic are [impl/rational-time.md](impl/rational-time.md)).
 
 The four timebases - `SourceTime`, `ClipTime`, `LayerTime`, `CompTime`
 ([01-GLOSSARY.md](01-GLOSSARY.md) §4) - are distinct newtypes over `Rational`. Conversions
@@ -207,8 +204,7 @@ Invariants:
 | `Null` | yes | — | No source and no size; carries only a transform, so layers parent to it and move as a rig. Never draws, emits no node in the evaluation graph, and reports no picture — so it is not offered as a matte or a layer-valued effect parameter. Masks and effects can be added to it but never run (as on a Camera). The bridge enum names this kind `NullLayer` for Dart's sake only (K-206). |
 | `Shape { contents: Vec<ShapeElement> }` | future | §9.2 | |
 | `Audio { item: Uuid }` | future | An audio item | v1 audio is only a footage layer's own stream (§5.2, docs/09). |
-| `Light` | future | — | Paired with Camera; not in v1. |
-| `Light { light: LightProps }` | §9.3 | 3D only. |
+| `Light { light: LightProps }` | future | §9.3 | Paired with Camera; 3D only, not in v1. |
 
 ### 5.3 Clips (Sequence layers only)
 

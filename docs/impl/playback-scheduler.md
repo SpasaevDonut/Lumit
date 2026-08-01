@@ -34,14 +34,11 @@ impl EpochToken {
 
 ## 2. Thread topology
 
-| Thread(s) | Owns | Never does |
-|---|---|---|
-| UI (main) | egui, input, document edits (single writer), snapshot publication | evaluation, decode, blocking waits |
-| Worker pool (N = cores − 3, min 2) | graph evaluation, CPU effects, cache (de)serialisation | GPU submits, UI state |
-| Decode threads (per active clip, pooled ≤ 16) | libav decode, frame index lookups | evaluation |
-| GPU-submit (1) | queue submissions, presents, pool trim, device-loss recovery | waiting on locks held elsewhere |
-| Audio (cpal callback, realtime) | mixing decoded PCM into the device buffer | allocation, locks, logging — **nothing blocking, ever** |
-| IO (1) | project save/autosave/journal, disk cache reads/writes | anything latency-sensitive |
+Thread roles are [05-ARCHITECTURE.md](../05-ARCHITECTURE.md) §2; what each may not do is
+[14-ENGINEERING-RULES.md](../14-ENGINEERING-RULES.md) §1.1. Neither is restated here.
+
+Pinned here, because they are this note's to choose: **pool size N = cores − 3, min 2**;
+decode threads pooled at **≤ 16**; one GPU-submit thread and one IO thread.
 
 Pool: use **rayon** scoped into a dedicated `ThreadPool` (not the global one) — its
 work-stealing is right for DAG fan-out, and cancellation is our epoch tokens, not rayon's.

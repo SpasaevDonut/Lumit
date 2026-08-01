@@ -1,13 +1,10 @@
 # Plugins, scripting, and expressions
 
-**Status: specification only - not yet implemented (roadmap Phase 4).** The OFX host, the LFX
-native plugin API, and the expression/scripting runtime do not exist in code yet - the crates
-`lumit-ofx`, `lumit-lfx`, and `lumit-expr` are unbuilt. What *does* exist is the placeholder
-plumbing that lets unknown OFX/LFX/expression data round-trip without loss: the
-`EffectNamespace` enum's `Ofx`/`Lfx`/`Placeholder` variants render as identity while
-preserving parameters and keyframes (shared with [11-AE-IMPORT.md](11-AE-IMPORT.md ) §6). This
-document is the design to build against; the concrete build is tracked in [TODO.md](TODO.md).
-It specifies Lumit's extensibility surfaces: the OFX
+**Status: specification only - not yet implemented (roadmap Phase 4).** What *does* exist is
+the placeholder plumbing that lets unknown OFX/LFX/expression data round-trip without loss:
+the `EffectNamespace` enum's `Ofx`/`Lfx`/`Placeholder` variants render as identity while
+preserving parameters and keyframes (shared with [11-AE-IMPORT.md](11-AE-IMPORT.md) §6).
+This document specifies Lumit's extensibility surfaces: the OFX
 host (K-061), the LFX native plugin API (K-062), and the expression/scripting runtime
 (K-063) — see [02-DECISIONS.md](02-DECISIONS.md). Terminology follows
 [01-GLOSSARY.md](01-GLOSSARY.md) exactly. RFC-2119 keywords (MUST, SHOULD, MAY) are
@@ -208,7 +205,7 @@ values are the only truth. This is the one OFX idea kept whole, minus the string
 - Frames are **scene-linear, premultiplied alpha, RGBA float** — the working space, no
   colour conversion at the boundary ([06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md)).
 - **Every colour depth is mandatory (K-066)**: a LFX plugin MUST process both fp16 and
-  fp32 frames correctly — the host sends whichever the comp is set to (K-026) and never
+  fp32 frames correctly — the host sends whichever depth the project is set to (K-069) and never
   converts to accommodate a plugin. A plugin MAY declare a preferred depth as a
   performance hint only. The validator (§3.6) runs the conformance suite at both depths.
 - **ROI-aware**: a process request carries the output ROI and DoD; the plugin declared its

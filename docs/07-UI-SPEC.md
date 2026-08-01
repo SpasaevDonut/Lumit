@@ -8,18 +8,9 @@ exists and how it behaves*, never what it looks like.
 
 RFC-2119 keywords (MUST, SHOULD, MAY) are used with their standard meanings.
 
-**Implementation status (2026-07-24).** This is the **target** UI specification; the shipping
-Flutter frontend (`flutter_ui/`) implements a subset of it. Broadly built: the docking shell,
-workspaces, Project panel (relink/missing-footage), Timeline lanes + keyframes, the graph
-editor (all lenses), Scopes, Hierarchy, Settings (General/Appearance/Interface/Performance/
-Export), the command palette's Commands category, and a single-export dialogue. **Not yet
-built / regressions** include: the whole **Audio panel** (§10), most of the **Viewer bar**
-(§2.2 - magnification, channel view, guides, ROI, transparency grid, colour-management and
-degradation indicators), the four **workspace presets** (§1.6), the **first-run setup** screen
-(§13.1), the **transform gizmo / motion paths** (§2.3-§2.4, gated on comp rendering), and the
-**Keymap / Colour-management / Preview-mode / CUDA / Plugins** settings pages (§15). The
-concrete gaps and Flutter parity regressions are tracked in [TODO.md](TODO.md); read the
-sections below as the design, not a claim of current state.
+This is the **target** UI specification; the shipping Flutter frontend implements a subset of
+it. Read the sections below as the design, not a claim of current state — the gaps are
+tracked in [TODO.md](TODO.md), which is the one document that says what is built.
 
 The base arrangement is deliberately After Effects-shaped, because the target audience arrives
 from AE: Viewer in the centre, Project panel on the left, Effect Controls / Effects & Presets /
@@ -30,19 +21,14 @@ the interface is truly the user's.
 
 ## 1. Application shell and docking
 
-> **v1 status (K-074, K-086, refined by owner request):** the shell is a tiling dock
-> (egui_tiles). Panels stacked together form a tab group with a title tab per panel,
-> draggable to re-arrange the workspace; a panel that sits alone renders as a bare pane with
-> no tab bar — the Viewer's look on every solo panel — so the default workspace shows tabs
-> only on the left Project/effects stack. A tabbed panel's pop-out button lifts it into its
-> own OS window, and dragging its tab moves it; a bare pane, having no tab bar to carry
-> either, gets both a different way — right-click anywhere empty in it for the same pop-out,
-> and a small grip in its top-right corner to drag it (the Timeline's own comp-tab-strip
-> right-click pop-out is this same mechanism, not a special case). Closing a popped-out
-> window docks the panel back. This delivers the substance of the section below — tabs,
-> drag-to-dock, re-arrangeable layouts, pop-out — though the exact five-drop-zone visuals and
-> in-window frame trees described below are still approximated by egui_tiles' own
-> affordances.
+> **Shell shape (K-074, K-086).** The shell is a tiling dock. Panels stacked together form a
+> tab group with a title tab per panel, draggable to re-arrange the workspace; a panel that
+> sits alone renders as a bare pane with no tab bar — the Viewer's look on every solo panel.
+> A tabbed panel's pop-out button lifts it into its own OS window and dragging its tab moves
+> it; a bare pane, having no tab bar to carry either, gets both a different way — right-click
+> anywhere empty in it for the same pop-out, and a small grip in its top-right corner to drag
+> it. The Timeline's comp-tab-strip right-click pop-out is this same mechanism, not a special
+> case. Closing a popped-out window docks the panel back.
 
 ### 1.1 Frames, groups, tabs
 
@@ -73,7 +59,7 @@ the pending layout SHOULD be previewed as an outline before release.
 ### 1.3 Floating windows
 
 - Dropping a panel outside any drop zone, choosing Undock, or holding `Ctrl` during the drop
-  MUST create a floating window. Floating windows are true OS windows (egui multi-viewport)
+  MUST create a floating window. Floating windows are true OS windows
   and MUST be placeable on any monitor.
 - A floating window hosts its own frame tree: users MAY dock several panels into one floating
   window and split it like the main window.
@@ -1163,7 +1149,7 @@ frame transport K-183 deleted (a 1080p frame is 8 MiB and 8.8 ms in the codec); 
 answer to a question about a few pixels, not a picture.
 
 Still to build here: the x/y **position** pick for coordinate-valued parameter pairs (the
-egui build's T14 viewfinder), and the on-Viewer crosshair handle for point parameters.
+the T14 viewfinder), and the on-Viewer crosshair handle for point parameters.
 
 ---
 
@@ -1329,7 +1315,7 @@ Export window. Export never blocks editing; the queue runs in the background.
 
 **Shipped (v1, K-102):** the palette exists — Ctrl/Cmd+Shift+P or Window → Command palette…,
 fuzzy search (subsequence; a label match outranks a keyword-only one), arrow keys navigate,
-Enter/click runs, Esc closes, drawn as a top-anchored `egui::Modal`. v1 covers the
+Enter/click runs, Esc closes, drawn as a top-anchored modal. v1 covers the
 **commands** category (save, undo/redo, new composition, add layers, reset workspace, open
 Settings, colour scheme and shape switches, export). The effects/comps/panels categories,
 recent-first ranking, category badges and taught shortcuts fill in later.
@@ -1340,7 +1326,7 @@ The **Hierarchy** panel (K-102) shows the active composition as an indented, fol
 its layers, each precomp layer expandable to reveal the layers of the composition it nests,
 recursion-guarded. Clicking a row selects that layer and switches to its composition. It is
 read-only — the simple tree form of the AE composition flowchart; the full node-graph
-flowchart (the deferred `egui_node_graph`-style view) grows from it.
+flowchart (the deferred node-graph view) grows from it.
 
 ---
 
@@ -1465,32 +1451,7 @@ project file, [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2):
   **Autosave** (interval, copies kept), **Plugins** (search paths, disabled list,
   per-plugin overrides).
 
-**Shipped (v1, K-098; VRAM budget and Clear cache added K-100; Background fill added K-115;
-Cache root folder added K-117; Interface page added K-118; Export page added K-119):** the
-Settings window exists — a macOS-System-Settings-style surface, a sidebar of pages with grouped
-cards, honouring the Sharp/Round shape. It opens from **Window → Settings…** or
-**Ctrl/Cmd+comma**. Its v1 pages are a subset of the inventory above: **Appearance** (Theme Mode,
-Background ramp, Accent, Shape, Interface motion — all migrated here out of the Window menu,
-K-092), **Interface** (UI scale, 75–200%, applied live via egui's own zoom mechanism; a Show
-tooltips switch that suppresses hover tooltips app-wide when off, K-118), **Performance** (RAM
-frame-cache budget, disk-cache cap and VRAM frame-cache budget, all applied live, a Clear cache
-action that empties the RAM and VRAM tiers at once, a Background fill toggle gating the idle-fill
-loop, and a Cache root folder picker that redirects new project on-disk caches to a chosen folder
-instead of always sitting beside the project file, K-117), **Export** (a default-preset dropdown
-that a generic "Export…" action stamps — an explicit pick from the Export preset submenu always
-overrides it — and a filename template with `{comp}`/`{preset}`/`{date}` tokens for the export
-dialogue's suggested name, sanitised against illegal Windows filename characters, K-119; export
-priority and encoder preference order are not built — no priority or encoder-order concept exists
-in the export pipeline yet, so those two inventory rows would be dead controls), and **General**
-(reset workspace, an **Autosave** group — interval in minutes and copies kept, defaulting to the
-previous 5 min / 5 copies — and version). Reduced motion stays on the Appearance page as Interface
-motion (K-092), not this Interface page — the inventory line above groups it with Interface
-conceptually, but it shipped earlier under Appearance and stays there. The remaining groups (CUDA,
-decoder pool size, worker thread cap, proxy generation policy, Preview, Colour, export priority,
-encoder preference order, Keymap, Plugins) fill in on this same surface as those systems gain
-their controls.
-
-**Shipped in Flutter (K-193, K-194):** the paged surface is back, in the same shape — a
+**The window (K-193, K-194).** It opens from **Window → Settings…** or **Ctrl/Cmd+comma** — a
 sidebar of pages, each a stack of named sections, each section a card of rows carrying what
 the setting is, a line saying what it does, and its control on the right. Its pages are
 **General** (reset workspace, version and build), **Appearance** (colour scheme, corners,
@@ -1517,9 +1478,9 @@ whenever the user likes. Its **Clear** asks before deleting,
 unlike the other two tiers': RAM and VRAM cost a re-render each, while this one destroys files
 that may be a night's work and there is nothing to undo. With nothing parked it does not ask —
 a question about deleting nothing is only noise. The status line's cache meter grew a matching
-third bar (Disk), which asks the same question when clicked. The egui build's
-**Export** and **Autosave** groups are *not* rebuilt yet: neither has anything behind it on
-this frontend (docs/TODO.md), and an empty page is a promise the window cannot keep.
+third bar (Disk), which asks the same question when clicked. The **Export** and **Autosave**
+groups are not built: neither has anything behind it on this frontend
+([TODO.md](TODO.md)), and an empty page is a promise the window cannot keep.
 
 All bindings are remappable in Settings → Keymap (search, conflict detection, per-context
 display); the keymap serialises to a shareable file. An "After Effects" alternate preset

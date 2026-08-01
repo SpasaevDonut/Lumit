@@ -6,6 +6,7 @@ This folder is the specification and reference set for Lumit. Start here.
 
 **If you are new to the codebase**, read [GUIDE.md](GUIDE.md) - the plain-English
 tour of what each crate does, with Rust and threading explained in editing terms.
+It is large; use its section index rather than reading straight through.
 
 **If you want to change how the frontend and engine talk**, read
 [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) - the single source of truth for
@@ -31,9 +32,9 @@ Keeping these separate is what stops the set from rotting:
 |Doc | What it specifies |
 |---|---|
 | [00-VISION](00-VISION.md) | Why Lumit exists, pillars, non-goals, the v1 milestone |
-| [01-GLOSSARY](01-GLOSSARY.md) | Canonical terminology - binding on docs, UI, and code |
-| [02-DECISIONS](02-DECISIONS.md) | Numbered decision log (K-###) with rationale |
-| [03-DATA-MODEL](03-DATA-MODEL.md ) | Project/comp/layer/clip/property/keyframe object model |
+| [01-GLOSSARY](01-GLOSSARY.md) | Canonical terminology - binding on docs, UI, and code. §9 bans terms outright |
+| [02-DECISIONS](02-DECISIONS.md) | Numbered decision log (K-###) with rationale. **Search it; never read it end to end** |
+| [03-DATA-MODEL](03-DATA-MODEL.md) | Project/comp/layer/clip/property/keyframe object model |
 | [04-RETIMING](04-RETIMING.md) | The Retime system: segments, the two graph lenses |
 | [05-ARCHITECTURE](05-ARCHITECTURE.md) | Crates, threads, snapshots, the evaluation graph, GPU |
 | [06-RENDER-PIPELINE](06-RENDER-PIPELINE.md) | Render order, colour, caching, preview, export |
@@ -60,7 +61,11 @@ Keeping these separate is what stops the set from rotting:
 (rational time, cubic solving, wgpu patterns, hardware decode, the scheduler,
 optical flow, OFX hosting, beat detection, expressions): the authoritative
 *how* for each topic. Read the matching note before implementing its feature.
-[research/](research/) - the background research that informed the specs. Not
-canonical.
-[archive/](archive/) - frozen, dated material: audits, the egui-to-Flutter port
+- [research/](research/) - the background research that informed the specs.
+Compiled 2026-07-12, under the project's former name Kiriko (K-087). Not
+canonical: where it disagrees with a spec, the spec wins.
+- [archive/](archive/) - frozen, dated material: audits, the egui-to-Flutter port
 notes, and superseded ledgers. Read-only history; never updated.
+
+Every numbered doc is canonical, follows [01-GLOSSARY](01-GLOSSARY.md), and uses
+RFC-2119 keywords (MUST / SHOULD / MAY) in the binding sense.

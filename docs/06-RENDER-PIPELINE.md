@@ -186,13 +186,13 @@ later), and Application Settings holds only the *default for newly created proje
 Kernels MAY use wider internal accumulators where the algorithm needs them (large
 iterative blurs, scopes), but everything a node reads or writes is project depth.
 
-Why fp16 stays the default (2026-07-13, reviewed with Mack): fp16 here is floating
-point, not AE's integer 16bpc — it already carries values above 1.0 (superwhites, glow
-overshoot, up to 65504) and negatives, in linear light. fp32 buys extra mantissa (deep
-shadow gradients under extreme pushes, very long chains) at 16 bytes/px: double the
-bandwidth on a bandwidth-bound compositor and half the frames per cache byte. The
-depth is part of every cache key's quality field, so switching depth simply re-keys
-the project and the caches rebuild.
+Why fp16 stays the default (K-069): fp16 here is floating point, not AE's integer
+16bpc — it already carries values above 1.0 (superwhites, glow overshoot, up to 65504)
+and negatives, in linear light. fp32 buys extra mantissa (deep shadow gradients under
+extreme pushes, very long chains) at 16 bytes/px: double the bandwidth on a
+bandwidth-bound compositor and half the frames per cache byte. The depth is part of
+every cache key's quality field, so switching depth simply re-keys the project and the
+caches rebuild.
 
 ### 3.2 Input: decode and linearise
 

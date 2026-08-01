@@ -47,7 +47,7 @@ is cheap to revisit.
 which tools the user comes from (Vegas for ramps+effects / Vegas ramps + AE effects / AE for
 both / neither) and tunes defaults accordingly — chiefly the Retime graph lens (speed vs
 value), keymap preset offer, and which mapping tips show. One screen only, re-runnable from
-the command palette, every setting individually changeable. Added 2026-07-12 at Mack's
+the command palette, every setting individually changeable. Added 2026-07-12 at the owner's
 request; post-v1 polish. Spec: [07-UI-SPEC.md](07-UI-SPEC.md) §13.1.
 
 ## Core model
@@ -58,14 +58,14 @@ and systems concepts): [GUIDE.md](GUIDE.md) is the plain-English companion, upda
 same commit as any new concept. Testing policy: every feature ships with tests, every bug
 fix ships with a regression test, CI enforces fmt/clippy/tests on macOS + Windows plus an
 engine-crate coverage gate whose threshold may rise but never fall, and a design-token
-lint. Added 2026-07-13 at Mack's request. Spec: [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md).
+lint. Added 2026-07-13 at the owner's request. Spec: [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md).
 
 **K-008 · DECIDED · Brand mark and boot splash.** The mark is an Edo-kiriko faceted glass
 hexagon whose clay facets form a K (assets/brand/; construction and colour constants in
 [15-DESIGN.md](15-DESIGN.md) §brand). Boot shows a small centred splash listing each module
 and effect as it initialises (the boot log — real registry plumbing that grows with the
 effect suite and OFX scanning), minimum ~1 s dwell, failure lines in kraft. Added
-2026-07-13 at Mack's request.
+2026-07-13 at the owner's request.
 
 **K-020 · DECIDED · Layer-based model with a Sequence layer type.** Ordinary layers stay 1:1
 with a source, as in AE. A dedicated **Sequence layer** holds clips cut back-to-back on one
@@ -149,7 +149,7 @@ additionally needs: VideoToolbox hardware decode/encode promoted from dev-conven
 first-class (zero-copy via IOSurface, [impl/media-io.md](impl/media-io.md) §4), ProRes
 workflows (Mac editors' mezzanine norm), the Metal branch of the OFX 1.5 GPU render suite
 ([12-PLUGINS.md](12-PLUGINS.md) §2.4), and a notarised universal binary. Nothing in the
-engine may assume DX12-only. Added 2026-07-13 at Mack's request.
+engine may assume DX12-only. Added 2026-07-13 at the owner's request.
 
 **K-035 · DECIDED · Every effect gets a built-in strength matte.** Any effect instance can
 select a per-pixel strength source — the layer's own masks or any other layer (same
@@ -159,14 +159,14 @@ and effected image; for warp/distort-type effects by scaling the displacement fi
 the effect declares vector output (falling back to output-mix otherwise). No effect
 author writes masking code; it composes with everything. AE needs per-effect "composite
 on original"/precomp workarounds for this. Lands with the effect suite (phase 3). Added
-2026-07-13 at Mack's request. Spec: [08-EFFECTS.md](08-EFFECTS.md) §effect model.
+2026-07-13 at the owner's request. Spec: [08-EFFECTS.md](08-EFFECTS.md) §effect model.
 
 **K-036 · DECIDED · A node view is a planned lens over the evaluation graph.** Kiriko's
 layer stack already compiles to a DAG (K-015), so a Nuke-style node editor is a *view*,
 not a second engine: post-parity (phase 6 alongside the 3D ambitions), Kiriko exposes the
 graph for node-based compositing, starting where nodes earn their keep first — a
 Resolve-style grading node chain in the Colour workspace. Layers and nodes stay two lenses
-on one document; neither is a mode you convert into. Added 2026-07-13 at Mack's request.
+on one document; neither is a mode you convert into. Added 2026-07-13 at the owner's request.
 
 **K-037 · DECIDED · Share export: size-targeted clips for the community workflow.**
 Editors share previews (usually Discord, 50 MB free-tier cap): a one-click export mode
@@ -174,7 +174,7 @@ takes the active playback area (work area; whole comp until it exists), computes
 bitrate from the size budget ((target bytes × 8 ÷ duration) less audio/container
 overhead), optionally caps resolution, and writes a compressed H.264 clip. Presets:
 Discord 50 MB (default), 10 MB, custom size, plus a quality-first slider for people who
-prefer choosing compression over size. Added 2026-07-13 at Mack's request. Spec:
+prefer choosing compression over size. Added 2026-07-13 at the owner's request. Spec:
 export sections of [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md)/[07-UI-SPEC.md](07-UI-SPEC.md).
 
 **K-034 · DECIDED · Perceptual colour operations happen in Oklab.** Two colour domains,
@@ -187,7 +187,7 @@ hue genuinely preserves perceived lightness. Users interact in ordinary RGB thro
 conversion is engine-internal and cheap (two 3×3 matrices + three cube roots per
 direction, identical constants in the Rust CPU reference and the WGSL snippet, guarded by
 round-trip and hue-invariance tests). Effects declare which domain each parameter's maths
-runs in ([08-EFFECTS.md](08-EFFECTS.md)). Added 2026-07-13 at Mack's request. Spec:
+runs in ([08-EFFECTS.md](08-EFFECTS.md)). Added 2026-07-13 at the owner's request. Spec:
 [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.
 
 **K-031 · DECIDED · Colour spaces are selectable; preview always matches export.** Working
@@ -196,7 +196,7 @@ colour space is selectable per comp (with app-level defaults, and OCIO joining p
 and full quality is bit-identical to what export produces** through the same transforms.
 Export-only settings (encoder, bitrate, container, subsampling to 8/10-bit) sit strictly
 after the parity point. Adaptive degradation and Realtime mode affect interaction only and
-are always visibly indicated. Added 2026-07-12 at Mack's request. Spec:
+are always visibly indicated. Added 2026-07-12 at the owner's request. Spec:
 [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.
 
 **K-032 · DECIDED · Resource and export controls are explicit settings.** RAM/VRAM budgets,
@@ -204,7 +204,7 @@ CUDA on/off, decoder pool, worker caps, cache root/size in Settings → Performa
 export dialogue exposes full custom controls (resolution, frame rate, format, codec,
 encoder choice, rate control, audio, thread count and a background/balanced/fast priority)
 alongside presets — and exporting never blocks editing (06 §7.1). Added 2026-07-12 at
-Mack's request. Spec: [07-UI-SPEC.md](07-UI-SPEC.md) §Settings inventory.
+the owner's request. Spec: [07-UI-SPEC.md](07-UI-SPEC.md) §Settings inventory.
 
 **K-030 · DECIDED · Two preview modes: Cached (default) and Realtime-adaptive.** Cached
 plays at full chosen quality from the render-ahead ring and cache. Realtime never waits:
@@ -213,7 +213,7 @@ continuously with hysteresis — judge motion now at reduced resolution rather t
 quality after a wait. Clarified same day: the mode toggle is a **separate control** from
 the Viewer bar's resolution picker (Full/Half/Third/Quarter/Auto) — it lives in the
 transport and Settings → Preview, never in the resolution dropdown, and Cached always
-honours the picked resolution. Added 2026-07-12 at Mack's request. Spec:
+honours the picked resolution. Added 2026-07-12 at the owner's request. Spec:
 [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §6.5.
 
 ## Persistence
@@ -273,7 +273,7 @@ discouraged opt-out. **The host owns the optimisation strategy**: instance count
 scheduling are decided from declared traits plus measured cost under the governor's
 budgets, exactly as for built-in nodes. OFX plugins are scheduled per their declared
 render-thread-safety, with the host converting depth at the boundary. Added 2026-07-12 at
-Mack's request. Spec: [12-PLUGINS.md](12-PLUGINS.md) §2.3, §3.3–3.4.
+the owner's request. Spec: [12-PLUGINS.md](12-PLUGINS.md) §2.3, §3.3–3.4.
 
 **K-067 · DECIDED · The engine's pillars carry Edo-kiriko craft names.** The render
 pipeline as a whole — evaluation graph, GPU compositor, colour engine — is **Togi**
@@ -283,7 +283,7 @@ engine and master clock is **Hibiki** (響, resonance — everything syncs to it
 names appear in user-facing surfaces (boot splash, settings, docs, marketing); crate
 names stay `kiriko-*` and code identifiers stay plain English per the glossary. Future
 subsystem names come from the same craft vocabulary and are logged here. Added
-2026-07-13 at Mack's request.
+2026-07-13 at the owner's request.
 
 **K-068 · DECIDED · AE-style Project panel with auto-filing and the composition
 dialogue.** The Project panel is info-header-plus-tree: the selected item's details at
@@ -297,7 +297,7 @@ the same way into "Compositions". Manual comp creation always shows the settings
 pre-filled from that footage; comps created implicitly inside an active comp (future
 precompose) inherit the parent's settings silently; settings stay editable later
 (Composition settings…, one invertible op). Multi-step creations commit as one
-`Op::Batch` — one undo step. Added 2026-07-13 at Mack's request.
+`Op::Batch` — one undo step. Added 2026-07-13 at the owner's request.
 
 **K-069 · DECIDED · Working depth is one project-wide switch.** Supersedes the
 per-comp fp32 opt-in in K-026. The project renders everything — comps, effects,
@@ -309,10 +309,10 @@ default for new projects. Kernel-internal accumulators may exceed the project de
 where the algorithm needs it, but node inputs/outputs never do. Depth remains part of
 the cache key's quality field. Implementation lands with the depth-aware pipeline work
 in the effects phase; until then 16 bpc float is the only rendering depth. Decided
-2026-07-13 at Mack's request. Spec: [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.1.
+2026-07-13 at the owner's request. Spec: [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.1.
 
 **K-070 · DECIDED · The graph editor is a general derivative-lens editor, in the
-Timeline.** Three points from Mack (2026-07-13):
+Timeline.** Three points from the owner (2026-07-13):
 
 1. **Derivative lenses for every animatable property.** The value/speed views of §5.1
    generalise: any property (transform, effect parameter, mask, retime) can be viewed and
@@ -340,7 +340,7 @@ Timeline.** Three points from Mack (2026-07-13):
    `kiriko-core::sequence` tests (`re_speeding_a_cut_clip_keeps_its_start_frame`).
 
 **K-071 · DECIDED · The sequenced layer is single-source, order-preserving, edited in its
-own timeline tab.** Refines the Sequence layer (K-020) per Mack (2026-07-13):
+own timeline tab.** Refines the Sequence layer (K-020) per the owner (2026-07-13):
 
 - You **convert an imported-footage layer** into a *sequenced layer* (name pending — only
   footage sources qualify). It opens in its **own, visually distinct timeline tab** showing
@@ -367,7 +367,7 @@ own timeline tab.** Refines the Sequence layer (K-020) per Mack (2026-07-13):
   timeline; the dedicated-tab editing surface is the intended home and supersedes it.
 
 **K-072 · DECIDED · Transform property rows: keyframable speed and linked scale.** Detail
-for the property-row timeline restructure (07-UI-SPEC §5, K-070), from Mack (2026-07-13):
+for the property-row timeline restructure (07-UI-SPEC §5, K-070), from the owner (2026-07-13):
 
 - **Speed is a keyframable property like any other**, in the regular (layer) timeline view
   as well as the graph view. The Speed row gets a stopwatch; keyframing it builds the
@@ -402,7 +402,7 @@ for the property-row timeline restructure (07-UI-SPEC §5, K-070), from Mack (20
 **K-073 · DECIDED · v1 shell is a fixed native-panel layout, not a dock.** The Viewer is a
 bare, full-bleed central area with **no tab bar**; the Project/effects panel (left), Scopes
 (right) and Timeline (bottom) are resizable native panels around it. Chosen 2026-07-13 at
-Mack's insistence that the viewport carry no "top bit": egui_dock (0.16) draws a tab bar on
+the owner's insistence that the viewport carry no "top bit": egui_dock (0.16) draws a tab bar on
 every leaf and offers no per-leaf toggle, so the only way to give the Viewer a bare frame was
 to leave the docking system. Consequences: egui_dock is dropped as a dependency; drag-to-dock,
 tab rearrangement across regions, and floating panels are gone for now; the left panel keeps a
@@ -414,7 +414,7 @@ the eventual target. The `kiriko-ui` crate must keep the UI layer swappable rega
 **K-074 · DECIDED · Dockable tiling shell with a bare Viewer (supersedes K-073).** The
 window is a single tiling layout (egui_tiles): every panel except the Viewer carries a
 title tab and can be dragged to re-arrange the workspace; the **Viewer alone is a bare pane
-with no tab bar** (Mack, 2026-07-14: the viewport must have no top bit). This reverses
+with no tab bar** (the owner, 2026-07-14: the viewport must have no top bit). This reverses
 K-073's "fixed native panels, no docking" — that was a stopgap taken because egui_dock draws
 a tab bar on every leaf; egui_tiles doesn't force a tab on a lone pane, so the Viewer can be
 bare *and* the other panels fully dockable. Mechanism: the Viewer is inserted as a direct
@@ -431,7 +431,7 @@ note in [07-UI-SPEC.md](07-UI-SPEC.md) §1; keeps the UI layer swappable (K-012)
 
 **K-075 · DECIDED · Retime is a graph-editor channel (footage layers): frame-timecode value
 lens, speed-% derivative lens, Vegas default-lens setting; sequence-layer retiming lives in
-the sequence view.** Confirmed by Mack (2026-07-14), building on K-021, K-070, K-071, K-072:
+the sequence view.** Confirmed by the owner (2026-07-14), building on K-021, K-070, K-071, K-072:
 
 - **Footage layers — Retime graphs like any other channel.** A retimed footage layer exposes
   its Retime in the graph editor's left column beside the transform properties, using the same
@@ -450,14 +450,14 @@ the sequence view.** Confirmed by Mack (2026-07-14), building on K-021, K-070, K
   cut/splice/move, with an **optional graph pane below it** — the layer stays visible on top,
   so cutting/splicing continues while retiming, and the graph (the regular graph view)
   reflects the sequence's retime, respecting the gaps between pieces. Documented here;
-  **implemented later** (a good candidate for a focused `fable` session, per Mack).
+  **implemented later** (a good candidate for a focused `fable` session, per the owner).
 - **Increments:** *2a* (now) — footage Retime graphable, both lenses + the setting + the
   correct default lens; *2b* — the full [04-RETIMING.md](04-RETIMING.md) §9.2 in-graph segment
   editing (RateSegment endpoint drags, compensating edits, Rate↔Map conversions); *2c* (later)
   — the sequence-view graph pane.
 
 **K-076 · DECIDED · The Retime graph channel is named by its lens: Time (value) and Velocity
-(speed).** Confirmed by Mack (2026-07-14), refining K-075. The Retime channel — its outline
+(speed).** Confirmed by the owner (2026-07-14), refining K-075. The Retime channel — its outline
 row and its graph — reads **Time** in the value lens (source position, "which frame is
 showing") and **Velocity** in the derivative lens (the Vegas velocity-envelope heritage the
 speed graph already invokes). This **reverses the glossary §9 "velocity → speed" ban for this
@@ -468,7 +468,7 @@ stopwatch/keyframe control in the outline — and its **default lens is the valu
 (the Vegas-preference of K-075 defaults **off**), so the channel opens to Time.
 
 **K-078 · DECIDED · The Time (value) lens is a fully bezier-keyframed property, identical to
-any transform channel.** From Mack (2026-07-14), extending K-025/K-070/K-075/K-076. The Retime
+any transform channel.** From the owner (2026-07-14), extending K-025/K-070/K-075/K-076. The Retime
 **Time** lens is not a special read-only view: it is the ordinary graph editor — draggable
 keys, gold tangent handles, F9 easy-ease, marquee, auto-fit — operating on source position over
 local time, exactly like Position or Scale. This is realised by mapping each pair of value
@@ -492,7 +492,7 @@ The "which lens a channel opens to" preference (K-076) stays; per-project lens c
 still deferred.
 
 **K-079 · DECIDED · The graph editor pans and zooms; it shares the timeline's time axis and
-auto-fits vertically by default.** From Mack (2026-07-15). The curve editor previously mapped x
+auto-fits vertically by default.** From the owner (2026-07-15). The curve editor previously mapped x
 over the whole comp duration and framed y purely by auto-fit, so neither axis scrolled. Now:
 - **Horizontal** follows the shared lane axis (07-UI-SPEC §4): the same pixels-per-second and
   scrolled left edge as the layer bars, so **Alt-wheel** zooms and **Shift/horizontal-wheel**
@@ -512,7 +512,7 @@ over the whole comp duration and framed y purely by auto-fit, so neither axis sc
 Not yet done: relocating the layer list's own built-in scrollbar onto the outline's edge (it
 still sits at the far right); that needs a custom outline scrollbar and is deferred.
 
-**K-080 · DECIDED · The speed lens draws the exact derivative of the value bezier.** From Mack
+**K-080 · DECIDED · The speed lens draws the exact derivative of the value bezier.** From the owner
 (2026-07-15). The speed (derivative) view sampled its curve by central finite difference at
 half-frame steps — a display stopgap that could smear the shape near steep handles. It now uses
 `anim::evaluate_speed`, the closed-form `dv/dt = y′(u)/x′(u)` of the value-lens cubic (with the
@@ -521,7 +521,7 @@ value lens draws: bezier easing in the value view shows as the matching smooth s
 straight span as a flat speed, a Hold as zero. This is the value/speed "two views of one data"
 promise (K-070) made exact.
 
-**K-081 · DECIDED · Tangent handles are draggable in the speed lens too.** From Mack
+**K-081 · DECIDED · Tangent handles are draggable in the speed lens too.** From the owner
 (2026-07-15). The speed (derivative) lens showed one draggable speed point per key; it now also
 carries the same gold tangent handles as the value lens for a selected key, so a curve can be
 eased from either view. In the speed graph a handle's **height is that side's speed** and its
@@ -532,7 +532,7 @@ value lens keeps the unified partner-length behaviour (K-072 refinement); the sp
 a unified drag but keeps the partner's own reach (no screen-length preservation — the speed lens
 is about the speeds themselves).
 
-**K-082 · DECIDED · Linux is a supported build target.** From Mack (2026-07-16), after outside
+**K-082 · DECIDED · Linux is a supported build target.** From the owner (2026-07-16), after outside
 requests to run Kiriko on Linux. Kiriko remains **Windows-first** (that ordering is unchanged);
 Linux joins macOS as a supported desktop target: the build must work from a plain
 `cargo build` given the platform's usual dependencies, and the README documents them. On Linux
@@ -1759,7 +1759,7 @@ exceptions: a **camera** is a viewpoint, not a picture, so it keeps position at 
 centre with no content anchor; a **text** layer keeps its origin at the text insertion point
 (anchor 0,0) because its content size is only known after glyph layout, matching AE's
 point-text convention. Only *new* layers default this way — saved projects load their stored
-transforms unchanged (the transform is serialised in full). Added 2026-07-19 at Mack's
+transforms unchanged (the transform is serialised in full). Added 2026-07-19 at the owner's
 request. Built in an isolated worktree; not pushed — another agent may also claim K-150,
 renumber on merge if so.
 
@@ -1775,7 +1775,7 @@ mix by coverage correctly; the premultiplied-alpha maths is the shared
 already present in the enum, the UI dropdown and both GPU mappings when this work began; GEN-1
 adds Subtract to match. CPU/GPU parity holds (the compositor's inline oracle tests pin each
 mode's formula). Spec: [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §3.5. Added 2026-07-19 at
-Mack's request. Built in an isolated worktree; not pushed — another agent may also claim
+the owner's request. Built in an isolated worktree; not pushed — another agent may also claim
 K-151, renumber on merge if so.
 
 **K-152 · DECIDED · Vibrancy, a saturation-aware colour effect (GEN-2).** A new **Colour**
@@ -1790,7 +1790,7 @@ per-pixel factor `1 + amount·(1−sat)`, and scale colour about Rec. 709 luma b
 zero and re-premultiplied. Built to the four-site pattern (schema → Resolved + resolve → CPU
 reference oracle → WGSL kernel → the `wgsl_vibrancy_matches_the_cpu_oracle` parity test), so
 preview equals export (K-031). Spec: [08-EFFECTS.md](08-EFFECTS.md) §3.10. Added 2026-07-19 at
-Mack's request. Built in an isolated worktree; not pushed — another agent may also claim
+the owner's request. Built in an isolated worktree; not pushed — another agent may also claim
 K-152, renumber on merge if so.
 
 **K-153 · DECIDED · Layers sit freely across the comp boundaries (GEN-3).** From the owner
@@ -2719,7 +2719,7 @@ it grows its own" — it has grown one. The rest of K-033's Mac release list (Vi
 ProRes, notarisation, the native menu bar) is untouched and still outstanding.
 
 **K-196 · DECIDED · The graph editor is the AE graph, and the keyframe clipboard speaks
-AE's format.** From Mack (2026-07-28), replacing the per-channel mini-lanes the frb port
+AE's format.** From the owner (2026-07-28), replacing the per-channel mini-lanes the frb port
 shipped with the behaviour docs/07 §5 always specified. The graph is **one full-height
 pane** sharing the Timeline's ruler, zoom and horizontal scroll; the curves it draws are
 evaluated by a Dart port of the engine's own cubic (`flutter_ui/lib/panels/graph_maths.dart`,
@@ -2805,7 +2805,7 @@ owner's choice, replacing docs/07 §15's never-built `Ctrl+Alt+T`; that table is
 the same commit.
 
 **K-198 · DECIDED · Retime keeps its chord and gains one the operating system cannot
-take.** From Mack (2026-07-28), extending K-197 rather than reversing it. K-197's
+take.** From the owner (2026-07-28), extending K-197 rather than reversing it. K-197's
 **Alt+Shift+T** is unchanged and stays the shortcut the specs name. It also, on Windows,
 collides with the system's **input-language switch**: left Alt with Shift is how Windows
 cycles keyboard layouts, so on any machine with a second layout installed the OS consumes
@@ -2822,7 +2822,7 @@ command whose only route is the keyboard has no route at all — every keyboard 
 wants a menu or palette entry beside it.
 
 **K-199 · DECIDED · The keymap is the engine's, the keyboard is the frontend's, and the
-reveal cycle is three commands on one key.** From Mack (2026-07-29), restoring what K-182
+reveal cycle is three commands on one key.** From the owner (2026-07-29), restoring what K-182
 removed and finishing what docs/07 §15 has promised since it was written. `lumit-keymap`
 came back from git history unchanged — chords, contexts, conflict detection, the shipped
 default and the After Effects preset, with its eight tests — because it was deleted as
@@ -2869,7 +2869,7 @@ about why.
 the table and no dispatch behind them yet — those commands do not exist on this frontend, so
 the rows are honest about the keymap and silent in use. `docs/TODO.md` carries that.
 
-**K-200 · DECIDED · Retime has one chord, like everything else.** From Mack (2026-07-29),
+**K-200 · DECIDED · Retime has one chord, like everything else.** From the owner (2026-07-29),
 superseding the two-chord half of K-198. The owner's recollection behind K-197's
 **Alt+Shift+T** was simply wrong — the After Effects chord being reached for was
 **Ctrl+Alt+T** all along — so the collision K-198 worked around (Windows takes Alt+Shift
@@ -2883,7 +2883,7 @@ command wants a menu or palette entry beside it. The bridge simplifies with the 
 a keymap row carries one chord, not a list whose only customer was this pair.
 
 **K-201 · DECIDED · The export dialogue grows the fields an export actually has, and image
-sequences join the formats.** From Mack (2026-07-29). File ▸ Export… (the glossary bans
+sequences join the formats.** From the owner (2026-07-29). File ▸ Export… (the glossary bans
 "render" for user-facing output, so the name was never a choice) now carries: a **format**
 box — H.264/HEVC into `.mp4`, or a **PNG/TIFF image sequence**, one lossless RGBA still per
 frame written through the same ffmpeg seam and the same frame walk as video, named
@@ -2901,7 +2901,7 @@ nothing). The preview-equals-export identity (K-031) is untouched: the range and
 *which* comp frames render and how the file is stamped, never how a frame renders.
 
 **K-202 · DECIDED · Themes are yours to make, and the Timeline gets a second ground.**
-From Mack (2026-07-29). Four Appearance changes, one of which is a spec correction.
+From the owner (2026-07-29). Four Appearance changes, one of which is a spec correction.
 
 **Custom themes.** Settings → Appearance → **Customise…** opens every colour the theme
 carries, one row each — name and a line saying what it does on the left, a swatch that
@@ -2944,7 +2944,7 @@ area's edges are **draggable on the ruler** for the first time on this frontend:
 settable only from the menu, and a span you can see is one you expect to take hold of.
 
 **K-203 · DECIDED · Selection you can get out of, a work area that exists, and a surround
-that is grey.** From Mack (2026-07-29). Six defects reported against the K-199…K-202 work,
+that is grey.** From the owner (2026-07-29). Six defects reported against the K-199…K-202 work,
 fixed together because four of them are one theme: the interface holding state the user
 could no longer see or reach.
 
@@ -3043,7 +3043,7 @@ applied to reporting the first adapter's video memory. Regression test:
 `crates/lumit-bridge/src/api/tests.rs`.
 
 **K-205 · DECIDED · The renderer's backend is pinned on every platform, in every build.**
-From Mack (2026-07-29), out of the Linux hybrid-GPU report. K-177 pinned the D3D12 backend
+From the owner (2026-07-29), out of the Linux hybrid-GPU report. K-177 pinned the D3D12 backend
 only under the opt-in `shared-texture` feature and said in as many words that "every
 non-feature build keeps the all-backends instance"; the Linux and macOS siblings copied that
 shape. This supersedes K-177 on that point. `GpuContext::headless` now selects **DX12 on
@@ -3070,7 +3070,7 @@ nothing else.
 ---
 
 **K-206 · DECIDED · The Null layer ships, and the bridge enum spells it `NullLayer`.**
-From Mack (2026-07-29). The Null layer (01-GLOSSARY §2, reserved in 03-DATA-MODEL §5.2 since
+From the owner (2026-07-29). The Null layer (01-GLOSSARY §2, reserved in 03-DATA-MODEL §5.2 since
 the model was written) is now a shipped kind: an invisible, source-less, size-less layer that
 carries only a transform, so layers parent to it and move as a rig.
 
@@ -3111,7 +3111,7 @@ does now, on Linux, at the version the workspace pins. A generated file is an ou
 output is checked by CI, not by a reviewer's eye.
 
 **K-207 · DECIDED · The lane area is rows all the way down, the work area is a band you can
-drag, and the playhead has a head.** From Mack (2026-07-29). Four defects reported against
+drag, and the playhead has a head.** From the owner (2026-07-29). Four defects reported against
 K-202/K-203 while testing them.
 
 **The lane area has no bottom.** The rows were laid out to their own height, so with one
@@ -3146,7 +3146,7 @@ ruler with the line carried into it as a notch in `surface_0` — black on a dar
 white on a light one. A 1px line alone reads as a row seam at a glance.
 
 **K-208 · DECIDED · A layer drag moves both halves of the Timeline, and the two halves
-measure the table once.** From Mack, reporting Airizz (2026-07-29). The Timeline's outline
+measure the table once.** From the owner, reporting Airizz (2026-07-29). The Timeline's outline
 and lane area are built as two columns of rows side by side, which is what makes their
 horizontal scrolls independent and their layout easy to follow. Two things came out of that
 which needed answering: an animation that cannot cross the seam, and a table that can be
@@ -3184,7 +3184,7 @@ playhead, the work-area ground, the marquee and the graph view's scroll plumbing
 The requirement attached to this round was that both views behave exactly as they do now, so
 the seam stays for the moment; this entry does not close the door on it.
 
-**K-209 · DECIDED · Icons draw at 16px and land on the pixel grid.** From Mack, reporting
+**K-209 · DECIDED · Icons draw at 16px and land on the pixel grid.** From the owner, reporting
 Airizz (2026-07-29): the icons read as crunchy, and the guess was that anti-aliasing was
 missing. It was not — it was the mechanism. Iconoir's line art carries a 1.5-unit stroke on
 a 24-unit grid, so an icon drawn at 12px has a 0.75px stroke, which the renderer can only
@@ -3202,7 +3202,7 @@ the note rather than papered over.
 
 
 **K-210 · DECIDED · The dropper reads a value at a pixel — not only a colour — and the
-picker applies live.** From Mack (2026-07-30), asking for the egui build's two tools back in
+picker applies live.** From the owner (2026-07-30), asking for the egui build's two tools back in
 Flutter, in the shape they had there.
 
 **The dropper is a pixel tool, not a colour tool.** It is armed from whatever wants a value
@@ -3229,11 +3229,11 @@ keeps one fixed offset from the pointer everywhere. It used to be clamped inside
 so approaching the bottom-right corner it crept over the very pixels being aimed at and then
 stopped following the pointer at all — a pick there is as ordinary as a pick anywhere else.
 It is drawn in the application's overlay rather than in the panel's own stack, which is what
-lets it hang over whatever is beside the Viewer and so need no clamp. (Both reported by Mack
+lets it hang over whatever is beside the Viewer and so need no clamp. (Both reported by the owner
 on testing.)
 
 The **window's** edge is the one exception, and it is answered by flipping rather than sliding
-(Mack, asked for explicitly): the viewfinder goes to the other side of the pointer on whichever
+(the owner, asked for explicitly): the viewfinder goes to the other side of the pointer on whichever
 axis would run off — above instead of below, left instead of right, each axis independently —
 at the same distance, so it still never creeps over the pixel being read. Only a window with
 room for neither side clamps, because half a magnifier beats none. The bound is the **window's
@@ -3248,7 +3248,7 @@ afterwards as plain numbers. Asking render objects where they are from inside th
 build, and marking that overlay dirty from inside the panel's build, are both wrong for the
 same reason, and an ordinary scroll over the Viewer did both: the wheel zooms the picture, the
 panel relays out, and the magnifier tried to place itself against a tree mid-rebuild — a red
-window and `'attached': is not true` (Mack, on testing). Nothing that places it touches a render
+window and `'attached': is not true` (the owner, on testing). Nothing that places it touches a render
 object now, and a redraw asked for during a build is deferred to after the frame.
 
 **The strip under the grid says what is about to be taken, in the terms of the thing being
@@ -3272,7 +3272,7 @@ changing the sample size then cost nothing at all; a read happens only when the 
 the window's edge, the playhead moves, an edit lands, or a different layer is being read. The
 first cut of this asked per mouse move — a request, a cache lookup and a stream message at
 pointer rate, each one cloning the whole eight-megabyte frame to copy 81 pixels out of the
-middle (Mack, on testing: "a crazy number of calls"). Two fixes, both kept: the window, and
+middle (the owner, on testing: "a crazy number of calls"). Two fixes, both kept: the window, and
 `framecache::with_best_frame`, which hands a reader the pixels **in place** under the cache
 lock instead of cloning them — bounded, pure-CPU, nowhere near the GPU or the FFI boundary.
 
@@ -3282,7 +3282,7 @@ neither the composition's nor anything the frontend can know in advance. The fir
 window asked in composition pixels and then indexed the reply with them: with a fitted Viewer
 the two grids differ by the preview scale, every index fell outside the window, each one
 clamped to the nearest edge — and the magnifier showed nine by nine of the *same* pixel, which
-reads as a flat average of the area (Mack, on testing: "just an average of all the values in
+reads as a flat average of the area (the owner, on testing: "just an average of all the values in
 it… and it might not be aligned"). The request now carries `(u, v)` in 0–1, the reply says
 which raster it cut from, and every pixel either side names is in that raster; asking in the
 wrong grid is no longer expressible. The clamp went too: a position outside the window answers
@@ -3307,7 +3307,7 @@ its hex is the same value said another way. A scene-linear colour in a float wor
 below 0 as far as the parameter's own declared range allows: several built-ins declare 0–4
 precisely because HDR tints are legal in linear light, and one declares −1 for a lift. A 0–255
 dial cannot express those at all, so the picker was silently clamping values the engine carries
-happily (Mack, on testing). The square and the strip stay 0–1 — they are a chromaticity
+happily (the owner, on testing). The square and the strip stay 0–1 — they are a chromaticity
 picture — and an over-range colour is carried through them as a gain on its brightest channel,
 so dragging about on the square does not quietly throw the overshoot away.
 
@@ -3477,7 +3477,7 @@ comment in `Layer::source_time_at` marks for deletion; it is left alone rather t
 half-migrated. Recorded here so the next person meets it deliberately.
 
 **K-214 · DECIDED · The frame cache is named by content, and its three tiers are one ladder.**
-Requested by Mack (2026-07-30), from two complaints that turned out to be the same one: "a lot
+Requested by the owner (2026-07-30), from two complaints that turned out to be the same one: "a lot
 of things are resetting the cache when they shouldn't — moving the work area, adding audio to a
 layer, changing the opacity of a hidden layer", and "when I undo, we shouldn't have to cache
 from scratch again". Both are the cost of positional keying, which K-178 recorded as an interim
@@ -3542,7 +3542,7 @@ question — does this frame play now — and a frame in memory is one upload fr
 of the two holds it is the status line meter's business, where each tier has its own bar.
 
 **K-215 · DECIDED · The three follow-ups K-214 left in the backlog are closed.** Requested by
-Mack (2026-07-30): implement what the TODO named rather than leaving it. Each was a stated gap,
+the owner (2026-07-30): implement what the TODO named rather than leaving it. Each was a stated gap,
 and each is a different kind of gap.
 
 **The disk tier has an index, so it evicts by the same rule as the tiers above it.** It held
@@ -3589,7 +3589,7 @@ rather than copying the application's into it, so the project follows along afte
 project's answer overrides the application's, and changing either moves nothing — the frames in
 the old folder simply stop being addressed, and that folder is deletable at any time.
 
-**Not done, and deliberately: nothing about this is in the pull request for K-214.** Mack asked
+**Not done, and deliberately: nothing about this is in the pull request for K-214.** the owner asked
 for these on a branch of their own so the reviewable change stays the one that was reviewed.
 
 **K-216 · DECIDED · The toolbar is one strip under the menu bar, and it ships with the whole

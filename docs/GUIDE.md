@@ -50,11 +50,11 @@ engine for things; the engine doesn't know the UI exists. That's why the UI coul
 replaced entirely without touching the engine — like swapping a car's dashboard without
 opening the engine bay.
 
-That rule is also why `lumit-render` exists. The picture-making code used to live inside
-`lumit-ui`, which meant the Flutter frontend had to reach *through* the egui frontend to
-render anything at all — a dashboard wired into another dashboard. Pulling it into its own
-crate (decision K-178) put it back where it belongs: both frontends now ask the same engine
-for frames, so a comp cannot look different in one than the other.
+That rule is also why `lumit-render` exists. The picture-making code once lived inside the
+frontend, which meant anything wanting a frame had to reach *through* a user interface to
+get one — a dashboard wired into another dashboard. Pulling it into its own crate (decision
+K-178) put it back where it belongs: the Viewer and the exporter now ask the same engine for
+frames, so what you preview cannot differ from what you export.
 
 ## 2. Rust in ten minutes, Lumit edition
 
@@ -655,17 +655,15 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   it on a footage or adjustment layer's row in the Timeline — the row outlines while
   you hover, and letting go appends the effect exactly as if you'd picked it from
   that layer's own menu, one undo step either way.
-- **Why that drop once died silently (the one-slot drag rule).** egui carries exactly
-  one "thing being dragged" for the whole app, like a single hand that can hold one
-  object. The catch: when any drop zone asks "was that released on me?", egui hands
-  the object over *before* checking whether it is the kind that zone wanted — and if
-  it is the wrong kind, the object is simply gone. The Timeline's whole-body zone
-  (the one that accepts footage dropped from the Project panel) sits underneath every
-  layer row, so it asked first, was handed the dragged *effect*, shrugged, and
-  discarded it — the row you actually dropped on found the hand empty. The fix is a
-  small shared reader (`dnd_release_of` in `panels.rs`) that peeks at the kind first
-  and only takes a drop that matches; every drop zone in the app now reads through
-  it, so a footage drag and an effect drag can never eat each other again.
+- **The one-slot drag rule**, worth knowing wherever drag-and-drop is written. If the
+  toolkit carries exactly one "thing being dragged" for the whole app — a single hand
+  holding one object — then a drop zone that asks "was that released on me?" may be
+  handed the object *before* anything checks it is the kind that zone wanted, and a
+  zone that shrugs at the wrong kind has already consumed it. Overlapping zones then
+  eat each other's drops silently: the wide zone underneath asks first and discards
+  what the row on top was waiting for. **Every drop zone must peek at the kind before
+  taking the drop**, through one shared reader rather than each zone deciding for
+  itself.
 - **Effects, the pixel side.** The first real effect exists end to end: **Blur**
   (gaussian). Its life is the template every effect will follow (design rule §1.1's four
   parts): a catalogue entry in `lumit-core/src/fx.rs` declaring parameters and behaviour
@@ -1684,9 +1682,9 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   mechanism, just no longer a special case), and **a small grip in its top-right corner** to
   drag it to a new spot, the same as dragging a tab would. The grip sits in its own tiny
   corner rather than spreading the drag gesture across the whole empty top strip, because of
-  an egui quirk worth knowing if you touch this code: a region that senses dragging does not
-  automatically step aside for an ordinary button drawn on top of it the way a plain click
-  does — dragging is tracked per-widget from the moment the mouse is pressed, not by "whoever
+  a trap worth knowing wherever drag regions are written: a region that senses dragging does
+  not automatically step aside for an ordinary button drawn on top of it the way a plain
+  click does — dragging is tracked from the moment the mouse is pressed, not by "whoever
   is visually on top" at release, so a wide drag-sensing strip sitting *underneath* a panel's
   own buttons could reach in and steal an ordinary click-and-slightly-move as a pane-drag
   instead. Keeping the grip small, and adding it *after* (visually on top of) the panel's own
@@ -3111,46 +3109,6 @@ swappable hook — the real app uses the plugin, the tests slot in a pretend pat
 — which is why the whole import-and-save flow can be tested without a single
 real window appearing.
 
-**Running it.** Install the Flutter SDK (`git clone -b stable
-https://github.com/flutter/flutter`, put its `bin` on PATH — it fetches its own
-Dart on first run; the Windows build also wants the same VS 2022 C++ tools the
-Rust build uses). Then, from `flutter_ui/`: `flutter run -d windows` to launch,
-`flutter test` for the tests, `flutter analyze` for the lint pass. The bridge
-library builds separately with `cargo build -p lumit_bridge`, which drops
-`lumit_bridge.dll` in `target/debug/` where the Flutter app looks for it.
-
-**Running it on Linux (for the Linux collaborator).** The Flutter frontend now
-builds and runs on Linux, not only Windows. You need three things installed
-once: the FFmpeg 7.1 "shared" build the engine links (see §8's Linux notes — the
-BtbN `n7.1 ... linux64-gpl-shared` tarball, with `FFMPEG_PKG_CONFIG_PATH`,
-`LD_LIBRARY_PATH` and `LIBCLANG_PATH` pointed at it and LLVM 18); the Flutter
-desktop toolchain (`sudo apt-get install clang cmake ninja-build pkg-config
-libgtk-3-dev`); and the same X11/Wayland/ALSA/GL dev libraries the engine's own
-Linux build wants (the `libasound2-dev libgl-dev libegl-dev libxkbcommon-dev …`
-list in §8). Then, from `flutter_ui/`: build the engine bridge with `cargo build
--p lumit_bridge` — on Linux this produces `liblumit_bridge.so` in `target/debug/`
-(the loader looks there, then `target/release/`, then beside the executable, then
-the system library path; the `lib` prefix and `.so` suffix are Cargo's Unix name
-for the same crate that becomes `lumit_bridge.dll` on Windows). Run the app with
-`flutter run -d linux`, the tests with `flutter test`, the lint pass with
-`flutter analyze`. If a run or test complains it cannot fetch packages offline,
-add `--no-pub` after a successful `flutter pub get` to reuse the resolved
-packages. Two things behave differently on Linux by design, both degrading
-cleanly rather than failing: the Viewer's zero-copy Viewer path uses **DMA-BUF**
-rather than the Windows DXGI shared handle (built behind
-`--features shared-texture-linux`, K-177 — see the DMA-BUF sections in §9 above);
-there is **no CPU fallback behind it**, because K-183 deleted the copy-the-bytes
-path outright — so on a machine whose driver cannot export the shared image (a
-software rasteriser such as Mesa's lavapipe, which is what CI has), every frame
-is dropped at the publish step and the Viewer simply stays empty. It says so on
-stderr and nothing crashes, but it does not draw. That is why the six Flutter
-tests that wait for a frame skip on CI (`LUMIT_NO_ZERO_COPY_VIEWER=1`, in
-docs/TODO.md); and **popping a panel out into its own OS window works** —
-the `desktop_multi_window` plugin ships a first-class Linux (GTK) implementation,
-so pop-out is *not* gated off Linux. Because this box cannot build
-Flutter-for-Linux, the Linux build is proven by the CI `flutter-linux` job, not
-locally — treat a green run of that job as the gate.
-
 **Verifying the Linux zero-copy Viewer (the collaborator's checklist, K-177).**
 CI proves the Rust Vulkan/DMA-BUF code and the GTK plugin *compile*; whether the
 picture actually reaches the screen can only be checked on a real Linux machine
@@ -3205,69 +3163,11 @@ window:
    discrete GPU — that decides the texture's storage mode, and the discrete case
    is the one corner this path knowingly does not synchronise).
 
-**Running it on macOS.** The Flutter frontend now has a `macos/` platform
-folder too, scaffolded with `flutter create --platforms=macos .` (K-033 names
-Metal/macOS a supported future target; this is the first concrete step
-towards it, not the full pass — see below for what is still deferred). You
-need Xcode installed (the full app, not just the Command Line Tools — `flutter
-doctor` will say so plainly if only the tools are present) and CocoaPods
-(`brew install cocoapods`). Build the bridge library the same way as the other
-two platforms: `cargo build -p lumit_bridge`, which drops
-`liblumit_bridge.dylib` in `target/debug/` (Cargo's Unix cdylib naming, same as
-Linux's `.so` but with the macOS suffix). Then, from `flutter_ui/`: `flutter
-run -d macos` to launch, `flutter test` for the tests, `flutter analyze` for
-the lint pass. The generated Xcode project's App Sandbox is switched off and
-library validation disabled in both entitlements files — a sandboxed,
-hardened-runtime process cannot `dlopen` an unsigned, locally-built dylib from
-an arbitrary Cargo target path, which is exactly what the bridge loader does
-(matching the unsigned, unsandboxed posture Windows and Linux dev builds
-already have; a signed macOS release is a later decision). The Viewer's zero-copy
-path now exists here too (`shared-texture-macos`, Metal/IOSurface, K-195), so the
-picture appears; it is default-on and needs no flag. The native macOS menu bar
-(muda) stays deferred with
-the rest of the "macOS pass" named in `docs/archive/flutter-port/01-STRATEGY.md` — the
-in-window menu bar renders instead, same as it does today.
-
-**What the bridge carries now (v0.2).** The first bridge only described the
-project as a tree of item names. It now also carries the *inside* of things, so
-the Viewer, Timeline and property editors have something to draw. Ask for the
-document and each composition comes back with its size, frame rate, total frame
-count, its stack of layers (each with a name, a kind, the frames it starts and
-ends on, and its row of switches — visible, locked, solo and the rest), and any
-markers on its timeline. Each piece of footage comes back with its resolution,
-rate and length once Lumit has *probed* the file (read its vital statistics),
-plus a plain status word — `ok`, `missing` (the file has moved), or `unprobed`
-(not looked at yet). The frontend can also make small edits — flip a switch,
-nudge a layer's start or end to the playhead, set a transform value, drop a
-marker — and each goes through the same undo machinery the egui app uses, so one
-press of undo takes it back. All of that is still ordinary text (JSON) crossing
-the bridge. The one exception is the actual picture: a single video frame is far
-too big to send as text, so when the Viewer asks to decode a frame the engine
-hands back a raw block of pixels instead. Dart *copies those pixels out
-immediately and then hands the block straight back to the engine to free* — the
-same "borrow it, copy it, give it back" manners the text replies already use, so
-neither side is left holding memory the other owns. Reading video needs FFmpeg,
-which is bundled behind an on-by-default switch (the `media` feature); turn it
-off and the app still builds and runs, footage just reads as "unprobed" and no
-frames decode.
-
-**What the bridge carries now (v0.3).** v0.2 could *set* a layer's position or
-opacity but never *read* it back, so the property editors could only show what
-you had changed this session. v0.3 fills that gap and adds the rest of the verbs
-a real editor needs. Now every layer also reports its whole transform — for each
-property, its current value, whether it is animated, and (when animated) its
-keyframes with their frames and easing — plus what it points at (the footage or
-comp it shows, or a solid's colour) and its stack of effects. Each composition
-reports its work area (the in/out span the transport loops). And the frontend
-can now *do* far more, every action going through the same undo machinery the
-egui app uses: add a layer of any kind (solid, text, camera, adjustment,
-sequence), delete or duplicate one, change a composition's settings in one
-undoable step, click the *stopwatch* to start or stop animating a property, add
-or remove or slide keyframes, move the work-area edges, and apply, remove or
-tune effects. The rule stays the same as before: every one of these mirrors
-exactly what the egui frontend does under the hood (the same defaults, the same
-op), so the two front doors can never drift apart, and every reply is still the
-whole document as text (JSON) so the panels just re-read it.
+**What the bridge carries.** The surface the frontend and engine share is
+specified in [17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) - the single source
+of truth for it. It is generated from `crates/lumit-bridge/src/api/`, so the
+declaration and the document are the two things to read; neither this guide nor
+any other file carries a second copy of the list.
 
 **Placing footage and restacking layers.** You can now build a composition from
 the Flutter side: double-click a footage clip in the Project panel (or drag it
@@ -3275,68 +3175,34 @@ onto the timeline) and it becomes a new layer at the top of the stack — sized 
 centred exactly as the egui app would place it — and you can drag a layer row's
 name up or down to restack it, just like moving a track in any editor.
 
-**The Viewer showing real frames, and the scopes reading them (F2).** The Viewer
-now shows actual pictures. It works out which footage the playhead is sitting
-over — the topmost visible footage layer whose span covers the current frame —
-asks the engine to decode that one frame to raw pixels, turns those pixels into
-an image Flutter can draw, and fits it onto the neutral grey pasteboard. A small
-shared helper (the *preview source*) does this work once and keeps the last
-eight decoded frames in memory, so scrubbing back and forth is cheap and it
-never decodes more than one frame per drawn frame. An important honesty: this is
-a **single-layer** preview. The real *compositor* — the part that stacks every
-layer, applies each one's position and effects, and blends them into the
-finished picture — still lives only in the Rust egui application; it has not been
-lifted out into a shared piece yet. So Flutter can show one footage frame
-straight, but not the composited comp; that (and the faster shared-GPU-texture
-path) waits on the compositor being extracted. When footage is *missing* the
-Viewer draws the same broadcast colour bars a comp shows — unmistakably "no
-signal here" rather than a black frame that hides the mistake — with the file's
-name written across the bottom; an unreadable file shows a dark "unreadable"
-card instead. Pressing play advances the playhead in time with the comp's frame
-rate and loops back to the start at the end, mirroring the egui transport. The
-**Scopes** panel — the colourist's instruments that plot brightness and colour
-instead of the picture (a waveform, an RGB waveform, a vectorscope and a
-histogram) — reads the very same decoded pixels from the shared preview source,
-so the trace always matches what is on screen. Each scope is drawn on a fixed
-near-black background rather than the interface theme, because a scope must be
-read against the same neutral whatever colours the chrome wears, and it holds the
-last trace for a beat rather than blinking to blank when a frame is momentarily
+**The Scopes.** The colourist's instruments that plot brightness and colour instead of
+the picture (a waveform, an RGB waveform, a vectorscope and a histogram) read the very same
+pixels the Viewer is showing, so the trace always matches what is on screen. Each scope is
+drawn on a fixed near-black background rather than the interface theme, because a measuring
+instrument must be read against the same neutral whatever colours the chrome wears, and it
+holds the last trace for a beat rather than blinking to blank when a frame is momentarily
 unavailable.
 
-**The Viewer showing the REAL composited comp (K-175).** The single-layer
-preview above was the honest stop-gap; the Viewer now shows the *whole* comp —
-every layer stacked, each one's position and effects applied, blended into the
-finished picture — the same pixels the egui Viewer shows and the same pixels an
-export writes to a file. Here is the trick that made it possible without a big
-rebuild. The compositor lives in the Rust egui crate, but the part that draws a
-comp to an offscreen picture (the one the *exporter* already uses) never needed
-a window or the egui interface — it only needs a graphics device, the video
-decoders and the document. So that path is wrapped in a small reusable object, a
-**headless renderer**: "headless" just means "no window". It holds the graphics
-device (which is slow to set up, so it is created once and kept), the compiled
-drawing programs and the open video decoders, and each time the Viewer asks for
-a frame it composites the comp and hands back the finished pixels. Because it is
-the very same code the exporter runs, the Viewer, the egui preview and the
-exported file cannot disagree about what the comp looks like (K-031). The bridge
-holds one of these renderers for the session and offers a new call,
-`lumit_bridge_render_comp_frame`, that takes a comp and a frame and returns the
-composited pixels with the same borrow-copy-return manners as the single-frame
-decode. On the Dart side the Viewer prefers this whole-comp call whenever the
-engine offers it, and quietly falls back to the old single-layer decode when a
-render can't be produced — for instance on a machine with no suitable graphics
-card, where the renderer reports itself unavailable once and the Viewer simply
-stays on the single-layer path (never a crash). A missing layer inside the comp
-comes back already painted as colour bars *inside* the finished frame, so the
-Viewer needs no separate "missing" card on this path. (Both honesties this
-paragraph used to end on — the bridge depending on the egui crate, and a smaller
-scale shrinking the returned picture without reducing the work — are dealt with
-in "The picture-making crate" below.)
+**The headless renderer (K-175).** The Viewer shows the *whole* comp — every layer
+stacked, each one's position and effects applied, blended into the finished
+picture. The piece that makes it possible is the **headless renderer**, where
+"headless" just means "no window": drawing a comp to an offscreen picture needs
+only a graphics device, the video decoders and the document, so it needs no
+interface at all. It holds the graphics device (slow to set up, so created once
+and kept), the compiled drawing programs and the open video decoders, and each
+time it is asked for a frame it composites the comp and hands back the pixels.
 
-**The picture-making crate, and why dragging a value used to stutter (K-178).**
-The paragraph above ended on a wrinkle: to draw anything, the Flutter frontend
-had to reach *through* the egui frontend, because that is where the picture-making
-code lived. That has now been pulled out into a crate of its own, `lumit-render`,
-which both frontends use. The engine no longer contains a dashboard.
+Because it is **the very same code the exporter runs**, the Viewer and the
+exported file cannot disagree about what a comp looks like (K-031). That is the
+whole reason it exists. A missing layer comes back already painted as colour bars
+*inside* the finished frame, so the Viewer needs no separate "missing" card. Where
+no suitable graphics card exists the renderer reports itself unavailable once,
+and the Viewer degrades rather than crashing.
+
+**The picture-making crate (K-178).** That renderer used to live inside the
+frontend, so anything wanting a frame had to reach *through* a user interface to
+get one. It is now a crate of its own, `lumit-render`. The engine no longer
+contains a dashboard.
 
 It is worth understanding what that code actually does, because the shape of it
 is what fixed a real performance problem. Making one frame is five steps:
@@ -3469,47 +3335,6 @@ boundary joins you drag in time). Drags snap to beats and whole frames with the
 magnet on. It shares the timeline's own zoom and scroll, so the curve stays lined up
 with the lanes underneath.
 
-**What the bridge carries now (v0.4): export, Retime and the last columns.** The
-biggest addition is **export** — writing the finished comp to an `.mp4`. Rather
-than teach the bridge to encode video from scratch, it borrows the egui
-application's exporter through the same headless seam the Viewer uses (K-175):
-the seam gathers the footage and audio the export needs and lends a graphics
-device, and the exporter does the rest on its **own thread**, exactly as the
-egui app does, so the interface never freezes while a file is written. The
-conversation is a simple loop: Dart calls "start" with the composition, an
-output path, and a small description of the settings; then it calls "poll" on a
-timer to learn how far along the encode is (which frame of how many, which
-encoder the machine settled on) until the reply says *done* (with the file's
-path) or *failed* (with a calm reason); a "cancel" call stops it cleanly. Only
-one export runs at a time — asking to start a second while one is running
-answers "an export is already running", and the interface queues it. Two pieces
-of the export dialogue are worked out on the Rust side so the two frontends
-cannot disagree: **stamping a preset** (choosing "YouTube 1080p60" fills in the
-codec, size and bitrate, keeping the preset's own peak bitrate while its numbers
-stand unedited and falling back to a 1.5× peak once you change them) and
-**naming the file** (a template with `{comp}`, `{preset}` and `{date}` slots,
-cleaned of characters Windows forbids, always ending in `.mp4` — and a blank
-template reproduces each preset's own suggested name exactly). Alongside export,
-v0.4 finishes the read-back and the editing verbs a real timeline needs. A
-keyframe now reports its **Bezier** handle on each side (the tangent's slope and
-reach) and the frontend can set a keyframe's interpolation (hold, linear or
-bezier). A footage layer now reports its **Retime** — the map from the clip's
-own clock to which moment of the source is on screen, told as a chain of
-segments (a constant-or-eased *speed* run, or a value curve) meeting at
-boundaries — and the frontend can set a constant speed, change a segment's ease
-preset, convert a curved segment to a plain speed one (the reply tells you how
-much the fit drifted), and drag a boundary. (The word is *Retime* and the
-quantity is *speed*, never "time remap" or "velocity" — the house glossary.)
-Finally the last timeline **columns** are wired: a layer's blend mode (with the
-full list to choose from), its matte (borrowing another layer's alpha or
-brightness to cut it out), its parent (so moving one layer moves another), the
-composition's motion-blur shutter, and dropping a starter mask shape (rectangle,
-ellipse or star) onto a layer. As always, each of these mirrors exactly what the
-egui frontend commits, one undoable step, and the reply is the whole document as
-text so the panels just re-read it. Nothing engine-side is needed to remember
-which comps are open or where the playhead sits — that is the frontend's own
-state — so restoring a session stays a Dart concern.
-
 **The Retime graph, in the timeline.** Turning on the graph lens swaps the
 timeline's lane area for a curve of the selected clip's *speed* over time: each
 straight or eased ramp is drawn from its start speed to its end speed, a bent
@@ -3601,37 +3426,6 @@ thread the moment you moved the pointer over the picture, now simply reads the
 pixels the Viewer has already copied back — sampling is free — only asking the
 worker for a frame in the rare case where none has arrived yet.
 
-**Filling in the edit commands (bridge v0.7).** By this point the bridge could
-show the whole document and do the common edits, but a scatter of menu items and
-editors still had nowhere to send their instruction — the engine simply had no
-"command" for them yet. This round adds the missing ones, each a thin, tested
-Rust function that routes through the engine's own undo-able operation (so the
-Flutter app and the old egui app can never disagree, and one press is one undo):
-the *razor* that cuts or deletes a clip under the playhead on a sequence layer;
-*beat detection* (listen to the composition's audio, drop a marker on every
-beat) and clearing those markers; the project-panel actions (delete, rename, drag
-back to the top level, and *relink* a moved-away video file to its new place on
-disk, siblings in the same folder coming along); the layer commands (rename,
-convert a footage layer into an editable sequence, trim a slowed-down clip to
-where its source runs out); the two remaining speed switches (play a clip in
-reverse; choose how in-between frames are made — nearest, blend or optical flow);
-editing what a text layer *says* and a solid's colour and size and a camera's
-zoom; the four remaining effect-knob kinds (dropdowns, checkboxes, random seeds
-and point pickers) plus reordering effects and moving a linked x/y keyframe pair
-as one undo step; and three housekeeping calls — a proper *autosave* that writes
-a spare copy beside your project **without** quietly making that copy the file
-you are editing (the old shortcut had that bug), a list of those spare copies and
-a "replay the crash journal" recovery, and an honest *boot log* the splash screen
-can show (the library's version and which features it was built with — no made-up
-lines). On the Dart side these all live on a new optional capability the real
-library offers (`EditOpsBridge`), kept separate so the test stand-ins need no
-changes; the interface calls them through plain pass-throughs that show any calm
-error in the status line. Two honest caveats are written down rather than
-hidden: beat detection runs in one go here (the old app did it on a background
-thread — fine for short clips, a later change if long songs feel slow), and the
-crash-journal recovery can replay a journal a previous session left but the
-Flutter side does not yet *write* one on every edit (a named follow-up).
-
 **Finishing the chrome: the splash log, the recovery prompt, and making the
 whole interface bigger (section E).** Three of the remaining chrome pieces are
 now wired up. The **splash** — the little card that appears while the app starts
@@ -3684,81 +3478,6 @@ rough edge written down rather than papered over. The parts that actually open a
 real window can only be *built* on the owner's Windows machine (the tool that
 compiles them does not run in the assistant's environment), so the checks for
 this feature are run there.
-
-**The "engine-surface close" wave (bridge v0.9), in plain terms.** A run of
-small gaps all came down to the same thing: the engine *knew* something the
-Flutter side could not yet *see* or *ask for*. This wave closed those.
-
-- The picture-description the Flutter side reads (the "snapshot") learned to
-  carry a few more facts it had been leaving out: the clips laid along a
-  sequence row; where each layer's own clock sits on the timeline (so the
-  Timeline can draw the little "held frame" hatch when a slowed clip runs out of
-  footage); which markers are the music beats the app found versus ones you
-  dropped by hand; the words, size and colour of a text layer, a solid's size,
-  a camera's zoom; and, for each effect, exactly which effect it is and whether
-  each of its dials is animated. All of this was *already* in the engine — the
-  snapshot just wasn't repeating it — so adding it is safe and an older reader
-  simply ignores the new fields.
-- Drawing a mask by dragging a box in the Viewer now sends the box's real size
-  and position to the engine, instead of dropping a fixed starter shape in the
-  middle and ignoring where you drew.
-- Effect dials got a stopwatch and keyframe navigator, just like the transform
-  rows already had — turn animation on, drop a key at the playhead, nudge or
-  remove one — by reusing the very same machinery the transform keyframes use.
-- "Save these effects as a preset" and "load a preset onto this layer" now work:
-  the engine hands the Flutter side a small text file (a `.lumfx`) that is
-  byte-for-byte the same as the one the egui app writes, so presets pass between
-  the two apps; the Flutter side only has to pop up the file picker.
-- A **crash journal** is now written on every edit. The journal is a running
-  list of the edits you have made since the last save, kept in a little file
-  beside the app's cache; if the app ever stops unexpectedly, reopening the
-  project replays that list so your unsaved work comes back. The egui app has
-  always done this; now the Flutter bridge does too.
-- The **realtime tier** got wired up. During playback, if the machine can't
-  keep up at full resolution, a small controller (built and tested long ago but
-  never plugged in) drops the preview to half, a third, or a quarter resolution
-  and earns it back when things calm down — quick to worsen, slow to improve, so
-  the picture doesn't flicker between qualities. The Viewer can now ask the
-  bridge "what resolution are we at?" to show a readout, and in *Auto* mode it
-  renders the next frame at whatever the controller chose. Picking a fixed
-  resolution by hand simply overrides it.
-
-**The "final UI wave", in plain terms.** The wave above taught the engine to
-*tell* the Flutter side more; this one is the Flutter side actually *drawing and
-using* those new facts, so the windows now look and behave like the older egui
-app in these places:
-
-- **Beat markers look different from your own markers.** The music beats the app
-  detects show up as faint ticks that fade with how sure the app is about each
-  one, sitting low on the ruler; the markers you drop by hand stay full-height
-  and solid. (Before, everything looked the same.)
-- **A sequence row shows its cut lines.** When one timeline row holds several
-  clips end-to-end, thin dividers now mark where one clip stops and the next
-  begins — the same lines the razor tool cuts on.
-- **The "held frame" hatch.** If you slow a clip down so much that it runs out of
-  its own footage before the row ends, the leftover stretch is washed and
-  striped in a calm amber with a small "HOLD" tag — a quiet warning that the clip
-  is repeating its last frame there, never a red alarm. Working out *where* that
-  stretch begins meant copying a piece of the engine's time-mapping maths into
-  the Flutter side (in `graph_maths.dart`), which is covered by its own tests.
-- **The Text, Solid and Camera editors now read the truth.** They fill their
-  boxes from what the engine actually holds (a text layer's words/size/colour, a
-  solid's dimensions, a camera's zoom) instead of only remembering what you typed
-  this session.
-- **The `.lumfx` preset buttons.** "Save preset" and "Load preset" now sit under
-  the effects list and open a normal file picker; the effect dials' stopwatches
-  (from the wave above) also make animating effects match animating a transform.
-- **"Auto" is now in the resolution menu.** Alongside Full/Half/Third/Quarter you
-  can pick Auto; a small readout beside the menu shows which resolution the
-  realtime controller has settled on while you play.
-
-One big piece is deliberately *not* in this wave: the **value graph editor** —
-the curve-with-handles view for animating an ordinary property, and the
-source-position ("Time") lens for retimed clips. The Flutter graph editor draws
-the *speed* curve for retimed clips today; the value curve is a large, separate
-build, and drawing it at low fidelity (straight lines where real curves belong)
-would look wrong, so it is left as an honest, named remainder rather than
-half-built (see `docs/archive/flutter-port/06-REMAINING-WORK.md` §C).
 
 **Audio playback in the Flutter frontend.** Until this change, pressing play in
 the Flutter window moved the picture but made no sound at all — the playhead
@@ -4236,1587 +3955,731 @@ yes yet. The point of asking now is that when the first one arrives it says so
 in one place, rather than becoming a special case wedged into the middle of
 the layout.
 
-### Making your own theme, and the Timeline's two grounds (K-202)
+### Themes you can edit (K-202)
 
-**Themes you can edit.** Settings → Appearance has a **Customise…** button under
-the colour scheme. It opens a window listing every colour the interface uses —
-what it is called, a line saying where it shows up, and a swatch you click to
-pick a new one. It opens on the colours you are *currently* using, and every
-change shows in the app straight away, because a colour you cannot see against
-everything else is a colour you cannot judge.
+Settings → Appearance has a **Customise…** button under the colour scheme. It
+lists every colour the interface uses — its name, a line saying where it shows
+up, and a swatch you click to change. It opens on the colours you are currently
+using and every change shows immediately, because a colour you cannot see
+against everything else is a colour you cannot judge.
 
-**Save** asks for a name the first time and makes it a theme of your own, which
-then appears in the scheme list. Select it later, press Customise… again, and
-Save updates that theme rather than making another. Closing with unsaved
-changes asks whether to keep them; discarding puts back exactly what was there.
+**Save** asks for a name the first time and adds the theme to the scheme list;
+saving again updates it. What is stored is deliberately *not* a copy of the whole
+theme — only a name, whether it is light or dark, and the colours you actually
+set. That is what lets a theme saved last year still open after Lumit gains new
+colours: anything new comes from the light or dark base underneath. The colours
+are written into your settings file as ordinary `#rrggbb` text, so you can read
+one, paste one in, or send a theme to somebody.
 
-What gets saved is deliberately *not* a copy of the whole theme — it is a name,
-whether it is a light or a dark theme, and the colours you set. That matters
-because Lumit gains colours over time: a theme you saved last year still opens,
-and anything new simply comes from the light or dark base underneath. The
-colours are written into your settings file as ordinary `#rrggbb` text, so you
-can read them, paste one in by hand, or send a theme to somebody.
+The scheme list is grouped into Dark, Light and Custom, because light or dark is
+the first thing anyone picks by.
 
-One colour is not offered: the **Viewer's surround**, the neutral grey around
-the picture. It stays a fixed neutral on purpose — you cannot judge a colour
-grade against a tinted background, so this is the one place the interface's
-taste has to give way to being able to see straight.
+**Two surfaces stay neutral whatever your theme says.** The Viewer's surround
+and the scopes are measuring instruments, not decoration: you cannot judge a
+grade against a tinted surround, and a waveform is read as a bright trace on
+near-black. Each has one opt-in switch in Settings → Appearance, off by default,
+and neither is offered in the customise window. The general rule and its two
+switches are [15-DESIGN.md](15-DESIGN.md) §2.1.
 
-**The scheme list is grouped** into Dark, Light and Custom, because light or
-dark is the first thing anyone picks by.
-
-**Scopes.** A waveform or vectorscope is a *measuring instrument*: it is read on
-a near-black background with a bright trace, whatever colour the rest of the app
-is. That is what the design docs have always said, and the panel now does it.
-If you like the look of scopes matching your theme — and it does look good —
-there is a switch for it in Settings → Appearance, off by default.
-
-**Why the Timeline has two background shades now.** The lane and layer areas
-used to be one flat colour end to end. Two things suffered: a selected row had
-almost nothing to stand out against, and the **work area** — the span you are
-actually going to export — was invisible unless you looked at the thin band on
-the ruler. So the part inside the work area keeps the normal panel colour and
-everything outside it is washed slightly darker, which tells you at a glance
-what you are delivering. On a light theme the wash is a bigger step, because the
-same small difference reads as less on a bright background.
-
-Selected rows got their own colour at the same time, rather than borrowing one
-from the general set of greys. It brightens on a dark theme and *darkens* on a
-light one — a selection has to stand out from whichever background it lands on,
-and that is not something a simple light-to-dark ramp can express. Both of these
-are ordinary colours in the customise window, so you can set them yourself.
-
-And the work area's two edges can now be **dragged on the ruler**. Until now you
-could only set them from the Timeline menu, which was precise but roundabout —
-a span you can see is one you expect to be able to grab.
+**The Timeline has two background shades.** The part inside the work area keeps
+the normal panel colour; everything outside it is washed slightly darker, so the
+span you are actually going to export is visible at a glance. On a light theme
+the wash is a bigger step, because the same difference reads as less on a bright
+background. Selected rows have a colour of their own that brightens on a dark
+theme and *darkens* on a light one — a selection has to stand out from whichever
+background it lands on, which a simple light-to-dark ramp cannot express.
 
 ### The keyboard, and why the engine owns it (K-199)
 
-**The problem it solves.** Every editor lets you change its shortcuts, because
-everybody arrives with different muscle memory — and because sometimes the
-operating system steals a key from under you (that really happened to us: on
-Windows, left Alt with Shift is how the system switches keyboard layouts, so
-the chord Retime briefly shipped on never reached Lumit at all — K-198 tells
-that story, and K-200 finished it by moving Retime to Ctrl+Alt+T outright). So
-Lumit has a **keymap**: a list saying "this key combination, in this place,
-runs this command", and a page in Settings where you can change any of it.
+Everybody arrives with different muscle memory, and sometimes the operating
+system takes a key from under you — on Windows, left Alt with Shift switches
+keyboard layouts, so a chord bound there never reaches Lumit at all. So Lumit has
+a **keymap**: a list saying "this key combination, in this place, runs this
+command", and a Settings page where you can change any of it.
 
-**Three words.** A **chord** is a key with its modifiers — `Space`, `Ctrl+D`,
-`Shift+F3`. A **context** is *where you are*: the whole app, or one focused
-panel. An **action** is a command, named by a short stable string like
-`playback.toggle`. A **binding** ties a chord in a context to an action. When
-you press keys, something has to answer "what does that mean, here?" — and
-that something is the engine.
+Four words. A **chord** is a key with its modifiers (`Space`, `Ctrl+D`). A
+**context** is where you are: the whole app, or one focused panel. An **action**
+is a command named by a short stable string like `playback.toggle`. A **binding**
+ties a chord in a context to an action.
 
-**Why the engine and not the frontend.** This is the same rule as everywhere
-else in the port: the frontend shows and forwards, the engine decides. Working
-out that the Timeline's own `D` beats the app-wide `D` while the Timeline is
-focused, or that two bindings now clash, or that this JSON is a keymap and that
-one is not — those are *rules*, and rules that live in the frontend are rules
-nobody can test without a window. `crates/lumit-keymap` is the rulebook (about
-600 lines, thirteen tests, no windowing code at all) and
-`crates/lumit-bridge/src/api/keymap.rs` is the window onto it.
+**The engine decides what a chord means.** Working out that the Timeline's own
+`D` beats the app-wide `D` while the Timeline is focused, that two bindings now
+clash, or that this JSON is a keymap and that one is not — those are rules, and
+rules living in the frontend are rules nobody can test without a window.
+`crates/lumit-keymap` is the rulebook, with no windowing code in it at all.
 
-The frontend keeps exactly two jobs, and both are genuinely its own:
+The frontend keeps two jobs, both genuinely its own:
 
-1. **Spelling the keypress.** Flutter tells it a key was pressed; it writes that
-   down as text the engine can read — `Mod+Alt+Shift+T`, where `Mod` means Cmd
-   on a Mac and Ctrl everywhere else. That translation is why a keymap written
-   on a Mac still reads on Windows.
-2. **Recognising a gesture.** Pressing `U` three times quickly is three
-   different commands, and telling "three quick taps" from "three presses over
-   a minute" is the same kind of judgement as spotting a double-click. That
-   belongs with the mouse and the keyboard, not with the document.
+1. **Spelling the keypress** — writing what Flutter reports as text the engine
+   reads, `Mod+Alt+Shift+T`, where `Mod` is Cmd on a Mac and Ctrl elsewhere. That
+   translation is why a keymap written on a Mac still reads on Windows.
+2. **Recognising a gesture** — telling three quick taps of `U` from three presses
+   over a minute is the same judgement as spotting a double-click, and belongs
+   with the keyboard rather than with the document.
 
-**Where your keymap is kept.** In the engine while Lumit is running; in your
-workspace settings file between runs. The frontend stores it as an opaque lump
-of text it never reads — the engine hands it out with one call and takes it back
-with another. The nice consequence is that "the keymap that survives a restart"
-and "the keymap file you email to a friend" are the same format, so Export and
-Import are the same code as save and restore.
+Your keymap lives in the engine while Lumit runs and in your workspace settings
+file between runs; the frontend stores it as an opaque lump of text it never
+reads. So "the keymap that survives a restart" and "the keymap you email to a
+friend" are one format, and Export and Import are the same code as save and
+restore.
 
-**The table in Settings → Keymap.** One row per command, grouped by where it is
-live, with the name on the left and the keys on the right. Click the keys and
-press what you want. A few behaviours are worth knowing because they are
-deliberate rather than accidental:
+Three behaviours in Settings → Keymap are deliberate rather than accidental:
 
-- **One row, one key** (K-200). No shipped command has two chords; if you want
-  a second spelling of one, bind it yourself — that is what the page is for.
-- **Taking a key another command already has is allowed.** It has to be: if it
-  were refused, you could never *swap* two commands' keys, because a swap needs
-  a moment where one key is claimed twice. What happens next depends on whether
-  both could fire at the same time. If they could, you get a warning naming the
-  clash and you sort it out. If they could not (same context), the old command
-  simply loses the key and its row goes blank, where you can see it.
-- **Reset is per row**, and puts back *every* chord the shipped keymap gives
-  that command.
+- **One row, one key** (K-200). No shipped command has two chords; bind a second
+  spelling yourself if you want one.
+- **Taking a key another command already has is allowed.** It has to be — a swap
+  needs a moment where one key is claimed twice. If both could fire at the same
+  time you get a warning naming the clash; if they could not, the old command
+  loses the key and its row goes blank where you can see it.
+- **Reset is per row**, and restores every chord the shipped keymap gives that
+  command.
 
-**`U`, `UU`, `UUU`.** In the Timeline, `U` opens the properties you have
-animated on the selected layer; pressing it again straight away opens everything
-you have *changed*, animated or not; a third press shuts the layer. This is
-After Effects' behaviour and the reason it is worth having is that a layer with
-forty properties usually has three you care about. The panel counts the taps;
-the engine answers which groups qualify, because "has a keyframe" and "differs
-from a fresh layer" are questions about the document — and the second one needs
-to know what a fresh layer's Position would have been, which is a rule the
-engine owns.
+`U` in the Timeline opens the properties you have animated on the selected
+layer; again straight away opens everything you have *changed*, animated or not;
+a third press shuts the layer. With nothing selected it asks the same question of
+the whole composition. The panel counts the taps; the engine answers which groups
+qualify, because "has a keyframe" and "differs from a fresh layer" are questions
+about the document.
 
-**One honest gap.** Some rows in the table — the Tools, Project, Panels and
-Effect controls groups — are bindings for commands this frontend has not built
-yet. The keys are really bound; pressing them does nothing, because there is
-nothing on the other end. They are listed rather than hidden so the table
-describes the keymap truthfully, and `docs/TODO.md` carries the gap.
+Some rows are bindings for commands this frontend has not built. The keys are
+really bound and pressing them does nothing. They are listed rather than hidden
+so the table describes the keymap truthfully; [TODO.md](TODO.md) carries the gap.
 
-### Letting go of a selection, and a work area that is really there (K-203)
+### Selection you can get out of, and a work area that is really there (K-203)
 
-Six small things reported after the Appearance work landed. Four of them turn
-out to be the same mistake in different clothes: the interface was holding on to
-state you could no longer see or reach.
-
-**A selection you can get out of.** Click a property's name and it lights up.
-Twirl the layer shut and — until now — it *stayed* selected: invisible, but
-still the selection, so it came back lit the moment you reopened the layer, and
-it went on tinting that layer's row while you were working on a different layer
-entirely. Now closing a fold forgets what was selected inside it, and clicking a
-layer's name clears the property selection, because "select this layer" ought to
-mean this layer and not also whatever you picked on the last one.
-
-More basic than either: there was **no way to select nothing**. The only way to
-change the selection was to pick something else. Every command that reads the
-selection — Delete, the Retime chord, `U` — was stuck with whatever was picked
-last. Clicking empty ground in either half of the Timeline now deselects
-everything: no layer, no properties, no keyframes. Empty ground means exactly
-that — a name, a switch, a property row, a bar or a keyframe still takes its own
-click.
-
-**`U` with nothing selected asks about the whole composition.** "Show me what is
-animated" is a question about the comp at least as often as about one layer, and
-before this the key simply did nothing unless a layer was selected. The
-`U`/`UU`/`UUU` cycle is otherwise the same; it just runs over every layer.
+**There is always a way to select nothing.** Clicking empty ground in either half
+of the Timeline deselects everything — no layer, no properties, no keyframes. A
+name, a switch, a property row, a bar or a keyframe still takes its own click.
+Closing a fold forgets what was selected inside it, and clicking a layer's name
+clears the property selection: "select this layer" ought to mean this layer and
+not also whatever was picked on the last one. Without this, every command that
+reads the selection is stuck with whatever was picked last.
 
 **The work area exists from the start.** The engine stores "this comp has not
-been narrowed" as *nothing at all*, which is honest — but the interface has no
-such state. A comp nobody has narrowed has a work area of the whole comp, which
-is what every editor shows you and what leaves the two ends there to take hold
-of. Because the frontend was showing the engine's "nothing" literally, there was
-no bar to see, no handles to drag, nothing for the darker out-of-range wash to
-shade, and `B` and `N` — which have been in the keymap since the keymap came
-back — had never been wired to anything, so pressing them did nothing. All of
-that is fixed: the bar spans the comp until you narrow it, its ends drag on the
-ruler, `B` and `N` set them from the playhead, and the two-shade ground runs the
-full height of the lane view *and* the graph view. "Clear work area" now widens
-it back to the whole comp rather than making it vanish.
+been narrowed" as nothing at all, which is honest, but the interface has no such
+state: a comp nobody has narrowed has a work area of the whole comp. That is what
+leaves two ends there to take hold of, gives the darker out-of-range wash
+something to shade, and gives `B` and `N` something to set. "Clear work area"
+widens it back to the whole comp rather than making it vanish.
 
-One implementation note worth recording, because it is the kind of thing that
-bites twice. The first version of this worked the work area out *inside each
-widget that drew it*, and each answer cost several calls across the
-Rust/Flutter boundary. On a panel that rebuilds as often as the Timeline does
-that added eighteen extra calls to opening a single twirl, and the standing
-call-budget test caught it. It is now read once per panel build, in frames, and
-handed down.
-
-**Ctrl+S saves.** It was bound and it resolved to the right command; nothing in
-the shell was listening for that command, so the chord ran off the end and the
-status line kept saying "Unsaved changes". The File menu's Save is now an
-ordinary function that both the menu and the keyboard call, so there is one path
-to disk instead of two that have to agree.
-
-**The Viewer's surround is grey again.** The area around the picture had been
-taking the theme's panel colour. It should not: you cannot judge a grade against
-a tinted surround, which is why the theme has carried a deliberately neutral
-surround colour all along — the Viewer simply was not asking for it. Neutral is
-the default now, and Settings → Appearance → Viewer has a switch to take the
-theme's colour instead if you prefer the look. Same shape of answer as the
-scopes switch: off-spec, opt-in, and squarely a matter of taste.
-
-**The Scopes toolbar no longer prints the frame number.** The Timeline and the
-Viewer both say where the playhead is; a third copy sitting directly above the
-trace was only competing with it.
+**One path to disk.** File → Save is an ordinary function that both the menu and
+the keyboard call, rather than two paths that have to agree.
 
 ### Why a layer drag moves both halves of the Timeline (K-208)
 
-The Timeline is a table in two halves: the outline on the left (names, switches,
-columns) and the lane area on the right (bars, keyframes, waveforms). They are
-built as two separate columns of rows, side by side, with their vertical scrolls
-tied together — which is what lets each half scroll horizontally on its own and
-keeps the whole thing straightforward to reason about.
+The Timeline is a table in two halves — the outline on the left, the lane area on
+the right — built as two columns of rows with their vertical scrolls tied
+together. That is what lets each half scroll horizontally on its own.
 
-The cost of that arrangement showed up the first time somebody tried to animate
-a layer being dragged up or down the stack. The drag gesture lives in the
-outline, because the name is the handle you grab. So the outline knew a drag was
-happening and the lane area did not — the names could slide out of the way while
-the bars beside them sat perfectly still, which reads as the table coming apart.
+The drag gesture lives in the outline, because the name is the handle you grab.
+So the knowledge of a drag must not belong to either half. Two values live on the
+panel itself and are handed to both: **the drag in flight** (which row was
+lifted, which row it would land on) and **the row heights** (how tall each
+layer's block is, counting open fold-out rows). Each half wraps every layer's
+block in the same small widget, which asks one shared function "how far does
+block *n* move right now?". Both halves ask the same question of the same
+numbers, so they answer identically. That function is ordinary arithmetic with no
+widgets in it, so it is tested directly.
 
-The fix is not to merge the two halves into one. It is to stop the *knowledge*
-of the drag from belonging to one of them. Two values now live on the panel
-itself and are handed to both halves:
+Two details. The blocks are moved with a **transform**, not by changing the
+layout, so nothing reflows underneath a gesture in progress and the drop lands
+where the document says it should. And the movement runs at the duration from
+Settings → Interface → Animation level, including zero — an animation the user
+cannot turn off is a bug, not a flourish.
 
-- **the drag in flight** — which row was lifted, and which row it would land on;
-- **the row heights** — how tall each layer's block is, counting the fold-out
-  rows it has open.
+One overlay draws the row seams for each half. Drawing them per row *and* in a
+full-height overlay makes the two disagree by whatever fraction of a pixel the
+scroll offset sits at.
 
-Each half then wraps every layer's block in the same small widget, which asks
-one shared function "how far does block number *n* move right now?" and slides
-it by that much. Both halves ask the same question of the same numbers, so they
-answer identically and move as one row. That function is ordinary arithmetic
-with no widgets in it, so it is tested directly.
+### Hairlines, icons, and the pixel grid (K-209)
 
-Two details worth knowing. The blocks are moved with a **transform**, not by
-changing the layout: the rows keep their real positions, so nothing reflows
-underneath a gesture in progress and the drop lands where the document says it
-should. And the movement runs at the duration from Settings → Interface →
-Animation level, including zero — an animation the user cannot turn off is a
-bug, not a flourish.
+Icons are line art on a 24-unit grid with strokes 1.5 units thick. Drawn at 24
+pixels the lines are 1.5 px; at 16 px they are exactly 1; at 12 px they are 0.75.
+A three-quarter-pixel line does not exist, so the renderer lights the pixels
+either side at partial brightness and one clean stroke becomes two grey ones.
+That is what "crunchy" is — anti-aliasing doing its job on geometry that does not
+fit. **16px is the smallest size at which these icons have a whole pixel to put a
+line in**, which is what [15-DESIGN.md](15-DESIGN.md) asks for.
 
-The same two values also settled an older annoyance: the two halves each used to
-draw their own row seams, and the outline's were drawn twice — once per row and
-once by the overlay that runs the full height of the panel. The two disagreed by
-whatever fraction of a pixel the scroll offset happened to sit at, so the
-outline's rows looked a hair taller than the lanes. The per-row line is gone; one
-overlay draws the seams for each half.
+The second rule applies to any hairline anywhere. A stroke is centred on its
+path, so a 1-pixel line drawn along a pixel boundary covers half of each
+neighbour and comes out grey and doubled. Shifting by half a pixel puts it back
+on a pixel centre — but **only when the stroke is an odd number of screen pixels
+wide**. On a high-DPI display where the line is a full 2 pixels it already covers
+whole pixels, and shifting is what would blur it. At scalings like 150% a stroke
+is 1.5 screen pixels and there is no whole number to land on; that is the nature
+of the thing, not something left undone.
 
-### Why the icons looked crunchy, and what actually fixes it (K-209)
+### Keeping the preview up with the pointer
 
-The complaint was that the icons look rough — and the instinct, reasonably, was
-that they were missing anti-aliasing. They were not. Anti-aliasing was on the
-whole time; it was what was doing it.
+Three separate mechanisms keep a dragged value's picture level with your hand,
+and they are the three places this can go wrong: the asking, the showing, and the
+remembering.
 
-Every icon in the set is drawn as line art on a 24-by-24 grid, with lines 1.5
-units thick. When you draw that icon at some size on screen, the lines scale
-with it: at 24 pixels the lines are 1.5 pixels, at 16 pixels they are exactly 1,
-and at the 12 the panels were using they are 0.75. A three-quarter-pixel line
-does not exist. The renderer's only honest option is to light up the pixels
-either side of where the line should be, each at partial brightness — so a line
-that should be one clean stroke becomes two grey ones. Do that to every stroke
-in every icon and the whole set reads as smeared and unevenly weighted. That is
-the crunch.
+**The asking.** A drag produces values far faster than the engine draws frames,
+so the frontend must choose which to ask for. Dropping any tick that arrives too
+soon after the last one throws away exactly the wrong ones — you slow down, you
+stop, you let go, and those final positions all arrive within a few
+milliseconds. `lib/state/preview_throttle.dart` instead sends the first tick
+immediately and, while the interval runs, *holds* the newest tick rather than
+dropping it. Nothing is discarded without its replacement in hand, and the rate
+is still bounded. The engine does the same on its side — the worker drains its
+queue and keeps only the newest request — so at most one superseded render is
+ever in flight. **The rule: throttle by holding the newest, never by dropping it.**
 
-So the first fix is simply to draw them at a size the strokes fit into. 16px is
-not a taste decision, it is the smallest size at which these icons have a whole
-pixel to put a line in — and it is what the design spec asked for in the first
-place; the code had drifted to 10–13.
+**The showing.** On a zero-copy path the engine names a piece of GPU memory. When
+the size changes it makes a new one, and the frontend registers the replacement
+**before** letting go of the old one — the other order leaves the Viewer with
+nothing to draw for a round trip to the platform runner, which is a blank flash.
+The general rule: **never show less than you were showing a moment ago.**
 
-The second fix is subtler and worth knowing because it applies to any hairline
-you draw anywhere. A stroke is centred on the path it follows: a 1-pixel line
-drawn along the boundary between two pixels covers half of each, and comes out
-grey and doubled rather than crisp. The icons' own geometry sits on whole units
-of that 24 grid, so at 16px every horizontal and vertical line lands exactly on
-a boundary. Shifting the icon by half a pixel puts those lines back on pixel
-centres, where one pixel can hold them. We only do it when the stroke is an odd
-number of screen pixels wide — on a high-DPI display where the line is a full 2
-pixels, it already covers whole pixels and moving it is what would blur it.
-
-None of this helps at display scalings like 150%, where a stroke comes to 1.5
-screen pixels and there is no whole number to land on. That is the nature of the
-thing, not something left undone.
-
-### Why a drag lagged the pointer, and how the preview keeps up
-
-Three separate things made the Viewer feel a step behind while you dragged a
-value, and they are worth understanding as a set because they are the three
-kinds of place this can go wrong: the asking, the showing, and the remembering.
-
-**The asking.** A mouse drag gives you a new value far more often than the
-engine can draw a frame — hundreds of times a second against maybe fifty. So
-the frontend has to choose which positions to ask for. It used to do the obvious
-thing: ignore any tick that arrived less than 20 ms after the last one. The
-trouble is *which* tick that throws away. You drag, you slow down, you stop, you
-let go — and the last few positions all arrive within a few milliseconds of each
-other, so they are all ignored. The picture stays wherever the pointer was
-20 ms before you stopped, until the release commits and a fresh frame is asked
-for. Every drag ended with a visible catch-up.
-
-`lib/state/preview_throttle.dart` is the fix, and it is a small idea: send the
-first tick straight away, and while the interval is running *hold* the newest
-tick rather than dropping it, sending it when the interval is up. Nothing is
-ever discarded without its replacement already in hand, and the rate is still
-bounded. The engine does the same thing on its side — the worker takes
-everything queued and keeps only the newest picture request (`drain_to_newest`)
-— so at most one superseded render is ever in flight. A release cancels any
-held tick, because the commit that follows is a truer statement of the same
-value and will ask for its own frame.
-
-**The showing.** On a zero-copy path the engine draws into a piece of GPU memory
-and tells Flutter "here is the name of that memory". When the size changes (a
-comp resize, or the adaptive tier deciding to render smaller) the engine makes a
-*new* piece of memory with a new name, and the frontend has to register the new
-one with the platform runner. The old code unregistered the current texture
-first and then registered the replacement — leaving the Viewer with nothing to
-draw for the length of a round trip to the runner and back. That is a blank
-flash. Registering the replacement *before* letting go of the old one means the
-last good frame is on screen until there is a newer one to put there, which is
-the rule the whole preview should follow: never show less than you were showing
-a moment ago. The same object now also refuses to start a second registration
-for a texture it is already registering, which used to happen once per frame
-that arrived during the round trip.
-
-**The remembering.** The engine keeps rendered frames so returning to a moment
-is free, and those frames are filed by *position* — composition, frame number,
-preview scale — not by what is in them. So when you commit an edit, nothing about
-any frame's name changes and every held frame has to be thrown away, or the
-Viewer would be served the picture from before your edit. The worker did throw
-them away, but it checked for that at the top of its loop turn, and an idle
-editor's turn is a 200 ms wait on its request channel. Click the eye icon to hide
-a layer and the sequence is: the edit commits and retires the frames; the
-frontend asks for a new frame; the worker wakes with that request and serves
-it — from the caches it has not yet noticed are stale. You get the old picture,
-and because nothing asks again, you keep it until you move the playhead.
-
-The fix is to check immediately before serving anything rather than only at the
-top of the turn. The lesson is the general one about invalidation by polling: if
-a cache is dropped on a schedule but read on demand, there is a window, and the
-window is exactly as long as the schedule. The engine now counts any serve that
-happens with retired caches still in place (`stale_serves`, visible in the cache
-readout), which is how the regression test catches it — a counter that must stay
-at zero is a much easier thing to test than a picture that is sometimes stale.
+**The remembering.** Frames are held under content hashes (below), and a cache
+that is dropped on a schedule but read on demand has a window exactly as long as
+that schedule. So retirement is checked immediately before serving anything,
+never only at the top of a loop turn. The engine counts any serve that happens
+with retired caches still in place (`stale_serves`, visible in the cache
+readout): **a counter that must stay at zero is far easier to test than a picture
+that is sometimes stale.**
 
 ### Why the sound waits a moment before it starts (the pre-roll)
 
-Press play and two things have to begin: the picture and the sound. The sound is
-easy to start — hand the mix to the operating system and it plays on its own. The
-picture is not: the first frame has to be composited, which takes as long as it
-takes.
+Press play and two things must begin. The sound starts instantly — hand the mix
+to the operating system and it plays. The first frame has to be composited, which
+takes as long as it takes. Starting both at the same instant therefore starts
+them at different *times*, and since the sound is the clock everything follows,
+adaptive playback dutifully skips forward to the frame the clock has reached.
 
-Starting them at the same instant therefore starts them at different *times*.
-The sound is already thirty or eighty milliseconds in by the time the first frame
-appears, and because the sound is the clock everything follows, adaptive playback
-then does exactly what it is told: it skips forward to the frame the clock has
-reached. So every press of play began with a small jump, and the busier the comp
-the bigger the jump.
+So playback banks a few frames first. The worker holds the mix aside, renders
+ahead into its ring, and starts the sound when either three frames are banked or
+150 ms have passed — whichever comes first, because a comp too heavy to bank
+three frames quickly must not sit in silence. The clock's zero is taken at that
+moment rather than when the request arrived, so the pre-roll is not mistaken for
+playback time the picture must catch up on.
 
-The fix is the one the scheduler note asks for and it is called a pre-roll: bank
-a few frames first, then start the sound. The worker now holds the mix aside when
-playback begins, renders ahead into its ring as usual, and starts the sound the
-moment either three frames are banked or 150 ms have passed — whichever comes
-first, because a comp too heavy to bank three frames quickly must not sit in
-silence waiting for them. The clock's zero point is taken at that moment rather
-than when the request arrived, so the milliseconds spent pre-rolling are not
-mistaken for playback time the picture has to catch up on.
+### The three-tier cache (K-214, K-215)
 
-### Why the cache meter has one bar per tier
+The most expensive thing Lumit does is composite a frame, and everything about
+how the editor feels comes back to how rarely it has to do that twice. The
+normative specification is [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) §5;
+the reasoning is K-214 and K-215 in [02-DECISIONS.md](02-DECISIONS.md). What
+follows is the idea.
 
-There are three places a finished frame can live: ordinary memory, the graphics
-card, and (eventually) the disk. They hold different things at different rates,
-and since frames stopped travelling as pixels (K-183) the memory tier is only
-used by the scopes — so a Viewer busily banking frames on the card reported
-"nothing held" on the status line and looked broken.
-
-One number cannot answer "what is cached" for any of them, so the meter no longer
-tries: it draws a small bar per tier with the megabytes held beside it, and
-clicking a bar empties that tier alone. The budget for each is in the tooltip and
-in Settings → Performance, because the status line is one line shared with the
-notices and the export progress. All three bars are there now (K-214) — the disk
-one asks before it deletes, since that tier holds files rather than a re-render's
-worth of work.
-
-### Three ways a cache can lie about itself
-
-The VRAM frame cache stopped at 512 MB however large a budget Settings was
-showing, and once it was full, moving the playhead banked nothing new. Those look
-like one bug and were three, each worth knowing as a shape.
-
-**A budget that was recorded as applied without being applied.** The worker keeps
-"what I have already told the cache" so it can spot a change; it seeded that from
-the *wish* — the value the settings had written into a shared slot. A fresh
-renderer's cache holds the built-in default, and the settings' value is usually
-already in that slot by the time a worker starts (restored at launch, or left
-there by the previous project). So the two disagreed from the first turn and the
-worker never noticed: the cache sat at its 512 MiB default all session. The fix
-is to start from "nothing applied yet" so the first turn always applies. The
-general lesson: never seed "what I have done" from "what was asked" — seed it
-from a value that cannot be mistaken for done.
-
-**A fill that gave up instead of choosing.** The background fill refused to render
-once the cache was within one frame of full, on the reasoning that filling past
-the budget would evict what it had just made. True in the limit, but it made the
-cache stick to wherever it first filled: move the playhead and the frames it
-wanted were new, while the frames in the way were far away and stale. What it does
-now is keep a *window* around the playhead, as many frames as the budget holds,
-and let the LRU decide what leaves — which it is good at, because staleness and
-distance from the playhead amount to the same thing here. Giving up is not a
-policy; it is the absence of one.
-
-**A readout that could not see a swap.** The worker mirrors the cache's contents
-for the cache bar and only republishes when the numbers change — bytes used and
-entries held. A cache sitting exactly at its budget trades one frame for another
-of the same size, so both numbers stay put while every frame in it changes. The
-bar went on drawing the old holdings for as long as the cache stayed full, which
-reads as "the fill has stopped" and sent us looking for a bug in the fill. The
-cache now carries a version that every insert bumps, and the mirror watches that
-too. If you mirror a collection, mirror something that changes when its
-*contents* do, not only when its size does.
-
-### The work area could leave the composition, and it took the worker with it
-
-Dragging the work area's start before frame zero killed the render worker. Worth
-following the whole chain, because every link is a habit worth having.
-
-The work area is stored as two times, and nothing checked they were inside the
-comp. Frame numbers derived from them are signed, but the cache fill's are
-*unsigned* — a frame is never negative — so casting a negative in point gave a
-first frame of about eighteen quintillion. The fill then asked for a walk from
-that to frame 363, and Rust's `clamp` panics when its bounds cross: `min > max`.
-That panic is on the worker thread, so the worker died, and every later frame
-request came back "send error" — which is why the Viewer went quiet and pressing
-play threw. One bad drag, and the engine was gone for the session.
-
-Three fixes, at three depths, and all three belong:
-
-**The document refuses to hold it.** The op that stores a work area clamps both
-ends into the comp and refuses a span with nothing left after clamping. That is
-the real fix, because it bounds every caller at once — the drag, the keyboard
-nudge, a project file from an older build — and it is why the handle now simply
-stops at the edge: the panel draws what the document says.
-
-**The frontend does not ask for it.** The helper the drag commits through clamps
-the pointer's frame too. Strictly redundant, and still right: it means a drag
-along the edge is not a stream of refusals being swallowed.
-
-**The engine cannot be killed by it anyway.** `fill_order` treats an impossible
-range as an empty one. A guard against something the layer above now prevents
-sounds like belt and braces, but the rule in docs/14 is not "validate at the
-edges", it is *no panics in engine crates* — and a document from disk is not
-something the ops layer has vetted.
-
-### The three-tier cache, and why editing stopped throwing frames away (K-214)
-
-The most expensive thing Lumit does is composite a frame. Everything about how
-the editor *feels* comes back to how rarely it has to do that twice. This is the
-whole arrangement in plain terms, because it changed shape substantially.
-
-**A frame's name is a hash of what is in it.** Before rendering, Lumit writes
-down everything that could possibly affect the picture — every layer's evaluated
-transform, its effects and their values, masks, blend mode, switches, which file
-each footage layer reads and which frame of it, the transforms it inherits from
-its parents, and the preview resolution — and hashes all of it into one
-128-bit number. Two frames with the same number are guaranteed to be the same
-picture. So a finished frame is filed under that number, and asking for a frame
-means computing the number and looking it up.
-
-Nothing about *where* the frame sits goes into the name. That one decision is
-what the following three behaviours fall out of, and all three are things you can
-feel in the hand:
+**A frame's name is a hash of what is in it.** Before rendering, Lumit hashes
+everything that could affect the picture — every layer's evaluated transform, its
+effects and their values, masks, blend mode, switches, which file each footage
+layer reads and which frame of it, the transforms inherited from its parents, and
+the preview resolution — into one 128-bit number. Two frames with the same number
+are the same picture. Nothing about *where* the frame sits goes into the name, and
+three behaviours you can feel fall out of that one decision:
 
 - **An edit that cannot change a pixel costs nothing.** Renaming a layer, nudging
-  the work area, toggling solo on the only visible layer, adding sound to a layer,
-  moving a marker, changing the opacity of a *hidden* layer: each of these
-  produces exactly the same hashes as before, so every held frame is still held
-  and the cache bar stays green. Until this landed, the cache was named by
-  position — `(comp, frame, scale)` — which does not change when the picture does,
-  so the only safe thing to do on any committed edit was **throw every frame
-  away**. That is what made the bar go blank on a keystroke.
+  the work area, moving a marker, changing the opacity of a hidden layer: same
+  hashes, so every held frame is still held.
 - **Undo is instantly warm.** The restored document asks for the names it asked
-  for before the edit; if they have not been evicted since, they are still there.
-  Nothing is re-rendered to get back to where you were.
-- **There is no invalidation code at all.** No dirty flags, no "which frames could
-  this edit have reached" reasoning — which is a genuinely hard question once you
-  remember that a precomp means editing one composition changes every composition
-  containing it. An edit changes values, values change hashes, and the old entries
-  simply stop being asked for and age out.
+  for before the edit.
+- **There is no invalidation code at all.** No dirty flags, no reasoning about
+  which frames an edit could have reached — a genuinely hard question once a
+  precomp means editing one composition changes every composition containing it.
+  Values change, hashes change, old entries stop being asked for and age out.
 
-**One honest catch, and it had to be fixed for any of this to be safe.** A hidden
-layer contributes nothing to the hash, which is right — it draws nothing. But a
-layer *parented* to it still follows it. So moving a hidden Null moved its
-children on screen while every name stayed the same, and the children kept
-serving frames from before the move. Under the old positional keying that bug was
-harmless (everything was thrown away on every edit anyway); under content keying
-it would show a stale picture. Each layer's contribution now includes the
-transforms of its whole parent chain, and the algorithm version was bumped so
-every frame named under the old scheme stops being addressed.
+**The catch content keying forces you to get right:** a hidden layer contributes
+nothing to the hash, but a layer *parented* to it still follows it. Each layer's
+contribution therefore includes the transforms of its whole parent chain.
 
-**Three places a frame can live, and it can move between them.** Cheapest to
-reach first:
+**Three places a frame can live**, cheapest to reach first: on the graphics card
+as a display texture, in memory as the same frame's bytes, and on disk as a small
+file. Only the disk tier outlives the session. A frame pushed off the card is
+read back and written down rather than dropped, and can be promoted straight back
+up — without that upward half the lower tiers would be bookkeeping with nothing
+to show for it.
 
-1. **On the graphics card** — a finished display texture. Showing one is a single
-   GPU copy; nothing is composited and no pixels cross into the application.
-2. **In memory** — the same frame's bytes. Putting one back on the card is an
-   upload: a fraction of a composite.
-3. **On disk** — a small file per frame in a cache folder. This is the only tier
-   that outlives the session, so a project you reopen tomorrow can be warm.
+Read-back does not stutter the preview because it is never performed on the
+thread the picture is waiting on: the worker *asks* the card for the copy and
+collects the bytes a turn or two later. A bounded number may be in flight at
+once, and anything past that is dropped, costing a re-render and nothing else.
 
-When the card's cache is full and a new frame arrives, the frame that leaves is
-**read back off the card into memory and written to disk** rather than dropped —
-and can be put straight back on the card when it is wanted again. That is the
-"demotion ladder", and without the *upward* half it would be pointless: before it
-existed nothing could turn held bytes into a texture the Viewer shows, so a frame
-that fell out of the card would have been re-composited regardless and the two
-lower tiers were bookkeeping with nothing to show for it.
+Two rules keep the ladder from wasting work. **A frame that came back up is not
+sent down again** — it is already below, so copying it twice is pure traffic.
+And **a frame is written to disk on the way down**, not when memory later forgets
+it, so a session that ends unexpectedly has still banked what it made.
 
-**Why reading a frame back does not stutter the preview.** Copying a frame off
-the graphics card is slow enough to notice, and eviction happens *during* a
-render — on the thread the picture is waiting on. So the read-back is not
-performed there. The worker *asks* the card for it (encodes a copy command and
-returns immediately), and collects the bytes a turn or two later, by which time
-the card has done it alongside whatever it was rendering next. At most four of
-those may be in flight at once, which is what keeps a burst of evictions from
-flooding the bus; anything past that is dropped, and a dropped one costs a
-re-render and nothing else.
+**Filling the disk tier does not wait for eviction.** A cache big enough never to
+fill would otherwise never push anything out, so the tier whose only job is to
+make tomorrow start warm would stay empty — and the more memory you gave it, the
+more certain that became, silently, because the frames really were held on the
+card. So each time the editor has been idle a moment, one held frame not yet on
+disk is copied down. It runs *alongside* the fill that renders new frames: on a
+long composition the fill has work for as long as memory lasts, so "after the
+fill" would have meant never.
 
-Two small rules keep the ladder from wasting work. A frame that came back *up*
-is not sent down again when it leaves — it is already in memory and on disk, so
-copying it down a second time would be pure traffic (this is what stops a long
-scrub over a span bigger than the cache from reading the same frames off the card
-over and over). And a frame is written to disk on the way down, not when memory
-later forgets it, so a session that ends unexpectedly has still banked what it
-made.
+**The idle fill never re-renders a frame it already has somewhere.** It has no
+deadline, so a frame in memory or in a file is fetched rather than made.
+Otherwise opening yesterday's project walks a full disk cache and renders every
+frame of it again.
 
-**Where the disk cache lives.** By default in Lumit's own cache folder, in a
-subfolder named after the project's internal id — which is written into the
-`.lum` and never changes, so an unsaved project caches from the moment it is
-created and still finds its frames after a save and a reopen. Each platform has
-its own idea of where that folder is, and Lumit uses the local one rather than
-inventing a path (the same call the crash journal and the media index already
-make, so there is only ever one Lumit folder):
+**Climb the ladder before the frame is due.** Fetching an existing frame at the
+moment it is wanted costs that frame's own budget for a memory upload, and is
+useless from disk — the bytes come back from another thread after the frame has
+gone past, so it gets composited from scratch anyway. Promotions and disk reads
+now go out over the same window of coming frames that source decodes use.
 
-| | Where the frames go |
-|---|---|
-| Windows | `%LOCALAPPDATA%\Lumit\Lumit\cache\frames\<document id>\` |
-| macOS | `~/Library/Caches/dev.Lumit.Lumit/frames/<document id>/` |
-| Linux | `$XDG_CACHE_HOME/lumit/frames/<document id>/`, or `~/.cache/lumit/…` |
+**Why the cache bar is a photograph rather than a question.** Answering "is this
+frame held?" means *naming* it, which needs the renderer's knowledge of the
+footage files and is far too much work for the thread that paints the interface.
+So the bar leaves a note saying which composition and scale it wants, the render
+worker computes the strip and publishes it, and the bar draws what was last
+published. On a long composition a first pass samples so the bar owes an answer
+for the whole composition immediately — a stripe filling in from the left looks
+like the *cache* filling in from the left — and a refinement pass then walks it in
+bounded chunks, starting under the playhead. Only a *held* sample paints the
+frames it stood for; painting a stride green off one held frame and correcting it
+a moment later would flash cache the user does not have.
 
-On Windows that is deliberately **Local** AppData and not Roaming: a roaming
-profile on a work machine would try to copy the whole cache to a network share at
-logoff, and a frame cache can be tens of gigabytes.
-
-This is the *cache* directory, not the temp directory — temp is emptied on
-reboot, so a project would come back cold every morning. These do survive a
-reboot. What they do allow is the operating system reclaiming the space when a
-disk gets tight (macOS's Optimise Storage and the usual Linux cleaners both treat
-these folders as fair game), which is exactly right for something deletable at
-any time: "warm yesterday, cold today" is possible and is not a fault.
-
-Settings → Performance offers two alternatives: beside the project file, which
-makes the cache travel with the project and is never reclaimed by anyone, or a
-folder you pick, to put it on a faster or roomier drive. Changing the setting
-moves nothing; the old folder is simply no longer looked at, and deleting a cache
-folder by hand is always safe.
-
-**Why the cache bar is a photograph rather than a question.** The stripe under the
-ruler shows which frames are held. Answering that per frame now means *naming*
-each frame — hashing the whole composition at that time — which needs the
-renderer's knowledge of the footage files and is far too much work for the thread
-that paints the interface. So the bar leaves a note saying which composition and
-what scale it is drawing, and the render worker computes the strip and publishes
-it; the bar draws whatever was last published. It is at most a tenth of a second
-stale, blank for a moment after switching compositions, and on a very long
-composition it samples rather than naming all forty thousand frames to draw a
-stripe a thousand pixels wide. Mint means the frame plays now; steel blue means it
-is parked on disk and one promotion away; dimmed means it is held, but at a
-coarser resolution than you are viewing.
-
-### Three things the cache learned afterwards (K-215)
-
-The three-tier cache above shipped with three known gaps, written into the
-backlog rather than papered over. All three are closed now, and each is worth a
-paragraph because each is a different *kind* of gap.
-
-**The disk tier could not tell a dear frame from a cheap one.** The two tiers
-above it evict by the rule the design asks for — throw out whatever is *stale,
-large, and cheap to make again* — because they hold that information in memory
-beside each frame. The disk tier held nothing beside its files, so all it could
-sort by was the one thing a filesystem remembers: when each file was written. It
-therefore deleted the oldest frame even when that frame had taken half a second
-to render and its neighbour had taken two milliseconds.
-
-It now keeps a small **index**: for each parked frame, its size, what it cost to
-render, when it was last wanted, and what preview size it was made at. Two files,
-and the reason there are two is worth knowing, because it is a pattern you will
-meet again. A single file rewritten on every change would rewrite megabytes to
-record one frame. A single file rewritten only occasionally would lose whatever
+**The disk tier keeps an index** of each parked frame's size, cost, last use and
+preview scale, because a filesystem remembers only when a file was written — so
+without one it deletes the frame that took half a second to render in favour of
+the one that took two milliseconds. It is two files, and the reason is a pattern
+worth knowing: a single file rewritten on every change rewrites megabytes to
+record one frame, and a single file rewritten occasionally loses whatever
 happened since — and those frames are *worse than forgotten*, because the files
-are still on the disk taking up room nothing knows to reclaim. So there is a
-snapshot (`index.bin`) rewritten now and then, and a log (`index.log`) with one
-small fixed-size record appended per change. Opening reads the snapshot and
-replays the log. A record half-written when the power went is a partial record at
-the end, and being fixed-size is exactly what makes that detectable — it is
-discarded and the whole ones before it still count. If either file is missing or
-unreadable the folder is walked once and the index rebuilt from it, so a cache
-from an older build, or one whose index was deleted, costs a scan and nothing
-else.
+are still on disk with nothing knowing to reclaim them. So there is a snapshot
+plus an append-only log of fixed-size records. Fixed size is what makes a
+half-written record at the end detectable; it is discarded and the whole ones
+still count. If either file is unreadable the folder is walked once and the index
+rebuilt.
 
-**The cache bar was sampled on a long composition, and now it converges.**
-Drawing the stripe means asking "is this frame held?" per frame, and each answer
-means naming that frame — hashing the whole composition at that moment. On a
-ten-minute composition that is tens of thousands of hashes, so the first version
-sampled: one frame in forty stood for its neighbours. Honest at the width a
-stripe is drawn, and wrong if you zoom in.
+**Where a project caches is the project's business if it wants it to be.** The
+location setting is application-wide by default, with an **Applies to** row
+offering *This project*, which stores the choice inside the `.lum`. Two things
+fall out of it being in the document: it travels with a copy of the project, and
+it is an ordinary undoable, journalled edit. A project that never set one stores
+nothing. The paths themselves are [10-FILE-FORMAT.md](10-FILE-FORMAT.md) §3.
 
-What it does now is two passes. The sampled pass still runs first, because the
-bar owes an answer for the *whole* composition immediately — a stripe that fills
-in from the left looks like the cache filling in from the left, which is a lie
-about something the user is watching closely. Then a refinement pass walks the
-strip in bounded chunks, replacing each sample with the frames it stood for, and
-it starts at the frame last shown and wraps — so the part of the bar under the
-playhead is the part that firms up first. A composition short enough to name in
-one go has a stride of one and its first pass is already the truth. One detail
-that took a moment to get right: only a *held* sample paints the frames it
-skipped. Painting a whole stride green off one held frame and correcting it a
-moment later would flash cache the user does not have.
+**One number cannot answer "what is cached" for three tiers**, so the meter draws
+a bar each with the megabytes beside it, and clicking one empties that tier
+alone. The disk bar asks before it deletes, since that tier holds files rather
+than a re-render's worth of work.
 
-**Where a project caches is now the project's business, if it wants it to be.**
-The location setting was application-wide: every project cached wherever Lumit
-was set to. That is the right default and the wrong only-option — a project
-living on a scratch drive wants its frames on that drive, and a project you hand
-to someone else should carry the choice with it. So the document itself can hold
-a location, and Settings → Performance grew an **Applies to** row: *Everything*,
-which is the setting, or *This project*, which is a field inside the `.lum`.
+**Three shapes of bug a cache invites**, all worth recognising elsewhere:
 
-Two consequences fall out of it being in the document rather than in the
-settings. It travels: copy the project, open it on another machine, and it still
-caches where you said. And it is an ordinary edit — the same op machinery as
-moving a layer — so it is undoable, it is journalled with everything else, and it
-is saved when you save. A project that has never been given a location of its own
-stores nothing at all, so its file does not grow a line for a choice nobody made.
+- **Never seed "what I have already done" from "what was asked."** Seed it from a
+  value that cannot be mistaken for done, or the first comparison agrees by
+  accident and the change is never applied.
+- **Giving up is not a policy.** A fill that refuses to render once the cache is
+  nearly full sticks wherever it first filled. Keeping a *window* around the
+  playhead and letting the LRU decide what leaves is a policy.
+- **If you mirror a collection, mirror something that changes when its contents
+  do**, not only when its size does. A cache at its budget trades one frame for
+  another and both the byte count and the entry count stay put while every frame
+  in it changes.
 
-### Making playback use the cache it has
+**A frame in memory is handed over, not copied.** A 1080p frame is 8 MB, and the
+cache must not hold its lock while the card works. A shared handle (Rust's `Arc`)
+lets the cache and the uploader point at the same bytes, so handing a frame over
+costs adding one to a number. **Textures that promotion made are pooled and
+written over** rather than reallocated per frame; the shared handle also answers
+"is anybody still using this?" without bookkeeping — if the pool holds the only
+remaining share, nothing else can be showing it. Only textures a promotion made
+are reused, because a texture a composite drew into cannot have bytes written
+into it.
 
-The three tiers were built and full, and playback still did not get all it could
-from them. Three things were in the way. None of them changes what the cache
-holds — they change what it costs to get a frame out of it.
+**The decode width and the frame's name must round the same way.** A frame's name
+includes how coarsely it was made, kept to 1% steps for Auto resolution so a hair
+of zoom returns the same frame. Footage carries a second thing in its name — the
+width it was decoded at — and computing that from the *exact* scale rather than
+the rounded one gives two names for what the first rule calls one step. The cache
+bar asks by a rounded scale, so it computed a different name for every frame,
+found none, and drew an empty stripe over a composition that was fully cached.
+Compositions of solids were unaffected, which is why every test of the bar
+passed: they were all built from solids.
 
-**The disk tier was always one step too late.** Reading a frame off disk is done
-by a different thread, and the bytes come back a moment after they are asked
-for — a turn or two of the worker loop. Playback asked for a frame at the moment
-it had to show it, so the bytes always arrived after the frame had gone past, and
-playback composited the frame from the beginning instead. The frames did arrive,
-and they were used the *second* time you played over that part; but a first pass
-over a span that had been parked on disk got no good from it at all. That is most
-of what the disk tier holds when you re-open a project, which is exactly when you
-want it to help.
+### Playback, the sound, and keeping time
 
-Playback already looks ahead: while it makes one frame, it tells the decode
-thread which video frames the *coming* frames will need, so those decodes happen
-alongside. The disk reads now go out in the same place. By the time playback
-reaches the frame, the bytes have arrived and the frame is on the card. Nothing
-waits for a read — a frame that has not turned up is composited as it was before.
+Every-frame playback shows every frame however long it takes, so on a heavy
+stretch the picture stops keeping time and the sound must stop rather than run
+over a picture out of step with it.
 
-**A frame in memory was copied to be put back on the card.** A 1080p frame is
-8 MB. Putting one back on the card handed the uploader a *copy* of those bytes,
-because the cache must not hold its lock while the graphics card works. The fix
-is a shared handle (Rust calls it an `Arc`): the cache and the uploader point at
-the same 8 MB, and the count of who is looking is what keeps it alive. Handing a
-frame over is now the cost of adding one to a number. The same handle goes to the
-disk thread, so a frame that falls out of the card is no longer copied twice on
-its way down.
+What is measured is **the gap between one picture going out and the next** —
+that gap *is* the rate you are watching. One picture arriving late stops the
+sound immediately; **eight in a row arriving on time start it again**. The
+asymmetry is the point: one picture landing on time by chance says nothing about
+the next, so stopping takes the evidence of one and starting takes the evidence
+of many. When it starts, it starts **at the picture** — the sound is moved to the
+frame on screen first, so the two are together by construction rather than by
+hope.
 
-**Every promoted frame made a new texture on the card.** A texture is memory on
-the graphics card, and asking for one is not free. Playback promotes a frame each
-time it passes one, so that was an allocation per frame — while the cache was, at
-the same moment, throwing away a texture of exactly the same size, because a
-promotion pushes something out. So the ones that leave are kept in a small pool
-(four of them) and written over instead.
+Three earlier rules failed in ways worth keeping: measuring how far *ahead* the
+sound had got cannot restart it, because the clock stops reporting when the sound
+stops; waiting for the picture to reach the sound's position cannot work, because
+the sound stopped ahead by however long the slow frame took; and restarting as
+soon as finished frames are waiting stutters, because frames are usually waiting
+even when the run is nowhere near full speed.
 
-The care here is in one question: is anybody still using that texture? A texture
-that the Viewer is showing must not be written over — you would see the wrong
-picture, and no error would be raised. The shared handle answers it without any
-bookkeeping: if the pool holds the *only* remaining share of a texture, nothing
-else can be showing it. Only then is it used again. One more rule, which is about
-what the card allows rather than about safety: a texture that a composite drew
-into cannot have bytes written into it, so only textures that a promotion made
-are kept.
+### The toolbar and the tool model (K-216, K-228)
 
-**And one more, which is not about the cache at all.** Showing a frame made the
-interface ask the engine three questions it did not need to ask. Two Viewer
-widgets show which preview tier playback has settled on, and each asked the
-engine for that number every time it redrew — which is every frame. A third
-asked which route frames take from the engine to the screen, and that one is
-decided when Lumit is built: the answer cannot change while it runs. At 24
-frames a second that is about 72 questions a second before playback does
-anything of use, and it grows with the frame rate.
+**A tool is an answer to one question: what does dragging do?** Not what the
+button does — the button only arms it. One tool is armed at a time for the whole
+application, so there is never a question of which panel thinks it is holding
+what.
 
-Each crossing between the interface and the engine is cheap, and none of these is
-free. So the frame now brings the tier with it — the only thing that can change
-it is a new frame — and the route is read once and kept. A redrawn Viewer bar
-now asks the engine nothing at all, and there is a test that counts the
-crossings and fails if that stops being true.
+**Groups and the little triangle.** Thirteen buttons cover about thirty tools;
+tools doing the same sort of job share a button as After Effects shares them. The
+button shows the one you last used and wears a triangle to say there is more
+underneath; hold or right-click it for the rest. The keyboard does the same
+without the flyout — `Q` arms the shape tool you last had, and `Q` again steps to
+the next and comes round. That "press again to cycle" rule is the one bit of a
+toolbar people notice immediately when it is missing.
 
-### The toolbar, and why it shows tools that do nothing yet (K-216)
+**The chords come from the engine, not the strip.** The toolbar knows only which
+*action name* arms which group, so rebinding a tool in Settings → Keymap changes
+nothing here. Tools sit in a keymap context of their own called `Tools`, which is
+not a panel, so no panel is ever "in" it: a keypress is offered to the focused
+panel first, then to the app-wide table, then to the tools. That ordering lets
+`C` cut a clip when the Timeline has focus and arm the razor everywhere else,
+without either binding knowing the other exists.
 
-Every editor has a strip of tools under its menus, and the Flutter frontend did
-not: the row the old shell had never made it across the port, so the arrow, the
-hand and the pen simply did not exist as things you could pick. That strip is
-back, spanning the window under the menu bar, and this section is what it is
-and what it is not.
-
-**A tool is an answer to one question: what does dragging do?** Not what does
-the *button* do — the button only arms it. With the Selection tool in your hand
-a drag in the Viewer nudges things about; with the Hand tool it slides the
-picture; with the Pen it would drop a mask vertex. One tool is armed at a time
-for the whole application, so there is never a question of which panel thinks
-it is holding what.
-
-**Groups, and the little triangle.** Thirteen buttons cover about thirty tools,
-because tools that do the same sort of job share a button the way After Effects
-shares them — all five shape tools sit under one, all five pen tools under
-another. The button shows the one you last used and wears a small triangle in
-its corner to say there is more underneath; hold it, or right-click it, and the
-rest of the group appears. The keyboard does the same without the flyout: `Q`
-arms the shape tool you last had, and pressing `Q` again while a shape tool is
-armed steps to the next one and comes round again. That "press again to cycle"
-rule is the one bit of a toolbar people notice immediately when it is missing.
-
-**Where the chords come from.** Not from this file, and not from the strip. The
-engine keeps the keymap (see "The keyboard, and why the engine owns it" above),
-and the toolbar only knows which *action name* arms which group —
-`tool.select`, `tool.pen`, and so on. So rebinding a tool in Settings → Keymap
-moves the shortcut and nothing in the toolbar changes or needs to. The tools sit
-in a keymap context of their own called `Tools`, which is not a panel, so no
-panel is ever "in" it: a keypress is offered to the focused panel first, then to
-the app-wide table, and only then to the tools. That ordering is what lets `C`
-cut a clip when the Timeline has focus and arm the razor everywhere else,
-without either binding having to know the other exists.
-
-**Why most of them do nothing.** Only Selection and Hand do any work today —
-both pan the picture, as they did before there was a toolbar — and every other
-tool changes the shape of the pointer over the Viewer and stops there. That is
-deliberate, and it is a decision (K-216) rather than an oversight. The tool set
-is specified: shipping the strip with only the two working tools on it would
-teach a wrong idea of what the application is, and would leave nowhere agreed
-for the rest to appear as they are built. So the whole set is drawn, and each
-unbuilt tool's tooltip says in as many words that arming it changes nothing
-yet — a toolbar that quietly does nothing is far worse than one that tells you
-which of its buttons are still waiting on their behaviour.
-
-**The two switches at the right-hand end.** Snapping, and the workspace strip —
-Edit, Effects, Colour, Audio. Neither is a tool; both had nowhere else sensible
-to live, and the UI spec has always asked for the workspace names to be visible
-in the window chrome rather than buried in a menu. Snapping is, for now, a
-switch nothing reads: same rule as the tools, and the same reason.
+**Unbuilt tools are shown, greyed and unpickable.** The whole specified set is
+drawn, because shipping only the working tools would teach a wrong idea of what
+the application is and leave nowhere agreed for the rest to appear. The refusal
+lives in the state that holds the armed tool rather than in the button — there
+are three ways to arm a tool and only one is a button. A group with nothing built
+in it cannot be pressed; a mixed group opens on one that works and cycles only
+through those. The `ready` flag driving this is the same one the tooltips use, so
+a tool becomes pickable in the commit that makes it do something, and a test pins
+the whole set.
 
 ### Wireframes, and what "selected" means on the picture (K-217)
 
-Before this, the Viewer could show you one box round one layer and give you one
-small square to drag it by. Now the picture behaves the way an editor expects:
-you point at a layer and it lights up, you click and it is selected, you drag it
-and it moves, you drag from empty space and you sweep up everything inside the
-rectangle. This section is what is underneath that.
-
 **A wireframe is a rectangle that knows what it is round.** Every layer has a
-size of its own — a clip is as big as its video, a solid is whatever it was made
-at, a nested comp is the size of the comp inside it — and the box is that
-rectangle pushed through the layer's transform. So it moves, stretches and
-*turns* with the layer rather than staying square to the screen, which is the
-whole reason it is useful: a rotated layer's box tells you which way up it is. A
-Null layer has no picture at all, so it is given a 100×100 box by convention;
-without one you could never grab the very layers rigs are built out of.
+size of its own, and the box is that rectangle pushed through the layer's
+transform — so it moves, stretches and *turns* with the layer rather than staying
+square to the screen. A Null has no picture, so it is given a 100×100 box by
+convention; without one you could never grab the very layers rigs are built out
+of.
 
-**Where those sizes come from, and why they arrive late.** Asking how big a
-video file is means opening the file, and opening files is slow and cannot be
-done in the middle of drawing a frame. So the Viewer keeps a small notebook: the
-easy answers (a solid, a precomp) are read straight from the document and thrown
-away whenever the document changes, and a clip is measured once and remembered
-for the whole session. Until that measurement comes back the layer is treated as
-comp-sized — the same guess the engine itself makes when it cannot read a file —
-and the box quietly corrects itself when the real answer lands.
+Sizes arrive late, because asking how big a video file is means opening it. The
+Viewer keeps a small notebook: easy answers are read from the document and
+dropped whenever it changes, a clip is measured once and remembered for the
+session, and until the measurement lands the layer is treated as comp-sized — the
+same guess the engine makes when it cannot read a file.
 
-**Hit-testing runs backwards through the transform.** "Is the pointer inside this
-layer?" sounds like a question about a shape on screen, and it would be a fiddly
-one: the shape is a rotated, scaled, possibly very squashed quadrilateral. It is
-much easier asked the other way round — take the pointer, run it *backwards*
-through the layer's transform into the layer's own coordinates, and ask whether
-it is between 0 and the width. That is one subtraction and one rotation, it is
-exact at any zoom, and it is why the code has no polygon geometry in it at all.
+**Hit-testing runs backwards through the transform.** Asking whether the pointer
+is inside a rotated, scaled quadrilateral is fiddly; running the *pointer*
+backwards into the layer's own coordinates and asking whether it is between 0 and
+the width is one subtraction and one rotation, exact at any zoom. It is why there
+is no polygon geometry in the code at all. The mask tools use the same inverse.
 
-**The handles.** Eight small squares sit on the box's corners and edge midpoints;
-dragging one asks "what scale would put this corner under the pointer?" and
-writes that. Hold Shift and both directions take the same factor, so the layer
-keeps its proportions. A short bar stands off the top edge with a knob on the
-end: dragging it measures the angle swept about the layer's anchor point and adds
-it to the rotation the layer already had — Shift snaps to 45°. Both are the
-gestures After Effects has, and the bar is deliberately the same shape as AE's,
-because that is where people's hands go.
+**The handles.** Eight squares on corners and edge midpoints; dragging one asks
+what scale would put that corner under the pointer. Shift takes the same factor
+both ways. A bar stands off the top edge with a knob on the end for rotation,
+measuring the angle swept about the anchor; Shift snaps to 45°. A ninth handle is
+the anchor point itself, which pans behind. It grabs from 8 pixels where the
+scale handles grab from 16, and that asymmetry *is* the design: the anchor sits
+in the middle of the layer, which is also where you naturally grab to drag it, so
+a generous target would turn every move into a pan-behind.
 
-**One trap worth knowing, because it cost a working gesture.** Flutter does not
-tell you a drag has started until the pointer has moved a certain distance —
-about 18 pixels. If you ask "what did they grab?" at *that* moment, the pointer
-has already left the handle, which is nine pixels across, and every handle drag
-gets treated as a drag of the layer's body. The fix is to remember where the
-pointer went *down*, separately, and decide from that; the distance already
-travelled is then added into the drag so the layer does not lag behind the
-pointer for the rest of the stroke.
+**Remember where the pointer went down.** Flutter does not report a drag until
+the pointer has travelled about 18 pixels. Ask "what did they grab?" at that
+moment and it has already left a nine-pixel handle; measure a rotation from there
+and a quarter-turn comes out as 45°. Record the press position separately and
+measure from it, adding the distance already travelled so nothing lags. **Any
+gesture whose meaning depends on where it began has to remember where it began.**
 
-**Selecting several.** Shift-click adds a layer to the selection or takes it out
-again; dragging from empty space rubber-bands a rectangle and, when you let go,
-takes every layer *wholly* inside it — a layer the sweep merely clipped is far
-more likely to be an accident than an intention. Under the hood there is now a
-list of selected layers, with the old single "selected layer" kept as its first
-entry, because nearly everything else in the application works on one layer and
-had no reason to change. Deleting now deletes all of them, which is the only
-sensible reading once several boxes are on screen.
+**Selecting several.** Shift-click adds or removes; dragging from empty space
+rubber-bands and takes every layer *wholly* inside — a layer merely clipped is
+more likely an accident than an intention. The band settles the selection when
+you let go rather than clearing it on press, which is what lets the same gesture
+gather mask points belonging to an already-selected layer without dropping that
+layer first. If it catches no points it is the layer sweep it always was, which
+is why there is no "point mode" to switch into.
 
-**And the Hand tool is the same picture with the editing taken out.** It shows
-the boxes of whatever is selected, draws no handles, highlights nothing under the
-pointer, and every drag moves the *view* instead of the layer. That is the entire
-difference between the two tools, and it is why the tool lives in one value the
-whole application reads (see the toolbar section above).
+**The Hand tool is the same picture with the editing taken out** — boxes of
+whatever is selected, no handles, no hover highlight, and every drag moves the
+view. That is the entire difference between the two tools.
 
-### The Zoom tool, and why zooming now flies (K-218)
+### Zoom, and why it flies (K-218)
 
-Three gestures change how big the picture is drawn: the wheel, a click with the
-Zoom tool, and dragging a box with it. They are all the same question in
-different clothes — *what magnification, and what pan, put this where I want
-it?* — so they all go through the same two small functions.
+Three gestures change magnification — the wheel, a Zoom-tool click, and dragging
+a box — and they are one question in different clothes, so they go through the
+same two small functions.
 
-**Anchoring.** The rule every zoom obeys: the point you aimed at does not move.
-Zoom about the cursor and the pixel under it stays under it; sweep a box and its
-middle lands in the middle of the panel. The arithmetic is short — work out
-which comp point is currently under the cursor, then solve the pan that puts
-that same comp point back under the cursor at the new magnification. It is the
-difference between leaning in and teleporting, and it is what the unit tests
-check, one line each, rather than checking a table of expected numbers.
+**Anchoring: the point you aimed at does not move.** Work out which comp point is
+under the cursor, then solve the pan that puts it back under the cursor at the
+new magnification. It is the difference between leaning in and teleporting, and
+it is what the unit tests check, one line each.
 
-**The tool.** Click to zoom in about where you clicked; hold Alt and the pointer
-changes to the zoom-out lens and the click halves instead. Drag a box and the
-picture flies so that box fills the panel; hold Alt and it does the exact
-opposite — everything you can see shrinks into the box you drew, still centred
-on it. That last one is deliberately the *inverse* rather than "some amount of
-zooming out", so Alt-dragging the same box undoes the zoom you have just done. A
-drag of only a few pixels is treated as a click, because otherwise a hand that
-wobbled would fit a three-pixel box to the panel and throw the picture into
-orbit.
+Alt inverts every gesture: click halves instead of doubling, and an Alt-drag
+shrinks everything visible into the box you drew, still centred on it — the exact
+inverse, so Alt-dragging the same box undoes the zoom you just did. A drag of a
+few pixels is treated as a click, or a wobbling hand would fit a three-pixel box
+to the panel and throw the picture into orbit.
 
-**Why it moves instead of jumping.** Changing magnification changes *where you
-are*, and cutting straight there loses your place — the very thing anchoring
-exists to preserve. So the picture travels, over the same short duration the rest
-of the interface uses for motion, and cuts instantly when the shell is set to *No
-animation*. Two details are worth knowing:
+**The travel is geometric, not linear.** Magnification is a ratio: 1× to 8× is
+three doublings, not seven units. Interpolating the number itself makes the first
+half bolt and the second half crawl; interpolating the *logarithm* makes it one
+steady move, for the same reason volume sliders are in decibels. Magnification
+and pan travel from one clock, or the anchor drifts mid-flight where it is most
+visible.
 
-- **The travel is geometric, not linear.** Magnification is a ratio: going from
-  1× to 8× is three doublings, not "seven units". If you interpolate the number
-  itself, the first half of the flight bolts and the second half crawls.
-  Interpolating the *logarithm* makes it one steady move — the same reason
-  volume sliders are in decibels.
-- **The magnification and the pan travel together, from one clock.** Animate
-  them separately and the anchor point drifts in the middle of the flight, which
-  is exactly where it is most visible.
+**The wheel is left alone** — it already arrives as a stream of small steps, and
+a gesture that is already continuous does not want a second continuity on top. A
+fresh frame is asked for when the flight *lands*, not per animation frame.
 
-**The wheel is left alone.** It already arrives as a stream of small steps; laying
-an animation over each one puts the picture behind your fingers. A gesture that is
-already continuous does not want a second continuity on top.
+**Magnification is not resolution.** Magnification is how big the picture is
+drawn and costs nothing. Resolution is how many pixels the engine is asked to
+make. The render scale follows the *panel* — a Viewer docked into a corner is
+genuinely cheap — and must not follow the zoom inside it. Lowering it on zoom-out
+throws away every cached frame for a gesture that only meant "let me see more",
+and raising it on zoom-in is impossible above the composition's own resolution.
 
-**One more thing that happens at the end.** The engine renders the picture at the
-size it is actually shown at, so once the magnification has changed the frame in
-hand is the wrong resolution. A fresh one is asked for when the flight *lands*,
-not on every frame of it — a render per animation frame would cost a great deal
-to show something for 8 milliseconds.
+**Anything drawn per unit of area must be bounded by what is on screen, not by
+what is being looked at.** The transparency checkerboard is a loop of small
+rectangles: fine over a panel, half a million rectangles per frame over an HD
+picture at 800%. It is bounded by the panel and clipped to the picture, with the
+pattern pinned to the picture's corner so panning slides the board with it.
 
-### The Rotation tool, and a cursor we had to draw ourselves (K-219)
+### Drawn pointers (K-219, K-226, K-230)
 
-Pick the Rotation tool and drag anywhere over the picture: the selected layer
-turns. It turns about its **anchor point** — the little cross that appears while
-the tool is in hand — because that is what an anchor is *for*: the pin the layer
-spins on. Hold Shift and the turn locks to 45° steps. Nothing that is not
-selected moves, and clicking picks a layer the same way the Selection tool does.
+Operating systems ship a short, inconsistent list of cursors. Flutter offers
+names for a grabbing hand and a magnifier that Windows does not have; ask there
+and the embedder quietly returns the ordinary arrow — nothing errors, and the
+tool simply looks like no tool at all. So tools that need a pointer the system
+lacks hide the system one over the Viewer and paint their own.
 
-**Why the pointer is painted by hand.** Operating systems ship a fixed set of
-cursors — an arrow, a hand, a text bar, a couple of magnifiers — and "a curved
-rotation arrow" is not among them. Flutter can only ask for one the platform
-already has, so the only way to get After Effects' curved arrow is to hide the
-real pointer while you are over the picture and draw our own in its place.
+That trouble buys something a system cursor could never do: a drawn pointer can
+*change*. The rotation arc leans round the anchor, drawn square to the line from
+the anchor out to your pointer, and tightens towards the corners — measured in
+the *layer's* own coordinates, so a layer on its side still has its corners where
+its corners are. Shape tools and the Pen wear the eyedropper's crosshair, meaning
+*this exact pixel*, with the tool's icon tucked down and to the right so it does
+not sit on the shape you are dragging out; it is drawn twice, a dark copy under a
+bright one, so it reads on white or black. Painting tools get a ring the size of
+the stroke they would leave, following the magnification between a visible
+minimum and a sane maximum, because it is a pointer, not the paint.
 
-That sounds like a lot of trouble for an icon, and it would be, except for the
-thing it buys: a drawn pointer can *change*. Ours does two things a system cursor
-never could.
+**Draw from pointer movement, not from hover.** A `MouseRegion` reports hovering,
+which by definition stops the moment *any* button goes down — including the right
+one, which these tools do not use. A pointer drawn from hover freezes where you
+pressed, inside the very shape you are dragging out. `DrawnPointerRegion` listens
+for movement instead, which is reported whatever the buttons are doing.
 
-- **It leans round the anchor.** The arc is always drawn square to the line from
-  the anchor out to your pointer, so wherever you are on the layer the curve
-  reads as "round the pivot" rather than pointing off in some fixed screen
-  direction.
-- **It tightens at the corners.** Out along an edge the arc is long and lazy;
-  out towards a corner it closes up. The measurement is simple — how equally far
-  out the two axes are from the middle of the layer — and it is done in the
-  *layer's* own coordinates, so a layer lying on its side still has its corners
-  where its corners are.
+**Holding the pointer still.** Some drags aim at a place; some are pure movement,
+like turning a camera. For the second kind, letting the pointer travel is pure
+loss — it wanders into the corner of the screen, stops, and the drag stops with
+it while your hand is still going. There is no "lock the pointer" call on
+Windows, so: remember where it was on button-down and put it straight back after
+each movement. The subtlety is that **putting it back is itself a movement**,
+reported with a delta that exactly cancels the real one — so the drag measures
+each event against the anchor it is pinned to rather than against the previous
+event, and the put-back reads as no movement at all. Where the platform cannot do
+this, the freeze reports that it failed and the drag falls back to reading
+movements between events.
 
-**Turning several at once.** The angle is measured about the first selected
-layer's anchor and then given to all of them, each turning about its own anchor.
-The obvious alternative — every layer measuring its own angle from the same
-pointer — makes a group fly apart as soon as their anchors are in different
-places, which is not a rotation of anything.
-
-**And the same trap as last time, in a new place.** Flutter reports a drag as
-starting *after* the pointer has travelled about eighteen pixels. Measure the
-angle from there and every turn is short by however far that was: a quarter-turn
-drag came out as 45° instead of 90°. The fix is the same one the scale handles
-needed — record where the pointer actually went down and measure from that. Worth
-remembering as a rule: any gesture whose *meaning* depends on where it began has
-to remember where it began.
-
-### Pan behind, and a razor that cuts where you point (K-220)
-
-Two more tools, and they are less alike than their neighbours on the strip: one
-is an After Effects tool copied faithfully, the other is a tool After Effects
-does not have at all.
+### Pan behind, and the razor (K-220, K-221)
 
 **The Anchor point tool moves the pivot without moving the picture.** The anchor
-is the spot a layer spins and scales about, and it is also the spot Position
-places. So moving the anchor on its own makes the layer jump: the same Position
-now means somewhere else. This tool moves the anchor *and* shifts Position by
-exactly the amount that cancels the jump — the pivot slides, the picture sits
-still. After Effects calls that **pan behind**, and the name is the whole idea:
-you are sliding the layer behind its own pivot.
+is what a layer spins and scales about and also what Position places, so moving
+it alone makes the layer jump. This tool moves the anchor *and* shifts Position by
+exactly the amount that cancels the jump. After Effects calls it **pan behind**,
+and the name is the idea: you are sliding the layer behind its own pivot. Shift
+locks to one axis measured on the *screen*, because it is about the gesture your
+hand is making; Ctrl snaps the pivot to the layer's corners, edge midpoints and
+centre, with the snap distance measured in screen pixels so it is as fussy as
+your zoom allows. The whole drag commits as **one** edit: land half of it and the
+picture moves, which is the one thing this tool promises not to do.
 
-Two modifiers, both borrowed from AE:
+**The Razor cuts where you click**, as Premiere's does — After Effects has no
+razor at all. Shift-clicking cuts every layer under that moment. What a cut does
+depends on the layer: a Sequence layer gets an **edit point** and stays one
+layer; anything else **splits into two layers**, both keeping the source,
+effects, masks, parent and keyframes. What makes that invisible is `start_offset`
+— where the layer's own time zero sits on the comp's clock — which both halves
+keep, so each shows exactly the frames it showed before and every keyframe stays
+on the comp frame it was on.
 
-- **Shift** locks the drag to one axis — measured on the *screen*, not on the
-  layer, because it is about the gesture your hand is making. A sideways drag
-  stays sideways even on a layer that is lying at an angle.
-- **Ctrl** (Cmd on a Mac) snaps the pivot to the layer's own key points: the four
-  corners, the four edge midpoints, and the centre. That is how you put a pivot
-  *exactly* on a corner rather than nearly on one. The snap distance is measured
-  in screen pixels, so it is as fussy as your current zoom allows — a layer shown
-  tiny snaps from further away in its own coordinates, which is right, because
-  what you can see is what you can aim at.
+**Cutting a retimed layer leaves a keyframe at the cut, on both halves.** The two
+halves' speed ramps are not two curves that look alike, they are the same curve,
+so bending one would bend the other. The key changes nothing because of **de
+Casteljau's algorithm**: a cubic bezier splits at any point into two cubics whose
+union is the original curve — not an approximation, the same curve. The shape
+survives by construction; the code only converts the pieces back into the
+speed-and-influence numbers a keyframe stores. The test samples the curve two
+hundred times, inserts the key, samples again, and demands the lists agree.
 
-The whole drag commits as **one** edit, not four. The anchor pair and the
-position pair only mean anything together here: land half of it and the picture
-moves, which is the one thing this tool promises not to do.
+**There is one razor.** The Timeline's "Arm razor" menu item arms the toolbar's
+tool rather than a flag of its own — two bits of state meaning the same thing
+will disagree the first time somebody uses the other one.
 
-**The Razor is Premiere's tool, not After Effects'.** AE has no razor at all — it
-splits layers with a keyboard shortcut at the playhead, and its `C` key cycles
-camera tools. Lumit has one because Lumit has Sequence layers, the strip where
-clips sit end to end, and cutting those is a mouse job. So the razor behaves the
-way Premiere's does: **it cuts where you click**, and Shift-clicking cuts every
-layer that is under that moment, not just the one you clicked.
+### Masks (K-222, K-223, K-224)
 
-That is a change: the razor used to cut at the playhead wherever you clicked,
-which made it a slow way of pressing Ctrl+Shift+D. The specification always said
-"click a clip to cut it at that time"; now it does.
+A mask is a shape drawn on a layer deciding which of its pixels show. The engine
+has always had them; what was missing was a way for the interface to read and
+change them.
 
-**What a cut actually does depends on the layer.** A Sequence layer holds clips,
-so cutting it puts an **edit point** inside it and it stays one layer. Anything
-else **splits into two layers** — both keep the source, the effects, the masks,
-the parent and the keyframes, and they meet exactly at the cut. The trick that
-makes that invisible is a field called `start_offset`: it says where the layer's
-own time zero sits on the comp's clock, and both halves keep the same one. So
-each half shows exactly the frames it showed before, and every keyframe stays on
-the comp frame it was on. Without that, the second half would rewind to its own
-beginning and the whole thing would be useless.
+**A mask crosses the bridge as its path** — a list of vertices, each a position
+plus two handles, one for the curve arriving and one for the curve leaving. A
+corner has both handles zero; a smooth vertex has them pointing opposite ways.
+That is exactly how the engine stores it, so the numbers cross unchanged.
 
-**And there is only one razor.** The Timeline's menu still has "Arm razor", but
-it now arms the toolbar's tool rather than a flag of its own. Two bits of state
-that both mean the same thing will disagree the first time somebody uses the
-other one.
-
-**One bug this shook out, worth remembering.** The Timeline's "Arm razor" menu
-item stopped working the moment the razor moved onto the toolbar — you could
-click it, the tool armed, and the lanes carried on as though nothing had
-happened. The reason is a Flutter habit worth knowing: watching an object only
-tells you about *that* object. The panel watches the shell's UI state, but the
-armed tool lives on its own little notifier hanging off it, so nothing told the
-panel to redraw. It looked right again the instant anything else happened to
-rebuild the panel, which is the worst kind of bug — it works while you are
-testing it and fails while you are using it. The panel subscribes to the tool
-directly now.
-
-### Cutting a speed ramp without bending it (K-221)
-
-When the razor cuts a layer, both halves keep *everything* — same source, same
-effects, same speed map. That is what makes the cut invisible. It is also a
-problem the moment the layer is retimed: the two halves' speed ramps are not
-two curves that happen to look alike, they are literally the same curve. Bend
-the first half's speed afterwards and the second half bends with it.
-
-So the razor leaves a keyframe behind, at the cut, on both halves. Now each half
-has an end of its own to hold and can be reshaped without disturbing its
-neighbour. Premiere does the same thing to a speed ramp it cuts.
-
-**The interesting part is that the key changes nothing.** A cut that altered the
-ramp it was cutting would be worse than no cut at all. The trick is a piece of
-old, exact geometry called **de Casteljau's algorithm**: the curve between two
-keyframes is a cubic bezier, and a cubic can be split at any point into *two
-cubics whose union is the original curve*. Not a close approximation — the same
-curve, exactly. So the shape survives by construction; all the code has to do is
-convert the split pieces back into the speed-and-influence numbers a keyframe
-stores, which is just running the usual conversion backwards.
-
-The test for it is the honest kind: sample the curve two hundred times across
-the span, insert the key, sample again, and demand the two lists agree.
-
-### The pivot is a handle now
-
-The Selection tool's box grew a ninth handle: the anchor point in the middle.
-Dragging it pans behind — the pivot moves, the picture stays put — exactly as the
-Anchor point tool does, with the same Shift and Ctrl behaviour.
-
-One number in there is worth explaining, because it looks like a mistake. The
-scale handles grab from 16 pixels away; the anchor grabs from 8. That asymmetry
-*is* the design. The anchor usually sits in the middle of the layer, which is
-also the most natural place to grab a layer to drag it about. Give it the same
-generous target as the corners and every attempt to move a layer would pan behind
-instead — the pivot sliding away while the layer sat still, which reads as the
-drag being broken rather than as a different gesture. So the pivot has to be
-aimed at.
-
-### Masks, and the seam that was missing (K-222)
-
-A **mask** is a shape drawn on a layer that decides which of its pixels show.
-The engine has had them all along — the shape model, the maths for rectangles
-and ellipses and stars, and a renderer that applies them. What it did not have
-was a way for the *interface* to see them: no call to read a layer's masks, none
-to add one, none to change one. So the first half of this work was building that
-seam, and the second half was the tools that use it.
-
-**A mask crosses the bridge as its path.** A path is a list of vertices, and each
-vertex is a position plus two "handles" — one for the curve arriving, one for the
-curve leaving. A corner is a vertex whose handles are both zero; a smooth curve is
-one whose handles point opposite ways. That is exactly how the engine stores it,
-so the numbers cross unchanged rather than being translated into some frontend
-shape and back.
-
-**The coordinates are the layer's own.** A mask is written in the same pixel grid
-the layer's content uses, not in the composition's. That is what makes a mask
-travel with its layer: move the layer, rotate it, scale it, and the mask goes
-along without anything having to recalculate it, because the mask was never
-described in comp coordinates in the first place. The tool takes where you
-clicked on screen and runs it *backwards* through the layer's transform — the
-same inverse the wireframe uses to answer "is the pointer inside this layer?".
+**The coordinates are the layer's own**, not the composition's. That is what
+makes a mask travel with its layer under any transform without anything
+recalculating it.
 
 **Two kinds of drawing gesture.** Rectangle, rounded rectangle, ellipse and star
-are *boxes*: you drag two opposite corners and the shape is built to fit, with
-Shift keeping the box square. The polygon is a *path*: each click plants a corner,
-and a click-and-drag plants a point and pulls a pair of curve handles out of it —
-mirrored, so the curve runs smoothly through, unless you hold Alt, which breaks
-the pair and leaves the incoming handle where it was. Clicking the first point
-again closes the shape, and closing it is what applies it. Escape throws the path
-away; Backspace takes back the last point.
+are *boxes*: drag two opposite corners, Shift keeps it square. The Pen is a
+*path*: each click plants a corner, a click-and-drag pulls out a mirrored pair of
+curve handles unless you hold Alt, clicking the first point closes the shape, and
+closing is what applies it. Escape discards; Backspace takes back the last point.
+The polygon tool drags out a regular polygon, the star without its notches — the
+path gesture is the *Pen's*, which is what a pen tool is everywhere.
 
-**Every edit is the whole list.** The engine's operation for masks replaces a
-layer's entire mask list at once. That sounds wasteful and is exactly right:
-adding, deleting, renaming, inverting and reordering are then all *the same
-operation*, each is trivially reversible (the old list is the undo), and each is
-one undo step. It is the same choice the effect stack makes.
+**Every edit is the whole list.** The engine's mask op replaces a layer's entire
+mask list at once, which sounds wasteful and is exactly right: adding, deleting,
+renaming, inverting and reordering become the same operation, each trivially
+reversible (the old list is the undo) and each one undo step. The effect stack
+makes the same choice.
 
-**Where they show up.** In the Timeline, a layer with masks grows a **Masks**
-heading in its twirl-down — above Effects, because masks are applied before
-effects are, so the list reads top-to-bottom in the order the picture is actually
-built. The heading only appears once there is a mask, exactly like Effects. And on
-the picture, the selected layer's masks are outlined with a mark on each vertex.
+**Moving points.** Every vertex of a selected layer's mask is a small square you
+can click, Shift-click, or sweep. Travel is put through each layer's inverse map
+before being added to the point, so a selection spanning two layers with
+different transforms still moves together under the pointer. The picture catches
+up on release rather than following live: the live-preview path patches a layer's
+*transform* into a copy of the document, and a mask path does not fit through it.
 
-**One thing it will not do yet, and says so.** In After Effects, drawing a shape
-with *nothing* selected makes a **shape layer** — a layer that is nothing but
-vector art. Lumit's engine has no such layer kind: the list of what a layer can be
-(footage, solid, precomp, text, camera, sequence, adjustment, null) has no "shape"
-in it. Rather than quietly doing nothing, the tool posts a line in the status bar
-telling you to select a layer. The alternative — making a solid and putting a mask
-on it, and calling that a shape layer — would be a lie in the layer list, and one
+**Masks appear above Effects** in a layer's twirl-down, because masks are applied
+before effects, so the list reads top-to-bottom in the order the picture is
+built. The heading appears only once there is a mask.
+
+**Drawing with nothing selected posts a notice rather than inventing a layer.**
+After Effects would make a shape layer; Lumit's engine has no such layer kind.
+Making a solid and putting a mask on it would be a lie in the layer list, and one
 that would have to be untold the day the real thing arrives.
-
-### The Pen and the polygon, put the right way round (K-223)
-
-A correction worth recording, because the shape of the mistake is instructive.
-The click-a-point, drag-for-a-curve, click-the-first-point-to-close gesture was
-built on the **polygon** tool. It is the **Pen's** gesture — that is what a pen
-tool is, in After Effects and in every drawing application — and the polygon
-tool's job is to drag out a polygon, the same way the star tool drags out a star.
-
-So the builder moved to the Pen, and the polygon became a regular five-sided
-figure inscribed in the box you drag, first point at the top: the star without
-its notches.
-
-Two things came out of the swap. The class called `PolygonDraft` is now
-`PathDraft`, because it was never about polygons — it is a path being built, and
-a name that says what a thing is beats a name that says where it happened to live
-first. And the five shape tools had been shipped with their "is this built?" flags
-still saying no, so every one of their tooltips claimed the tool did nothing while
-it was busily drawing masks. That flag is a promise about what the interface tells
-you, so a wrong one is not a cosmetic bug; there is now a test that pins the whole
-set of built tools, which will fail the next time one ships out of step.
-
-### Moving a mask's points (K-224)
-
-A mask you have drawn is only half a tool until you can correct it. With the
-Selection tool in hand and the layer controls showing, every vertex of every
-selected layer's mask is drawn as a small square, and those squares are things
-you can aim at: click one to take it, `Shift`-click to add or remove, or sweep a
-rectangle from empty space to take every point inside it. Drag any selected point
-and the whole set moves.
-
-**One gesture, two meanings, decided by what is under it.** The rubber band that
-has always selected *layers* now selects *points* when there are points in it —
-and only when the points belong to a layer that is already selected. If it
-catches none, it is the layer sweep it always was. That is how After Effects
-behaves, and it is why there is no "point mode" to switch into.
-
-**The subtle bit: when the selection is decided.** The band used to clear the
-selection the instant you pressed. Harmless when it was layers being swept —
-fatal for points, because the press would drop the very layer whose points you
-were about to gather. So the band now leaves everything alone while you drag it
-and settles the selection when you let go. As a side effect the boxes stay on
-screen while you aim, which is better anyway.
-
-**Why the maths is per layer.** Your mouse moves a certain number of pixels *on
-the screen*; a mask is written in its layer's own coordinates, which may be
-scaled and turned. So the travel is put through each layer's inverse map before
-it is added to the point — two points on the picture, subtracted — which means a
-selection spanning two layers with quite different transforms still moves
-together under the pointer, as it appears to.
-
-The picture itself catches up when you let go rather than following live: the
-live-preview path patches a layer's *transform* into a copy of the document, and
-a mask path does not fit through it. The marks moving is enough to aim by. What
-is still owed: a vertex's two **bezier handles** cannot be dragged, and mask paths
-cannot be keyframed.
 
 ### Typing on the picture (K-225)
 
-Text has been its own kind of layer in the engine for a long time — the
-renderer draws it, the document holds the words, the size and the colour — but
-the only way to make one was a menu item that dropped the word "Text" in the
-middle of the composition. The **Type tool** puts one where you point: click
-empty picture and a text layer is made there with a caret in it; click an
-existing text layer and you are editing that one instead. Click somewhere else
-and the first edit ends and the next begins.
+The **Type tool** makes a text layer where you point, or edits the one you click.
+A layer you never typed into is removed when the edit ends — an empty line draws
+no pixels, so a stray click would otherwise leave an invisible row.
 
-**A click you did not mean leaves nothing behind.** A layer the tool made that
-you never typed into is removed when the edit ends. An empty line draws no
-pixels, so all a stray click would otherwise leave is an invisible row in the
-Timeline.
+**Why the words appear before the layer changes.** Writing the layer on each
+keystroke would make undo take a sentence apart one letter at a time. So while
+you type the Viewer shows a *preview* — the same trick a dragged layer uses,
+where the engine renders a copy of the project with one value changed — and the
+layer is written once, when you stop. One session of typing is one undo step.
 
-**Why the words appear before the layer changes.** Every edit to a document is
-an undo step. If the layer were written on each keystroke, pressing undo after
-typing a sentence would take the sentence apart one letter at a time. So while
-you type, the Viewer is shown a *preview* — the same trick a dragged layer uses,
-where the engine renders a copy of the project with one value changed and the
-project itself is never touched — and the layer is written once, when you stop.
-One session of typing is one undo step.
-
-**The caret is ours, the text is the engine's.** Underneath the tool is a real
-text field, invisible, which is why arrows, selection, backspace, paste and
-accented characters all behave the way they do everywhere else. What you see on
-the picture is the engine's own rendering of the layer; what the tool draws over
-it is the caret. Its position is a guess — half the point size per character —
-and it is *the same guess the engine makes* when it decides where a text layer's
-anchor point goes. Two guesses that agree keep the caret at the end of the line;
-the real widths of the letters live inside the rasteriser and have never crossed
+**The caret is ours, the text is the engine's.** Underneath is a real invisible
+text field, which is why arrows, selection, backspace, paste and accented
+characters behave as they do everywhere. The caret's position is a guess — half
+the point size per character — and it is *the same guess the engine makes* when
+placing a text layer's anchor. Two guesses that agree keep the caret at the end
+of the line; the real letter widths live in the rasteriser and have never crossed
 the bridge. When they do, both guesses get replaced together.
 
-**The anchor trick.** A brand-new layer holds an empty line, which has no middle
-to be anchored in, so its anchor sits at the line's left end. When the edit ends
-the anchor moves to the middle of whatever you typed — and Position moves by
-exactly the amount that cancels it, the same pan-behind sum the Anchor point
-tool commits. So the words never appear to shift, and afterwards the layer
-scales and turns about itself.
+**The anchor trick.** A new layer holds an empty line with no middle to be
+anchored in, so its anchor sits at the line's left end. When the edit ends the
+anchor moves to the middle of what you typed and Position moves by exactly the
+amount that cancels it — the same pan-behind sum. The words never appear to
+shift, and afterwards the layer scales and turns about itself.
 
-**Vertical type is not built.** The text engine lays out one horizontal line.
-The tool stays on the strip and says so, like every other unbuilt tool.
-
-### Tool options: fill, size, and the stroke that is not there yet (K-225)
-
-The toolbar now shows the settings the armed tool draws with, where After
-Effects shows them: a fill swatch and a size while a type tool is in hand, a
-fill swatch, a stroke swatch and a stroke width while a shape tool, the Pen or a
-paint tool is.
-
-Fill and size are live — they say what the next text layer is made with. The two
-stroke controls are **deliberately disabled**. Nothing in the engine strokes
-anything: an outline round a shape and a paint stroke are both engine features
-that do not exist yet. They are shown rather than hidden for the same reason the
-unbuilt tools are shown — the strip is the specification, and a control that is
-visibly not working yet tells you more than a gap does.
-
-**A bug this turned up.** The Viewer listened for the tool being changed only so
-it could change the mouse pointer, and handed the rest of the panel to that
-listener as a *cached* subtree — the standard Flutter trick for not rebuilding
-something that has not changed. But it had: every tool overlay lives in that
-subtree, so picking a tool changed the pointer while the overlays underneath
-stayed armed for whatever had been in hand when the panel last redrew. It only
-ever worked because a tool is usually picked before anything else makes the
-Viewer redraw. The stage is now built inside the listener.
-
-### What the pointer tells you (K-226)
-
-An operating system ships a short list of mouse pointers — an arrow, a hand, a
-crosshair, an I-beam — and "rounded rectangle tool" is not on it. So the tools
-that draw hide the system pointer while they are over the picture and paint
-their own. Three tools already did this (Rotation, Anchor point, Razor); now
-they all share one piece of code.
-
-**Shape tools and the Pen** wear the same crosshair the eyedropper does — the
-pointer that means *this exact pixel*, which is precisely what the first corner
-of a shape or the first point of a path is — with the tool's own icon tucked
-down and to the right. The icon is drawn twice, a dark copy a pixel across and
-the bright one over it, so it stays readable whether the picture under it is
-white or black. Down and to the right because a badge above or to the left would
-sit on top of the shape you are dragging out.
-
-**The painting tools get a ring instead.** A brush is not a point, it is a
-width, so the pointer is a circle the size of the stroke it would leave, with a
-dot in the middle for where that stroke starts. The ring follows the
-magnification — zoom in and it grows with the picture — and is kept between a
-visible minimum and a sane maximum, because it is a *pointer*, not the paint.
-Nothing is actually painted: the engine has no paint strokes at all, so clicking
-says so.
-
-**Type points where the words will start.** Horizontal type takes the system's
-own I-beam. Nobody ships a sideways one, so vertical type has a drawn beam,
-turned a quarter turn, which tells you which way the line will run before you
-type anything. And the point you click is now the *start* of the line rather
-than its middle: the new layer's anchor begins at the left end of the baseline,
-so the words run to the right of where you clicked and sit on it.
-
-### A tool you cannot pick, and why that is the honest option (K-228)
-
-Every tool in the specification is on the strip, including the ones nothing is
-built behind. Until now those could be armed: you would pick the Roto brush, drag
-on the picture, and nothing would happen. The tooltip said so, but a tooltip is
-read by someone who already suspects something is wrong.
-
-So an unbuilt tool is now **shown, greyed and unpickable**. The button declines,
-the flyout row declines, and the keyboard shortcut declines, because the refusal
-lives in the state that holds the armed tool rather than in the button — there
-are three ways to arm a tool and only one of them is a button. A group with
-nothing built in it (Roto, Puppet) cannot be pressed at all; a group with a
-mixture (the Pen, whose four editing siblings are unbuilt) opens on one that
-works and cycles only through those.
-
-The flag driving this is the same `ready` flag the tooltips already used, so
-nothing has to be kept in step by hand: a tool becomes pickable in the commit
-that makes it do something.
+**Tool options.** The toolbar shows what the armed tool draws with: a fill swatch
+and size for type, fill, stroke and stroke width for shapes and the Pen. The
+stroke controls are deliberately disabled — nothing in the engine strokes
+anything yet — shown rather than hidden for the same reason unbuilt tools are
+shown.
 
 ### Moving the camera by dragging (K-229)
 
-A 3D composition is looked at through a **camera layer**, and the three camera
-tools move it with the mouse instead of by typing numbers into the Timeline.
+A camera has a position, three rotations and a *zoom* (focal distance in comp
+pixels). The plane at the camera's own position renders 1:1 and centred, which is
+another way of saying **the camera's position is the point it is looking at**;
+the eye sits `zoom` behind that. Once you see that, the three tools are almost
+trivial:
 
-**The trick is what Lumit's camera numbers mean.** A camera has a position,
-three rotations and a *zoom* — the focal distance, in composition pixels. The
-plane sitting at the camera's own position is the one that renders at exactly
-1:1 and centred, which is another way of saying **the camera's position is the
-point it is looking at**; the eye itself sits `zoom` behind that, along the way
-the camera is pointed. Once you see that, the three tools are almost trivial:
-
-- **Orbit** changes only the rotations. The eye is worked out from the position
-  *and* the rotations, so turning the camera swings the eye round the point it is
-  looking at — a real orbit, with no extra pivot to store anywhere.
+- **Orbit** changes only the rotations. The eye is derived from position *and*
+  rotations, so turning swings the eye round the point being looked at — a real
+  orbit with no extra pivot stored anywhere.
 - **Track** slides the position along the camera's own left-right and up-down
-  axes. The eye goes with it, so the picture slides under your pointer the way it
-  does under the Hand tool.
-- **Dolly** slides the position along the way the camera is pointed, taking the
-  eye and the subject in or out together. How far a pixel of drag goes is a
+  axes.
+- **Dolly** slides it along the way the camera points. A pixel of drag moves a
   fraction of how far away things already are, so a wide shot covers ground and a
   close-up creeps.
 
-**One thing had to match the renderer exactly**: the camera's three axes are
-built in the same order the compositor builds its matrix (`Ry · Rx · Rz`). Get
-that wrong and asking for "forward" sends the camera sideways — so the axes have
-their own tests against hand-computed cases.
+**The axes are built in the same order the compositor builds its matrix**
+(`Ry · Rx · Rz`). Get that wrong and "forward" sends the camera sideways, so the
+axes have tests against hand-computed cases. **Dragging up lifts the camera over
+the top, which means tilting it to look down** — every application that gets this
+backwards is described as having an inverted camera, so it has its own test. The
+pitch stops just short of straight down rather than wrapping, because one pixel
+past the pole flips the picture over.
 
-**And one classic bug has its own test**: dragging *up* has to lift the camera
-over the top, which means tilting it to look *down*. Every application that gets
-this backwards is described as having an inverted camera. The pitch also stops
-just short of straight down instead of wrapping, because one pixel past the pole
-flips the whole picture over.
-
-While a camera tool is in hand, the point the camera is looking at is marked on
-the picture, and the Orbit tool draws the faint circle it swings around. That
-point is always the middle of the frame — which is worth saying out loud, because
-it is the same statement as "the camera looks at the middle of the picture".
-
-What is missing: a separate **point of interest** (After Effects' two-node
-camera, where the pivot is a thing you can move on its own), the **Unified
-Camera** tool that puts all three gestures on the three mouse buttons, and
-depth-of-field handles on the picture.
-
-### Pointers we have to draw ourselves, and why (K-230)
-
-A mouse pointer on a desktop is not a picture the application supplies — it names
-one from a list the operating system ships, and the system draws it. That list is
-short and it is not the same list everywhere. Flutter offers names for a
-*hand-that-grabs* and a *magnifier*, but Windows has neither; ask for one there
-and the embedder quietly hands back the ordinary arrow. Nothing errors, nothing
-warns: the tool simply looks like no tool at all, which is exactly what the Hand
-and Zoom tools were doing.
-
-So they join the Rotation, Anchor point and Razor tools in the other approach:
-hide the system pointer over the Viewer and **paint our own** on top of the
-picture. An open hand that closes while it drags, and a magnifier whose sign
-follows the `Alt` key. It costs a small painter each and it is the only way to
-have them.
-
-Drawn pointers have one trap worth knowing. The thing that reports "the mouse is
-here" as it moves over a region is a `MouseRegion`, and it reports *hovering* —
-which by definition stops the moment a button goes down. A pointer drawn from
-hover alone therefore freezes where you pressed and sits inside the very shape
-you are dragging out — and it stops for *any* button, including the right one,
-which none of these tools do anything with. Taking the position from each tool's
-own drag was only half a fix: left-drag followed, right-click still pinned the
-pointer until the button came up. So they all share one small wrapper,
-`DrawnPointerRegion`, which listens for pointer *movement* rather than hovering.
-Movement is reported whatever the button is doing, so the drawn pointer keeps up
-either way — and it is only about where the mark is painted: no tool has gained a
-gesture on a button it did not already answer to.
+Still missing: a separate point of interest (AE's two-node camera), the Unified
+Camera tool, and depth-of-field handles on the picture.
 
 ### One gesture, one undo step (K-230)
 
-The document is a stack of small, exactly reversible edits called **ops**, and
-`Ctrl+Z` undoes one of them. That is a good design with one obligation: *an op
-has to be what a person would call an action*. A layer's Position is two separate
-numbers in the model — x and y, which is what makes it possible to animate them
-apart — so writing them as two ops meant one drag became two undo steps, and the
-first `Ctrl+Z` put the layer back along one axis only. It reads as broken undo
-rather than as two honest edits.
+The document is a stack of small, exactly reversible **ops**, and `Ctrl+Z` undoes
+one. That design carries one obligation: **an op has to be what a person would
+call an action.** Position is two numbers in the model — which is what lets them
+animate apart — so writing them as two ops made one drag two undo steps, and the
+first undo moved the layer back along one axis only.
 
-The engine has an op that carries several edits and undoes them together
-(`Op::Batch`), and the fix everywhere is to reach for it. A drag writes both
-axes at once. A scale writes both axes at once. Making a text layer used to be
-*three* ops — a layer saying "Text" in the middle of the composition, an empty
-line written into it, and a move to where you clicked — so undoing walked back
-through two states nobody had ever seen; it is one op now, and the layer arrives
-already saying what it should say, where it should be. Finishing a typing session
-is one more. So the first undo takes back the words and the very next removes the
-layer, which is the whole of what a person means by "undo the text I just made".
+`Op::Batch` carries several edits and undoes them together, and it is the answer
+everywhere: a drag writes both axes at once, a scale writes both axes at once,
+and making a text layer is one op rather than three, so it arrives already saying
+what it should, where it should be. The first undo takes back the words and the
+next removes the layer, which is the whole of what a person means.
 
-### Holding the pointer still (K-230)
+### Asking the engine nothing in a rebuild path (K-230, K-231)
 
-Some drags aim at a place — you are moving *this* handle to *that* point — and
-some are pure movement. Turning a camera is the second kind: nothing on the
-picture is being aimed at, only the direction and distance you drag. For those,
-letting the pointer travel is pure loss. It wanders out of the panel, and
-eventually into the corner of the screen, where it stops moving and the drag
-stops with it while your hand is still going.
+**If a rebuild can be caused by moving the mouse, nothing in it may cross the
+bridge.** The Hand tool and the camera tools redraw on every pointer movement —
+they have to, something is following your mouse — so anything their build method
+asks is asked at the rate a mouse reports, a hundred times a second or more.
+Answers that cannot change without an edit landing are worked out once and held.
 
-Every 3D application answers this the same way, and there is no "lock the
-pointer" call on Windows to do it with. So: remember where the pointer was when
-the button went down (`GetCursorPos`), and after each movement put it straight
-back (`SetCursorPos`). It never appears to move, and the movements still arrive.
+There is a subtler layer. The held copy of the document — the read model — used
+to *check* with the engine that the document had not moved before answering. That
+grouped to once per frame while a frame was being built, but outside a frame it
+checked every single time, and "outside a frame" is exactly where mouse handlers
+run. Drawing does not need the check at all: when the document changes, the model
+is refreshed and everything drawing from it repaints anyway. The catch is that
+the check was quietly covering for something else — a panel that commits its own
+edit and then draws saw its own edit only because the check happened to notice.
+**Every panel that commits refreshes the model itself: tell the model, do not
+make drawing ask.**
 
-The one subtlety is that *putting it back is itself a movement*, and the system
-reports it like any other — with a delta that exactly cancels the real one. So
-the drag measures each event against the anchor it is pinned to rather than
-against the previous event; the put-back then reads as no movement at all, which
-is the truth of it. Where the platform cannot do this at all, the freeze reports
-that it failed and the drag falls back to reading movements between events, as it
-always did.
+The standing bridge-call budget tests are what hold this line.
 
-### Why zooming in used to freeze the window (K-230)
+### Who gets the Delete key (K-234)
 
-Behind a transparent picture there is a checkerboard, so you can tell "black" from
-"nothing". It is drawn the obvious way: a loop over the area, one small rectangle
-per light square. That is fine when the area is a panel — a few thousand squares
-— and a disaster when the area is the *picture*, because a picture at 800% on an
-HD composition is 15360 pixels across. Half a million rectangles, every frame,
-for the few thousand actually on screen. The window stops responding, and it
-looks as though the *rendering* has become slow when nothing is being rendered
-differently at all.
+Flutter calls **every** registered key handler, in registration order, and does
+not stop at the first that says it dealt with the key. So a panel cannot claim a
+key simply by handling it. That is harmless while handlers disagree about which
+keys they care about, and a bug the moment two want the same one: `Delete` in the
+shell means "remove the selected layers", `Delete` in the Timeline with a mask
+row picked means "remove that mask", and both fired — the mask went, and so did
+the layer it was drawn on.
 
-The board is bounded by the panel now and clipped to the picture, with the
-pattern still pinned to the picture's own corner so panning slides the board with
-the picture rather than the picture swimming over a fixed grid. Its cost is the
-same at every magnification. The general lesson is worth keeping: **anything
-drawn per-unit-of-area must be bounded by what is on screen, not by what is being
-looked at.**
-
-### Magnification is not resolution (K-230)
-
-Two different numbers are easy to confuse. **Magnification** is how big the
-picture is drawn — a display setting, changing nothing about the frame itself.
-**Resolution** is how many pixels the engine is asked to make, which costs real
-time and fills the cache.
-
-The Viewer tells the engine what fraction of full resolution to render, and that
-number follows the *panel*: a Viewer docked into a corner is genuinely cheap,
-which is the point. It must not follow the zoom inside the panel. Zooming out
-used to lower it, which threw away every cached frame and made the picture
-coarser — for a gesture that only meant "let me see more of it". Zooming in
-cannot raise it either: above the composition's own resolution there is nothing
-left to render.
-
-### Asking the engine nothing (K-230)
-
-There is a standing rule in this frontend that a rebuild must not re-read the
-world (see the bridge-call budget tests). Two tools broke it in the same way and
-it is a useful shape to recognise.
-
-Both the Hand tool and the camera tools redraw on **every movement of the
-pointer** — they have to; something is following your mouse. Redrawing then runs
-the panel's build method again, and if that method asks the engine anything, the
-question is asked at the rate a mouse reports, which is a hundred times a second
-or more. Panning re-read the composition's settings, its size, and every layer's
-source item. Hovering with a camera tool re-found the active camera, which reads
-a focal distance and a frame rate across the bridge.
-
-Neither answer can change without an edit landing, so both are worked out once
-and held until one does. The rule generalises: **if a rebuild can be caused by
-moving the mouse, nothing in it may cross the bridge.**
-
-There was one more layer of this, and it is the subtle one (K-231). The held
-copy of the document — the read model — used to *check* with the engine that the
-document had not moved before answering any question about it. Cheap-sounding,
-and it grouped those checks to one per frame while a frame was being built. But
-outside a frame it checked every single time, and "outside a frame" is exactly
-where mouse handlers run. So the cheapest question in the application was being
-asked hundreds of times a second, to be told nothing had changed, because moving
-a mouse changes no document.
-
-Drawing does not need the check at all: when the document does change, the model
-is refreshed and everything drawing from it is repainted anyway. So the paint
-path reads the copy in hand and asks nothing. The catch — and it is worth
-knowing, because it bit during this change — is that the check was quietly
-covering for something else: a panel that commits its own edit and then draws
-would see its own edit only because the check happened to notice. Every panel
-that commits now refreshes the model itself, which is what the Timeline and
-Effect controls were already doing. **Tell the model; do not make drawing ask.**
-
+`LumitUiState` holds one nullable `deleteClaim`. The Timeline points it at its
+own handler while it is on screen, and the shell's `Delete` calls it first: `true`
+means it was dealt with and the shell stands down. **When two parts of the
+application want the same key, do not race them — have the broader one ask the
+narrower one first.** A selection inside a layer is narrower than the layer.
 
 ### A performance test that cannot see the bug (K-233)
 
-Worth knowing on its own, because it wasted two rounds of the owner reporting
-the same thing.
+A budget test hovered the mouse over the Viewer with a camera tool in hand and
+asserted that no calls crossed to the engine. It passed. The application was
+making a call on every frame.
 
-The frontend has *budget tests*: they count how many calls cross to the engine
-during one interaction, and fail if the number jumps. One of them hovered the
-mouse over the Viewer with a camera tool in hand and asserted the count was
-zero. It passed. The application was making a call on every single frame.
-
-The reason is a detail of how Flutter's test harness works. `await tester.pump()`
-draws a frame but does **not** move the clock, so every frame in the test carries
-the same timestamp. The read model groups its work "once per frame" by comparing
-that timestamp — so as far as it was concerned the whole twenty-move gesture was
-one frame, and it did its work once. In a running application every frame has a
-new timestamp, and the work happened sixty times a second.
+`await tester.pump()` draws a frame but does **not** move the clock, so every
+frame in the test carries the same timestamp. The read model groups its work once
+per frame by comparing that timestamp, so the whole twenty-move gesture looked
+like one frame and the work happened once. In a running application every frame
+has a new timestamp.
 
 The fix is one argument — `tester.pump(const Duration(milliseconds: 16))` — and
-the lesson is bigger than the argument: **a performance test that cannot
-reproduce the conditions it is guarding does not merely fail to catch the bug,
-it certifies that the bug is not there.** When a budget reads zero, check that
-it can read non-zero: break the thing on purpose and watch the number move.
-### Who gets the Delete key (K-234)
-
-Every keyboard shortcut in Lumit is registered the same way: the panel (or the
-shell) hands Flutter a function and says "call me on every key press". The catch
-is in *every*. Flutter calls **all** of them, in the order they registered, and
-it does not stop at the first one that says "I dealt with that". So a panel
-cannot claim a key simply by handling it — the shell's own handler for the same
-key has already run, or is about to.
-
-That was harmless while the handlers disagreed about *which* keys they cared
-about, and became a bug the moment two of them wanted the same one. `Delete` in
-the shell means "remove the selected layers". `Delete` in the Timeline, with a
-mask row picked, means "remove that mask". Both fired: the mask went, and so did
-the layer it was drawn on.
-
-The fix is a single question the shell asks before it acts. `LumitUiState` holds
-one nullable function called `deleteClaim`; the Timeline points it at its own
-"delete the selected masks" while it is on screen, and the shell's `Delete` calls
-it first. `true` means "that key was mine, I have dealt with it" and the shell
-stands down; `false` means "nothing of mine was selected" and the shell deletes
-the layers as it always did. One place decides, so the two answers cannot both
-happen.
-
-The general shape is worth keeping: **when two parts of the application want the
-same key, do not race them — have the broader one ask the narrower one first.**
-A selection inside a layer is narrower than the layer, so it is asked first.
-
-### Why a bigger cache made the disk one useless
-
-A hole in the three-tier cache, and an instructive one: the symptom was the
-opposite of what you would guess from the cause.
-
-A frame got onto disk one way. The card's cache filled up, a frame was pushed
-out to make room, and on its way out it was read back and written to disk. That
-works — as long as the cache *fills up*. Give it more memory than a session ever
-uses, say 10 GB on a roomy card, and it never fills, so nothing is ever pushed
-out, so nothing is ever written to disk. The tier whose only job is to make
-tomorrow start warm stayed completely empty. And the more memory you gave the
-cache, the more certain that became.
-
-It was also silent. The cache bar was green all session, because the frames
-really were held — on the card. Then you restarted and it was blank, because
-none of them had ever reached a file.
-
-The ladder now has a second way down, for when there is time to spare. Each time
-the editor has been idle for a moment, one held frame that is not on disk yet is
-copied down. The frame stays on the card and keeps serving the Viewer; what
-travels is a copy. It uses the same non-blocking read-back an eviction uses — ask
-the card for the pixels, collect them a moment later — and no more of those may
-be in flight than before, so it cannot get in the picture's way.
-
-One detail worth the sentence: the backup runs *alongside* the fill that renders
-new frames, not after it. Waiting for the fill to finish sounds tidier, but on a
-long composition the fill has frames to make for as long as the memory lasts —
-so "after the fill" would have meant "never", which is exactly how long the disk
-tier stayed empty.
-
-**Climbing the ladder before the frame is due.** Rendering runs ahead of the
-clock, so a frame is usually made before it is shown. Fetching one that already
-exists did not: whichever rung it was sitting on, it was climbed at the moment
-the frame was wanted, inside the turn that had to deliver it.
-
-From memory that is one upload — quick, but it came out of that frame's own
-budget instead of out of the slack that running ahead exists to build up. From
-disk it was worse than slow, it was useless: the read goes to another thread and
-the bytes come back a moment later, so a copy asked for at the instant the frame
-was due always arrived after it had gone past, and the frame was composited from
-scratch anyway.
-
-Both are now fetched over the same window of coming frames that source decodes
-already use. By the time playback reaches the frame it is a texture on the card
-and nothing is composited at all.
-
-The idle fill follows the same rule, and it matters most right after the backup
-above has done its work: **the fill never re-renders a frame it already has
-somewhere.** It has no deadline — that is the whole point of it — so a frame in
-memory or in a file is fetched, not made. Without that rule, opening yesterday's
-project would walk a full disk cache and render every frame of it again, which is
-precisely what the cache exists to prevent.
-
-**The cache bar that went blank over video.** Worth recording, because the
-symptom pointed away from the cause.
-
-A frame's name includes how coarsely it was made. For Auto resolution that is
-kept to 1% steps — zoom the Viewer by a hair and you get the same frame back
-rather than an identical one under a new name. But footage has a second thing in
-its name: the width it was decoded at. And that width was worked out from the
-exact scale rather than the rounded one. At 1920 wide, 0.4235 gave 813 pixels
-and 0.4240 gave 814 — one step by the first rule, two names by the second.
-
-The bar is where it showed. It asks the engine by a scale rounded to a
-thousandth, which is almost never the exact number the render used, so it worked
-out a different name for every frame than the one it had been filed under, found
-none of them, and drew an empty stripe over a composition that was entirely
-cached and playing perfectly.
-
-A composition of solids was fine the whole time, because a solid's name has no
-decode width in it. That is why it looked like a fault in video footage, and why
-every test of the bar passed: they were all built from solids.
-
-Both rules now round the same way, so the width in the name is the width the
-pixels really were. A footnote worth having: resizing the window by less than a
-percent no longer re-decodes the footage either.
-
-**The sound that would not stop, and would not come back.** Three rules, two of
-them wrong, and each wrong in a way worth remembering.
-
-Every-frame playback shows every frame however long it takes, so on a heavy
-stretch the picture stops keeping time. Lumit's answer is to stop the sound
-rather than let it run over a picture that has fallen out of step with it.
-
-The first rule measured **how far in front of the picture the sound had got**,
-and stopped it at half a second. It also never started it again: the clock stops
-reporting the moment the sound stops, so the only test that could have restarted
-it could not run at all. One slow frame took the sound away for the rest of the
-run.
-
-The second rule tried to start it again by **waiting for the picture to reach the
-moment the sound had got to** — which cannot work, because the sound stops
-*ahead* of the picture by however long the slow frame took. Thirty seconds of
-rendering leaves it thirty seconds ahead; if the composition ends before the
-picture gets there, the sound never returns.
-
-The third started the sound again as soon as **finished frames were waiting**.
-But frames are usually waiting at the instant a picture goes out, even when the
-run as a whole is nowhere near full speed — so the sound came back on the very
-next picture, stopped, came back, and to the ear never stopped at all. It just
-stuttered.
-
-What is measured now is the obvious thing: **the gap between one picture going
-out and the next.** That gap *is* the rate you are watching. One picture arriving
-late stops the sound immediately, because sound over a picture that has stopped
-keeping time is the whole complaint. Eight in a row arriving on time starts it
-again — one picture landing on time by chance says nothing about the next, so
-stopping takes the evidence of one and starting takes the evidence of many.
-
-And when it starts, it starts *at the picture*: the sound is moved to the frame
-on screen first, so the two are together by construction rather than by hope.
-
+the lesson is bigger: **a performance test that cannot reproduce the conditions
+it is guarding does not merely fail to catch the bug, it certifies that the bug
+is not there.** When a budget reads zero, check that it can read non-zero: break
+the thing on purpose and watch the number move.

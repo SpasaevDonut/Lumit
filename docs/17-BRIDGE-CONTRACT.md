@@ -46,10 +46,8 @@ crates/lumit-core, -project,    the engine (unchanged by the bridge)
     [05-ARCHITECTURE.md](05-ARCHITECTURE.md) - engine crates never know the UI
     exists - is unbroken. The bridge is not an engine crate; it is the seam.
 - The Viewer render path goes through `lumit-render`'s headless renderer
-    (`lumit_render::headless`), an **engine** crate the egui frontend drives too.
-    Until K-178 that compositor lived inside `lumit-ui` and the bridge had to depend
-    on the egui frontend to reach it - a deliberate temporary edge logged as K-175,
-    now retired. The bridge depends on no frontend at all.
+    (`lumit_render::headless`), an **engine** crate. The bridge depends on no
+    frontend at all (K-178 retired the last such edge).
 - Long-running work (decode, export, beat detection) runs on worker threads with
     channels inside the engine; the bridge exposes progress through poll functions
     the frontend calls on a cadence.
@@ -83,14 +81,9 @@ undo step:
     pixels without producing a hundred commits, journal writes and undo entries.
     Only the release commits.
 
-The predecessor — a hand-written `extern "C"` surface passing whole documents as
-JSON text — was deleted once every panel had moved across (K-179). Its shape
-explains the two rules above: it is exactly what they exist to avoid.
-
 ### The four binding rules
 
-These are the contract. Three of them survived the change of transport unchanged
-(K-179); the fourth did not, and the difference matters.
+These are the contract.
 
 1. **No panic crosses the boundary.** A panic must never unwind into Dart —
     unwinding across languages is undefined behaviour
@@ -118,10 +111,9 @@ These are the contract. Three of them survived the change of transport unchanged
     notified *after* the store's own lock is dropped, because it crosses into
     Dart and a lock held across that boundary is forbidden.
 
-4. **The library is required, not optional.** The previous transport bound
-    symbols by name and degraded to placeholder behaviour when the `.dll` was
-    absent; flutter_rust_bridge compares a content hash at start-up and refuses
-    to run against a mismatched or missing library. So `cargo build -p
+4. **The library is required, not optional.** flutter_rust_bridge compares a
+    content hash at start-up and refuses to run against a mismatched or missing
+    library; there is no degraded placeholder mode. So `cargo build -p
     lumit_bridge` is a build dependency of the Flutter tests, and a stale library
     fails loudly rather than misbehaving quietly. Widget tests therefore drive
     the **real engine** — see `flutter_ui/test/frb/frb_test_support.dart` for why
@@ -259,10 +251,5 @@ that read-back is gone.
 calling thread and are honest follow-ups in [TODO.md](TODO.md); they function
 today, the conversion is a threading refactor, not a missing capability.
 
-## See also
-
-- [05-ARCHITECTURE.md](05-ARCHITECTURE.md) - crates, threads, the dependency rule.
-- [06-RENDER-PIPELINE.md](06-RENDER-PIPELINE.md) - how a frame is produced.
-- [GUIDE.md](GUIDE.md) - the plain-English tour of the codebase.
-- [archive/flutter-port/](archive/flutter-port/) - the historical record of the
-    egui-to-Flutter port that produced this seam (frozen; not maintained).
+The historical record of the port that produced this seam is frozen in
+[archive/flutter-port/](archive/flutter-port/).

@@ -113,12 +113,10 @@ chosen so none of this requires a rewrite.
 
 ## Standing rules
 
-- Performance gates run in CI on every merge ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md));
-  a regression blocks the merge, phase work notwithstanding.
-- Every feature lands with its spec section, tests, and glossary compliance
-  ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) definition of done).
-- Docs are canonical: if implementation must diverge, the doc changes first (or in the same
-  change), with a decision-log entry when it reverses a K-number.
+Every gate below is subject to [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md) §10 (the
+definition of done) and the CI performance gates of
+[13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.3. A regression blocks a merge, phase
+work notwithstanding.
 
 ## Open questions
 
