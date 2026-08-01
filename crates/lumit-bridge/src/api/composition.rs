@@ -423,7 +423,10 @@ impl CompositionReference {
                 outer.height,
             ),
         );
-     /// Precompose one or more layers into a new composition (docs/07 §13.4, K-068).
+        self.add_at_top(layer)
+    }
+
+    /// Precompose one or more layers into a new composition (docs/07 §13.4, K-068).
     ///
     /// `layer_ids` are the layers in `self` to precompose.
     /// `name` is the name of the new composition.

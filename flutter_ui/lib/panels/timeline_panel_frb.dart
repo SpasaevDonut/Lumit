@@ -35,6 +35,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../shell/precompose_dialog_frb.dart';
 import '../state/comp_model.dart';
 import '../state/comp_time.dart';
 import '../state/drag_payloads.dart';
@@ -698,8 +699,13 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     final comp = ui.selectedComp;
     final layers = ui.selectedLayers.value;
     if (comp == null || layers.isEmpty) return false;
-    ui.setSelection([comp.precompose(layers: layers)]);
-    ui.model.refresh();
+    showPrecomposeDialogFrb(
+      context: context,
+      comp: comp,
+      selectedLayers: layers,
+      ui: ui,
+      workspace: ui.workspace,
+    );
     return true;
   }
 

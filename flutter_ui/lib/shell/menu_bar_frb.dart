@@ -20,7 +20,6 @@ import 'package:uuid/uuid.dart';
 
 import '../state/dock.dart';
 import '../state/file_dialogs.dart';
-import '../state/workspace.dart';
 import '../widgets/controls.dart';
 import 'command_palette_frb.dart';
 import 'comp_settings_frb.dart';

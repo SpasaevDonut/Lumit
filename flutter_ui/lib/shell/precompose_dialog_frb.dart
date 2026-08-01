@@ -9,11 +9,8 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 
-import '../icons/icons.dart';
 import '../main.dart';
-import '../state/comp_model.dart';
 import '../state/workspace.dart';
-import '../theme/theme.dart';
 import '../widgets/controls.dart';
 
 /// Show the Pre-compose dialogue and execute precompose on confirm.
