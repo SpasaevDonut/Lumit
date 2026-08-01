@@ -59,26 +59,38 @@ Future<void> showPrecomposeDialogFrb({
             openNewComp: openNewComp,
           );
 
-          final layerIds = layers.map((l) => l.internallayerId).toList();
-          final leaveAttributes = !moveAttributes && layers.length == 1;
-
-          final newPrecompLayer = comp.precompose(
-            layerIds: layerIds,
-            name: name,
-            leaveAttributes: leaveAttributes,
-            adjustDuration: adjustDuration,
-          );
-
-          ui.setSelection([newPrecompLayer]);
-          ui.notifyListeners();
-
-          if (openNewComp) {
-            final sourceItem = newPrecompLayer.getSourceItem();
-            if (sourceItem case ItemReference_Composition(:final field0)) {
-              ui.setSelectedComp(field0);
+          final uniqueLayerIds = <UuidValue>{};
+          final layerIds = <UuidValue>[];
+          for (final l in layers) {
+            if (uniqueLayerIds.add(l.internallayerId)) {
+              layerIds.add(l.internallayerId);
             }
           }
-          close(null);
+
+          final leaveAttributes = !moveAttributes && layerIds.length == 1;
+
+          try {
+            final newPrecompLayer = comp.precompose(
+              layerIds: layerIds,
+              name: name,
+              leaveAttributes: leaveAttributes,
+              adjustDuration: adjustDuration,
+            );
+
+            ui.setSelection([newPrecompLayer]);
+            ui.notifyListeners();
+
+            if (openNewComp) {
+              final sourceItem = newPrecompLayer.getSourceItem();
+              if (sourceItem case ItemReference_Composition(:final field0)) {
+                ui.setSelectedComp(field0);
+              }
+            }
+          } catch (e) {
+            debugPrint('Precompose failed: $e');
+          } finally {
+            close(null);
+          }
         },
         onCancel: () => close(null),
       ),

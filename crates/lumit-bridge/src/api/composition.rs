@@ -444,6 +444,10 @@ impl CompositionReference {
         use lumit_core::model::{Composition, MotionBlur, ProjectItem};
         use lumit_core::ops::{AutoFolderKind, Op};
 
+        let mut layer_ids = layer_ids;
+        layer_ids.sort();
+        layer_ids.dedup();
+
         if layer_ids.is_empty() {
             return Err(BridgeError::InvalidLayer);
         }
