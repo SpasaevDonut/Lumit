@@ -416,6 +416,17 @@ class LumitUiState extends ChangeNotifier {
 
   void requestTogglePlay() => togglePlayRequest.value++;
 
+  /// Bumped when `Ctrl+Shift+P` asks for the command palette.
+  ///
+  /// A notifier for the same reason as [togglePlayRequest]: the palette's list
+  /// of commands is the menu bar's, declared beside the menu items so the two
+  /// cannot drift into different ideas of what "New composition" does. The
+  /// shortcut asks for the palette rather than building a second list of its
+  /// own — which would be exactly the drift that note warns about.
+  final ValueNotifier<int> paletteRequest = ValueNotifier(0);
+
+  void requestPalette() => paletteRequest.value++;
+
   /// Bumped each time a rendered frame reaches the Viewer, on any of the three
   /// transports. Watched by anything that redraws when the picture does — the
   /// Timeline's cache bar, the Scopes panel.
@@ -836,6 +847,7 @@ class LumitUiState extends ChangeNotifier {
     selectedLayer.dispose();
     selectedLayers.dispose();
     activePanel.dispose();
+    paletteRequest.dispose();
     super.dispose();
   }
 
@@ -1072,6 +1084,10 @@ class _LumitAppViewState extends State<LumitAppView> {
         } else {
           state.toggleRetime(layer);
         }
+      case 'palette.open':
+        // The menu bar owns the palette's list of commands, so the key asks
+        // for it rather than assembling a second one (docs/07 §12).
+        ui.requestPalette();
       case 'layer.duplicate':
         final layer = ui.selectedLayer.value;
         if (layer == null) {

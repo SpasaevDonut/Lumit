@@ -32,6 +32,7 @@ import 'package:lumit_flutter/src/rust/api/keymap.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
 import '../state/comp_model.dart';
@@ -442,7 +443,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       return;
     }
     setState(() {
-      ui.selectedLayer.value = null;
+      // Clears the list as well as the primary — `_syncSelection` only follows
+      // the primary the other way (one layer set becomes the whole selection),
+      // so dropping it alone would leave the list holding what was let go.
+      ui.clearSelection();
       _selectedProperties.clear();
       _laneKeySelection.clear();
       _graphKeySelection.clear();
@@ -450,11 +454,22 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     });
   }
 
-  /// Select a layer by click. Its properties are not selected with it: a click
-  /// on a layer's name means "this layer", and leaving a property of the layer
-  /// before it lit is the highlight belonging to nothing on screen that K-203
-  /// went looking for.
-  void _selectLayer(LumitUiState ui, LayerReference? layer) => setState(() {
+  /// Select a layer by click: plain replaces, Ctrl toggles, Shift extends the
+  /// range down the stack — the same three rules a property row follows
+  /// ([_selectProperty]), because a selection that behaved one way for rows
+  /// and another for layers would be two selections to learn.
+  ///
+  /// The list is the shell's (K-217), so this hands the work to
+  /// [LumitUiState.setSelection] and [LumitUiState.toggleSelected] rather than
+  /// keeping a second idea of what is selected: the Viewer's boxes, Delete and
+  /// the split all read that one list.
+  ///
+  /// A layer's properties are not selected with it: a click on a layer's name
+  /// means "this layer", and leaving a property of the layer before it lit is
+  /// the highlight belonging to nothing on screen that K-203 went looking for.
+  void _selectLayer(LumitUiState ui, LayerReference? layer,
+          {List<BridgeLayerEntry> among = const []}) =>
+      setState(() {
         if (ui.selectedLayer.value?.internallayerId != layer?.internallayerId) {
           _selectedProperties.clear();
           _graphKeySelection.clear();
@@ -464,7 +479,33 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           // at once, which is the ambiguity K-203 set out to remove.
           _highlighted = null;
         }
-        ui.selectedLayer.value = layer;
+        if (layer == null) {
+          ui.clearSelection();
+          return;
+        }
+        final keys = HardwareKeyboard.instance;
+        if (keys.isControlPressed || keys.isMetaPressed) {
+          ui.toggleSelected(layer);
+          return;
+        }
+        final held = ui.selectedLayer.value;
+        if (keys.isShiftPressed && held != null) {
+          final a = among.indexWhere(
+              (e) => e.layer.internallayerId == held.internallayerId);
+          final b = among.indexWhere(
+              (e) => e.layer.internallayerId == layer.internallayerId);
+          if (a >= 0 && b >= 0) {
+            // The clicked layer stays the primary — it is the one just asked
+            // for, and everything that acts on one layer acts on that.
+            ui.setSelection([
+              layer,
+              for (var i = a < b ? a : b; i <= (a < b ? b : a); i++)
+                if (i != b) among[i].layer,
+            ]);
+            return;
+          }
+        }
+        ui.setSelection([layer]);
       });
 
   /// Fill in any layer's has-audio answer we do not have, off the build.
@@ -647,6 +688,139 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     return true;
   }
 
+  /// `Ctrl+Shift+C`: pack the selection into a comp of its own (docs/07 §4.4).
+  ///
+  /// The whole move is the engine's — one batch, one undo step — so all this
+  /// does is hand it the selection and put the layer it gets back in the
+  /// selection's place, because the Precomp layer is what the user is now
+  /// working on.
+  bool _precomposeSelection(LumitUiState ui) {
+    final comp = ui.selectedComp;
+    final layers = ui.selectedLayers.value;
+    if (comp == null || layers.isEmpty) return false;
+    ui.setSelection([comp.precompose(layers: layers)]);
+    ui.model.refresh();
+    return true;
+  }
+
+  /// `[` and `]`: move the selected layers so that end lands on the playhead;
+  /// with `Alt`, trim that end to it instead (docs/07 §4.4).
+  ///
+  /// A move carries the layer's content with it and a trim does not, and
+  /// neither may run past the source or turn a bar inside out. Those are the
+  /// bar drag's rules, so they are read from the bar drag's own clamp rather
+  /// than written a second time here — a key and a drag that disagreed about
+  /// where a layer may end would be two different edits wearing one name.
+  bool _moveOrTrimSelection(LumitUiState ui, String action) {
+    final comp = ui.selectedComp;
+    final selected = ui.selectedLayerIds;
+    if (comp == null || selected.isEmpty) return false;
+
+    final grab = switch (action) {
+      'layer.trim.in' => BarGrab.trimIn,
+      'layer.trim.out' => BarGrab.trimOut,
+      _ => BarGrab.move,
+    };
+    final atIn = action == 'layer.move.in' || action == 'layer.trim.in';
+    final frame = ui.playheadFrame.value;
+    final (fpsNum, fpsDen) = ui.model.fpsExact;
+
+    var changed = false;
+    for (final entry in ui.model.layers) {
+      if (!selected.contains(entry.layer.internallayerId)) continue;
+      final span = entry.info.span;
+      final inFrame = frameOfTime(span.inPoint, fpsNum, fpsDen);
+      final outFrame = frameOfTime(span.outPoint, fpsNum, fpsDen);
+      final delta = clampBarDelta(
+        grab: grab,
+        delta: frame - (atIn ? inFrame : outFrame),
+        inFrame: inFrame,
+        outFrame: outFrame,
+        bounds: _barBounds[entry.layer.internallayerId.toString()] ??
+            BarBounds.free,
+      );
+      if (delta == 0) continue;
+      final newIn = inFrame + (grab == BarGrab.trimOut ? 0 : delta);
+      final newOut = outFrame + (grab == BarGrab.trimIn ? 0 : delta);
+      if (newOut <= newIn) continue;
+      entry.layer.setSpan(
+        span: BridgeSpan(
+          inPoint: comp.timeOfFrame(frame: newIn),
+          outPoint: comp.timeOfFrame(frame: newOut),
+          // Moving carries the content with the bar, so time zero travels too.
+          startOffset: grab == BarGrab.move
+              ? comp.timeOfFrame(
+                  frame: frameOfTime(span.startOffset, fpsNum, fpsDen) + delta)
+              : span.startOffset,
+        ),
+      );
+      changed = true;
+    }
+    if (changed) ui.model.refresh();
+    return changed;
+  }
+
+  /// One reveal key: the selected layers open showing exactly what the key
+  /// names, and pressing it again shuts them (docs/07 §4.3).
+  ///
+  /// AE's `P`, `S`, `R`, `T`, `A`, `E`, `M` and `Shift+L`. `U` is not one of
+  /// these — it asks the engine what qualifies and has its own cycle
+  /// ([_revealTap]); these know their row up front. `R` on a 3D layer reveals
+  /// all three rotation rows, because the engine lists them as three groups.
+  bool _reveal(LumitUiState ui, String action) {
+    final selected = ui.selectedLayerIds;
+    if (selected.isEmpty) return false;
+    setState(() {
+      for (final entry in ui.model.layers) {
+        if (!selected.contains(entry.layer.internallayerId)) continue;
+        final id = entry.layer.internallayerId.toString();
+        final wanted = _revealPaths(id, entry, action);
+        // Already showing this and nothing else: the key is a toggle, so the
+        // second press shuts the layer rather than reopening what is open.
+        final showing = _open.contains(id) &&
+            wanted.every(_open.contains) &&
+            !_open.any((p) => isUnderPath(id, p) && !wanted.contains(p));
+        // Every reveal starts from the layer closed, so it shows what it says
+        // rather than adding to whatever the last one left open.
+        _open.removeWhere((p) => p == id || isUnderPath(id, p));
+        _dropSelectionUnder(id);
+        if (showing) continue;
+        _open
+          ..add(id)
+          ..addAll(wanted);
+      }
+    });
+    return true;
+  }
+
+  /// Which fold paths a reveal key opens under [id]. Empty means the layer's
+  /// own row and nothing beneath it — what the Retime chord leaves behind, and
+  /// what `E` or `M` come to on a layer with no effects or masks to show.
+  List<String> _revealPaths(String id, BridgeLayerEntry entry, String action) {
+    final axis = switch (action) {
+      'reveal.position' => 'position',
+      'reveal.scale' => 'scale',
+      'reveal.rotation' => 'rotation',
+      'reveal.opacity' => 'opacity',
+      'reveal.anchor' => 'anchor',
+      _ => null,
+    };
+    if (axis != null) {
+      return [
+        for (final group in transformGroups(threeD: entry.info.switches.threeD))
+          if (group.axes.first.prop.name.startsWith(axis))
+            transformGroupPath(id, group),
+      ];
+    }
+    return switch (action) {
+      'reveal.effects' =>
+        entry.info.effects.isEmpty ? const [] : [effectsPath(id)],
+      'reveal.masks' => entry.info.masks.isEmpty ? const [] : [masksPath(id)],
+      'reveal.volume' => [audioPath(id)],
+      _ => const [],
+    };
+  }
+
   /// The bar drag in flight, if any — a notifier rather than panel state so
   /// only the waveform lanes redraw as the pointer moves, not the whole table.
   final ValueNotifier<BarDragPreview?> _barDrag = ValueNotifier(null);
@@ -795,6 +969,22 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
     if (action == 'layer.split') {
       return _splitSelectionAtPlayhead(ui);
+    }
+    if (action == 'layer.precompose') {
+      return _precomposeSelection(ui);
+    }
+    if (action == 'layer.move.in' ||
+        action == 'layer.move.out' ||
+        action == 'layer.trim.in' ||
+        action == 'layer.trim.out') {
+      return _moveOrTrimSelection(ui, action!);
+    }
+    // The single-property reveals (docs/07 §4.3). `layer.retime.enable` is the
+    // shell's command, not this panel's — it lands here only to *show* the row
+    // the shell has just switched on, which is view state and so ours.
+    if (action != null &&
+        (action.startsWith('reveal.') || action == 'layer.retime.enable')) {
+      return _reveal(ui, action);
     }
     if (action == 'graph.ease' ||
         action == 'graph.ease.in' ||
@@ -979,6 +1169,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
           }
         }
         if (groups.audio) _open.add(audioPath(id));
+        // Retime needs no path of its own: the row sits above Transform on
+        // any open layer that has one, and `groups.any` already counts it, so
+        // a layer whose only animation is its Retime opens for `U` here.
       }
     });
     return true;
@@ -1300,8 +1493,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                     blockHeights: blockHeights,
                                                     groupOrder: _groupOrder,
                                                     widths: _groupWidths,
-                                                    selected:
-                                                        ui.selectedLayer.value,
+                                                    selectedIds:
+                                                        ui.selectedLayerIds,
                                                     highlighted: _highlighted,
                                                     selectedProperties:
                                                         _selectedProperties,
@@ -1319,7 +1512,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                         .playheadFrame
                                                         .value = f,
                                                     onSelect: (l) =>
-                                                        _selectLayer(ui, l),
+                                                        _selectLayer(ui, l,
+                                                            among: layers),
                                                     onHighlight: (id) =>
                                                         setState(() =>
                                                             _highlighted = id),
@@ -1583,6 +1777,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                 child: _LayerArea(
                                                   comp: comp,
                                                   layers: layers,
+                                                  selectedIds:
+                                                      ui.selectedLayerIds,
                                                   layerDrag: _layerDrag,
                                                   blockHeights: blockHeights,
                                                   open: _open,
@@ -1653,7 +1849,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                                   ? 0
                                                                   : frames - 1),
                                                   onSelect: (l) =>
-                                                      _selectLayer(ui, l),
+                                                      _selectLayer(ui, l,
+                                                          among: layers),
                                                   onChanged: ui.model.refresh,
                                                   cacheRevision:
                                                       Listenable.merge([
@@ -3205,7 +3402,11 @@ class _Outline extends StatelessWidget {
   /// (docs/07 §4.2) — rows draw their cells to match the header's.
   final List<TimelineGroup> groupOrder;
   final Map<TimelineGroup, double> widths;
-  final LayerReference? selected;
+
+  /// The whole selection as ids (K-217), worked out once by the panel: a row
+  /// asking "am I selected?" is then one set lookup rather than a walk of the
+  /// list per row per paint.
+  final Set<UuidValue> selectedIds;
   final String? highlighted;
 
   /// The selected properties' fold paths, in selection order: each is a
@@ -3236,7 +3437,7 @@ class _Outline extends StatelessWidget {
     required this.layers,
     required this.groupOrder,
     required this.widths,
-    required this.selected,
+    required this.selectedIds,
     required this.highlighted,
     required this.selectedProperties,
     required this.graphColours,
@@ -3278,8 +3479,7 @@ class _Outline extends StatelessWidget {
             index: i,
             count: layers.length,
             // A local compare, not a bridge call: both ids already sit here.
-            selected:
-                selected?.internallayerId == layers[i].layer.internallayerId,
+            selected: selectedIds.contains(layers[i].layer.internallayerId),
             // A layer marks itself when its fold was last touched, and when
             // a selected property is one of its own (docs/07 §4.3).
             highlighted: highlighted ==
@@ -3444,10 +3644,27 @@ class _OutlineRowState extends State<_OutlineRow> {
     // (K-184).
     final info = widget.entry.info;
 
-    return Builder(
-      builder: (context) => GestureDetector(
+    // Selection happens on the DOWN, for the whole row, outside the gesture
+    // arena — the reason the name has always done it that way (see the note by
+    // the name cell) applies to every other cell too, and the row's tap used to
+    // do it a *second* time on the way up. Two calls per click is invisible for
+    // a plain click and exactly wrong for a Ctrl+click, which toggled the layer
+    // in and straight back out again.
+    return Listener(
+      onPointerDown: (event) {
+        if (_claimed) {
+          _claimed = false;
+          return;
+        }
+        if (event.buttons == kPrimaryButton) widget.onSelect();
+      },
+      child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: widget.onSelect,
+        // A tap that does nothing, so that nothing is what happens: the empty
+        // ground behind these rows deselects on tap (K-203), and a row that
+        // entered no tap into the arena let the ground win and throw away the
+        // selection the pointer-down had just made.
+        onTap: () {},
         onSecondaryTapDown: (d) => _showRowMenu(context, d.globalPosition),
         child: Container(
           // No drop line: the rows themselves move to where they would land,
@@ -3457,6 +3674,20 @@ class _OutlineRowState extends State<_OutlineRow> {
       ),
     );
   }
+
+  /// Set by a control on its way down, so the row above it leaves the
+  /// selection alone: pressing a layer's eye, or opening its properties, is
+  /// not choosing the layer. The gesture arena used to settle this by itself,
+  /// and cannot now that the row selects from a raw listener outside it.
+  ///
+  /// Cleared by the very next pointer-down the row sees, which is this same
+  /// one — Flutter hands a pointer to the innermost target first, so the
+  /// control always sets this before the row reads it.
+  bool _claimed = false;
+
+  /// Mark [child]'s clicks as the control's own, not the row's.
+  Widget _ownClick(Widget child) =>
+      Listener(onPointerDown: (_) => _claimed = true, child: child);
 
   Widget _rowBody(BuildContext context, LumitTheme t, BridgeLayerInfo info) {
     return Container(
@@ -3488,12 +3719,18 @@ class _OutlineRowState extends State<_OutlineRow> {
               if (i > 0) _rowSeam,
               SizedBox(
                 width: widget.widths[widget.groupOrder[i]],
+                // Only the identity group is the layer itself — its name and
+                // its number are what you click to choose it. The other three
+                // are controls: hiding a layer, or picking its blend mode, is
+                // not choosing it, and those cells have never selected.
                 child: switch (widget.groupOrder[i]) {
-                  TimelineGroup.switches => _switchCells(context, info),
                   TimelineGroup.identity => _identityCells(context, t, info),
-                  TimelineGroup.render => _renderCells(context, info),
-                  TimelineGroup.compose => _composeCells(context, t, info,
-                      widget.widths[TimelineGroup.compose] ?? 0),
+                  TimelineGroup.switches =>
+                    _ownClick(_switchCells(context, info)),
+                  TimelineGroup.render =>
+                    _ownClick(_renderCells(context, info)),
+                  TimelineGroup.compose => _ownClick(_composeCells(context, t,
+                      info, widget.widths[TimelineGroup.compose] ?? 0)),
                 },
               ),
             ],
@@ -3552,7 +3789,7 @@ class _OutlineRowState extends State<_OutlineRow> {
         // want to look at one layer's values while another is selected.
         LumitTooltip(
           message: widget.open ? 'Fold the properties away' : 'Properties',
-          child: GestureDetector(
+          child: _ownClick(GestureDetector(
             key: ValueKey<String>('tl-twirl-$id'),
             behavior: HitTestBehavior.opaque,
             onTap: widget.onToggleOpen,
@@ -3567,11 +3804,11 @@ class _OutlineRowState extends State<_OutlineRow> {
                 ),
               ),
             ),
-          ),
+          )),
         ),
         LumitTooltip(
           message: 'Label colour — recolours the bar too',
-          child: _labelSwatch(context, t, id, info.label),
+          child: _ownClick(_labelSwatch(context, t, id, info.label)),
         ),
         const SizedBox(width: 4),
         SizedBox(
@@ -3582,47 +3819,41 @@ class _OutlineRowState extends State<_OutlineRow> {
         // The name is also the stack handle: drag it up or down to reorder
         // the layer (docs/07 §4.7). A locked layer holds its place.
         //
-        // A raw listener selects on the DOWN, outside the gesture arena: the
-        // rename's double-tap holds the arena open for its whole window, so
-        // selecting through the row's tap made a plain click on the name
-        // reach the Effect controls a third of a second late — the same lag
-        // the Project panel's rows cure the same way.
+        // Selection is the row's, on the pointer down — the rename's
+        // double-tap holds the gesture arena open for its whole window, so
+        // selecting through a tap made a plain click on the name reach the
+        // Effect controls a third of a second late.
+        //
+        // The drag itself: a plain vertical gesture, not a `Draggable`.
+        //
+        // A `Draggable` carries a floating copy of the thing being moved,
+        // which is why this used to show a little name label under the
+        // pointer while the real row stayed behind. Both halves of the
+        // table already slide (K-208), so the stack shows the move
+        // truthfully on its own — the label was a second, worse answer to
+        // a question already answered, and the row it named did not move.
+        // The row travels; nothing floats.
         Expanded(
-          child: Listener(
-            onPointerDown: (event) {
-              if (event.buttons == kPrimaryButton) widget.onSelect();
-            },
-            // The drag itself: a plain vertical gesture, not a `Draggable`.
-            //
-            // A `Draggable` carries a floating copy of the thing being moved,
-            // which is why this used to show a little name label under the
-            // pointer while the real row stayed behind. Both halves of the
-            // table already slide (K-208), so the stack shows the move
-            // truthfully on its own — the label was a second, worse answer to
-            // a question already answered, and the row it named did not move.
-            // The row travels; nothing floats.
-            child: info.switches.locked
-                ? _name(t, id, info)
-                : GestureDetector(
-                    behavior: HitTestBehavior.opaque,
-                    onVerticalDragStart: (_) {
-                      _dragTravel = 0;
-                      widget.layerDrag.value = LayerDrag(index, index);
-                    },
-                    onVerticalDragUpdate: (d) {
-                      _dragTravel += d.delta.dy;
-                      final to = layerDragTarget(
-                          widget.blockHeights, index, _dragTravel);
-                      final drag = widget.layerDrag.value;
-                      if (drag?.to == to && drag?.from == index) return;
-                      widget.layerDrag.value = LayerDrag(index, to);
-                    },
-                    onVerticalDragEnd: (_) => _commitDrag(),
-                    onVerticalDragCancel: () =>
-                        widget.layerDrag.value = null,
-                    child: _name(t, id, info),
-                  ),
-          ),
+          child: info.switches.locked
+              ? _name(t, id, info)
+              : GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onVerticalDragStart: (_) {
+                    _dragTravel = 0;
+                    widget.layerDrag.value = LayerDrag(index, index);
+                  },
+                  onVerticalDragUpdate: (d) {
+                    _dragTravel += d.delta.dy;
+                    final to = layerDragTarget(
+                        widget.blockHeights, index, _dragTravel);
+                    final drag = widget.layerDrag.value;
+                    if (drag?.to == to && drag?.from == index) return;
+                    widget.layerDrag.value = LayerDrag(index, to);
+                  },
+                  onVerticalDragEnd: (_) => _commitDrag(),
+                  onVerticalDragCancel: () => widget.layerDrag.value = null,
+                  child: _name(t, id, info),
+                ),
         ),
         const SizedBox(width: 4),
       ],
@@ -3914,6 +4145,11 @@ class _LayerArea extends StatelessWidget {
   final CompositionReference comp;
   final List<BridgeLayerEntry> layers;
 
+  /// The selection as ids, the same set the outline draws from (K-217) — a bar
+  /// outlines when its name row is lit, so the two halves of the table never
+  /// disagree about what is chosen.
+  final Set<UuidValue> selectedIds;
+
   /// Which layers are twirled open in the outline. Read only to leave the same
   /// room their property rows take, so a bar never drifts away from its name.
   final Set<String> open;
@@ -3992,6 +4228,7 @@ class _LayerArea extends StatelessWidget {
   const _LayerArea({
     required this.comp,
     required this.layers,
+    required this.selectedIds,
     required this.open,
     required this.hasAudio,
     required this.peaks,
@@ -4183,6 +4420,10 @@ class _LayerArea extends StatelessWidget {
                                               entry: layers[i],
                                               axis: axis,
                                               razor: razor,
+                                              selected: selectedIds.contains(
+                                                  layers[i]
+                                                      .layer
+                                                      .internallayerId),
                                               playheadFrame: () =>
                                                   playhead.value,
                                               onRazor: (frame) =>
@@ -4811,12 +5052,18 @@ class _Bar extends StatefulWidget {
   /// every kind that has no source to run out of.
   final BarBounds bounds;
 
+  /// Whether this layer is in the selection. The bar is the only mark a
+  /// selected layer has on the lane side, and with several chosen at once
+  /// (K-217) the outline's lit rows are off the side of the panel.
+  final bool selected;
+
   const _Bar({
     super.key,
     required this.comp,
     required this.entry,
     required this.axis,
     required this.razor,
+    required this.selected,
     required this.playheadFrame,
     required this.onRazor,
     required this.onSelect,
@@ -5007,6 +5254,12 @@ class _BarState extends State<_Bar> {
                     // outline swatch shows, so recolouring a layer recolours
                     // its bar — and each kind starts on its own colour.
                     color: t.labelColour(info.label),
+                    // Selected bars take the accent as an outline rather than a
+                    // fill: the fill is the label colour and says which layer
+                    // this is, which is not a thing selection may overwrite.
+                    border: widget.selected
+                        ? Border.all(color: t.accent, width: 1)
+                        : null,
                     borderRadius: BorderRadius.circular(2),
                   ),
                   // A Sequence layer draws its clip splits, so the razor has
