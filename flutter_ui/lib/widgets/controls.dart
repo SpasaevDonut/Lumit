@@ -44,6 +44,11 @@ class HouseButton extends StatefulWidget {
   final bool small;
   final EdgeInsets? padding;
 
+  /// The default action of the window it sits in — what `Enter` presses
+  /// (K-243). Drawn with the accent edge it would otherwise only get under the
+  /// pointer, which is what docs/15 §2 keeps the one accent for.
+  final bool primary;
+
   const HouseButton({
     super.key,
     required this.child,
@@ -51,6 +56,7 @@ class HouseButton extends StatefulWidget {
     this.frameless = false,
     this.small = false,
     this.padding,
+    this.primary = false,
   });
 
   @override
@@ -78,6 +84,7 @@ class _HouseButtonState extends State<HouseButton> {
       edge = t.hairlineStrong;
     } else {
       fill = widget.frameless ? null : t.surface3;
+      if (widget.primary) edge = t.accent;
     }
     final pad = widget.padding ??
         (widget.small
@@ -426,6 +433,23 @@ Future<T?> showLumitModal<T>({
 /// means a window there opens centred and forgets where it was dragged.
 Workspace? modalPlacementStore;
 
+int _openModals = 0;
+
+/// Whether a modal window is up (K-243).
+///
+/// The panels register their keyboard commands on the hardware keyboard rather
+/// than holding focus, so nothing about a dialogue being open stopped them
+/// hearing a keypress meant for it: `Enter` in the Pre-compose dialogue was
+/// also `Enter` in the Timeline, and renamed a layer behind the window instead
+/// of pressing the button in front of it. A panel command is about the panel,
+/// and while a modal is up the panel is not what is being used.
+///
+/// Counted by the windows themselves as they mount and unmount, rather than by
+/// the open and close calls: a window can also leave by having the tree taken
+/// down under it, and a count only the close path decremented would stick above
+/// zero and leave the keyboard dead for the rest of the session.
+bool get lumitModalOpen => _openModals > 0;
+
 /// A window that can be dragged around the app window and, when it has a size,
 /// resized from its bottom-right corner.
 ///
@@ -458,6 +482,7 @@ class _MovableWindowState extends State<_MovableWindow> {
   @override
   void initState() {
     super.initState();
+    _openModals++;
     _size = widget.initialSize;
     final id = widget.id;
     final saved =
@@ -468,6 +493,12 @@ class _MovableWindowState extends State<_MovableWindow> {
       // placement was written — only a resizable one takes a size back.
       if (widget.initialSize != null && saved.size != null) _size = saved.size;
     }
+  }
+
+  @override
+  void dispose() {
+    _openModals--;
+    super.dispose();
   }
 
   void _remember() {
@@ -613,6 +644,12 @@ class HouseTextField extends StatefulWidget {
   /// *for*, on fields whose surroundings do not already say.
   final String? hint;
 
+  /// A pointer went down somewhere that is not this field. What an inline
+  /// rename commits on: clicking away is a person finishing the edit, and a
+  /// field that kept what was typed only when `Enter` was pressed threw the
+  /// work away for everyone who clicks instead (K-243).
+  final VoidCallback? onTapOutside;
+
   const HouseTextField({
     super.key,
     required this.controller,
@@ -620,6 +657,7 @@ class HouseTextField extends StatefulWidget {
     this.onSubmitted,
     this.autofocus = false,
     this.hint,
+    this.onTapOutside,
   });
 
   @override
@@ -670,6 +708,9 @@ class _HouseTextFieldState extends State<HouseTextField> {
             backgroundCursorColor: t.surface2,
             selectionColor: t.accent.withValues(alpha: 0.5),
             onSubmitted: widget.onSubmitted,
+            onTapOutside: widget.onTapOutside == null
+                ? null
+                : (_) => widget.onTapOutside!(),
           ),
         ],
       ),

@@ -13,6 +13,7 @@
 // the impossible combination too; this is the same rule said early enough to
 // keep the dialogue honest.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -166,6 +167,26 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
+    // The dialogue takes focus when it opens, and `Enter` is Pre-compose
+    // wherever that focus sits (K-243) — the button at the bottom is the
+    // default action, so the keyboard should be able to say yes without first
+    // having to find it. Typing a name is one click into the field.
+    return Focus(
+      autofocus: true,
+      onKeyEvent: (_, event) {
+        if (event is! KeyDownEvent) return KeyEventResult.ignored;
+        if (event.logicalKey != LogicalKeyboardKey.enter &&
+            event.logicalKey != LogicalKeyboardKey.numpadEnter) {
+          return KeyEventResult.ignored;
+        }
+        _confirm();
+        return KeyEventResult.handled;
+      },
+      child: _body(t),
+    );
+  }
+
+  Widget _body(LumitTheme t) {
     return FloatSurface(
       width: 440,
       child: Column(
@@ -191,7 +212,6 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
                   key: const ValueKey('precompose-name'),
                   controller: _name,
                   width: double.infinity,
-                  autofocus: true,
                   onSubmitted: (_) => _confirm(),
                 ),
               ),
@@ -256,6 +276,7 @@ class _PrecomposeBodyState extends State<_PrecomposeBody> {
             children: [
               HouseButton(
                 key: const ValueKey('precompose-confirm'),
+                primary: true,
                 onPressed: _confirm,
                 child: const Text('Pre-compose'),
               ),

@@ -4678,3 +4678,67 @@ is for seeing what is behind it, not for working while it is open.
 The regression test is `flutter_ui/test/modal_window_test.dart`: dragging moves the window by
 exactly what was dragged, the grip resizes from the corner with the opposite edge staying put,
 the minimum and the app window bound the size, and a placement survives a store round trip.
+
+---
+
+**K-243 · DECIDED · A double-click opens; `Enter` renames.** Double-clicking a layer in the
+Timeline opened an inline rename, and a second click on a footage row in the Project panel did
+the same. That is the wrong verb on both: a double-click means *open this* in every editor,
+and K-191 had already made it mean that for a composition — which left the application saying
+two different things with one gesture depending on what was under the pointer.
+
+**One rule, and the item answers it.** A double-click opens what it lands on:
+
+* a **composition** fronts in the Timeline (K-191, unchanged);
+* a **Precomp layer** fronts the comp it draws — the same answer the Project panel and the
+  Hierarchy already gave for the comp itself;
+* **footage** raises New composition on the selection, already the media's size, rate and
+  length, with the selected items landing in the comp as layers. Footage has no window of its
+  own, and the thing wanted from a clip just double-clicked is a comp to put it in. The
+  dialogue was already able to do this — it is what dropping footage on the New composition
+  button does — so this is a second door onto one funnel, not a second implementation;
+* a **folder** shows or hides what is in it — opening a folder *is* seeing inside it. It
+  keeps a caret so a shut one does not read as an empty one, every row reserves the caret's
+  width so a child still lines up one step right of the folder holding it, and a search
+  looks inside a shut folder because otherwise searching would depend on where the twirls
+  were left. Which folders are shut is session state, like the search text, not the
+  document's business;
+* **every other layer kind** does nothing yet. It should open that layer in a Viewer of its
+  own, and there is no such Viewer to open; a double-click that half-worked would be worse
+  than one that waits.
+
+**Renaming is `Enter`**, which docs/07 §15 has bound to `layer.rename` in the Timeline since
+the keymap was written and nothing had ever handled. The row that the selected layer is on
+opens its own editor, driven by a notifier the panel sets — a rename must not rebuild the
+whole table (K-208's reasoning, K-231's budget). A locked layer still refuses, as it did when
+a double-click was the way in. Renaming a comp or a footage item stays on the row menu, and a
+comp also on its settings dialogue.
+
+**Three things had to be true for `Enter` to work at all**, and each was a bug of its own:
+
+1. **A dialogue's keys are its own.** The panels register their commands on the hardware
+   keyboard rather than by holding focus, so nothing about an open window stopped the
+   Timeline hearing a keypress meant for it — the Pre-compose dialogue's `Enter` renamed the
+   layer behind the window. `showLumitModal` now says whether a modal is up
+   (`lumitModalOpen`) and the Timeline's handler stands down while one is. The count is kept
+   by the windows themselves as they mount and unmount, not by the open and close calls: a
+   window can also leave by having its tree taken down under it, and a count only the close
+   path decremented would stick above zero and leave the keyboard dead for the session.
+2. **Pre-compose is the dialogue's default action.** It takes focus when the window opens and
+   `Enter` presses it wherever that focus sits, drawn with the accent edge docs/15 §2 keeps
+   for exactly this. The name field no longer takes focus on open, which is the cost: typing
+   a name is now one click into the field.
+3. **Clicking away finishes an edit and keeps it.** The Timeline's rename only committed on
+   `Enter`; a click anywhere else left the field open and the typing was lost. It commits on
+   the tap outside now, the way the Project panel's rename already did — the same
+   `onTapOutside` hook, added to the shared `HouseTextField` so every inline editor gets it.
+   The test harness gained the `TapRegionSurface` the application has from its `MaterialApp`,
+   without which that hook never fires and no test could have seen this.
+
+The regression tests are in `timeline_panel_frb_test.dart` (Enter renames the selected layer,
+a locked layer refuses, clicking elsewhere commits, a double-clicked Precomp fronts its comp,
+a double-clicked anything else does nothing), `project_panel_frb_test.dart` (a second click on
+footage makes a comp of it, on a folder opens and shuts it, a search still looks inside a shut
+one, the row menu renames, and none of it falls through to the empty-area import),
+`precompose_dialog_frb_test.dart` (Enter presses Pre-compose) and `modal_window_test.dart`
+(a window says it is open, and stops saying so however it leaves).

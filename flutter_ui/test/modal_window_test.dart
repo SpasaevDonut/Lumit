@@ -149,6 +149,32 @@ void main() {
     expect(tester.getSize(find.byType(FloatSurface)), screen);
   });
 
+  /// The panels hang their keyboard commands off the hardware keyboard, so
+  /// they have to be told a window is up (K-243) — and told it is gone again
+  /// however it left, including having its tree taken down under it. A count
+  /// that stuck above zero would leave the keyboard dead for the session.
+  testWidgets('a window says it is open, and stops when it goes',
+      (tester) async {
+    // A sized window, so the corner of the screen is the backdrop to click.
+    await tester.pumpWidget(
+        host(id: 'test-window', initialSize: const Size(200, 150)));
+    expect(lumitModalOpen, isFalse);
+
+    await open(tester);
+    expect(lumitModalOpen, isTrue);
+
+    await tester.tapAt(const Offset(5, 5));
+    await tester.pumpAndSettle();
+    expect(body, findsNothing, reason: 'the window went');
+    expect(lumitModalOpen, isFalse, reason: 'dismissing closed it');
+
+    await open(tester);
+    expect(lumitModalOpen, isTrue);
+    await tester.pumpWidget(const SizedBox());
+    expect(lumitModalOpen, isFalse,
+        reason: 'and so did the tree going away under it');
+  });
+
   testWidgets('a placement survives a save and load of the store',
       (tester) async {
     await tester.pumpWidget(

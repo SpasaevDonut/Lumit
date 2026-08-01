@@ -2784,27 +2784,31 @@ void main() {
       expect(p.comp.frameAtTime(time: layer.getSpan().inPoint), before,
           reason: 'a locked bar holds still');
 
-      final name = find.byKey(ValueKey<String>('tl-name-$id'));
-      await tester.tap(name);
-      await tester.pump(kDoubleTapMinTime);
-      await tester.tap(name);
+      await tester.tap(find.byKey(ValueKey<String>('tl-name-$id')));
+      // Past the double-tap window, so the recognizer's countdown is not still
+      // running when the test ends.
+      await tester.pump(kDoubleTapTimeout);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'a locked name does not open the editor');
     });
 
-    /// Double-clicking the name turns it into an editor; submitting renames
-    /// the layer through the document (one op, undoable like any other).
-    testWidgets('double-clicking the name renames the layer', (tester) async {
+    /// Enter turns the selected layer's name into an editor (K-243); submitting
+    /// renames the layer through the document (one op, undoable like any
+    /// other). It used to be a double-click, which now opens the layer.
+    testWidgets('Enter renames the selected layer', (tester) async {
       final p = withComp();
       final layer = p.comp.addSolidLayer();
       await mount(tester, p);
       final id = layer.internallayerId;
 
-      final name = find.byKey(ValueKey<String>('tl-name-$id'));
-      await tester.tap(name);
-      await tester.pump(kDoubleTapMinTime);
-      await tester.tap(name);
+      await tester.tap(find.byKey(ValueKey<String>('tl-name-$id')));
+      await tester.pump(kDoubleTapTimeout);
+      expect(p.uiState.selectedLayer.value?.internallayerId, id,
+          reason: 'the click picked it');
+
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
 
       final editor = find.byKey(ValueKey<String>('tl-rename-$id'));
@@ -2817,6 +2821,80 @@ void main() {
       expect(layer.getInfo().name, 'Hero solid');
       expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
           reason: 'submitting leaves the editor');
+    });
+
+    /// Clicking away from the rename editor finishes the edit and keeps what
+    /// was typed (K-243). Pressing Enter is not the only way people leave a
+    /// field, and the edit used to sit there open and then be lost.
+    testWidgets('clicking elsewhere commits the rename', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      final other = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      await tester.tap(find.byKey(ValueKey<String>('tl-name-$id')));
+      await tester.pump(kDoubleTapTimeout);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump();
+
+      final editor = find.byKey(ValueKey<String>('tl-rename-$id'));
+      expect(editor, findsOneWidget);
+      await tester.enterText(editor, 'Backplate');
+      await tester.pump();
+
+      // No Enter: click another row, the way a person would.
+      await tester.tap(find
+          .byKey(ValueKey<String>('tl-name-${other.internallayerId}')));
+      await tester.pump(kDoubleTapTimeout);
+
+      expect(layer.getInfo().name, 'Backplate',
+          reason: 'the edit was kept, not thrown away');
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'and the editor closed');
+    });
+
+    /// Double-clicking a Precomp layer opens the comp it draws (K-243) — the
+    /// same thing the Project panel and the Hierarchy do, and what a
+    /// double-click means everywhere else in the application.
+    testWidgets('double-clicking a precomp layer opens its comp',
+        (tester) async {
+      final p = withComp();
+      final inner = p.state.project!.newComposition(name: 'Inner');
+      final layer = p.comp.addPrecompLayer(comp: inner);
+      await mount(tester, p);
+      final id = layer.internallayerId;
+
+      final name = find.byKey(ValueKey<String>('tl-name-$id'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.selectedComp?.getSettings().name, 'Inner',
+          reason: 'the nested comp is fronted');
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'and nothing is being renamed');
+    });
+
+    /// Every other kind has no window of its own yet, so a double-click on one
+    /// does nothing at all — and in particular does not rename it.
+    testWidgets('double-clicking any other layer does nothing', (tester) async {
+      final p = withComp();
+      final layer = p.comp.addSolidLayer();
+      await mount(tester, p);
+      final id = layer.internallayerId;
+      final before = p.uiState.selectedComp;
+
+      final name = find.byKey(ValueKey<String>('tl-name-$id'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(ValueKey<String>('tl-rename-$id')), findsNothing,
+          reason: 'a double-click is not a rename any more');
+      expect(p.uiState.selectedComp, before, reason: 'and fronts nothing');
     });
 
     /// Clicking anywhere on a layer selects it — including its bar in the

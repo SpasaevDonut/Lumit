@@ -128,8 +128,14 @@ Widget hostPanel({
               ),
               animationLevel: animationLevel,
               showTooltips: false,
-              child: Overlay(
-                initialEntries: [OverlayEntry(builder: (_) => child)],
+              // The application's root is a MaterialApp, which puts one of
+              // these above everything; without it `onTapOutside` never fires
+              // and a test cannot see an inline editor commit on a click
+              // elsewhere (K-243).
+              child: TapRegionSurface(
+                child: Overlay(
+                  initialEntries: [OverlayEntry(builder: (_) => child)],
+                ),
               ),
             ),
           ),

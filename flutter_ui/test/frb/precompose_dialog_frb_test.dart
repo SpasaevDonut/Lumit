@@ -8,6 +8,7 @@
 // these drive the real bridge, so a wrong argument shows up as a wrong
 // document rather than a passing mock.
 
+import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/shell/precompose_dialog_frb.dart';
@@ -71,6 +72,24 @@ void main() {
     if (item case ItemReference_Composition(:final field0)) return field0;
     throw StateError('a Precomp layer draws from a composition');
   }
+
+  /// Pre-compose is the dialogue's default action (K-243): it takes focus when
+  /// the window opens, so `Enter` presses it without the pointer having to find
+  /// it. It must also not reach the Timeline behind the window, which is where
+  /// `Enter` renames the selected layer.
+  testWidgets('Enter presses Pre-compose', (tester) async {
+    final it = await open(tester);
+    final before = it.layers.single.getName();
+
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    await tester.pumpAndSettle();
+
+    final after = it.comp.getLayers();
+    expect(after.length, 1, reason: 'the layer was packed into a new comp');
+    expect(sourceComp(after.single).getLayers().single.getName(), before);
+    expect(find.byKey(const ValueKey('precompose-confirm')), findsNothing,
+        reason: 'and the dialogue closed');
+  });
 
   testWidgets('moving the attributes packs the layers whole', (tester) async {
     final it = await open(tester, layerCount: 2);
