@@ -39,8 +39,15 @@ import 'timeline_extras_frb.dart';
 /// lands on the table's own grid.
 const double sequenceRow = 22;
 
-/// Three rows of clips and three of envelope (K-248).
+/// The clips get three rows — **including the layer's own bar row**, which is
+/// the top of them. Collapsed, that row is exactly the bar it always was;
+/// opening adds the two below it and the clips spread across all three, so
+/// nothing about the layer's own row changes shape as it opens (K-248).
 const double sequenceClipStrip = sequenceRow * 3;
+
+/// What opening actually adds to the row: the two clip rows under the bar,
+/// plus the graph.
+const double sequenceClipExtra = sequenceClipStrip - sequenceRow;
 const double sequenceEnvelopeStrip = sequenceRow * 3;
 const double sequenceViewHeight = sequenceClipStrip + sequenceEnvelopeStrip;
 
@@ -113,7 +120,9 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(
-          height: sequenceClipStrip,
+          // Two rows here; the third is the layer's own bar row, which this
+          // sits directly under and reads as one region with.
+          height: sequenceClipExtra,
           child: Stack(children: [for (final c in _clips) _clip(t, c)]),
         ),
         SizedBox(
@@ -138,10 +147,8 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
         // graph more or less room. Only here, and only on a Sequence layer —
         // every other row's height is the table's business, not the user's.
         _GraphDivider(
-          onDrag: (dy) => widget.onGraphHeight?.call(
-            (widget.graphHeight + dy)
-                .clamp(sequenceGraphMin + _dividerHeight, sequenceGraphMax),
-          ),
+          height: widget.graphHeight,
+          onHeight: (h) => widget.onGraphHeight?.call(h),
         ),
       ],
     );
@@ -256,9 +263,27 @@ enum _Grab { body, start, end }
 const double _dividerHeight = 5;
 
 /// The grab bar along the bottom of a sequence view.
-class _GraphDivider extends StatelessWidget {
-  final ValueChanged<double> onDrag;
-  const _GraphDivider({required this.onDrag});
+///
+/// **Tracks the pointer exactly, and lands on whole rows.** The raw travel is
+/// accumulated here and the *height* is snapped, rather than snapping each
+/// delta — snapped deltas quietly lose the remainder on every frame, so the
+/// divider drifts away from the mouse over a long drag. And it has to land on
+/// rows: the lane's seams are ruled on the table's grid, so a view half a row
+/// out puts a hairline through the middle of every layer below it.
+class _GraphDivider extends StatefulWidget {
+  final double height;
+  final ValueChanged<double> onHeight;
+  const _GraphDivider({required this.height, required this.onHeight});
+
+  @override
+  State<_GraphDivider> createState() => _GraphDividerState();
+}
+
+class _GraphDividerState extends State<_GraphDivider> {
+  /// The height the gesture began at, and everything the pointer has
+  /// travelled since — kept raw, so the snap is of the total.
+  double? _from;
+  double _travelled = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -268,7 +293,22 @@ class _GraphDivider extends StatelessWidget {
       child: GestureDetector(
         key: const ValueKey('seq-graph-divider'),
         behavior: HitTestBehavior.opaque,
-        onVerticalDragUpdate: (d) => onDrag(d.delta.dy),
+        onVerticalDragStart: (_) {
+          _from = widget.height;
+          _travelled = 0;
+        },
+        onVerticalDragUpdate: (d) {
+          final from = _from ?? widget.height;
+          _travelled += d.delta.dy;
+          final wanted = (from + _travelled)
+              .clamp(sequenceGraphMin + _dividerHeight, sequenceGraphMax);
+          // Snapped to whole rows, measured from the graph's own top.
+          final rows =
+              ((wanted - _dividerHeight) / sequenceRow).round().clamp(1, 16);
+          widget.onHeight(rows * sequenceRow + _dividerHeight);
+        },
+        onVerticalDragEnd: (_) => _from = null,
+        onVerticalDragCancel: () => _from = null,
         child: SizedBox(
           height: _dividerHeight,
           child: Center(
@@ -313,8 +353,10 @@ class _EnvelopeStrip extends StatefulWidget {
 
 class _EnvelopeStripState extends State<_EnvelopeStrip> {
   /// The point under the pointer while a drag runs: which clip, which key,
-  /// and the speed it is being asked for.
-  ({BridgeClip clip, int index, double speed})? _drag;
+  /// the speed it is being asked for, and how far it has been carried in
+  /// time. A point moves both ways — *when* a ramp reaches a speed matters as
+  /// much as what the speed is.
+  ({BridgeClip clip, int index, double speed, double dx})? _drag;
 
   List<BridgeClip> get _clips => widget.entry.info.clips;
 
@@ -410,30 +452,66 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                 ),
               ),
             ),
+            // What the drag is setting, beside the point it has hold of — a
+            // speed is a number you are aiming at, and reading it off the
+            // height of a dot against an axis that reframes as you drag is
+            // not aiming.
+            if (_drag case final held?) _readout(t, held, height),
             // The line itself: click to plant a point, drag one to re-speed.
             Positioned.fill(
               child: GestureDetector(
                 key: const ValueKey('seq-envelope'),
                 behavior: HitTestBehavior.opaque,
                 onTapUp: (d) => _tap(d.localPosition, height),
-                onVerticalDragStart: (d) => _startDrag(d.localPosition, height),
-                onVerticalDragUpdate: (d) => setState(() {
+                // A pan, not a vertical drag: the point moves in both
+                // directions, so the gesture must not be handed to the
+                // scrollables the moment it leans sideways.
+                onPanStart: (d) => _startDrag(d.localPosition, height),
+                onPanUpdate: (d) => setState(() {
                   final held = _drag;
                   if (held != null) {
                     _drag = (
                       clip: held.clip,
                       index: held.index,
                       speed: _speedAt(d.localPosition.dy, height),
+                      dx: held.dx + d.delta.dx,
                     );
                   }
                 }),
-                onVerticalDragEnd: (_) => _commit(),
-                onVerticalDragCancel: () => setState(() => _drag = null),
+                onPanEnd: (_) => _commit(),
+                onPanCancel: () => setState(() => _drag = null),
               ),
             ),
           ],
         );
       },
+    );
+  }
+
+  /// The speed the drag is asking for, floating beside the point.
+  Widget _readout(
+      LumitTheme t,
+      ({BridgeClip clip, int index, double speed, double dx}) held,
+      double height) {
+    final keys = _shown(held.clip);
+    final index = held.index.clamp(0, keys.length - 1);
+    final x = _xOfKey(held.clip, keys[index]);
+    final y = _y(envelopeSpeeds(keys)[index], height);
+    return Positioned(
+      left: x + 8,
+      top: (y - 9).clamp(0.0, height - 18),
+      child: IgnorePointer(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+          decoration: BoxDecoration(
+            color: t.surface3,
+            border: Border.all(color: t.hairline),
+            borderRadius: BorderRadius.circular(t.tokens.controlRadius),
+          ),
+          child: Text('${held.speed.round()}%',
+              style: t.small.copyWith(color: t.textPrimary)),
+        ),
+      ),
     );
   }
 
@@ -443,7 +521,41 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     final keys = _keysOf(clip);
     final held = _drag;
     if (held == null || held.clip.id != clip.id) return keys;
-    return _withSpeed(clip, keys, held.index, held.speed);
+    return _moved(clip, _withSpeed(clip, keys, held.index, held.speed),
+        held.index, held.dx);
+  }
+
+  /// [keys] with the dragged one carried along in time, snapped to whole
+  /// frames and held strictly between its neighbours.
+  ///
+  /// The two ends stay put: they are the clip's own edges, and a clip's
+  /// length is trimmed on the clip, never on its speed curve.
+  List<BridgeKeyframe> _moved(
+      BridgeClip clip, List<BridgeKeyframe> keys, int index, double dx) {
+    if (index <= 0 || index >= keys.length - 1) return keys;
+    final perFrame = widget.axis.perFrame;
+    if (perFrame <= 0) return keys;
+    final frames = (dx / perFrame).round();
+    if (frames == 0) return keys;
+    final fps = widget.fps <= 0 ? 1.0 : widget.fps;
+    final wanted = rationalSeconds(keys[index].time) + frames / fps;
+    // One frame of daylight either side, so two keys can never share a time.
+    final lo = rationalSeconds(keys[index - 1].time) + 1 / fps;
+    final hi = rationalSeconds(keys[index + 1].time) - 1 / fps;
+    if (lo >= hi) return keys;
+    final at = wanted.clamp(lo, hi);
+    return [
+      for (var i = 0; i < keys.length; i++)
+        if (i == index)
+          BridgeKeyframe(
+            time: timeOfSubframe(at * fps, widget.fpsNum, widget.fpsDen),
+            value: keys[i].value,
+            interpIn: keys[i].interpIn,
+            interpOut: keys[i].interpOut,
+          )
+        else
+          keys[i],
+    ];
   }
 
   /// [keys] with the drag applied — one point, or the whole line.
@@ -518,6 +630,7 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
           clip: found.clip,
           index: found.index,
           speed: envelopeSpeeds(_keysOf(found.clip))[found.index],
+          dx: 0,
         ));
   }
 
@@ -574,7 +687,12 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     if (held == null) return;
     _write(
       held.clip,
-      _withSpeed(held.clip, _keysOf(held.clip), held.index, held.speed),
+      _moved(
+        held.clip,
+        _withSpeed(held.clip, _keysOf(held.clip), held.index, held.speed),
+        held.index,
+        held.dx,
+      ),
     );
   }
 
@@ -614,13 +732,16 @@ class _EnvelopePainter extends CustomPainter {
     for (final (speed, text) in [(100.0, '100%'), (0.0, '0')]) {
       final at = y(speed);
       if (at < 0 || at > size.height) continue;
-      canvas.drawLine(
-        Offset(0, at),
-        Offset(size.width, at),
-        Paint()
-          ..color = line
-          ..strokeWidth = 1,
-      );
+      // Dotted, so the graph's own reference lines never read as the row
+      // seams that rule the rest of the table — solid, they were the same
+      // mark meaning two different things.
+      final paint = Paint()
+        ..color = line
+        ..strokeWidth = 1;
+      for (var x = 0.0; x < size.width; x += 6) {
+        canvas.drawLine(Offset(x, at), Offset((x + 3).clamp(0, size.width), at),
+            paint);
+      }
       final painter = TextPainter(
         text: TextSpan(text: text, style: label),
         textDirection: TextDirection.ltr,

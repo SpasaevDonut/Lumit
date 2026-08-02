@@ -581,7 +581,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// How much taller each open view makes its layer's row.
   Map<String, double> get _sequenceExtra => {
         for (final id in _sequenceOpen)
-          id: sequenceClipStrip + (_sequenceGraph[id] ?? sequenceEnvelopeStrip),
+          // The clips' top row *is* the layer's own bar row, so opening adds
+          // only the two under it — which is what keeps the layer's row
+          // looking exactly as it did when the view is shut (K-248).
+          id: sequenceClipExtra + (_sequenceGraph[id] ?? sequenceEnvelopeStrip),
       };
 
   /// Where each open sequence view sits down the table, as (top, bottom) in
@@ -5118,10 +5121,40 @@ class _LayerArea extends StatelessWidget {
                                         drag: layerDrag,
                                         heights: blockHeights,
                                         index: i,
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.stretch,
-                                          children: [
+                                        child: Container(
+                                          // One outline around the layer's own
+                                          // bar row and everything its open
+                                          // view added, so it reads as one
+                                          // region belonging to one layer
+                                          // rather than as loose strips that
+                                          // happen to sit under it (K-248).
+                                          // A *foreground* decoration: a
+                                          // border in the ordinary one insets
+                                          // its child, which made the lane's
+                                          // block two pixels taller than the
+                                          // outline reserved and put the two
+                                          // halves back out of step. This
+                                          // paints over the content and
+                                          // occupies no layout at all.
+                                          foregroundDecoration:
+                                              sequenceExtra.containsKey(
+                                                  layers[i]
+                                                      .layer
+                                                      .internallayerId
+                                                      .toString())
+                                              ? BoxDecoration(
+                                                  border: Border.all(
+                                                    color: t.accent.withValues(
+                                                        alpha: 0.5),
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(3),
+                                                )
+                                              : null,
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
                                             _Bar(
                                               key: ValueKey<String>(
                                                   'tl-bar-${layers[i].layer.internallayerId}'),
@@ -5176,7 +5209,7 @@ class _LayerArea extends StatelessWidget {
                                                                 .internallayerId
                                                                 .toString()] ??
                                                         sequenceViewHeight) -
-                                                    sequenceClipStrip,
+                                                    sequenceClipExtra,
                                                 onGraphHeight: (h) =>
                                                     onGraphHeight?.call(
                                                         layers[i], h),
@@ -5203,7 +5236,8 @@ class _LayerArea extends StatelessWidget {
                                                     ),
                                                 ],
                                               ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
                                       ),
                                   ],

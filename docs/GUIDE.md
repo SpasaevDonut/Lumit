@@ -1438,7 +1438,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   against a beat you can see, so the music, the other layers and the ruler all have to stay
   on screen while you do it. (An earlier decision put this in a tab of its own; K-248
   changed it.)
-  It opens **six rows tall, three and three**. The top three hold the **clips**: each drawn
+  It opens **six rows tall, three and three**, and the layer's own bar row is the **top of
+  the three** — so opening adds the two rows under it rather than pushing a new strip below
+  an unchanged bar, and a collapsed Sequence layer looks exactly as it always did. An open
+  view carries a faint accent outline around the whole of it, bar row included, so it reads
+  as one region belonging to one layer rather than as loose strips that happen to sit under
+  it. The top three hold the **clips**: each drawn
   where it sits with its playback speed on it, draggable along the row by its body and
   trimmable by either edge, and cuttable with the razor or `Ctrl+Shift+D` exactly as the bar
   above is — they are the same commands on the same layer. The bottom three hold the
@@ -1449,7 +1454,15 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   **The envelope is the same editor as the graph's Vegas lens**, over the same keyframes: a
   point per key, its height the playback speed in per cent, straight lines between.
   `Ctrl`-click or double-click the line plants a point, `Alt`-click lifts one, and dragging
-  a point re-speeds from there. A clip nobody has retimed draws the flat 100% it is actually
+  a point moves it **both ways**: up and down for the speed, left and right for *when* the
+  ramp reaches it — which matters as much as the speed does when you are cutting to a beat.
+  A point carries a little readout of the per cent it is setting, because reading a speed off
+  the height of a dot against an axis that reframes as you drag is not aiming. The two end
+  points stay put: they are the clip's own edges, and a clip's length is trimmed on the clip,
+  never on its speed curve.
+  The 100% and 0 reference lines are **dotted**, so the graph's own furniture never reads as
+  the row seams that rule the rest of the table — solid, they were the same mark meaning two
+  different things. A clip nobody has retimed draws the flat 100% it is actually
   playing, and dragging that line moves it **as one level** — the obvious reading of dragging
   a flat line is "this clip plays at that speed", which is what Vegas's first envelope point
   does too. Plant a point and the line has a shape worth keeping, so from then on a drag
