@@ -1432,6 +1432,34 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (Frame interpolation — how in-between frames are synthesised, Nearest / Blend / Flow — is a
   per-layer retime setting in the data model, but is not surfaced in the timeline for now; it
   will return in a dedicated place.)
+- **The sequence view: a Sequence layer's row, grown tall (K-248).** Double-click a
+  Sequence layer — its name in the outline, or its bar in the lanes — and its row **opens in
+  place** rather than swapping the Timeline for another tab. That is deliberate: you cut
+  against a beat you can see, so the music, the other layers and the ruler all have to stay
+  on screen while you do it. (An earlier decision put this in a tab of its own; K-248
+  changed it.)
+  What opens is two strips under the layer's own bar. The **clips**, each drawn where it
+  sits on the row with its playback speed written on it — a ramped clip says "ramp", because
+  a curve has no single number and printing one would be a lie about it. And the **speed
+  envelope**, a band per clip whose height is that clip's speed: drag it up to speed the clip
+  up, down towards zero to slow it, below zero to run it backwards. The clip stays exactly
+  where it is on the row while you do — an edit point already on a beat stays on that beat,
+  which is the promise the whole editor is built around.
+  The razor and `Ctrl+Shift+D` cut in the open row exactly as they cut the bar above,
+  because they are the same commands on the same layer; nothing new had to be taught.
+  **The layer's bar is its clips' extent**: first clip's start to last clip's end. Delete the
+  last clip and the end of the bar comes in with it; a gap in the middle stays a gap, renders
+  transparent, and is never closed for you.
+  **Clips can be reordered.** An earlier rule required a Sequence layer's clips to run
+  forward through their source — you could remove and space them, not shuffle them — which
+  existed so a camera track could replay through the cuts. K-248 drops it: a tracker will run
+  on the whole unaltered footage and be mapped through the sequence instead, and reordering
+  is what anyone coming from Vegas expects. Reordering moves clips between the row's
+  *slots*, so the run of boxes rearranges without the row being re-laid.
+  Two things are still owed here and are in [TODO.md](TODO.md): the per-clip **thumbnails**
+  at each clip's start and end (they need a decode-at-a-given-source-moment path that does
+  not exist yet), and shaping a clip's ramp beyond its two ends, which is the graph editor's
+  full envelope rather than this strip's.
 - **Video arriving as a Sequence layer (K-246).** With that switch on, dropping a video into
   a composition gives you a **Sequence layer** holding one clip, rather than a plain Footage
   layer — a row you can cut into pieces and ramp piece by piece, instead of a single

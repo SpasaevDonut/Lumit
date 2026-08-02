@@ -53,6 +53,7 @@ import 'graph_editor_frb.dart';
 import 'graph_maths.dart';
 import 'package:lumit_flutter/state/preview_throttle.dart';
 import 'timeline_extras_frb.dart';
+import 'sequence_view_frb.dart';
 import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
@@ -126,20 +127,27 @@ List<double> layerBlockHeights({
   required List<BridgeLayerEntry> layers,
   required Set<String> open,
   required Map<String, bool> hasAudio,
+  /// The Sequence layers whose view is open (K-248): their row is that much
+  /// taller, and the outline has to agree with the lanes about it or the two
+  /// halves of the Timeline stop lining up.
+  Set<String> sequenceOpen = const {},
 }) =>
     [
       for (final entry in layers)
         _rowHeight *
-            (1 +
-                (open.contains(entry.layer.internallayerId.toString())
-                    ? layerFoldRows(
-                        entry: entry,
-                        open: open,
-                        hasAudio: hasAudio[
-                                entry.layer.internallayerId.toString()] ??
-                            false,
-                      ).length
-                    : 0)),
+                (1 +
+                    (open.contains(entry.layer.internallayerId.toString())
+                        ? layerFoldRows(
+                            entry: entry,
+                            open: open,
+                            hasAudio: hasAudio[
+                                    entry.layer.internallayerId.toString()] ??
+                                false,
+                          ).length
+                        : 0)) +
+            (sequenceOpen.contains(entry.layer.internallayerId.toString())
+                ? sequenceViewHeight
+                : 0),
     ];
 
 /// How far the block at [index] slides while a drag is in flight, in pixels;
@@ -558,6 +566,21 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// The graph editor's selected keyframes, as `channelId#index` — owned here
   /// so the bottom bar's buttons and the shortcuts act on the same set.
   final Set<String> _graphKeySelection = {};
+
+  /// The Sequence layers whose view is open (K-248) — double-clicking one
+  /// opens its clips and their speed envelope inside its own row.
+  final Set<String> _sequenceOpen = {};
+
+  /// Open or close a Sequence layer's view. Any other kind is left alone: a
+  /// double-click on a Precomp already means "open the comp", and a layer with
+  /// no clips has nothing to show.
+  void _toggleSequenceView(BridgeLayerEntry entry) {
+    if (entry.info.kind != BridgeLayerKind.sequence) return;
+    final id = entry.layer.internallayerId.toString();
+    setState(() {
+      if (!_sequenceOpen.remove(id)) _sequenceOpen.add(id);
+    });
+  }
 
   /// Which reading of the curves the graph shows (docs/07 §5.1).
   GraphLens _graphLens = GraphLens.value;
@@ -1354,6 +1377,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     // blocks by these heights during a drag, so neither can measure the table
     // differently from the other (K-208).
     final blockHeights = layerBlockHeights(
+      sequenceOpen: _sequenceOpen,
         layers: layers, open: _open, hasAudio: _hasAudio);
     final graphColours = <String, List<Color>>{};
     for (final channel in channels) {
@@ -1525,6 +1549,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   child: _Outline(
                                                     comp: comp,
                                                     layers: layers,
+                                                    sequenceOpen: _sequenceOpen,
+                                                    onOpenSequence:
+                                                        _toggleSequenceView,
                                                     layerDrag: _layerDrag,
                                                     renameRequest:
                                                         _renameRequest,
@@ -1828,6 +1855,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   layerDrag: _layerDrag,
                                                   blockHeights: blockHeights,
                                                   open: _open,
+                                                  sequenceOpen: _sequenceOpen,
+                                                  onOpenSequence:
+                                                      _toggleSequenceView,
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
                                                   fps: ui.model.fps,
@@ -3928,6 +3958,10 @@ class _Outline extends StatelessWidget {
   final ValueChanged<String> onSelectProperty;
   final ValueChanged<String> onEditProperty;
   final Set<String> open;
+
+  /// The Sequence layers whose view is open, and how to toggle one (K-248).
+  final Set<String> sequenceOpen;
+  final void Function(BridgeLayerEntry entry)? onOpenSequence;
   final Map<String, bool> hasAudio;
   final ValueChanged<String> onToggle;
   final int playheadFrame;
@@ -3956,6 +3990,8 @@ class _Outline extends StatelessWidget {
     required this.onSelectProperty,
     required this.onEditProperty,
     required this.open,
+    this.sequenceOpen = const {},
+    this.onOpenSequence,
     required this.hasAudio,
     required this.onToggle,
     required this.playheadFrame,
@@ -3986,6 +4022,7 @@ class _Outline extends StatelessWidget {
             key: ValueKey<String>('tl-row-${layers[i].layer.internallayerId}'),
             comp: comp,
             entry: layers[i],
+            onOpenSequence: () => onOpenSequence?.call(layers[i]),
             layers: layers,
             groupOrder: groupOrder,
             widths: widths,
@@ -4052,6 +4089,10 @@ class _OutlineRow extends StatefulWidget {
   final CompositionReference comp;
   final BridgeLayerEntry entry;
 
+  /// Open or close this layer's sequence view (K-248) — what a double-click
+  /// on a Sequence layer means, where on other kinds it opens the source.
+  final VoidCallback? onOpenSequence;
+
   /// Every layer in the comp, for the parent picker's menu — from the same
   /// read model, so offering them costs nothing.
   final List<BridgeLayerEntry> layers;
@@ -4091,6 +4132,7 @@ class _OutlineRow extends StatefulWidget {
     super.key,
     required this.comp,
     required this.entry,
+    this.onOpenSequence,
     required this.layers,
     required this.groupOrder,
     required this.widths,
@@ -4492,11 +4534,18 @@ class _OutlineRowState extends State<_OutlineRow> {
     }
   }
 
-  /// Double-clicking a layer opens it (K-243). A Precomp opens the comp it
-  /// draws, the way it does in the Project panel and the Hierarchy; every other
-  /// kind will open in a Viewer of its own once there is one to open, and until
-  /// then does nothing. It no longer renames — `Enter` does that.
+  /// Double-clicking a layer opens it (K-243). A **Sequence** layer opens its
+  /// own view in place — its clips and their speed envelope, inside its row
+  /// (K-248) — because cutting is done against the beat you can see, so the
+  /// music and the ruler have to stay on screen. A Precomp opens the comp it
+  /// draws, the way it does in the Project panel and the Hierarchy; every
+  /// other kind will open in a Viewer of its own once there is one to open,
+  /// and until then does nothing. It no longer renames — `Enter` does that.
   void _openLayer() {
+    if (widget.entry.info.kind == BridgeLayerKind.sequence) {
+      widget.onOpenSequence?.call();
+      return;
+    }
     final comp = _sourceComp();
     if (comp == null) return;
     Provider.of<LumitUiState>(context, listen: false).setSelectedComp(comp);
@@ -4720,6 +4769,10 @@ class _LayerArea extends StatelessWidget {
   /// room their property rows take, so a bar never drifts away from its name.
   final Set<String> open;
 
+  /// The Sequence layers whose view is open, and how to toggle one (K-248).
+  final Set<String> sequenceOpen;
+  final void Function(BridgeLayerEntry entry)? onOpenSequence;
+
   /// Which layers carry sound — passed through only so the row list this side
   /// builds is identical to the outline's.
   final Map<String, bool> hasAudio;
@@ -4796,6 +4849,8 @@ class _LayerArea extends StatelessWidget {
     required this.layers,
     required this.selectedIds,
     required this.open,
+    this.sequenceOpen = const {},
+    this.onOpenSequence,
     required this.hasAudio,
     required this.peaks,
     required this.fps,
@@ -4996,6 +5051,13 @@ class _LayerArea extends StatelessWidget {
                                                   onRazor(layers[i], frame),
                                               onSelect: () =>
                                                   onSelect(layers[i].layer),
+                                              onOpenSequence: layers[i]
+                                                          .info
+                                                          .kind ==
+                                                      BridgeLayerKind.sequence
+                                                  ? () => onOpenSequence
+                                                      ?.call(layers[i])
+                                                  : null,
                                               onChanged: onChanged,
                                               dragPreview: dragPreview,
                                               bounds: bounds[layers[i]
@@ -5004,6 +5066,20 @@ class _LayerArea extends StatelessWidget {
                                                       .toString()] ??
                                                   BarBounds.free,
                                             ),
+                                            // A Sequence layer's own clips and
+                                            // their speed envelope, in the room
+                                            // the row grew for them (K-248).
+                                            if (sequenceOpen.contains(layers[i]
+                                                .layer
+                                                .internallayerId
+                                                .toString()))
+                                              SequenceViewFrb(
+                                                key: ValueKey<String>(
+                                                    'tl-seq-${layers[i].layer.internallayerId}'),
+                                                entry: layers[i],
+                                                axis: axis,
+                                                onChanged: onChanged,
+                                              ),
                                             // One lane per fold-out row the outline shows,
                                             // from the same list it builds: keyframe rows
                                             // draw their diamonds, the waveform row its
@@ -5609,6 +5685,11 @@ class _Bar extends StatefulWidget {
 
   /// Clicking (or grabbing) the bar selects its layer.
   final VoidCallback onSelect;
+
+  /// Double-clicking a Sequence layer's bar opens its view, the same as
+  /// double-clicking its name (K-248): the clips are what you came for, and
+  /// the bar is where you were already looking.
+  final VoidCallback? onOpenSequence;
   final VoidCallback onChanged;
 
   /// Where the live preview is published, for the waveform lane to follow.
@@ -5633,6 +5714,7 @@ class _Bar extends StatefulWidget {
     required this.playheadFrame,
     required this.onRazor,
     required this.onSelect,
+    this.onOpenSequence,
     required this.onChanged,
     required this.dragPreview,
     required this.bounds,
@@ -5643,6 +5725,10 @@ class _Bar extends StatefulWidget {
 }
 
 class _BarState extends State<_Bar> {
+  /// When this bar was last clicked, for spotting a double-click without
+  /// putting a recogniser in the razor’s way.
+  DateTime? _lastBarTap;
+
   /// Frames the gesture has moved so far, held here rather than committed.
   ///
   /// A bar drag has no cheap preview to show — moving a layer in time changes
@@ -5752,7 +5838,23 @@ class _BarState extends State<_Bar> {
             // to concede before the Effect controls learn the layer.
             child: Listener(
               onPointerDown: (event) {
-                if (event.buttons == kPrimaryButton) widget.onSelect();
+                if (event.buttons != kPrimaryButton) return;
+                widget.onSelect();
+                // A Sequence layer's bar opens its view on a double-click, the
+                // same as its name does (K-248) — counted here rather than
+                // with an `onDoubleTap` below, because a double-tap recogniser
+                // beside the razor's `onTapUp` makes the arena hold every
+                // single tap back, and the razor stops cutting. Two timestamps
+                // owe the arena nothing.
+                final open = widget.onOpenSequence;
+                if (open == null) return;
+                final now = DateTime.now();
+                final last = _lastBarTap;
+                _lastBarTap = now;
+                if (last != null && now.difference(last) < kDoubleTapTimeout) {
+                  _lastBarTap = null;
+                  open();
+                }
               },
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,

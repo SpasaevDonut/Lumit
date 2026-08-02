@@ -4,6 +4,7 @@
 // Driven through the panel rather than in isolation, for the same reason as
 // everywhere else here: what matters is that a click reaches the document.
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
@@ -11,6 +12,7 @@ import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 
 import 'package:lumit_flutter/state/tools.dart';
@@ -333,6 +335,79 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('marker-close')));
       await tester.pumpAndSettle();
+    });
+
+    // --- the sequence view (K-248) --------------------------------------
+
+    /// A Sequence layer, ready to open.
+    Future<LayerReference> sequencedLayer(dynamic p) async {
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.comp.addFootageLayer(footage: footage, asSequence: false);
+      p.comp.getLayers().single.convertToSequenced();
+      return p.comp.getLayers().single as LayerReference;
+    }
+
+    testWidgets('double-clicking a Sequence layer opens its clips in its row',
+        (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+
+      final clip = layer.getClips().single;
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsNothing,
+          reason: 'shut until it is opened');
+
+      final name = find.byKey(
+          ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsOneWidget,
+          reason: 'the clip is on screen');
+      expect(find.byKey(ValueKey<String>('seq-speed-${clip.id}')), findsOneWidget,
+          reason: 'and so is its point on the speed envelope');
+
+      // Double-clicking again shuts it.
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsNothing);
+    });
+
+    testWidgets('dragging an envelope point re-speeds only that clip',
+        (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      final name = find.byKey(
+          ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      final before = layer.getClips().single;
+      expect(before.retimed, isFalse, reason: 'plays at source rate to start');
+
+      // Downwards is slower: the envelope runs 100% at the top to -25% at the
+      // bottom, so a drag down the strip lowers the speed.
+      final point = find.byKey(ValueKey<String>('seq-speed-${before.id}'));
+      await tester.drag(point, const Offset(0, 14));
+      await tester.pumpAndSettle();
+
+      final after = layer.getClips().single;
+      expect(after.retimed, isTrue);
+      expect(after.speedPercent, isNotNull);
+      expect(after.speedPercent!, lessThan(100),
+          reason: 'dragging down the strip slows the clip');
+      // The covenant: the clip is still exactly where it was on the row.
+      expect(after.startFrame, before.startFrame);
+      expect(after.endFrame, before.endFrame);
     });
 
     testWidgets('the razor cuts a sequence clip where it is clicked',

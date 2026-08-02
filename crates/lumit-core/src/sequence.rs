@@ -460,6 +460,23 @@ impl Clip {
     }
 }
 
+/// The layer-local span the clips occupy: the first clip's start to the last
+/// clip's end (K-248). None for a Sequence layer with no clips at all, which
+/// has no length of its own to take.
+///
+/// Clips are not required to be in order in the list, so both ends are found
+/// by scanning rather than by reading the ends — reordering a Sequence layer
+/// is exactly the operation this has to survive.
+pub fn clips_span(clips: &[Clip]) -> Option<(Rational, Rational)> {
+    let mut start: Option<Rational> = None;
+    let mut end: Option<Rational> = None;
+    for c in clips {
+        start = Some(start.map_or(c.place_start, |s: Rational| s.min(c.place_start)));
+        end = Some(end.map_or(c.place_end(), |e: Rational| e.max(c.place_end())));
+    }
+    Some((start?, end?))
+}
+
 /// The clip active at layer-local time `lt`, or None if `lt` is in a gap
 /// (transparent) or past the end. Clips must not overlap, so at most one
 /// matches; the first match wins defensively.

@@ -56,6 +56,18 @@ These are v1-scope surfaces it does not yet match.
 **Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
 - Sequence-clip waveforms - Sequence layers' clips draw none.
 
+**The sequence view (K-248), still owed after the view itself landed:**
+- **Per-clip thumbnails** at each clip's start and end. They want a decode at a
+    *given source moment*; `FootageReference::thumbnail` only ever decodes the
+    media's first frame, so this is a new engine path plus a cache, not a
+    drawing change.
+- **Shaping a clip's ramp beyond its two ends** - the in-row strip sets a
+    clip's speed (and a straight ramp); the full envelope with points inside a
+    clip is the graph editor's, and a Sequence layer has no Retime channel
+    there yet (K-075 sent it here instead).
+- **Dragging clips to reorder** - `move_clip` is built and tested; nothing in
+    the row drags yet, so the only way to reorder is through the bridge.
+
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
     colour-management indicator; background-colour swatch.

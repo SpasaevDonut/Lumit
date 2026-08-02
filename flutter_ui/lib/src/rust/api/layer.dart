@@ -17,7 +17,7 @@ import 'retime.dart';
 import 'solid.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -56,15 +56,39 @@ class BridgeClip {
   final BridgeRational placeStart;
   final BridgeRational placeDuration;
 
+  /// Where the clip sits on the comp's own clock, in frames — so the
+  /// expanded row draws with no time-to-frame trip per clip (K-248, K-184).
+  final PlatformInt64 startFrame;
+  final PlatformInt64 endFrame;
+
+  /// The clip's single playback speed in per cent, or `None` when its map
+  /// says something one number cannot — a ramp, or a richer curve. The row
+  /// shows the envelope for those rather than a number.
+  final double? speedPercent;
+
+  /// Whether the clip carries a map at all. `false` is "plays at source
+  /// rate", a different state from a map that happens to be 100%.
+  final bool retimed;
+
   const BridgeClip({
     required this.id,
     required this.placeStart,
     required this.placeDuration,
+    required this.startFrame,
+    required this.endFrame,
+    this.speedPercent,
+    required this.retimed,
   });
 
   @override
   int get hashCode =>
-      id.hashCode ^ placeStart.hashCode ^ placeDuration.hashCode;
+      id.hashCode ^
+      placeStart.hashCode ^
+      placeDuration.hashCode ^
+      startFrame.hashCode ^
+      endFrame.hashCode ^
+      speedPercent.hashCode ^
+      retimed.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -73,7 +97,11 @@ class BridgeClip {
           runtimeType == other.runtimeType &&
           id == other.id &&
           placeStart == other.placeStart &&
-          placeDuration == other.placeDuration;
+          placeDuration == other.placeDuration &&
+          startFrame == other.startFrame &&
+          endFrame == other.endFrame &&
+          speedPercent == other.speedPercent &&
+          retimed == other.retimed;
 }
 
 /// Everything the Timeline outline, its bars, and the Hierarchy draw for one
@@ -96,6 +124,13 @@ class BridgeLayerInfo {
   /// Sequence clip starts as comp frames (empty on other kinds) — what the
   /// bar draws its split lines from.
   final Int64List clipFrames;
+
+  /// Every clip on a Sequence layer, in list order (empty on other kinds) —
+  /// what the expanded sequence view draws (K-248).
+  ///
+  /// In the read model rather than fetched per clip, so opening a Sequence
+  /// layer costs no bridge calls at all (K-184).
+  final List<BridgeClip> clips;
   final UuidValue? parent;
 
   /// The parent layer's current name, so the outline's parent picker renders
@@ -146,6 +181,7 @@ class BridgeLayerInfo {
     required this.inFrame,
     required this.outFrame,
     required this.clipFrames,
+    required this.clips,
     this.parent,
     this.parentName,
     required this.transform,
@@ -168,6 +204,7 @@ class BridgeLayerInfo {
       inFrame.hashCode ^
       outFrame.hashCode ^
       clipFrames.hashCode ^
+      clips.hashCode ^
       parent.hashCode ^
       parentName.hashCode ^
       transform.hashCode ^
@@ -192,6 +229,7 @@ class BridgeLayerInfo {
           inFrame == other.inFrame &&
           outFrame == other.outFrame &&
           clipFrames == other.clipFrames &&
+          clips == other.clips &&
           parent == other.parent &&
           parentName == other.parentName &&
           transform == other.transform &&
@@ -1093,6 +1131,16 @@ class LayerReference {
   void loadPreset({required String text}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceLoadPreset(that: this, text: text);
 
+  /// Move a clip to a different position in the row's order (K-248).
+  ///
+  /// Reordering is a Vegas expectation and K-071's source-ordering rule was
+  /// dropped for it. The clips keep their *places*: what changes is which
+  /// clip sits where, so the run of boxes is rearranged rather than the row
+  /// re-laid — moving a clip to a slot gives it that slot's start.
+  void moveClip({required UuidValue clip, required BigInt to}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceMoveClip(that: this, clip: clip, to: to);
+
   /// Remove `effect` from this layer's stack. An effect that is no longer there
   /// is an error rather than a silent success, so a double-click on Remove
   /// cannot look as though it deleted a second effect.
@@ -1149,6 +1197,24 @@ class LayerReference {
   /// every other curve-capable value.
   void setCameraZoom({required BridgeScalar zoom}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetCameraZoom(that: this, zoom: zoom);
+
+  /// Set one clip's playback speed, as a percentage (K-247, K-248).
+  ///
+  /// The clip keeps its place on the row — its start and its length are
+  /// untouched, so an edit point already on a beat stays on it (K-022) —
+  /// and the stretch of source it plays follows from the speed. Its first
+  /// frame is pinned, so re-speeding never moves where a clip begins
+  /// (K-070).
+  ///
+  /// `end_percent` makes it a ramp, running straight from one speed to the
+  /// other; leave it equal to `percent` for a constant speed. Negative runs
+  /// the clip backwards.
+  void setClipSpeed(
+          {required UuidValue clip,
+          required double percent,
+          required double endPercent}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetClipSpeed(
+          that: this, clip: clip, percent: percent, endPercent: endPercent);
 
   /// Enable or bypass `effect`. A bypassed effect renders as identity and is
   /// not animatable (docs/08 §1.5 — the effect's own Mix parameter is the

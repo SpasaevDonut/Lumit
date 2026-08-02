@@ -363,11 +363,22 @@ pub enum BridgeLayerKind {
 /// and a value type that pretends to round-trip what no control can edit is how
 /// a write quietly loses information.
 #[frb(non_opaque)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BridgeClip {
     pub id: Uuid,
     pub place_start: BridgeRational,
     pub place_duration: BridgeRational,
+    /// Where the clip sits on the comp's own clock, in frames — so the
+    /// expanded row draws with no time-to-frame trip per clip (K-248, K-184).
+    pub start_frame: i64,
+    pub end_frame: i64,
+    /// The clip's single playback speed in per cent, or `None` when its map
+    /// says something one number cannot — a ramp, or a richer curve. The row
+    /// shows the envelope for those rather than a number.
+    pub speed_percent: Option<f64>,
+    /// Whether the clip carries a map at all. `false` is "plays at source
+    /// rate", a different state from a map that happens to be 100%.
+    pub retimed: bool,
 }
 
 /// Everything the Timeline outline, its bars, and the Hierarchy draw for one
@@ -389,6 +400,12 @@ pub struct BridgeLayerInfo {
     /// Sequence clip starts as comp frames (empty on other kinds) — what the
     /// bar draws its split lines from.
     pub clip_frames: Vec<i64>,
+    /// Every clip on a Sequence layer, in list order (empty on other kinds) —
+    /// what the expanded sequence view draws (K-248).
+    ///
+    /// In the read model rather than fetched per clip, so opening a Sequence
+    /// layer costs no bridge calls at all (K-184).
+    pub clips: Vec<BridgeClip>,
     pub parent: Option<Uuid>,
     /// The parent layer's current name, so the outline's parent picker renders
     /// with no second lookup. None when there is no parent, or it is dangling.
@@ -441,6 +458,25 @@ pub(crate) fn read_layer_info(
             .collect(),
         _ => Vec::new(),
     };
+    let clips = match &layer.kind {
+        K::Sequence { clips } => clips
+            .iter()
+            .map(|c| BridgeClip {
+                id: c.id,
+                place_start: rational_of(c.place_start),
+                place_duration: rational_of(c.place_duration),
+                start_frame: comp
+                    .frame_rate
+                    .frame_at(lumit_core::time::CompTime(c.place_start)),
+                end_frame: comp
+                    .frame_rate
+                    .frame_at(lumit_core::time::CompTime(c.place_end())),
+                speed_percent: c.constant_speed().map(|s| s * 100.0),
+                retimed: c.retime.is_some(),
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     let s = layer.switches;
     BridgeLayerInfo {
         name: layer.name.clone(),
@@ -478,6 +514,7 @@ pub(crate) fn read_layer_info(
         in_frame: comp.frame_rate.frame_at(layer.in_point),
         out_frame: comp.frame_rate.frame_at(layer.out_point),
         clip_frames,
+        clips,
         parent: layer.parent,
         parent_name: layer.parent.and_then(|p| {
             comp.layers
@@ -1030,14 +1067,105 @@ impl LayerReference {
         let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
             return Ok(Vec::new());
         };
+        let comp = self.composition()?;
         Ok(clips
             .iter()
             .map(|c| BridgeClip {
                 id: c.id,
                 place_start: rational_of(c.place_start),
                 place_duration: rational_of(c.place_duration),
+                start_frame: comp
+                    .frame_rate
+                    .frame_at(lumit_core::time::CompTime(c.place_start)),
+                end_frame: comp
+                    .frame_rate
+                    .frame_at(lumit_core::time::CompTime(c.place_end())),
+                speed_percent: c.constant_speed().map(|s| s * 100.0),
+                retimed: c.retime.is_some(),
             })
             .collect())
+    }
+
+    /// Set one clip's playback speed, as a percentage (K-247, K-248).
+    ///
+    /// The clip keeps its place on the row — its start and its length are
+    /// untouched, so an edit point already on a beat stays on it (K-022) —
+    /// and the stretch of source it plays follows from the speed. Its first
+    /// frame is pinned, so re-speeding never moves where a clip begins
+    /// (K-070).
+    ///
+    /// `end_percent` makes it a ramp, running straight from one speed to the
+    /// other; leave it equal to `percent` for a constant speed. Negative runs
+    /// the clip backwards.
+    #[frb(sync)]
+    pub fn set_clip_speed(
+        &self,
+        clip: Uuid,
+        percent: f64,
+        end_percent: f64,
+    ) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let index = clips
+            .iter()
+            .position(|c| c.id == clip)
+            .ok_or(BridgeError::InvalidLayer)?;
+        let rate = |v: f64| {
+            lumit_core::time::Rational::from_f64_on_grid(
+                v / 100.0,
+                lumit_core::time::Rational::FLICK_DEN,
+            )
+            .map_err(|_| BridgeError::InvalidTime)
+        };
+        let mut clips = clips.clone();
+        clips[index] = clips[index].with_ramp(rate(percent)?, rate(end_percent)?);
+        self.commit_clips(clips)
+    }
+
+    /// Move a clip to a different position in the row's order (K-248).
+    ///
+    /// Reordering is a Vegas expectation and K-071's source-ordering rule was
+    /// dropped for it. The clips keep their *places*: what changes is which
+    /// clip sits where, so the run of boxes is rearranged rather than the row
+    /// re-laid — moving a clip to a slot gives it that slot's start.
+    #[frb(sync)]
+    pub fn move_clip(&self, clip: Uuid, to: usize) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let from = clips
+            .iter()
+            .position(|c| c.id == clip)
+            .ok_or(BridgeError::InvalidLayer)?;
+        let to = to.min(clips.len().saturating_sub(1));
+        if from == to {
+            return Ok(());
+        }
+        // The places are the row's, not the clips': lift the clip out, put it
+        // back at its new index, then hand every clip the place its slot has.
+        let places: Vec<_> = {
+            let mut sorted = clips.clone();
+            sorted.sort_by(|a, b| {
+                a.place_start
+                    .partial_cmp(&b.place_start)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            sorted
+                .iter()
+                .map(|c| (c.place_start, c.place_duration))
+                .collect()
+        };
+        let mut clips = clips.clone();
+        let moved = clips.remove(from);
+        clips.insert(to, moved);
+        for (c, (start, duration)) in clips.iter_mut().zip(places) {
+            c.place_start = start;
+            c.place_duration = duration;
+        }
+        self.commit_clips(clips)
     }
 
     /// Razor: cut the clip under `frame` in two, at the playhead.
@@ -1262,11 +1390,48 @@ impl LayerReference {
     }
 
     #[frb(ignore)]
+    /// Write a Sequence layer's clips, and bring its bar with them.
+    ///
+    /// **A Sequence layer's length is its clips' length** (K-248): first
+    /// clip's start to last clip's end, so deleting an outermost clip or
+    /// dragging one further out moves the end of the bar with it. Interior
+    /// gaps stay gaps — they render transparent and are never closed (K-022).
+    ///
+    /// Batched with the clips rather than folded into `SetSequenceClips`,
+    /// because the op's inverse is "the clips as they were" and a span quietly
+    /// changed inside it would not come back on undo. A batch inverts
+    /// member-wise, so both halves undo together for free.
     fn commit_clips(&self, clips: Vec<lumit_core::sequence::Clip>) -> Result<(), BridgeError> {
-        self.commit(lumit_core::Op::SetSequenceClips {
+        let layer = self.item()?;
+        let set_clips = lumit_core::Op::SetSequenceClips {
             comp: self.comp_id,
             layer: self.layer_id,
-            clips,
+            clips: clips.clone(),
+        };
+        // Clip places are in layer time; a span is in comp time, and the two
+        // differ by the layer's own zero.
+        let Some((start, end)) = lumit_core::sequence::clips_span(&clips) else {
+            return self.commit(set_clips);
+        };
+        let offset = layer.start_offset.0;
+        let (Ok(in_point), Ok(out_point)) = (offset.checked_add(start), offset.checked_add(end))
+        else {
+            return self.commit(set_clips);
+        };
+        if in_point == layer.in_point.0 && out_point == layer.out_point.0 {
+            return self.commit(set_clips);
+        }
+        self.commit(lumit_core::Op::Batch {
+            ops: vec![
+                set_clips,
+                lumit_core::Op::SetLayerSpan {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                    in_point: lumit_core::time::CompTime(in_point),
+                    out_point: lumit_core::time::CompTime(out_point),
+                    start_offset: layer.start_offset,
+                },
+            ],
         })
     }
 

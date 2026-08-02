@@ -2909,6 +2909,109 @@ fn editing_a_solid_changes_every_layer_that_uses_it() {
     assert_eq!(solid.get_definition().expect("definition").name, "Backdrop");
 }
 
+// --- The sequence view's clip edits (K-247, K-248) ------------------------
+
+/// A Sequence layer built for the clip tests: one clip spanning [0, 4).
+#[cfg(test)]
+fn sequenced_layer() -> (ProjectReference, CompositionReference, LayerReference) {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage, false).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+    layer.convert_to_sequenced().expect("sequenced");
+    let layer = comp.get_layers().expect("layers").remove(0);
+    (project, comp, layer)
+}
+
+/// Re-speeding a clip keeps its place and pins its first frame — the two
+/// promises the whole editing surface rests on (K-022, K-070).
+#[test]
+fn a_clips_speed_holds_its_place_and_its_first_frame() {
+    let (project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
+
+    layer
+        .set_clip_speed(before.id, 200.0, 200.0)
+        .expect("re-speeded");
+    let after = layer.get_clips().expect("clips").remove(0);
+
+    assert_eq!(after.start_frame, before.start_frame, "the edit point held");
+    assert_eq!(after.end_frame, before.end_frame, "and so did its length");
+    assert_eq!(after.speed_percent, Some(200.0));
+    assert!(after.retimed);
+
+    // One undo step puts it back.
+    project.undo().expect("undo");
+    let back = layer.get_clips().expect("clips").remove(0);
+    assert!(!back.retimed, "un-retimed again, not retimed to 100%");
+}
+
+/// A ramp reads as no single speed, which is what puts the envelope on screen
+/// instead of a number.
+#[test]
+fn a_ramped_clip_has_no_single_speed() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 100.0, 300.0).expect("ramped");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.speed_percent, None);
+    assert!(after.retimed);
+}
+
+/// A Sequence layer's bar is its clips' extent (K-248): cutting leaves it
+/// alone, and deleting an outermost clip brings the end in.
+#[test]
+fn the_layers_bar_follows_its_clips() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    let (in_before, out_before) = (whole.in_frame, whole.out_frame);
+
+    // A cut adds an edit point and changes no extent at all.
+    let middle = (in_before + out_before) / 2;
+    layer.cut_clip_at(middle).expect("cut");
+    let cut = layer.get_info().expect("info");
+    assert_eq!((cut.in_frame, cut.out_frame), (in_before, out_before));
+    assert_eq!(cut.clips.len(), 2);
+
+    // Deleting the last clip brings the end of the bar back with it.
+    layer.delete_clip_at(out_before - 1).expect("deleted");
+    let trimmed = layer.get_info().expect("info");
+    assert_eq!(trimmed.clips.len(), 1);
+    assert_eq!(trimmed.in_frame, in_before, "the start is where it was");
+    assert!(
+        trimmed.out_frame < out_before,
+        "and the end came in with the clip that went"
+    );
+}
+
+/// Clips reorder (K-248 dropped K-071's source ordering), and the row's own
+/// places stay where they are — what changes is which clip sits in which slot.
+#[test]
+fn clips_reorder_into_the_rows_own_slots() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let before = layer.get_clips().expect("clips");
+    assert_eq!(before.len(), 2);
+    let (first, second) = (before[0].id, before[1].id);
+    let slots: Vec<i64> = before.iter().map(|c| c.start_frame).collect();
+
+    layer.move_clip(second, 0).expect("reordered");
+    let after = layer.get_clips().expect("clips");
+    assert_eq!(after[0].id, second, "the second clip is first now");
+    assert_eq!(after[1].id, first);
+    assert_eq!(
+        after.iter().map(|c| c.start_frame).collect::<Vec<_>>(),
+        slots,
+        "and the row's slots did not move"
+    );
+}
+
 // --- Video arriving as a Sequence layer (K-246) ---------------------------
 
 /// With the preference on, media that **runs** arrives as a one-clip Sequence
