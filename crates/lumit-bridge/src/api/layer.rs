@@ -1403,6 +1403,58 @@ impl LayerReference {
         }
     }
 
+    /// The shape of this Sequence layer — where its cuts fall and how each
+    /// piece is ramped — as text, for [`Self::paste_sequence_shape`] (K-248).
+    ///
+    /// `clip` reads that clip alone; `None` reads the whole row. What comes
+    /// back carries no *source*: applying it keeps the target's own media,
+    /// which is the point — cutting a depth pass to the same beats as the
+    /// footage it belongs to is work nobody should do twice by hand, and by
+    /// eye the two always drift.
+    #[frb(sync)]
+    pub fn copy_sequence_shape(&self, clip: Option<Uuid>) -> Result<String, BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let taken: Vec<_> = match clip {
+            Some(id) => clips.iter().filter(|c| c.id == id).cloned().collect(),
+            None => clips.clone(),
+        };
+        serde_json::to_string(&lumit_core::sequence::SequenceShape::of(&taken))
+            .map_err(|_| BridgeError::InvalidItem)
+    }
+
+    /// Cut and ramp this Sequence layer to the shape in `text`, keeping its
+    /// own media (K-248).
+    ///
+    /// The row keeps the source its first clip already plays, and is rebuilt
+    /// with the pieces the shape describes. A shape longer than this row
+    /// reaches is applied as far as it goes: the piece straddling the end is
+    /// trimmed to it and anything wholly beyond is dropped, so a shape taken
+    /// from long footage lands sensibly on short footage rather than inventing
+    /// a row that runs past its media.
+    #[frb(sync)]
+    pub fn paste_sequence_shape(&self, text: String) -> Result<(), BridgeError> {
+        let layer = self.item()?;
+        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let shape: lumit_core::sequence::SequenceShape =
+            serde_json::from_str(&text).map_err(|_| BridgeError::InvalidItem)?;
+        // The media this row plays, and how far it reaches — both taken from
+        // the row as it stands, because neither is the shape's business.
+        let source = clips.first().ok_or(BridgeError::NoClipThere)?.source;
+        let limit = lumit_core::sequence::clips_span(clips)
+            .map(|(_, end)| end)
+            .ok_or(BridgeError::NoClipThere)?;
+        let next = shape.apply(source, limit);
+        if next.is_empty() {
+            return Err(BridgeError::NoClipThere);
+        }
+        self.commit_clips(next)
+    }
+
     /// Take one clip off the row, by id.
     ///
     /// What it leaves is a **gap**, not a closed row: nothing after it moves,

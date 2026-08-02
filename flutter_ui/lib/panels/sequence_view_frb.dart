@@ -59,6 +59,13 @@ const double sequenceViewHeight = sequenceClipStrip + sequenceEnvelopeStrip;
 const double sequenceGraphMin = sequenceRow;
 const double sequenceGraphMax = sequenceRow * 16;
 
+/// The sequence shape last copied, held for the session.
+///
+/// A shape is small text and belongs to no one layer — it is *for* carrying
+/// between them — so it sits beside the view rather than inside any instance
+/// of it, and survives a row being closed and another opened.
+String? sequenceShapeClipboard;
+
 /// How near an edge counts as grabbing it rather than the clip's body.
 const double _edgeGrab = 7;
 
@@ -386,6 +393,15 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             MenuRow(
+                onPressed: () => close('copy-clip'),
+                child: const Text('Copy this clip\'s shape')),
+            MenuRow(
+                onPressed: () => close('copy-row'),
+                child: const Text('Copy the whole row\'s shape')),
+            MenuRow(
+                onPressed: () => close('paste'),
+                child: const Text('Paste shape onto this layer')),
+            MenuRow(
                 onPressed: () => close('reset'),
                 child: const Text('Reset speed')),
             MenuRow(
@@ -403,6 +419,19 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
       case 'reset':
         widget.entry.layer.setClipSpeed(
             clip: clip.id, percent: 100, endPercent: 100);
+      // The shape — where the cuts fall and how each piece is ramped — with
+      // no media in it, so pasting it onto a depth pass cuts and ramps that
+      // pass to match without touching what it plays (K-248).
+      case 'copy-clip':
+        sequenceShapeClipboard =
+            widget.entry.layer.copySequenceShape(clip: clip.id);
+      case 'copy-row':
+        sequenceShapeClipboard = widget.entry.layer.copySequenceShape();
+      case 'paste':
+        final shape = sequenceShapeClipboard;
+        if (shape != null) {
+          widget.entry.layer.pasteSequenceShape(text: shape);
+        }
     }
     widget.onChanged();
   }
@@ -564,6 +593,20 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
   Offset? _downAt;
   bool _moving = false;
 
+  /// The selection box in flight, and the points it has caught, as
+  /// `clipId#index`.
+  ///
+  /// A press begins a box unless it lands **on a line** — within reach of the
+  /// curve at that x, which is a generous target and the one gesture that
+  /// obviously means "take hold of this". Everywhere else in the strip is
+  /// empty space, so it is free to select across.
+  Rect? _box;
+  final Set<String> _selected = {};
+
+  /// How near a clip's own line counts as grabbing it rather than starting a
+  /// selection box.
+  static const double _lineGrab = 10;
+
   List<BridgeClip> get _clips => widget.entry.info.clips;
 
   /// A clip's envelope keys — the map it actually plays by, which the engine
@@ -644,6 +687,8 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                     ],
                     xOfKey: _xOfKey,
                     y: (s) => _y(s, height),
+                    chosen: t.accent,
+                    selected: _selected,
                     range: _range,
                     line: t.hairline,
                     curve: t.curve.first,
@@ -661,6 +706,22 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
             // height of a dot against an axis that reframes as you drag is
             // not aiming.
             if (_drag case final held?) _readout(t, held, height),
+            if (_box case final box?)
+              Positioned(
+                key: const ValueKey('seq-envelope-box'),
+                left: box.left,
+                top: box.top,
+                width: box.width,
+                height: box.height,
+                child: IgnorePointer(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: t.accent.withValues(alpha: 0.12),
+                      border: Border.all(color: t.accent),
+                    ),
+                  ),
+                ),
+              ),
             // Last, so it is on top, and keyed, so it keeps its element
             // however the children above it come and go.
             // The line itself: click to plant a point, drag one to re-speed.
@@ -678,9 +739,20 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                 behavior: HitTestBehavior.opaque,
                 onPointerDown: (e) {
                   _downAt = e.localPosition;
-                  _startDrag(e.localPosition, height);
+                  if (_onALine(e.localPosition, height)) {
+                    _startDrag(e.localPosition, height);
+                  } else {
+                    setState(() => _box = Rect.fromPoints(
+                        e.localPosition, e.localPosition));
+                  }
                 },
                 onPointerMove: (e) => setState(() {
+                  final from = _downAt;
+                  if (_box != null && from != null) {
+                    _moving = true;
+                    _box = Rect.fromPoints(from, e.localPosition);
+                    return;
+                  }
                   final held = _drag;
                   if (held == null) return;
                   _moving = true;
@@ -701,9 +773,15 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                 }),
                 onPointerUp: (e) {
                   setState(() => _frozen = null);
-                  // A press that never moved is a click: plant a point, lift
-                  // one, or nothing at all.
-                  if (!_moving) {
+                  final box = _box;
+                  if (box != null) {
+                    setState(() {
+                      _box = null;
+                      if (_moving) _catch(box, height);
+                    });
+                  } else if (!_moving) {
+                    // A press that never moved is a click: plant a point, lift
+                    // one, or nothing at all.
                     setState(() => _drag = null);
                     _tap(_downAt ?? e.localPosition, height);
                   } else {
@@ -716,6 +794,7 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                   _drag = null;
                   _moving = false;
                   _frozen = null;
+                  _box = null;
                 }),
               ),
             ),
@@ -758,7 +837,13 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
   List<BridgeKeyframe> _shown(BridgeClip clip) {
     final keys = _keysOf(clip);
     final held = _drag;
-    if (held == null || held.clip.id != clip.id) return keys;
+    if (held == null) return keys;
+    if (held.clip.id != clip.id) {
+      // Another clip the selection reaches into: its caught points move too.
+      return _selected.any((s) => s.startsWith('${clip.id}#'))
+          ? _withSpeed(clip, keys, held.index, held.speed)
+          : keys;
+    }
     return _moved(clip, _withSpeed(clip, keys, held.index, held.speed),
         held.index, held.dx);
   }
@@ -801,7 +886,59 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     if (!clip.retimed) {
       return envelopeToKeys(keys, [for (final _ in keys) speed]);
     }
+    // A caught set moves together, by the same amount the dragged point
+    // moved. Its own points keep whatever spread they had — a selection is
+    // for shifting a shape, not for flattening it.
+    final held = _drag;
+    if (held != null && _selected.contains('${held.clip.id}#${held.index}')) {
+      final by = speed - _grabbedAt;
+      final speeds = envelopeSpeeds(keys);
+      var touched = false;
+      for (var i = 0; i < speeds.length; i++) {
+        if (_selected.contains('${clip.id}#$i')) {
+          speeds[i] += by;
+          touched = true;
+        }
+      }
+      if (touched) return envelopeToKeys(keys, speeds);
+    }
     return setEnvelopeSpeed(keys, index, speed);
+  }
+
+  /// Whether [local] is near enough to a clip's own line to mean "take hold
+  /// of this" rather than "start a box here".
+  ///
+  /// Measured against the line at that x, not against the nearest point: a
+  /// clip's line is what the eye follows, and asking for a direct hit on a
+  /// 7px dot would make re-speeding a test of aim.
+  bool _onALine(Offset local, double height) {
+    final clip = _clipAt(local.dx);
+    if (clip == null) return false;
+    final keys = _keysOf(clip);
+    final speeds = envelopeSpeeds(keys);
+    for (var i = 0; i + 1 < keys.length; i++) {
+      final x0 = _xOfKey(clip, keys[i]);
+      final x1 = _xOfKey(clip, keys[i + 1]);
+      if (local.dx < x0 - _lineGrab || local.dx > x1 + _lineGrab) continue;
+      final f = x1 > x0 ? ((local.dx - x0) / (x1 - x0)).clamp(0.0, 1.0) : 0.0;
+      final at = _y(speeds[i] + (speeds[i + 1] - speeds[i]) * f, height);
+      if ((local.dy - at).abs() <= _lineGrab) return true;
+    }
+    return false;
+  }
+
+  /// Take every point inside [box] into the selection. `Shift` adds to what
+  /// was already there; a plain box replaces it, and an empty one clears.
+  void _catch(Rect box, double height) {
+    if (!HardwareKeyboard.instance.isShiftPressed) _selected.clear();
+    for (final clip in _clips) {
+      final keys = _keysOf(clip);
+      final speeds = envelopeSpeeds(keys);
+      for (var i = 0; i < keys.length; i++) {
+        final at = Offset(_xOfKey(clip, keys[i]), _y(speeds[i], height));
+        if (box.contains(at)) _selected.add('${clip.id}#$i');
+      }
+    }
   }
 
   /// The envelope point [local] means: the nearest one within reach, or —
@@ -914,17 +1051,26 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
 
   void _commit() {
     final held = _drag;
-    setState(() => _drag = null);
     if (held == null) return;
-    _write(
-      held.clip,
-      _moved(
-        held.clip,
-        _withSpeed(held.clip, _keysOf(held.clip), held.index, held.speed),
-        held.index,
-        held.dx,
-      ),
-    );
+    // Every clip the selection reaches into, not just the one under the
+    // pointer: a box drawn across two clips moves the points in both.
+    final touched = _selected.contains('${held.clip.id}#${held.index}')
+        ? _clips
+            .where((c) => _selected.any((s) => s.startsWith('${c.id}#')))
+            .toList()
+        : [held.clip];
+    for (final clip in touched) {
+      final keys = clip.id == held.clip.id
+          ? _moved(
+              clip,
+              _withSpeed(clip, _keysOf(clip), held.index, held.speed),
+              held.index,
+              held.dx,
+            )
+          : _withSpeed(clip, _keysOf(clip), held.index, held.speed);
+      _write(clip, keys);
+    }
+    setState(() => _drag = null);
   }
 
   void _write(BridgeClip clip, List<BridgeKeyframe> keys) {
@@ -946,6 +1092,10 @@ class _EnvelopePainter extends CustomPainter {
   final (double, double) range;
   final Color line;
   final Color curve;
+
+  /// The accent a caught point takes, and which points are caught.
+  final Color chosen;
+  final Set<String> selected;
   final TextStyle label;
 
   /// Where the viewport's left edge sits in the canvas's own coordinates.
@@ -958,6 +1108,8 @@ class _EnvelopePainter extends CustomPainter {
     required this.range,
     required this.line,
     required this.curve,
+    required this.chosen,
+    required this.selected,
     required this.label,
     required this.viewportLeft,
   });
@@ -1002,8 +1154,13 @@ class _EnvelopePainter extends CustomPainter {
         path.lineTo(p.dx, p.dy);
       }
       canvas.drawPath(path, stroke);
-      for (final p in points) {
-        canvas.drawCircle(p, 3.5, Paint()..color = curve);
+      for (var i = 0; i < points.length; i++) {
+        final caught = selected.contains('${lane.clip.id}#$i');
+        canvas.drawCircle(
+          points[i],
+          caught ? 4.5 : 3.5,
+          Paint()..color = caught ? chosen : curve,
+        );
       }
     }
   }
@@ -1013,5 +1170,6 @@ class _EnvelopePainter extends CustomPainter {
       old.lanes != lanes ||
       old.range != range ||
       old.curve != curve ||
+      old.selected != selected ||
       old.viewportLeft != viewportLeft;
 }

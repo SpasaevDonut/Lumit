@@ -17,7 +17,7 @@ import 'retime.dart';
 import 'solid.dart';
 import 'state.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clip_under`, `clips_and_index`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
+// These functions are ignored because they are not marked as `pub`: `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
@@ -57,8 +57,13 @@ class BridgeClip {
   final BridgeRational placeStart;
   final BridgeRational placeDuration;
 
-  /// Where the clip sits on the comp's own clock, in frames — so the
+  /// Where the clip sits on the **comp's** own clock, in frames — so the
   /// expanded row draws with no time-to-frame trip per clip (K-248, K-184).
+  ///
+  /// A clip's `place_*` are in *layer* time; these carry the layer's own
+  /// zero already added. The two are the same number only while that zero
+  /// is itself zero, which stopped being true the moment a clip could be
+  /// dragged back past the start of its row.
   final PlatformInt64 startFrame;
   final PlatformInt64 endFrame;
 
@@ -925,6 +930,17 @@ class LayerReference {
         that: this,
       );
 
+  /// The shape of this Sequence layer — where its cuts fall and how each
+  /// piece is ramped — as text, for [`Self::paste_sequence_shape`] (K-248).
+  ///
+  /// `clip` reads that clip alone; `None` reads the whole row. What comes
+  /// back carries no *source*: applying it keeps the target's own media,
+  /// which is the point — cutting a depth pass to the same beats as the
+  /// footage it belongs to is work nobody should do twice by hand, and by
+  /// eye the two always drift.
+  String copySequenceShape({UuidValue? clip}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceCopySequenceShape(that: this, clip: clip);
+
   /// Razor: cut the clip under `frame` in two, at the playhead.
   ///
   /// The two halves keep their places — a cut must not shift what comes after
@@ -1182,6 +1198,18 @@ class LayerReference {
   void moveClip({required UuidValue clip, required BigInt to}) =>
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceMoveClip(that: this, clip: clip, to: to);
+
+  /// Cut and ramp this Sequence layer to the shape in `text`, keeping its
+  /// own media (K-248).
+  ///
+  /// The row keeps the source its first clip already plays, and is rebuilt
+  /// with the pieces the shape describes. A shape longer than this row
+  /// reaches is applied as far as it goes: the piece straddling the end is
+  /// trimmed to it and anything wholly beyond is dropped, so a shape taken
+  /// from long footage lands sensibly on short footage rather than inventing
+  /// a row that runs past its media.
+  void pasteSequenceShape({required String text}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferencePasteSequenceShape(that: this, text: text);
 
   /// Remove `effect` from this layer's stack. An effect that is no longer there
   /// is an error rather than a silent success, so a double-click on Remove

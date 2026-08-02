@@ -3028,6 +3028,87 @@ fn sliding_a_clip_moves_it_without_changing_it() {
     assert_eq!(after.retimed, before.retimed, "and the same map");
 }
 
+/// **A layer's cuts and ramps copy onto another layer**, which is what makes a
+/// depth pass follow the footage it belongs to (K-248).
+#[test]
+fn a_sequence_shape_copies_onto_another_layer() {
+    let (project, comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let first = layer
+        .get_clips()
+        .expect("clips")
+        .into_iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half");
+    layer
+        .set_clip_speed(first.id, 250.0, 250.0)
+        .expect("ramped");
+    let shape = layer.copy_sequence_shape(None).expect("copied");
+
+    // A second sequence layer over *different* media, uncut.
+    let other_footage = project
+        .import_footage("C:/clips/depth.mov".into())
+        .expect("imported");
+    // Converted rather than auto-wrapped: this path's media does not exist,
+    // so the wrap rule correctly declines it (a file it cannot read is not
+    // known to run).
+    comp.add_footage_layer(&other_footage, false)
+        .expect("placed");
+    comp.get_layers()
+        .expect("layers")
+        .remove(0)
+        .convert_to_sequenced()
+        .expect("sequenced");
+    let other = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(other.get_clips().expect("clips").len(), 1, "one whole clip");
+    let source_before = other.get_source_item().expect("item");
+
+    other.paste_sequence_shape(shape).expect("pasted");
+
+    let after = other.get_clips().expect("clips");
+    assert_eq!(after.len(), 2, "cut in the same place");
+    let earlier = after
+        .iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half");
+    assert_eq!(
+        earlier.speed_percent,
+        Some(250.0),
+        "and ramped the same way"
+    );
+    assert_eq!(
+        earlier.start_frame, first.start_frame,
+        "at the same moment on the comp's clock"
+    );
+    // The shape carries no media: this layer still plays its own.
+    assert!(
+        other.get_source_item().expect("item").is_some() == source_before.is_some(),
+        "the depth pass is not the footage"
+    );
+}
+
+/// One clip's shape copies on its own — the other half of the menu.
+#[test]
+fn one_clips_shape_copies_by_itself() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let one = layer.get_clips().expect("clips").remove(0);
+
+    let all = layer.copy_sequence_shape(None).expect("copied");
+    let just = layer.copy_sequence_shape(Some(one.id)).expect("copied");
+    assert_ne!(all, just, "one clip is not the whole row");
+    assert!(
+        just.len() < all.len(),
+        "and it carries less: one piece rather than two"
+    );
+}
+
 /// A Sequence layer has no Retime of its own (K-075): its clips carry the
 /// retiming, and a second map over the whole row would be a rival to those —
 /// exactly what K-249 spent itself ending.

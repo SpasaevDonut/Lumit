@@ -644,6 +644,120 @@ impl Clip {
     }
 }
 
+/// The *shape* of a Sequence layer, apart from what it plays: where its cuts
+/// fall, where its gaps are, and how each piece is ramped (K-248).
+///
+/// **This is what a depth pass needs.** Cutting one layer to a beat and then
+/// cutting a second — a depth render, a mask pass, a duplicate with different
+/// effects — to exactly the same beats is work nobody should do twice by hand,
+/// and doing it by eye guarantees they drift. Copying the shape and applying
+/// it elsewhere makes the second layer follow the first exactly.
+///
+/// It deliberately carries no *source*: the clips it is applied to keep their
+/// own media, which is the entire point — the depth pass is not the footage.
+/// Times are the layer's own, so the shape is independent of where either
+/// layer sits in the composition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SequenceShape {
+    pub pieces: Vec<ShapePiece>,
+}
+
+/// One piece of a [`SequenceShape`]: where it sits on the row, how far into
+/// its own source it starts, and its retime.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShapePiece {
+    pub place_start: Rational,
+    pub place_duration: Rational,
+    pub source_in: Rational,
+    pub retime: Option<Property>,
+}
+
+impl SequenceShape {
+    /// Read the shape of `clips` — all of them, or one, for the two things
+    /// the row's menu offers.
+    pub fn of(clips: &[Clip]) -> Self {
+        Self {
+            pieces: clips
+                .iter()
+                .map(|c| ShapePiece {
+                    place_start: c.place_start,
+                    place_duration: c.place_duration,
+                    source_in: c.source_in,
+                    retime: c.retime.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Rebuild `clips` in this shape, keeping their own source.
+    ///
+    /// `limit` is how far the target row reaches — the extent it already
+    /// occupied. A shape longer than that is applied as far as it goes and no
+    /// further: the piece straddling the end is trimmed to it and anything
+    /// wholly beyond is dropped, so a shape taken from a long clip lands
+    /// sensibly on a short one rather than inventing a row that runs past its
+    /// media.
+    ///
+    /// Every piece plays `source`, taking the shape's own trim-in and map, so
+    /// the two rows show the same moments of their respective media at the
+    /// same times — which is what makes a depth pass line up.
+    pub fn apply(&self, source: ClipSource, limit: Rational) -> Vec<Clip> {
+        let mut out = Vec::with_capacity(self.pieces.len());
+        for piece in &self.pieces {
+            if piece.place_start >= limit {
+                continue; // wholly past what this row reaches
+            }
+            let end = piece
+                .place_start
+                .checked_add(piece.place_duration)
+                .unwrap_or(limit);
+            let duration = if end > limit {
+                match limit.checked_sub(piece.place_start) {
+                    Ok(d) => d,
+                    Err(_) => continue,
+                }
+            } else {
+                piece.place_duration
+            };
+            if duration <= Rational::ZERO {
+                continue;
+            }
+            let mut clip = Clip::new(
+                source,
+                piece.source_in,
+                piece.source_in.checked_add(duration).unwrap_or(duration),
+                piece.place_start,
+                duration,
+            );
+            clip.retime = piece.retime.clone();
+            // A trimmed piece keeps only the part of its map it still has
+            // room for, exactly as trimming that clip by hand would.
+            if end > limit {
+                if let Some(shorter) =
+                    clip.trim_end(piece.place_start.checked_add(duration).unwrap_or(limit))
+                {
+                    clip = shorter;
+                }
+            }
+            if let Some(map) = &clip.retime {
+                if let Some(last) = map_last_value(map) {
+                    clip.source_out = last;
+                }
+            }
+            out.push(clip);
+        }
+        out
+    }
+}
+
+/// The last source position a map reaches.
+fn map_last_value(map: &Property) -> Option<Rational> {
+    let Animation::Keyframed(keys) = &map.animation else {
+        return None;
+    };
+    Rational::from_f64_on_grid(keys.last()?.value, Rational::FLICK_DEN).ok()
+}
+
 /// Resolve the overlaps a clip has just been dropped into — the **overwrite**
 /// edit every NLE does when one clip lands on another (K-248).
 ///
