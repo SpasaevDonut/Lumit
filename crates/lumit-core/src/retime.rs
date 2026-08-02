@@ -2519,3 +2519,68 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod keyframe_seam_tests {
+    use super::*;
+    use crate::time::Rational;
+
+    /// **The segment store is not a lossless keyframe carrier, and this is
+    /// where it stops being one.**
+    ///
+    /// `source_keyframes` renders a [`RateSegment`] as a straight Linear side,
+    /// because an eased speed ramp has no single per-key tangent to report
+    /// (K-078 says so for layers, and it is the same maths here). So a curve
+    /// whose shape lives in an *ease* comes back as the chord.
+    ///
+    /// It matters because it is the reason a Sequence layer's clips are being
+    /// moved onto the Retime property rather than being edited through this
+    /// pair from the Vegas envelope: routing the envelope over the segment
+    /// store would quietly flatten an eased ramp the first time a clip was
+    /// touched. Recorded as a test so the shortcut is not re-proposed.
+    #[test]
+    fn an_eased_rate_ramp_does_not_survive_the_keyframe_trip() {
+        let store = Retime::single_ramp(
+            Rational::new(2, 1).unwrap(),
+            Rational::ZERO,
+            Rational::ONE,
+            Rational::new(3, 1).unwrap(),
+            Ease::Linear,
+        );
+        let back = Retime::from_source_keyframes(&store.source_keyframes()).expect("a curve");
+
+        // The endpoints are held exactly — C0 is structural — so the drift is
+        // entirely in the middle, which is precisely the shape being lost.
+        assert!((store.evaluate(0.0) - back.evaluate(0.0)).abs() < 1e-9);
+        assert!((store.evaluate(2.0) - back.evaluate(2.0)).abs() < 1e-9);
+        assert!(
+            (store.evaluate(0.1) - back.evaluate(0.1)).abs() > 1e-3,
+            "the ease is what is lost; if this ever holds, the seam has been              made lossless and the clip migration may be reconsidered"
+        );
+    }
+
+    /// A curve already in the value vocabulary — which is what the envelope
+    /// writes, and what `from_source_keyframes` produces — does round-trip
+    /// exactly. The seam is lossy in one direction only.
+    #[test]
+    fn a_map_shaped_curve_round_trips_exactly() {
+        let seed = Retime::single_ramp(
+            Rational::new(2, 1).unwrap(),
+            Rational::ZERO,
+            Rational::ONE,
+            Rational::new(3, 1).unwrap(),
+            Ease::Linear,
+        );
+        // Once through, so the store holds MapSegments rather than a Rate.
+        let mapped = Retime::from_source_keyframes(&seed.source_keyframes()).expect("a curve");
+        let again = Retime::from_source_keyframes(&mapped.source_keyframes()).expect("a curve");
+
+        for i in 0..=20 {
+            let t = f64::from(i) / 10.0;
+            assert!(
+                (mapped.evaluate(t) - again.evaluate(t)).abs() < 1e-9,
+                "drifted at t={t}"
+            );
+        }
+    }
+}
