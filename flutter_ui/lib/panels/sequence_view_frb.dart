@@ -22,6 +22,8 @@
 // Zero bridge calls to draw: every clip and its map ride in on the comp read
 // model (K-184). The bridge is crossed only when a gesture commits.
 
+import 'dart:ui' as ui;
+
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -111,6 +113,46 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
   /// The clip being dragged, what the gesture is doing to it, and how far it
   /// has travelled — so the drag previews and commits once, on release.
   ({BridgeClip clip, _Grab grab, double dx})? _drag;
+
+  /// The first frame each clip shows, by clip id, decoded off the build.
+  /// A null entry is one already asked for — claimed before the decode starts
+  /// so a rebuild mid-flight does not ask twice.
+  final Map<String, ui.Image?> _thumbs = {};
+
+  @override
+  void dispose() {
+    for (final image in _thumbs.values) {
+      image?.dispose();
+    }
+    super.dispose();
+  }
+
+  /// Decode a clip's opening frame into the cache. Off the build, because it
+  /// opens the media — and once per clip, keyed by the moment it opens on, so
+  /// cutting or re-speeding a clip fetches the frame it now starts on.
+  void _wantThumb(BridgeClip clip) {
+    final key = '${clip.id}@${clip.startFrame}@${clip.retimed}';
+    if (_thumbs.containsKey(key)) return;
+    _thumbs[key] = null;
+    widget.entry.layer
+        .clipThumbnail(clip: clip.id, maxEdge: 96)
+        .then((frame) {
+      if (!mounted || frame == null || frame.width == 0) return;
+      ui.decodeImageFromPixels(
+        frame.rgba,
+        frame.width,
+        frame.height,
+        ui.PixelFormat.rgba8888,
+        (image) {
+          if (!mounted) {
+            image.dispose();
+            return;
+          }
+          setState(() => _thumbs[key] = image);
+        },
+      );
+    });
+  }
 
   /// Where the envelope and the clip strip were last clicked, for spotting a
   /// double-click without putting a recogniser in the way of the single click
@@ -226,6 +268,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
   /// One clip: a box where it sits, saying how fast it plays. Its body drags
   /// it along the row and its edges trim it.
   Widget _clip(LumitTheme t, BridgeClip clip) {
+    _wantThumb(clip);
     final drag = _drag;
     final moving = drag != null && drag.clip.id == clip.id;
     final shift = moving ? _draggedFrames(drag.dx) : 0;
@@ -279,7 +322,20 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
               borderRadius: BorderRadius.circular(2),
             ),
             alignment: Alignment.center,
-            child: ClipRect(
+            clipBehavior: Clip.hardEdge,
+            child: Row(
+              children: [
+                // The frame this clip opens on, so a row of cuts can be told
+                // apart at a glance rather than by their timings (K-248).
+                if (_thumbs['${clip.id}@${clip.startFrame}@${clip.retimed}']
+                    case final image?)
+                  Padding(
+                    padding: const EdgeInsets.all(1),
+                    child: RawImage(image: image, fit: BoxFit.contain),
+                  ),
+                Expanded(
+                  child: Center(
+              child: ClipRect(
               child: Text(
                 // A ramp has no single number to show, and printing one would
                 // be a lie about a curve — the envelope below reads it.
@@ -288,6 +344,10 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
                 overflow: TextOverflow.clip,
                 softWrap: false,
               ),
+            ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -482,33 +542,15 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
 
   List<BridgeClip> get _clips => widget.entry.info.clips;
 
-  /// A clip's envelope keys. An un-retimed clip has none of its own, so it is
-  /// read as the flat 100% it is actually playing — two implied points, one at
-  /// each end — and the first edit writes that out as a real map.
-  List<BridgeKeyframe> _keysOf(BridgeClip clip) {
-    final map = clip.retime;
-    if (map != null) {
-      final keys = keysOf(map);
-      if (keys.length >= 2) return keys;
-    }
-    final duration =
-        (clip.endFrame - clip.startFrame) / (widget.fps <= 0 ? 1 : widget.fps);
-    return [
-      BridgeKeyframe(
-        time: const BridgeRational(num: 0, den: 1),
-        value: 0,
-        interpIn: const BridgeSideInterp.linear(),
-        interpOut: const BridgeSideInterp.linear(),
-      ),
-      BridgeKeyframe(
-        time: timeOfSubframe(
-            duration * widget.fps, widget.fpsNum, widget.fpsDen),
-        value: duration,
-        interpIn: const BridgeSideInterp.linear(),
-        interpOut: const BridgeSideInterp.linear(),
-      ),
-    ];
-  }
+  /// A clip's envelope keys — the map it actually plays by, which the engine
+  /// hands over whether or not the clip has one of its own.
+  ///
+  /// Nothing is constructed here on purpose. This used to fabricate the flat
+  /// line for an un-retimed clip and started it at source **zero**, which is
+  /// true only of a clip nobody has cut: every clip after a cut begins part
+  /// way into its media, so ramping one sent it back to the top of the file
+  /// and it played the same frame or two throughout.
+  List<BridgeKeyframe> _keysOf(BridgeClip clip) => keysOf(clip.retime);
 
   /// The axis as it was when the drag began, held for the whole gesture.
   ///
@@ -726,7 +768,7 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
   /// keeping, so from then on a drag moves only the point it has hold of.
   List<BridgeKeyframe> _withSpeed(
       BridgeClip clip, List<BridgeKeyframe> keys, int index, double speed) {
-    if (clip.retime == null) {
+    if (!clip.retimed) {
       return envelopeToKeys(keys, [for (final _ in keys) speed]);
     }
     return setEnvelopeSpeed(keys, index, speed);

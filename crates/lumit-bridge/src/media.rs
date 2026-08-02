@@ -33,8 +33,17 @@ use uuid::Uuid;
 #[derive(Default)]
 pub(crate) struct MediaCache {
     #[cfg(feature = "media")]
-    thumbs: HashMap<(Uuid, u32), (u32, u32, Vec<u8>)>,
+    /// Keyed by item, size **and source frame**: a Sequence layer's clips
+    /// each want the frame they start on, not the file's first (K-248).
+    thumbs: HashMap<ThumbKey, Thumb>,
 }
+
+/// What a cached thumbnail is of: the item, the size asked for, and which
+/// frame of it.
+type ThumbKey = (Uuid, u32, i64);
+
+/// A decoded thumbnail: width, height, and tightly packed RGBA8.
+type Thumb = (u32, u32, Vec<u8>);
 
 impl MediaCache {
     pub fn clear(&mut self) {
@@ -44,14 +53,14 @@ impl MediaCache {
 
     /// A cached thumbnail for `(id, max_edge)`, if one was decoded already.
     #[cfg(feature = "media")]
-    fn thumb_get(&self, id: Uuid, max_edge: u32) -> Option<(u32, u32, Vec<u8>)> {
-        self.thumbs.get(&(id, max_edge)).cloned()
+    fn thumb_get(&self, id: Uuid, max_edge: u32, frame: i64) -> Option<Thumb> {
+        self.thumbs.get(&(id, max_edge, frame)).cloned()
     }
 
     /// Store a decoded thumbnail for `(id, max_edge)`.
     #[cfg(feature = "media")]
-    fn thumb_put(&mut self, id: Uuid, max_edge: u32, w: u32, h: u32, rgba: Vec<u8>) {
-        self.thumbs.insert((id, max_edge), (w, h, rgba));
+    fn thumb_put(&mut self, id: Uuid, max_edge: u32, frame: i64, w: u32, h: u32, rgba: Vec<u8>) {
+        self.thumbs.insert((id, max_edge, frame), (w, h, rgba));
     }
 }
 /// Decode one footage frame to tightly-packed RGBA8 (`media` feature only).
@@ -92,14 +101,16 @@ pub(crate) fn thumbnail_from_path(
     id: Uuid,
     max_edge: u32,
     path: &std::path::Path,
+    at_frame: i64,
 ) -> Option<(u32, u32, Vec<u8>)> {
     let max_edge = max_edge.clamp(1, 4096);
-    if let Some(hit) = cache.thumb_get(id, max_edge) {
+    let at_frame = at_frame.max(0);
+    if let Some(hit) = cache.thumb_get(id, max_edge, at_frame) {
         return Some(hit);
     }
-    let frame = decode_frame(path, 0)?;
+    let frame = decode_frame(path, at_frame.unsigned_abs())?;
     let (w, h, rgba) = downscale_to_max_edge(frame.width, frame.height, &frame.rgba, max_edge);
-    cache.thumb_put(id, max_edge, w, h, rgba.clone());
+    cache.thumb_put(id, max_edge, at_frame, w, h, rgba.clone());
     Some((w, h, rgba))
 }
 

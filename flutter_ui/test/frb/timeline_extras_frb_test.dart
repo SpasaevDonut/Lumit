@@ -467,7 +467,7 @@ void main() {
         }
         await gesture.up();
         await tester.pumpAndSettle();
-        final map = layer.getClips().single.retime!;
+        final map = layer.getClips().single.retime;
         return envelopeSpeeds(keysOf(map)).first;
       }
 

@@ -186,6 +186,42 @@ impl Clip {
         }
     }
 
+    /// The map this clip actually plays by: its own, or the identity it is
+    /// playing without one.
+    ///
+    /// The identity runs from [`Self::source_in`] — **not from zero**. That
+    /// distinction is the whole reason this exists: every clip after a cut
+    /// starts part way into its source, and anything that assumed a clip's
+    /// map began at source zero sent it back to the top of the media the
+    /// moment it was retimed. Read the effective map and there is nothing to
+    /// assume.
+    pub fn effective_retime(&self) -> Property {
+        if let Some(map) = &self.retime {
+            return map.clone();
+        }
+        let end = self
+            .source_in
+            .checked_add(self.place_duration)
+            .unwrap_or(self.source_in);
+        Property {
+            animation: Animation::Keyframed(vec![
+                Keyframe {
+                    time: Rational::ZERO,
+                    value: self.source_in.to_f64(),
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                },
+                Keyframe {
+                    time: self.place_duration,
+                    value: end.to_f64(),
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                },
+            ]),
+            extra: serde_json::Map::new(),
+        }
+    }
+
     /// The clip's single constant speed (1.0 = source rate), or None when its
     /// map says something one number cannot.
     ///

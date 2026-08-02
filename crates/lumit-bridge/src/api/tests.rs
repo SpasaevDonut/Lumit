@@ -3054,6 +3054,62 @@ fn trimming_a_clip_pulls_one_edge_in() {
     );
 }
 
+/// **A clip after a cut keeps starting where it starts.**
+///
+/// The reported fault: ramping the whole clip was fine, and ramping either
+/// half after one cut sent the picture insane — frozen on a frame or two. The
+/// map a clip plays by was being *constructed* by the frontend for a clip that
+/// had none of its own, and it built it starting at source zero: true only of
+/// a clip nobody has cut. Every clip after a cut begins part way into its
+/// media, so ramping one threw it back to the top of the file.
+///
+/// The map now crosses the bridge whether or not the clip has one, built from
+/// the clip's real trim-in, so there is nothing to assume.
+#[test]
+fn a_cut_clips_map_starts_where_the_clip_does() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+
+    let clips = layer.get_clips().expect("clips");
+    assert_eq!(clips.len(), 2);
+    let right = clips
+        .iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half");
+    assert!(!right.retimed, "neither half is retimed by a cut");
+
+    // The map it plays by opens on the moment it was cut at, not on zero.
+    let BridgeScalar::Keyframed(keys) = &right.retime else {
+        panic!("a clip always reports the map it plays by");
+    };
+    let opens_at = keys.first().expect("a first key").value;
+    assert!(
+        opens_at > 0.0,
+        "the later half starts part way into its media, not at the top of it"
+    );
+
+    // And ramping it keeps that: the first frame it shows is the one it showed.
+    layer
+        .set_clip_speed(right.id, 300.0, 300.0)
+        .expect("ramped");
+    let ramped = layer
+        .get_clips()
+        .expect("clips")
+        .into_iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half");
+    let BridgeScalar::Keyframed(after) = &ramped.retime else {
+        panic!("still a map");
+    };
+    assert!(
+        (after.first().expect("a first key").value - opens_at).abs() < 1e-6,
+        "re-speeding pins a clip's first frame (K-070), it does not move it          back to the start of the media"
+    );
+}
+
 /// A clip that has been cut can be lengthened again.
 ///
 /// The reported fault: after a razor cut the new edge looked draggable and
@@ -3132,12 +3188,12 @@ fn deleting_a_clip_leaves_a_gap() {
 fn a_clips_retime_round_trips_through_the_envelope() {
     let (_project, _comp, layer) = sequenced_layer();
     let clip = layer.get_clips().expect("clips").remove(0);
-    assert!(clip.retime.is_none(), "un-retimed to start");
+    assert!(!clip.retimed, "un-retimed to start");
 
     // Double speed as two keys, the shape the envelope authors.
     layer.set_clip_speed(clip.id, 200.0, 200.0).expect("sped");
     let sped = layer.get_clips().expect("clips").remove(0);
-    let map = sped.retime.clone().expect("a map");
+    let map = sped.retime.clone();
 
     layer.set_clip_retime(sped.id, map).expect("written back");
     let back = layer.get_clips().expect("clips").remove(0);

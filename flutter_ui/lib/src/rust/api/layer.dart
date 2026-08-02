@@ -15,6 +15,7 @@ import 'package:uuid/uuid.dart';
 import 'project_item.dart';
 import 'retime.dart';
 import 'solid.dart';
+import 'state.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `clips_and_index`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
@@ -70,12 +71,18 @@ class BridgeClip {
   /// rate", a different state from a map that happens to be 100%.
   final bool retimed;
 
-  /// The clip's retime map, keyed in **clip-local** time — what the
-  /// sequence view's envelope draws and edits (K-247, K-248).
+  /// The map this clip actually plays by, keyed in **clip-local** time —
+  /// what the sequence view's envelope draws and edits (K-247, K-248).
   ///
-  /// `None` for an un-retimed clip. The row then draws the flat 100% line
-  /// that clip is playing at, and the first edit gives it a real map.
-  final BridgeScalar? retime;
+  /// Always present, even for a clip with no map of its own: it then holds
+  /// the identity that clip is playing, running from its real trim-in.
+  /// [`Self::retimed`] is what says which of the two it is.
+  ///
+  /// Carried rather than left for the frontend to construct, because
+  /// constructing it means knowing where the clip's source starts — and a
+  /// frontend that assumed zero sent every clip after a cut back to the top
+  /// of its media the moment it was ramped.
+  final BridgeScalar retime;
 
   const BridgeClip({
     required this.id,
@@ -85,7 +92,7 @@ class BridgeClip {
     required this.endFrame,
     this.speedPercent,
     required this.retimed,
-    this.retime,
+    required this.retime,
   });
 
   @override
@@ -891,6 +898,21 @@ class LayerReference {
   Future<BridgeAudioPeaks> audioPeaks({required int buckets}) =>
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceAudioPeaks(that: this, buckets: buckets);
+
+  /// A thumbnail of the **first frame this clip shows** (K-248).
+  ///
+  /// Not the file's first frame: a clip after a cut starts part way in, and
+  /// a row of thumbnails that all showed frame zero would say nothing about
+  /// which clip is which. The moment is read through the clip's own map, so
+  /// a re-speeded clip still shows the frame it actually opens on.
+  ///
+  /// `None` when the media will not open, when the source is a comp rather
+  /// than footage (there is nothing on disk to decode), or in a build with
+  /// no media feature. Decoded once per (item, size, frame) and cached.
+  Future<BridgeRenderedFrame?> clipThumbnail(
+          {required UuidValue clip, required int maxEdge}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceClipThumbnail(
+          that: this, clip: clip, maxEdge: maxEdge);
 
   /// Turn a Footage layer into a Sequence layer holding one clip of the whole
   /// source — the way into the clip-editing surface.

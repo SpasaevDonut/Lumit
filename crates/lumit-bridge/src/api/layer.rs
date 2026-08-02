@@ -379,12 +379,18 @@ pub struct BridgeClip {
     /// Whether the clip carries a map at all. `false` is "plays at source
     /// rate", a different state from a map that happens to be 100%.
     pub retimed: bool,
-    /// The clip's retime map, keyed in **clip-local** time — what the
-    /// sequence view's envelope draws and edits (K-247, K-248).
+    /// The map this clip actually plays by, keyed in **clip-local** time —
+    /// what the sequence view's envelope draws and edits (K-247, K-248).
     ///
-    /// `None` for an un-retimed clip. The row then draws the flat 100% line
-    /// that clip is playing at, and the first edit gives it a real map.
-    pub retime: Option<crate::api::effect::BridgeScalar>,
+    /// Always present, even for a clip with no map of its own: it then holds
+    /// the identity that clip is playing, running from its real trim-in.
+    /// [`Self::retimed`] is what says which of the two it is.
+    ///
+    /// Carried rather than left for the frontend to construct, because
+    /// constructing it means knowing where the clip's source starts — and a
+    /// frontend that assumed zero sent every clip after a cut back to the top
+    /// of its media the moment it was ramped.
+    pub retime: crate::api::effect::BridgeScalar,
 }
 
 /// Everything the Timeline outline, its bars, and the Hierarchy draw for one
@@ -482,10 +488,10 @@ pub(crate) fn read_layer_info(
                 // Keyed in clip time, so it crosses with no offset applied —
                 // unlike a layer's, which the bridge carries out by the
                 // layer's own zero (K-213). A clip's zero *is* its start.
-                retime: c
-                    .retime
-                    .as_ref()
-                    .map(|r| BridgeScalar::read_at(r, lumit_core::time::Rational::ZERO)),
+                retime: BridgeScalar::read_at(
+                    &c.effective_retime(),
+                    lumit_core::time::Rational::ZERO,
+                ),
             })
             .collect(),
         _ => Vec::new(),
@@ -1095,10 +1101,10 @@ impl LayerReference {
                     .frame_at(lumit_core::time::CompTime(c.place_end())),
                 speed_percent: c.constant_speed().map(|s| s * 100.0),
                 retimed: c.retime.is_some(),
-                retime: c
-                    .retime
-                    .as_ref()
-                    .map(|r| BridgeScalar::read_at(r, lumit_core::time::Rational::ZERO)),
+                retime: BridgeScalar::read_at(
+                    &c.effective_retime(),
+                    lumit_core::time::Rational::ZERO,
+                ),
             })
             .collect())
     }
@@ -1245,6 +1251,67 @@ impl LayerReference {
             .position(|c| c.id == clip)
             .ok_or(BridgeError::InvalidLayer)?;
         Ok((clips.clone(), index))
+    }
+
+    /// A thumbnail of the **first frame this clip shows** (K-248).
+    ///
+    /// Not the file's first frame: a clip after a cut starts part way in, and
+    /// a row of thumbnails that all showed frame zero would say nothing about
+    /// which clip is which. The moment is read through the clip's own map, so
+    /// a re-speeded clip still shows the frame it actually opens on.
+    ///
+    /// `None` when the media will not open, when the source is a comp rather
+    /// than footage (there is nothing on disk to decode), or in a build with
+    /// no media feature. Decoded once per (item, size, frame) and cached.
+    pub fn clip_thumbnail(
+        &self,
+        clip: Uuid,
+        max_edge: u32,
+    ) -> Result<Option<crate::api::state::BridgeRenderedFrame>, BridgeError> {
+        let (clips, index) = self.clips_and_index(clip)?;
+        let clip = &clips[index];
+        let lumit_core::sequence::ClipSource::Footage(item) = clip.source else {
+            return Ok(None);
+        };
+        // The clip's own opening source moment, through whatever map it plays
+        // by — which is the identity when it has none of its own.
+        let opens_at = clip.source_time(clip.place_start.to_f64());
+
+        #[cfg(feature = "media")]
+        {
+            let proj = self.project()?;
+            let mut proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
+            let doc = proj.store.snapshot();
+            let Some(lumit_core::model::ProjectItem::Footage(f)) = doc.item(item) else {
+                return Ok(None);
+            };
+            let Some(path) = crate::api::footage::FootageReference::resolve_path(&proj, f) else {
+                return Ok(None);
+            };
+            // The media's own rate turns its seconds into its frames.
+            let fps = lumit_media::probe::probe(&path)
+                .ok()
+                .and_then(|i| i.video.map(|v| v.fps()))
+                .filter(|fps| *fps > 0.0)
+                .unwrap_or(1.0);
+            let at = (opens_at * fps).round() as i64;
+            Ok(
+                crate::media::thumbnail_from_path(&mut proj.media, item, max_edge, &path, at).map(
+                    |(width, height, rgba)| crate::api::state::BridgeRenderedFrame {
+                        frame: at.unsigned_abs(),
+                        width,
+                        height,
+                        rgba,
+                    },
+                ),
+            )
+        }
+
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = (item, opens_at, max_edge);
+            Ok(None)
+        }
     }
 
     /// Take one clip off the row, by id.
