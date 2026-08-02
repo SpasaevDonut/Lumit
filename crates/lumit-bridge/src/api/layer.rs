@@ -1279,32 +1279,51 @@ impl LayerReference {
 
         #[cfg(feature = "media")]
         {
-            let proj = self.project()?;
-            let mut proj = proj.write().map_err(|_| BridgeError::WriteFailed)?;
-            let doc = proj.store.snapshot();
-            let Some(lumit_core::model::ProjectItem::Footage(f)) = doc.item(item) else {
-                return Ok(None);
+            let project = self.project()?;
+            // **Everything under the read lock, then let it go.** Decoding a
+            // video frame is slow enough that holding the project across it
+            // stalls every other reader, and the render worker is one of them
+            // (docs/14 §3). The lock comes back only to store the result.
+            let (path, at, cached) = {
+                let proj = project.read().map_err(|_| BridgeError::ReadFailed)?;
+                let doc = proj.store.snapshot();
+                let Some(lumit_core::model::ProjectItem::Footage(f)) = doc.item(item) else {
+                    return Ok(None);
+                };
+                let Some(path) = crate::api::footage::FootageReference::resolve_path(&proj, f)
+                else {
+                    return Ok(None);
+                };
+                // The media's own rate turns its seconds into its frames.
+                let fps = lumit_media::probe::probe(&path)
+                    .ok()
+                    .and_then(|i| i.video.map(|v| v.fps()))
+                    .filter(|fps| *fps > 0.0)
+                    .unwrap_or(1.0);
+                let at = (opens_at * fps).round() as i64;
+                let cached = crate::media::thumb_cached(&proj.media, item, max_edge, at);
+                (path, at, cached)
             };
-            let Some(path) = crate::api::footage::FootageReference::resolve_path(&proj, f) else {
-                return Ok(None);
+
+            let thumb = match cached {
+                Some(hit) => hit,
+                None => {
+                    let Some(decoded) = crate::media::thumb_decode(&path, max_edge, at) else {
+                        return Ok(None);
+                    };
+                    if let Ok(mut proj) = project.write() {
+                        crate::media::thumb_store(&mut proj.media, item, max_edge, at, &decoded);
+                    }
+                    decoded
+                }
             };
-            // The media's own rate turns its seconds into its frames.
-            let fps = lumit_media::probe::probe(&path)
-                .ok()
-                .and_then(|i| i.video.map(|v| v.fps()))
-                .filter(|fps| *fps > 0.0)
-                .unwrap_or(1.0);
-            let at = (opens_at * fps).round() as i64;
-            Ok(
-                crate::media::thumbnail_from_path(&mut proj.media, item, max_edge, &path, at).map(
-                    |(width, height, rgba)| crate::api::state::BridgeRenderedFrame {
-                        frame: at.unsigned_abs(),
-                        width,
-                        height,
-                        rgba,
-                    },
-                ),
-            )
+            let (width, height, rgba) = thumb;
+            Ok(Some(crate::api::state::BridgeRenderedFrame {
+                frame: at.unsigned_abs(),
+                width,
+                height,
+                rgba,
+            }))
         }
 
         #[cfg(not(feature = "media"))]

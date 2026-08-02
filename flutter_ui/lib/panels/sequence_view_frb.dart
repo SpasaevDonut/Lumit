@@ -70,6 +70,15 @@ class SequenceViewFrb extends StatefulWidget {
   final int fpsNum;
   final int fpsDen;
 
+  /// Where the lane's viewport starts inside the scrolled content.
+  ///
+  /// The strip is as wide as the whole composition and lives inside the
+  /// Timeline's horizontal scroll, so canvas x 0 is the *start of time*, not
+  /// the left of the window — the axis labels were painted there and scrolled
+  /// out of sight the moment the Timeline moved, leaving the reference lines
+  /// with nothing naming them. The graph editor solved this the same way.
+  final ScrollController? hScroll;
+
   /// Whether the razor is armed, and how to cut this layer at a frame — the
   /// open view stands in for the layer's bar, so it carries the bar's razor.
   final bool razor;
@@ -96,6 +105,7 @@ class SequenceViewFrb extends StatefulWidget {
     required this.fps,
     required this.fpsNum,
     required this.fpsDen,
+    this.hScroll,
     this.razor = false,
     this.onRazor,
     this.onSelect,
@@ -242,6 +252,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
           child: _EnvelopeStrip(
             entry: widget.entry,
             axis: widget.axis,
+            hScroll: widget.hScroll,
             fps: widget.fps,
             fpsNum: widget.fpsNum,
             fpsDen: widget.fpsDen,
@@ -465,12 +476,15 @@ class _GraphDividerState extends State<_GraphDivider> {
         onVerticalDragUpdate: (d) {
           final from = _from ?? widget.height;
           _travelled += d.delta.dy;
-          final wanted = (from + _travelled)
-              .clamp(sequenceGraphMin + _dividerHeight, sequenceGraphMax);
-          // Snapped to whole rows, measured from the graph's own top.
-          final rows =
-              ((wanted - _dividerHeight) / sequenceRow).round().clamp(1, 16);
-          widget.onHeight(rows * sequenceRow + _dividerHeight);
+          final wanted =
+              (from + _travelled).clamp(sequenceGraphMin, sequenceGraphMax);
+          // **A whole number of rows, divider included.** The divider lives
+          // inside the graph's height rather than on top of it: adding its
+          // five pixels to a row multiple made the layer's whole block five
+          // pixels off the table's grid, so every row below an open view sat
+          // slightly out of its own seams.
+          final rows = (wanted / sequenceRow).round().clamp(1, 16);
+          widget.onHeight(rows * sequenceRow);
         },
         onVerticalDragEnd: (_) => _from = null,
         onVerticalDragCancel: () => _from = null,
@@ -494,6 +508,7 @@ class _GraphDividerState extends State<_GraphDivider> {
 class _EnvelopeStrip extends StatefulWidget {
   final BridgeLayerEntry entry;
   final TimelineAxis axis;
+  final ScrollController? hScroll;
   final double fps;
   final int fpsNum;
   final int fpsDen;
@@ -505,6 +520,7 @@ class _EnvelopeStrip extends StatefulWidget {
   const _EnvelopeStrip({
     required this.entry,
     required this.axis,
+    this.hScroll,
     required this.fps,
     required this.fpsNum,
     required this.fpsDen,
@@ -618,6 +634,9 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                     line: t.hairline,
                     curve: t.curve.first,
                     label: t.small.copyWith(color: t.textMuted),
+                    viewportLeft: (widget.hScroll?.hasClients ?? false)
+                        ? widget.hScroll!.offset
+                        : 0,
                   ),
                 ),
               ),
@@ -910,6 +929,9 @@ class _EnvelopePainter extends CustomPainter {
   final Color curve;
   final TextStyle label;
 
+  /// Where the viewport's left edge sits in the canvas's own coordinates.
+  final double viewportLeft;
+
   const _EnvelopePainter({
     required this.lanes,
     required this.xOfKey,
@@ -918,6 +940,7 @@ class _EnvelopePainter extends CustomPainter {
     required this.line,
     required this.curve,
     required this.label,
+    required this.viewportLeft,
   });
 
   @override
@@ -939,7 +962,9 @@ class _EnvelopePainter extends CustomPainter {
         text: TextSpan(text: text, style: label),
         textDirection: TextDirection.ltr,
       )..layout();
-      painter.paint(canvas, Offset(2, at - painter.height));
+      // At the window's edge, not the content's: a label at canvas x 0 is at
+      // the start of time and scrolls away the moment the lane moves.
+      painter.paint(canvas, Offset(viewportLeft + 2, at - painter.height));
     }
 
     final stroke = Paint()
@@ -966,5 +991,8 @@ class _EnvelopePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_EnvelopePainter old) =>
-      old.lanes != lanes || old.range != range || old.curve != curve;
+      old.lanes != lanes ||
+      old.range != range ||
+      old.curve != curve ||
+      old.viewportLeft != viewportLeft;
 }

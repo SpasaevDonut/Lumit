@@ -96,6 +96,57 @@ pub(crate) fn decode_frame(
 /// `max_edge` is clamped to 1..=4096: a request for a zero-pixel or absurd
 /// thumbnail is a caller bug, not something to allocate for.
 #[cfg(feature = "media")]
+/// A thumbnail already decoded, if there is one. Read-only, so a caller can
+/// check under a read lock and let it go before decoding anything.
+#[cfg(feature = "media")]
+pub(crate) fn thumb_cached(
+    cache: &MediaCache,
+    id: Uuid,
+    max_edge: u32,
+    frame: i64,
+) -> Option<Thumb> {
+    cache.thumb_get(id, max_edge.clamp(1, 4096), frame.max(0))
+}
+
+/// Decode and downscale one frame, touching no cache and holding no lock.
+///
+/// Split out from [`thumbnail_from_path`] because decoding a video frame takes
+/// long enough to matter: doing it with the project locked stalls every reader,
+/// and the render worker is one of them ([14-ENGINEERING-RULES.md] §3 — no
+/// locks held across expensive work). Callers check [`thumb_cached`], let the
+/// lock go, decode here, and take the lock again only to [`thumb_store`].
+#[cfg(feature = "media")]
+pub(crate) fn thumb_decode(path: &std::path::Path, max_edge: u32, frame: i64) -> Option<Thumb> {
+    let max_edge = max_edge.clamp(1, 4096);
+    let decoded = decode_frame(path, frame.max(0).unsigned_abs())?;
+    Some(downscale_to_max_edge(
+        decoded.width,
+        decoded.height,
+        &decoded.rgba,
+        max_edge,
+    ))
+}
+
+/// Remember a decoded thumbnail.
+#[cfg(feature = "media")]
+pub(crate) fn thumb_store(
+    cache: &mut MediaCache,
+    id: Uuid,
+    max_edge: u32,
+    frame: i64,
+    thumb: &Thumb,
+) {
+    let (w, h, rgba) = thumb;
+    cache.thumb_put(
+        id,
+        max_edge.clamp(1, 4096),
+        frame.max(0),
+        *w,
+        *h,
+        rgba.clone(),
+    );
+}
+
 pub(crate) fn thumbnail_from_path(
     cache: &mut MediaCache,
     id: Uuid,

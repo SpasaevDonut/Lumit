@@ -1928,6 +1928,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   sequenceBlanks:
                                                       _sequenceBlanks(layers,
                                                           blockHeights),
+                                                  hScroll: _hLane,
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
                                                   fps: ui.model.fps,
@@ -4863,6 +4864,10 @@ class _LayerArea extends StatelessWidget {
   /// The graph half of a sequence view has been dragged to a new height.
   final void Function(BridgeLayerEntry entry, double height)? onGraphHeight;
 
+  /// The lane's horizontal scroll, so an open view's axis labels can sit at
+  /// the window's edge rather than at the start of time.
+  final ScrollController? hScroll;
+
   /// Where the open sequence views sit, so the row seams skip them (K-248).
   final List<(double, double)> sequenceBlanks;
 
@@ -4946,6 +4951,7 @@ class _LayerArea extends StatelessWidget {
     this.onOpenSequence,
     this.onGraphHeight,
     this.sequenceBlanks = const [],
+    this.hScroll,
     required this.hasAudio,
     required this.peaks,
     required this.fps,
@@ -5220,6 +5226,7 @@ class _LayerArea extends StatelessWidget {
                                                 fps: fps,
                                                 fpsNum: fpsNum,
                                                 fpsDen: fpsDen,
+                                                hScroll: hScroll,
                                                 razor: razor,
                                                 onRazor: (frame) =>
                                                     onRazor(layers[i], frame),
