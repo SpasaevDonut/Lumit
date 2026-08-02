@@ -17,9 +17,12 @@
 #                                                      <- lumit-icon.svg (tile)
 #   assets/brand/lumit-project.ico                     <- lumit-project.svg (.lum)
 #   assets/brand/lumit-preset.ico                      <- lumit-preset.svg (.lumfx)
+#   packaging/macos/lumit-project.icns, lumit-preset.icns
+#                                                      <- the same two SVGs
 #
-# The file-type .ico files wait in assets/brand until an installer exists to
-# register the .lum/.lumfx associations (docs/TODO.md, Later).
+# The Windows installer (packaging/windows/lumit.iss) registers the .ico files
+# with the .lum/.lumfx associations; the .icns files join the macOS bundle's
+# resources with the macOS pass (K-033, docs/TODO.md).
 
 import io
 from pathlib import Path
@@ -64,6 +67,11 @@ def main() -> None:
     for s in MAC_SIZES:
         render(BRAND / "lumit-icon.svg", s).save(iconset / f"app_icon_{s}.png")
     print(f"{iconset.relative_to(ROOT)}: {MAC_SIZES}")
+
+    for name in ["lumit-project", "lumit-preset"]:
+        out = ROOT / "packaging" / "macos" / f"{name}.icns"
+        render(BRAND / f"{name}.svg", 1024).save(out, format="ICNS")
+        print(f"{out.relative_to(ROOT)}")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show File;
 import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
@@ -160,6 +161,18 @@ class CustomHandler extends BaseHandler {
   }
 }
 
+/// The `.lum` file a double-click or `lumit myproject.lum` asked us to open:
+/// the first argument that ends in `.lum` and exists on disk, or null. The
+/// Windows runner forwards the command line as entrypoint arguments (the
+/// installer's file association passes the document path this way); anything
+/// else on the line — flags, stray tokens — is not a project and is ignored.
+String? projectPathFromArgs(List<String> args) {
+  for (final a in args) {
+    if (a.toLowerCase().endsWith('.lum') && File(a).existsSync()) return a;
+  }
+  return null;
+}
+
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
 
@@ -172,6 +185,11 @@ Future<void> main(List<String> args) async {
   // dead and no way to make it live: the first thing a user does needs
   // something to do it *to*.
   state.newProject();
+  // A document on the command line opens over the empty project. On failure
+  // openProject posts its notice and the empty project stands — the same
+  // degraded-but-alive behaviour as a failed File → Open.
+  final fromArgs = projectPathFromArgs(args);
+  if (fromArgs != null) state.openProject(fromArgs);
   runApp(LumitAppNew(state, LumitUiState(state)));
 }
 

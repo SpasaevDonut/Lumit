@@ -403,10 +403,12 @@ list, not a re-statement of the roadmap.
     type-scale steps to the theme; add `ScopeColours` to the Flutter theme (Rust
     has it).
 - **Platform.** The macOS pass - native menu bar, VideoToolbox, ProRes,
-    notarisation (K-033). The Metal/IOSurface Viewer path is unverified on real
-    hardware. The installer registers the `.lum`/`.lumfx` file associations with
-    their document icons (`assets/brand/lumit-project.ico`, `lumit-preset.ico`,
-    K-251) - Windows registry/MSIX manifest, Linux .desktop + shared-mime-info.
+    notarisation (K-033); it also owes `application:openFile:` (a double-clicked
+    `.lum` opening, K-252) and adding `packaging/macos/*.icns` to the bundle's
+    resources. The Metal/IOSurface Viewer path is unverified on real hardware.
+    A CI release pipeline building the three installers from `packaging/`
+    (K-252), plus signing; Linux distro packages (deb/rpm/Flatpak) beyond
+    `install.sh`.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).

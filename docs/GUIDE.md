@@ -5440,7 +5440,26 @@ rather than shrinking one big picture — that is what keeps the 16-pixel
 version crisp instead of mushy. You only run it after editing an SVG; the
 generated files are committed, so a fresh checkout builds without it.
 
-The `.lum`/`.lumfx` document icons are made and waiting, but Windows will not
-show them next to your project files until an installer tells the system
-"files ending in .lum belong to Lumit, use this icon" — that registration is
-an installer job, listed under Later in the TODO.
+The document icons only appear next to your `.lum` files once something tells
+the operating system "files ending in .lum belong to Lumit, use this icon".
+Running the app never does that — it is an *installer's* job, and the
+installers live in `packaging/` (decision K-252):
+
+- **Windows** — `packaging/windows/build-installer.ps1` builds a normal
+  setup.exe (it needs the free Inno Setup tool once:
+  `winget install JRSoftware.InnoSetup`). Installing it copies the app into
+  Program Files, writes the .lum/.lumfx entries into the Windows registry with
+  their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
+  genuinely opens it: the association hands Lumit the file's path as a command
+  line argument, and the app checks its command line at boot
+  (`projectPathFromArgs` in `main.dart`).
+- **Linux** — `packaging/linux/install.sh` copies a built bundle into
+  `~/.local`, and installs the desktop entry, the file-type declarations, and
+  the icons where any desktop environment looks for them. No root needed.
+- **macOS** — `packaging/macos/make-dmg.sh` produces the usual drag-to-
+  Applications disk image (on a Mac; it uses Apple's own tooling). The
+  file-type declarations are in the app's Info.plist already, but their icons
+  and double-click opening land with the larger macOS pass in the TODO.
+
+None of this runs on `flutter run` — a dev run shows the app icon (it is baked
+into the executable) but registers nothing.

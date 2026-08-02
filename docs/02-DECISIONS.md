@@ -4979,3 +4979,20 @@ macOS-only. File-type icons for `.lum` (twin keys, `LUM` kicker) and `.lumfx` (s
 Sources are the four SVGs in `assets/brand/`; `scripts/gen-icons.py` renders every raster
 (each size rendered from the SVG directly, never downscaled). docs/15-DESIGN.md brand
 section rewritten in the same commit.
+
+**K-252 · PROPOSED · Per-platform installers: Inno Setup, a user-level install script, a DMG.**
+Follows K-251 (2026-08-02): the document icons stop waiting. `packaging/` gains the three
+platform stories, deliberately boring ones — **Windows**: an Inno Setup script
+(`lumit.iss`, built by `build-installer.ps1`) that installs the release bundle and registers
+`.lum`/`.lumfx` in the registry with their icons and an open command; chosen over MSIX for
+zero signing prerequisites on a GPLv3 hobby-scale project. **Linux**: a POSIX `install.sh`
+that places the bundle under `~/.local`, plus a desktop entry and shared-mime-info XML; the
+brand SVGs install as scalable icons directly. Proper distro packages (deb/rpm/Flatpak) can
+grow from these files later. **macOS**: `make-dmg.sh` (hdiutil) and the Info.plist document
+types; unsigned, un-notarised, and the document `.icns` files join the bundle with the macOS
+pass (K-033), which also owes `application:openFile:` handling.
+
+The app now honours a `.lum` on its command line (`projectPathFromArgs`, regression-tested),
+so the Windows association genuinely opens the document, not just the application. Still
+open, in TODO: a CI release pipeline that builds all three, signing/notarisation, and
+double-click opening on macOS.
