@@ -1812,15 +1812,24 @@ void main() {
               find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
           .width;
 
+      final centreBefore = tester
+          .getRect(
+              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
+          .center
+          .dx;
+
       await tester.tap(find.byKey(const ValueKey('tl-zoom-in')));
       await tester.pumpAndSettle();
       expect(find.text('150%'), findsOneWidget);
-      final zoomed = tester
-          .getRect(
-              find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')))
-          .width;
-      expect(zoomed, greaterThan(before),
+      final bar = tester.getRect(
+          find.byKey(ValueKey<String>('tl-bar-${layer.internallayerId}')));
+      expect(bar.width, greaterThan(before),
           reason: 'the comp takes more pixels when zoomed in');
+      // A button zoom has no pointer to zoom about, so it holds the middle of
+      // the visible lanes still — zooming about the left edge instead pushed
+      // whatever was being looked at off the right of the panel.
+      expect(bar.center.dx, moreOrLessEquals(centreBefore, epsilon: 1),
+          reason: 'the middle of the view stayed where it was');
 
       await tester.tap(find.byKey(const ValueKey('tl-zoom-fit')));
       await tester.pumpAndSettle();
@@ -2372,6 +2381,57 @@ void main() {
       expect(p.comp.getLayers(), hasLength(1),
           reason: 'the drop reached the document');
       expect(p.comp.getLayers().single.getName(), contains('shot'));
+    });
+
+    /// **A drop used to ignore where it was aimed.** Footage always went on at
+    /// the top of the stack, so building an order meant dragging every clip in
+    /// and then re-sorting it by hand.
+    testWidgets('footage lands where it was dropped, not at the top',
+        (tester) async {
+      final p = withComp();
+      // Three solids to drop between, added bottom-up so the stack reads
+      // Top, Middle, Bottom down the screen. The drop aims at the middle one.
+      for (final name in ['Bottom', 'Middle', 'Top']) {
+        p.comp.addSolidLayer().rename(name: name);
+      }
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+
+      await tester.pumpWidget(hostPanel(
+        child: const Row(
+          children: [
+            SizedBox(width: 300, child: ProjectPanelFrb()),
+            Expanded(child: TimelinePanelFrb()),
+          ],
+        ),
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1400, 700),
+      ));
+      await tester.pump();
+
+      final middle = p.comp.getLayers()[1];
+      final row =
+          find.byKey(ValueKey<String>('tl-row-${middle.internallayerId}'));
+      // The upper half of the row: a drop there goes above it, and the centre
+      // is the midpoint the rule flips on.
+      final target = tester.getTopLeft(row) +
+          Offset(tester.getSize(row).width / 2, 5);
+      final from = tester.getCenter(
+          find.byKey(ValueKey<String>('project-row-${footage.internalid}')));
+
+      final gesture = await tester.startGesture(from);
+      await tester.pump(const Duration(milliseconds: 200));
+      // Stepped, for the same arena reason as the drop test above.
+      for (var i = 1; i <= 10; i++) {
+        await gesture.moveTo(Offset.lerp(from, target, i / 10)!);
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      expect([for (final l in p.comp.getLayers()) l.getName()],
+          ['Top', 'shot.mov', 'Middle', 'Bottom'],
+          reason: 'it went in above the row it was dropped on');
     });
 
     /// Comps nest by the same gesture: drag one from the Project panel onto

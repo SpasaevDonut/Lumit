@@ -1159,6 +1159,19 @@ class LumitUiState extends ChangeNotifier {
     }
   }
 
+  /// Drop a comp's tab where [target]'s tab sits. The strip is drawn in this
+  /// list's order, so moving the entry is the whole reorder — and it rides
+  /// along in the session, like the rest of the tab strip.
+  void moveComp(UuidValue id, UuidValue target) {
+    final from = openComps.indexOf(id);
+    final to = openComps.indexOf(target);
+    if (from < 0 || to < 0 || from == to) return;
+    openComps.removeAt(from);
+    openComps.insert(to, id);
+    rememberSession();
+    notifyListeners();
+  }
+
   /// Close a comp's Timeline tab. When the closed tab was fronted, [fallback]
   /// — the tab bar's nearest remaining neighbour — fronts instead.
   void closeComp(UuidValue id, {CompositionReference? fallback}) {
