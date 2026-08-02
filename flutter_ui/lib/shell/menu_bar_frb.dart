@@ -156,6 +156,12 @@ class LumitMenuBarFrb extends StatelessWidget {
 
     return Container(
       height: 26,
+      // **Load-bearing.** The scroll view below shrink-wraps to the width of
+      // its Row, so without this the bar is only as wide as its nine headings
+      // — and the Column above it, centring by default, puts that stub in the
+      // middle of the window with the backdrop showing either side. The bar is
+      // chrome: it spans the window, one colour, headings from the left edge.
+      width: double.infinity,
       color: t.surface2,
       // Nine menu names do not fit a narrow window, and a menu you cannot
       // reach is worse than one you have to scroll to — so the bar scrolls

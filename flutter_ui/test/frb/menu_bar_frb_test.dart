@@ -606,6 +606,50 @@ void main() {
           reason: 'and back again');
     });
 
+    /// **The bar is chrome: it spans the window, one colour, from the left.**
+    ///
+    /// Making it scroll sideways (so nine headings cannot overflow a narrow
+    /// window) made it shrink-wrap to the width of those headings, and the
+    /// shell's Column then centred that stub with the backdrop showing either
+    /// side. Both symptoms, one cause.
+    ///
+    /// **The window has to be wider than the headings for this to be visible
+    /// at all.** The nine of them come to a little over 800px, so on the
+    /// default 800×600 test surface a shrink-wrapped bar is clamped to the full
+    /// width and looks perfect — which is exactly how the fault shipped. It is
+    /// pumped here at a real window size, in the Column `_LumitAppViewState`
+    /// puts it in — that Column is the whole mechanism, because a Column gives
+    /// its children *loose* cross-axis constraints, which is what lets a
+    /// shrink-wrapping child stay narrow and be centred. (`hostPanel` alone
+    /// puts the bar in an Overlay, which forces full width and hides the
+    /// fault; the whole `LumitAppNew` reproduces it too, but drags in an
+    /// unrelated Debug-panel overflow at this size.)
+    testWidgets('the bar spans the window, from the left edge', (tester) async {
+      tester.view.physicalSize = const Size(1280, 720);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+
+      final p = freshProject();
+      await tester.pumpWidget(hostPanel(
+        child: Builder(builder: (context) {
+          final state = context.watch<LumitState>();
+          context.watch<LumitUiState>();
+          return Column(children: [LumitMenuBarFrb(app: state)]);
+        }),
+        state: p.state,
+        uiState: p.uiState,
+      ));
+      await tester.pump();
+
+      final bar = tester.getRect(find.byType(LumitMenuBarFrb));
+      expect(bar.left, 0, reason: 'flush to the left edge, not centred');
+      expect(bar.width, 1280,
+          reason: 'the full width of the window, so one colour spans it');
+      expect(tester.getTopLeft(find.byKey(const ValueKey<String>('menu-File'))).dx,
+          lessThan(20),
+          reason: 'File is the first heading, at the left');
+    });
+
     testWidgets('Help ▸ About Lumit opens the About window', (tester) async {
       await mount(tester);
       await choose(tester, 'Help', 'About Lumit');
