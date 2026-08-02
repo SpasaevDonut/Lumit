@@ -61,12 +61,11 @@ These are v1-scope surfaces it does not yet match.
     *given source moment*; `FootageReference::thumbnail` only ever decodes the
     media's first frame, so this is a new engine path plus a cache, not a
     drawing change.
-- **Shaping a clip's ramp beyond its two ends** - the in-row strip sets a
-    clip's speed (and a straight ramp); the full envelope with points inside a
-    clip is the graph editor's, and a Sequence layer has no Retime channel
-    there yet (K-075 sent it here instead).
-- **Dragging clips to reorder** - `move_clip` is built and tested; nothing in
-    the row drags yet, so the only way to reorder is through the bridge.
+- **Dragging clips to reorder** - `move_clip` is built and tested, and a clip
+    drags along the row and trims by its edges; dropping one *between* two
+    others to reorder is not wired, so the only way to shuffle is the op.
+- **The clip strip draws no thumbnails or waveforms**, so a clip is a coloured
+    box with a percentage on it. Both want the same decode-at-a-moment path.
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;

@@ -16,7 +16,7 @@ import 'project_item.dart';
 import 'retime.dart';
 import 'solid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `clip_under`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
+// These functions are ignored because they are not marked as `pub`: `clip_under`, `clips_and_index`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
@@ -70,6 +70,13 @@ class BridgeClip {
   /// rate", a different state from a map that happens to be 100%.
   final bool retimed;
 
+  /// The clip's retime map, keyed in **clip-local** time — what the
+  /// sequence view's envelope draws and edits (K-247, K-248).
+  ///
+  /// `None` for an un-retimed clip. The row then draws the flat 100% line
+  /// that clip is playing at, and the first edit gives it a real map.
+  final BridgeScalar? retime;
+
   const BridgeClip({
     required this.id,
     required this.placeStart,
@@ -78,6 +85,7 @@ class BridgeClip {
     required this.endFrame,
     this.speedPercent,
     required this.retimed,
+    this.retime,
   });
 
   @override
@@ -88,7 +96,8 @@ class BridgeClip {
       startFrame.hashCode ^
       endFrame.hashCode ^
       speedPercent.hashCode ^
-      retimed.hashCode;
+      retimed.hashCode ^
+      retime.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -101,7 +110,8 @@ class BridgeClip {
           startFrame == other.startFrame &&
           endFrame == other.endFrame &&
           speedPercent == other.speedPercent &&
-          retimed == other.retimed;
+          retimed == other.retimed &&
+          retime == other.retime;
 }
 
 /// Everything the Timeline outline, its bars, and the Hierarchy draw for one
@@ -1198,6 +1208,16 @@ class LayerReference {
   void setCameraZoom({required BridgeScalar zoom}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetCameraZoom(that: this, zoom: zoom);
 
+  /// Replace one clip's whole retime map, keyed in clip-local time.
+  ///
+  /// The envelope in the sequence view writes through here: it speaks the
+  /// same keyframes the graph editor's Vegas lens does (K-249 made them one
+  /// representation), so one editor serves both. The clip keeps its place;
+  /// what it plays follows from the map.
+  void setClipRetime({required UuidValue clip, required BridgeScalar value}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetClipRetime(
+          that: this, clip: clip, value: value);
+
   /// Set one clip's playback speed, as a percentage (K-247, K-248).
   ///
   /// The clip keeps its place on the row — its start and its length are
@@ -1373,6 +1393,15 @@ class LayerReference {
   void setVolumeDb({required BridgeScalar value}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetVolumeDb(that: this, value: value);
 
+  /// Slide a clip along the row so it starts at `to_frame` (docs/04 §8.2).
+  ///
+  /// Its length, its trim and its map are untouched — the same frames play,
+  /// just earlier or later. Refused where it would start before the layer's
+  /// own zero.
+  void slideClip({required UuidValue clip, required PlatformInt64 toFrame}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSlideClip(
+          that: this, clip: clip, toFrame: toFrame);
+
   /// Razor: split this layer in two at `frame` (docs/07 §4.4).
   ///
   /// After Effects' split, not a clip cut: the layer keeps everything it has —
@@ -1409,6 +1438,19 @@ class LayerReference {
       BridgeLib.instance.api.crateApiLayerLayerReferenceToggleRetimeProperty(
         that: this,
       );
+
+  /// Trim one edge of a clip inward (docs/04 §8.2, non-ripple).
+  ///
+  /// `start_frame` and `end_frame` are where the clip's edges should land;
+  /// only an edge that moves *inward* is honoured, because trimming outward
+  /// needs source the clip may not have and is its own operation (§7.3).
+  /// Nothing else on the row moves — no ripple, ever (K-022).
+  void trimClip(
+          {required UuidValue clip,
+          required PlatformInt64 startFrame,
+          required PlatformInt64 endFrame}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceTrimClip(
+          that: this, clip: clip, startFrame: startFrame, endFrame: endFrame);
 
   @override
   int get hashCode =>

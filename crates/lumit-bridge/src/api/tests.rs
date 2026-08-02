@@ -3012,6 +3012,66 @@ fn clips_reorder_into_the_rows_own_slots() {
     );
 }
 
+/// A clip slides along its row, keeping its length and what it plays.
+#[test]
+fn sliding_a_clip_moves_it_without_changing_it() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
+    let length = before.end_frame - before.start_frame;
+
+    layer
+        .slide_clip(before.id, before.start_frame + 5)
+        .expect("slid");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.start_frame, before.start_frame + 5);
+    assert_eq!(after.end_frame - after.start_frame, length, "same length");
+    assert_eq!(after.retimed, before.retimed, "and the same map");
+}
+
+/// Trimming an edge brings it in and moves nothing else — no ripple, ever.
+#[test]
+fn trimming_a_clip_pulls_one_edge_in() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
+
+    layer
+        .trim_clip(before.id, before.start_frame, before.end_frame - 4)
+        .expect("trimmed");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.start_frame, before.start_frame, "the start held");
+    assert_eq!(after.end_frame, before.end_frame - 4);
+
+    // Trimming *outward* is refused rather than silently inventing source.
+    let out = after.end_frame + 20;
+    layer
+        .trim_clip(after.id, after.start_frame, out)
+        .expect("calm");
+    assert_eq!(
+        layer.get_clips().expect("clips").remove(0).end_frame,
+        after.end_frame,
+        "an outward trim needs source the clip may not have (docs/04 §7.3)"
+    );
+}
+
+/// The envelope writes a clip's whole map, and it reads back as what it wrote.
+#[test]
+fn a_clips_retime_round_trips_through_the_envelope() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    assert!(clip.retime.is_none(), "un-retimed to start");
+
+    // Double speed as two keys, the shape the envelope authors.
+    layer.set_clip_speed(clip.id, 200.0, 200.0).expect("sped");
+    let sped = layer.get_clips().expect("clips").remove(0);
+    let map = sped.retime.clone().expect("a map");
+
+    layer.set_clip_retime(sped.id, map).expect("written back");
+    let back = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(back.speed_percent, Some(200.0));
+    assert_eq!(back.start_frame, clip.start_frame, "place untouched");
+    assert_eq!(back.end_frame, clip.end_frame);
+}
+
 // --- Video arriving as a Sequence layer (K-246) ---------------------------
 
 /// With the preference on, media that **runs** arrives as a one-clip Sequence

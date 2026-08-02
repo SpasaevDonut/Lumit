@@ -367,8 +367,8 @@ void main() {
 
       expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsOneWidget,
           reason: 'the clip is on screen');
-      expect(find.byKey(ValueKey<String>('seq-speed-${clip.id}')), findsOneWidget,
-          reason: 'and so is its point on the speed envelope');
+      expect(find.byKey(const ValueKey('seq-envelope')), findsOneWidget,
+          reason: 'and so is the speed envelope beneath it');
 
       // Double-clicking again shuts it.
       await tester.tap(name);
@@ -394,10 +394,16 @@ void main() {
       final before = layer.getClips().single;
       expect(before.retimed, isFalse, reason: 'plays at source rate to start');
 
-      // Downwards is slower: the envelope runs 100% at the top to -25% at the
-      // bottom, so a drag down the strip lowers the speed.
-      final point = find.byKey(ValueKey<String>('seq-speed-${before.id}'));
-      await tester.drag(point, const Offset(0, 14));
+      // Downwards is slower: the envelope runs fast at the top to backwards at
+      // the bottom, so a drag down the strip lowers the speed. Started over
+      // the clip's own span, which is what picks the clip whose line it is.
+      final strip = tester.getRect(find.byKey(const ValueKey('seq-envelope')));
+      final clipBox =
+          tester.getRect(find.byKey(ValueKey<String>('seq-clip-${before.id}')));
+      await tester.dragFrom(
+        Offset(clipBox.center.dx, strip.top + strip.height * 0.3),
+        const Offset(0, 30),
+      );
       await tester.pumpAndSettle();
 
       final after = layer.getClips().single;

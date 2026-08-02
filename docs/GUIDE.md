@@ -1438,15 +1438,31 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   against a beat you can see, so the music, the other layers and the ruler all have to stay
   on screen while you do it. (An earlier decision put this in a tab of its own; K-248
   changed it.)
-  What opens is two strips under the layer's own bar. The **clips**, each drawn where it
-  sits on the row with its playback speed written on it — a ramped clip says "ramp", because
-  a curve has no single number and printing one would be a lie about it. And the **speed
-  envelope**, a band per clip whose height is that clip's speed: drag it up to speed the clip
-  up, down towards zero to slow it, below zero to run it backwards. The clip stays exactly
-  where it is on the row while you do — an edit point already on a beat stays on that beat,
-  which is the promise the whole editor is built around.
-  The razor and `Ctrl+Shift+D` cut in the open row exactly as they cut the bar above,
-  because they are the same commands on the same layer; nothing new had to be taught.
+  It opens **six rows tall, three and three**. The top three hold the **clips**: each drawn
+  where it sits with its playback speed on it, draggable along the row by its body and
+  trimmable by either edge, and cuttable with the razor or `Ctrl+Shift+D` exactly as the bar
+  above is — they are the same commands on the same layer. The bottom three hold the
+  **speed envelope**. Everything below the layer moves down by those six rows, so the view
+  is part of the table rather than something floating over it, and the row seams stop at its
+  edges: an open view is one cell, and ruling it into six would draw lines straight through
+  the graph.
+  **The envelope is the same editor as the graph's Vegas lens**, over the same keyframes: a
+  point per key, its height the playback speed in per cent, straight lines between.
+  `Ctrl`-click or double-click the line plants a point, `Alt`-click lifts one, and dragging
+  a point re-speeds from there. A clip nobody has retimed draws the flat 100% it is actually
+  playing, and dragging that line moves it **as one level** — the obvious reading of dragging
+  a flat line is "this clip plays at that speed", which is what Vegas's first envelope point
+  does too. Plant a point and the line has a shape worth keeping, so from then on a drag
+  moves only the point it has hold of.
+  The vertical axis **grows as you drag**. It opens on 100% down to −25%, with air either
+  side so a flat 100% line is not sitting on the strip's own top edge, and if you drag a
+  point past either end the axis reframes to hold it — so a fast ramp or a hard reverse
+  stays inside its own three rows instead of running out over the layers below.
+  **The layer's bar stays a plain bar.** Cutting a clip used to draw split lines up there;
+  the clips and their edit points belong to the view now, and the lines only said the same
+  thing twice. What the bar does show is where its clips are **not** — the gaps wash out
+  faintly, the way a trimmed footage layer shows the source it is not using — so a collapsed
+  Sequence layer still tells you it has holes in it.
   **The layer's bar is its clips' extent**: first clip's start to last clip's end. Delete the
   last clip and the end of the bar comes in with it; a gap in the middle stays a gap, renders
   transparent, and is never closed for you.
@@ -1454,12 +1470,9 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   forward through their source — you could remove and space them, not shuffle them — which
   existed so a camera track could replay through the cuts. K-248 drops it: a tracker will run
   on the whole unaltered footage and be mapped through the sequence instead, and reordering
-  is what anyone coming from Vegas expects. Reordering moves clips between the row's
-  *slots*, so the run of boxes rearranges without the row being re-laid.
-  Two things are still owed here and are in [TODO.md](TODO.md): the per-clip **thumbnails**
-  at each clip's start and end (they need a decode-at-a-given-source-moment path that does
-  not exist yet), and shaping a clip's ramp beyond its two ends, which is the graph editor's
-  full envelope rather than this strip's.
+  is what anyone coming from Vegas expects.
+  Per-clip **thumbnails** are still owed ([TODO.md](TODO.md)): they need a decode at a given
+  source moment, which no engine path offers yet.
 - **Video arriving as a Sequence layer (K-246).** With that switch on, dropping a video into
   a composition gives you a **Sequence layer** holding one clip, rather than a plain Footage
   layer — a row you can cut into pieces and ramp piece by piece, instead of a single

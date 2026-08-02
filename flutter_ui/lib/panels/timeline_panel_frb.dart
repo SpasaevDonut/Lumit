@@ -571,6 +571,25 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// opens its clips and their speed envelope inside its own row.
   final Set<String> _sequenceOpen = {};
 
+  /// Where each open sequence view sits down the table, as (top, bottom) in
+  /// the rows' own coordinates — what the row seams skip over, so an open view
+  /// reads as one cell rather than six ruled rows.
+  List<(double, double)> _sequenceBlanks(
+      List<BridgeLayerEntry> layers, List<double> heights) {
+    final out = <(double, double)>[];
+    var y = 0.0;
+    for (var i = 0; i < layers.length && i < heights.length; i++) {
+      if (_sequenceOpen
+          .contains(layers[i].layer.internallayerId.toString())) {
+        // The view sits directly under the layer's own bar, above whatever
+        // fold-out rows follow it.
+        out.add((y + _rowHeight, y + _rowHeight + sequenceViewHeight));
+      }
+      y += heights[i];
+    }
+    return out;
+  }
+
   /// Open or close a Sequence layer's view. Any other kind is left alone: a
   /// double-click on a Precomp already means "open the comp", and a layer with
   /// no clips has nothing to show.
@@ -1631,6 +1650,24 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                             -((_positionOf(_vOutline)?.pixels ??
                                                     0) %
                                                 _rowHeight),
+                                        // The grid here repeats from the
+                                        // panel's edge, so the blanks are
+                                        // carried up by however far the rows
+                                        // have scrolled.
+                                        blanks: [
+                                          for (final b in _sequenceBlanks(
+                                              layers, blockHeights))
+                                            (
+                                              b.$1 -
+                                                  (_positionOf(_vOutline)
+                                                          ?.pixels ??
+                                                      0),
+                                              b.$2 -
+                                                  (_positionOf(_vOutline)
+                                                          ?.pixels ??
+                                                      0),
+                                            ),
+                                        ],
                                       ),
                                     ),
                                   ),
@@ -1858,6 +1895,9 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   sequenceOpen: _sequenceOpen,
                                                   onOpenSequence:
                                                       _toggleSequenceView,
+                                                  sequenceBlanks:
+                                                      _sequenceBlanks(layers,
+                                                          blockHeights),
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
                                                   fps: ui.model.fps,
@@ -4773,6 +4813,9 @@ class _LayerArea extends StatelessWidget {
   final Set<String> sequenceOpen;
   final void Function(BridgeLayerEntry entry)? onOpenSequence;
 
+  /// Where the open sequence views sit, so the row seams skip them (K-248).
+  final List<(double, double)> sequenceBlanks;
+
   /// Which layers carry sound — passed through only so the row list this side
   /// builds is identical to the outline's.
   final Map<String, bool> hasAudio;
@@ -4851,6 +4894,7 @@ class _LayerArea extends StatelessWidget {
     required this.open,
     this.sequenceOpen = const {},
     this.onOpenSequence,
+    this.sequenceBlanks = const [],
     required this.hasAudio,
     required this.peaks,
     required this.fps,
@@ -5078,6 +5122,9 @@ class _LayerArea extends StatelessWidget {
                                                     'tl-seq-${layers[i].layer.internallayerId}'),
                                                 entry: layers[i],
                                                 axis: axis,
+                                                fps: fps,
+                                                fpsNum: fpsNum,
+                                                fpsDen: fpsDen,
                                                 onChanged: onChanged,
                                               ),
                                             // One lane per fold-out row the outline shows,
@@ -5137,6 +5184,7 @@ class _LayerArea extends StatelessWidget {
                                       painter: _RowDividerPainter(
                                         step: _rowHeight,
                                         colour: t.hairline,
+                                        blanks: sequenceBlanks,
                                       ),
                                     ),
                                   ),
@@ -5388,6 +5436,14 @@ class _RowDividerPainter extends CustomPainter {
   final double step;
   final Color colour;
 
+  /// Vertical stretches to leave alone, as (top, bottom) pairs.
+  ///
+  /// An open sequence view is one table cell, not six rows of one — ruling it
+  /// into rows drew lines through the clips and straight across the middle of
+  /// the speed envelope, which read as the graph having been chopped up
+  /// (K-248).
+  final List<(double, double)> blanks;
+
   /// How far the first seam sits above the top edge — the outline's overlay
   /// is pinned to the panel rather than to the scrolled rows, so it carries
   /// the scroll offset here instead.
@@ -5397,6 +5453,7 @@ class _RowDividerPainter extends CustomPainter {
     required this.step,
     required this.colour,
     this.phase = 0,
+    this.blanks = const [],
   });
 
   @override
@@ -5407,13 +5464,20 @@ class _RowDividerPainter extends CustomPainter {
       ..strokeWidth = 1;
     for (var y = phase + step; y <= size.height; y += step) {
       if (y < 0) continue;
+      // Strictly inside a blank, so the seams that *bound* an open view stay:
+      // the row still has a top and a bottom, it simply has no rules through
+      // its middle.
+      if (blanks.any((b) => y > b.$1 + 0.5 && y < b.$2 - 0.5)) continue;
       canvas.drawLine(Offset(0, y - 0.5), Offset(size.width, y - 0.5), paint);
     }
   }
 
   @override
   bool shouldRepaint(_RowDividerPainter old) =>
-      old.step != step || old.colour != colour || old.phase != phase;
+      old.step != step ||
+      old.colour != colour ||
+      old.phase != phase ||
+      old.blanks != blanks;
 
   /// Never absorbs a pointer: a background painter's default would eat the
   /// gestures on the rows below it.
@@ -5930,16 +5994,26 @@ class _BarState extends State<_Bar> {
                         : null,
                     borderRadius: BorderRadius.circular(2),
                   ),
-                  // A Sequence layer draws its clip splits, so the razor has
-                  // something to aim at and a cut is visible once made.
                   child: Stack(
                     children: [
-                      for (final clipFrame in info.clipFrames)
-                        Positioned(
-                          left: widget.axis.xOf(clipFrame.toInt()) - 0.5,
-                          top: 0,
-                          bottom: 0,
-                          child: Container(width: 1, color: t.surface0),
+                      // A Sequence layer's bar stays a plain bar: the clips and
+                      // their edit points are the sequence view's to draw, and
+                      // split lines up here only said the same thing twice
+                      // (K-248). What the bar does show is where its clips are
+                      // *not* — the gaps, faint, the way a trimmed footage
+                      // layer shows the source it is not using (K-212).
+                      if (info.kind == BridgeLayerKind.sequence)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: CustomPaint(
+                              painter: SequenceGapsPainter(
+                                clips: info.clips,
+                                axis: widget.axis,
+                                left: left,
+                                ink: t.surface0,
+                              ),
+                            ),
+                          ),
                         ),
                       // The two trim zones say so under the pointer: a bar
                       // whose ends can be taken hold of should not have to be
