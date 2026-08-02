@@ -1432,6 +1432,38 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (Frame interpolation — how in-between frames are synthesised, Nearest / Blend / Flow — is a
   per-layer retime setting in the data model, but is not surfaced in the timeline for now; it
   will return in a dedicated place.)
+- **The Vegas speed envelope (K-247).** With *Retime opens to Velocity* ticked, the Retime
+  channel's speed view stops being the After Effects speed graph and becomes the thing Vegas
+  editors already know: a **velocity envelope**. The difference is what a keyframe is on it.
+  In the After Effects speed graph a key has *two* dots — the speed coming in and the speed
+  going out, dragged separately — because a key is a corner where two spans meet. On the
+  envelope a key has **one** dot, and its height simply *is* the playback speed at that
+  moment: 100% is normal, 0% is a freeze, 300% is three times as fast, and dragging below
+  zero runs the footage backwards. Between two dots the speed runs in a straight line, which
+  is what a Vegas ramp is.
+  **Dragging a point changes the frames after it, and moves nothing.** Raise a point and the
+  footage from there on plays faster, so by the end of the layer you are further into the
+  clip than you were — but the layer does not get longer, no keyframe moves in time, and
+  nothing ripples. That is the whole promise the editor is built around: a beat you already
+  synced stays synced (the "beat-sync covenant"). The **first** point is pinned, so a clip
+  always starts on the frame it started on however you re-speed it.
+  **It is the same curve, not a simplified picture of it.** This is worth spelling out
+  because it is easy to assume otherwise. The Time view underneath is made of ordinary
+  bezier keyframes, and one might expect the straight lines of an envelope to be an
+  approximation drawn over them. They are not: if you set a span's value change to exactly
+  the area under the envelope's straight line — the average of the two speeds times the
+  span — the bezier's own speed comes out *exactly* that straight line, with the curvature
+  term cancelling to nothing. So the envelope and the Time curve are two readings of one
+  set of keyframes, and a ramp built in either is read back honestly in the other. (There
+  is a test that samples along the curve and checks it sits on the envelope's line; if that
+  ever fails, the two views have started disagreeing.)
+  The axis opens at **100% down to −25%**, and only ever grows: the strip of negative space
+  is deliberate, so it is visible that dragging down there is allowed and what it does. Push
+  a ramp to 850% and the axis reframes to fit it.
+  Two smaller things came with it. The Retime row's **name is now clickable**, like every
+  other property row's — it never was, which meant the Retime curve could be built but not
+  opened. And with the preference off, everything above is unchanged: the speed view is the
+  ordinary two-dot graph, for Retime and for every other property, in both modes.
 - **One way to retime a layer, not two (K-249).** For a while Lumit could retime a footage
   layer by either of two entirely separate mechanisms, and this is the note about the day
   that stopped. The **Retime property** is the one described just above: a keyframable

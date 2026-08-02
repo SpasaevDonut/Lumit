@@ -556,6 +556,16 @@ class GraphEditorFrb extends StatefulWidget {
   /// range is the user's — the wheel pans it and `Alt`+wheel zooms it.
   final bool autoFit;
 
+  /// Settings ▸ Interface ▸ Editing ▸ *Retime opens to Velocity* (K-246).
+  ///
+  /// On, a **Retime** channel's speed view becomes the Vegas envelope of
+  /// K-247: one point per key whose height is the playback speed in per cent,
+  /// straight lines between them, and the frames after a dragged point
+  /// re-integrated. Off — and for every channel that is not a Retime, in
+  /// either mode — the speed view is the ordinary two-sided derivative graph
+  /// with its in and out dots. Nothing about the value view changes either way.
+  final bool vegas;
+
   /// The selected keys, as `channelId#index` — owned by the Timeline panel so
   /// the bottom bar and the shortcuts act on the same set.
   final Set<String> selectedKeys;
@@ -579,6 +589,7 @@ class GraphEditorFrb extends StatefulWidget {
     required this.magnet,
     required this.lens,
     required this.autoFit,
+    this.vegas = false,
     required this.selectedKeys,
     required this.onSelectionChanged,
     required this.onChanged,
@@ -749,15 +760,44 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   List<List<BridgeKeyframe>> get _channelKeys =>
       [for (final c in widget.channels) c.keys];
 
-  (double, double) _fitRange() => widget.lens == GraphLens.value
-      ? fitValueRange(
-          _channelKeys,
-          [
-            for (final c in widget.channels)
-              if (c.isStatic) c.staticValue,
-          ],
-        )
-      : fitSpeedRange(_channelKeys);
+  /// Whether [channel] draws as the Vegas speed envelope right now (K-247) —
+  /// a Retime, in the speed view, with the preference on.
+  bool isEnvelope(GraphChannel channel) =>
+      widget.vegas && channel.retime && widget.lens == GraphLens.speed;
+
+  bool get _anyEnvelope => widget.channels.any(isEnvelope);
+
+  (double, double) _fitRange() {
+    if (widget.lens == GraphLens.value) {
+      return fitValueRange(
+        _channelKeys,
+        [
+          for (final c in widget.channels)
+            if (c.isStatic) c.staticValue,
+        ],
+      );
+    }
+    if (!_anyEnvelope) return fitSpeedRange(_channelKeys);
+    // An envelope brings its own floor and ceiling (100% down to −25%), which
+    // the ordinary speed fit has no business inventing. Any other channel
+    // selected alongside is framed as before and the two ranges are unioned —
+    // the speed view has always put unlike units on one axis (px/s beside
+    // %/s), so this is not a new compromise, just a wider one.
+    final envelope = fitEnvelopeRange([
+      for (final c in widget.channels)
+        if (isEnvelope(c)) c.keys
+    ]);
+    final others = [
+      for (final c in widget.channels)
+        if (!isEnvelope(c)) c.keys
+    ];
+    if (others.isEmpty) return envelope;
+    final rest = fitSpeedRange(others);
+    return (
+      envelope.$1 < rest.$1 ? envelope.$1 : rest.$1,
+      envelope.$2 > rest.$2 ? envelope.$2 : rest.$2,
+    );
+  }
 
   /// The Timeline's horizontal scroll offset, or zero before the view has been
   /// laid out (and in tests, which build the pane on its own).
@@ -787,12 +827,16 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     return lo + (height - y) / (height <= 0 ? 1 : height) * span;
   }
 
-  /// A key's y in the current lens: its value, or one side's speed.
+  /// A key's y in the current lens: its value, one side's speed, or — as an
+  /// envelope point — its playback speed in per cent.
   double _keyY(
       GraphChannel channel, int index, (double, double) range, double height,
       {required bool isOut}) {
     if (widget.lens == GraphLens.value) {
       return _yOf(channel.keys[index].value, range, height);
+    }
+    if (isEnvelope(channel)) {
+      return _yOf(envelopeSpeeds(channel.keys)[index], range, height);
     }
     return _yOf(
         sideSpeedAtKey(channel.keys, index, isOut: isOut), range, height);
@@ -1119,6 +1163,15 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     final pointerValue = _valueAt(local.dy, range, height);
 
     setState(() {
+      if (isEnvelope(drag.channel)) {
+        // An envelope point: its height is the playback speed in per cent,
+        // straight off the axis, and it carries the key sideways like any
+        // speed dot. There is no influence to set — an envelope's sides are
+        // always the chord (K-247), which is what keeps its lines straight.
+        drag.speed = pointerValue;
+        if (drag.dotOnly) drag.dxPx += dx;
+        return;
+      }
       if (widget.lens == GraphLens.speed) {
         // The speed lens: a dot's height IS that side's speed and its sideways
         // travel moves the keyframe in time; an influence handle's reach sets
@@ -1295,6 +1348,12 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   /// move together while the pointer is down.
   List<BridgeKeyframe> _keysWithHandleDrag(
       _HandleDrag drag, List<BridgeKeyframe> keys) {
+    // An envelope point sets a speed and the source positions after it follow
+    // (K-247). Every keyframe *time* stays exactly put, so a beat already
+    // synced stays synced — the covenant this whole feature is built around.
+    if (isEnvelope(drag.channel)) {
+      return setEnvelopeSpeed(keys, drag.index, drag.speed);
+    }
     final dragged = BridgeSideInterp.bezier(
         BridgeBezierSide(speed: drag.speed, influence: drag.influence));
     final partner = drag.mirrored
@@ -1459,6 +1518,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                       grid: t.hairline,
                       label: t.small.copyWith(color: t.textMuted),
                       viewportLeft: _viewportLeft,
+                      vegas: widget.vegas,
                     ),
                   ),
                 ),
@@ -1533,7 +1593,11 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       for (var i = 0; i < keys.length; i++) {
         final id = '${channel.id}#$i';
         final chosen = widget.selectedKeys.contains(id);
-        final sides = widget.lens == GraphLens.value
+        final sides = widget.lens == GraphLens.value || isEnvelope(channel)
+            // The value view, and the Vegas envelope: one point per key. The
+            // envelope's whole idea is that a key has *a* speed rather than
+            // two one-sided ones (K-247), so a second dot would be a second
+            // answer to a question with one.
             ? const [true]
             // Speed lens: an in dot and an out dot, moved independently —
             // the ends have only the side that exists.
@@ -1711,6 +1775,9 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       );
       return (e.time, e.value);
     }
+    // An envelope point has no influence handle: its sides are always the
+    // chord, which is what keeps the lines between points straight (K-247).
+    if (isEnvelope(channel)) return null;
     // Speed lens: the influence handle reaches horizontally from the dot.
     final keyTime = rationalSeconds(key.time);
     final dt = (rationalSeconds(nb.time) - keyTime).abs();
@@ -1746,6 +1813,11 @@ class _GraphPainter extends CustomPainter {
   /// readable wherever the view is and at whatever zoom.
   final double viewportLeft;
 
+  /// Whether Retime channels draw as the Vegas envelope (K-247) — which puts
+  /// their curve on the axis in **per cent** rather than in source seconds per
+  /// second, so it lands on the points drawn over it.
+  final bool vegas;
+
   const _GraphPainter({
     required this.channels,
     required this.shownKeys,
@@ -1757,6 +1829,7 @@ class _GraphPainter extends CustomPainter {
     required this.grid,
     required this.label,
     required this.viewportLeft,
+    this.vegas = false,
   });
 
   double _yOf(double v, Size size) {
@@ -1772,6 +1845,10 @@ class _GraphPainter extends CustomPainter {
     for (var c = 0; c < channels.length; c++) {
       final channel = channels[c];
       final keys = shownKeys[c];
+      // A Retime drawn as the Vegas envelope reads in per cent, so its curve
+      // is scaled onto the same axis as its points (K-247).
+      final envelope = vegas && channel.retime && lens == GraphLens.speed;
+      final speedScale = envelope ? 100.0 : 1.0;
       final paint = Paint()
         ..color = palette[channel.colourIndex % palette.length]
         ..strokeWidth = 1.4
@@ -1796,7 +1873,7 @@ class _GraphPainter extends CustomPainter {
         final seconds = axis.perFrame <= 0 ? 0.0 : x / axis.perFrame / f;
         final v = lens == GraphLens.value
             ? evaluateKeys(keys, seconds)
-            : evaluateKeysSpeed(keys, seconds);
+            : evaluateKeysSpeed(keys, seconds) * speedScale;
         final point = Offset(x, _yOf(v, size));
         if (first) {
           path.moveTo(point.dx, point.dy);
@@ -1809,7 +1886,7 @@ class _GraphPainter extends CustomPainter {
 
       // Speed lens: the vertical join at each key, where in and out speed
       // step — drawn faint so a discontinuity reads as one key, not two.
-      if (lens == GraphLens.speed) {
+      if (lens == GraphLens.speed && !envelope) {
         final joinPaint = Paint()
           ..color = paint.color.withValues(alpha: 0.35)
           ..strokeWidth = 1;

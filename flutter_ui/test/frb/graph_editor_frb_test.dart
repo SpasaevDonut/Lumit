@@ -8,6 +8,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/graph_editor_frb.dart';
+import 'package:lumit_flutter/panels/graph_maths.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
@@ -560,6 +561,95 @@ void main() {
       ]);
       expect(channels.map((c) => c.colourIndex).toList(), [0, 1, 2]);
       expect(channels.last.keys, hasLength(2));
+    });
+
+    // --- the Vegas speed envelope (K-247) -------------------------------
+
+    /// Turn the preference on the way Settings does, then open the layer's
+    /// Retime row — which is where the default-lens rule fires.
+    Future<void> openRetime(WidgetTester tester, dynamic p,
+        {required bool vegas}) async {
+      (p.uiState as LumitUiState).workspace.interface.retimeOpensToSpeed =
+          vegas;
+      final layer = (p as dynamic).layer as LayerReference;
+      layer.toggleRetimeProperty();
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        child: const TimelinePanelFrb(),
+        state: p.state as LumitState,
+        uiState: p.uiState as LumitUiState,
+        size: const Size(1280, 600),
+      ));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('tl-graph')));
+      await tester.pump();
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-twirl-${layer.internallayerId}')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('tl-retime-name')));
+      await tester.pump();
+    }
+
+    testWidgets('a Retime opens to Velocity, and as one dot per key',
+        (tester) async {
+      final p = withLayer();
+      await openRetime(tester, p, vegas: true);
+
+      // The preference chose the lens on the way in (K-246).
+      final base = 'graph-key-${p.layer.internallayerId}/retime#0';
+      expect(find.byKey(ValueKey<String>('$base-out')), findsOneWidget,
+          reason: 'the speed view is showing');
+      // …and the envelope is one point per key, not the two-sided pair the
+      // ordinary speed graph draws (K-247).
+      expect(find.byKey(ValueKey<String>('$base-in')), findsNothing);
+      final second = 'graph-key-${p.layer.internallayerId}/retime#1';
+      expect(find.byKey(ValueKey<String>('$second-in')), findsNothing);
+      expect(find.byKey(ValueKey<String>('$second-out')), findsOneWidget);
+    });
+
+    testWidgets('with the preference off a Retime opens to Time',
+        (tester) async {
+      final p = withLayer();
+      await openRetime(tester, p, vegas: false);
+      // The value view names its keys without a side.
+      expect(
+          find.byKey(ValueKey<String>(
+              'graph-key-${p.layer.internallayerId}/retime#0')),
+          findsOneWidget);
+    });
+
+    /// The Vegas edit: drag a point's speed and the frames after it change,
+    /// while every keyframe time stays exactly where it was (K-022, K-247).
+    testWidgets('dragging an envelope point re-times without moving a key',
+        (tester) async {
+      final p = withLayer();
+      await openRetime(tester, p, vegas: true);
+
+      List<BridgeKeyframe> retimeKeys() =>
+          keysOf(p.layer.getRetimeProperty() as BridgeScalar);
+      final timesBefore = [
+        for (final k in retimeKeys()) p.comp.frameAtTime(time: k.time)
+      ];
+      final lastBefore = retimeKeys().last.value;
+
+      // Drag the first point upwards: faster, so more source is consumed.
+      await _drag(
+          tester,
+          find.byKey(ValueKey<String>(
+              'graph-key-${p.layer.internallayerId}/retime#0-out')),
+          const Offset(0, -60));
+
+      final after = retimeKeys();
+      expect(after.last.value, greaterThan(lastBefore),
+          reason: 'speeding the first span up advances further into the '
+              'source by the end');
+      expect(after.first.value, closeTo(0, 1e-6),
+          reason: 'the start is pinned — a clip still begins where it began');
+      expect([
+        for (final k in after) p.comp.frameAtTime(time: k.time)
+      ], timesBefore, reason: 'no keyframe moved in time: beats stay synced');
     });
   }, skip: !engineAvailable);
 }

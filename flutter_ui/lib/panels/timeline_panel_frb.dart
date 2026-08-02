@@ -600,7 +600,30 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
         _graphKeySelection.clear();
         final cut = path.indexOf('/');
         if (cut > 0) _highlighted = path.substring(0, cut);
+        _openRetimeInItsDefaultLens(path);
       });
+
+  /// Opening a **Retime** row lands in the lens the user asked for (K-246):
+  /// with *Retime opens to Velocity* on, the speed view — which in that mode
+  /// is the Vegas envelope (K-247).
+  ///
+  /// Only on the way *in*, and only for a Retime: switching lens by hand
+  /// afterwards must stick, and selecting Position must not drag the Retime
+  /// preference onto it. Turn the preference off, reopen the row, and the Time
+  /// view is back — which is the point of it being a preference, not a mode.
+  void _openRetimeInItsDefaultLens(String path) {
+    if (!_vegas(context)) return;
+    final cut = path.indexOf('/');
+    if (cut <= 0 || path != retimePath(path.substring(0, cut))) return;
+    _graphLens = GraphLens.speed;
+  }
+
+  /// Settings ▸ Interface ▸ Editing ▸ *Retime opens to Velocity* (K-246).
+  bool _vegas(BuildContext context) =>
+      Provider.of<LumitUiState>(context, listen: false)
+          .workspace
+          .interface
+          .retimeOpensToSpeed;
 
   /// Editing a value or keying a property selects it too (docs/07 §4.3) —
   /// quietly: an already-selected property stays where it is in the order.
@@ -1686,6 +1709,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                                     _graphLens,
                                                                 autoFit:
                                                                     _graphAutoFit,
+                                                                vegas: _vegas(
+                                                                    context),
                                                                 selectedKeys:
                                                                     _graphKeySelection,
                                                                 onSelectionChanged:
@@ -2117,6 +2142,7 @@ class _FoldRow extends StatelessWidget {
           playheadFrame: playheadFrame,
           onSeek: onSeek,
           onChanged: onChanged,
+          onLabelTap: () => onSelectProperty(path),
         ),
       FoldMaskRow(:final mask) => _MaskRow(
           comp: comp,
@@ -2926,6 +2952,12 @@ class _RetimeRow extends StatefulWidget {
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
 
+  /// Selects the channel, so its curve opens in the graph — the same handle
+  /// every other property row's name is. Retime was built without one, which
+  /// left it the one channel `graphChannels` could build and nobody could
+  /// choose.
+  final VoidCallback? onLabelTap;
+
   const _RetimeRow({
     required this.comp,
     required this.layer,
@@ -2934,6 +2966,7 @@ class _RetimeRow extends StatefulWidget {
     required this.playheadFrame,
     required this.onSeek,
     required this.onChanged,
+    this.onLabelTap,
   });
 
   @override
@@ -2977,7 +3010,14 @@ class _RetimeRowState extends State<_RetimeRow> {
               },
             ),
             const SizedBox(width: 4),
-            Expanded(child: Text('Retime', style: t.body)),
+            Expanded(
+              child: GestureDetector(
+                key: const ValueKey('tl-retime-name'),
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onLabelTap,
+                child: Text('Retime', style: t.body),
+              ),
+            ),
             SizedBox(
               width: widget.valueColumn.width,
               child: animated
