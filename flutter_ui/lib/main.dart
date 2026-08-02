@@ -161,6 +161,18 @@ class CustomHandler extends BaseHandler {
   }
 }
 
+/// The window's title: plain 'Lumit' until the project has a home on disk,
+/// then 'Lumit - `<file name>`' without the extension — the same convention as
+/// every editor's title bar.
+String windowTitleFor(String? path) {
+  if (path == null || path.isEmpty) return 'Lumit';
+  var name = path.split(RegExp(r'[/\\]')).last;
+  if (name.toLowerCase().endsWith('.lum')) {
+    name = name.substring(0, name.length - 4);
+  }
+  return 'Lumit - $name';
+}
+
 /// The `.lum` file a double-click or `lumit myproject.lum` asked us to open:
 /// the first argument that ends in `.lum` and exists on disk, or null. The
 /// Windows runner forwards the command line as entrypoint arguments (the
@@ -270,7 +282,17 @@ class LumitState extends ChangeNotifier {
       _pendingSink = null;
     }
 
+    refreshWindowTitle();
     notifyListeners();
+  }
+
+  /// Put the project's name in the title bar. Called when the document's path
+  /// can have changed — adopting a project, and a completed save — rather than
+  /// on every edit, so no bridge call rides the change stream.
+  void refreshWindowTitle() {
+    SystemChrome.setApplicationSwitcherDescription(
+      ApplicationSwitcherDescription(label: windowTitleFor(project?.path())),
+    );
   }
 
   /// Tell the app an edit landed, for callers that made one themselves rather

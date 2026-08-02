@@ -802,8 +802,10 @@ Future<void> saveProjectFrb(
   try {
     final written = await project.save(path: target);
     app.postNotice('Saved to $written');
-    // Save as gives the project a new path, and the session is filed by path.
+    // Save as gives the project a new path, and the session is filed by path —
+    // and the title bar carries the name.
     ui.rememberSession();
+    app.refreshWindowTitle();
   } catch (_) {
     // The work is still in the document and the journal; say so calmly and let
     // the user pick somewhere writable.
