@@ -39,6 +39,7 @@ fn layer(kind: LayerKind, name: &str) -> lumit_core::model::Layer {
         label: 0,
         volume_db: Property::zero(),
         retime: None,
+        interpolation: Default::default(),
         blend: Default::default(),
         masks: Vec::new(),
         paint: Vec::new(),
@@ -161,13 +162,7 @@ fn main() {
         },
         extra: serde_json::Map::new(),
     });
-    let (doc, comp) = doc_with(
-        LayerKind::Footage {
-            item: item_id,
-            retime: None,
-        },
-        Some(footage),
-    );
+    let (doc, comp) = doc_with(LayerKind::Footage { item: item_id }, Some(footage));
     run(
         "footage comp, cold decode, scale 1.0",
         &mut r,

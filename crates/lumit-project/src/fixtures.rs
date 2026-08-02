@@ -157,7 +157,7 @@ pub fn stress_document(p: &StressParams) -> Document {
             layers.push(Layer {
                 id: uid(3, layer_index),
                 name: format!("layer {layer_index}"),
-                kind: LayerKind::Footage { item, retime: None },
+                kind: LayerKind::Footage { item },
                 in_point: CompTime(Rational::ZERO),
                 out_point,
                 start_offset: CompTime(Rational::ZERO),
@@ -167,6 +167,7 @@ pub fn stress_document(p: &StressParams) -> Document {
                 label: 0,
                 volume_db: lumit_core::anim::Property::zero(),
                 retime: None,
+                interpolation: Default::default(),
                 blend: Default::default(),
                 masks: Vec::new(),
                 paint: Vec::new(),

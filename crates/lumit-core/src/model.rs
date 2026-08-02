@@ -779,14 +779,12 @@ pub fn collapse_state(doc: &Document, comp: &Composition, layer: &Layer, lt: f64
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum LayerKind {
-    Footage {
-        item: Uuid,
-        /// Retime map (docs/04-RETIMING.md): local time → source time. None =
-        /// no retiming (plays at source rate). Defaulted for projects saved
-        /// before Retime existed.
-        #[serde(default)]
-        retime: Option<crate::retime::Retime>,
-    },
+    /// One footage item as the layer's source. Retiming lives on the layer
+    /// itself ([`Layer::retime`]), not here: this variant carried a second,
+    /// rival retime store until K-249 deleted it, and a document written
+    /// before that is converted on open (the `0.1.0` → `0.2.0` migration in
+    /// `lumit-project`).
+    Footage { item: Uuid },
     /// A SolidDef asset as this layer's source (docs/01-GLOSSARY.md: Solid
     /// layer; docs/03-DATA-MODEL.md §5.2 — solids are assets so they dedupe).
     Solid { def: Uuid },
@@ -1044,6 +1042,21 @@ pub struct Layer {
     /// visible and gives the row something to key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub retime: Option<Property>,
+    /// How a fractional source moment becomes pixels: nearest, blend, or
+    /// optical flow (docs/04-RETIMING.md §10).
+    ///
+    /// A **render policy, not part of the map** — §10 is explicit that the two
+    /// are orthogonal — so it sits beside [`Self::retime`] rather than inside
+    /// it, exactly as [`crate::sequence::Clip`] has carried its own since it
+    /// was written. It used to live inside the layer's segment store, which
+    /// tied "how in-betweens are made" to "which retime system you use" for no
+    /// reason; K-249 untangled them when that store went.
+    ///
+    /// Applies whether or not the layer is retimed: an un-retimed layer whose
+    /// comp runs at a different rate from its source is already asking for
+    /// frames between two it has.
+    #[serde(default)]
+    pub interpolation: crate::retime::Interpolation,
     #[serde(default)]
     pub blend: BlendMode,
     /// Masks gate the layer's alpha before effects/transform
@@ -1125,19 +1138,9 @@ impl Layer {
     /// The one place the mapping is decided, so the render plan and the frame
     /// cache key can never disagree about which source frame a layer shows.
     pub fn source_time_at(&self, lt: f64) -> f64 {
-        // ponytail: the pre-K-197 segment store still answers for layers that
-        // carry one (the Source card's speed row writes it). Delete that arm —
-        // and `LayerKind::Footage::retime` with it — once the Retime property
-        // owns every case.
-        if let Some(retime) = &self.retime {
-            return retime.value_at(lt);
-        }
-        match &self.kind {
-            LayerKind::Footage {
-                retime: Some(retime),
-                ..
-            } => retime.evaluate(lt),
-            _ => lt,
+        match &self.retime {
+            Some(retime) => retime.value_at(lt),
+            None => lt,
         }
     }
 }
@@ -1748,6 +1751,7 @@ mod tests {
             label: 0,
             volume_db: crate::anim::Property::zero(),
             retime: None,
+            interpolation: Default::default(),
             blend: BlendMode::Normal,
             masks: Vec::new(),
             paint: Vec::new(),

@@ -219,7 +219,7 @@ fn footage_places_into_a_composition_even_when_the_media_is_missing() {
 
     // The fixture's media has an empty absolute path and an unsaved project, so
     // it cannot resolve — the comp's own duration and size are used.
-    comp.add_footage_layer(footage).expect("placed");
+    comp.add_footage_layer(footage, false).expect("placed");
 
     let layers = comp.get_layers().expect("layers");
     assert_eq!(layers.len(), 1);
@@ -1743,7 +1743,7 @@ fn a_footage_layer_converts_to_a_sequence_layer_in_one_step() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
 
     assert_eq!(layer.get_kind().expect("kind"), BridgeLayerKind::Footage);
@@ -1811,7 +1811,7 @@ fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
     layer.convert_to_sequenced().expect("converted");
     let layer = comp.get_layers().expect("layers").remove(0);
@@ -2909,42 +2909,642 @@ fn editing_a_solid_changes_every_layer_that_uses_it() {
     assert_eq!(solid.get_definition().expect("definition").name, "Backdrop");
 }
 
-// --- Retime ---------------------------------------------------------------
+// --- The sequence view's clip edits (K-247, K-248) ------------------------
 
-/// A footage layer with no retiming is `None`, not 100% — "not retimed" and
-/// "retimed to exactly 1×" are different states in the file, and only the first
-/// skips the resampler.
-#[test]
-fn retiming_is_absent_until_it_is_switched_on() {
+/// A Sequence layer built for the clip tests: one clip spanning [0, 4).
+#[cfg(test)]
+fn sequenced_layer() -> (ProjectReference, CompositionReference, LayerReference) {
     let project = LumitBridgeState::new_project(None).expect("a new project");
     let comp = project.new_composition("Scene".into(), None).expect("comp");
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
+    layer.convert_to_sequenced().expect("sequenced");
+    let layer = comp.get_layers().expect("layers").remove(0);
+    (project, comp, layer)
+}
 
-    assert!(layer.get_retime().expect("retime").is_none());
+/// Re-speeding a clip keeps its place and pins its first frame — the two
+/// promises the whole editing surface rests on (K-022, K-070).
+#[test]
+fn a_clips_speed_holds_its_place_and_its_first_frame() {
+    let (project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
 
-    layer.set_retime_enabled(true).expect("on");
-    let retime = layer.get_retime().expect("retime").expect("some");
+    layer
+        .set_clip_speed(before.id, 200.0, 200.0)
+        .expect("re-speeded");
+    let after = layer.get_clips().expect("clips").remove(0);
+
+    assert_eq!(after.start_frame, before.start_frame, "the edit point held");
+    assert_eq!(after.end_frame, before.end_frame, "and so did its length");
+    assert_eq!(after.speed_percent, Some(200.0));
+    assert!(after.retimed);
+
+    // One undo step puts it back.
+    project.undo().expect("undo");
+    let back = layer.get_clips().expect("clips").remove(0);
+    assert!(!back.retimed, "un-retimed again, not retimed to 100%");
+}
+
+/// A ramp reads as no single speed, which is what puts the envelope on screen
+/// instead of a number.
+#[test]
+fn a_ramped_clip_has_no_single_speed() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 100.0, 300.0).expect("ramped");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.speed_percent, None);
+    assert!(after.retimed);
+}
+
+/// A Sequence layer's bar is its clips' extent (K-248): cutting leaves it
+/// alone, and deleting an outermost clip brings the end in.
+#[test]
+fn the_layers_bar_follows_its_clips() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    let (in_before, out_before) = (whole.in_frame, whole.out_frame);
+
+    // A cut adds an edit point and changes no extent at all.
+    let middle = (in_before + out_before) / 2;
+    layer.cut_clip_at(middle).expect("cut");
+    let cut = layer.get_info().expect("info");
+    assert_eq!((cut.in_frame, cut.out_frame), (in_before, out_before));
+    assert_eq!(cut.clips.len(), 2);
+
+    // Deleting the last clip brings the end of the bar back with it.
+    layer.delete_clip_at(out_before - 1).expect("deleted");
+    let trimmed = layer.get_info().expect("info");
+    assert_eq!(trimmed.clips.len(), 1);
+    assert_eq!(trimmed.in_frame, in_before, "the start is where it was");
     assert!(
-        (retime.speed_percent - 100.0).abs() < 0.001,
-        "switching it on changes nothing visible"
-    );
-    assert!(!retime.varies, "the identity map is one constant segment");
-
-    layer.set_retime_enabled(false).expect("off");
-    assert!(
-        layer.get_retime().expect("retime").is_none(),
-        "off removes the map rather than setting 100%"
+        trimmed.out_frame < out_before,
+        "and the end came in with the clip that went"
     );
 }
 
-/// The speed, the reverse gate and the interpolation policy are independent —
-/// a speed edit must not silently re-lock reverse or reset the policy.
+/// A clip slides along its row, keeping its length and what it plays.
 #[test]
-fn speed_reverse_and_interpolation_do_not_disturb_each_other() {
+fn sliding_a_clip_moves_it_without_changing_it() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
+    let length = before.end_frame - before.start_frame;
+
+    layer
+        .slide_clip(before.id, before.start_frame + 5)
+        .expect("slid");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.start_frame, before.start_frame + 5);
+    assert_eq!(after.end_frame - after.start_frame, length, "same length");
+    assert_eq!(after.retimed, before.retimed, "and the same map");
+}
+
+/// Converting a **retimed** layer into a Sequence layer keeps its retiming,
+/// and converting back returns it — a round trip must leave the layer playing
+/// what it played.
+#[test]
+fn converting_a_retimed_layer_both_ways_keeps_its_map() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage, false).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+
+    layer.toggle_retime_property().expect("retimed");
+    let before = layer.get_retime_property().expect("read").expect("a map");
+
+    layer.convert_to_sequenced().expect("sequenced");
+    let sequenced = comp.get_layers().expect("layers").remove(0);
+    let clip = sequenced.get_clips().expect("clips").remove(0);
+    assert!(
+        clip.retimed,
+        "the clip carries the layer's map: it spans the whole layer, so the          two are the same clock"
+    );
+
+    sequenced.convert_from_sequenced().expect("back");
+    let back = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(
+        back.get_retime_property().expect("read"),
+        Some(before),
+        "and the round trip left it exactly as it was"
+    );
+}
+
+/// Cutting a **retimed** clip gives each half a key at the cut, so the two
+/// ramps are independent from the moment they are made — editing one half's
+/// speed never bends the other. An un-retimed clip gains no keys at all
+/// (K-236: a map nobody has shaped is not one to put keys into).
+#[test]
+fn a_razor_cut_keys_a_retimed_clip_and_only_that() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    let at = (whole.in_frame + whole.out_frame) / 2;
+
+    // Un-retimed: cut, and neither half has a map.
+    layer.cut_clip_at(at).expect("cut");
+    for clip in layer.get_clips().expect("clips") {
+        assert!(!clip.retimed, "a cut alone does not retime anything");
+    }
+
+    // Retimed: each half keeps a map, and each opens on the moment it starts.
+    let (_p2, _c2, ramped) = sequenced_layer();
+    let one = ramped.get_clips().expect("clips").remove(0);
+    ramped.set_clip_speed(one.id, 200.0, 200.0).expect("ramped");
+    let whole = ramped.get_info().expect("info");
+    ramped
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+
+    let halves = ramped.get_clips().expect("clips");
+    assert_eq!(halves.len(), 2);
+    for half in &halves {
+        assert!(half.retimed, "each half kept the ramp it was cut out of");
+        let BridgeScalar::Keyframed(keys) = &half.retime else {
+            panic!("a keyframed map");
+        };
+        assert!(keys.len() >= 2, "with a key at each of its own ends");
+    }
+    // The later half opens where the cut fell, not at the top of the media.
+    let (early, late) = (&halves[0], &halves[1]);
+    let value = |c: &crate::api::layer::BridgeClip| {
+        let BridgeScalar::Keyframed(keys) = &c.retime else {
+            panic!("keyframed");
+        };
+        keys.first().expect("a first key").value
+    };
+    assert!(
+        value(late) > value(early),
+        "the second half starts further into the source than the first"
+    );
+}
+
+/// A Sequence layer converts back to plain footage — the way out of the
+/// clip-editing surface, which has to exist because the way in is offered to
+/// anyone (K-248).
+#[test]
+fn a_sequence_layer_converts_back_to_footage() {
+    let (_project, comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 250.0, 250.0).expect("ramped");
+
+    layer.convert_from_sequenced().expect("converted back");
+    let back = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(back.get_kind().expect("kind"), BridgeLayerKind::Footage);
+    // The clip spanned the whole layer, so its map is the layer's map: clip
+    // time and layer time were the same clock, and K-249 made them the same
+    // kind of map, so nothing had to be converted.
+    assert!(
+        back.get_retime_property().expect("read").is_some(),
+        "the ramp came with it"
+    );
+
+    // A row of several clips refuses rather than silently losing all but one.
+    let (_p2, _c2, many) = sequenced_layer();
+    let whole = many.get_info().expect("info");
+    many.cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    assert!(matches!(
+        many.convert_from_sequenced(),
+        Err(BridgeError::ManyClips)
+    ));
+}
+
+/// **A layer's cuts and ramps copy onto another layer**, which is what makes a
+/// depth pass follow the footage it belongs to (K-248).
+#[test]
+fn a_sequence_shape_copies_onto_another_layer() {
+    let (project, comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let first = layer
+        .get_clips()
+        .expect("clips")
+        .into_iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half");
+    layer
+        .set_clip_speed(first.id, 250.0, 250.0)
+        .expect("ramped");
+    let shape = layer.copy_sequence_shape(None).expect("copied");
+
+    // A second sequence layer over *different* media, uncut.
+    let other_footage = project
+        .import_footage("C:/clips/depth.mov".into())
+        .expect("imported");
+    // Converted rather than auto-wrapped: this path's media does not exist,
+    // so the wrap rule correctly declines it (a file it cannot read is not
+    // known to run).
+    comp.add_footage_layer(&other_footage, false)
+        .expect("placed");
+    comp.get_layers()
+        .expect("layers")
+        .remove(0)
+        .convert_to_sequenced()
+        .expect("sequenced");
+    let other = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(other.get_clips().expect("clips").len(), 1, "one whole clip");
+    let source_before = other.get_source_item().expect("item");
+
+    other.paste_sequence_shape(shape).expect("pasted");
+
+    let after = other.get_clips().expect("clips");
+    assert_eq!(after.len(), 2, "cut in the same place");
+    let earlier = after
+        .iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half");
+    assert_eq!(
+        earlier.speed_percent,
+        Some(250.0),
+        "and ramped the same way"
+    );
+    assert_eq!(
+        earlier.start_frame, first.start_frame,
+        "at the same moment on the comp's clock"
+    );
+    // The shape carries no media: this layer still plays its own.
+    assert!(
+        other.get_source_item().expect("item").is_some() == source_before.is_some(),
+        "the depth pass is not the footage"
+    );
+}
+
+/// One clip's shape copies on its own — the other half of the menu.
+#[test]
+fn one_clips_shape_copies_by_itself() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let one = layer.get_clips().expect("clips").remove(0);
+
+    let all = layer.copy_sequence_shape(None).expect("copied");
+    let just = layer.copy_sequence_shape(Some(one.id)).expect("copied");
+    assert_ne!(all, just, "one clip is not the whole row");
+    assert!(
+        just.len() < all.len(),
+        "and it carries less: one piece rather than two"
+    );
+}
+
+/// A Sequence layer has no Retime of its own (K-075): its clips carry the
+/// retiming, and a second map over the whole row would be a rival to those —
+/// exactly what K-249 spent itself ending.
+#[test]
+fn a_sequence_layer_refuses_a_retime_of_its_own() {
+    let (_project, _comp, layer) = sequenced_layer();
+    assert!(matches!(
+        layer.toggle_retime_property(),
+        Err(BridgeError::NotRetimeable)
+    ));
+    assert!(
+        layer.get_retime_property().expect("read").is_none(),
+        "and nothing was installed on the way to refusing"
+    );
+}
+
+/// Dragging a clip back past the start of the row carries the **layer**
+/// earlier, the way dragging any other layer's bar before the start of the
+/// composition does — and every other clip stays exactly where it was on the
+/// comp's clock while it happens.
+#[test]
+fn a_clip_dragged_before_the_start_takes_the_layer_with_it() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let before = layer.get_clips().expect("clips");
+    let first = before
+        .iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half")
+        .clone();
+    let second = before
+        .iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half")
+        .clone();
+
+    layer
+        .slide_clip(first.id, first.start_frame - 10)
+        .expect("slid before the start");
+
+    let after = layer.get_clips().expect("clips");
+    let moved = after
+        .iter()
+        .find(|c| c.id == first.id)
+        .expect("still there");
+    let stayed = after
+        .iter()
+        .find(|c| c.id == second.id)
+        .expect("still there");
+
+    assert_eq!(
+        moved.start_frame,
+        first.start_frame - 10,
+        "the clip went where it was dragged, past the start"
+    );
+    assert_eq!(
+        stayed.start_frame, second.start_frame,
+        "and the other clip did not move on the comp's clock"
+    );
+    assert_eq!(
+        layer.get_info().expect("info").in_frame,
+        first.start_frame - 10,
+        "the layer's bar starts where its earliest clip now does"
+    );
+}
+
+/// Trimming an edge brings it in and moves nothing else — no ripple, ever.
+#[test]
+fn trimming_a_clip_pulls_one_edge_in() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let before = layer.get_clips().expect("clips").remove(0);
+
+    layer
+        .trim_clip(before.id, before.start_frame, before.end_frame - 4)
+        .expect("trimmed");
+    let after = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(after.start_frame, before.start_frame, "the start held");
+    assert_eq!(after.end_frame, before.end_frame - 4);
+
+    // And outward again: the map carries on at the speed it was going
+    // (docs/04 §7.3), which is what lets a cut clip be lengthened back.
+    let out = after.end_frame + 20;
+    layer
+        .trim_clip(after.id, after.start_frame, out)
+        .expect("extended");
+    assert_eq!(
+        layer.get_clips().expect("clips").remove(0).end_frame,
+        out,
+        "an edge dragged outward extends rather than snapping back"
+    );
+}
+
+/// **A clip after a cut keeps starting where it starts.**
+///
+/// The reported fault: ramping the whole clip was fine, and ramping either
+/// half after one cut sent the picture insane — frozen on a frame or two. The
+/// map a clip plays by was being *constructed* by the frontend for a clip that
+/// had none of its own, and it built it starting at source zero: true only of
+/// a clip nobody has cut. Every clip after a cut begins part way into its
+/// media, so ramping one threw it back to the top of the file.
+///
+/// The map now crosses the bridge whether or not the clip has one, built from
+/// the clip's real trim-in, so there is nothing to assume.
+#[test]
+fn a_cut_clips_map_starts_where_the_clip_does() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+
+    let clips = layer.get_clips().expect("clips");
+    assert_eq!(clips.len(), 2);
+    let right = clips
+        .iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half");
+    assert!(!right.retimed, "neither half is retimed by a cut");
+
+    // The map it plays by opens on the moment it was cut at, not on zero.
+    let BridgeScalar::Keyframed(keys) = &right.retime else {
+        panic!("a clip always reports the map it plays by");
+    };
+    let opens_at = keys.first().expect("a first key").value;
+    assert!(
+        opens_at > 0.0,
+        "the later half starts part way into its media, not at the top of it"
+    );
+
+    // And ramping it keeps that: the first frame it shows is the one it showed.
+    layer
+        .set_clip_speed(right.id, 300.0, 300.0)
+        .expect("ramped");
+    let ramped = layer
+        .get_clips()
+        .expect("clips")
+        .into_iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half");
+    let BridgeScalar::Keyframed(after) = &ramped.retime else {
+        panic!("still a map");
+    };
+    assert!(
+        (after.first().expect("a first key").value - opens_at).abs() < 1e-6,
+        "re-speeding pins a clip's first frame (K-070), it does not move it          back to the start of the media"
+    );
+}
+
+/// A clip that has been cut can be lengthened again.
+///
+/// The reported fault: after a razor cut the new edge looked draggable and
+/// snapped back every time, because only inward trims were honoured — so the
+/// half you had just made could be shortened and never restored.
+#[test]
+fn a_cut_clip_can_be_lengthened_again() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let left = layer.get_clips().expect("clips").remove(0);
+
+    // Shorter first, which always worked…
+    layer
+        .trim_clip(left.id, left.start_frame, left.end_frame - 3)
+        .expect("trimmed in");
+    let short = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(short.end_frame, left.end_frame - 3);
+
+    // …and now longer again, which is what snapped back.
+    layer
+        .trim_clip(short.id, short.start_frame, left.end_frame + 4)
+        .expect("extended out");
+    let long = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(long.end_frame, left.end_frame + 4);
+    assert_eq!(long.start_frame, left.start_frame, "the other edge held");
+}
+
+/// Extending carries the map on at the speed it was already going, so the
+/// frames the clip already showed keep showing at the same moments.
+#[test]
+fn extending_a_retimed_clip_keeps_what_it_already_played() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 200.0, 200.0).expect("sped");
+    let fast = layer.get_clips().expect("clips").remove(0);
+
+    layer
+        .trim_clip(fast.id, fast.start_frame, fast.end_frame + 5)
+        .expect("extended");
+    let longer = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(
+        longer.speed_percent,
+        Some(200.0),
+        "still double speed all the way along, not a ramp into the new tail"
+    );
+}
+
+/// Deleting a clip leaves a gap: nothing after it moves, so every edit point
+/// still standing keeps the beat it was cut to (K-022).
+#[test]
+fn deleting_a_clip_leaves_a_gap() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let clips = layer.get_clips().expect("clips");
+    assert_eq!(clips.len(), 2);
+    let (first, second) = (clips[0].clone(), clips[1].clone());
+
+    layer.delete_clip(first.id).expect("deleted");
+    let left = layer.get_clips().expect("clips");
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, second.id);
+    assert_eq!(
+        left[0].start_frame, second.start_frame,
+        "what was left did not slide back to fill the hole"
+    );
+}
+
+/// The envelope writes a clip's whole map, and it reads back as what it wrote.
+#[test]
+fn a_clips_retime_round_trips_through_the_envelope() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    assert!(!clip.retimed, "un-retimed to start");
+
+    // Double speed as two keys, the shape the envelope authors.
+    layer.set_clip_speed(clip.id, 200.0, 200.0).expect("sped");
+    let sped = layer.get_clips().expect("clips").remove(0);
+    let map = sped.retime.clone();
+
+    layer.set_clip_retime(sped.id, map).expect("written back");
+    let back = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(back.speed_percent, Some(200.0));
+    assert_eq!(back.start_frame, clip.start_frame, "place untouched");
+    assert_eq!(back.end_frame, clip.end_frame);
+}
+
+// --- Video arriving as a Sequence layer (K-246) ---------------------------
+
+/// With the preference on, media that **runs** arrives as a one-clip Sequence
+/// layer — ready to be cut on its own row — while a still image does not,
+/// because there is nothing in one frame to cut.
+///
+/// Needs an ffmpeg on PATH to make the fixtures; skips itself without one, the
+/// same as every other test here that wants real media.
+#[test]
+fn video_is_wrapped_and_a_still_is_not() {
+    #[cfg(feature = "media")]
+    {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let Some(clip) = lumit_media::index::tests_support::fixture(dir.path()) else {
+            return; // no ffmpeg on this machine
+        };
+        // One frame of the same pattern: a still, by duration rather than by
+        // extension — which is exactly the distinction the engine draws.
+        let Some(bin) = lumit_media::index::tests_support::ffmpeg_bin() else {
+            return;
+        };
+        let still = dir.path().join("still.png");
+        let made = std::process::Command::new(bin)
+            .args(["-v", "error", "-y", "-i"])
+            .arg(&clip)
+            .args(["-frames:v", "1"])
+            .arg(&still)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let project = LumitBridgeState::new_project(None).expect("a new project");
+        let comp = project.new_composition("Scene".into(), None).expect("comp");
+
+        let video = project
+            .import_footage(clip.to_string_lossy().into_owned())
+            .expect("imported");
+        comp.add_footage_layer(&video, true).expect("placed");
+        let layers = comp.get_layers().expect("layers");
+        assert_eq!(
+            layers[0].get_kind().expect("kind"),
+            BridgeLayerKind::Sequence,
+            "video asked to arrive as a Sequence layer does"
+        );
+        assert_eq!(
+            layers[0].get_info().expect("info").clip_frames.len(),
+            1,
+            "one clip, spanning the whole import"
+        );
+
+        if made {
+            let image = project
+                .import_footage(still.to_string_lossy().into_owned())
+                .expect("imported");
+            comp.add_footage_layer(&image, true).expect("placed");
+            assert_eq!(
+                comp.get_layers().expect("layers")[0]
+                    .get_kind()
+                    .expect("kind"),
+                BridgeLayerKind::Footage,
+                "a still has no run to cut, so it is never wrapped"
+            );
+        }
+
+        // …and with the preference off, video is a Footage layer as always.
+        comp.add_footage_layer(&video, false).expect("placed");
+        assert_eq!(
+            comp.get_layers().expect("layers")[0]
+                .get_kind()
+                .expect("kind"),
+            BridgeLayerKind::Footage
+        );
+    }
+}
+
+/// Media that will not probe stays a plain Footage layer even when the
+/// preference is on. Guessing towards the more elaborate shape on no
+/// information is the more annoying mistake to undo.
+#[test]
+fn unreadable_media_is_never_wrapped() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/not-really-here.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage, true).expect("placed");
+    assert_eq!(
+        comp.get_layers().expect("layers")[0]
+            .get_kind()
+            .expect("kind"),
+        BridgeLayerKind::Footage
+    );
+}
+
+// --- Retime ------------------------------------------------------------
+
+/// The frame-interpolation policy is a layer's own setting, present on every
+/// layer whether or not it is retimed (K-249).
+///
+/// It used to live inside the rival retime store this file once exercised at
+/// length — a constant speed, a reverse gate and an enable switch, all of them
+/// a second way to retime a layer that the Retime property already did better.
+/// Those went with the store; the policy stayed, because it was never part of
+/// the map to begin with (docs/04 §10).
+#[test]
+fn interpolation_is_a_layer_setting_of_its_own() {
     use crate::api::retime::BridgeRetimeInterp;
 
     let project = LumitBridgeState::new_project(None).expect("a new project");
@@ -2952,110 +3552,48 @@ fn speed_reverse_and_interpolation_do_not_disturb_each_other() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
-    layer.set_retime_enabled(true).expect("on");
 
-    layer.set_retime_reverse(true).expect("gate open");
-    layer
-        .set_retime_interpolation(BridgeRetimeInterp::Blend)
-        .expect("policy");
-    layer.set_retime_speed(50.0).expect("half speed");
-
-    let retime = layer.get_retime().expect("retime").expect("some");
-    assert!((retime.speed_percent - 50.0).abs() < 0.5);
-    assert!(retime.allow_reverse, "the speed edit kept the gate open");
     assert_eq!(
-        retime.interpolation,
-        BridgeRetimeInterp::Blend,
-        "and kept the policy"
+        layer.get_interpolation().expect("read"),
+        BridgeRetimeInterp::Nearest,
+        "nearest is the gaming-footage default (docs/04 §10)"
     );
-
-    // A freeze is a legal speed, not an error.
-    layer.set_retime_speed(0.0).expect("freeze");
     assert!(
-        layer
-            .get_retime()
-            .expect("retime")
-            .expect("some")
-            .speed_percent
-            .abs()
-            < 0.5
+        layer.get_retime_property().expect("read").is_none(),
+        "and it is readable with no retime in sight"
+    );
+
+    layer
+        .set_interpolation(BridgeRetimeInterp::Blend)
+        .expect("set");
+    assert_eq!(
+        layer.get_interpolation().expect("read"),
+        BridgeRetimeInterp::Blend
+    );
+
+    // One undo step, and it does not reach for a retime that is not there.
+    project.undo().expect("undo");
+    assert_eq!(
+        layer.get_interpolation().expect("read"),
+        BridgeRetimeInterp::Nearest
     );
 }
 
-/// Editing a curve that varies would discard its shape, so it is refused rather
-/// than flattened — the same rule the keyframe rows follow.
+/// Every layer kind has a policy — it is not a footage-layer idea, because any
+/// layer can be asked for a moment between two of its source's frames.
 #[test]
-fn a_varying_curve_refuses_a_single_speed() {
-    use lumit_core::retime::{Boundary, RateSegment, Retime, RetimeSegment};
-    use lumit_core::time::Rational;
-
-    let project = LumitBridgeState::new_project(None).expect("a new project");
-    let comp = project.new_composition("Scene".into(), None).expect("comp");
-    let footage = project
-        .import_footage("C:/clips/shot.mov".into())
-        .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
-    let layer = comp.get_layers().expect("layers").remove(0);
-    layer.set_retime_enabled(true).expect("on");
-
-    // A ramp, installed behind the row's back the way the Retime graph will.
-    let one = Rational::new(1, 1).expect("1");
-    let two = Rational::new(2, 1).expect("2");
-    let ramp = Retime {
-        boundaries: vec![
-            Boundary::new(Rational::ZERO, Rational::ZERO),
-            Boundary::new(one, two),
-        ],
-        segments: vec![RetimeSegment::Rate(RateSegment::new(
-            Rational::ZERO,
-            two,
-            lumit_core::retime::Ease::Linear,
-        ))],
-        allow_reverse: false,
-        interpolation: Default::default(),
-        extra: serde_json::Map::new(),
-    };
-    {
-        let state = project.state().expect("state");
-        let state = state.write().expect("write");
-        state
-            .store
-            .commit(lumit_core::Op::SetLayerRetime {
-                comp: comp.id,
-                layer: layer.id(),
-                retime: Some(ramp),
-            })
-            .expect("ramp installed");
-    }
-
-    let read = layer.get_retime().expect("retime").expect("some");
-    assert!(read.varies, "a ramp is not one constant speed");
-    assert!(matches!(
-        layer.set_retime_speed(50.0),
-        Err(BridgeError::RetimeVaries)
-    ));
-
-    // …but the gate and the policy are still editable, because neither
-    // discards the shape.
-    layer.set_retime_reverse(true).expect("gate still editable");
-    assert!(layer.get_retime().expect("retime").expect("some").varies);
-}
-
-/// Retiming is a footage-layer idea; every other kind refuses calmly.
-#[test]
-fn only_footage_layers_retime() {
+fn every_layer_kind_has_an_interpolation_policy() {
+    use crate::api::retime::BridgeRetimeInterp;
     let (_project, layer) = project_with_layer();
-    assert!(layer.get_retime().expect("retime").is_none());
-    assert!(matches!(
-        layer.set_retime_enabled(true),
-        Err(BridgeError::NotFootage)
-    ));
-    assert!(matches!(
-        layer.set_retime_speed(50.0),
-        Err(BridgeError::NotFootage)
-    ));
+    assert_eq!(
+        layer.get_interpolation().expect("read"),
+        BridgeRetimeInterp::Nearest
+    );
+    layer
+        .set_interpolation(BridgeRetimeInterp::Blend)
+        .expect("a solid takes one too");
 }
 
 /// The Retime *property* (K-197) is an ordinary keyframable scalar: absent

@@ -27,7 +27,7 @@
 
 use crate::decode::{CompFrame, CompJob, DecodePool};
 use crate::export::{AudioJob, ItemInfo};
-use crate::plan::{plan_comp_frame, Quality, RetimeOverride};
+use crate::plan::{plan_comp_frame, Quality};
 use crate::source::{SourceProbe, SourceProbes};
 use lumit_core::model::{Composition, Document, FootageItem, LayerKind, ProjectItem};
 // The one preview-size rounding, shared with the compositor's scaled render
@@ -560,9 +560,8 @@ impl HeadlessRenderer {
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
-        retime_override: Option<&RetimeOverride>,
     ) -> Result<(wgpu::Texture, u32, u32), String> {
-        self.preview_display_texture_fmt(doc, comp_id, frame, quality, retime_override, false)
+        self.preview_display_texture_fmt(doc, comp_id, frame, quality, false)
     }
 
     /// [`Self::preview_display_texture`] with the output channel order chosen:
@@ -573,7 +572,6 @@ impl HeadlessRenderer {
         comp_id: Uuid,
         frame: u64,
         quality: Quality,
-        retime_override: Option<&RetimeOverride>,
         bgra: bool,
     ) -> Result<(wgpu::Texture, u32, u32), String> {
         let comp = doc
@@ -585,14 +583,7 @@ impl HeadlessRenderer {
         let fps = comp.frame_rate.fps().max(1.0);
         let t = frame as f64 / fps;
 
-        let jobs = plan_comp_frame(
-            doc,
-            comp,
-            t,
-            quality,
-            &ProbeView(&self.probe_cache),
-            retime_override,
-        );
+        let jobs = plan_comp_frame(doc, comp, t, quality, &ProbeView(&self.probe_cache));
         // The whole point: decode only when the wanted pixels actually differ.
         let reusable = matches!(
             &self.retained,
@@ -668,9 +659,12 @@ impl HeadlessRenderer {
     ///   from the retained pixels and touches no file at all. That is what makes
     ///   a value drag feel live rather than stuttery.
     ///
-    /// `retime_override` is the one live edit that *does* change the decode — a
-    /// Retime "Time" drag moves to a different source frame — so it is applied
-    /// to the plan rather than patched into the document afterwards.
+    /// A Retime drag is the one live edit that *does* change the decode — it
+    /// moves to a different source frame — so it cannot ride the retained
+    /// pixels. It arrives as a patched document like any other provisional
+    /// value, and the plan below re-reads the map from it. (A bespoke override
+    /// parameter for this existed here, threaded through every caller and
+    /// constructed by none of them; K-249 removed it.)
     ///
     /// The document handed in may be a throwaway with a drag's provisional value
     /// already patched in; nothing is cached against its identity here, so that
@@ -686,10 +680,8 @@ impl HeadlessRenderer {
         frame: u64,
         quality: Quality,
         scale: f32,
-        retime_override: Option<&RetimeOverride>,
     ) -> Result<(Vec<u8>, u32, u32), String> {
-        let (shown, cw, ch) =
-            self.preview_display_texture(doc, comp_id, frame, quality, retime_override)?;
+        let (shown, cw, ch) = self.preview_display_texture(doc, comp_id, frame, quality)?;
         let Some(parts) = self.parts.as_ref() else {
             return Err("headless preview: renderer is unavailable after an earlier fault".into());
         };
@@ -745,7 +737,7 @@ impl HeadlessRenderer {
         self.sync_items(doc, (cw, ch));
         let fps = comp.frame_rate.fps().max(1.0);
         let t = frame as f64 / fps;
-        let jobs = plan_comp_frame(doc, comp, t, quality, &ProbeView(&self.probe_cache), None);
+        let jobs = plan_comp_frame(doc, comp, t, quality, &ProbeView(&self.probe_cache));
         let mut wants = Vec::new();
         for job in &jobs {
             if job.slate {
@@ -822,7 +814,7 @@ impl HeadlessRenderer {
         frame: u64,
         scale: f32,
     ) -> Result<(Vec<u8>, u32, u32), String> {
-        self.render_preview(doc, comp_id, frame, Quality::default(), scale, None)
+        self.render_preview(doc, comp_id, frame, Quality::default(), scale)
     }
 
     /// Compute a scope trace (waveform/vectorscope/histogram, K-096 v1) from an
@@ -925,7 +917,7 @@ impl HeadlessRenderer {
         }
         let started = std::time::Instant::now();
         let (texture, _, _) =
-            self.preview_display_texture_fmt(doc, comp_id, frame, quality, None, bgra)?;
+            self.preview_display_texture_fmt(doc, comp_id, frame, quality, bgra)?;
         let texture = std::sync::Arc::new(texture);
         if let Some(key) = key {
             // What it actually cost, so the store's cost-aware eviction has
@@ -1804,6 +1796,7 @@ mod tests {
             label: 0,
             volume_db: lumit_core::anim::Property::zero(),
             retime: None,
+            interpolation: Default::default(),
             blend: Default::default(),
             masks: Vec::new(),
             paint: Vec::new(),
@@ -1902,7 +1895,7 @@ mod tests {
             ..Default::default()
         };
         let (shown, cw, ch) = r
-            .preview_display_texture(&doc, comp_id, 0, q, None)
+            .preview_display_texture(&doc, comp_id, 0, q)
             .expect("preview texture");
         assert_eq!((cw, ch), (16, 16), "the reported dims stay logical");
         assert_eq!(
@@ -1911,9 +1904,7 @@ mod tests {
             "the composite ran at the preview scale, not at comp size"
         );
         // And the read-back entry point agrees end to end: right size, still red.
-        let (rgba, w, h) = r
-            .render_preview(&doc, comp_id, 0, q, 0.5, None)
-            .expect("preview");
+        let (rgba, w, h) = r.render_preview(&doc, comp_id, 0, q, 0.5).expect("preview");
         assert_eq!((w, h), (8, 8));
         let idx = (((h / 2) * w + w / 2) * 4) as usize;
         assert!(rgba[idx] > 200, "red solid stays red at the scaled size");
@@ -2078,10 +2069,7 @@ mod tests {
             c.layers.push(lumit_core::model::Layer {
                 id: Uuid::now_v7(),
                 name: "gone.mp4".into(),
-                kind: LayerKind::Footage {
-                    item: item_id,
-                    retime: None,
-                },
+                kind: LayerKind::Footage { item: item_id },
                 in_point: CompTime(Rational::new(0, 1).unwrap()),
                 out_point: CompTime(Rational::new(5, 1).unwrap()),
                 start_offset: CompTime(Rational::new(0, 1).unwrap()),
@@ -2091,6 +2079,7 @@ mod tests {
                 label: 0,
                 volume_db: Property::zero(),
                 retime: None,
+                interpolation: Default::default(),
                 blend: Default::default(),
                 masks: Vec::new(),
                 paint: Vec::new(),
@@ -2148,8 +2137,7 @@ mod tests {
         let doc = store.snapshot();
         let q = crate::plan::Quality::default();
 
-        r.render_preview(&doc, comp_id, 0, q, 1.0, None)
-            .expect("first");
+        r.render_preview(&doc, comp_id, 0, q, 1.0).expect("first");
         let after_first = r.decoded_frames();
         assert_eq!(after_first, 1, "the first frame decodes");
 
@@ -2172,7 +2160,7 @@ mod tests {
                     }
                 }
             }
-            r.render_preview(&dragging, comp_id, 0, q, 1.0, None)
+            r.render_preview(&dragging, comp_id, 0, q, 1.0)
                 .expect("drag tick");
         }
         assert_eq!(
@@ -2182,8 +2170,7 @@ mod tests {
         );
 
         // A different frame is genuinely different pixels, so it decodes.
-        r.render_preview(&doc, comp_id, 1, q, 1.0, None)
-            .expect("frame 1");
+        r.render_preview(&doc, comp_id, 1, q, 1.0).expect("frame 1");
         assert_eq!(
             r.decoded_frames(),
             after_first + 1,
@@ -2615,7 +2602,7 @@ mod tests {
         let doc = store.snapshot();
 
         let (preview, pw, ph) = r
-            .render_preview(&doc, comp_id, 0, crate::plan::Quality::default(), 1.0, None)
+            .render_preview(&doc, comp_id, 0, crate::plan::Quality::default(), 1.0)
             .expect("preview render");
         let (export, ew, eh) = r.render_rgba(&doc, comp_id, 0, 1.0).expect("export render");
 
@@ -2679,6 +2666,7 @@ mod tests {
             label: 0,
             volume_db: Property::zero(),
             retime: None,
+            interpolation: Default::default(),
             blend: Default::default(),
             masks: Vec::new(),
             paint: Vec::new(),
@@ -2843,14 +2831,7 @@ mod tests {
             let store = DocumentStore::new(doc);
             let doc = store.snapshot();
             let (preview, pw, ph) = r
-                .render_preview(
-                    &doc,
-                    comp_id,
-                    frame,
-                    crate::plan::Quality::default(),
-                    1.0,
-                    None,
-                )
+                .render_preview(&doc, comp_id, frame, crate::plan::Quality::default(), 1.0)
                 .unwrap_or_else(|e| panic!("{name}: preview render failed: {e}"));
             let (export, ew, eh) = r
                 .render_rgba(&doc, comp_id, frame, 1.0)
@@ -2887,38 +2868,25 @@ mod tests {
             return;
         };
 
-        use lumit_core::retime::{FlowParams, Interpolation, Retime};
-        let rows: Vec<(&str, Option<Retime>, u64)> = vec![
-            ("plain footage", None, 10),
-            (
-                "retime blend",
-                {
-                    let mut retime = Retime::constant_speed(
-                        Rational::new(2, 1).unwrap(),
-                        Rational::ZERO,
-                        Rational::new(1, 2).unwrap(),
-                    );
-                    retime.interpolation = Interpolation::Blend;
-                    Some(retime)
-                },
-                7,
-            ),
+        use lumit_core::retime::{FlowParams, Interpolation};
+        // Half speed as the Retime property expresses it (K-249): two seconds
+        // of layer time reading one of source. The interpolation policy rides
+        // beside it on the layer rather than inside it.
+        let half_speed = || {
+            lumit_core::model::Layer::identity_retime(Rational::ZERO, Rational::new(2, 1).unwrap())
+        };
+        let rows: Vec<(&str, Option<lumit_core::anim::Property>, Interpolation, u64)> = vec![
+            ("plain footage", None, Interpolation::Nearest, 10),
+            ("retime blend", Some(half_speed()), Interpolation::Blend, 7),
             (
                 "retime flow",
-                {
-                    let mut retime = Retime::constant_speed(
-                        Rational::new(2, 1).unwrap(),
-                        Rational::ZERO,
-                        Rational::new(1, 2).unwrap(),
-                    );
-                    retime.interpolation = Interpolation::Flow(FlowParams::default());
-                    Some(retime)
-                },
+                Some(half_speed()),
+                Interpolation::Flow(FlowParams::default()),
                 7,
             ),
         ];
 
-        for (name, retime, frame) in rows {
+        for (name, retime, interpolation, frame) in rows {
             let mut doc = Document::new();
             let item = Uuid::now_v7();
             doc.items
@@ -2934,7 +2902,9 @@ mod tests {
                     extra: serde_json::Map::new(),
                 }));
             let comp_id = Uuid::now_v7();
-            let layer = matrix_layer("Clip", LayerKind::Footage { item, retime }, 320, 240);
+            let mut layer = matrix_layer("Clip", LayerKind::Footage { item }, 320, 240);
+            layer.retime = retime;
+            layer.interpolation = interpolation;
             doc.items.push(ProjectItem::Composition(Composition {
                 id: comp_id,
                 name: "Scene".into(),
@@ -2953,14 +2923,7 @@ mod tests {
             let store = DocumentStore::new(doc);
             let doc = store.snapshot();
             let (preview, pw, ph) = r
-                .render_preview(
-                    &doc,
-                    comp_id,
-                    frame,
-                    crate::plan::Quality::default(),
-                    1.0,
-                    None,
-                )
+                .render_preview(&doc, comp_id, frame, crate::plan::Quality::default(), 1.0)
                 .unwrap_or_else(|e| panic!("{name}: preview render failed: {e}"));
             let (export, ew, eh) = r
                 .render_rgba(&doc, comp_id, frame, 1.0)
@@ -3099,15 +3062,12 @@ mod tests {
         let (store, comp_id) = doc_with_solid(LinearColour([1.0, 1.0, 1.0, 1.0]), 8, 8);
         let doc = store.snapshot();
         let q = crate::plan::Quality::default();
-        r.render_preview(&doc, comp_id, 0, q, 1.0, None)
-            .expect("render");
+        r.render_preview(&doc, comp_id, 0, q, 1.0).expect("render");
         let decodes = r.decoded_frames();
 
-        assert!(r
-            .render_preview(&doc, Uuid::now_v7(), 0, q, 1.0, None)
-            .is_err());
+        assert!(r.render_preview(&doc, Uuid::now_v7(), 0, q, 1.0).is_err());
         // The good comp still re-composites from its retained pixels.
-        r.render_preview(&doc, comp_id, 0, q, 1.0, None)
+        r.render_preview(&doc, comp_id, 0, q, 1.0)
             .expect("still fine");
         assert_eq!(r.decoded_frames(), decodes);
     }
@@ -3136,13 +3096,12 @@ mod tests {
                 divisor: 1,
             };
             // Warm: the first render builds pipelines and probes.
-            let _ = renderer.render_preview(&doc, comp_id, 0, quality, scale, None);
+            let _ = renderer.render_preview(&doc, comp_id, 0, quality, scale);
 
             let n = 30u32;
             let started = std::time::Instant::now();
             for frame in 0..n {
-                let out =
-                    renderer.render_preview(&doc, comp_id, u64::from(frame), quality, scale, None);
+                let out = renderer.render_preview(&doc, comp_id, u64::from(frame), quality, scale);
                 assert!(out.is_ok(), "{label} frame {frame} failed");
             }
             let each = started.elapsed().as_secs_f64() * 1000.0 / f64::from(n);

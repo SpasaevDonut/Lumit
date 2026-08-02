@@ -4850,3 +4850,108 @@ reads `comps()`, so in a running application the cache is always warm, the resto
 reopened project's comps up in the previous project's list, and a reopened project came back
 with no tabs and nothing fronted. A test that opens with a cold cache is testing the one state
 the application is never in.
+
+---
+
+**K-246 · DECIDED · Two Vegas preferences, and a first-run screen that sets them.** From the
+owner (2026-08-02). Lumit gains two application-level settings, independent of each other and
+each an ordinary visible row in the Settings window:
+
+- **Retime opens to speed** — the graph editor opens a Retime channel in the **speed lens**
+  (K-075's Vegas default-lens preference, carried into the property era), with the envelope
+  semantics of K-247. Off, a Retime channel opens to the value lens and the speed lens keeps
+  its ordinary two-sided shape; ordinary properties are untouched either way.
+- **Video arrives as a Sequence layer** — adding **video footage or an image sequence**
+  (never a still image) to a comp creates a one-clip Sequence layer over that source instead
+  of a Footage layer. One funnel decides it (the `add_footage_layer` path), so drag-drop,
+  double-click insertion and the menus cannot disagree. Single-source stands: each import
+  wraps into its own Sequence layer; splicing different sources into one layer stays deferred
+  (K-071's single-source clause survives K-248).
+
+And the **first-run screen is un-gated** (supersedes K-006's post-v1 stance, which existed
+because the screen had no settings to write — these are those settings): on the very first
+launch, one calm screen asks how the user edits — **AE-style** or **Vegas-style** — where
+Vegas ticks both settings and AE ticks neither. Skippable, and everything it writes remains
+an ordinary setting afterwards (07-UI-SPEC §13.1's rules stand). v1 is deliberately plain;
+the four-card version with per-choice imagery (the owner: "looking a little like Apple's
+settings menus") is the destination and its polish is in TODO.
+
+**K-247 · DECIDED · The Vegas speed lens is an envelope: one point per key, speed as the
+value.** From the owner (2026-08-02), building on K-076 and K-197. With the Vegas preference
+on, the Retime channel's speed view stops being a derivative plot with two one-sided dots per
+key and becomes a **speed envelope**: each keyframe is **one draggable point** whose height
+*is* the playback speed (per cent) at that moment — the owner: "think of the speed percent as
+the value instead of it being a derivative of the actual frame values". Between points the
+speed runs straight for now (eased shapes return with the preset-shelf rework, in TODO). The
+store stays the one Retime property (K-197, K-249): an envelope point is a source-time
+keyframe whose two side speeds are equal, and dragging a point **re-integrates the keyframe
+values downstream** — source positions after the drag shift, while every keyframe *time* and
+the layer's box stay put (K-022's covenant; K-070's start-pinning). Details:
+
+- The **default vertical range is 100% down to −25%**, Vegas mode only, growing whenever the
+  curve exceeds it. The visible negative floor is deliberate: it teaches that dragging below
+  zero reverses the clip.
+- **Reverse is ungated everywhere**, both modes, both lenses: a Retime curve may descend.
+  (The old segment engine's `allow_reverse` gate does not carry over to the property path.)
+- The AE-style speed graph — ordinary properties, and Retime with the preference off — is
+  untouched.
+
+**K-248 · DECIDED · The sequence view is the layer's own row grown tall, and clips reorder.**
+From the owner (2026-08-02), superseding two clauses of K-071 and refining K-020.
+
+- **Inline, not a tab.** Double-clicking a Sequence layer — its name in the outline (where a
+  Precomp opens its comp) or its bar in the lanes — expands the row *in place*: the row grows
+  tall, each clip draws a start and an end **thumbnail** (a thumbnail-at-source-time read;
+  the existing bridge call only decodes a first frame), the razor and `Ctrl+Shift+D` cut the
+  clip under the pointer/playhead in two, and beneath the clips sits a **small speed-envelope
+  strip** (K-247 semantics, speed lens only) whose points belong to their clip and travel
+  with it. Double-clicking again collapses. K-071's dedicated timeline tab is superseded:
+  the Timeline's tabs hold comps, and the owner prefers cutting without leaving the lane; the
+  full graph editor stays the home of the value view.
+- **Clips reorder.** K-071's source-ordered invariant ("source time never jumps backwards")
+  is dropped: clips on a Sequence layer may be reordered and repeated freely, the Vegas
+  expectation. The camera-tracker rationale that motivated the ordering is re-answered rather
+  than lost: a tracker will run on the **full, unaltered footage** and its result be mapped
+  through the sequence's clip/retime resolution onto the layer — that mapping is the owner's
+  design, expected with the tracker work.
+- **The layer's span is its clips'.** A Sequence layer's bar always runs from its first
+  clip's start to its last clip's end; interior gaps render transparent (unchanged); deleting
+  or trimming an outermost clip moves the corresponding end of the bar. Retime edits still
+  move nothing (K-022).
+
+**K-249 · DECIDED · One retime system: the property.** From the owner (2026-08-02), resolving
+[04-RETIMING.md](04-RETIMING.md)'s first open question — the K-197 duality — in the direction
+K-213 already marked: **the property survives, and everything else converges on it.**
+
+- The pre-K-197 **layer** speed map (`LayerKind::Footage::retime`, the fallback arm in
+  `Layer::source_time_at`, and the Source card's speed/reverse/frames rows that edit it) is
+  **deleted**. A document that carries one converts to property keyframes at load, through
+  the store's own exact keyframe reader (`Retime::source_keyframes`), one way, with a notice.
+- **Sequence clips migrate too**: `Clip::retime` moves from the segment store to the same
+  `Property` shape, so the layer channel's Vegas lens and the sequence view's envelope strip
+  are one editor over one representation, and cutting a clip splits keyframes rather than
+  segments. The exact-split and integration maths of 04-RETIMING §§4–5 remain the reference
+  for how the property is split and integrated; the segment store survives only as the
+  load-time conversion for older documents.
+- 04-RETIMING §0's framing — the property as the current surface, the segment engine as the
+  destination — inverts: the property is both. Segment-era affordances (freeze, presets,
+  overrun indication…) return by being rebuilt on the property, per K-197's own rule.
+
+---
+
+**K-250 · DECIDED · The speed envelope opens with headroom: 125% to −25%.** From the owner
+(2026-08-02), refining K-247's figure after using it. K-247 set the Vegas envelope's default
+range at 100% down to −25%; the top figure is now **125%**.
+
+The room above normal playback is the whole point of the change. At exactly 100 the flat
+line every un-retimed clip draws sat on the very top edge of the graph with nowhere to go
+but down, which reads as a ceiling rather than as the ordinary speed it is — and speeding a
+clip *up* is the commonest thing anyone does here. The floor stays where it was: −25% is
+enough negative space to show that dragging below zero runs the clip backwards, without
+giving up half the graph to a state most clips never reach. The range still only ever grows:
+a curve reaching past either end reframes the axis, and while a drag is in flight the axis
+is *frozen* and the drawing clipped to the graph's own bounds, so a point taken past an edge
+never draws over the rows beside it and the framing catches up when the pointer is let go.
+
+Both readings of the envelope take it — the layer's Retime channel in the graph editor, and
+the sequence view's strip — because they are one editor over one representation (K-249).

@@ -999,7 +999,24 @@ impl CompositionReference {
     /// a frame count: audio-only media has no video frame count or rate, and
     /// reconstructing seconds from those silently clamped such a clip to one frame.
     #[frb(sync)]
-    pub fn add_footage_layer(&self, footage: &FootageReference) -> Result<(), BridgeError> {
+    /// Place `footage` in this composition as a new layer.
+    ///
+    /// `as_sequence` is Settings ▸ Interface ▸ Editing ▸ *Video arrives as a
+    /// Sequence layer* (K-246), forwarded by the frontend. On, media that
+    /// **runs** — a video stream longer than a single frame — arrives as a
+    /// one-clip Sequence layer, ready to be cut on its own row; a still image
+    /// never does, because there is nothing in one frame to cut. Off, and for
+    /// stills either way, this is the plain Footage layer it always was.
+    ///
+    /// It is one call rather than "add, then convert" so the choice is one
+    /// undo step and one funnel: every route into a comp — a drop, a
+    /// double-click, a menu — comes through here and cannot disagree with the
+    /// others about what a video import becomes.
+    pub fn add_footage_layer(
+        &self,
+        footage: &FootageReference,
+        as_sequence: bool,
+    ) -> Result<(), BridgeError> {
         let proj = self.project()?;
         let comp = self.composition()?;
 
@@ -1013,10 +1030,25 @@ impl CompositionReference {
             };
 
             let (out, nat_w, nat_h) = Self::footage_span_and_size(&p, f, &comp);
+            let sequenced = as_sequence && Self::runs_as_video(&p, f);
+
+            let kind = if sequenced {
+                lumit_core::model::LayerKind::Sequence {
+                    clips: vec![lumit_core::sequence::Clip::new(
+                        lumit_core::sequence::ClipSource::Footage(item),
+                        lumit_core::time::Rational::ZERO,
+                        out,
+                        lumit_core::time::Rational::ZERO,
+                        out,
+                    )],
+                }
+            } else {
+                lumit_core::model::LayerKind::Footage { item }
+            };
 
             crate::edits::base_layer(
                 f.name.clone(),
-                lumit_core::model::LayerKind::Footage { item, retime: None },
+                kind,
                 out,
                 crate::edits::centred_transform(nat_w, nat_h, comp.width, comp.height),
             )
@@ -1031,6 +1063,45 @@ impl CompositionReference {
             })
             .map_err(BridgeError::OpError)?;
         Ok(())
+    }
+
+    /// Whether this media is something to cut: a video stream that runs for
+    /// more than a single frame (K-246).
+    ///
+    /// A still image probes with a video stream too — one frame of it — which
+    /// is why the question is about duration and not about the stream being
+    /// there. Media that will not probe answers **false**: a Sequence layer is
+    /// the more elaborate shape, and guessing wrong towards the plain one is
+    /// the cheaper mistake to undo.
+    ///
+    /// Image sequences will qualify by this same rule once they are a footage
+    /// kind at all (docs/TODO.md) — they run, so they answer true with no
+    /// change here.
+    #[frb(ignore)]
+    fn runs_as_video(state: &LumitBridgeState, footage: &lumit_core::model::FootageItem) -> bool {
+        #[cfg(feature = "media")]
+        {
+            let Some(path) = FootageReference::resolve_path(state, footage) else {
+                return false;
+            };
+            let Ok(info) = lumit_media::probe::probe(&path) else {
+                return false;
+            };
+            let Some(video) = info.video.as_ref() else {
+                return false;
+            };
+            let fps = video.fps();
+            // Half a frame's slack, so a one-frame still cannot creep over the
+            // line on a rounded duration.
+            let one_frame = if fps > 0.0 { 1.0 / fps } else { 0.0 };
+            info.duration_seconds > one_frame * 1.5
+        }
+
+        #[cfg(not(feature = "media"))]
+        {
+            let _ = (state, footage);
+            false
+        }
     }
 
     /// The span end and natural pixel size a placed clip should take: the media's
@@ -1231,6 +1302,39 @@ impl CompositionReference {
             paint: None,
             contents: None,
             masks: None,
+            clip_retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with one clip's retime replaced — the live envelope
+    /// drag, which never touches the document.
+    ///
+    /// A retime decides *which frame of the source* is decoded, so unlike a
+    /// transform it cannot be previewed by re-compositing pixels that are
+    /// already in hand: the provisional map has to reach the render plan, and
+    /// it does that by riding along with the request and being patched onto a
+    /// clone (K-247).
+    #[frb(sync)]
+    pub fn render_frame_with_clip_retime(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        clip: Uuid,
+        retime: crate::api::effect::BridgeScalar,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: None,
+            clip_retime: Some((clip, retime)),
         }))
     }
 
@@ -1369,6 +1473,7 @@ impl CompositionReference {
             paint: None,
             contents: None,
             masks: None,
+            clip_retime: None,
         }))
     }
 
@@ -1398,6 +1503,7 @@ impl CompositionReference {
             paint: None,
             contents: None,
             masks: None,
+            clip_retime: None,
         }))
     }
 
@@ -1431,6 +1537,7 @@ impl CompositionReference {
             paint: Some(strokes),
             contents: None,
             masks: None,
+            clip_retime: None,
         }))
     }
 
@@ -1455,6 +1562,7 @@ impl CompositionReference {
             paint: None,
             contents: Some(contents),
             masks: None,
+            clip_retime: None,
         }))
     }
 
@@ -1478,6 +1586,7 @@ impl CompositionReference {
             text: None,
             paint: None,
             contents: None,
+            clip_retime: None,
             masks: Some(masks),
         }))
     }

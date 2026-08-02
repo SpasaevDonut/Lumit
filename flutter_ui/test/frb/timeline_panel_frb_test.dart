@@ -3107,7 +3107,7 @@ void main() {
       final silent = p.comp.addSolidLayer();
       final audible =
           p.state.project!.importFootage(path: _wavFile('tone.wav'));
-      p.comp.addFootageLayer(footage: audible);
+      p.comp.addFootageLayer(footage: audible, asSequence: false);
       await mount(tester, p);
 
       final footageLayer = p.comp.getLayers().first;

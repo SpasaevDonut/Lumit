@@ -1726,6 +1726,13 @@ pub struct RenderCompRequestWithPreview {
     /// per drag, not one per tick, so the picture is kept in step by previewing
     /// rather than by writing.
     pub paint: Option<Vec<crate::api::layer::BridgeStroke>>,
+    /// One clip's retime map, while its envelope point is being dragged
+    /// (K-247). The same reason as `text` and `paint`: a re-speed is one op
+    /// per drag, not one per tick, and a retime decides *which frame* is
+    /// decoded — so without this the picture simply does not move until the
+    /// pointer is let go, which is the one edit where watching it matters
+    /// most.
+    pub clip_retime: Option<(Uuid, crate::api::effect::BridgeScalar)>,
     /// A shape layer's whole art list, while one of its items is being dragged
     /// (K-239). The same reason as `paint` above.
     pub contents: Option<Vec<crate::api::layer::BridgeShapeItem>>,
@@ -2613,6 +2620,19 @@ fn render_comp_with_preview(
     if let Some(paint) = req.paint {
         comp.layers[index].paint = paint.into_iter().map(|s| s.write()).collect();
     }
+    if let Some((clip, map)) = req.clip_retime {
+        // Clip time, so no layer offset is applied on the way in.
+        if let Ok(animation) = map.animation_at(lumit_core::time::Rational::ZERO) {
+            if let lumit_core::model::LayerKind::Sequence { clips } = &mut comp.layers[index].kind {
+                if let Some(c) = clips.iter_mut().find(|c| c.id == clip) {
+                    c.retime = Some(lumit_core::anim::Property {
+                        animation,
+                        extra: serde_json::Map::new(),
+                    });
+                }
+            }
+        }
+    }
     if let Some(masks) = req.masks {
         comp.layers[index].masks = masks.into_iter().map(|m| m.write()).collect();
     }
@@ -2696,7 +2716,6 @@ fn trace_scope(
                         req.frame,
                         quality_for(req.scale),
                         req.scale,
-                        None,
                     )
                     .ok()
                     .map(|(rgba, width, height)| (width, height, rgba))
@@ -2799,14 +2818,7 @@ fn sample_pixels(
                     let mut render = || {
                         state
                             .renderer
-                            .render_preview(
-                                &document,
-                                req.comp.id,
-                                req.frame,
-                                quality,
-                                req.scale,
-                                None,
-                            )
+                            .render_preview(&document, req.comp.id, req.frame, quality, req.scale)
                             .ok()
                             .map(|(rgba, width, height)| (width, height, rgba))
                     };
@@ -2897,7 +2909,6 @@ fn sample_layer_alone(
             req.frame,
             quality_for(req.scale),
             req.scale,
-            None,
         )
         .ok()?;
     state.layer_sample = Some(LayerSample {

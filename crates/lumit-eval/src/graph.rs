@@ -161,14 +161,9 @@ pub fn compile(comp: &Composition) -> EvalGraph {
             sources.insert(source, id);
             id
         };
-        // Retime folds away unless this is a Footage layer carrying one.
-        if matches!(
-            layer.kind,
-            LayerKind::Footage {
-                retime: Some(_),
-                ..
-            }
-        ) {
+        // Retime folds away unless the layer actually carries one (K-249: the
+        // map is the layer's property, whatever the layer's kind).
+        if layer.retime.is_some() {
             top = g.push(NodeKind::Retime, vec![top]);
         }
         // Masks fold away when the layer has none.
@@ -229,7 +224,6 @@ mod tests {
     use lumit_core::anim::Property;
     use lumit_core::mask::Mask;
     use lumit_core::model::{Composition, LayerKind, LinearColour, Switches, TransformGroup};
-    use lumit_core::retime::Retime;
     use lumit_core::time::{CompTime, Duration, FrameRate, Rational};
 
     fn secs(s: i64) -> CompTime {
@@ -250,6 +244,7 @@ mod tests {
             label: 0,
             volume_db: lumit_core::anim::Property::zero(),
             retime: None,
+            interpolation: Default::default(),
             effects: Vec::new(),
             paint: Vec::new(),
             blend: BlendMode::Normal,
@@ -259,14 +254,21 @@ mod tests {
         }
     }
 
-    fn footage(retime: Option<Retime>, masks: Vec<Mask>) -> lumit_core::model::Layer {
-        layer(
+    /// A footage layer, retimed or not. `retime` is the layer's own Retime
+    /// property (K-249) — the only map there is — so "is this layer retimed"
+    /// is now a question about the layer rather than about its kind.
+    fn footage(
+        retime: Option<lumit_core::anim::Property>,
+        masks: Vec<Mask>,
+    ) -> lumit_core::model::Layer {
+        let mut l = layer(
             LayerKind::Footage {
                 item: Uuid::now_v7(),
-                retime,
             },
             masks,
-        )
+        );
+        l.retime = retime;
+        l
     }
 
     fn comp_with(layers: Vec<lumit_core::model::Layer>) -> Composition {
@@ -286,8 +288,8 @@ mod tests {
         }
     }
 
-    fn ident_retime() -> Retime {
-        Retime::identity(Rational::new(5, 1).unwrap(), Rational::ZERO)
+    fn ident_retime() -> lumit_core::anim::Property {
+        lumit_core::model::Layer::identity_retime(Rational::ZERO, Rational::new(5, 1).unwrap())
     }
 
     #[test]
@@ -471,7 +473,7 @@ mod tests {
     #[test]
     fn layers_on_the_same_source_share_one_source_node() {
         let item = Uuid::now_v7();
-        let footage_on = |item| layer(LayerKind::Footage { item, retime: None }, Vec::new());
+        let footage_on = |item| layer(LayerKind::Footage { item }, Vec::new());
         // Two footage layers on the same item.
         let g = compile(&comp_with(vec![footage_on(item), footage_on(item)]));
         let sources = g

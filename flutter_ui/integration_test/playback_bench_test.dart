@@ -37,7 +37,7 @@ void main() {
 
     final comp = state.project!.newComposition(name: 'Bench');
     final footage = state.project!.importFootage(path: path);
-    comp.addFootageLayer(footage: footage);
+    comp.addFootageLayer(footage: footage, asSequence: false);
     ui.setSelectedComp(comp);
 
     await tester.pumpWidget(LumitAppNew(state, ui));

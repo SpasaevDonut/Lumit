@@ -1,12 +1,19 @@
 // Settings defaults must be a no-op for existing installs, and the workspace
 // JSON must round-trip.
 
+import 'dart:io';
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/state/settings.dart';
 import 'package:lumit_flutter/state/workspace.dart';
 import 'package:lumit_flutter/theme/theme.dart';
+
+/// A settings file of this test's own, never the developer's real one — every
+/// setter calls `save()`, and the store is machine state a test must not reach.
+String _scratchStore(String name) =>
+    '${Directory.systemTemp.path}${Platform.pathSeparator}'
+    'lumit-test-$name${Platform.pathSeparator}workspace.json';
 
 void main() {
   test('performance defaults are the shipped ones', () {
@@ -18,6 +25,86 @@ void main() {
     final i = InterfaceSettings();
     expect(i.uiScale, 1.0);
     expect(i.showTooltips, isTrue);
+    // The Vegas pair (K-246) defaults off: the shipped behaviour is the
+    // After Effects one, and a new setting must never change an editor on
+    // somebody who has not asked for it.
+    expect(i.retimeOpensToSpeed, isFalse);
+    expect(i.videoAsSequenceLayer, isFalse);
+  });
+
+  test('a settings file written before the Vegas pair loads as After Effects',
+      () {
+    final i = InterfaceSettings.fromJson(const {'ui_scale': 1.25});
+    expect(i.retimeOpensToSpeed, isFalse);
+    expect(i.videoAsSequenceLayer, isFalse);
+  });
+
+  test('the Vegas pair survives a settings round-trip', () {
+    final i = InterfaceSettings()
+      ..retimeOpensToSpeed = true
+      ..videoAsSequenceLayer = true;
+    final back = InterfaceSettings.fromJson(i.toJson());
+    expect(back.retimeOpensToSpeed, isTrue);
+    expect(back.videoAsSequenceLayer, isTrue);
+  });
+
+  test('the Vegas answer sets both preferences and answers the question', () {
+    Workspace.storeOverride = _scratchStore('vegas');
+    final ws = Workspace()..setEditingStyle(vegas: true);
+    expect(ws.interface.retimeOpensToSpeed, isTrue);
+    expect(ws.interface.videoAsSequenceLayer, isTrue);
+    expect(ws.firstRunDone, isTrue);
+    Workspace.storeOverride = null;
+  });
+
+  test('the After Effects answer leaves both off, and is still an answer', () {
+    Workspace.storeOverride = _scratchStore('ae');
+    final ws = Workspace()..setEditingStyle(vegas: false);
+    expect(ws.interface.retimeOpensToSpeed, isFalse);
+    expect(ws.interface.videoAsSequenceLayer, isFalse);
+    // The point of the flag: answering "After Effects" must not leave the
+    // screen asking again on the next launch just because nothing changed.
+    expect(ws.firstRunDone, isTrue);
+    Workspace.storeOverride = null;
+  });
+
+  // The whole first-run rule in two lines: no file means ask, a file means
+  // do not. Anything else — a `Workspace` built by a test, a corrupt file —
+  // counts as "do not", or the screen appears where it has no business.
+  test('only a missing settings file counts as a first run', () {
+    expect(Workspace().firstRunDone, isTrue,
+        reason: 'a Workspace built directly is not a first run');
+
+    final missing = _scratchStore('missing');
+    File(missing).parent.createSync(recursive: true);
+    if (File(missing).existsSync()) File(missing).deleteSync();
+    Workspace.storeOverride = missing;
+    expect((Workspace()..load()).firstRunDone, isFalse);
+
+    final corrupt = _scratchStore('corrupt');
+    File(corrupt).parent.createSync(recursive: true);
+    File(corrupt).writeAsStringSync('{ this is not json');
+    Workspace.storeOverride = corrupt;
+    expect((Workspace()..load()).firstRunDone, isTrue,
+        reason: 'a corrupt file belongs to somebody who already uses Lumit');
+
+    Workspace.storeOverride = null;
+  });
+
+  test('an answered first run survives a restart', () {
+    final path = _scratchStore('restart');
+    File(path).parent.createSync(recursive: true);
+    if (File(path).existsSync()) File(path).deleteSync();
+    Workspace.storeOverride = path;
+
+    final first = Workspace()..load();
+    expect(first.firstRunDone, isFalse);
+    first.setEditingStyle(vegas: true);
+
+    final second = Workspace()..load();
+    expect(second.firstRunDone, isTrue);
+    expect(second.interface.retimeOpensToSpeed, isTrue);
+    Workspace.storeOverride = null;
   });
 
   test('an unknown playback name falls back to adaptive', () {

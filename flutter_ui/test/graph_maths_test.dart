@@ -19,6 +19,8 @@ BridgeKeyframe key(
         time: rat(n, d), value: v, interpIn: interpIn, interpOut: interpOut);
 
 void main() {
+  envelopeTests();
+  envelopeShapeTests();
   group('evaluateKeys', () {
     test('clamps past the ends and lerps a straight span', () {
       final keys = [key(0, 1, 10), key(1, 1, 20)];
@@ -289,6 +291,192 @@ void main() {
     test('rejects text that is not keyframe data', () {
       expect(parseClipboardText('hello world'), isNull);
       expect(parseClipboardText(''), isNull);
+    });
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The Vegas speed envelope (K-247).
+// ---------------------------------------------------------------------------
+
+void envelopeTests() {
+  group('the Vegas speed envelope', () {
+    test('an identity retime reads as 100% throughout', () {
+      // Ten seconds of layer time showing ten seconds of source.
+      final keys = [key(0, 1, 0.0), key(10, 1, 10.0)];
+      expect(envelopeSpeeds(keys), everyElement(closeTo(100, 1e-9)));
+    });
+
+    test('half speed reads as 50%', () {
+      final keys = [key(0, 1, 0.0), key(10, 1, 5.0)];
+      expect(envelopeSpeeds(keys), everyElement(closeTo(50, 1e-9)));
+    });
+
+    test('a backwards run reads negative', () {
+      final keys = [key(0, 1, 5.0), key(5, 1, 0.0)];
+      expect(envelopeSpeeds(keys), everyElement(closeTo(-100, 1e-9)));
+    });
+
+    test('setting a speed re-integrates the frames after it, start pinned', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(4, 1, 4.0)];
+      // Drag the *first* point to 300%: the span to the second key now runs
+      // at an average of (300 + 100) / 2 = 200%, advancing 4s of source in 2s.
+      final out = setEnvelopeSpeed(keys, 0, 300);
+      expect(out[0].value, closeTo(0.0, 1e-9), reason: 'the start is pinned');
+      expect(out[1].value, closeTo(4.0, 1e-9));
+      // …and everything past it carries the shift, the Vegas feel: the second
+      // span still runs at 100% average, so it still advances 2s.
+      expect(out[2].value, closeTo(6.0, 1e-9));
+      // Every keyframe *time* stayed exactly put (the beat-sync covenant).
+      expect([for (final k in out) rationalSeconds(k.time)], [0.0, 2.0, 4.0]);
+    });
+
+    test('a speed set is the speed read back', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(4, 1, 4.0)];
+      final out = setEnvelopeSpeed(keys, 1, 250);
+      expect(envelopeSpeeds(out)[1], closeTo(250, 1e-9));
+      expect(envelopeSpeeds(out)[0], closeTo(100, 1e-9),
+          reason: 'the points either side are untouched');
+      expect(envelopeSpeeds(out)[2], closeTo(100, 1e-9));
+    });
+
+    // The claim the whole envelope rests on: it is not a simplified view of
+    // the curve, it *is* the curve. If this fails, the two lenses disagree and
+    // a ramp drawn in one reads wrong in the other.
+    test('the curve under a straight envelope has an exactly linear speed', () {
+      final keys = [key(0, 1, 0.0), key(4, 1, 4.0)];
+      final ramped = setEnvelopeSpeed(keys, 1, 300); // 100% → 300%
+      // Strictly inside the span: `evaluateKeysSpeed` is 0 *at* the first and
+      // last key by the engine's own outside-the-keys rule, so the endpoints
+      // are checked through the points themselves just below.
+      for (var i = 1; i < 8; i++) {
+        final t = i / 8 * 4.0;
+        // The straight line between the two points, in source units.
+        final expected = (100 + (300 - 100) * (t / 4.0)) / 100;
+        expect(evaluateKeysSpeed(ramped, t), closeTo(expected, 1e-6),
+            reason: 'speed at t=$t should sit on the envelope line');
+      }
+      expect(envelopeSpeeds(ramped), [closeTo(100, 1e-9), closeTo(300, 1e-9)]);
+    });
+
+    test('the default range is 125 down to -25, and only ever grows', () {
+      final flat = [key(0, 1, 0.0), key(4, 1, 4.0)];
+      expect(fitEnvelopeRange([flat]), envelopeDefaultRange,
+          reason: 'an ordinary clip opens at exactly the documented range');
+
+      final fast = setEnvelopeSpeed(flat, 1, 850);
+      final (lo, hi) = fitEnvelopeRange([fast]);
+      expect(hi, greaterThan(850),
+          reason: 'a fast ramp is framed, not clipped');
+      expect(lo, -25.0, reason: 'the floor did not move');
+      // The headroom above normal playback is the point of the top figure
+      // (K-250): a flat 100% line must not sit on the graph's own edge.
+      expect(envelopeDefaultRange.$2, 125.0);
+
+      final reversed = setEnvelopeSpeed(flat, 1, -400);
+      final (rlo, rhi) = fitEnvelopeRange([reversed]);
+      expect(rlo, lessThan(-400));
+      expect(rhi, 125.0, reason: 'the ceiling did not move either');
+    });
+
+    /// **The invariant the whole envelope rests on**, checked after the
+    /// operation that used to break it.
+    ///
+    /// A key's stored tangent is a speed; its span's chord is an average. Move
+    /// a key in time and the chord changes while the tangent does not, so a
+    /// span that was straight stopped being straight — the curve bulged and
+    /// the graph described playback the points did not say. It looked like it
+    /// fixed itself, because the next speed drag re-ran the integration.
+    test('moving a point in time leaves every span straight', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(6, 1, 10.0)];
+      final ramped = setEnvelopeSpeed(keys, 1, 250);
+      final speedsBefore = envelopeSpeeds(ramped);
+
+      // Drag the middle point later, which is what bent it.
+      final moved = moveEnvelopePoint(ramped, 1, rat(3, 1));
+
+      expect(rationalSeconds(moved[1].time), closeTo(3.0, 1e-9));
+      expect(envelopeSpeeds(moved), [
+        closeTo(speedsBefore[0], 1e-6),
+        closeTo(speedsBefore[1], 1e-6),
+        closeTo(speedsBefore[2], 1e-6),
+      ], reason: 'the point keeps the speed it had');
+
+      // And every span reads as the straight line between its two points —
+      // sampled inside each one, which is where a bulge would show.
+      for (var span = 0; span + 1 < moved.length; span++) {
+        final t0 = rationalSeconds(moved[span].time);
+        final t1 = rationalSeconds(moved[span + 1].time);
+        final v0 = envelopeSpeeds(moved)[span];
+        final v1 = envelopeSpeeds(moved)[span + 1];
+        for (var i = 1; i < 8; i++) {
+          final f = i / 8;
+          final t = t0 + (t1 - t0) * f;
+          expect(evaluateKeysSpeed(moved, t) * 100, closeTo(v0 + (v1 - v0) * f, 1e-4),
+              reason: 'span \$span at t=\$t sits on its own straight line');
+        }
+      }
+    });
+
+    test('an empty or mismatched envelope leaves the keys alone', () {
+      expect(envelopeToKeys(const [], const []), isEmpty);
+      final keys = [key(0, 1, 0.0), key(4, 1, 4.0)];
+      expect(envelopeToKeys(keys, const [100.0]), same(keys));
+      expect(setEnvelopeSpeed(keys, 9, 200), same(keys));
+    });
+  });
+}
+
+void envelopeShapeTests() {
+  group('the envelope leaves untouched keys alone', () {
+    test('a flat envelope is all linear sides', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(4, 1, 4.0)];
+      final out = envelopeToKeys(keys, const [100.0, 100.0, 100.0]);
+      for (final k in out) {
+        expect(k.interpIn, isA<BridgeSideInterp_Linear>());
+        expect(k.interpOut, isA<BridgeSideInterp_Linear>());
+      }
+    });
+
+    // The bug: dragging one point re-shaped every key on the channel, so keys
+    // nobody touched changed glyph from a diamond to a circle.
+    test('a key whose speed is still its chord keeps a linear side', () {
+      final keys = [
+        key(0, 1, 0.0),
+        key(2, 1, 2.0),
+        key(4, 1, 4.0),
+        key(6, 1, 6.0),
+      ];
+      // Ramp only the middle span: keys 0 and 3 are nowhere near it.
+      final out = envelopeToKeys(keys, const [100.0, 100.0, 300.0, 300.0]);
+      expect(out[0].interpOut, isA<BridgeSideInterp_Linear>(),
+          reason: 'the first span is still a flat 100%');
+      expect(out[3].interpIn, isA<BridgeSideInterp_Linear>(),
+          reason: 'and so is the last');
+      expect(out[1].interpOut, isA<BridgeSideInterp_Bezier>(),
+          reason: 'the ramped span genuinely leaves at a non-chord speed');
+      expect(out[2].interpIn, isA<BridgeSideInterp_Bezier>());
+    });
+
+    test('flattening a ramp puts the linear sides back', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(4, 1, 4.0)];
+      final ramped = setEnvelopeSpeed(keys, 1, 300);
+      final flat = setEnvelopeSpeed(ramped, 1, 100);
+      for (final k in flat) {
+        expect(k.interpIn, isA<BridgeSideInterp_Linear>());
+        expect(k.interpOut, isA<BridgeSideInterp_Linear>());
+      }
+      expect(envelopeSpeeds(flat), everyElement(closeTo(100, 1e-9)));
+    });
+
+    test('the speeds still read back after the linear-side tidying', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(4, 1, 4.0)];
+      final out = envelopeToKeys(keys, const [100.0, 300.0, 50.0]);
+      expect(envelopeSpeeds(out), [
+        closeTo(100, 1e-9),
+        closeTo(300, 1e-9),
+        closeTo(50, 1e-9),
+      ]);
     });
   });
 }

@@ -1432,6 +1432,222 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (Frame interpolation — how in-between frames are synthesised, Nearest / Blend / Flow — is a
   per-layer retime setting in the data model, but is not surfaced in the timeline for now; it
   will return in a dedicated place.)
+- **Any footage layer can become a Sequence layer, and come back.** Layer ▸ Convert to
+  sequence layer, or right-click the layer in the Timeline; the same rows offer the way back
+  once it is one. The Vegas preference decides what an *import* becomes, never what a layer
+  is allowed to be — somebody without that preference ticked may still want one row cut into
+  pieces, and somebody who tried it has to be able to change their mind. Coming back keeps
+  the clip's source, its trim and its ramp: a single clip spans its whole layer, so the two
+  are the same map on the same clock and nothing is converted. A row of **several** clips
+  refuses rather than silently keeping one and throwing the rest away — which clip the layer
+  should become is a decision only you can make, so delete the others first.
+- **A Sequence layer has no Retime of its own.** Ctrl+Alt+T and the Composition menu's
+  Enable Retime are greyed out on one, and the menu says why. Its *clips* each carry a
+  retime, ramped in the sequence view — a second map over the whole row would be a rival to
+  those, which is exactly the situation the one-retime-system work existed to end.
+- **The sequence view: a Sequence layer's row, grown tall (K-248).** Double-click a
+  Sequence layer — its name in the outline, or its bar in the lanes — and its row **opens in
+  place** rather than swapping the Timeline for another tab. That is deliberate: you cut
+  against a beat you can see, so the music, the other layers and the ruler all have to stay
+  on screen while you do it. (An earlier decision put this in a tab of its own; K-248
+  changed it.)
+  It opens **six rows tall, three and three**, and the layer's own bar row is the **top of
+  the three**: while the view is open the bar itself stands down and the clip region takes
+  that row, so the three read as one block with no seam through them — the row seams are
+  suppressed across the whole view, and a hairline between the first and second row was
+  exactly the thing that made it look like a bar with strips stuck underneath. Opening
+  therefore adds the two rows below the bar rather than pushing a new strip under an
+  unchanged one, and a collapsed Sequence layer looks precisely as it always did. An open
+  view carries a faint accent outline around the whole of it, and a line across the bottom
+  of the clips says where the graph begins. The top three hold the **clips**: each drawn
+  where it sits with its playback speed on it, draggable along the row by its body and
+  trimmable by either edge, and cuttable with the razor or `Ctrl+Shift+D` exactly as the bar
+  above is — they are the same commands on the same layer. The bottom three hold the
+  **speed envelope**. Everything below the layer moves down by those six rows, so the view
+  is part of the table rather than something floating over it, and the row seams stop at its
+  edges: an open view is one cell, and ruling it into six would draw lines straight through
+  the graph.
+  **The envelope is the same editor as the graph's Vegas lens**, over the same keyframes: a
+  point per key, its height the playback speed in per cent, straight lines between.
+  `Ctrl`-click or double-click the line plants a point, `Alt`-click lifts one, and dragging
+  a point moves it **both ways**: up and down for the speed, left and right for *when* the
+  ramp reaches it — which matters as much as the speed does when you are cutting to a beat.
+  Moving one sideways keeps the speed it had and **re-works the frames around it**, so every
+  stretch of the line stays straight. That is not a detail: a keyframe stores a *speed*,
+  while the stretch between two of them has an *average* — move a key in time and the
+  average changes while the stored speed does not, so a line that was straight quietly bows
+  and the graph starts describing playback the points do not say. Re-running the sums
+  through the same speeds puts it back on its line.
+  A point carries a little readout of the per cent it is setting, because reading a speed off
+  the height of a dot against an axis that reframes as you drag is not aiming. The two end
+  points stay put: they are the clip's own edges, and a clip's length is trimmed on the clip,
+  never on its speed curve.
+  The 100% and 0 reference lines are **dotted**, so the graph's own furniture never reads as
+  the row seams that rule the rest of the table — solid, they were the same mark meaning two
+  different things. A clip nobody has retimed draws the flat 100% it is actually
+  playing, and dragging that line moves it **as one level** — the obvious reading of dragging
+  a flat line is "this clip plays at that speed", which is what Vegas's first envelope point
+  does too. Plant a point and the line has a shape worth keeping, so from then on a drag
+  moves only the point it has hold of.
+  The vertical axis **grows as you drag**. It opens on 100% down to −25%, with air either
+  side so a flat 100% line is not sitting on the strip's own top edge, and if you drag a
+  point past either end the axis reframes to hold it — so a fast ramp or a hard reverse
+  stays inside its own three rows instead of running out over the layers below.
+  **The layer's bar stays a plain bar.** Cutting a clip used to draw split lines up there;
+  the clips and their edit points belong to the view now, and the lines only said the same
+  thing twice. What the bar does show is where its clips are **not** — the gaps wash out
+  faintly, the way a trimmed footage layer shows the source it is not using — so a collapsed
+  Sequence layer still tells you it has holes in it.
+  **Dropping a clip on another overwrites it.** Drag a clip over its
+  neighbours and, when you let go, the one you dragged wins its whole span:
+  anything buried under it is gone, anything covered at one end is trimmed back
+  to its edge, and anything it lands in the middle of becomes two clips with
+  the dropped one between them. It is destructive exactly where it lands and
+  nowhere else — no edit point beyond the drop moves, and nothing ripples. The
+  pieces left either side keep playing the frames they played, because the
+  trims and the split go through the same arithmetic the razor uses.
+  **A clip dragged back past the start takes the layer with it.** A clip's place is measured
+  in the layer's own time, which cannot go negative — so dragging one before the start of the
+  row carries the whole layer earlier instead, exactly as dragging any other layer's bar
+  before the start of the composition does. Every *other* clip is pushed the same amount
+  later in layer time, so it stays precisely where it was on the composition's clock and only
+  the clip you dragged actually moves.
+  **The layer's bar is its clips' extent**: first clip's start to last clip's end. Delete the
+  last clip and the end of the bar comes in with it; a gap in the middle stays a gap, renders
+  transparent, and is never closed for you.
+  **Clips can be reordered.** An earlier rule required a Sequence layer's clips to run
+  forward through their source — you could remove and space them, not shuffle them — which
+  existed so a camera track could replay through the cuts. K-248 drops it: a tracker will run
+  on the whole unaltered footage and be mapped through the sequence instead, and reordering
+  is what anyone coming from Vegas expects.
+  **A selection box** works in the envelope: press anywhere that is not on a clip's own line
+  and drag, and every point inside is caught (`Shift` adds to what was there). Dragging any
+  caught point moves the whole set by the same amount, keeping its own spread — a selection
+  shifts a shape rather than flattening it — and a box drawn across two clips moves the
+  points in both.
+  **A row's shape copies onto another layer.** Right-click a clip: *copy this clip's shape*,
+  *copy the whole row's shape*, *paste shape onto this layer*. A shape is where the cuts
+  fall, where the gaps are and how each piece is ramped — and deliberately **no media**,
+  which is the whole point. Cutting a depth pass to the same beats as the footage it belongs
+  to is work nobody should do twice by hand, and doing it by eye guarantees the two drift
+  apart. Pasting keeps the target layer's own source and applies the shape as far as that
+  row reaches: the piece straddling the end is trimmed to it and anything wholly past it is
+  dropped, so a shape taken from long footage lands sensibly on short footage.
+  Per-clip **thumbnails** are still owed ([TODO.md](TODO.md)): they need a decode at a given
+  source moment, which no engine path offers yet.
+- **Video arriving as a Sequence layer (K-246).** With that switch on, dropping a video into
+  a composition gives you a **Sequence layer** holding one clip, rather than a plain Footage
+  layer — a row you can cut into pieces and ramp piece by piece, instead of a single
+  indivisible block. A **still image never is**, and the rule for telling them apart is
+  worth knowing because it is not the file extension: a still probes as a video stream too,
+  one frame long, so the question the engine asks is *does this run* — is it longer than a
+  single frame at its own rate. Image sequences will answer yes by that same rule the day
+  they exist as a footage kind, with nothing here to change.
+  Media that will not open at all answers **no** and arrives as a plain Footage layer.
+  Guessing towards the simpler shape when there is nothing to go on is the cheaper mistake:
+  a layer that should have been sequenced is one command away from being one, and a wrongly
+  sequenced layer is more to undo.
+  It is **one call into the engine**, not "make a layer, then convert it" — so it is one
+  undo step, and every route into a composition (a drop on the timeline, footage dropped on
+  the New composition button, the menus) goes through the same funnel and cannot disagree
+  about what a video import becomes.
+- **Planting and lifting keys on a curve, and holding a drag to one axis.** Four small
+  gestures the graph editor was missing, all of them working in either lens and whether or
+  not Vegas mode is on.
+  **Double-click the curve to plant a key** where you clicked. The key takes the value the
+  curve already has there, so nothing moves — a planted point is somewhere to grab, not an
+  edit. On the Vegas envelope it also takes the speed the line already reads there, so the
+  straight line it lands on stays straight. `Ctrl`-click does the same thing, and so does a
+  plain click with the **Pen** armed.
+  **`Alt`-click a key to lift it**, or click one with the Pen armed. Everything else on the
+  channel stays exactly as it was, and the last key of a channel refuses to go — an animated
+  property with no keyframes at all is not a state worth being able to reach by accident.
+  (Double-clicking a *key* deliberately does nothing. Flutter holds every single tap back
+  until the double-tap timer expires once a double-tap is registered on the same widget, and
+  a single click on a key — selecting it — is the commonest gesture in the pane. It is not
+  worth a visible delay on every selection to save one modifier.)
+  **Hold `Shift` while dragging a key** and it moves in one direction only: along time, or
+  along value, whichever way the pointer has travelled further **in pixels**. Pixels rather
+  than the numbers themselves, because the two axes carry different units — seconds against
+  source-seconds, or per cent — so comparing values would make the constraint depend on how
+  far the graph happened to be zoomed rather than on the gesture your hand made. It follows
+  the pointer live: sweep the other way mid-drag and the constraint switches with you, and
+  letting `Shift` go gives back the full travel rather than losing whatever it suppressed.
+- **The Vegas speed envelope (K-247).** With *Retime opens to Velocity* ticked, the Retime
+  channel's speed view stops being the After Effects speed graph and becomes the thing Vegas
+  editors already know: a **velocity envelope**. The difference is what a keyframe is on it.
+  In the After Effects speed graph a key has *two* dots — the speed coming in and the speed
+  going out, dragged separately — because a key is a corner where two spans meet. On the
+  envelope a key has **one** dot, and its height simply *is* the playback speed at that
+  moment: 100% is normal, 0% is a freeze, 300% is three times as fast, and dragging below
+  zero runs the footage backwards. Between two dots the speed runs in a straight line, which
+  is what a Vegas ramp is.
+  **Dragging a point changes the frames after it, and moves nothing.** Raise a point and the
+  footage from there on plays faster, so by the end of the layer you are further into the
+  clip than you were — but the layer does not get longer, no keyframe moves in time, and
+  nothing ripples. That is the whole promise the editor is built around: a beat you already
+  synced stays synced (the "beat-sync covenant"). The **first** point is pinned, so a clip
+  always starts on the frame it started on however you re-speed it.
+  **It is the same curve, not a simplified picture of it.** This is worth spelling out
+  because it is easy to assume otherwise. The Time view underneath is made of ordinary
+  bezier keyframes, and one might expect the straight lines of an envelope to be an
+  approximation drawn over them. They are not: if you set a span's value change to exactly
+  the area under the envelope's straight line — the average of the two speeds times the
+  span — the bezier's own speed comes out *exactly* that straight line, with the curvature
+  term cancelling to nothing. So the envelope and the Time curve are two readings of one
+  set of keyframes, and a ramp built in either is read back honestly in the other. (There
+  is a test that samples along the curve and checks it sits on the envelope's line; if that
+  ever fails, the two views have started disagreeing.)
+  The axis opens at **125% down to −25%** (K-250), and only ever grows. The headroom above
+  normal playback is the point of the top figure: at exactly 100 the flat line an un-retimed
+  clip draws sat on the graph's very top edge with nowhere to go but up and out of sight,
+  which reads as a ceiling rather than as the ordinary speed it is — and speeding a clip up
+  is the commonest thing anyone does here. The negative strip is deliberate too, so it is
+  visible that dragging below zero is allowed and what it does. Push a ramp to 850% and the
+  axis reframes to fit it — though **not while you are dragging**: the axis is frozen for
+  the length of a gesture (or the range would grow as you drag, which stretches what the
+  next pixel is worth and sends the value off exponentially), and the drawing is clipped to
+  the graph's own bounds so a point taken past an edge never draws over the rows beside it.
+  The framing catches up when you let go.
+  **The picture follows the point as you drag it.** A retime decides *which frame* of the
+  source is on screen, so unlike dragging a position — where the pixels are already in hand
+  and only get moved about — nothing can update until the provisional map reaches the render
+  plan. It rides along with the frame request and is patched onto a throwaway copy of the
+  document, so the picture keeps up without a single edit being written or an undo step
+  being made.
+  Two smaller things came with it. The Retime row's **name is now clickable**, like every
+  other property row's — it never was, which meant the Retime curve could be built but not
+  opened. And with the preference off, everything above is unchanged: the speed view is the
+  ordinary two-dot graph, for Retime and for every other property, in both modes.
+- **One way to retime a layer, not two (K-249).** For a while Lumit could retime a footage
+  layer by either of two entirely separate mechanisms, and this is the note about the day
+  that stopped. The **Retime property** is the one described just above: a keyframable
+  value, in the graph editor, saying which moment of the source is on screen at each moment
+  of the layer. The other was older — a *segment store* living inside the layer's Footage
+  source, built from spans of eased speed, and edited by three rows on the Source card (an
+  on switch, a speed percentage, a reverse tick). Two systems, one job, and only the
+  property could draw a ramp, so the segment rows could not even show what the graph had
+  made — they said "varies" and refused to be edited.
+  The property survives and the segment rows are gone. Retiming a layer is **Ctrl+Alt+T**
+  (or Composition ▸ Enable Retime) and then the graph, everywhere, for every layer.
+  Three consequences worth knowing:
+  **Old projects convert themselves.** A project saved by the older build has its segment
+  store turned into the identical keyframes when it opens — the same shape, the same source
+  moment at every point of the layer — and the file's schema version moves from `0.1.0` to
+  `0.2.0` to record that this has happened. Nothing is lost: the conversion goes through the
+  segment store's own reader, which was written to describe a curve exactly.
+  **"In-between frames" moved rather than died.** How a fractional moment becomes pixels —
+  Nearest, Blend, or optical Flow — was stored *inside* the old segment store, which meant
+  the setting existed only if you used that particular retiming system. It was never part
+  of the map (the specification has always said the two are independent), so it now sits on
+  the layer in its own right, beside the Retime property, still on the Source card and still
+  saying what it always said. A layer that is not retimed has one too, which is right: a
+  25 fps source in a 60 fps composition is already being asked for frames that do not exist.
+  **A drag override nobody built came out with it.** The renderer carried a parameter for
+  overriding a layer's retime mid-drag, threaded through every layer of the preview and
+  export call chain — and constructed by no code anywhere. It went; a Retime drag arrives as
+  a provisionally-edited document, exactly like a Position drag, and the plan reads the map
+  from that.
 - **Property rows in the Timeline** (K-072) — twirl a layer open and each of its animatable
   properties (Position, Scale, Rotation, Opacity, and the 3D ones) gets its own row: on the
   left a stopwatch to turn animation on or off, the property's name, and its current value;
@@ -2057,6 +2273,39 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   names and shortcuts that pop up when you rest the pointer on a button. Both default to
   today's behaviour (native scale, tooltips on), so nothing changes for anyone until they visit
   this page.
+- **Editing style: the two Vegas settings, and being asked once (K-246).** The Interface page
+  has a third group, **Editing**, holding two switches that decide whether Lumit behaves the
+  way After Effects does or the way Vegas does. They are genuinely independent — plenty of
+  people want Vegas ramps and After Effects imports, which is why they are two switches and
+  not one mode — and **both are off by default**, off being the After Effects behaviour Lumit
+  has always had. A new switch must never change how somebody's editor works without them
+  asking, so a settings file written before these existed reads as "off, off".
+  **Retime opens to Velocity** decides which way round the Retime graph opens. Off, it opens
+  showing *which moment of the footage is on screen* — a line climbing steadily means normal
+  playback. On, it opens showing *playback speed* as a percentage, which is the Vegas
+  velocity envelope: one point per keyframe, dragged up to speed the footage up, down towards
+  zero to slow it, and below zero to run it backwards. Both are views of the same underlying
+  retime — switching between them converts nothing — and this setting only picks which one you
+  land in. Ordinary properties like Position are untouched by it.
+  **Video arrives as a Sequence layer** decides what dropping a video file into a composition
+  makes. Off, you get a plain Footage layer, one layer per file, as in After Effects. On, you
+  get a **Sequence layer**: a layer that holds a run of clips on its one row, so you can cut
+  the footage into pieces and ramp each piece separately without stacking up layers. Still
+  images are never wrapped this way — there is nothing to cut in a single frame — but image
+  sequences are, because they are footage that runs.
+  Because those two settings now exist, Lumit finally has something to ask on a **first
+  launch**. On a machine with no settings file at all, one small screen appears before
+  anything else and asks *how do you edit?*, with two answers: **After Effects**, which
+  leaves both switches off, and **Vegas**, which turns both on. There is a **Skip**, which
+  keeps the defaults, and clicking outside the screen does the same thing. Whatever you pick,
+  the answer is written down so the question is asked exactly once — and everything it set is
+  an ordinary switch on the Interface page afterwards, so no answer is one you are stuck with.
+  What counts as a first launch is precisely "there is no settings file on this machine":
+  a file that predates the question, or one that has been corrupted, both belong to somebody
+  who has used Lumit already, and being asked to introduce yourself after months of work
+  would be absurd. (The screen is deliberately plain for now. The fuller version in
+  [07-UI-SPEC.md](07-UI-SPEC.md) §13.1 — four choices, each with a small picture of what it
+  does — is in [TODO.md](TODO.md).)
   The **Export** page (K-119) holds two defaults for the export dialogue. **Default preset**
   is the preset that a plain "Export comp…" action starts from — pick a specific preset from
   the File menu's "Export preset" submenu instead and that always wins, regardless of what's

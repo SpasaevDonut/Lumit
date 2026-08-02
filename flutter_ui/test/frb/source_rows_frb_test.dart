@@ -9,6 +9,7 @@ import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
+import 'package:lumit_flutter/src/rust/api/retime.dart';
 
 import 'frb_test_support.dart';
 
@@ -116,46 +117,35 @@ void main() {
           reason: 'but it still has a transform');
     });
 
-    testWidgets('a footage layer retimes, and a ramp refuses a single speed',
+    testWidgets('the in-between frames row is on every layer, retimed or not',
         (tester) async {
       final p = withComp();
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
-      p.comp.addFootageLayer(footage: footage);
+      p.comp.addFootageLayer(footage: footage, asSequence: false);
       final layer = p.comp.getLayers().single;
       p.uiState.selectedLayer.value = layer;
       await mount(tester, p);
 
-      // Absent until switched on: "not retimed" and "retimed to 1x" differ.
-      expect(find.text('Retime'), findsOneWidget);
+      // The card's rival retiming system is gone (K-249): retiming is
+      // Ctrl+Alt+T and the graph, and what is left here is the render policy,
+      // which was never part of the map.
+      expect(find.byKey(const ValueKey('src-retime-on')), findsNothing);
       expect(find.byKey(const ValueKey('src-retime-speed')), findsNothing);
-      expect(layer.getRetime(), isNull);
+      expect(find.byKey(const ValueKey('src-retime-reverse')), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('src-retime-on')));
-      await tester.pump();
-      expect(layer.getRetime(), isNotNull);
-      expect(find.byKey(const ValueKey('src-retime-speed')), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('src-retime-speed')));
-      await tester.pump();
-      await tester.enterText(find.byType(EditableText).first, '50');
-      await tester.testTextInput.receiveAction(TextInputAction.done);
-      await tester.pump();
-      expect(layer.getRetime()!.speedPercent, closeTo(50, 0.5));
-
-      // The gate and the policy are independent of the speed.
-      await tester.tap(find.byKey(const ValueKey('src-retime-reverse')));
-      await tester.pump();
-      expect(layer.getRetime()!.allowReverse, isTrue);
-      expect(layer.getRetime()!.speedPercent, closeTo(50, 0.5),
-          reason: 'opening the gate did not reset the speed');
+      expect(find.byKey(const ValueKey('src-retime-interp')), findsOneWidget);
+      expect(layer.getInterpolation(), BridgeRetimeInterp.nearest);
     });
 
-    testWidgets('a non-footage layer has no Retime row', (tester) async {
+    testWidgets('a layer with no retime still has a policy', (tester) async {
       final p = withComp();
-      p.uiState.selectedLayer.value = p.comp.addTextLayer();
+      final layer = p.comp.addTextLayer();
+      p.uiState.selectedLayer.value = layer;
       await mount(tester, p);
-      expect(find.text('Retime'), findsNothing,
-          reason: 'only footage plays at a speed other than its own');
+      expect(layer.getRetimeProperty(), isNull);
+      expect(layer.getInterpolation(), BridgeRetimeInterp.nearest,
+          reason: 'any layer can be asked for a moment between two frames');
     });
+
   }, skip: !engineAvailable);
 }

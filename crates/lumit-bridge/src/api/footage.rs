@@ -221,7 +221,7 @@ impl FootageReference {
 
         let id = self.id;
         Ok(
-            crate::media::thumbnail_from_path(&mut proj.media, id, max_edge, &path).map(
+            crate::media::thumbnail_from_path(&mut proj.media, id, max_edge, &path, 0).map(
                 |(width, height, rgba)| BridgeRenderedFrame {
                     // A thumbnail is of the media's own first frame, not of a
                     // composition — there is no playhead behind it to report.

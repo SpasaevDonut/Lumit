@@ -242,92 +242,47 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
     ];
   }
 
-  /// Retiming, on footage layers only. Absent until switched on, because "not
-  /// retimed" and "retimed to exactly 1x" are different states in the file.
+  /// How in-between frames are made — the one retiming-adjacent control that
+  /// belongs on a card rather than in a graph.
+  ///
+  /// This card used to carry a whole second retiming system beside it: an
+  /// enable switch, a constant speed and a reverse gate, writing a segment
+  /// store that rivalled the Retime property. K-249 deleted it. Retiming is
+  /// **Ctrl+Alt+T** and the Retime graph now, which is the only place a ramp
+  /// was ever editable anyway; what is left here was never part of the map
+  /// (docs/04 §10) and applies whether or not the layer is retimed.
+  ///
+  /// Shown on footage only. Every layer *has* the setting — it is a plain
+  /// field with a default, and the engine asks any layer for it — but a layer
+  /// with no frames of its own has no in-betweens to make, and a row that
+  /// changes nothing is worse than no row. It is also what puts the Source
+  /// card on screen at all, so an offer here would give an adjustment layer a
+  /// source card describing a source it does not have.
   List<Widget> _retimeRows(LumitTheme t) {
-    // Only footage retimes; every other kind answers null to both.
     if (widget.layer.getKind() != BridgeLayerKind.footage) return const [];
-    final retime = widget.layer.getRetime();
-
-    final rows = <Widget>[
+    return [
       _row(
         t,
-        'Retime',
-        HouseCheckbox(
-          key: const ValueKey('src-retime-on'),
-          value: retime != null,
-          onChanged: (on) {
-            widget.layer.setRetimeEnabled(on_: on);
-            widget.onChanged();
-          },
+        'In-between frames',
+        SizedBox(
+          width: _cellWidth + 40,
+          child: BareDropdown<BridgeRetimeInterp>(
+            key: const ValueKey('src-retime-interp'),
+            value: widget.layer.getInterpolation(),
+            options: BridgeRetimeInterp.values,
+            label: (i) => switch (i) {
+              BridgeRetimeInterp.nearest => 'Nearest',
+              BridgeRetimeInterp.blend => 'Blend',
+              BridgeRetimeInterp.flow => 'Optical flow',
+            },
+            onChanged: (i) {
+              widget.layer.setInterpolation(interpolation: i);
+              widget.onChanged();
+            },
+          ),
         ),
       ),
     ];
-    if (retime == null) return rows;
-
-    rows.add(_row(
-      t,
-      'Speed',
-      retime.varies
-          // A ramp has no single speed to show, and writing one would discard
-          // its shape — the same rule an animated property follows.
-          ? LumitTooltip(
-              message: 'This layer ramps — edit it in the Retime graph',
-              child: Text('varies (${retime.speedPercent.round()}% average)',
-                  style: t.small.copyWith(color: t.textMuted)),
-            )
-          : SizedBox(
-              width: _cellWidth,
-              child: DragValueField(
-                key: const ValueKey('src-retime-speed'),
-                value: retime.speedPercent,
-                min: -400,
-                max: 400,
-                decimals: 0,
-                suffix: '%',
-                onChanged: (v) {
-                  widget.layer.setRetimeSpeed(percent: v.toDouble());
-                  widget.onChanged();
-                },
-              ),
-            ),
-    ));
-
-    rows.add(_row(
-      t,
-      'Allow reverse',
-      HouseCheckbox(
-        key: const ValueKey('src-retime-reverse'),
-        value: retime.allowReverse,
-        onChanged: (on) {
-          widget.layer.setRetimeReverse(allow: on);
-          widget.onChanged();
-        },
-      ),
-    ));
-
-    rows.add(_row(
-      t,
-      'In-between frames',
-      SizedBox(
-        width: _cellWidth + 40,
-        child: BareDropdown<BridgeRetimeInterp>(
-          key: const ValueKey('src-retime-interp'),
-          value: retime.interpolation,
-          options: BridgeRetimeInterp.values,
-          label: (i) => switch (i) {
-            BridgeRetimeInterp.nearest => 'Nearest',
-            BridgeRetimeInterp.blend => 'Blend',
-            BridgeRetimeInterp.flow => 'Optical flow',
-          },
-          onChanged: (i) {
-            widget.layer.setRetimeInterpolation(interpolation: i);
-            widget.onChanged();
-          },
-        ),
-      ),
-    ));
-    return rows;
   }
 
   Widget _swatch(

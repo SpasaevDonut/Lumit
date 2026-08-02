@@ -28,7 +28,7 @@ void main() {
       final p = freshProject();
       final comp = p.state.project!.newComposition(name: 'Scene');
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
-      comp.addFootageLayer(footage: footage);
+      comp.addFootageLayer(footage: footage, asSequence: false);
       final layer = comp.getLayers().single;
       p.uiState
         ..setSelectedComp(comp)

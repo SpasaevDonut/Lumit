@@ -49,6 +49,7 @@ void main() {
         inFrame: inFrame,
         outFrame: outFrame,
         clipFrames: Int64List(0),
+        clips: const [],
         transform: BridgeTransform(
           anchorX: const BridgeScalar.static_(0),
           anchorY: const BridgeScalar.static_(0),

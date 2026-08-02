@@ -505,7 +505,6 @@ fn run(
             src as u64,
             crate::plan::Quality::default(),
             1.0,
-            None,
         )?;
         // Letterbox into the delivery frame when the size was changed.
         let (tw, th) = sink.size();
@@ -723,6 +722,7 @@ mod tests {
                 label: 0,
                 volume_db: lumit_core::anim::Property::zero(),
                 retime: None,
+                interpolation: Default::default(),
                 blend: Default::default(),
                 masks: Vec::new(),
                 paint: Vec::new(),

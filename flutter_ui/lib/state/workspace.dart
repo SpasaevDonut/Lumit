@@ -183,6 +183,34 @@ class Workspace extends ChangeNotifier {
   PerformanceSettings performance = PerformanceSettings();
   InterfaceSettings interface = InterfaceSettings();
 
+  /// Whether the first-run screen has had its answer (K-246, docs/07 §13.1).
+  ///
+  /// **True unless [load] finds no settings file.** Only loading can tell a
+  /// genuine first run from a `Workspace` built for some other reason — every
+  /// widget test constructs one, and a default of false would put the screen
+  /// over the whole suite. A file that predates this field also answers true:
+  /// an existing settings file means an existing user, and asking them where
+  /// they came from after months of work would be absurd.
+  bool firstRunDone = true;
+
+  /// Take the Vegas answer, or the After Effects one, from the first-run screen
+  /// (K-246). Both settings move together here and separately in Settings —
+  /// this is the pair the screen offers, not a mode the rest of the code reads.
+  /// Marks the screen answered, so it is asked exactly once.
+  void setEditingStyle({required bool vegas}) {
+    interface.retimeOpensToSpeed = vegas;
+    interface.videoAsSequenceLayer = vegas;
+    firstRunDone = true;
+    settingsChanged();
+  }
+
+  /// Dismiss the first-run screen without changing anything (skip = Lumit
+  /// defaults, docs/07 §13.1). Recorded so it is not asked again.
+  void skipFirstRun() {
+    firstRunDone = true;
+    settingsChanged();
+  }
+
   /// The keymap as the engine last serialised it, stored verbatim and never
   /// read here (docs/07 §15, K-199). A keymap is machine-local settings and
   /// this is the machine-local settings file; the *rules* stay in Rust, so what
@@ -526,6 +554,7 @@ class Workspace extends ChangeNotifier {
         'animation_level': animationLevel.name,
         'performance': performance.toJson(),
         'interface': interface.toJson(),
+        'first_run_done': firstRunDone,
         'keymap': keymapJson,
         'custom_themes': [for (final t in customThemes) t.toJson()],
         'custom_theme': customThemeName,
@@ -566,6 +595,8 @@ class Workspace extends ChangeNotifier {
     if (j['interface'] is Map<String, dynamic>) {
       interface = InterfaceSettings.fromJson(j['interface']);
     }
+    // Absent means an existing user, not a new one — see the field.
+    firstRunDone = j['first_run_done'] as bool? ?? true;
     keymapJson = j['keymap'] is String ? j['keymap'] as String : null;
     customThemes = [];
     final rawThemes = j['custom_themes'];
@@ -619,7 +650,14 @@ class Workspace extends ChangeNotifier {
   void load() {
     try {
       final f = storeFile();
-      if (!f.existsSync()) return;
+      if (!f.existsSync()) {
+        // Nothing on file for this machine: that, and only that, is a first
+        // run (K-246). A corrupt file below is *not* — it belongs to somebody
+        // who has used Lumit already, and losing their settings is enough of
+        // an insult without being asked to introduce themselves again.
+        firstRunDone = false;
+        return;
+      }
       final j = jsonDecode(f.readAsStringSync());
       if (j is Map<String, dynamic>) applyJson(j);
     } catch (_) {

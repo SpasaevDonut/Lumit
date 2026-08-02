@@ -6,48 +6,7 @@
 import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
-// These functions are ignored because they are not marked as `pub`: `read`, `segments_vary`, `with_retime`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `clone`, `eq`, `eq`, `fmt`, `fmt`
-
-/// A layer's retiming, as a row can show it.
-class BridgeRetime {
-  /// Percent: 100 is source rate, 50 is half speed, 0 is a freeze.
-  final double speedPercent;
-
-  /// True when the curve is *not* one constant segment — a ramp or an
-  /// explicit map. `speed_percent` is then the average across the layer and
-  /// writing a speed is refused, because it would discard the shape.
-  final bool varies;
-
-  /// While off, evaluation clamps speed at zero so the curve never runs
-  /// backwards (docs/04 §6.2).
-  final bool allowReverse;
-  final BridgeRetimeInterp interpolation;
-
-  const BridgeRetime({
-    required this.speedPercent,
-    required this.varies,
-    required this.allowReverse,
-    required this.interpolation,
-  });
-
-  @override
-  int get hashCode =>
-      speedPercent.hashCode ^
-      varies.hashCode ^
-      allowReverse.hashCode ^
-      interpolation.hashCode;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is BridgeRetime &&
-          runtimeType == other.runtimeType &&
-          speedPercent == other.speedPercent &&
-          varies == other.varies &&
-          allowReverse == other.allowReverse &&
-          interpolation == other.interpolation;
-}
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `clone`, `eq`, `fmt`
 
 /// How a source frame is chosen when the map lands between two (docs/04 §10).
 enum BridgeRetimeInterp {
