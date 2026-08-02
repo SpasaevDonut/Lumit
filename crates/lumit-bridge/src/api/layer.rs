@@ -1526,50 +1526,6 @@ impl LayerReference {
         self.commit_clips(clips)
     }
 
-    /// Move a clip to a different position in the row's order (K-248).
-    ///
-    /// Reordering is a Vegas expectation and K-071's source-ordering rule was
-    /// dropped for it. The clips keep their *places*: what changes is which
-    /// clip sits where, so the run of boxes is rearranged rather than the row
-    /// re-laid — moving a clip to a slot gives it that slot's start.
-    #[frb(sync)]
-    pub fn move_clip(&self, clip: Uuid, to: usize) -> Result<(), BridgeError> {
-        let layer = self.item()?;
-        let lumit_core::model::LayerKind::Sequence { clips } = &layer.kind else {
-            return Err(BridgeError::NotSequence);
-        };
-        let from = clips
-            .iter()
-            .position(|c| c.id == clip)
-            .ok_or(BridgeError::InvalidLayer)?;
-        let to = to.min(clips.len().saturating_sub(1));
-        if from == to {
-            return Ok(());
-        }
-        // The places are the row's, not the clips': lift the clip out, put it
-        // back at its new index, then hand every clip the place its slot has.
-        let places: Vec<_> = {
-            let mut sorted = clips.clone();
-            sorted.sort_by(|a, b| {
-                a.place_start
-                    .partial_cmp(&b.place_start)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            sorted
-                .iter()
-                .map(|c| (c.place_start, c.place_duration))
-                .collect()
-        };
-        let mut clips = clips.clone();
-        let moved = clips.remove(from);
-        clips.insert(to, moved);
-        for (c, (start, duration)) in clips.iter_mut().zip(places) {
-            c.place_start = start;
-            c.place_duration = duration;
-        }
-        self.commit_clips(clips)
-    }
-
     /// Razor: cut the clip under `frame` in two, at the playhead.
     ///
     /// The two halves keep their places — a cut must not shift what comes after
@@ -1729,14 +1685,19 @@ impl LayerReference {
                 source_out: duration,
                 place_start: Rational::ZERO,
                 place_duration: duration,
-                // The clip starts un-retimed whatever the layer was doing. A
-                // layer's Retime is keyed in *layer* time and a clip's in
-                // *clip* time; the two coincide here — the clip spans the
-                // whole layer — but they stop coinciding the moment the clip
-                // is cut or slid, and carrying a map across as if they were
-                // interchangeable is how a conversion silently re-times
-                // somebody's footage. Tracked in TODO.
-                retime: None,
+                // **The layer's own map comes with it.** A layer's Retime is
+                // keyed in layer time and a clip's in clip time, and here they
+                // are the same clock: the clip spans the whole layer, starting
+                // at its zero. K-249 made the two the same kind of map, so
+                // nothing is converted — it is the same keyframes, read
+                // against the same instant. (They stop coinciding the moment
+                // the clip is cut or slid, but by then the map is the clip's
+                // and travels with it.)
+                //
+                // The mirror of `convert_from_sequenced`, which brings it
+                // back the same way: converting one direction and back must
+                // leave the layer playing what it played.
+                retime: layer.retime.clone(),
                 interpolation: layer.interpolation.clone(),
                 extra: serde_json::Map::new(),
             }],

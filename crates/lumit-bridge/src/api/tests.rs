@@ -2987,31 +2987,6 @@ fn the_layers_bar_follows_its_clips() {
     );
 }
 
-/// Clips reorder (K-248 dropped K-071's source ordering), and the row's own
-/// places stay where they are — what changes is which clip sits in which slot.
-#[test]
-fn clips_reorder_into_the_rows_own_slots() {
-    let (_project, _comp, layer) = sequenced_layer();
-    let whole = layer.get_info().expect("info");
-    layer
-        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
-        .expect("cut");
-    let before = layer.get_clips().expect("clips");
-    assert_eq!(before.len(), 2);
-    let (first, second) = (before[0].id, before[1].id);
-    let slots: Vec<i64> = before.iter().map(|c| c.start_frame).collect();
-
-    layer.move_clip(second, 0).expect("reordered");
-    let after = layer.get_clips().expect("clips");
-    assert_eq!(after[0].id, second, "the second clip is first now");
-    assert_eq!(after[1].id, first);
-    assert_eq!(
-        after.iter().map(|c| c.start_frame).collect::<Vec<_>>(),
-        slots,
-        "and the row's slots did not move"
-    );
-}
-
 /// A clip slides along its row, keeping its length and what it plays.
 #[test]
 fn sliding_a_clip_moves_it_without_changing_it() {
@@ -3026,6 +3001,87 @@ fn sliding_a_clip_moves_it_without_changing_it() {
     assert_eq!(after.start_frame, before.start_frame + 5);
     assert_eq!(after.end_frame - after.start_frame, length, "same length");
     assert_eq!(after.retimed, before.retimed, "and the same map");
+}
+
+/// Converting a **retimed** layer into a Sequence layer keeps its retiming,
+/// and converting back returns it — a round trip must leave the layer playing
+/// what it played.
+#[test]
+fn converting_a_retimed_layer_both_ways_keeps_its_map() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/shot.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage, false).expect("placed");
+    let layer = comp.get_layers().expect("layers").remove(0);
+
+    layer.toggle_retime_property().expect("retimed");
+    let before = layer.get_retime_property().expect("read").expect("a map");
+
+    layer.convert_to_sequenced().expect("sequenced");
+    let sequenced = comp.get_layers().expect("layers").remove(0);
+    let clip = sequenced.get_clips().expect("clips").remove(0);
+    assert!(
+        clip.retimed,
+        "the clip carries the layer's map: it spans the whole layer, so the          two are the same clock"
+    );
+
+    sequenced.convert_from_sequenced().expect("back");
+    let back = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(
+        back.get_retime_property().expect("read"),
+        Some(before),
+        "and the round trip left it exactly as it was"
+    );
+}
+
+/// Cutting a **retimed** clip gives each half a key at the cut, so the two
+/// ramps are independent from the moment they are made — editing one half's
+/// speed never bends the other. An un-retimed clip gains no keys at all
+/// (K-236: a map nobody has shaped is not one to put keys into).
+#[test]
+fn a_razor_cut_keys_a_retimed_clip_and_only_that() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    let at = (whole.in_frame + whole.out_frame) / 2;
+
+    // Un-retimed: cut, and neither half has a map.
+    layer.cut_clip_at(at).expect("cut");
+    for clip in layer.get_clips().expect("clips") {
+        assert!(!clip.retimed, "a cut alone does not retime anything");
+    }
+
+    // Retimed: each half keeps a map, and each opens on the moment it starts.
+    let (_p2, _c2, ramped) = sequenced_layer();
+    let one = ramped.get_clips().expect("clips").remove(0);
+    ramped.set_clip_speed(one.id, 200.0, 200.0).expect("ramped");
+    let whole = ramped.get_info().expect("info");
+    ramped
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+
+    let halves = ramped.get_clips().expect("clips");
+    assert_eq!(halves.len(), 2);
+    for half in &halves {
+        assert!(half.retimed, "each half kept the ramp it was cut out of");
+        let BridgeScalar::Keyframed(keys) = &half.retime else {
+            panic!("a keyframed map");
+        };
+        assert!(keys.len() >= 2, "with a key at each of its own ends");
+    }
+    // The later half opens where the cut fell, not at the top of the media.
+    let (early, late) = (&halves[0], &halves[1]);
+    let value = |c: &crate::api::layer::BridgeClip| {
+        let BridgeScalar::Keyframed(keys) = &c.retime else {
+            panic!("keyframed");
+        };
+        keys.first().expect("a first key").value
+    };
+    assert!(
+        value(late) > value(early),
+        "the second half starts further into the source than the first"
+    );
 }
 
 /// A Sequence layer converts back to plain footage — the way out of the

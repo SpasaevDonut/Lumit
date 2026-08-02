@@ -1207,16 +1207,6 @@ class LayerReference {
   void loadPreset({required String text}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceLoadPreset(that: this, text: text);
 
-  /// Move a clip to a different position in the row's order (K-248).
-  ///
-  /// Reordering is a Vegas expectation and K-071's source-ordering rule was
-  /// dropped for it. The clips keep their *places*: what changes is which
-  /// clip sits where, so the run of boxes is rearranged rather than the row
-  /// re-laid — moving a clip to a slot gives it that slot's start.
-  void moveClip({required UuidValue clip, required BigInt to}) =>
-      BridgeLib.instance.api
-          .crateApiLayerLayerReferenceMoveClip(that: this, clip: clip, to: to);
-
   /// Cut and ramp this Sequence layer to the shape in `text`, keeping its
   /// own media (K-248).
   ///

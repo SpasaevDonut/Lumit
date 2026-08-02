@@ -4844,6 +4844,23 @@ class _OutlineRowState extends State<_OutlineRow> {
                     key: const ValueKey('tl-row-from-sequence'),
                     onPressed: () => close('from-sequence'),
                     child: const Text('Convert to footage layer')),
+            ],
+            // The shape — the cuts, the gaps and the ramps, with no media in
+            // it — from the layer itself, so carrying a cut onto a depth pass
+            // never needs either row opened first (K-248). Offered on a locked
+            // layer too: copying is not editing.
+            if (widget.entry.info.kind == BridgeLayerKind.sequence) ...[
+              MenuRow(
+                  key: const ValueKey('tl-row-copy-shape'),
+                  onPressed: () => close('copy-shape'),
+                  child: const Text('Copy sequence shape')),
+              if (!locked && sequenceShapeClipboard != null)
+                MenuRow(
+                    key: const ValueKey('tl-row-paste-shape'),
+                    onPressed: () => close('paste-shape'),
+                    child: const Text('Paste sequence shape')),
+            ],
+            if (!locked) ...[
               MenuRow(
                   onPressed: () => close('delete'),
                   child: const Text('Delete')),
@@ -4868,6 +4885,19 @@ class _OutlineRowState extends State<_OutlineRow> {
         // the user's decision, not the command's, and the engine says so.
         try {
           layer.convertFromSequenced();
+        } catch (_) {
+          return;
+        }
+      case 'copy-shape':
+        try {
+          sequenceShapeClipboard = layer.copySequenceShape();
+        } catch (_) {}
+        return; // nothing changed in the document
+      case 'paste-shape':
+        final shape = sequenceShapeClipboard;
+        if (shape == null) return;
+        try {
+          layer.pasteSequenceShape(text: shape);
         } catch (_) {
           return;
         }

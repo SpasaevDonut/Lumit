@@ -54,18 +54,11 @@ Flutter is the only frontend (K-174, K-182); git history is the parity reference
 These are v1-scope surfaces it does not yet match.
 
 **Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
-- Sequence-clip waveforms - Sequence layers' clips draw none.
-
-**The sequence view (K-248), still owed after the view itself landed:**
-- **Per-clip thumbnails** at each clip's start and end. They want a decode at a
-    *given source moment*; `FootageReference::thumbnail` only ever decodes the
-    media's first frame, so this is a new engine path plus a cache, not a
-    drawing change.
-- **Dragging clips to reorder** - `move_clip` is built and tested, and a clip
-    drags along the row and trims by its edges; dropping one *between* two
-    others to reorder is not wired, so the only way to shuffle is the op.
-- **The clip strip draws no thumbnails or waveforms**, so a clip is a coloured
-    box with a percentage on it. Both want the same decode-at-a-moment path.
+- Sequence-clip waveforms - a Sequence layer's clips draw none, so a clip in
+    the sequence view is a coloured box with its opening frame and its speed
+    on it. `audio_peaks` answers for a Footage layer only; a clip wants peaks
+    over its own trim of its own source, which is a new engine path beside the
+    decode-at-a-moment one the clip thumbnails already use (K-248).
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
@@ -75,9 +68,7 @@ These are v1-scope surfaces it does not yet match.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.
-- **Razor** - a Sequence layer's eased ramps refuse a cut (`UncuttableClip`), and
-    its **clips'** own speed maps get no key at the cut the way a layer's Retime
-    does.
+- **Razor** - a Sequence layer's eased ramps refuse a cut (`UncuttableClip`).
 - **Shape layers** - built (K-237, [impl/shape-layers.md](impl/shape-layers.md)):
     with nothing selected a shape tool or the Pen makes a layer holding the art,
     in the toolbar's fill and stroke, listed in the Timeline under Contents.
@@ -199,19 +190,11 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Retime follow-ups after K-249** (the system is one property now, layers and
-clips alike):
-- **`convert_to_sequenced` drops the layer's Retime** rather than carrying it
-    onto the clip it makes (`layer.rs`). A layer's map is keyed in layer time
-    and a clip's in clip time; they coincide only while the clip spans the
-    whole layer, and carrying one across as if they were interchangeable is
-    how a conversion silently re-times footage.
-- **A clip's own map gets no key at a razor cut**, the way a layer's does
-    (below, under Toolbar tools).
-- **The eased ramp shapes are gone from clips** — `Clip::with_ramp` takes two
-    speeds and runs straight between them, which is what the envelope authors.
-    Slow/Fast/Smooth/Sharp come back with the preset-shelf rework above,
-    rebuilt on the property like everything else K-249 moved.
+**Retime follow-up after K-249.** **The eased ramp shapes are gone from
+clips** — `Clip::with_ramp` takes two speeds and runs straight between them,
+which is what the envelope authors. Slow/Fast/Smooth/Sharp come back with the
+preset-shelf rework above, rebuilt on the property like everything else K-249
+moved.
 
 **System memory is only read on Windows.** `system_memory_bytes` and
 `video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB
