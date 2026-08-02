@@ -188,17 +188,19 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Retime: the clip half of K-249.** The **layer** half landed: the segment arm
-is deleted, old documents convert at load (`0.1.0` → `0.2.0`), and interpolation
-is its own layer field. Still owed: `Clip::retime` moves from the segment store
-to the same `Property` shape, so the sequence view's envelope and the layer
-channel are one editor over one representation. Two things wait on it:
+**Retime follow-ups after K-249** (the system is one property now, layers and
+clips alike):
 - **`convert_to_sequenced` drops the layer's Retime** rather than carrying it
-    onto the clip it makes (`layer.rs`). A layer's map is in layer time and a
-    clip's is in clip time; converting one to the other faithfully is its own
-    piece of work, and doing it wrong silently re-times footage.
-- **A clip's own speed map gets no key at a razor cut**, the way a layer's does
+    onto the clip it makes (`layer.rs`). A layer's map is keyed in layer time
+    and a clip's in clip time; they coincide only while the clip spans the
+    whole layer, and carrying one across as if they were interchangeable is
+    how a conversion silently re-times footage.
+- **A clip's own map gets no key at a razor cut**, the way a layer's does
     (below, under Toolbar tools).
+- **The eased ramp shapes are gone from clips** — `Clip::with_ramp` takes two
+    speeds and runs straight between them, which is what the envelope authors.
+    Slow/Fast/Smooth/Sharp come back with the preset-shelf rework above,
+    rebuilt on the property like everything else K-249 moved.
 
 **System memory is only read on Windows.** `system_memory_bytes` and
 `video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB

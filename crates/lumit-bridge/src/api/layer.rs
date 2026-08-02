@@ -1200,12 +1200,13 @@ impl LayerReference {
                 place_start: Rational::ZERO,
                 place_duration: duration,
                 // The clip starts un-retimed whatever the layer was doing. A
-                // layer's Retime is a property in *layer* time and a clip's is
-                // a curve in *clip* time; carrying one across as if they were
-                // the same thing was only ever right because both used to be
-                // the same segment store (K-249). Converting a retimed layer
-                // faithfully is its own piece of work, tracked in TODO.
-                retime: lumit_core::retime::Retime::identity(duration, Rational::ZERO),
+                // layer's Retime is keyed in *layer* time and a clip's in
+                // *clip* time; the two coincide here — the clip spans the
+                // whole layer — but they stop coinciding the moment the clip
+                // is cut or slid, and carrying a map across as if they were
+                // interchangeable is how a conversion silently re-times
+                // somebody's footage. Tracked in TODO.
+                retime: None,
                 interpolation: layer.interpolation.clone(),
                 extra: serde_json::Map::new(),
             }],

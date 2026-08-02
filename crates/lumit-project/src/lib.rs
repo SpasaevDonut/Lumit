@@ -103,6 +103,50 @@ static MIGRATIONS: &[Migration] = &[Migration {
 /// **The property wins if both are present.** A layer carrying each was already
 /// evaluating the property alone (`source_time_at` preferred it), so keeping it
 /// is what makes the file open looking the way it last rendered.
+/// Lift the old segment store out of `owner["retime"]`, leaving nothing
+/// readable behind.
+///
+/// `take` puts null in its place, which serde reads as the absent field the
+/// new shape expects — and makes the store unreachable whatever happens next,
+/// so it can never be read twice.
+fn take_retime_store(owner: &mut serde_json::Value) -> Option<lumit_core::retime::Retime> {
+    let old = owner.get_mut("retime").map(serde_json::Value::take)?;
+    serde_json::from_value(old).ok() // unreadable: opens un-retimed, not wrong
+}
+
+/// Write `store` onto `dest` as the Retime **property**, with its
+/// interpolation policy beside it.
+///
+/// **The property wins if there is already one.** A layer carrying each was
+/// evaluating the property alone (`source_time_at` preferred it), so keeping
+/// it is what makes the file open looking the way it last rendered. A clip
+/// never had two, so the rule costs it nothing.
+fn write_retime_property(
+    dest: &mut serde_json::Map<String, serde_json::Value>,
+    store: lumit_core::retime::Retime,
+) {
+    // The policy is not part of the map (docs/04 §10) and now lives beside it.
+    // Carried across whether or not the map is; `or_insert` leaves a clip's
+    // own policy, which it always had, exactly as written.
+    if let Ok(policy) = serde_json::to_value(&store.interpolation) {
+        dest.entry("interpolation").or_insert(policy);
+    }
+    if dest.get("retime").is_some_and(|r| !r.is_null()) {
+        return;
+    }
+    // Built as a real `Property` and serialised, rather than as hand-written
+    // JSON: the shape then follows the type, and a later change to either
+    // cannot silently make this write a document the same build refuses to
+    // read.
+    let property = lumit_core::anim::Property {
+        animation: lumit_core::anim::Animation::Keyframed(store.source_keyframes()),
+        extra: serde_json::Map::new(),
+    };
+    if let Ok(v) = serde_json::to_value(property) {
+        dest.insert("retime".into(), v);
+    }
+}
+
 fn retime_onto_the_layer(value: &mut serde_json::Value) {
     let Some(comps) = value.get_mut("comps").and_then(|c| c.as_array_mut()) else {
         return;
@@ -112,38 +156,34 @@ fn retime_onto_the_layer(value: &mut serde_json::Value) {
             continue;
         };
         for layer in layers {
-            let Some(footage) = layer.pointer_mut("/kind/Footage") else {
-                continue;
-            };
-            // `take` leaves null behind, which serde reads as the absent field
-            // the new shape expects — and makes the old store unreachable
-            // whatever happens below, so it can never be read twice.
-            let Some(old) = footage.get_mut("retime").map(serde_json::Value::take) else {
-                continue;
-            };
-            let Ok(store) = serde_json::from_value::<lumit_core::retime::Retime>(old) else {
-                continue; // unreadable: the layer opens un-retimed rather than wrong
-            };
-            // The policy is not part of the map (docs/04 §10) and now lives
-            // beside it. Carried across whether or not the map is.
-            let Some(obj) = layer.as_object_mut() else {
-                continue;
-            };
-            if let Ok(policy) = serde_json::to_value(&store.interpolation) {
-                obj.entry("interpolation").or_insert(policy);
-            }
-            if !obj.get("retime").is_some_and(|r| !r.is_null()) {
-                // Built as a real `Property` and serialised, rather than as
-                // hand-written JSON: the shape then follows the type, and a
-                // later change to either cannot silently make this write a
-                // document the same build refuses to read.
-                let property = lumit_core::anim::Property {
-                    animation: lumit_core::anim::Animation::Keyframed(store.source_keyframes()),
-                    extra: serde_json::Map::new(),
-                };
-                if let Ok(v) = serde_json::to_value(property) {
-                    obj.insert("retime".into(), v);
+            // A Sequence layer's clips carried the same segment store, and
+            // move to the same property shape (K-249's second half).
+            if let Some(clips) = layer
+                .pointer_mut("/kind/Sequence/clips")
+                .and_then(|c| c.as_array_mut())
+            {
+                for clip in clips {
+                    let Some(store) = take_retime_store(clip) else {
+                        continue;
+                    };
+                    if let Some(fields) = clip.as_object_mut() {
+                        write_retime_property(fields, store);
+                    }
                 }
+            }
+            // Taken out of the layer's *kind* and written onto the layer
+            // itself — the one place the two owners differ. Sequenced so the
+            // take lands before the object is reached for, or writing the
+            // property would put the old store back.
+            let store = match layer.pointer_mut("/kind/Footage") {
+                Some(footage) => take_retime_store(footage),
+                None => None,
+            };
+            let Some(store) = store else {
+                continue;
+            };
+            if let Some(fields) = layer.as_object_mut() {
+                write_retime_property(fields, store);
             }
         }
     }
@@ -1379,6 +1419,52 @@ mod tests {
             (property.value_at(4.0) - 2.0).abs() < 1e-9,
             "and it still shows the source moment it used to"
         );
+    }
+
+    /// A Sequence layer's **clips** convert too — the second half of K-249,
+    /// and the one that would otherwise have left the sequence view editing a
+    /// representation nothing else spoke.
+    #[test]
+    fn a_clips_segment_store_becomes_the_retime_property() {
+        use lumit_core::retime::Retime;
+        use lumit_core::time::Rational;
+
+        let store = Retime::constant_speed(
+            Rational::new(4, 1).unwrap(),
+            Rational::ZERO,
+            Rational::new(2, 1).unwrap(),
+        );
+        let doc = serde_json::json!({
+            "comps": [{
+                "layers": [{
+                    "kind": { "Sequence": { "clips": [{
+                        "id": Uuid::now_v7(),
+                        "source": { "Footage": Uuid::now_v7() },
+                        "source_in": [0, 1],
+                        "source_out": [8, 1],
+                        "place_start": [0, 1],
+                        "place_duration": [4, 1],
+                        "retime": serde_json::to_value(&store).unwrap(),
+                    }]}}
+                }]
+            }]
+        });
+
+        let out = run_migrations(MIGRATIONS, doc, (0, 1, 0));
+        // It typed as a real Clip, which is the whole test: the migration has
+        // to produce a document *this* build can read.
+        let clip: lumit_core::sequence::Clip = serde_json::from_value(
+            out["comps"][0]["layers"][0]["kind"]["Sequence"]["clips"][0].clone(),
+        )
+        .expect("a clip");
+        assert_eq!(
+            clip.constant_speed(),
+            Some(2.0),
+            "double speed before, double speed after"
+        );
+        // …and it reads the same source moments it used to.
+        assert!((clip.source_time(1.0) - store.evaluate(1.0)).abs() < 1e-6);
+        assert!((clip.source_time(3.0) - store.evaluate(3.0)).abs() < 1e-6);
     }
 
     /// The policy for making in-between frames rides across too — it was never
