@@ -2057,6 +2057,39 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   names and shortcuts that pop up when you rest the pointer on a button. Both default to
   today's behaviour (native scale, tooltips on), so nothing changes for anyone until they visit
   this page.
+- **Editing style: the two Vegas settings, and being asked once (K-246).** The Interface page
+  has a third group, **Editing**, holding two switches that decide whether Lumit behaves the
+  way After Effects does or the way Vegas does. They are genuinely independent — plenty of
+  people want Vegas ramps and After Effects imports, which is why they are two switches and
+  not one mode — and **both are off by default**, off being the After Effects behaviour Lumit
+  has always had. A new switch must never change how somebody's editor works without them
+  asking, so a settings file written before these existed reads as "off, off".
+  **Retime opens to Velocity** decides which way round the Retime graph opens. Off, it opens
+  showing *which moment of the footage is on screen* — a line climbing steadily means normal
+  playback. On, it opens showing *playback speed* as a percentage, which is the Vegas
+  velocity envelope: one point per keyframe, dragged up to speed the footage up, down towards
+  zero to slow it, and below zero to run it backwards. Both are views of the same underlying
+  retime — switching between them converts nothing — and this setting only picks which one you
+  land in. Ordinary properties like Position are untouched by it.
+  **Video arrives as a Sequence layer** decides what dropping a video file into a composition
+  makes. Off, you get a plain Footage layer, one layer per file, as in After Effects. On, you
+  get a **Sequence layer**: a layer that holds a run of clips on its one row, so you can cut
+  the footage into pieces and ramp each piece separately without stacking up layers. Still
+  images are never wrapped this way — there is nothing to cut in a single frame — but image
+  sequences are, because they are footage that runs.
+  Because those two settings now exist, Lumit finally has something to ask on a **first
+  launch**. On a machine with no settings file at all, one small screen appears before
+  anything else and asks *how do you edit?*, with two answers: **After Effects**, which
+  leaves both switches off, and **Vegas**, which turns both on. There is a **Skip**, which
+  keeps the defaults, and clicking outside the screen does the same thing. Whatever you pick,
+  the answer is written down so the question is asked exactly once — and everything it set is
+  an ordinary switch on the Interface page afterwards, so no answer is one you are stuck with.
+  What counts as a first launch is precisely "there is no settings file on this machine":
+  a file that predates the question, or one that has been corrupted, both belong to somebody
+  who has used Lumit already, and being asked to introduce yourself after months of work
+  would be absurd. (The screen is deliberately plain for now. The fuller version in
+  [07-UI-SPEC.md](07-UI-SPEC.md) §13.1 — four choices, each with a small picture of what it
+  does — is in [TODO.md](TODO.md).)
   The **Export** page (K-119) holds two defaults for the export dialogue. **Default preset**
   is the preset that a plain "Export comp…" action starts from — pick a specific preset from
   the File menu's "Export preset" submenu instead and that always wins, regardless of what's
