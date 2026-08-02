@@ -62,11 +62,12 @@ for bin in $(find "$app/Contents" -type f ! -name "*.png" ! -name "*.json" ! -na
     fi
 done
 if [ -n "$fixups" ]; then
-    # -cd creates the destination if missing; NEVER -od here — that flag
-    # OVERWRITES the directory, i.e. deletes Contents/Frameworks and every
-    # framework already embedded in it.
+    # -cd creates the destination if missing; -of overwrites dylibs a
+    # previous run already copied, so reruns are idempotent. NEVER -od here —
+    # that flag OVERWRITES the directory, i.e. deletes Contents/Frameworks
+    # and every framework already embedded in it.
     # shellcheck disable=SC2086 # word-splitting the -x list is the point
-    dylibbundler -cd -b $fixups \
+    dylibbundler -cd -of -b $fixups \
         -d "$app/Contents/Frameworks/" \
         -p "@executable_path/../Frameworks/" \
         -s "$ffprefix/lib"
