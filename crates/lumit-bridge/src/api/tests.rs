@@ -3452,9 +3452,13 @@ fn a_keymap_survives_the_json_it_is_stored_as() {
     let saved = keymap_to_json();
 
     keymap_load_preset(BridgeKeymapPreset::AfterEffects);
+    // The rebind is gone: the chord means what the preset says it means, not
+    // what this test made it mean. It used to assert `None` here, which held
+    // only while `Mod+Shift+S` was a spare chord — Save as took it (K-244), and
+    // a preset's own binding proves the replacement better than a blank does.
     assert_eq!(
-        keymap_lookup(BridgeKeyContext::Global, "Mod+Shift+S".into()),
-        None,
+        keymap_lookup(BridgeKeyContext::Global, "Mod+Shift+S".into()).as_deref(),
+        Some("file.save.as"),
         "the preset really replaced it"
     );
 
