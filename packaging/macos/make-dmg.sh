@@ -6,7 +6,9 @@
 #
 #   packaging/macos/make-dmg.sh [version]
 #
-# Needs: flutter, rust, and `brew install ffmpeg@7 dylibbundler`.
+# Needs: flutter, rust, and `brew install ffmpeg@7 dylibbundler create-dmg`
+# (create-dmg optional - without it the image has no drag-to-Applications
+# window dressing).
 #
 # The bundling is the same move the Windows installer makes with the FFmpeg
 # DLLs: the bridge links the shared FFmpeg, so the libraries must travel with
@@ -52,9 +54,11 @@ app="$root/flutter_ui/build/macos/Build/Products/Release/lumit_flutter.app"
 # dylibbundler. The bridge dylib is the expected hit; the loop rather than a
 # hardcoded path so a renamed framework cannot silently ship keg links.
 fixups=""
+fixlist=""
 for bin in $(find "$app/Contents" -type f ! -name "*.png" ! -name "*.json" ! -name "*.plist"); do
     if otool -L "$bin" 2>/dev/null | tail -n +2 | grep -Eq '/opt/homebrew/|/usr/local/(opt|Cellar)/'; then
         fixups="$fixups -x $bin"
+        fixlist="$fixlist $bin"
     fi
 done
 if [ -n "$fixups" ]; then
@@ -70,6 +74,18 @@ else
     echo "warning: nothing in the app links Homebrew - is the media feature on?" >&2
 fi
 
+# dyld (macOS 15+) refuses to launch a binary carrying duplicate LC_RPATH
+# entries, and dylibbundler adds its -p path as an rpath on each binary it
+# fixes — on top of Xcode's default '@executable_path/../Frameworks'. Drop
+# the slashed twin outright, then collapse any exact duplicates to one.
+for bin in "$app/Contents/MacOS/lumit_flutter" $fixlist; do
+    while install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$bin" 2>/dev/null; do :; done
+    for rp in $(otool -l "$bin" | awk '$1=="path"{print $2}' | sort | uniq -d); do
+        while install_name_tool -delete_rpath "$rp" "$bin" 2>/dev/null; do :; done
+        install_name_tool -add_rpath "$rp" "$bin"
+    done
+done
+
 # Re-sign everything ad hoc; the install-name rewrites invalidated the
 # existing signatures.
 codesign --force --deep --sign - "$app"
@@ -77,10 +93,20 @@ codesign --force --deep --sign - "$app"
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
 cp -R "$app" "$stage/Lumit.app"
-ln -s /Applications "$stage/Applications"
 
 mkdir -p "$here/dist"
 out="$here/dist/lumit-$version-macos-$arch.dmg"
 rm -f "$out"
-hdiutil create -volname "Lumit" -srcfolder "$stage" -ov -format UDZO "$out"
+if command -v create-dmg >/dev/null; then
+    # The proper drag-into-Applications window (brew install create-dmg).
+    create-dmg --volname "Lumit" \
+        --window-size 540 380 --icon-size 128 \
+        --icon "Lumit.app" 140 185 --app-drop-link 400 185 \
+        --hide-extension "Lumit.app" \
+        "$out" "$stage"
+else
+    # Plain image: app + Applications shortcut, no window dressing.
+    ln -s /Applications "$stage/Applications"
+    hdiutil create -volname "Lumit" -srcfolder "$stage" -ov -format UDZO "$out"
+fi
 echo "Wrote $out"
