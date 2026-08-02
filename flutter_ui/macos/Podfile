@@ -38,5 +38,13 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_macos_build_settings(target)
+    # Release builds default to a universal (arm64 + x86_64) binary, which
+    # makes cargokit cross-compile the bridge for the other architecture —
+    # where Homebrew's FFmpeg does not exist, so the build dies in
+    # rusty_ffmpeg's pkg-config probe. One architecture per machine until the
+    # macOS pass takes on universal binaries properly (K-033, docs/TODO.md).
+    target.build_configurations.each do |config|
+      config.build_settings['ONLY_ACTIVE_ARCH'] = 'YES'
+    end
   end
 end
