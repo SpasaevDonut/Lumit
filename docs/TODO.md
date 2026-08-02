@@ -406,9 +406,10 @@ list, not a re-statement of the roadmap.
     notarisation (K-033); it also owes `application:openFile:` (a double-clicked
     `.lum` opening, K-252) and adding `packaging/macos/*.icns` to the bundle's
     resources. The Metal/IOSurface Viewer path is unverified on real hardware.
-    A CI release pipeline building the three installers from `packaging/`
-    (K-252), plus signing; Linux distro packages (deb/rpm/Flatpak) beyond
-    `install.sh`.
+    The release workflow gains a macOS job when that pass lands (today it
+    builds Windows + Linux only — a DMG linking Homebrew keg paths would not
+    run elsewhere); signing the Windows installer; Linux distro packages
+    (deb/rpm/Flatpak) beyond `install.sh` and the release tarball.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).

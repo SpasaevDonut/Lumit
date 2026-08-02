@@ -5463,3 +5463,14 @@ installers live in `packaging/` (decision K-252):
 
 None of this runs on `flutter run` — a dev run shows the app icon (it is baked
 into the executable) but registers nothing.
+
+Releases do not depend on your machines at all. Pushing a git tag that starts
+with `v` (say `v0.1.0`) wakes `.github/workflows/release.yml`, and GitHub's
+own computers do the work: a Windows machine builds the setup.exe, a Linux
+machine builds a run-anywhere bundle (FFmpeg's libraries ride inside it), and
+both land attached to a GitHub Release under that tag. Flutter cannot
+cross-build — a Windows machine can only make the Windows app — which is why
+the answer to "can I release everything from Windows" is "yes, by letting the
+tag do it". There is no macOS artifact yet, deliberately: the app it would
+build only runs on a machine with the same Homebrew FFmpeg installed, so it
+waits for the proper macOS pass in the TODO.

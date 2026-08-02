@@ -8,7 +8,10 @@
 ; path from the command line (projectPathFromArgs in flutter_ui/lib/main.dart).
 
 ; Keep in step with flutter_ui/pubspec.yaml `version:` when cutting a release.
+; The release workflow overrides this from the tag (iscc /DMyAppVersion=...).
+#ifndef MyAppVersion
 #define MyAppVersion "0.1.0"
+#endif
 #define MyAppExe "lumit_flutter.exe"
 
 [Setup]
