@@ -315,6 +315,10 @@ class LumitState extends ChangeNotifier {
       context: context,
       project: project,
       footage: footage,
+      asSequence: Provider.of<LumitUiState>(context, listen: false)
+          .workspace
+          .interface
+          .videoAsSequenceLayer,
     );
     if (comp == null) return null;
     notifyDocumentChanged();

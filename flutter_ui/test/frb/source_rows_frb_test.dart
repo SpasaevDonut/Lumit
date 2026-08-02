@@ -121,7 +121,7 @@ void main() {
         (tester) async {
       final p = withComp();
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
-      p.comp.addFootageLayer(footage: footage);
+      p.comp.addFootageLayer(footage: footage, asSequence: false);
       final layer = p.comp.getLayers().single;
       p.uiState.selectedLayer.value = layer;
       await mount(tester, p);

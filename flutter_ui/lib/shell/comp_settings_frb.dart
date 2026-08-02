@@ -85,6 +85,11 @@ Future<CompositionReference?> showNewCompositionFrb({
   required BuildContext context,
   required ProjectReference project,
   List<FootageReference> footage = const [],
+  /// Settings ▸ Interface ▸ Editing ▸ *Video arrives as a Sequence layer*
+  /// (K-246), forwarded to the engine for each item placed below. Taken as an
+  /// argument rather than read from the workspace here, because this file is
+  /// a dialogue and knows nothing about where settings live.
+  bool asSequence = false,
 }) async {
   // Probed before the dialog opens rather than inside it: `mediaInfo` reads the
   // container with FFmpeg, and a dialog that popped up and then rearranged itself
@@ -127,7 +132,7 @@ Future<CompositionReference?> showNewCompositionFrb({
         final comp =
             project.newComposition(name: settings.name, settings: settings);
         for (final item in footage) {
-          comp.addFootageLayer(footage: item);
+          comp.addFootageLayer(footage: item, asSequence: asSequence);
         }
         close(comp);
       },

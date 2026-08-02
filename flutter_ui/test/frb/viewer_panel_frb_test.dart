@@ -1874,7 +1874,7 @@ void main() {
     testWidgets('a missing footage layer raises the badge', (tester) async {
       final p = withLayer();
       final gone = p.state.project!.importFootage(path: 'C:/nowhere/gone.mp4');
-      p.comp.addFootageLayer(footage: gone);
+      p.comp.addFootageLayer(footage: gone, asSequence: false);
       await mount(tester, p);
 
       await settleFrb(

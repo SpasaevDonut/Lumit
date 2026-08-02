@@ -90,6 +90,10 @@ features = [
 
 [dev-dependencies]
 tempfile = "3"
+# The ffmpeg-made fixtures, so tests that need real media can have some —
+# a still and a running clip are the two sides of the K-246 wrap rule, and
+# nothing but real media can tell them apart. Skips itself with no ffmpeg.
+lumit-media = { path = "../lumit-media", features = ["test-fixtures"] }
 
 # The bridge is the one crate that cannot inherit the workspace's
 # `unsafe_code = "deny"`: flutter_rust_bridge's generated glue crosses a C ABI

@@ -839,7 +839,7 @@ void main() {
       final p = freshProject();
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
       final comp = p.state.project!.newComposition(name: 'Scene');
-      comp.addFootageLayer(footage: footage);
+      comp.addFootageLayer(footage: footage, asSequence: false);
 
       await tester.pumpWidget(hostPanel(
         child: const ProjectPanelFrb(),

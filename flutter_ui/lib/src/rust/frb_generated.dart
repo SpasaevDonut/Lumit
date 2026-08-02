@@ -160,7 +160,9 @@ abstract class BridgeLibApi extends BaseApi {
       {required CompositionReference that});
 
   void crateApiCompositionCompositionReferenceAddFootageLayer(
-      {required CompositionReference that, required FootageReference footage});
+      {required CompositionReference that,
+      required FootageReference footage,
+      required bool asSequence});
 
   LayerReference crateApiCompositionCompositionReferenceAddNullLayer(
       {required CompositionReference that});
@@ -1324,12 +1326,15 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
 
   @override
   void crateApiCompositionCompositionReferenceAddFootageLayer(
-      {required CompositionReference that, required FootageReference footage}) {
+      {required CompositionReference that,
+      required FootageReference footage,
+      required bool asSequence}) {
     return handler.executeSync(SyncTask(
       callFfi: () {
         final serializer = SseSerializer(generalizedFrbRustBinding);
         sse_encode_box_autoadd_composition_reference(that, serializer);
         sse_encode_box_autoadd_footage_reference(footage, serializer);
+        sse_encode_bool(asSequence, serializer);
         return pdeCallFfi(generalizedFrbRustBinding, serializer, funcId: 24)!;
       },
       codec: SseCodec(
@@ -1339,7 +1344,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       ),
       constMeta:
           kCrateApiCompositionCompositionReferenceAddFootageLayerConstMeta,
-      argValues: [that, footage],
+      argValues: [that, footage, asSequence],
       apiImpl: this,
     ));
   }
@@ -1348,7 +1353,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       get kCrateApiCompositionCompositionReferenceAddFootageLayerConstMeta =>
           const TaskConstMeta(
             debugName: "composition_reference_add_footage_layer",
-            argNames: ["that", "footage"],
+            argNames: ["that", "footage", "asSequence"],
           );
 
   @override

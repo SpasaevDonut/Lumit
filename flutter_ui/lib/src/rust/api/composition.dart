@@ -13,7 +13,7 @@ import 'layer.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:uuid/uuid.dart';
 
-// These functions are ignored because they are not marked as `pub`: `add_at_top`, `commit`, `composition`, `dispatch`, `document`, `footage_span_and_size`, `project`, `to_engine`
+// These functions are ignored because they are not marked as `pub`: `add_at_top`, `commit`, `composition`, `dispatch`, `document`, `footage_span_and_size`, `project`, `runs_as_video`, `to_engine`
 // These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `id`, `new`, `project_id`
 
@@ -270,10 +270,24 @@ class CompositionReference {
   /// The duration comes from the container's real `duration_seconds`, not from
   /// a frame count: audio-only media has no video frame count or rate, and
   /// reconstructing seconds from those silently clamped such a clip to one frame.
-  void addFootageLayer({required FootageReference footage}) =>
+  /// Place `footage` in this composition as a new layer.
+  ///
+  /// `as_sequence` is Settings ▸ Interface ▸ Editing ▸ *Video arrives as a
+  /// Sequence layer* (K-246), forwarded by the frontend. On, media that
+  /// **runs** — a video stream longer than a single frame — arrives as a
+  /// one-clip Sequence layer, ready to be cut on its own row; a still image
+  /// never does, because there is nothing in one frame to cut. Off, and for
+  /// stills either way, this is the plain Footage layer it always was.
+  ///
+  /// It is one call rather than "add, then convert" so the choice is one
+  /// undo step and one funnel: every route into a comp — a drop, a
+  /// double-click, a menu — comes through here and cannot disagree with the
+  /// others about what a video import becomes.
+  void addFootageLayer(
+          {required FootageReference footage, required bool asSequence}) =>
       BridgeLib.instance.api
           .crateApiCompositionCompositionReferenceAddFootageLayer(
-              that: this, footage: footage);
+              that: this, footage: footage, asSequence: asSequence);
 
   /// Add a Null layer: an invisible layer with no source of its own, carrying
   /// only a transform, for parenting rigs. It has no size, so only its

@@ -1432,6 +1432,22 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (Frame interpolation — how in-between frames are synthesised, Nearest / Blend / Flow — is a
   per-layer retime setting in the data model, but is not surfaced in the timeline for now; it
   will return in a dedicated place.)
+- **Video arriving as a Sequence layer (K-246).** With that switch on, dropping a video into
+  a composition gives you a **Sequence layer** holding one clip, rather than a plain Footage
+  layer — a row you can cut into pieces and ramp piece by piece, instead of a single
+  indivisible block. A **still image never is**, and the rule for telling them apart is
+  worth knowing because it is not the file extension: a still probes as a video stream too,
+  one frame long, so the question the engine asks is *does this run* — is it longer than a
+  single frame at its own rate. Image sequences will answer yes by that same rule the day
+  they exist as a footage kind, with nothing here to change.
+  Media that will not open at all answers **no** and arrives as a plain Footage layer.
+  Guessing towards the simpler shape when there is nothing to go on is the cheaper mistake:
+  a layer that should have been sequenced is one command away from being one, and a wrongly
+  sequenced layer is more to undo.
+  It is **one call into the engine**, not "make a layer, then convert it" — so it is one
+  undo step, and every route into a composition (a drop on the timeline, footage dropped on
+  the New composition button, the menus) goes through the same funnel and cannot disagree
+  about what a video import becomes.
 - **The Vegas speed envelope (K-247).** With *Retime opens to Velocity* ticked, the Retime
   channel's speed view stops being the After Effects speed graph and becomes the thing Vegas
   editors already know: a **velocity envelope**. The difference is what a keyframe is on it.

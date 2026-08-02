@@ -618,6 +618,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     _graphLens = GraphLens.speed;
   }
 
+  /// Settings ▸ Interface ▸ Editing ▸ *Video arrives as a Sequence layer*
+  /// (K-246). Forwarded to the engine, which decides whether this particular
+  /// media is something to cut.
+  bool _videoAsSequence(BuildContext context) =>
+      Provider.of<LumitUiState>(context, listen: false)
+          .workspace
+          .interface
+          .videoAsSequenceLayer;
+
   /// Settings ▸ Interface ▸ Editing ▸ *Retime opens to Velocity* (K-246).
   bool _vegas(BuildContext context) =>
       Provider.of<LumitUiState>(context, listen: false)
@@ -1376,7 +1385,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                   // Bottom-up, so a multi-item drop stacks in the order the
                   // panel listed them: each lands at the top of the stack.
                   for (final f in footage.reversed) {
-                    comp.addFootageLayer(footage: f);
+                    comp.addFootageLayer(
+                        footage: f, asSequence: _videoAsSequence(context));
                   }
                 case CompDragData(comp: final dropped):
                   // A comp cannot nest into itself; the engine refuses and

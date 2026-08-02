@@ -219,7 +219,7 @@ fn footage_places_into_a_composition_even_when_the_media_is_missing() {
 
     // The fixture's media has an empty absolute path and an unsaved project, so
     // it cannot resolve — the comp's own duration and size are used.
-    comp.add_footage_layer(footage).expect("placed");
+    comp.add_footage_layer(footage, false).expect("placed");
 
     let layers = comp.get_layers().expect("layers");
     assert_eq!(layers.len(), 1);
@@ -1743,7 +1743,7 @@ fn a_footage_layer_converts_to_a_sequence_layer_in_one_step() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
 
     assert_eq!(layer.get_kind().expect("kind"), BridgeLayerKind::Footage);
@@ -1811,7 +1811,7 @@ fn the_razor_cuts_and_deletes_without_moving_the_other_clips() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
     layer.convert_to_sequenced().expect("converted");
     let layer = comp.get_layers().expect("layers").remove(0);
@@ -2909,6 +2909,100 @@ fn editing_a_solid_changes_every_layer_that_uses_it() {
     assert_eq!(solid.get_definition().expect("definition").name, "Backdrop");
 }
 
+// --- Video arriving as a Sequence layer (K-246) ---------------------------
+
+/// With the preference on, media that **runs** arrives as a one-clip Sequence
+/// layer — ready to be cut on its own row — while a still image does not,
+/// because there is nothing in one frame to cut.
+///
+/// Needs an ffmpeg on PATH to make the fixtures; skips itself without one, the
+/// same as every other test here that wants real media.
+#[test]
+fn video_is_wrapped_and_a_still_is_not() {
+    #[cfg(feature = "media")]
+    {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let Some(clip) = lumit_media::index::tests_support::fixture(dir.path()) else {
+            return; // no ffmpeg on this machine
+        };
+        // One frame of the same pattern: a still, by duration rather than by
+        // extension — which is exactly the distinction the engine draws.
+        let Some(bin) = lumit_media::index::tests_support::ffmpeg_bin() else {
+            return;
+        };
+        let still = dir.path().join("still.png");
+        let made = std::process::Command::new(bin)
+            .args(["-v", "error", "-y", "-i"])
+            .arg(&clip)
+            .args(["-frames:v", "1"])
+            .arg(&still)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+
+        let project = LumitBridgeState::new_project(None).expect("a new project");
+        let comp = project.new_composition("Scene".into(), None).expect("comp");
+
+        let video = project
+            .import_footage(clip.to_string_lossy().into_owned())
+            .expect("imported");
+        comp.add_footage_layer(&video, true).expect("placed");
+        let layers = comp.get_layers().expect("layers");
+        assert_eq!(
+            layers[0].get_kind().expect("kind"),
+            BridgeLayerKind::Sequence,
+            "video asked to arrive as a Sequence layer does"
+        );
+        assert_eq!(
+            layers[0].get_info().expect("info").clip_frames.len(),
+            1,
+            "one clip, spanning the whole import"
+        );
+
+        if made {
+            let image = project
+                .import_footage(still.to_string_lossy().into_owned())
+                .expect("imported");
+            comp.add_footage_layer(&image, true).expect("placed");
+            assert_eq!(
+                comp.get_layers().expect("layers")[0]
+                    .get_kind()
+                    .expect("kind"),
+                BridgeLayerKind::Footage,
+                "a still has no run to cut, so it is never wrapped"
+            );
+        }
+
+        // …and with the preference off, video is a Footage layer as always.
+        comp.add_footage_layer(&video, false).expect("placed");
+        assert_eq!(
+            comp.get_layers().expect("layers")[0]
+                .get_kind()
+                .expect("kind"),
+            BridgeLayerKind::Footage
+        );
+    }
+}
+
+/// Media that will not probe stays a plain Footage layer even when the
+/// preference is on. Guessing towards the more elaborate shape on no
+/// information is the more annoying mistake to undo.
+#[test]
+fn unreadable_media_is_never_wrapped() {
+    let project = LumitBridgeState::new_project(None).expect("a new project");
+    let comp = project.new_composition("Scene".into(), None).expect("comp");
+    let footage = project
+        .import_footage("C:/clips/not-really-here.mov".into())
+        .expect("imported");
+    comp.add_footage_layer(&footage, true).expect("placed");
+    assert_eq!(
+        comp.get_layers().expect("layers")[0]
+            .get_kind()
+            .expect("kind"),
+        BridgeLayerKind::Footage
+    );
+}
+
 // --- Retime ------------------------------------------------------------
 
 /// The frame-interpolation policy is a layer's own setting, present on every
@@ -2928,7 +3022,7 @@ fn interpolation_is_a_layer_setting_of_its_own() {
     let footage = project
         .import_footage("C:/clips/shot.mov".into())
         .expect("imported");
-    comp.add_footage_layer(&footage).expect("placed");
+    comp.add_footage_layer(&footage, false).expect("placed");
     let layer = comp.get_layers().expect("layers").remove(0);
 
     assert_eq!(

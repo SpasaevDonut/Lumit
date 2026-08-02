@@ -928,11 +928,13 @@ fn wire__crate__api__composition__composition_reference_add_footage_layer_impl(
                 <crate::api::composition::CompositionReference>::sse_decode(&mut deserializer);
             let api_footage =
                 <crate::api::footage::FootageReference>::sse_decode(&mut deserializer);
+            let api_as_sequence = <bool>::sse_decode(&mut deserializer);
             deserializer.end();
             transform_result_sse::<_, BridgeError>((move || {
                 let output_ok = crate::api::composition::CompositionReference::add_footage_layer(
                     &api_that,
                     &api_footage,
+                    api_as_sequence,
                 )?;
                 Ok(output_ok)
             })())
