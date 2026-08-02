@@ -223,8 +223,8 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Workspace machinery beyond the presets** ([07-UI-SPEC.md](07-UI-SPEC.md)
     §1.6) - user workspaces (save-as/rename/export), the chrome switcher strip,
     and Alt+Shift+1-9.
-- **First-run setup screen** (K-006, K-246) - v1 ships minimal in the Vegas PR:
-    one AE-style / Vegas-style choice writing the two K-246 settings. Still owed
+- **First-run setup screen** (K-006, K-251) - v1 ships minimal in the Vegas PR:
+    one AE-style / Vegas-style choice writing the two K-251 settings. Still owed
     after that lands: the four-card version with a small image over each choice
     ([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
 - **Command palette** - recents are session-lived, and only genuinely bound
@@ -428,8 +428,13 @@ list, not a re-statement of the roadmap.
     type-scale steps to the theme; identity colour tokens for Shape and Null
     layers (§6.1 reserves the values; both kinds borrow today).
 - **Platform.** The macOS pass - native menu bar, VideoToolbox, ProRes,
-    notarisation (K-033). The Metal/IOSurface Viewer path is unverified on real
-    hardware.
+    notarisation (K-033); it also owes `application:openFile:` (a double-clicked
+    `.lum` opening, K-252) and adding `packaging/macos/*.icns` to the bundle's
+    resources. The Metal/IOSurface Viewer path is unverified on real hardware.
+    The release workflow gains a macOS job when that pass lands (today it
+    builds Windows + Linux only — a DMG linking Homebrew keg paths would not
+    run elsewhere); signing the Windows installer; Linux distro packages
+    (deb/rpm/Flatpak) beyond `install.sh` and the release tarball.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).

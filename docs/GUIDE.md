@@ -5412,3 +5412,66 @@ should not make Lumit start claiming you have unsaved changes. So it is recorded
 through a side door that skips all three (`set_ui_state`), and the frontend calls
 it in the one instant it is genuinely wanted — immediately before a save, when the
 arrangement it describes is the one on the screen.
+
+## 10. The app icon and the brand files
+
+The icon you see in the taskbar is not one picture — it is a small bag of
+pictures. Windows keeps them all in a single `.ico` file (ours holds seven
+sizes, 256 pixels down to 16), and shows whichever one fits the spot: big for
+the desktop, tiny for a browser-style tab. macOS does the same thing with a
+folder of loose PNGs instead of a bag.
+
+Nobody draws seven pictures by hand. The artwork is drawn **once**, as an SVG —
+a text file of drawing instructions ("a rounded square here, this gradient
+there") that can be rendered at any size without going blurry. The four SVGs in
+`assets/brand/` are the only files a human edits:
+
+- `lumit-mark.svg` — the mark itself: two keyframe diamonds overlapping, white
+  where they cross. This bare form is the Windows and Linux icon.
+- `lumit-icon.svg` — the same mark sitting on a dark rounded tile. Only macOS
+  uses this, because macOS expects every icon to bring its own tile.
+- `lumit-project.svg` and `lumit-preset.svg` — document icons for `.lum`
+  project files and `.lumfx` presets: a dark page with a folded corner and the
+  mark inside, like the little badge on any Photoshop or After Effects file.
+
+`scripts/gen-icons.py` turns those four drawings into every pixel file the
+operating systems want (run `pip install resvg-py pillow` once, then
+`python scripts/gen-icons.py`). It renders each size straight from the SVG
+rather than shrinking one big picture — that is what keeps the 16-pixel
+version crisp instead of mushy. You only run it after editing an SVG; the
+generated files are committed, so a fresh checkout builds without it.
+
+The document icons only appear next to your `.lum` files once something tells
+the operating system "files ending in .lum belong to Lumit, use this icon".
+Running the app never does that — it is an *installer's* job, and the
+installers live in `packaging/` (decision K-252):
+
+- **Windows** — `packaging/windows/build-installer.ps1` builds a normal
+  setup.exe (it needs the free Inno Setup tool once:
+  `winget install JRSoftware.InnoSetup`). Installing it copies the app into
+  Program Files, writes the .lum/.lumfx entries into the Windows registry with
+  their icons, and puts Lumit in the Start menu. Double-clicking a `.lum` then
+  genuinely opens it: the association hands Lumit the file's path as a command
+  line argument, and the app checks its command line at boot
+  (`projectPathFromArgs` in `main.dart`).
+- **Linux** — `packaging/linux/install.sh` copies a built bundle into
+  `~/.local`, and installs the desktop entry, the file-type declarations, and
+  the icons where any desktop environment looks for them. No root needed.
+- **macOS** — `packaging/macos/make-dmg.sh` produces the usual drag-to-
+  Applications disk image (on a Mac; it uses Apple's own tooling). The
+  file-type declarations are in the app's Info.plist already, but their icons
+  and double-click opening land with the larger macOS pass in the TODO.
+
+None of this runs on `flutter run` — a dev run shows the app icon (it is baked
+into the executable) but registers nothing.
+
+Releases do not depend on your machines at all. Pushing a git tag that starts
+with `v` (say `v0.1.0`) wakes `.github/workflows/release.yml`, and GitHub's
+own computers do the work: a Windows machine builds the setup.exe, a Linux
+machine builds a run-anywhere bundle (FFmpeg's libraries ride inside it), and
+both land attached to a GitHub Release under that tag. Flutter cannot
+cross-build — a Windows machine can only make the Windows app — which is why
+the answer to "can I release everything from Windows" is "yes, by letting the
+tag do it". There is no macOS artifact yet, deliberately: the app it would
+build only runs on a machine with the same Homebrew FFmpeg installed, so it
+waits for the proper macOS pass in the TODO.

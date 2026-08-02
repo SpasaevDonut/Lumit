@@ -8,6 +8,75 @@
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconFile</key>
 	<string></string>
+	<!-- .lum / .lumfx document types (K-252). The .icns document icons live in
+	     packaging/macos/ and join the bundle's resources with the macOS pass
+	     (K-033) — until then the types associate with a generic icon. Opening a
+	     double-clicked document also lands with that pass (application:openFile:
+	     in the AppDelegate); docs/TODO.md carries both. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Lumit project</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleTypeIconFile</key>
+			<string>lumit-project</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>io.github.luminalmvm.lumit.project</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Lumit preset</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleTypeIconFile</key>
+			<string>lumit-preset</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>io.github.luminalmvm.lumit.preset</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>io.github.luminalmvm.lumit.project</string>
+			<key>UTTypeDescription</key>
+			<string>Lumit project</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>lum</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>io.github.luminalmvm.lumit.preset</string>
+			<key>UTTypeDescription</key>
+			<string>Lumit preset</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>lumfx</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 	<key>CFBundleIdentifier</key>
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>

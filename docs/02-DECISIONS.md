@@ -4955,3 +4955,44 @@ never draws over the rows beside it and the framing catches up when the pointer 
 
 Both readings of the envelope take it — the layer's Retime channel in the graph editor, and
 the sequence view's strip — because they are one editor over one representation (K-249).
+
+---
+
+**K-251 · DECIDED · The mark is the twin keyframes; the Kiriko facet mark retires.**
+From the owner (2026-08-02). The brand mark becomes **two rounded keyframe diamonds
+side by side — blue and violet-magenta — overlapping in an additive white core**: keyframes
+for motion, the overlap for compositing, the white for luminance. This supersedes the mark
+half of K-008 (the Edo-kiriko faceted hexagon, "approved placeholder" since 2026-07-13);
+K-008's splash structure and the Persona-5 broken-glass splash-art ambition stand.
+
+The shape was not taste alone: a corpus study of ~1,270 icons (Apple top charts US/GB/JP/DE
+free+paid, plus every editing/creative search) found the winning grammar — at most two hue
+families (78% of top apps), one large glyph, dark tile in the pro-editing tier — and the
+category's burned imagery to avoid (play button, film strip, clapperboard, lens ring, colour
+wheel; the four-point sparkle now reads as an AI badge). Letterform candidates were rejected
+by the owner as boring; composited-frames and lit-gem candidates were culled as
+gallery-generic and AI-generic respectively.
+
+Deployment: the bare mark (no tile) is the Windows/Linux icon; the dark rounded tile is
+macOS-only. File-type icons for `.lum` (twin keys, `LUM` kicker) and `.lumfx` (single key,
+`LUMFX` kicker) wait in `assets/brand/` for an installer to register the associations.
+Sources are the four SVGs in `assets/brand/`; `scripts/gen-icons.py` renders every raster
+(each size rendered from the SVG directly, never downscaled). docs/15-DESIGN.md brand
+section rewritten in the same commit.
+
+**K-252 · PROPOSED · Per-platform installers: Inno Setup, a user-level install script, a DMG.**
+Follows K-251 (2026-08-02): the document icons stop waiting. `packaging/` gains the three
+platform stories, deliberately boring ones — **Windows**: an Inno Setup script
+(`lumit.iss`, built by `build-installer.ps1`) that installs the release bundle and registers
+`.lum`/`.lumfx` in the registry with their icons and an open command; chosen over MSIX for
+zero signing prerequisites on a GPLv3 hobby-scale project. **Linux**: a POSIX `install.sh`
+that places the bundle under `~/.local`, plus a desktop entry and shared-mime-info XML; the
+brand SVGs install as scalable icons directly. Proper distro packages (deb/rpm/Flatpak) can
+grow from these files later. **macOS**: `make-dmg.sh` (hdiutil) and the Info.plist document
+types; unsigned, un-notarised, and the document `.icns` files join the bundle with the macOS
+pass (K-033), which also owes `application:openFile:` handling.
+
+The app now honours a `.lum` on its command line (`projectPathFromArgs`, regression-tested),
+so the Windows association genuinely opens the document, not just the application. Still
+open, in TODO: a CI release pipeline that builds all three, signing/notarisation, and
+double-click opening on macOS.
