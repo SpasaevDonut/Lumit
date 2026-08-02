@@ -21,11 +21,15 @@ the graph options every other property has and **nothing else**: no lenses, no e
 no freeze, no interpolation policy on that path. That parity is the rule, not a temporary
 state — Retime-specific affordances return only as they are built on top of the property.
 
-**Sections 1–13 below specify the segment engine**, which remains canonical: it still
-evaluates for any document carrying one, and it is where the richer affordances come from
-when they return. Read those sections as the destination and as the engine's contract, not as
-a description of the current frontend. Which of the two survives is the first entry under
-**Open questions** at the foot of this document, and [TODO.md](TODO.md) tracks every gap.
+**Sections 1–13 below specify the segment engine.** K-249 (2026-08-02) resolved which of the
+two survives: **the property does**. The segment store's layer arm is deleted (documents that
+carry one convert to property keyframes at load), `Clip::retime` migrates to the same
+property shape, and the segment engine remains only as that load-time conversion. Read
+§§1–13 as the mathematical reference the property path draws on — the integration, splitting
+and overrun maths — not as a description of the shipping store. The speed lens additionally
+has a Vegas mode: with the K-246 preference on it is a single-point **envelope** (speed as
+the value, default range 100% to −25%, K-247) rather than the two-sided derivative view.
+[TODO.md](TODO.md) tracks the migration and every remaining gap.
 
 ---
 
@@ -728,12 +732,10 @@ constant-factor mechanisms. The mapping, for when an importer exists:
 
 ## Open questions
 
-1. **Which Retime survives (K-197).** A layer can be retimed two ways today: the property of
-   §0, and the segment store of §§1–13 (`LayerKind::Footage::retime`, still the fallback in
-   `Layer::source_time_at`, still edited by the Source card's speed/reverse/frames rows).
-   Either the property grows what is worth keeping from the segment model and the store is
-   deleted, or the two are reconciled into one. **Two ways to retime one layer is the state
-   to leave, not to extend** — decide this before building anything further on either.
+1. **Resolved — the property survives (K-249, 2026-08-02).** The layer segment arm
+   (`LayerKind::Footage::retime`, the `Layer::source_time_at` fallback, the Source card's
+   speed/reverse/frames rows) is deleted with a one-way load-time conversion, and
+   `Clip::retime` migrates to the property shape. See §0.
 2. **Expression-driven Retime.** Should a later version allow an expression slot on the
    retime store (AE parity: expressions on Time Remap, `loopOut` source loops)? Requires
    defining exactness and cache semantics for a scripted map; deliberately excluded from v1

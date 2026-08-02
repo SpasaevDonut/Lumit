@@ -188,14 +188,11 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Retime: two ways to retime one layer (K-197).** A layer carries
-`retime: Option<Property>`, keyframable like any other property. The **old
-segment path** is still in the model (`LayerKind::Footage::retime`), still
-evaluated as the fallback in `Layer::source_time_at`, and still edited by the
-Source card's speed/reverse/frames rows. Decide its fate before building anything
-else on Retime: either the property grows what is worth keeping and the segment
-store is deleted, or the two are reconciled. **This is the state to leave, not to
-extend.**
+**Retime: one system, the property (K-249).** Decided 2026-08-02: the pre-K-197
+segment arm (`LayerKind::Footage::retime`, the `Layer::source_time_at` fallback,
+the Source card's speed/reverse/frames rows) is deleted, old documents converting
+to property keyframes at load; `Clip::retime` migrates to the same `Property`
+shape. Landing in the Vegas PR (K-246–K-249); delete this entry when it does.
 
 **System memory is only read on Windows.** `system_memory_bytes` and
 `video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB
@@ -220,9 +217,10 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Workspace machinery beyond the presets** ([07-UI-SPEC.md](07-UI-SPEC.md)
     §1.6) - user workspaces (save-as/rename/export), the chrome switcher strip,
     and Alt+Shift+1-9.
-- **First-run setup screen** (K-006) - GATED: post-v1 polish, and its cards set
-    preferences that do not exist yet. Build those first or the screen writes
-    settings nothing reads.
+- **First-run setup screen** (K-006, K-246) - v1 ships minimal in the Vegas PR:
+    one AE-style / Vegas-style choice writing the two K-246 settings. Still owed
+    after that lands: the four-card version with a small image over each choice
+    ([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
 - **Command palette** - recents are session-lived, and only genuinely bound
     shortcuts are taught (today just undo/redo).
 
@@ -292,8 +290,13 @@ register a closed fd - or one the OS has since reissued. Either hold the previou
 `SharedDmabuf` for one generation, or `dup()` at export so the number in flight
 owns itself.
 
-**Retime UI wiring** (the engine is built; these are UI/command affordances -
-[04-RETIMING.md](04-RETIMING.md)):
+**Ramp preset shelf rework** - the Linear/Slow/Fast/Smooth/Sharp buttons need a
+general rethink (owner, 2026-08-02) before they return on the property path; not
+a Vegas-mode concern ([04-RETIMING.md](04-RETIMING.md) §12.2).
+
+**Retime UI wiring** (UI/command affordances - [04-RETIMING.md](04-RETIMING.md);
+post-K-249 these return on the **property** path — the segment calls named here
+are the reference for behaviour, not wiring targets):
 - Freeze-at-playhead (`insert_freeze` built, no caller); Hold preset button;
     RATE/MAP type chips; kink badge; graph overrun band + source-out reference
     line; compensating Alt-drag; copy/paste a retime between clips;
