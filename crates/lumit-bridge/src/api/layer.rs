@@ -1193,10 +1193,12 @@ impl LayerReference {
 
     /// Trim one edge of a clip inward (docs/04 §8.2, non-ripple).
     ///
-    /// `start_frame` and `end_frame` are where the clip's edges should land;
-    /// only an edge that moves *inward* is honoured, because trimming outward
-    /// needs source the clip may not have and is its own operation (§7.3).
-    /// Nothing else on the row moves — no ripple, ever (K-022).
+    /// `start_frame` and `end_frame` are where the clip's edges should land.
+    /// An edge moving **inward** crops the map there; one moving **outward**
+    /// carries it on at the speed it was already going (§7.3), which is what
+    /// lets a clip be lengthened again after a cut. Running past the media it
+    /// has is legal — that is overrun, and it renders as a held frame — so it
+    /// is not refused. Nothing else on the row moves: no ripple, ever (K-022).
     #[frb(sync)]
     pub fn trim_clip(
         &self,
@@ -1216,9 +1218,13 @@ impl LayerReference {
         let mut next = clips[index].clone();
         if end < next.place_end() {
             next = next.trim_end(end).ok_or(BridgeError::InvalidTime)?;
+        } else if end > next.place_end() {
+            next = next.extend_end(end).ok_or(BridgeError::InvalidTime)?;
         }
         if start > next.place_start {
             next = next.trim_start(start).ok_or(BridgeError::InvalidTime)?;
+        } else if start < next.place_start {
+            next = next.extend_start(start).ok_or(BridgeError::InvalidTime)?;
         }
         clips[index] = next;
         self.commit_clips(clips)
@@ -1239,6 +1245,20 @@ impl LayerReference {
             .position(|c| c.id == clip)
             .ok_or(BridgeError::InvalidLayer)?;
         Ok((clips.clone(), index))
+    }
+
+    /// Take one clip off the row, by id.
+    ///
+    /// What it leaves is a **gap**, not a closed row: nothing after it moves,
+    /// so every edit point still standing keeps the beat it was cut to
+    /// (K-022). `delete_clip_at` is the same thing aimed with the playhead;
+    /// this is the one the sequence view's own menu uses, because there the
+    /// clip has already been pointed at.
+    #[frb(sync)]
+    pub fn delete_clip(&self, clip: Uuid) -> Result<(), BridgeError> {
+        let (mut clips, index) = self.clips_and_index(clip)?;
+        clips.remove(index);
+        self.commit_clips(clips)
     }
 
     /// Move a clip to a different position in the row's order (K-248).

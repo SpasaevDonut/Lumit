@@ -186,14 +186,62 @@ impl Clip {
         }
     }
 
-    /// The clip's single constant speed (1.0 = source rate), or None when it
-    /// is not retimed at all, or holds anything a single number cannot say.
+    /// The clip's single constant speed (1.0 = source rate), or None when its
+    /// map says something one number cannot.
+    ///
+    /// Read across **every** span, not just a two-key map: extending a clip
+    /// adds a key at the same speed, and three keys in a straight line are
+    /// still one constant speed however many of them there are.
     pub fn constant_speed(&self) -> Option<f64> {
         // Not retimed is the plainest constant speed there is: source rate.
-        let Some((v0, v1)) = self.ramp_view() else {
+        let Some(speeds) = self.span_speeds() else {
             return self.retime.is_none().then_some(1.0);
         };
-        ((v0 - v1).abs() < 1e-9).then_some(v0)
+        let first = *speeds.first()?;
+        speeds
+            .iter()
+            .all(|v| (v - first).abs() < 1e-9)
+            .then_some(first)
+    }
+
+    /// Every speed the map actually reaches: both ends of every span, in
+    /// order. None when the clip is not retimed, or its map is not keyframed.
+    ///
+    /// The *tangents*, not the chords. A chord is a span's average speed, so
+    /// reading chords cannot tell a ramp from a constant — 100% into 300% and
+    /// a flat 200% have the same chord, and the first is emphatically not one
+    /// speed. These are the same numbers the envelope draws its points at.
+    fn span_speeds(&self) -> Option<Vec<f64>> {
+        let Animation::Keyframed(keys) = &self.retime.as_ref()?.animation else {
+            return None;
+        };
+        if keys.len() < 2 {
+            return None;
+        }
+        let side = |s: &SideInterp, chord: f64| match s {
+            SideInterp::Bezier { speed, .. } => *speed,
+            SideInterp::Hold => 0.0,
+            SideInterp::Linear => chord,
+        };
+        let mut out = Vec::with_capacity((keys.len() - 1) * 2);
+        for pair in keys.windows(2) {
+            let dt = pair[1].time.checked_sub(pair[0].time).ok()?.to_f64();
+            if dt <= 0.0 {
+                return None;
+            }
+            let chord = (pair[1].value - pair[0].value) / dt;
+            out.push(side(&pair[0].interp_out, chord));
+            out.push(side(&pair[1].interp_in, chord));
+        }
+        Some(out)
+    }
+
+    /// The speed the clip leaves at, and the one it arrives at — the ends of
+    /// [`Self::span_speeds`]. Used when a clip is extended, so the map is
+    /// carried on at the speed it was already going rather than at 1×.
+    fn end_speeds(&self) -> Option<(f64, f64)> {
+        let speeds = self.span_speeds()?;
+        Some((*speeds.first()?, *speeds.last()?))
     }
 
     /// The clip's ramp as `(start speed, end speed)` when its map is two keys
@@ -412,6 +460,106 @@ impl Clip {
             place_start: new_start,
             place_duration,
             retime: right,
+            ..self.clone()
+        })
+    }
+
+    /// Extend the clip's tail outward to end at layer time `new_end`
+    /// (docs/04-RETIMING.md §7.3): the map is carried on at the speed it was
+    /// already going, so a tail that was frozen stays frozen and a moving one
+    /// keeps moving. The clip keeps its start; nothing else on the row moves.
+    ///
+    /// None when `new_end` is not actually past the current end, or on
+    /// overflow. Running past the media it has is *legal* — that is overrun,
+    /// and it renders as a held frame (§7.2) — so it is not refused here.
+    pub fn extend_end(&self, new_end: Rational) -> Option<Clip> {
+        let duration = new_end.checked_sub(self.place_start).ok()?;
+        if duration <= self.place_duration {
+            return None;
+        }
+        let added = duration.checked_sub(self.place_duration).ok()?;
+        let speed = self.end_speeds().map_or(1.0, |(_, v1)| v1);
+        let source_out = self
+            .source_out
+            .checked_add(
+                Rational::from_f64_on_grid(speed * added.to_f64(), Rational::FLICK_DEN).ok()?,
+            )
+            .ok()?;
+
+        let retime = match &self.retime {
+            None => None,
+            Some(map) => {
+                let Animation::Keyframed(keys) = &map.animation else {
+                    return None;
+                };
+                let last = keys.last()?;
+                let mut grown = keys.clone();
+                grown.push(Keyframe {
+                    time: duration,
+                    value: last.value + speed * added.to_f64(),
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                });
+                Some(Property {
+                    animation: Animation::Keyframed(grown),
+                    extra: map.extra.clone(),
+                })
+            }
+        };
+        Some(Clip {
+            place_duration: duration,
+            source_out,
+            retime,
+            ..self.clone()
+        })
+    }
+
+    /// Extend the clip's head outward to start at layer time `new_start`, the
+    /// mirror of [`Self::extend_end`]: the map is carried *backwards* at the
+    /// speed it starts with, so the clip enters earlier showing earlier
+    /// source. The clip's end never moves.
+    pub fn extend_start(&self, new_start: Rational) -> Option<Clip> {
+        if new_start >= self.place_start || new_start.is_negative() {
+            return None;
+        }
+        let added = self.place_start.checked_sub(new_start).ok()?;
+        let duration = self.place_duration.checked_add(added).ok()?;
+        let speed = self.end_speeds().map_or(1.0, |(v0, _)| v0);
+        let back = Rational::from_f64_on_grid(speed * added.to_f64(), Rational::FLICK_DEN).ok()?;
+        let source_in = self.source_in.checked_sub(back).ok()?;
+
+        let retime = match &self.retime {
+            None => None,
+            Some(map) => {
+                let Animation::Keyframed(keys) = &map.animation else {
+                    return None;
+                };
+                let first = keys.first()?;
+                // Every key moves later in clip time by what was added at the
+                // front, and a new one opens the map at the earlier source.
+                let mut grown = vec![Keyframe {
+                    time: Rational::ZERO,
+                    value: first.value - speed * added.to_f64(),
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                }];
+                for k in keys {
+                    grown.push(Keyframe {
+                        time: k.time.checked_add(added).ok()?,
+                        ..*k
+                    });
+                }
+                Some(Property {
+                    animation: Animation::Keyframed(grown),
+                    extra: map.extra.clone(),
+                })
+            }
+        };
+        Some(Clip {
+            place_start: new_start,
+            place_duration: duration,
+            source_in,
+            retime,
             ..self.clone()
         })
     }

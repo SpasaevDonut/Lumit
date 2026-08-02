@@ -917,6 +917,16 @@ class LayerReference {
         that: this,
       );
 
+  /// Take one clip off the row, by id.
+  ///
+  /// What it leaves is a **gap**, not a closed row: nothing after it moves,
+  /// so every edit point still standing keeps the beat it was cut to
+  /// (K-022). `delete_clip_at` is the same thing aimed with the playhead;
+  /// this is the one the sequence view's own menu uses, because there the
+  /// clip has already been pointed at.
+  void deleteClip({required UuidValue clip}) => BridgeLib.instance.api
+      .crateApiLayerLayerReferenceDeleteClip(that: this, clip: clip);
+
   /// Delete the clip under `frame`, leaving a gap.
   ///
   /// A gap is legal on the Vegas surface (K-071), so the clips after it stay
@@ -1441,10 +1451,12 @@ class LayerReference {
 
   /// Trim one edge of a clip inward (docs/04 §8.2, non-ripple).
   ///
-  /// `start_frame` and `end_frame` are where the clip's edges should land;
-  /// only an edge that moves *inward* is honoured, because trimming outward
-  /// needs source the clip may not have and is its own operation (§7.3).
-  /// Nothing else on the row moves — no ripple, ever (K-022).
+  /// `start_frame` and `end_frame` are where the clip's edges should land.
+  /// An edge moving **inward** crops the map there; one moving **outward**
+  /// carries it on at the speed it was already going (§7.3), which is what
+  /// lets a clip be lengthened again after a cut. Running past the media it
+  /// has is legal — that is overrun, and it renders as a held frame — so it
+  /// is not refused. Nothing else on the row moves: no ripple, ever (K-022).
   void trimClip(
           {required UuidValue clip,
           required PlatformInt64 startFrame,

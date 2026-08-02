@@ -3041,15 +3041,89 @@ fn trimming_a_clip_pulls_one_edge_in() {
     assert_eq!(after.start_frame, before.start_frame, "the start held");
     assert_eq!(after.end_frame, before.end_frame - 4);
 
-    // Trimming *outward* is refused rather than silently inventing source.
+    // And outward again: the map carries on at the speed it was going
+    // (docs/04 §7.3), which is what lets a cut clip be lengthened back.
     let out = after.end_frame + 20;
     layer
         .trim_clip(after.id, after.start_frame, out)
-        .expect("calm");
+        .expect("extended");
     assert_eq!(
         layer.get_clips().expect("clips").remove(0).end_frame,
-        after.end_frame,
-        "an outward trim needs source the clip may not have (docs/04 §7.3)"
+        out,
+        "an edge dragged outward extends rather than snapping back"
+    );
+}
+
+/// A clip that has been cut can be lengthened again.
+///
+/// The reported fault: after a razor cut the new edge looked draggable and
+/// snapped back every time, because only inward trims were honoured — so the
+/// half you had just made could be shortened and never restored.
+#[test]
+fn a_cut_clip_can_be_lengthened_again() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let left = layer.get_clips().expect("clips").remove(0);
+
+    // Shorter first, which always worked…
+    layer
+        .trim_clip(left.id, left.start_frame, left.end_frame - 3)
+        .expect("trimmed in");
+    let short = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(short.end_frame, left.end_frame - 3);
+
+    // …and now longer again, which is what snapped back.
+    layer
+        .trim_clip(short.id, short.start_frame, left.end_frame + 4)
+        .expect("extended out");
+    let long = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(long.end_frame, left.end_frame + 4);
+    assert_eq!(long.start_frame, left.start_frame, "the other edge held");
+}
+
+/// Extending carries the map on at the speed it was already going, so the
+/// frames the clip already showed keep showing at the same moments.
+#[test]
+fn extending_a_retimed_clip_keeps_what_it_already_played() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 200.0, 200.0).expect("sped");
+    let fast = layer.get_clips().expect("clips").remove(0);
+
+    layer
+        .trim_clip(fast.id, fast.start_frame, fast.end_frame + 5)
+        .expect("extended");
+    let longer = layer.get_clips().expect("clips").remove(0);
+    assert_eq!(
+        longer.speed_percent,
+        Some(200.0),
+        "still double speed all the way along, not a ramp into the new tail"
+    );
+}
+
+/// Deleting a clip leaves a gap: nothing after it moves, so every edit point
+/// still standing keeps the beat it was cut to (K-022).
+#[test]
+fn deleting_a_clip_leaves_a_gap() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let clips = layer.get_clips().expect("clips");
+    assert_eq!(clips.len(), 2);
+    let (first, second) = (clips[0].clone(), clips[1].clone());
+
+    layer.delete_clip(first.id).expect("deleted");
+    let left = layer.get_clips().expect("clips");
+    assert_eq!(left.len(), 1);
+    assert_eq!(left[0].id, second.id);
+    assert_eq!(
+        left[0].start_frame, second.start_frame,
+        "what was left did not slide back to fill the hole"
     );
 }
 

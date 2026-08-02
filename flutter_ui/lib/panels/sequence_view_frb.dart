@@ -247,6 +247,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
         cursor: SystemMouseCursors.resizeLeftRight,
         child: GestureDetector(
           behavior: HitTestBehavior.opaque,
+          onSecondaryTapDown: (d) => _clipMenu(clip, d.globalPosition),
           onHorizontalDragStart: (d) => setState(() {
             final where = d.localPosition.dx;
             _drag = (
@@ -292,6 +293,41 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
         ),
       ),
     );
+  }
+
+  /// What can be done to one clip. Right-click is where a clip's own
+  /// operations live: it is the one gesture that is unambiguously *about this
+  /// clip* and cannot be confused with cutting, moving or trimming it.
+  Future<void> _clipMenu(BridgeClip clip, Offset at) async {
+    final picked = await showLumitPopup<String>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        width: 190,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            MenuRow(
+                onPressed: () => close('reset'),
+                child: const Text('Reset speed')),
+            MenuRow(
+                onPressed: () => close('delete'),
+                child: const Text('Delete clip')),
+          ],
+        ),
+      ),
+    );
+    if (!mounted || picked == null) return;
+    switch (picked) {
+      case 'delete':
+        // A gap, not a closed row: what follows keeps the beat it was cut to.
+        widget.entry.layer.deleteClip(clip: clip.id);
+      case 'reset':
+        widget.entry.layer.setClipSpeed(
+            clip: clip.id, percent: 100, endPercent: 100);
+    }
+    widget.onChanged();
   }
 
   /// Write the drag: a body grab slides the clip, an edge grab trims it.
@@ -427,6 +463,17 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
   /// much as what the speed is.
   ({BridgeClip clip, int index, double speed, double dx})? _drag;
 
+  /// The speed the grabbed point had when the gesture began, and how far the
+  /// pointer has travelled since.
+  ///
+  /// **The drag is relative, not absolute.** Reading the speed straight off
+  /// the pointer's height teleports the point to the cursor the instant it is
+  /// grabbed — the whole clip's width is the grab target, so the pointer is
+  /// rarely at the point's own height — and then the change over a gesture is
+  /// not proportional to the travel at all. Travel in, travel out.
+  double _grabbedAt = 0;
+  double _travelled = 0;
+
   /// Where the press landed, and whether it has moved since — a press that
   /// never moves is a click, and the two are told apart here because raw
   /// pointer events do not do it for you.
@@ -463,17 +510,22 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     ];
   }
 
+  /// The axis as it was when the drag began, held for the whole gesture.
+  ///
+  /// **Without this the drag runs away.** The range grows to hold whatever a
+  /// point reaches, so a point dragged past the floor widened the axis, which
+  /// stretched what the next pixel of travel was worth, which pushed the point
+  /// further still — the value ran off exponentially for a steady hand. A
+  /// gesture has to keep the scale it started on; the axis reframes when the
+  /// pointer is let go.
+  (double, double)? _frozen;
+
   /// The range the strip draws over: the documented default, grown to hold
-  /// every point on every clip **and** whatever a drag is currently asking
-  /// for — so a point dragged past the floor reframes the axis instead of
-  /// running off the strip and over the layers below (K-247).
+  /// every point on every clip (K-247).
   (double, double) get _range {
-    var (lo, hi) = fitEnvelopeRange([for (final c in _clips) _keysOf(c)]);
-    final held = _drag;
-    if (held != null) {
-      if (held.speed < lo) lo = held.speed;
-      if (held.speed > hi) hi = held.speed;
-    }
+    final frozen = _frozen;
+    if (frozen != null) return frozen;
+    final (lo, hi) = fitEnvelopeRange([for (final c in _clips) _keysOf(c)]);
     // Air at both ends, always. K-247's 100%-to-−25% is what the axis has to
     // *contain*, and contained is not the same as touching the edge: without
     // this an un-retimed clip's flat 100% line drew exactly on the strip's top
@@ -486,12 +538,6 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     final (lo, hi) = _range;
     final span = (hi - lo).abs() < 1e-9 ? 1.0 : hi - lo;
     return height - (speed - lo) / span * height;
-  }
-
-  double _speedAt(double y, double height) {
-    final (lo, hi) = _range;
-    final span = (hi - lo).abs() < 1e-9 ? 1.0 : hi - lo;
-    return lo + (height - y) / (height <= 0 ? 1 : height) * span;
   }
 
   /// Where a clip's key sits on the comp's own clock, in x pixels.
@@ -562,14 +608,19 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                   final held = _drag;
                   if (held == null) return;
                   _moving = true;
+                  _travelled += e.delta.dy;
+                  final (lo, hi) = _range;
+                  final span = (hi - lo).abs() < 1e-9 ? 1.0 : hi - lo;
                   _drag = (
                     clip: held.clip,
                     index: held.index,
-                    speed: _speedAt(e.localPosition.dy, height),
+                    // Down is slower: the axis runs fast at the top.
+                    speed: _grabbedAt - _travelled / (height <= 0 ? 1 : height) * span,
                     dx: held.dx + e.delta.dx,
                   );
                 }),
                 onPointerUp: (e) {
+                  setState(() => _frozen = null);
                   // A press that never moved is a click: plant a point, lift
                   // one, or nothing at all.
                   if (!_moving) {
@@ -584,6 +635,7 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                 onPointerCancel: (_) => setState(() {
                   _drag = null;
                   _moving = false;
+                  _frozen = null;
                 }),
               ),
             ),
@@ -732,12 +784,13 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
   void _startDrag(Offset local, double height) {
     final found = _nearestPoint(local, height);
     if (found == null) return;
-    setState(() => _drag = (
-          clip: found.clip,
-          index: found.index,
-          speed: envelopeSpeeds(_keysOf(found.clip))[found.index],
-          dx: 0,
-        ));
+    final at = envelopeSpeeds(_keysOf(found.clip))[found.index];
+    setState(() {
+      _frozen = _range;
+      _grabbedAt = at;
+      _travelled = 0;
+      _drag = (clip: found.clip, index: found.index, speed: at, dx: 0);
+    });
   }
 
   /// `Ctrl`-click or double-click the line to plant a point; `Alt`-click one
