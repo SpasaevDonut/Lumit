@@ -372,15 +372,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// One layer's bounds, from what its kind can be asked cheaply.
   BarBounds _boundsOf(BridgeLayerEntry entry, int fpsNum, int fpsDen) {
     final info = entry.info;
-    // Retime frees both ends (docs/04-RETIMING.md): the Retime property
-    // (K-197), and the Source card's speed map, which is the same promise by
-    // the older route and is still live in the interface.
-    var retimed = info.retime != null;
+    // Retime frees both ends (docs/04-RETIMING.md). One question now, not two:
+    // K-249 left the Retime property as the only map, so the read model's own
+    // field is the whole answer and the bar no longer crosses the bridge to
+    // ask a second time.
+    final retimed = info.retime != null;
     int? sourceFrames;
     try {
       switch (info.kind) {
         case BridgeLayerKind.footage:
-          retimed = retimed || entry.layer.getRetime() != null;
           sourceFrames = _footageFrames[entry.layer.internallayerId.toString()];
         case BridgeLayerKind.precomp:
           final source = entry.layer.getSourceItem();

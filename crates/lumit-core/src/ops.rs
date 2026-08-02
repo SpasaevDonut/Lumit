@@ -259,11 +259,17 @@ pub enum Op {
         layer: Uuid,
         retime: Option<crate::anim::Property>,
     },
-    /// Replace a Footage layer's Retime map (None = play at source rate).
-    SetLayerRetime {
+    /// Set how a layer's fractional source moments become pixels — nearest,
+    /// blend or flow (docs/04-RETIMING.md §10).
+    ///
+    /// A render policy, independent of the retime map, which is why it is its
+    /// own op rather than part of `SetRetimeProperty`: changing how in-betweens
+    /// are made must not touch the map, and un-retimed layers have the setting
+    /// too.
+    SetLayerInterpolation {
         comp: Uuid,
         layer: Uuid,
-        retime: Option<crate::retime::Retime>,
+        interpolation: crate::retime::Interpolation,
     },
     /// Several ops as one undo step (e.g. "create Solids folder + solid +
     /// layer"). Applied in order; the inverse is the reversed inverses. If a
@@ -904,10 +910,10 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 retime: previous,
             })
         }
-        Op::SetLayerRetime {
+        Op::SetLayerInterpolation {
             comp,
             layer,
-            retime,
+            interpolation,
         } => {
             let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
             let l = c
@@ -915,14 +921,11 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
                 .iter_mut()
                 .find(|l| l.id == *layer)
                 .ok_or(OpError::UnknownLayer)?;
-            let crate::model::LayerKind::Footage { retime: slot, .. } = &mut l.kind else {
-                return Err(OpError::UnknownLayer);
-            };
-            let previous = std::mem::replace(slot, retime.clone());
-            Ok(Op::SetLayerRetime {
+            let previous = std::mem::replace(&mut l.interpolation, interpolation.clone());
+            Ok(Op::SetLayerInterpolation {
                 comp: *comp,
                 layer: *layer,
-                retime: previous,
+                interpolation: previous,
             })
         }
         Op::Batch { ops } => {

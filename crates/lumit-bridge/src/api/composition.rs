@@ -1016,7 +1016,7 @@ impl CompositionReference {
 
             crate::edits::base_layer(
                 f.name.clone(),
-                lumit_core::model::LayerKind::Footage { item, retime: None },
+                lumit_core::model::LayerKind::Footage { item },
                 out,
                 crate::edits::centred_transform(nat_w, nat_h, comp.width, comp.height),
             )

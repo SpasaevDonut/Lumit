@@ -342,7 +342,7 @@ mod tests {
         Layer {
             id: Uuid::now_v7(),
             name: "clip.mp4".into(),
-            kind: LayerKind::Footage { item, retime: None },
+            kind: LayerKind::Footage { item },
             in_point: t(0, 1),
             out_point: t(10, 1),
             start_offset: t(0, 1),
@@ -352,6 +352,7 @@ mod tests {
             label: 0,
             volume_db: crate::anim::Property::zero(),
             retime: None,
+            interpolation: Default::default(),
             blend: Default::default(),
             masks: Vec::new(),
             paint: Vec::new(),
@@ -776,6 +777,7 @@ mod tests {
                     label: 0,
                     volume_db: crate::anim::Property::zero(),
                     retime: None,
+                    interpolation: Default::default(),
                     blend: Default::default(),
                     masks: Vec::new(),
                     paint: Vec::new(),
@@ -811,12 +813,14 @@ mod tests {
         assert_eq!(n(&store.snapshot()), 1);
     }
 
-    /// Retime on a Footage layer round-trips through undo; the op refuses a
-    /// non-Footage target.
+    /// The frame-interpolation policy round-trips through undo, and it is a
+    /// layer's own setting rather than part of its retime (K-249): the layer
+    /// here is never retimed at all, and still has a policy — which is the
+    /// case that used to be unrepresentable, because the only home for it was
+    /// inside a retime the layer did not have.
     #[test]
-    fn retime_op_round_trips_and_targets_footage() {
-        use crate::retime::Retime;
-        use crate::time::Rational;
+    fn interpolation_round_trips_and_needs_no_retime() {
+        use crate::retime::Interpolation;
         let store = DocumentStore::new(Document::new());
         let (ops, comp_id) = scripted_ops(&store.snapshot());
         let mut layer_id = None;
@@ -830,45 +834,41 @@ mod tests {
         }
         let layer_id = layer_id.unwrap();
 
-        let retime = Retime::constant_speed(
-            Rational::new(10, 1).unwrap(),
-            Rational::ZERO,
-            Rational::new(1, 2).unwrap(),
+        let layer_of = |doc: &Document| {
+            doc.comp(comp_id)
+                .unwrap()
+                .layers
+                .iter()
+                .find(|l| l.id == layer_id)
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(
+            layer_of(&store.snapshot()).interpolation,
+            Interpolation::Nearest
         );
+        assert!(
+            layer_of(&store.snapshot()).retime.is_none(),
+            "this layer is deliberately un-retimed"
+        );
+
         store
-            .commit(Op::SetLayerRetime {
+            .commit(Op::SetLayerInterpolation {
                 comp: comp_id,
                 layer: layer_id,
-                retime: Some(retime),
+                interpolation: Interpolation::Blend,
             })
             .unwrap();
-        // Half speed: at local time 4 the source is 2.
-        let doc = store.snapshot();
-        let l = doc
-            .comp(comp_id)
-            .unwrap()
-            .layers
-            .iter()
-            .find(|l| l.id == layer_id)
-            .unwrap();
-        if let crate::model::LayerKind::Footage { retime, .. } = &l.kind {
-            assert!((retime.as_ref().unwrap().evaluate(4.0) - 2.0).abs() < 1e-9);
-        } else {
-            panic!("expected a footage layer");
-        }
+        assert_eq!(
+            layer_of(&store.snapshot()).interpolation,
+            Interpolation::Blend
+        );
+
         store.undo().unwrap();
-        let doc = store.snapshot();
-        let l = doc
-            .comp(comp_id)
-            .unwrap()
-            .layers
-            .iter()
-            .find(|l| l.id == layer_id)
-            .unwrap();
-        assert!(matches!(
-            &l.kind,
-            crate::model::LayerKind::Footage { retime: None, .. }
-        ));
+        assert_eq!(
+            layer_of(&store.snapshot()).interpolation,
+            Interpolation::Nearest
+        );
     }
 
     /// The Retime *property* (K-197) round-trips through undo, and it is what
@@ -962,6 +962,7 @@ mod tests {
                     label: 0,
                     volume_db: crate::anim::Property::zero(),
                     retime: None,
+                    interpolation: Default::default(),
                     blend: Default::default(),
                     masks: Vec::new(),
                     paint: Vec::new(),

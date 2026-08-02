@@ -1432,6 +1432,35 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (Frame interpolation — how in-between frames are synthesised, Nearest / Blend / Flow — is a
   per-layer retime setting in the data model, but is not surfaced in the timeline for now; it
   will return in a dedicated place.)
+- **One way to retime a layer, not two (K-249).** For a while Lumit could retime a footage
+  layer by either of two entirely separate mechanisms, and this is the note about the day
+  that stopped. The **Retime property** is the one described just above: a keyframable
+  value, in the graph editor, saying which moment of the source is on screen at each moment
+  of the layer. The other was older — a *segment store* living inside the layer's Footage
+  source, built from spans of eased speed, and edited by three rows on the Source card (an
+  on switch, a speed percentage, a reverse tick). Two systems, one job, and only the
+  property could draw a ramp, so the segment rows could not even show what the graph had
+  made — they said "varies" and refused to be edited.
+  The property survives and the segment rows are gone. Retiming a layer is **Ctrl+Alt+T**
+  (or Composition ▸ Enable Retime) and then the graph, everywhere, for every layer.
+  Three consequences worth knowing:
+  **Old projects convert themselves.** A project saved by the older build has its segment
+  store turned into the identical keyframes when it opens — the same shape, the same source
+  moment at every point of the layer — and the file's schema version moves from `0.1.0` to
+  `0.2.0` to record that this has happened. Nothing is lost: the conversion goes through the
+  segment store's own reader, which was written to describe a curve exactly.
+  **"In-between frames" moved rather than died.** How a fractional moment becomes pixels —
+  Nearest, Blend, or optical Flow — was stored *inside* the old segment store, which meant
+  the setting existed only if you used that particular retiming system. It was never part
+  of the map (the specification has always said the two are independent), so it now sits on
+  the layer in its own right, beside the Retime property, still on the Source card and still
+  saying what it always said. A layer that is not retimed has one too, which is right: a
+  25 fps source in a 60 fps composition is already being asked for frames that do not exist.
+  **A drag override nobody built came out with it.** The renderer carried a parameter for
+  overriding a layer's retime mid-drag, threaded through every layer of the preview and
+  export call chain — and constructed by no code anywhere. It went; a Retime drag arrives as
+  a provisionally-edited document, exactly like a Position drag, and the plan reads the map
+  from that.
 - **Property rows in the Timeline** (K-072) — twirl a layer open and each of its animatable
   properties (Position, Scale, Rotation, Opacity, and the 3D ones) gets its own row: on the
   left a stopwatch to turn animation on or off, the property's name, and its current value;

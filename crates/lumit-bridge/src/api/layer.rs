@@ -1174,7 +1174,7 @@ impl LayerReference {
         use lumit_core::time::Rational;
 
         let layer = self.item()?;
-        let LayerKind::Footage { item, retime } = &layer.kind else {
+        let LayerKind::Footage { item } = &layer.kind else {
             return Err(BridgeError::NotFootage);
         };
         let comp = self.composition()?;
@@ -1199,10 +1199,14 @@ impl LayerReference {
                 source_out: duration,
                 place_start: Rational::ZERO,
                 place_duration: duration,
-                retime: retime.clone().unwrap_or_else(|| {
-                    lumit_core::retime::Retime::identity(duration, Rational::ZERO)
-                }),
-                interpolation: Default::default(),
+                // The clip starts un-retimed whatever the layer was doing. A
+                // layer's Retime is a property in *layer* time and a clip's is
+                // a curve in *clip* time; carrying one across as if they were
+                // the same thing was only ever right because both used to be
+                // the same segment store (K-249). Converting a retimed layer
+                // faithfully is its own piece of work, tracked in TODO.
+                retime: lumit_core::retime::Retime::identity(duration, Rational::ZERO),
+                interpolation: layer.interpolation.clone(),
                 extra: serde_json::Map::new(),
             }],
         };

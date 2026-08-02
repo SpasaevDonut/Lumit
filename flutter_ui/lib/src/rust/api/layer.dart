@@ -940,6 +940,16 @@ class LayerReference {
         that: this,
       );
 
+  /// How this layer's in-between frames are made.
+  ///
+  /// Every layer has an answer, retimed or not: a layer whose source runs at
+  /// a different rate from its comp is already being asked for frames between
+  /// the ones it has.
+  BridgeRetimeInterp getInterpolation() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetInterpolation(
+        that: this,
+      );
+
   /// What kind of source this layer has.
   BridgeLayerKind getKind() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetKind(
@@ -980,13 +990,6 @@ class LayerReference {
   /// This layer's transform parent, if any (K-103).
   UuidValue? getParent() =>
       BridgeLib.instance.api.crateApiLayerLayerReferenceGetParent(
-        that: this,
-      );
-
-  /// This layer's retiming, or `None` when it plays at source rate (or is not
-  /// a footage layer at all).
-  BridgeRetime? getRetime() =>
-      BridgeLib.instance.api.crateApiLayerLayerReferenceGetRetime(
         that: this,
       );
 
@@ -1170,6 +1173,11 @@ class LayerReference {
       BridgeLib.instance.api
           .crateApiLayerLayerReferenceSetEffects(that: this, effects: effects);
 
+  /// Choose how in-between frames are found. One undo step.
+  void setInterpolation({required BridgeRetimeInterp interpolation}) =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceSetInterpolation(
+          that: this, interpolation: interpolation);
+
   void setLabel({required int label}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetLabel(that: this, label: label);
 
@@ -1195,26 +1203,6 @@ class LayerReference {
   void setParent({UuidValue? parent}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetParent(that: this, parent: parent);
 
-  /// Turn retiming on or off.
-  ///
-  /// On installs the identity map — the same length, playing at source rate —
-  /// so switching it on changes nothing visible and gives the row something to
-  /// edit. Off removes the map entirely rather than setting 100%, because
-  /// "not retimed" and "retimed to exactly 1×" are different states in the
-  /// file and only the first skips the resampler.
-  ///
-  /// Off also re-hangs the layer on its source, exactly as the Retime property
-  /// does (K-212): it keeps its in point and the frame showing there, then
-  /// plays at source rate until the source runs out or its own out point
-  /// arrives, whichever comes first. It never grows. One undo step covers both.
-  void setRetimeEnabled({required bool on_}) => BridgeLib.instance.api
-      .crateApiLayerLayerReferenceSetRetimeEnabled(that: this, on_: on_);
-
-  /// Choose how in-between frames are found.
-  void setRetimeInterpolation({required BridgeRetimeInterp interpolation}) =>
-      BridgeLib.instance.api.crateApiLayerLayerReferenceSetRetimeInterpolation(
-          that: this, interpolation: interpolation);
-
   /// Replace the Retime property's whole animation, as one undoable step —
   /// the same coarse-grained shape as a transform property, for the same
   /// invertibility reason. Refused on a layer that is not retimed: the row
@@ -1222,18 +1210,6 @@ class LayerReference {
   void setRetimeProperty({required BridgeScalar value}) => BridgeLib
       .instance.api
       .crateApiLayerLayerReferenceSetRetimeProperty(that: this, value: value);
-
-  /// Open or close the reverse gate.
-  void setRetimeReverse({required bool allow}) => BridgeLib.instance.api
-      .crateApiLayerLayerReferenceSetRetimeReverse(that: this, allow: allow);
-
-  /// Set one constant speed for the whole layer.
-  ///
-  /// Refused on a layer whose curve varies — see the module note. A speed of
-  /// zero is a freeze, which is legal and useful; a negative one needs the
-  /// reverse gate open, which the engine enforces at evaluation.
-  void setRetimeSpeed({required double percent}) => BridgeLib.instance.api
-      .crateApiLayerLayerReferenceSetRetimeSpeed(that: this, percent: percent);
 
   /// Replace this shape layer's whole contents.
   ///

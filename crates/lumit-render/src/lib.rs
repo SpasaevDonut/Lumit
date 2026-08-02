@@ -73,6 +73,6 @@ pub use headless::{
     preview_scale_q, DemotedFrame, FrameProvenance, HeadlessRenderer, PrefetchWant, PreparedFrame,
     Promotion, DEFAULT_VRAM_CACHE_BYTES,
 };
-pub use plan::{plan_comp_frame, Quality, RetimeOverride};
+pub use plan::{plan_comp_frame, Quality};
 pub use realise::Realiser;
 pub use source::{SourceProbe, SourceProbes};

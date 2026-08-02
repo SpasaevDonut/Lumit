@@ -2696,7 +2696,6 @@ fn trace_scope(
                         req.frame,
                         quality_for(req.scale),
                         req.scale,
-                        None,
                     )
                     .ok()
                     .map(|(rgba, width, height)| (width, height, rgba))
@@ -2799,14 +2798,7 @@ fn sample_pixels(
                     let mut render = || {
                         state
                             .renderer
-                            .render_preview(
-                                &document,
-                                req.comp.id,
-                                req.frame,
-                                quality,
-                                req.scale,
-                                None,
-                            )
+                            .render_preview(&document, req.comp.id, req.frame, quality, req.scale)
                             .ok()
                             .map(|(rgba, width, height)| (width, height, rgba))
                     };
@@ -2897,7 +2889,6 @@ fn sample_layer_alone(
             req.frame,
             quality_for(req.scale),
             req.scale,
-            None,
         )
         .ok()?;
     state.layer_sample = Some(LayerSample {

@@ -188,11 +188,17 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Retime: one system, the property (K-249).** Decided 2026-08-02: the pre-K-197
-segment arm (`LayerKind::Footage::retime`, the `Layer::source_time_at` fallback,
-the Source card's speed/reverse/frames rows) is deleted, old documents converting
-to property keyframes at load; `Clip::retime` migrates to the same `Property`
-shape. Landing in the Vegas PR (K-246–K-249); delete this entry when it does.
+**Retime: the clip half of K-249.** The **layer** half landed: the segment arm
+is deleted, old documents convert at load (`0.1.0` → `0.2.0`), and interpolation
+is its own layer field. Still owed: `Clip::retime` moves from the segment store
+to the same `Property` shape, so the sequence view's envelope and the layer
+channel are one editor over one representation. Two things wait on it:
+- **`convert_to_sequenced` drops the layer's Retime** rather than carrying it
+    onto the clip it makes (`layer.rs`). A layer's map is in layer time and a
+    clip's is in clip time; converting one to the other faithfully is its own
+    piece of work, and doing it wrong silently re-times footage.
+- **A clip's own speed map gets no key at a razor cut**, the way a layer's does
+    (below, under Toolbar tools).
 
 **System memory is only read on Windows.** `system_memory_bytes` and
 `video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB
