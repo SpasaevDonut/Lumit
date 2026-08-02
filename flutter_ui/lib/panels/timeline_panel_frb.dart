@@ -598,9 +598,13 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
       final extra =
           _sequenceExtra[layers[i].layer.internallayerId.toString()];
       if (extra != null) {
-        // The view sits directly under the layer's own bar, above whatever
-        // fold-out rows follow it.
-        out.add((y + _rowHeight, y + _rowHeight + extra));
+        // **From the top of the layer's own row.** The view takes that row as
+        // the first of its three clip rows, so a seam ruled under it would cut
+        // the clip region in two — which is the one place the region must read
+        // as a single block. The seams that *bound* the whole view are left
+        // alone: the range is exclusive at both ends, so the layer still has a
+        // line above it and the fold-out below still has one over it.
+        out.add((y, y + _rowHeight + extra));
       }
       y += heights[i];
     }
@@ -5155,6 +5159,19 @@ class _LayerArea extends StatelessWidget {
                                             crossAxisAlignment:
                                                 CrossAxisAlignment.stretch,
                                             children: [
+                                            // An open sequence view takes the
+                                            // layer's own bar row as the top
+                                            // of its clip area, so the bar
+                                            // itself stands down: three rows
+                                            // of clips is one region, and a
+                                            // bar drawn across the first of
+                                            // them would put a seam through
+                                            // the middle of it (K-248).
+                                            if (!sequenceExtra.containsKey(
+                                                layers[i]
+                                                    .layer
+                                                    .internallayerId
+                                                    .toString()))
                                             _Bar(
                                               key: ValueKey<String>(
                                                   'tl-bar-${layers[i].layer.internallayerId}'),
@@ -5203,6 +5220,13 @@ class _LayerArea extends StatelessWidget {
                                                 fps: fps,
                                                 fpsNum: fpsNum,
                                                 fpsDen: fpsDen,
+                                                razor: razor,
+                                                onRazor: (frame) =>
+                                                    onRazor(layers[i], frame),
+                                                onSelect: () =>
+                                                    onSelect(layers[i].layer),
+                                                onClose: () => onOpenSequence
+                                                    ?.call(layers[i]),
                                                 graphHeight: (sequenceExtra[
                                                             layers[i]
                                                                 .layer

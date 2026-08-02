@@ -1439,11 +1439,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   on screen while you do it. (An earlier decision put this in a tab of its own; K-248
   changed it.)
   It opens **six rows tall, three and three**, and the layer's own bar row is the **top of
-  the three** — so opening adds the two rows under it rather than pushing a new strip below
-  an unchanged bar, and a collapsed Sequence layer looks exactly as it always did. An open
-  view carries a faint accent outline around the whole of it, bar row included, so it reads
-  as one region belonging to one layer rather than as loose strips that happen to sit under
-  it. The top three hold the **clips**: each drawn
+  the three**: while the view is open the bar itself stands down and the clip region takes
+  that row, so the three read as one block with no seam through them — the row seams are
+  suppressed across the whole view, and a hairline between the first and second row was
+  exactly the thing that made it look like a bar with strips stuck underneath. Opening
+  therefore adds the two rows below the bar rather than pushing a new strip under an
+  unchanged one, and a collapsed Sequence layer looks precisely as it always did. An open
+  view carries a faint accent outline around the whole of it, and a line across the bottom
+  of the clips says where the graph begins. The top three hold the **clips**: each drawn
   where it sits with its playback speed on it, draggable along the row by its body and
   trimmable by either edge, and cuttable with the razor or `Ctrl+Shift+D` exactly as the bar
   above is — they are the same commands on the same layer. The bottom three hold the

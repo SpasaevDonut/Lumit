@@ -68,6 +68,16 @@ class SequenceViewFrb extends StatefulWidget {
   final int fpsNum;
   final int fpsDen;
 
+  /// Whether the razor is armed, and how to cut this layer at a frame — the
+  /// open view stands in for the layer's bar, so it carries the bar's razor.
+  final bool razor;
+  final void Function(int frame)? onRazor;
+
+  /// Select this layer, and close the view — the bar's other duties, which
+  /// the view takes on while it is standing in for it.
+  final VoidCallback? onSelect;
+  final VoidCallback? onClose;
+
   /// How tall the graph half is right now, and where to report a drag of its
   /// divider. Only the graph resizes: the clip strip is sized for cutting,
   /// while how much room a speed curve wants depends on how far its ramps go.
@@ -84,6 +94,10 @@ class SequenceViewFrb extends StatefulWidget {
     required this.fps,
     required this.fpsNum,
     required this.fpsDen,
+    this.razor = false,
+    this.onRazor,
+    this.onSelect,
+    this.onClose,
     this.graphHeight = sequenceEnvelopeStrip,
     this.onGraphHeight,
     required this.onChanged,
@@ -98,9 +112,23 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
   /// has travelled — so the drag previews and commits once, on release.
   ({BridgeClip clip, _Grab grab, double dx})? _drag;
 
-  /// Where the envelope was last clicked, for spotting a double-click without
-  /// putting a recogniser in the way of the single click that selects.
+  /// Where the envelope and the clip strip were last clicked, for spotting a
+  /// double-click without putting a recogniser in the way of the single click
+  /// that selects — the same trap the bar and the graph pane both hit.
   DateTime? _lastEnvelopeTap;
+  DateTime? _lastStripTap;
+
+  /// Whether this click is the second of a double, on the clip strip.
+  bool _doubleOnStrip() {
+    final now = DateTime.now();
+    final last = _lastStripTap;
+    _lastStripTap = now;
+    if (last != null && now.difference(last) < kDoubleTapTimeout) {
+      _lastStripTap = null;
+      return true;
+    }
+    return false;
+  }
 
   List<BridgeClip> get _clips => widget.entry.info.clips;
 
@@ -120,10 +148,51 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(
-          // Two rows here; the third is the layer's own bar row, which this
-          // sits directly under and reads as one region with.
-          height: sequenceClipExtra,
-          child: Stack(children: [for (final c in _clips) _clip(t, c)]),
+          // All three rows, the layer's own bar row included: the view stands
+          // in for the bar while it is open, so the clips are one region
+          // rather than a strip under a bar with a seam between them.
+          height: sequenceClipStrip,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            // The razor cuts here, since there is no bar to aim at while the
+            // view is open — the same command on the same layer, aimed at
+            // where it was clicked (docs/07 §4.4).
+            onTapUp: (d) {
+              if (widget.razor) {
+                widget.onRazor?.call(widget.axis.frameAt(d.localPosition.dx));
+                return;
+              }
+              widget.onSelect?.call();
+              // Double-clicking the region shuts it again, the same gesture
+              // that opened it.
+              if (_doubleOnStrip()) widget.onClose?.call();
+            },
+            child: Stack(
+              children: [
+                // The region's own ground, so three rows of it read as one
+                // block rather than as empty lane.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: ColoredBox(color: t.surface1),
+                  ),
+                ),
+                for (final c in _clips) _clip(t, c),
+                // Where the clips end and the graph begins. Drawn *inside*
+                // the clip region rather than as a row of its own: a
+                // separator with a height of its own makes the view one pixel
+                // taller than the outline reserved for it, and the two halves
+                // of the Timeline go out of step over a hairline.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  child: IgnorePointer(
+                    child: Container(height: 1, color: t.hairline),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ),
         SizedBox(
           height: (widget.graphHeight - _dividerHeight)
@@ -358,6 +427,12 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
   /// much as what the speed is.
   ({BridgeClip clip, int index, double speed, double dx})? _drag;
 
+  /// Where the press landed, and whether it has moved since — a press that
+  /// never moves is a click, and the two are told apart here because raw
+  /// pointer events do not do it for you.
+  Offset? _downAt;
+  bool _moving = false;
+
   List<BridgeClip> get _clips => widget.entry.info.clips;
 
   /// A clip's envelope keys. An un-retimed clip has none of its own, so it is
@@ -429,9 +504,16 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     return LayoutBuilder(
       builder: (context, box) {
         final height = box.maxHeight;
+        // **Every child keyed.** Flutter matches a Stack's children by
+        // position when they are not, so the readout appearing mid-drag took
+        // the slot before the gesture detector and rebuilt its element from
+        // scratch — taking with it the recogniser holding the drag, which
+        // ended the gesture the instant the readout showed up. The same trap
+        // K-212 records against the trimmed-layer ghost.
         return Stack(
           children: [
             Positioned.fill(
+              key: const ValueKey('seq-envelope-curves'),
               child: IgnorePointer(
                 child: CustomPaint(
                   painter: _EnvelopePainter(
@@ -457,29 +539,52 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
             // height of a dot against an axis that reframes as you drag is
             // not aiming.
             if (_drag case final held?) _readout(t, held, height),
+            // Last, so it is on top, and keyed, so it keeps its element
+            // however the children above it come and go.
             // The line itself: click to plant a point, drag one to re-speed.
             Positioned.fill(
-              child: GestureDetector(
+              key: const ValueKey('seq-envelope-gestures'),
+              // **Raw pointer events, not a gesture.** A point moves in both
+              // directions, and a pan recogniser that wants both axes is in
+              // the arena against the lane's vertical scroll *and* its
+              // horizontal one — which win, so the drag died the moment it
+              // had travelled far enough for them to claim it and had to be
+              // started again. A `Listener` is not in the arena at all, so
+              // the first drag is the one that works.
+              child: Listener(
                 key: const ValueKey('seq-envelope'),
                 behavior: HitTestBehavior.opaque,
-                onTapUp: (d) => _tap(d.localPosition, height),
-                // A pan, not a vertical drag: the point moves in both
-                // directions, so the gesture must not be handed to the
-                // scrollables the moment it leans sideways.
-                onPanStart: (d) => _startDrag(d.localPosition, height),
-                onPanUpdate: (d) => setState(() {
+                onPointerDown: (e) {
+                  _downAt = e.localPosition;
+                  _startDrag(e.localPosition, height);
+                },
+                onPointerMove: (e) => setState(() {
                   final held = _drag;
-                  if (held != null) {
-                    _drag = (
-                      clip: held.clip,
-                      index: held.index,
-                      speed: _speedAt(d.localPosition.dy, height),
-                      dx: held.dx + d.delta.dx,
-                    );
-                  }
+                  if (held == null) return;
+                  _moving = true;
+                  _drag = (
+                    clip: held.clip,
+                    index: held.index,
+                    speed: _speedAt(e.localPosition.dy, height),
+                    dx: held.dx + e.delta.dx,
+                  );
                 }),
-                onPanEnd: (_) => _commit(),
-                onPanCancel: () => setState(() => _drag = null),
+                onPointerUp: (e) {
+                  // A press that never moved is a click: plant a point, lift
+                  // one, or nothing at all.
+                  if (!_moving) {
+                    setState(() => _drag = null);
+                    _tap(_downAt ?? e.localPosition, height);
+                  } else {
+                    _commit();
+                  }
+                  _moving = false;
+                  _downAt = null;
+                },
+                onPointerCancel: (_) => setState(() {
+                  _drag = null;
+                  _moving = false;
+                }),
               ),
             ),
           ],
@@ -498,6 +603,7 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     final x = _xOfKey(held.clip, keys[index]);
     final y = _y(envelopeSpeeds(keys)[index], height);
     return Positioned(
+      key: const ValueKey('seq-envelope-readout'),
       left: x + 8,
       top: (y - 9).clamp(0.0, height - 18),
       child: IgnorePointer(

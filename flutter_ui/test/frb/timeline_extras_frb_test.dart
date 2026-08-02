@@ -414,6 +414,53 @@ void main() {
           reason: 'the row below moved by the same amount on both sides');
     });
 
+    /// A drag must survive the readout appearing.
+    ///
+    /// The readout is a `Stack` child that only exists while a drag runs, and
+    /// unkeyed children are matched by position — so it took the gesture
+    /// detector's slot, Flutter rebuilt that element, and the recogniser
+    /// holding the drag went with it. The gesture ended the instant the
+    /// readout showed up, one frame in. Driven here one step at a time,
+    /// because a single synthetic move never reproduces it (the same reason
+    /// K-212's first round of tests all passed).
+    testWidgets('a drag keeps going once the readout appears', (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      final before = layer.getClips().single;
+      final strip = tester.getRect(find.byKey(const ValueKey('seq-envelope')));
+      final clipBox =
+          tester.getRect(find.byKey(ValueKey<String>('seq-clip-${before.id}')));
+      final from = Offset(clipBox.center.dx, strip.top + strip.height * 0.3);
+
+      // One event at a time, because a single synthetic move never
+      // reproduces a drag that dies part way (the same reason K-212's first
+      // round of tests all passed).
+      final gesture = await tester.startGesture(from);
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(0, 8));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final after = layer.getClips().single;
+      expect(after.speedPercent, isNotNull);
+      // The whole 48px of travel, not the first step of it.
+      final oneStepOnly = 100 - (8 / strip.height) * 161;
+      expect(after.speedPercent!, lessThan(oneStepOnly - 20),
+          reason: 'every move counted, not just the one before the readout '
+              'appeared');
+    });
+
     testWidgets('dragging an envelope point re-speeds only that clip',
         (tester) async {
       final p = withComp();
