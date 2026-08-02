@@ -206,6 +206,29 @@ tools and the Pen (§2.3.1), Horizontal type (§2.3.2), the three painting tools
 three camera tools (§2.3.5). **Disabled** (K-228 — shown, not armable): vertical type, the Pen's
 four editing siblings, the Roto tools and the Puppet pins. Each tool's behaviour is tracked
 separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
+
+### 1.8 The menu bar (K-244)
+
+The bar carries nine menus in this order: **File, Edit, Composition, Layer, Effect, Animation,
+View, Window, Help**. The arrangement is deliberately After Effects', for the same reason the
+panel layout is.
+
+- Every command the finished application will carry MUST be listed, whether or not it is built.
+  An unbuilt one MUST read "(Not implemented)" after its name and MUST be disabled.
+- A command whose preconditions are absent (no project, no composition, no selected layer) MUST
+  grey out rather than fail when pressed.
+- A row MUST show the chord the keymap currently binds to its action, and MUST take it from the
+  keymap rather than carrying a chord of its own (§15, K-199).
+- On **macOS** the bar MUST be the system menu bar, not an in-window strip, with About and
+  Settings in the application menu. On Windows and Linux Settings sits under Edit and About
+  under Help. The item tree MUST be shared between the two renderings.
+- **Window** MUST list every panel with a tick showing whether it is in the arrangement;
+  toggling one adds or drops it, and the change persists because the arrangement does. The last
+  remaining panel MUST NOT be hideable.
+- **Effect** MUST offer one submenu per effect category, each item applying to *every* selected
+  layer (K-217), and the whole menu MUST be disabled with nothing selected.
+- **File ▸ Open recent** lists the ten most recent project paths, newest first.
+
 ---
 
 ## 2. Viewer
@@ -1630,6 +1653,13 @@ them away the day dispatch started going through the keymap.
 | Global | `Ctrl+M` | Add active comp to export queue |
 | Global | `Ctrl+K` | Composition settings |
 | Global | `Ctrl+Z` / `Ctrl+Shift+Z` | Undo / redo |
+| Global | `Ctrl+Alt+N` / `Ctrl+N` | New project / new composition (After Effects' pairing) |
+| Global | `Ctrl+O` | Open a project |
+| Global | `Ctrl+S` / `Ctrl+Shift+S` | Save / Save as |
+| Global | `Ctrl+I` | Import footage |
+| Global | `Ctrl+Alt+M` | Export the composition |
+| Global | `Ctrl+A` / `Ctrl+Shift+A` | Select all layers / deselect all |
+| Global | `Ctrl+Alt+;` | Settings (Preferences) |
 | Global | `Alt+Shift+1…9` | Switch workspace |
 | Global | `` ` `` | Maximise / restore panel under pointer |
 | Tools | `V` | Selection tool |

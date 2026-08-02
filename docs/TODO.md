@@ -366,6 +366,15 @@ setting nothing reads.
 - **Export status still speaks the old idiom** - `export.rs` replies in JSON
     strings (`err_json`) polled on a timer; follow the worker's typed-stream way.
 
+- **The menu bar names its own backlog (K-244).** Every row marked
+    "(Not implemented)" in File/Edit/Composition/Layer/Animation/View/Help is a
+    command with a place waiting for it: Close project, History, Cut/Copy/Paste,
+    layer settings and the mask/transform/blending/matte/style families, the
+    whole Animation menu, the View menu's zoom/resolution/grid/ruler rows,
+    Trim and Crop comp to work area, Add to export queue, Check for updates and
+    the help links. Delete each mark as the command lands. Suggested chords for
+    the AE-shaped ones are in K-244.
+
 ## Later - roadmap features not yet built
 
 Grouped by the phase they belong to in [16-ROADMAP.md](16-ROADMAP.md). A pointer

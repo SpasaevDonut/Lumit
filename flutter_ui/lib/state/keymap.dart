@@ -17,6 +17,7 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/widgets.dart' show SingleActivator;
 import 'package:flutter_rust_bridge/flutter_rust_bridge.dart';
 
 import '../src/rust/api/keymap.dart';
@@ -111,6 +112,38 @@ String? chordText(KeyEvent event) {
   ].join('+');
 }
 
+/// The logical key each keymap name stands for — [_namedKeys] read backwards.
+/// Where two keys share a name (`Enter` is both), the first declared wins, so
+/// the main-row key is the one a menu shows.
+final Map<String, LogicalKeyboardKey> _keysByName = {
+  for (final e in _namedKeys.entries.toList().reversed) e.value: e.key,
+};
+
+/// A chord as macOS's own menu bar wants it: a [SingleActivator] for the native
+/// `PlatformMenuItem` to draw beside its row (K-244).
+///
+/// Only the native menu needs this — everywhere else the keyboard is the
+/// engine's business and a chord is text. `Mod` becomes Cmd, because macOS is
+/// the only place this is asked. Null when the chord names a key we cannot
+/// spell as a logical key, so a row shows no shortcut rather than the wrong one.
+SingleActivator? activatorForChord(String chord) {
+  if (chord.isEmpty) return null;
+  // `Mod++` would split into an empty last part; the trailing `+` *is* the key.
+  final keyText = chord.endsWith('+') ? '+' : chord.split('+').last;
+  final mods = chord.substring(0, chord.length - keyText.length).split('+');
+  final key = _keysByName[keyText] ??
+      (keyText.length == 1
+          ? LogicalKeyboardKey(keyText.toLowerCase().codeUnitAt(0))
+          : null);
+  if (key == null) return null;
+  return SingleActivator(
+    key,
+    meta: mods.contains('Mod'),
+    alt: mods.contains('Alt'),
+    shift: mods.contains('Shift'),
+  );
+}
+
 /// How a chord is *shown* on this machine: `Mod` becomes the symbol or word the
 /// platform's own menus use, so a Windows user reads Ctrl and a Mac user reads
 /// ⌘. The stored form never changes — only the reading of it.
@@ -195,10 +228,18 @@ class KeymapState extends ChangeNotifier {
   /// hover: this is drawn on every tooltip and the answer only changes when a
   /// rebind lands, which is exactly when [_adopt] refreshes it.
   String? chordFor(String action) {
+    final raw = rawChordFor(action);
+    return raw == null ? null : chordLabel(raw);
+  }
+
+  /// The same binding in the engine's own spelling (`Mod+Shift+Z`), for the one
+  /// caller that needs the parts rather than the reading: the macOS native menu,
+  /// which wants a [SingleActivator].
+  String? rawChordFor(String action) {
     for (final group in _groups) {
       for (final binding in group.bindings) {
         if (binding.action == action && binding.chord.isNotEmpty) {
-          return chordLabel(binding.chord);
+          return binding.chord;
         }
       }
     }

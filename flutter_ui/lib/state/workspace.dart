@@ -421,8 +421,24 @@ class Workspace extends ChangeNotifier {
   /// this does not notify listeners.
   void rememberProject(String path) {
     lastProjectPath = path;
+    recentProjects
+      ..remove(path)
+      ..insert(0, path);
+    if (recentProjects.length > maxRecentProjects) {
+      recentProjects.removeRange(maxRecentProjects, recentProjects.length);
+    }
     save();
   }
+
+  /// The projects opened or saved most recently, newest first — File ▸ Open
+  /// recent. Paths only: whether the file is still there is not asked until
+  /// someone picks it, because a network drive that is slow to answer must not
+  /// hold up a menu opening.
+  final List<String> recentProjects = [];
+
+  /// How many the list keeps. Ten is the length every editor settled on: long
+  /// enough to reach last week's work, short enough to read at a glance.
+  static const int maxRecentProjects = 10;
 
   /// Remember [session] for the project at [path], persisted immediately so the
   /// next open restores it. A no-op write when the session is unchanged, so the
@@ -496,6 +512,7 @@ class Workspace extends ChangeNotifier {
         'precompose_adjust_duration': precomposeAdjustDuration,
         'precompose_open_new_comp': precomposeOpenNewComp,
         'last_project_path': lastProjectPath,
+        'recent_projects': recentProjects,
         'sessions': {
           for (final e in sessions.entries) e.key: e.value.toJson(),
         },
@@ -547,6 +564,11 @@ class Workspace extends ChangeNotifier {
     lastProjectPath = j['last_project_path'] is String
         ? j['last_project_path'] as String
         : null;
+    recentProjects.clear();
+    final rawRecent = j['recent_projects'];
+    if (rawRecent is List) {
+      recentProjects.addAll(rawRecent.whereType<String>());
+    }
     sessions.clear();
     final rawSessions = j['sessions'];
     if (rawSessions is Map) {
