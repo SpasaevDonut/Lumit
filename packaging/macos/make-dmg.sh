@@ -33,6 +33,16 @@ ffprefix="$(brew --prefix ffmpeg@7 2>/dev/null)" || {
     exit 1
 }
 
+# Flutter forces a universal build on the xcodebuild command line
+# (ARCHS="arm64 x86_64", ONLY_ACTIVE_ARCH=NO), which out-ranks every project
+# and Podfile setting — cargokit then cross-compiles the bridge for the
+# architecture Homebrew has no FFmpeg for, and rusty_ffmpeg's pkg-config
+# probe dies. FLUTTER_XCODE_* variables are Flutter's own escape hatch:
+# they are appended as build settings AFTER Flutter's, and the last ARCHS
+# wins. One architecture per machine until K-033 takes on universal builds.
+FLUTTER_XCODE_ARCHS="$arch"
+export FLUTTER_XCODE_ARCHS
+
 (cd "$root/flutter_ui" && flutter build macos --release)
 
 app="$root/flutter_ui/build/macos/Build/Products/Release/lumit_flutter.app"
