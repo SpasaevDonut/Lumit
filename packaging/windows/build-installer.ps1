@@ -17,16 +17,22 @@ try {
 }
 
 $iscc = Get-Command iscc -ErrorAction SilentlyContinue
-if ($null -eq $iscc) {
-    $default = "$env:ProgramFiles(x86)\Inno Setup 6\ISCC.exe"
-    if (Test-Path $default) { $iscc = $default }
-    else {
+if ($null -ne $iscc) {
+    $iscc = $iscc.Source
+} else {
+    # Machine-wide and per-user (winget default) install locations. The
+    # ${env:ProgramFiles(x86)} braces are required — the parens are part of
+    # the variable's name.
+    $candidates = @(
+        (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+        (Join-Path $env:LOCALAPPDATA 'Programs\Inno Setup 6\ISCC.exe')
+    )
+    $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if ($null -eq $iscc) {
         Write-Error ("Inno Setup not found. Install it with: " +
             "winget install JRSoftware.InnoSetup")
         exit 1
     }
-} else {
-    $iscc = $iscc.Source
 }
 
 & $iscc "$PSScriptRoot\lumit.iss"
