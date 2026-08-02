@@ -1243,6 +1243,23 @@ pub struct Document {
     /// survives being opened on another machine and moves with a copy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_location: Option<CacheLocation>,
+    /// How the interface was arranged for this project, as the frontend's own
+    /// JSON: the panel layout, which comps were open, where the playhead sat
+    /// (K-245, docs/10-FILE-FORMAT.md §1.2).
+    ///
+    /// **Opaque to the engine.** Nothing here reads inside it; it is carried,
+    /// stored and handed back. That is deliberate — the shape belongs to
+    /// whichever frontend wrote it, and an engine that understood it would have
+    /// to be changed every time a panel gained a setting.
+    ///
+    /// It lives in the document, rather than only in the local settings file,
+    /// so a project shared with someone else opens arranged the way its author
+    /// left it. It is a *hint*: a reader that already has its own record of this
+    /// project prefers that, and one that cannot make sense of this ignores it.
+    /// `None` for a project that has never been arranged, which is why an older
+    /// build's file gains no line for it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_state: Option<serde_json::Value>,
     /// Unknown fields from newer Lumit versions, preserved on load/save
     /// (docs/10-FILE-FORMAT.md §1.1 — mandatory forward compatibility).
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
@@ -1271,6 +1288,7 @@ impl Document {
             items: Vec::new(),
             auto_folders: AutoFolders::default(),
             cache_location: None,
+            ui_state: None,
             extra: serde_json::Map::new(),
         }
     }

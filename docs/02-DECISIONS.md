@@ -4789,3 +4789,64 @@ empty dock has no way back.
 **Composition ▸ Add to export queue, not "render queue"** (glossary §9 — *export*, never
 *render*, for anything the user sees).
 
+
+---
+
+**K-245 · DECIDED · A project remembers the sitting it was left in, and carries it to whoever
+opens it next.** Reopening a project landed on an empty Viewer: no comp fronted, no tabs, the
+playhead at zero, whatever panel arrangement the application happened to be in. The frontend
+already modelled the answer — `SavedSession` in `flutter_ui/lib/state/workspace.dart`, written
+during the port — and nothing ever called it. This wires it, and extends it in the direction
+the owner asked for: the arrangement is **per project**, and it **travels with the file**.
+
+**What is remembered.** Which comps are on the Timeline tab strip, which of them is fronted,
+what frame the playhead sits on, which layer is selected, and how the panels are arranged —
+the arrangement itself (the tree, the tab groups, which tab each group fronts, the split
+shares), never the name of a preset. Sizes and positions a user drags to *are* the
+arrangement; a name could not carry them.
+
+**Two homes, and which one answers.** The same record is written to two places:
+
+* the **machine-local workspace store**, keyed by the project's file path, kept up to date as
+  the user works (fronting a comp, closing a tab, changing the selection, dragging a panel,
+  and on the window losing focus or closing — the playhead moves far too often to write per
+  move);
+* **inside the `.lum`**, in a new `ui_state` field on the document, written at save time only.
+
+On open the **local record wins**, and the file's is the fallback. That ordering is what makes
+both jobs work at once: your own projects open the way *you* last had them even between saves,
+and a project arriving from somebody else — which has no local record — opens arranged the way
+its author left it. A user with several projects open in turn therefore gets each one's own
+layout as they switch, with no layout names to manage.
+
+**Why the arrangement is in the document at all.** This supersedes the clause in
+[10-FILE-FORMAT.md](10-FILE-FORMAT.md) §2 that forbade window layout in `project.json`. That
+rule exists to keep a project file portable and free of one machine's private business — cache
+paths, local usernames, absolute paths (K-173). A panel arrangement is none of those: it is
+panel names, tab indices and fractional shares, which mean the same thing on any machine and
+any monitor. It is written as an **absent-by-default** field, so a project nobody has arranged
+gains no line for it and an older build reads the file unchanged, and it is **opaque to the
+engine** — carried, stored and handed back, never read into — because its shape belongs to
+whichever frontend wrote it. A reader that cannot make sense of it ignores it and opens the
+way it already was; a layout naming a panel this build has never heard of is dropped whole
+rather than half-applied. Window *placement* (K-242) stays machine-local: pixel offsets on one
+person's monitor are exactly the private business the rule is about.
+
+**Recording it is not an edit.** `DocumentStore::set_ui_state` is deliberately not an op: not
+undoable (Ctrl-Z must never rearrange the window), not journalled (crash recovery replays work,
+not furniture), and it does not move the revision — so resizing a panel does not make a project
+read as having unsaved changes. The frontend writes it immediately before saving, which is the
+moment the arrangement it describes is the one on screen.
+
+Regression tests: `crates/lumit-core/src/store.rs` (recording is neither undoable nor a
+change), `crates/lumit-project/src/lib.rs` (the arrangement survives a save, and an unarranged
+project saves no field), and `flutter_ui/test/frb/session_restore_frb_test.dart` — the round
+trip through a real save and open, a stale session naming a since-deleted comp falling back
+quietly, and a shared project opening arranged on a machine that has never seen it.
+
+The round-trip test deliberately reads the comp list **before** opening, because adopting a
+project has to invalidate that cache (K-184) and the first cut of this did not: every panel
+reads `comps()`, so in a running application the cache is always warm, the restore looked the
+reopened project's comps up in the previous project's list, and a reopened project came back
+with no tabs and nothing fronted. A test that opens with a cold cache is testing the one state
+the application is never in.

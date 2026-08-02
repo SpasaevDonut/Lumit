@@ -394,6 +394,41 @@ impl ProjectReference {
         Ok(())
     }
 
+    /// How the interface was arranged when this project was last saved, as the
+    /// JSON the frontend itself wrote (K-245), or `None` for a project that has
+    /// never carried one.
+    ///
+    /// The engine never looks inside it. It is the frontend's own record,
+    /// travelling in the `.lum` so a project shared with someone else opens
+    /// arranged the way its author left it.
+    #[frb(sync)]
+    pub fn ui_state(&self) -> Result<Option<String>, BridgeError> {
+        let state = self.state()?;
+        let state = state.read().map_err(|_| BridgeError::ReadFailed)?;
+        Ok(state
+            .store
+            .snapshot()
+            .ui_state
+            .as_ref()
+            .map(|value| value.to_string()))
+    }
+
+    /// Record the arrangement to be written into the file on the next save.
+    /// `None`, or JSON that does not parse, clears it rather than failing: a
+    /// frontend that cannot describe itself must not be able to stop a save.
+    ///
+    /// Not an op — see `DocumentStore::set_ui_state`. It is not undoable, and it
+    /// does not mark the project as having unsaved changes, because moving a
+    /// panel is not an edit to the work.
+    #[frb(sync)]
+    pub fn set_ui_state(&self, ui_state: Option<String>) -> Result<(), BridgeError> {
+        let parsed = ui_state.and_then(|json| serde_json::from_str(&json).ok());
+        let state = self.state()?;
+        let state = state.write().map_err(|_| BridgeError::WriteFailed)?;
+        state.store.set_ui_state(parsed);
+        Ok(())
+    }
+
     /// Whether there is anything to undo or redo, for greying the menu items.
     #[frb(sync)]
     pub fn history(&self) -> Result<BridgeHistory, BridgeError> {

@@ -205,13 +205,13 @@ class LumitMenuBarFrb extends StatelessWidget {
           PaletteCommand(
             label: 'Save',
             category: 'File',
-            run: () => saveProjectFrb(app, picker: savePicker),
+            run: () => saveProjectFrb(app, ui, picker: savePicker),
           ),
           PaletteCommand(
             label: 'Save as…',
             category: 'File',
             run: () =>
-                saveProjectFrb(app, forcePicker: true, picker: savePicker),
+                saveProjectFrb(app, ui, forcePicker: true, picker: savePicker),
           ),
           PaletteCommand(
             label: 'Import…',
@@ -333,14 +333,14 @@ List<MenuSection> lumitMenus(
           'Save',
           project == null
               ? null
-              : () => saveProjectFrb(app, picker: savePicker),
+              : () => saveProjectFrb(app, ui, picker: savePicker),
           action: 'file.save'),
       MenuEntry(
           'Save as…',
           project == null
               ? null
               : () =>
-                  saveProjectFrb(app, forcePicker: true, picker: savePicker),
+                  saveProjectFrb(app, ui, forcePicker: true, picker: savePicker),
           action: 'file.save.as'),
       const MenuEntry.divider(),
       MenuEntry(
@@ -713,7 +713,8 @@ Future<void> _recover(BuildContext context, LumitState app) async {
 /// [picker] is the injectable seam a widget test needs: no plugin channel can
 /// open a real dialogue in one.
 Future<void> saveProjectFrb(
-  LumitState app, {
+  LumitState app,
+  LumitUiState ui, {
   bool forcePicker = false,
   Future<String?> Function()? picker,
 }) async {
@@ -726,9 +727,16 @@ Future<void> saveProjectFrb(
     if (picked == null) return;
     target = picked;
   }
+  // How the interface is arranged goes into the file, so a project handed to
+  // someone else opens the way it was left (K-245). Written here rather than
+  // as it changes, because this is the moment it is asked for: recording a
+  // panel drag into the document would make moving furniture an unsaved change.
+  project.setUiState(uiState: ui.sessionJson());
   try {
     final written = await project.save(path: target);
     app.postNotice('Saved to $written');
+    // Save as gives the project a new path, and the session is filed by path.
+    ui.rememberSession();
   } catch (_) {
     // The work is still in the document and the journal; say so calmly and let
     // the user pick somewhere writable.

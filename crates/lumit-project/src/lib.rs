@@ -1375,6 +1375,35 @@ mod tests {
         );
     }
 
+    /// **A project's arrangement travels with it** (K-245): hand the file to
+    /// someone else and it opens with the panels where its author left them.
+    /// The engine stores it as the frontend's own JSON without reading inside,
+    /// so it round-trips whole; a project nobody has arranged saves no field at
+    /// all, and an older build reads that file unchanged.
+    #[test]
+    fn the_saved_arrangement_survives_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("arranged.lum");
+
+        let mut doc = doc_with_item();
+        assert!(doc.ui_state.is_none(), "nothing arranged by default");
+        save(&doc, &path).unwrap();
+        assert!(open(&path).unwrap().0.ui_state.is_none());
+        let bare = std::fs::metadata(&path).unwrap().len();
+
+        let arrangement = serde_json::json!({
+            "dock": { "kind": "tabs", "active": 1 },
+            "session": { "frame": 12, "open_comps": ["a", "b"] },
+        });
+        doc.ui_state = Some(arrangement.clone());
+        save(&doc, &path).unwrap();
+        assert_eq!(open(&path).unwrap().0.ui_state, Some(arrangement));
+        assert!(
+            std::fs::metadata(&path).unwrap().len() > bare,
+            "it is really in the file, not only in the document"
+        );
+    }
+
     #[test]
     fn save_open_round_trip_and_no_temp_litter() {
         let dir = tempfile::tempdir().unwrap();

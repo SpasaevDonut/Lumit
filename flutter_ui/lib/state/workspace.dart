@@ -26,11 +26,23 @@ class SavedSession {
   final int frame;
   final String? selectedLayer;
 
+  /// How the panels were arranged for this project, as [DockSplit.toJson]
+  /// (K-245) — the arrangement itself, not the name of a preset, because the
+  /// sizes and positions a user drags to are the arrangement.
+  ///
+  /// Held as raw JSON rather than as a [DockSplit], because this class is
+  /// compared to decide whether anything needs writing, and a dock tree is
+  /// mutated in place as panels are dragged: the object would be equal to
+  /// itself after every change. Raw JSON also means an arrangement naming a
+  /// panel this build has never heard of survives being read and written back.
+  final Map<String, dynamic>? dock;
+
   const SavedSession({
     this.openComps = const [],
     this.activeComp,
     this.frame = 0,
     this.selectedLayer,
+    this.dock,
   });
 
   Map<String, dynamic> toJson() => {
@@ -38,6 +50,7 @@ class SavedSession {
         'active_comp': activeComp,
         'frame': frame,
         'selected_layer': selectedLayer,
+        'dock': dock,
       };
 
   factory SavedSession.fromJson(Map<String, dynamic> j) => SavedSession(
@@ -53,7 +66,15 @@ class SavedSession {
         selectedLayer: j['selected_layer'] is String
             ? j['selected_layer'] as String
             : null,
+        dock: j['dock'] is Map
+            ? (j['dock'] as Map).cast<String, dynamic>()
+            : null,
       );
+
+  /// The arrangement compared by value. Encoding is the cheap deep compare
+  /// here: both sides are built key-by-key in the same order by [toJson], so
+  /// equal trees encode identically.
+  String get _dockKey => dock == null ? '' : jsonEncode(dock);
 
   @override
   bool operator ==(Object other) =>
@@ -61,6 +82,7 @@ class SavedSession {
       other.activeComp == activeComp &&
       other.frame == frame &&
       other.selectedLayer == selectedLayer &&
+      other._dockKey == _dockKey &&
       listEquals(other.openComps, openComps);
 
   @override
@@ -68,6 +90,7 @@ class SavedSession {
         activeComp,
         frame,
         selectedLayer,
+        _dockKey,
         Object.hashAll(openComps),
       );
 }

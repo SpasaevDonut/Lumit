@@ -43,6 +43,14 @@ Rules:
   (`"channel": "Alpha"`, `"blend": "Screen"`); a data-carrying variant is externally tagged
   (`{ "Footage": { … } }`). Variants are additive, so old readers keep unknown ones via the
   preservation rule below.
+- **The interface arrangement rides along, opaquely** (K-245): `ui_state` is the frontend's
+  own JSON — the panel arrangement, which comps were open, the playhead, the selection — and
+  the engine never reads inside it. Absent by default, so a project nobody has arranged gains
+  no line for it. It is a *hint*: a reader that already has its own record of this project
+  prefers that, and one that cannot make sense of what is here ignores it. What it may **not**
+  contain is anything machine-specific — no pixel window placements, no paths, no usernames
+  (§2's rule, which K-245 narrowed rather than lifted: panel names, tab indices and fractional
+  shares mean the same thing on any machine, and that is all this field is for).
 - **Unknown-field preservation is mandatory**: a reader keeps any keys it does not
   understand and writes them back out. This is what lets shared projects and newer/older
   Lumit versions coexist (K-065) and lets Placeholder effects round-trip
@@ -72,8 +80,12 @@ Relinking one file automatically relinks siblings that resolve under the same pa
 **Collect for sharing**: an explicit command copies the project plus all referenced media
 into one folder, rewriting references relative — the mechanism behind community project
 sharing (K-065). Nothing machine-specific is ever written into `project.json` (no cache
-paths, no window layout, no local usernames); per-machine state lives in app settings, and
-workspaces are app-level with optional project hints.
+paths, no local usernames, no window placements in monitor pixels); per-machine state lives in
+app settings. **Amended by K-245:** the *panel arrangement* is not machine-specific — panel
+names, tab indices and fractional shares read the same anywhere — so it travels in `ui_state`
+(§1.1) precisely so a shared project opens the way its author left it. The machine-local
+workspace store still keeps its own copy per project path, and that copy is preferred on open;
+the file's is what answers on a machine that has never seen the project.
 
 ## 3. The sidecar cache folder
 

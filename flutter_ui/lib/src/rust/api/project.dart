@@ -181,8 +181,30 @@ class ProjectReference {
       BridgeLib.instance.api.crateApiProjectProjectReferenceSetCacheLocation(
           that: this, location: location);
 
+  /// Record the arrangement to be written into the file on the next save.
+  /// `None`, or JSON that does not parse, clears it rather than failing: a
+  /// frontend that cannot describe itself must not be able to stop a save.
+  ///
+  /// Not an op — see `DocumentStore::set_ui_state`. It is not undoable, and it
+  /// does not mark the project as having unsaved changes, because moving a
+  /// panel is not an edit to the work.
+  void setUiState({String? uiState}) => BridgeLib.instance.api
+      .crateApiProjectProjectReferenceSetUiState(that: this, uiState: uiState);
+
   Stream<WorkerResponse> startWorker() =>
       BridgeLib.instance.api.crateApiProjectProjectReferenceStartWorker(
+        that: this,
+      );
+
+  /// How the interface was arranged when this project was last saved, as the
+  /// JSON the frontend itself wrote (K-245), or `None` for a project that has
+  /// never carried one.
+  ///
+  /// The engine never looks inside it. It is the frontend's own record,
+  /// travelling in the `.lum` so a project shared with someone else opens
+  /// arranged the way its author left it.
+  String? uiState() =>
+      BridgeLib.instance.api.crateApiProjectProjectReferenceUiState(
         that: this,
       );
 

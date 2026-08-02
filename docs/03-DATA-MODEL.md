@@ -51,6 +51,7 @@ struct Document {
     items: Vec<ProjectItem>,   // flat storage; Project-panel order = Vec order; folders hold children by id
     auto_folders: AutoFolders, // where new solids / comps are auto-filed (K-068)
     cache_location: Option<CacheLocation>, // this project's own frame-cache folder (K-215)
+    ui_state: Option<serde_json::Value>,   // how the interface was arranged, opaque (K-245)
 }
 ```
 
@@ -61,6 +62,15 @@ setting held in one machine's settings file could not travel with it. `None`, th
 means the project follows the application-wide choice. It is set through an ordinary op, so it is
 undoable and journalled like any other change, and it changes no pixel: cache entries are named
 by content, and where they are kept is not part of that name.
+
+`ui_state` is the other field that is not the work itself: how the interface was arranged for
+this project (K-245) — the panel layout, the open comp tabs, the playhead, the selection — as
+whatever JSON the frontend wrote. **The engine never reads inside it.** It is carried so that a
+project handed to somebody else opens the way its author left it; the shape belongs to the
+frontend, and an engine that understood it would have to change every time a panel gained a
+setting. Unlike `cache_location` it is *not* an op: recording it is not undoable, not
+journalled, and does not move the store's revision, because moving a panel is not an edit to the
+work (`DocumentStore::set_ui_state`). The frontend writes it just before a save.
 
 A `ProjectItem` (the intended **Asset**) is one of the following. **v1 ships
 `Footage`, `Folder`, `Composition`, `Solid`**; the audio/still/sequence kinds

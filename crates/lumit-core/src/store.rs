@@ -126,6 +126,30 @@ impl DocumentStore {
         self.current.load_full()
     }
 
+    /// Record how the interface is arranged for this project (K-245), to be
+    /// written into the `.lum` on the next save.
+    ///
+    /// **Not an op, on purpose.** Three things follow from that, and each is the
+    /// behaviour we want: dragging a panel is not undoable, so Ctrl-Z never
+    /// rearranges the window out from under the user; it is not journalled, so
+    /// crash recovery replays edits and not furniture; and it does not bump the
+    /// revision, so a project does not read as having unsaved changes because a
+    /// panel was resized. Nothing in the engine reads this value, so no reader
+    /// can be looking at a stale one.
+    ///
+    /// The frontend calls it immediately before saving, which is when the
+    /// arrangement it describes is the one on screen.
+    pub fn set_ui_state(&self, ui_state: Option<serde_json::Value>) {
+        // The journal lock is what every writer takes before read-modify-write
+        // on the document, so taking it here too is what stops an edit landing
+        // between the clone and the store and being dropped. Nothing crosses
+        // FFI or awaits while it is held (docs/14 §3).
+        let _journal = self.journal.lock();
+        let mut doc = Document::clone(&self.snapshot());
+        doc.ui_state = ui_state;
+        self.current.store(Arc::new(doc));
+    }
+
     /// Apply an operation, journal it, publish the new snapshot.
     pub fn commit(&self, op: Op) -> Result<Arc<Document>, OpError> {
         let mut journal = self.journal.lock();
@@ -260,6 +284,37 @@ mod tests {
         );
         store.redo().unwrap();
         assert!(store.snapshot().cache_location.is_some());
+    }
+
+    /// **The arrangement is carried, not edited** (K-245). Moving a panel is not
+    /// work done to the project, so recording it must not put a step on the undo
+    /// stack — Ctrl-Z after a save would otherwise rearrange the window — and
+    /// must not move the revision, which is what tells the shell the project has
+    /// unsaved changes.
+    #[test]
+    fn recording_the_arrangement_is_neither_undoable_nor_a_change() {
+        let store = DocumentStore::new(Document::new());
+        store
+            .commit(Op::SetCacheLocation {
+                location: Some(CacheLocation::BesideProject),
+            })
+            .unwrap();
+        let revision = store.revision();
+
+        store.set_ui_state(Some(serde_json::json!({ "dock": "whatever" })));
+        assert_eq!(
+            store.snapshot().ui_state,
+            Some(serde_json::json!({ "dock": "whatever" }))
+        );
+        assert_eq!(revision, store.revision(), "not a change to the document");
+
+        store.undo().unwrap();
+        assert_eq!(
+            store.snapshot().ui_state,
+            Some(serde_json::json!({ "dock": "whatever" })),
+            "undo reaches the edit before it, not the arrangement"
+        );
+        assert!(store.snapshot().cache_location.is_none());
     }
 
     fn t(n: i64, d: i64) -> CompTime {

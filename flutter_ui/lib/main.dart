@@ -3,6 +3,8 @@
 // see docs/archive/flutter-port/ for the plan and the parity checklist.
 
 import 'dart:async';
+import 'dart:convert';
+import 'dart:ui' show AppExitResponse;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -229,6 +231,14 @@ class LumitState extends ChangeNotifier {
   /// ever reached the Viewer for a new project.
   void _adopt(ProjectReference opened) {
     project = opened;
+    // The comp list is cached per document (K-184) and invalidated when the
+    // item tree changes — but adopting another project is not a change to the
+    // tree, it is a different tree. Left standing, every reader of `comps()`
+    // answers from the project that is no longer loaded until something
+    // happens to edit the new one: the session restore looked the reopened
+    // project's comps up in the *previous* project's list and found none of
+    // them, so a reopened project came back with no tabs and nothing fronted.
+    _compsCache = null;
 
     workerStream?.cancel();
     workerStream =
@@ -557,8 +567,13 @@ class LumitUiState extends ChangeNotifier {
   /// Put the panels back where they started (Window → Reset workspace).
   void resetLayout() => workspace.resetWorkspaceLayout();
 
-  /// Remember a layout the user changed by dragging a panel.
-  void saveLayout() => workspace.save();
+  /// Remember a layout the user changed by dragging a panel — app-wide, and
+  /// against the open project, which is what makes two projects able to be
+  /// arranged differently (K-245).
+  void saveLayout() {
+    workspace.save();
+    rememberSession();
+  }
 
   void setScheme(LumitColorScheme next) => workspace.setScheme(next);
 
@@ -673,6 +688,9 @@ class LumitUiState extends ChangeNotifier {
   /// Keep the list honest when something sets the primary on its own.
   void _syncSelection() {
     final primary = selectedLayer.value;
+    // Whichever way round the two notifiers were set, the selection has just
+    // changed, and it is part of the session (see [rememberSession]).
+    rememberSession();
     if (primary == null) {
       if (selectedLayers.value.isNotEmpty) selectedLayers.value = const [];
       return;
@@ -792,6 +810,24 @@ class LumitUiState extends ChangeNotifier {
     // And the same for the comp the model itself is bound to: it can be undone
     // out of existence while it is the one being looked at.
     model.addListener(_frontLiveCompIfFrontedOneHasGone);
+    // A project being adopted — opened, or made new — is where the saved
+    // session is put back. The engine state is the only thing that knows a
+    // document has been swapped underneath us. The document loaded *now* is
+    // the one this shell starts on, so it does not count as a swap: without
+    // this the first edit of the session would read as a new project and
+    // clear the fronted comp and the selection.
+    _sessionProject = _app.project;
+    _app.addListener(_adoptProjectSession);
+    // Where the playhead was left is worth keeping, and it moves far too often
+    // to write down each time. So it is captured when the user steps away from
+    // the window and when they close it, alongside the deliberate acts below.
+    _lifecycle = AppLifecycleListener(
+      onInactive: rememberSession,
+      onExitRequested: () async {
+        rememberSession();
+        return AppExitResponse.exit;
+      },
+    );
     // The keymap: restored from the workspace if the user has changed one,
     // otherwise the engine's shipped defaults (K-199). Held here because
     // every keypress goes through it and the settings page edits it, so it
@@ -887,6 +923,8 @@ class LumitUiState extends ChangeNotifier {
 
   @override
   void dispose() {
+    _app.removeListener(_adoptProjectSession);
+    _lifecycle.dispose();
     sub?.cancel();
     _changes?.cancel();
     tools.dispose();
@@ -921,7 +959,145 @@ class LumitUiState extends ChangeNotifier {
     }
     _selectedComp = reference;
     model.bind(reference);
+    rememberSession();
     notifyListeners();
+  }
+
+  // --- The per-project session ---------------------------------------------
+  //
+  // Where the user had got to in *this* document: the comps on the tab strip,
+  // which one was fronted, where the playhead sat, what was selected. It is
+  // kept in the workspace store keyed by the project's path rather than in the
+  // `.lum`, because none of it is the document — a project file must stay
+  // byte-identical between two saves of the same work and must not carry one
+  // machine's habits to another (docs/10 §1.1, §2). The panel arrangement and
+  // which panel each tab group fronts are already persisted there too, app-wide.
+
+  /// The project whose session is on screen. Compared by identity, so a
+  /// document swapped underneath the shell is noticed the moment it is adopted.
+  ProjectReference? _sessionProject;
+
+  late final AppLifecycleListener _lifecycle;
+
+  /// Write down where the user is. A project with no file has nowhere to be
+  /// written to — the sessions are keyed by path — so this is a no-op until it
+  /// has been saved once.
+  void rememberSession() {
+    // Restoring moves the fronted comp and the selection, and each of those
+    // moves would be written back — over the very session being read.
+    if (_restoring) return;
+    final path = _app.project?.path();
+    if (path == null) return;
+    workspace.rememberSession(path, session());
+  }
+
+  /// Where the user is, as the thing that gets written down: the tab strip, the
+  /// fronted comp, the playhead, the selection, and how the panels are arranged.
+  SavedSession session() => SavedSession(
+        openComps: [for (final id in openComps) id.toString()],
+        activeComp: _selectedComp?.internalid.toString(),
+        frame: playheadFrame.value,
+        selectedLayer: selectedLayer.value?.internallayerId.toString(),
+        dock: workspace.dock.toJson(),
+      );
+
+  /// The same thing as JSON, for the copy that goes inside the `.lum` so it
+  /// travels with a project shared with someone else (K-245).
+  String sessionJson() => jsonEncode(session().toJson());
+
+  /// Put the saved session back after a project is opened, and start from
+  /// nothing when a new one is made.
+  ///
+  /// Every id is checked against the document that actually loaded before it is
+  /// used: a comp or layer deleted since the session was written must leave the
+  /// user on a sensible default, never on a reference the engine has never
+  /// heard of.
+  bool _restoring = false;
+
+  /// The arrangement the project file itself carries, or null when it has none
+  /// or none that can be read.
+  SavedSession? _embeddedSession(ProjectReference project) {
+    try {
+      final json = project.uiState();
+      if (json == null) return null;
+      final decoded = jsonDecode(json);
+      if (decoded is! Map) return null;
+      return SavedSession.fromJson(decoded.cast<String, dynamic>());
+    } catch (_) {
+      // A project written by another build may describe an interface this one
+      // does not have. Opening it must still work; it simply opens arranged the
+      // way this machine already was.
+      return null;
+    }
+  }
+
+  /// Put the panels where the session says, if it says anything about them.
+  ///
+  /// A layout naming a panel this build has never heard of is dropped whole
+  /// rather than half-applied — the arrangement is a hint, and the one on
+  /// screen is a perfectly good fallback.
+  void _applyDock(Map<String, dynamic>? json) {
+    if (json == null) return;
+    try {
+      final parsed = DockNode.fromJson(json);
+      if (parsed is! DockSplit) return;
+      workspace.dock = parsed;
+      workspace.touch();
+    } catch (_) {
+      // Left as it was.
+    }
+  }
+
+  void _adoptProjectSession() {
+    final project = _app.project;
+    if (identical(project, _sessionProject)) return;
+    _sessionProject = project;
+
+    _restoring = true;
+    try {
+      // Nothing from the previous document may outlive it: its comp ids, its
+      // playhead and its selection all belong to a project no longer loaded.
+      openComps.clear();
+      clearSelection();
+      playheadFrame.value = 0;
+      setSelectedComp(null);
+
+      final path = project?.path();
+      if (path == null) return;
+      workspace.rememberProject(path);
+
+      // This machine's own record of the project comes first: it is the more
+      // recent account of what *this* user was doing, and it is kept up to date
+      // between saves. The one in the file is what a project arriving from
+      // somebody else brings with it (K-245), so it answers exactly when there
+      // is no local record — the first time this project is opened here.
+      final session = workspace.sessionFor(path) ?? _embeddedSession(project!);
+      if (session == null) return;
+      _applyDock(session.dock);
+
+      final known = {
+        for (final (comp, _) in _app.comps()) comp.internalid.toString(): comp,
+      };
+      for (final id in session.openComps) {
+        final comp = known[id];
+        if (comp != null) openComps.add(comp.internalid);
+      }
+      final front = known[session.activeComp] ??
+          (openComps.isEmpty ? null : known[openComps.first.toString()]);
+      setSelectedComp(front);
+      playheadFrame.value = session.frame < 0 ? 0 : session.frame;
+
+      final wanted = session.selectedLayer;
+      if (front == null || wanted == null) return;
+      for (final layer in front.getLayers()) {
+        if (layer.internallayerId.toString() == wanted) {
+          setSelection([layer]);
+          break;
+        }
+      }
+    } finally {
+      _restoring = false;
+    }
   }
 
   /// **A comp can be taken out from under the user.** Pre-compose, step into
@@ -985,6 +1161,7 @@ class LumitUiState extends ChangeNotifier {
     if (_selectedComp?.internalid == id) {
       setSelectedComp(fallback);
     } else {
+      rememberSession();
       notifyListeners();
     }
   }
@@ -1232,7 +1409,7 @@ class _LumitAppViewState extends State<LumitAppView> {
       case 'file.open':
         openProjectFrb(state);
       case 'file.save.as':
-        saveProjectFrb(state, forcePicker: true);
+        saveProjectFrb(state, ui, forcePicker: true);
       case 'file.import':
         importFootageFrb(state);
       case 'file.export':
@@ -1262,7 +1439,7 @@ class _LumitAppViewState extends State<LumitAppView> {
         // (K-203) — a shortcut with its own path to disk is a second save to
         // keep honest. Without a path yet it opens the picker, which is what
         // Save has always meant on a document that has never been written.
-        saveProjectFrb(state);
+        saveProjectFrb(state, ui);
       // The work area is the span the Viewer previews and the export writes
       // (K-037), so setting its ends from the playhead is a two-key job, not a
       // trip to a menu. A comp that has never had one set reads as the whole

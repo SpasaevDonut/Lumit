@@ -5108,3 +5108,57 @@ about. So a panel you close stays closed after a restart, and no new setting had
 for it. The one rule is that the last panel cannot be closed — an empty workspace would have no
 menu to get anything back from except this one, and that is a trap rather than a feature.
 
+
+### Coming back to a project the way you left it (K-245)
+
+Open a project you worked on yesterday and you should be looking at what you were
+looking at yesterday: the same comps on the tab strip, the same one in front, the
+playhead where you parked it, the layer you had selected, and the panels arranged
+the way you had dragged them. Lumit writes all of that down. Two things are worth
+understanding: *what* it counts as "where you were", and *where* that gets written.
+
+**What is remembered is the arrangement, not the name of one.** Lumit ships some
+workspace presets, but what gets saved for your project is the actual tree of
+panels — which panel is where, which ones are stacked as tabs, which tab is in
+front, and the exact fractions of the window each part takes. That matters because
+what you actually do is *drag* things: nudge the Timeline taller, pull the Project
+panel narrower. A saved preset name could not carry any of that back.
+
+**It is written in two places, and they answer different questions.** The first is
+Lumit's own settings file on your machine, filed under the project's path, and it
+is kept up to date as you work — every time you front a comp, close a tab, change
+the selection or drag a panel. (The playhead is the exception: it moves dozens of
+times a second while you scrub, and writing a file each time would be absurd, so it
+is captured at the moments that are already occasional — when you save, when the
+window loses focus, and when you close the app.)
+
+The second copy goes **inside the `.lum` file itself**, written at the moment you
+save. This is the one that matters when you *hand the project to somebody else*. On
+their machine there is no local record of your project — they have never opened it
+— so the copy in the file answers instead, and it opens arranged the way you left
+it. That is the whole rule of precedence: **your own record wins if you have one;
+the file's is what a stranger's machine reads.**
+
+Which is also what makes several projects behave: each one has its own record under
+its own path, so switching between two projects switches between two arrangements,
+with no layout names to manage and nothing to remember to save.
+
+**Why the engine refuses to look inside it.** The project file is the engine's
+format, but this arrangement is not the engine's business — it is a list of panel
+names and fractions that only the interface understands. So the engine stores it as
+an opaque blob: it carries it, writes it, hands it back, and never reads into it.
+The payoff is that a panel gaining a new setting is a change to the frontend alone.
+The matching promise runs the other way too: a project written by a newer Lumit,
+describing a panel this build has never heard of, is not an error — the layout is
+simply dropped and the project opens with your interface as it already was. Better
+to ignore an arrangement than to fail to open somebody's work over furniture.
+
+**And moving a panel is not an edit.** This is the subtle one. Everything you do to
+a project normally goes through the undo stack, gets written to the crash-recovery
+journal, and marks the project as having unsaved changes. The arrangement does
+none of those three, on purpose. Ctrl-Z must never rearrange your window; crash
+recovery should replay your work, not your furniture; and dragging a panel wider
+should not make Lumit start claiming you have unsaved changes. So it is recorded
+through a side door that skips all three (`set_ui_state`), and the frontend calls
+it in the one instant it is genuinely wanted — immediately before a save, when the
+arrangement it describes is the one on the screen.

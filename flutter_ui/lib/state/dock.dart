@@ -95,7 +95,11 @@ class DockSplit extends DockNode {
   Map<String, dynamic> toJson() => {
         'kind': 'split',
         'axis': axis.name,
-        'shares': shares,
+        // A copy: the live list is mutated in place as splitters are dragged,
+        // and a caller that keeps this map — the per-project session (K-245)
+        // does — would otherwise be holding the layout rather than a record of
+        // what it was.
+        'shares': [...shares],
         'children': [for (final c in children) c.toJson()],
       };
 }

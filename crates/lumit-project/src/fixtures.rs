@@ -199,6 +199,9 @@ pub fn stress_document(p: &StressParams) -> Document {
         // The fixture caches wherever the application is set to, like any
         // ordinary project.
         cache_location: None,
+        // Nor does it carry an arrangement: the fixture is a document, not a
+        // sitting in front of one.
+        ui_state: None,
         extra: serde_json::Map::new(),
     }
 }
