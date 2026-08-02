@@ -1432,6 +1432,15 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (Frame interpolation — how in-between frames are synthesised, Nearest / Blend / Flow — is a
   per-layer retime setting in the data model, but is not surfaced in the timeline for now; it
   will return in a dedicated place.)
+- **Any footage layer can become a Sequence layer, and come back.** Layer ▸ Convert to
+  sequence layer, or right-click the layer in the Timeline; the same rows offer the way back
+  once it is one. The Vegas preference decides what an *import* becomes, never what a layer
+  is allowed to be — somebody without that preference ticked may still want one row cut into
+  pieces, and somebody who tried it has to be able to change their mind. Coming back keeps
+  the clip's source, its trim and its ramp: a single clip spans its whole layer, so the two
+  are the same map on the same clock and nothing is converted. A row of **several** clips
+  refuses rather than silently keeping one and throwing the rest away — which clip the layer
+  should become is a decision only you can make, so delete the others first.
 - **A Sequence layer has no Retime of its own.** Ctrl+Alt+T and the Composition menu's
   Enable Retime are greyed out on one, and the menu says why. Its *clips* each carry a
   retime, ramped in the sequence view — a second map over the whole row would be a rival to
@@ -1511,6 +1520,19 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   existed so a camera track could replay through the cuts. K-248 drops it: a tracker will run
   on the whole unaltered footage and be mapped through the sequence instead, and reordering
   is what anyone coming from Vegas expects.
+  **A selection box** works in the envelope: press anywhere that is not on a clip's own line
+  and drag, and every point inside is caught (`Shift` adds to what was there). Dragging any
+  caught point moves the whole set by the same amount, keeping its own spread — a selection
+  shifts a shape rather than flattening it — and a box drawn across two clips moves the
+  points in both.
+  **A row's shape copies onto another layer.** Right-click a clip: *copy this clip's shape*,
+  *copy the whole row's shape*, *paste shape onto this layer*. A shape is where the cuts
+  fall, where the gaps are and how each piece is ramped — and deliberately **no media**,
+  which is the whole point. Cutting a depth pass to the same beats as the footage it belongs
+  to is work nobody should do twice by hand, and doing it by eye guarantees the two drift
+  apart. Pasting keeps the target layer's own source and applies the shape as far as that
+  row reaches: the piece straddling the end is trimmed to it and anything wholly past it is
+  dropped, so a shape taken from long footage lands sensibly on short footage.
   Per-clip **thumbnails** are still owed ([TODO.md](TODO.md)): they need a decode at a given
   source moment, which no engine path offers yet.
 - **Video arriving as a Sequence layer (K-246).** With that switch on, dropping a video into

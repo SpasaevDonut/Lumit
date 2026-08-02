@@ -92,6 +92,10 @@ pub enum BridgeError {
     /// A Sequence layer's retiming belongs to its clips, not to the layer
     /// (K-075), so it has no Retime channel to switch on.
     NotRetimeable,
+    /// Converting back to a plain Footage layer needs one clip, and this row
+    /// has several — which of them the layer would become is the user's
+    /// decision, not the command's.
+    ManyClips,
     /// No clip sits under the playhead.
     NoClipThere,
     /// A mask path with fewer than two vertices — not a shape.
@@ -187,6 +191,10 @@ impl fmt::Display for BridgeError {
             BridgeError::NotRetimeable => write!(
                 f,
                 "A sequence layer retimes its clips, not the whole layer — open it and use its speed graph"
+            ),
+            BridgeError::ManyClips => write!(
+                f,
+                "This layer holds several clips — delete all but the one to keep first"
             ),
             BridgeError::NoClipThere => write!(f, "No clip under the playhead"),
             BridgeError::EmptyPath => write!(f, "A mask needs at least two points"),

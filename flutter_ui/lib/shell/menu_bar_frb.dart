@@ -457,6 +457,31 @@ List<MenuSection> lumitMenus(
           _retimeLabel(layer),
           _retimeable(layer) ? onLayer((l) => app.toggleRetime(l)) : null,
           action: 'layer.retime.enable'),
+      // In and out of the clip-editing surface, for anyone — the Vegas
+      // preference decides what an *import* becomes (K-246), never what a
+      // layer is allowed to be. Offered here and on a layer's right-click.
+      // Coming back out is offered whenever going in is, because a user who
+      // tries it has to be able to change their mind.
+      MenuEntry(
+          _sequenced(layer)
+              ? 'Convert to footage layer'
+              : 'Convert to sequence layer',
+          _convertible(layer)
+              ? onLayer((l) {
+                  try {
+                    if (_sequenced(layer)) {
+                      l.convertFromSequenced();
+                    } else {
+                      l.convertToSequenced();
+                    }
+                    app.notifyDocumentChanged();
+                  } catch (_) {
+                    // A row of several clips refuses, and says so through the
+                    // status line rather than taking the interface down.
+                  }
+                })
+              : null,
+          action: 'layer.sequence.convert'),
       const MenuEntry.todo('Flow'),
       const MenuEntry.todo('3D layer'),
       const MenuEntry.todo('Markers'),
@@ -612,6 +637,28 @@ Map<String, List<BridgeEffectInfo>> _effectGroups() =>
     }();
 
 Map<String, List<BridgeEffectInfo>>? _effectGroupsCache;
+
+/// Whether this layer is a Sequence layer.
+bool _sequenced(LayerReference? layer) {
+  if (layer == null) return false;
+  try {
+    return layer.getKind() == BridgeLayerKind.sequence;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Whether this layer can cross between footage and sequence at all. Only
+/// footage has clips to cut, and only a sequence has any to put back.
+bool _convertible(LayerReference? layer) {
+  if (layer == null) return false;
+  try {
+    final kind = layer.getKind();
+    return kind == BridgeLayerKind.footage || kind == BridgeLayerKind.sequence;
+  } catch (_) {
+    return false;
+  }
+}
 
 /// Whether this layer can carry a Retime at all. A Sequence layer cannot: its
 /// clips each have one of their own (K-075).

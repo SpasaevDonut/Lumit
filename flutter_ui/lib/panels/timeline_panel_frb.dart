@@ -4829,6 +4829,21 @@ class _OutlineRowState extends State<_OutlineRow> {
                 MenuRow(
                     onPressed: () => close('down'),
                     child: const Text('Send backward')),
+              // In and out of the clip-editing surface, for anyone. The Vegas
+              // preference decides what an *import* becomes (K-246), never
+              // what a layer is allowed to be — and coming back out is
+              // offered wherever going in is, so a user who tries it can
+              // change their mind.
+              if (widget.entry.info.kind == BridgeLayerKind.footage)
+                MenuRow(
+                    key: const ValueKey('tl-row-to-sequence'),
+                    onPressed: () => close('to-sequence'),
+                    child: const Text('Convert to sequence layer')),
+              if (widget.entry.info.kind == BridgeLayerKind.sequence)
+                MenuRow(
+                    key: const ValueKey('tl-row-from-sequence'),
+                    onPressed: () => close('from-sequence'),
+                    child: const Text('Convert to footage layer')),
               MenuRow(
                   onPressed: () => close('delete'),
                   child: const Text('Delete')),
@@ -4846,6 +4861,16 @@ class _OutlineRowState extends State<_OutlineRow> {
         layer.reorder(newIndex: BigInt.from(index + 1));
       case 'delete':
         layer.delete();
+      case 'to-sequence':
+        layer.convertToSequenced();
+      case 'from-sequence':
+        // A row of several clips refuses: which one the layer would become is
+        // the user's decision, not the command's, and the engine says so.
+        try {
+          layer.convertFromSequenced();
+        } catch (_) {
+          return;
+        }
       case _:
         return;
     }

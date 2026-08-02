@@ -3028,6 +3028,37 @@ fn sliding_a_clip_moves_it_without_changing_it() {
     assert_eq!(after.retimed, before.retimed, "and the same map");
 }
 
+/// A Sequence layer converts back to plain footage — the way out of the
+/// clip-editing surface, which has to exist because the way in is offered to
+/// anyone (K-248).
+#[test]
+fn a_sequence_layer_converts_back_to_footage() {
+    let (_project, comp, layer) = sequenced_layer();
+    let clip = layer.get_clips().expect("clips").remove(0);
+    layer.set_clip_speed(clip.id, 250.0, 250.0).expect("ramped");
+
+    layer.convert_from_sequenced().expect("converted back");
+    let back = comp.get_layers().expect("layers").remove(0);
+    assert_eq!(back.get_kind().expect("kind"), BridgeLayerKind::Footage);
+    // The clip spanned the whole layer, so its map is the layer's map: clip
+    // time and layer time were the same clock, and K-249 made them the same
+    // kind of map, so nothing had to be converted.
+    assert!(
+        back.get_retime_property().expect("read").is_some(),
+        "the ramp came with it"
+    );
+
+    // A row of several clips refuses rather than silently losing all but one.
+    let (_p2, _c2, many) = sequenced_layer();
+    let whole = many.get_info().expect("info");
+    many.cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    assert!(matches!(
+        many.convert_from_sequenced(),
+        Err(BridgeError::ManyClips)
+    ));
+}
+
 /// **A layer's cuts and ramps copy onto another layer**, which is what makes a
 /// depth pass follow the footage it belongs to (K-248).
 #[test]

@@ -919,6 +919,24 @@ class LayerReference {
       BridgeLib.instance.api.crateApiLayerLayerReferenceClipThumbnail(
           that: this, clip: clip, maxEdge: maxEdge);
 
+  /// Turn a Sequence layer back into a plain Footage layer (K-248).
+  ///
+  /// The way out of the clip-editing surface, and it must exist: converting
+  /// in is offered to anyone, so a user who tries it has to be able to
+  /// change their mind.
+  ///
+  /// **It keeps the first clip's source and its trim, and nothing else.**
+  /// The cuts, the gaps and the per-clip ramps have no home on a layer that
+  /// holds one uncut piece of footage, and inventing somewhere to put them
+  /// would be worse than saying plainly that they go. A row of several clips
+  /// is refused outright rather than silently losing all but one: the user
+  /// can delete the clips they do not want first, which is a decision only
+  /// they can make.
+  void convertFromSequenced() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceConvertFromSequenced(
+        that: this,
+      );
+
   /// Turn a Footage layer into a Sequence layer holding one clip of the whole
   /// source — the way into the clip-editing surface.
   ///

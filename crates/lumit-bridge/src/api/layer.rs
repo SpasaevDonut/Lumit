@@ -1403,6 +1403,63 @@ impl LayerReference {
         }
     }
 
+    /// Turn a Sequence layer back into a plain Footage layer (K-248).
+    ///
+    /// The way out of the clip-editing surface, and it must exist: converting
+    /// in is offered to anyone, so a user who tries it has to be able to
+    /// change their mind.
+    ///
+    /// **It keeps the first clip's source and its trim, and nothing else.**
+    /// The cuts, the gaps and the per-clip ramps have no home on a layer that
+    /// holds one uncut piece of footage, and inventing somewhere to put them
+    /// would be worse than saying plainly that they go. A row of several clips
+    /// is refused outright rather than silently losing all but one: the user
+    /// can delete the clips they do not want first, which is a decision only
+    /// they can make.
+    #[frb(sync)]
+    pub fn convert_from_sequenced(&self) -> Result<(), BridgeError> {
+        use lumit_core::model::LayerKind;
+
+        let layer = self.item()?;
+        let LayerKind::Sequence { clips } = &layer.kind else {
+            return Err(BridgeError::NotSequence);
+        };
+        let [clip] = clips.as_slice() else {
+            return Err(BridgeError::ManyClips);
+        };
+        let lumit_core::sequence::ClipSource::Footage(item) = clip.source else {
+            return Err(BridgeError::NotFootage);
+        };
+        let comp = self.composition()?;
+        let index = comp
+            .layers
+            .iter()
+            .position(|l| l.id == self.layer_id)
+            .ok_or(BridgeError::InvalidLayer)?;
+
+        let mut converted = layer.clone();
+        converted.kind = LayerKind::Footage { item };
+        converted.interpolation = clip.interpolation.clone();
+        // The clip's own map becomes the layer's, which is exact: the clip
+        // spans the whole layer, so clip time and layer time are the same
+        // clock (K-249 made them the same kind of map, so nothing converts).
+        converted.retime = clip.retime.clone();
+
+        self.commit(lumit_core::Op::Batch {
+            ops: vec![
+                lumit_core::Op::RemoveLayer {
+                    comp: self.comp_id,
+                    layer: self.layer_id,
+                },
+                lumit_core::Op::AddLayer {
+                    comp: self.comp_id,
+                    index,
+                    layer: Box::new(converted),
+                },
+            ],
+        })
+    }
+
     /// The shape of this Sequence layer — where its cuts fall and how each
     /// piece is ramped — as text, for [`Self::paste_sequence_shape`] (K-248).
     ///
