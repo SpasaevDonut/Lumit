@@ -152,7 +152,7 @@ jobs:
       # pkg-config override (K-204).
       - name: Install FFmpeg 7.1 and dylibbundler
         run: |
-          brew install ffmpeg@7 dylibbundler
+          brew install ffmpeg@7 dylibbundler create-dmg
           echo "FFMPEG_PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig" >> "$GITHUB_ENV"
       - uses: Swatinem/rust-cache@v2
       - uses: subosito/flutter-action@v2
