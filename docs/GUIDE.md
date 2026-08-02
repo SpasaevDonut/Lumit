@@ -1485,6 +1485,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   thing twice. What the bar does show is where its clips are **not** — the gaps wash out
   faintly, the way a trimmed footage layer shows the source it is not using — so a collapsed
   Sequence layer still tells you it has holes in it.
+  **A clip dragged back past the start takes the layer with it.** A clip's place is measured
+  in the layer's own time, which cannot go negative — so dragging one before the start of the
+  row carries the whole layer earlier instead, exactly as dragging any other layer's bar
+  before the start of the composition does. Every *other* clip is pushed the same amount
+  later in layer time, so it stays precisely where it was on the composition's clock and only
+  the clip you dragged actually moves.
   **The layer's bar is its clips' extent**: first clip's start to last clip's end. Delete the
   last clip and the end of the bar comes in with it; a gap in the middle stays a gap, renders
   transparent, and is never closed for you.

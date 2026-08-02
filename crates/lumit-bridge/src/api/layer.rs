@@ -368,8 +368,13 @@ pub struct BridgeClip {
     pub id: Uuid,
     pub place_start: BridgeRational,
     pub place_duration: BridgeRational,
-    /// Where the clip sits on the comp's own clock, in frames — so the
+    /// Where the clip sits on the **comp's** own clock, in frames — so the
     /// expanded row draws with no time-to-frame trip per clip (K-248, K-184).
+    ///
+    /// A clip's `place_*` are in *layer* time; these carry the layer's own
+    /// zero already added. The two are the same number only while that zero
+    /// is itself zero, which stopped being true the moment a clip could be
+    /// dragged back past the start of its row.
     pub start_frame: i64,
     pub end_frame: i64,
     /// The clip's single playback speed in per cent, or `None` when its map
@@ -477,12 +482,20 @@ pub(crate) fn read_layer_info(
                 id: c.id,
                 place_start: rational_of(c.place_start),
                 place_duration: rational_of(c.place_duration),
-                start_frame: comp
-                    .frame_rate
-                    .frame_at(lumit_core::time::CompTime(c.place_start)),
-                end_frame: comp
-                    .frame_rate
-                    .frame_at(lumit_core::time::CompTime(c.place_end())),
+                start_frame: comp.frame_rate.frame_at(lumit_core::time::CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(c.place_start)
+                        .unwrap_or(c.place_start),
+                )),
+                end_frame: comp.frame_rate.frame_at(lumit_core::time::CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(c.place_end())
+                        .unwrap_or(c.place_end()),
+                )),
                 speed_percent: c.constant_speed().map(|s| s * 100.0),
                 retimed: c.retime.is_some(),
                 // Keyed in clip time, so it crosses with no offset applied —
@@ -1093,12 +1106,20 @@ impl LayerReference {
                 id: c.id,
                 place_start: rational_of(c.place_start),
                 place_duration: rational_of(c.place_duration),
-                start_frame: comp
-                    .frame_rate
-                    .frame_at(lumit_core::time::CompTime(c.place_start)),
-                end_frame: comp
-                    .frame_rate
-                    .frame_at(lumit_core::time::CompTime(c.place_end())),
+                start_frame: comp.frame_rate.frame_at(lumit_core::time::CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(c.place_start)
+                        .unwrap_or(c.place_start),
+                )),
+                end_frame: comp.frame_rate.frame_at(lumit_core::time::CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(c.place_end())
+                        .unwrap_or(c.place_end()),
+                )),
                 speed_percent: c.constant_speed().map(|s| s * 100.0),
                 retimed: c.retime.is_some(),
                 retime: BridgeScalar::read_at(
@@ -1186,13 +1207,59 @@ impl LayerReference {
     pub fn slide_clip(&self, clip: Uuid, to_frame: i64) -> Result<(), BridgeError> {
         let (mut clips, index) = self.clips_and_index(clip)?;
         let comp = self.composition()?;
-        let to = comp
+        let layer = self.item()?;
+
+        // The travel, as a signed time: `to_frame` may be before the start of
+        // the composition, and a frame count is the only place the sign
+        // survives cleanly.
+        let start_frame = comp
             .frame_rate
-            .time_of_frame(to_frame.max(0))
+            .frame_at(lumit_core::time::CompTime(clips[index].place_start));
+        let moved = to_frame - start_frame;
+        let step = comp
+            .frame_rate
+            .time_of_frame(moved.unsigned_abs() as i64)
+            .map_err(|_| BridgeError::InvalidTime)?
+            .0;
+        let zero = Rational::ZERO;
+        let delta = if moved < 0 {
+            zero.checked_sub(step)
+                .map_err(|_| BridgeError::InvalidTime)?
+        } else {
+            step
+        };
+
+        let wanted = clips[index]
+            .place_start
+            .checked_add(delta)
             .map_err(|_| BridgeError::InvalidTime)?;
-        let delta =
-            to.0.checked_sub(clips[index].place_start)
+
+        // **Before the layer's own zero, the layer moves.** A clip's place is
+        // layer time and cannot go negative, so dragging one back past the
+        // start carries the whole layer earlier — exactly what dragging any
+        // other layer's bar before the start of the composition does. Every
+        // *other* clip is pushed the same amount later in layer time, so it
+        // stays where it was on the comp's clock and only the dragged one
+        // actually moves.
+        if wanted.is_negative() {
+            let shift = Rational::ZERO
+                .checked_sub(wanted)
                 .map_err(|_| BridgeError::InvalidTime)?;
+            for c in clips.iter_mut() {
+                c.place_start = c
+                    .place_start
+                    .checked_add(shift)
+                    .map_err(|_| BridgeError::InvalidTime)?;
+            }
+            clips[index].place_start = Rational::ZERO;
+            let offset = layer
+                .start_offset
+                .0
+                .checked_sub(shift)
+                .map_err(|_| BridgeError::InvalidTime)?;
+            return self.commit_clips_with_offset(clips, lumit_core::time::CompTime(offset));
+        }
+
         clips[index] = clips[index].slide(delta).ok_or(BridgeError::InvalidTime)?;
         self.commit_clips(clips)
     }
@@ -1625,7 +1692,21 @@ impl LayerReference {
     /// changed inside it would not come back on undo. A batch inverts
     /// member-wise, so both halves undo together for free.
     fn commit_clips(&self, clips: Vec<lumit_core::sequence::Clip>) -> Result<(), BridgeError> {
-        let layer = self.item()?;
+        let offset = self.item()?.start_offset;
+        self.commit_clips_with_offset(clips, offset)
+    }
+
+    /// [`Self::commit_clips`], with the layer's own zero moving too — what a
+    /// clip dragged back past the start of the row needs, since a clip's place
+    /// is layer time and cannot go negative.
+    #[frb(ignore)]
+    fn commit_clips_with_offset(
+        &self,
+        clips: Vec<lumit_core::sequence::Clip>,
+        start_offset: lumit_core::time::CompTime,
+    ) -> Result<(), BridgeError> {
+        let mut layer = self.item()?;
+        layer.start_offset = start_offset;
         let set_clips = lumit_core::Op::SetSequenceClips {
             comp: self.comp_id,
             layer: self.layer_id,
@@ -1652,7 +1733,7 @@ impl LayerReference {
                     layer: self.layer_id,
                     in_point: lumit_core::time::CompTime(in_point),
                     out_point: lumit_core::time::CompTime(out_point),
-                    start_offset: layer.start_offset,
+                    start_offset,
                 },
             ],
         })

@@ -3028,6 +3028,59 @@ fn sliding_a_clip_moves_it_without_changing_it() {
     assert_eq!(after.retimed, before.retimed, "and the same map");
 }
 
+/// Dragging a clip back past the start of the row carries the **layer**
+/// earlier, the way dragging any other layer's bar before the start of the
+/// composition does — and every other clip stays exactly where it was on the
+/// comp's clock while it happens.
+#[test]
+fn a_clip_dragged_before_the_start_takes_the_layer_with_it() {
+    let (_project, _comp, layer) = sequenced_layer();
+    let whole = layer.get_info().expect("info");
+    layer
+        .cut_clip_at((whole.in_frame + whole.out_frame) / 2)
+        .expect("cut");
+    let before = layer.get_clips().expect("clips");
+    let first = before
+        .iter()
+        .min_by_key(|c| c.start_frame)
+        .expect("the earlier half")
+        .clone();
+    let second = before
+        .iter()
+        .max_by_key(|c| c.start_frame)
+        .expect("the later half")
+        .clone();
+
+    layer
+        .slide_clip(first.id, first.start_frame - 10)
+        .expect("slid before the start");
+
+    let after = layer.get_clips().expect("clips");
+    let moved = after
+        .iter()
+        .find(|c| c.id == first.id)
+        .expect("still there");
+    let stayed = after
+        .iter()
+        .find(|c| c.id == second.id)
+        .expect("still there");
+
+    assert_eq!(
+        moved.start_frame,
+        first.start_frame - 10,
+        "the clip went where it was dragged, past the start"
+    );
+    assert_eq!(
+        stayed.start_frame, second.start_frame,
+        "and the other clip did not move on the comp's clock"
+    );
+    assert_eq!(
+        layer.get_info().expect("info").in_frame,
+        first.start_frame - 10,
+        "the layer's bar starts where its earliest clip now does"
+    );
+}
+
 /// Trimming an edge brings it in and moves nothing else — no ripple, ever.
 #[test]
 fn trimming_a_clip_pulls_one_edge_in() {
