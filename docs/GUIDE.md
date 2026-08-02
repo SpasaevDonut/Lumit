@@ -5162,3 +5162,36 @@ should not make Lumit start claiming you have unsaved changes. So it is recorded
 through a side door that skips all three (`set_ui_state`), and the frontend calls
 it in the one instant it is genuinely wanted — immediately before a save, when the
 arrangement it describes is the one on the screen.
+
+## 10. The app icon and the brand files
+
+The icon you see in the taskbar is not one picture — it is a small bag of
+pictures. Windows keeps them all in a single `.ico` file (ours holds seven
+sizes, 256 pixels down to 16), and shows whichever one fits the spot: big for
+the desktop, tiny for a browser-style tab. macOS does the same thing with a
+folder of loose PNGs instead of a bag.
+
+Nobody draws seven pictures by hand. The artwork is drawn **once**, as an SVG —
+a text file of drawing instructions ("a rounded square here, this gradient
+there") that can be rendered at any size without going blurry. The four SVGs in
+`assets/brand/` are the only files a human edits:
+
+- `lumit-mark.svg` — the mark itself: two keyframe diamonds overlapping, white
+  where they cross. This bare form is the Windows and Linux icon.
+- `lumit-icon.svg` — the same mark sitting on a dark rounded tile. Only macOS
+  uses this, because macOS expects every icon to bring its own tile.
+- `lumit-project.svg` and `lumit-preset.svg` — document icons for `.lum`
+  project files and `.lumfx` presets: a dark page with a folded corner and the
+  mark inside, like the little badge on any Photoshop or After Effects file.
+
+`scripts/gen-icons.py` turns those four drawings into every pixel file the
+operating systems want (run `pip install resvg-py pillow` once, then
+`python scripts/gen-icons.py`). It renders each size straight from the SVG
+rather than shrinking one big picture — that is what keeps the 16-pixel
+version crisp instead of mushy. You only run it after editing an SVG; the
+generated files are committed, so a fresh checkout builds without it.
+
+The `.lum`/`.lumfx` document icons are made and waiting, but Windows will not
+show them next to your project files until an installer tells the system
+"files ending in .lum belong to Lumit, use this icon" — that registration is
+an installer job, listed under Later in the TODO.

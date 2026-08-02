@@ -399,7 +399,9 @@ list, not a re-statement of the roadmap.
     has it).
 - **Platform.** The macOS pass - native menu bar, VideoToolbox, ProRes,
     notarisation (K-033). The Metal/IOSurface Viewer path is unverified on real
-    hardware.
+    hardware. The installer registers the `.lum`/`.lumfx` file associations with
+    their document icons (`assets/brand/lumit-project.ico`, `lumit-preset.ico`,
+    K-246) - Windows registry/MSIX manifest, Linux .desktop + shared-mime-info.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).

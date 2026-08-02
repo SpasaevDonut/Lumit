@@ -4850,3 +4850,27 @@ reads `comps()`, so in a running application the cache is always warm, the resto
 reopened project's comps up in the previous project's list, and a reopened project came back
 with no tabs and nothing fronted. A test that opens with a cold cache is testing the one state
 the application is never in.
+
+---
+
+**K-246 · DECIDED · The mark is the twin keyframes; the Kiriko facet mark retires.**
+From the owner (2026-08-02). The brand mark becomes **two rounded keyframe diamonds
+side by side — blue and violet-magenta — overlapping in an additive white core**: keyframes
+for motion, the overlap for compositing, the white for luminance. This supersedes the mark
+half of K-008 (the Edo-kiriko faceted hexagon, "approved placeholder" since 2026-07-13);
+K-008's splash structure and the Persona-5 broken-glass splash-art ambition stand.
+
+The shape was not taste alone: a corpus study of ~1,270 icons (Apple top charts US/GB/JP/DE
+free+paid, plus every editing/creative search) found the winning grammar — at most two hue
+families (78% of top apps), one large glyph, dark tile in the pro-editing tier — and the
+category's burned imagery to avoid (play button, film strip, clapperboard, lens ring, colour
+wheel; the four-point sparkle now reads as an AI badge). Letterform candidates were rejected
+by the owner as boring; composited-frames and lit-gem candidates were culled as
+gallery-generic and AI-generic respectively.
+
+Deployment: the bare mark (no tile) is the Windows/Linux icon; the dark rounded tile is
+macOS-only. File-type icons for `.lum` (twin keys, `LUM` kicker) and `.lumfx` (single key,
+`LUMFX` kicker) wait in `assets/brand/` for an installer to register the associations.
+Sources are the four SVGs in `assets/brand/`; `scripts/gen-icons.py` renders every raster
+(each size rendered from the SVG directly, never downscaled). docs/15-DESIGN.md brand
+section rewritten in the same commit.
