@@ -87,4 +87,22 @@ void main() {
       expect(layerDragTarget(heights, -1, 100), -1);
     });
   });
+
+  group('where a Project-panel drop lands', () {
+    test('the top half of a block goes above it, the bottom half below', () {
+      expect(layerDropSlot(heights, 0), 0);
+      expect(layerDropSlot(heights, 10), 0, reason: 'top half of block 0');
+      expect(layerDropSlot(heights, 12), 1, reason: 'bottom half of block 0');
+      expect(layerDropSlot(heights, 40), 1, reason: 'top half of block 1');
+      expect(layerDropSlot(heights, 60), 2, reason: 'bottom half of block 1');
+    });
+
+    test('a drop past the last block lands at the bottom of the stack', () {
+      expect(layerDropSlot(heights, 10000), heights.length);
+    });
+
+    test('an empty stack takes the drop at nought', () {
+      expect(layerDropSlot(const [], 500), 0);
+    });
+  });
 }

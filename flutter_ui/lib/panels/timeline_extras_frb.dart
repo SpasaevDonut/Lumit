@@ -18,6 +18,7 @@ import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
 import '../icons/icons.dart';
+import '../shell/comp_settings_frb.dart';
 import '../state/comp_time.dart';
 import '../state/timeline_columns.dart';
 import '../theme/theme.dart';
@@ -38,12 +39,21 @@ class CompTabsFrb extends StatelessWidget {
     // re-read when the engine says it changed shape. Filtered to the tabs the
     // user has opened, so a deleted comp's tab also simply stops matching.
     final selected = uiState.selectedComp?.internalid;
+    // In the tab strip's own order, not the project's: the strip is dragged
+    // into whatever order suits the work, and `openComps` is where that order
+    // lives (and what the session writes down).
+    final byId = {for (final entry in state.comps()) entry.$1.internalid: entry};
     final comps = [
-      for (final entry in state.comps())
-        if (uiState.openComps.contains(entry.$1.internalid) ||
-            entry.$1.internalid == selected)
-          entry,
+      for (final id in uiState.openComps)
+        if (byId[id] != null) byId[id]!,
     ];
+    // A fronted comp always joins `openComps`, so this only catches a comp
+    // fronted from somewhere that has not been through `setSelectedComp` yet.
+    if (selected != null &&
+        !uiState.openComps.contains(selected) &&
+        byId[selected] != null) {
+      comps.add(byId[selected]!);
+    }
     if (comps.isEmpty) return const SizedBox.shrink();
 
     return Container(
@@ -53,19 +63,41 @@ class CompTabsFrb extends StatelessWidget {
         scrollDirection: Axis.horizontal,
         children: [
           for (var i = 0; i < comps.length; i++)
-            _CompTab(
-              key: ValueKey<String>('tl-tab-${comps[i].$1.internalid}'),
-              name: comps[i].$2,
-              active: selected == comps[i].$1.internalid,
-              onTap: () => uiState.setSelectedComp(comps[i].$1),
-              closeKey:
-                  ValueKey<String>('tl-tab-close-${comps[i].$1.internalid}'),
-              onClose: () => uiState.closeComp(
-                comps[i].$1.internalid,
-                // The nearest remaining neighbour fronts: the one to the
-                // left, or the next one when the first tab closes.
-                fallback:
-                    comps.length == 1 ? null : comps[i == 0 ? 1 : i - 1].$1,
+            DragTarget<UuidValue>(
+              onWillAcceptWithDetails: (d) => d.data != comps[i].$1.internalid,
+              onAcceptWithDetails: (d) =>
+                  uiState.moveComp(d.data, comps[i].$1.internalid),
+              builder: (context, candidate, _) => Draggable<UuidValue>(
+                data: comps[i].$1.internalid,
+                feedback: Container(
+                  height: 22,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  color: t.surface2,
+                  child: Center(child: Text(comps[i].$2, style: t.small)),
+                ),
+                childWhenDragging: const SizedBox.shrink(),
+                child: _CompTab(
+                  key: ValueKey<String>('tl-tab-${comps[i].$1.internalid}'),
+                  name: comps[i].$2,
+                  active: selected == comps[i].$1.internalid,
+                  dropping: candidate.isNotEmpty,
+                  onTap: () => uiState.setSelectedComp(comps[i].$1),
+                  onMenu: (position) => showCompTabMenuFrb(
+                    context: context,
+                    comp: comps[i].$1,
+                    position: position,
+                    onChanged: uiState.model.refresh,
+                  ),
+                  closeKey:
+                      ValueKey<String>('tl-tab-close-${comps[i].$1.internalid}'),
+                  onClose: () => uiState.closeComp(
+                    comps[i].$1.internalid,
+                    // The nearest remaining neighbour fronts: the one to the
+                    // left, or the next one when the first tab closes.
+                    fallback:
+                        comps.length == 1 ? null : comps[i == 0 ? 1 : i - 1].$1,
+                  ),
+                ),
               ),
             ),
         ],
@@ -74,17 +106,49 @@ class CompTabsFrb extends StatelessWidget {
   }
 }
 
+/// A comp tab's context menu. Only one entry so far — the same Composition
+/// settings dialog the Project panel's menu opens, reached from the comp the
+/// user is actually working in rather than by hunting for its project row.
+Future<void> showCompTabMenuFrb({
+  required BuildContext context,
+  required CompositionReference comp,
+  required Offset position,
+  required VoidCallback onChanged,
+}) async {
+  final open = await showLumitPopup<bool>(
+    context: context,
+    position: position,
+    builder: (close) => FloatSurface(
+      width: 210,
+      child: MenuRow(
+        key: const ValueKey('tl-tab-menu-settings'),
+        onPressed: () => close(true),
+        child: const Text('Composition settings…'),
+      ),
+    ),
+  );
+  if (open != true || !context.mounted) return;
+  if (await showCompSettingsFrb(context: context, comp: comp)) onChanged();
+}
+
 class _CompTab extends StatelessWidget {
   final String name;
   final bool active;
+
+  /// A tab being dragged is hovering over this one, which is where it would
+  /// land — lit so the drop is visible before it is taken.
+  final bool dropping;
   final VoidCallback onTap;
+  final ValueChanged<Offset> onMenu;
   final Key closeKey;
   final VoidCallback onClose;
   const _CompTab({
     super.key,
     required this.name,
     required this.active,
+    required this.dropping,
     required this.onTap,
+    required this.onMenu,
     required this.closeKey,
     required this.onClose,
   });
@@ -95,10 +159,13 @@ class _CompTab extends StatelessWidget {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: onTap,
+      onSecondaryTapUp: (d) => onMenu(d.globalPosition),
       child: Container(
         padding: const EdgeInsets.only(left: 10, right: 4),
         decoration: BoxDecoration(
-          color: active ? t.surface0 : null,
+          color: dropping
+              ? t.accent.withValues(alpha: 0.18)
+              : (active ? t.surface0 : null),
           border: Border(
             bottom: BorderSide(
               color: active ? t.accent : const Color(0x00000000),

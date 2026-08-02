@@ -106,6 +106,59 @@ void main() {
       expect(find.textContaining('Open a composition'), findsOneWidget);
     });
 
+    /// The strip is the user's order, not the project's: a tab dragged onto
+    /// another takes its place, and the fronted comp comes along unchanged.
+    testWidgets('dragging a comp tab reorders the strip', (tester) async {
+      final p = withComp();
+      final second = p.state.project!.newComposition(name: 'Titles');
+      p.uiState.setSelectedComp(second);
+      await mount(tester, p);
+
+      final first = find.byKey(ValueKey<String>('tl-tab-${p.comp.internalid}'));
+      expect(tester.getCenter(first).dx,
+          lessThan(tester.getCenter(
+              find.byKey(ValueKey<String>('tl-tab-${second.internalid}'))).dx));
+
+      // Onto the tab to its left, which is where it lands.
+      await tester.drag(
+          find.byKey(ValueKey<String>('tl-tab-${second.internalid}')),
+          tester.getCenter(first) -
+              tester.getCenter(
+                  find.byKey(ValueKey<String>('tl-tab-${second.internalid}'))));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.openComps,
+          [second.internalid, p.comp.internalid]);
+      expect(p.uiState.selectedComp?.internalid, second.internalid,
+          reason: 'reordering the strip fronts nothing new');
+      expect(
+          tester.getCenter(
+                  find.byKey(ValueKey<String>('tl-tab-${second.internalid}')))
+              .dx,
+          lessThan(tester.getCenter(first).dx),
+          reason: 'and the strip is drawn in the new order');
+    });
+
+    /// Right-clicking a tab reaches the comp's settings, so the comp being
+    /// worked in can be edited without going back to the Project panel.
+    testWidgets('a comp tab offers Composition settings on right click',
+        (tester) async {
+      final p = withComp();
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-tab-${p.comp.internalid}')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('tl-tab-menu-settings')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('tl-tab-menu-settings')));
+      await tester.pumpAndSettle();
+      expect(find.text('Composition settings'), findsOneWidget,
+          reason: 'the dialog the Project panel opens, from the tab');
+      expect(tester.takeException(), isNull);
+    });
+
     /// **The bridge error where the Timeline should be.** Pre-compose, step
     /// into the new comp, undo: the layers come back and the comp they were
     /// packed into stops existing — with the Timeline still fronting it, every

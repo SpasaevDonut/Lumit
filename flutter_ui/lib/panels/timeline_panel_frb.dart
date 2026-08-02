@@ -222,6 +222,22 @@ int layerDragTarget(List<double> heights, int from, double travel) {
   return to;
 }
 
+/// Which slot footage dropped from the Project panel takes, from how far down
+/// the stack it landed.
+///
+/// [y] is measured from the top of the first block, so the caller subtracts the
+/// pinned toolbar and header and adds the scroll. A drop in a block's top half
+/// goes above it and one in its bottom half below, the same midpoint rule a
+/// layer drag uses — and a drop past the last block lands at the bottom.
+int layerDropSlot(List<double> heights, double y) {
+  var top = 0.0;
+  for (var i = 0; i < heights.length; i++) {
+    if (y < top + heights[i] / 2) return i;
+    top += heights[i];
+  }
+  return heights.length;
+}
+
 /// One layer's block, slid out of a dragged layer's way.
 ///
 /// A transform, not a layout change: the rows keep their places, so a drag
@@ -935,6 +951,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// Ctrl+wheel zooms about the pointer.
   double _zoom = 1;
 
+  /// The body the Project panel drops onto, so a drop can be measured against
+  /// it: where in the stack the pointer let go is where the footage lands.
+  final GlobalKey _dropArea = GlobalKey();
+
   /// Whether a dragged keyframe sticks to whole frames (docs/07 §4.5). On by
   /// default: landing between frames is the deliberate exception.
   bool _magnet = true;
@@ -1329,6 +1349,40 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     }
   }
 
+  /// Zoom from somewhere other than the pointer — the bottom bar's − / + —
+  /// holding the middle of the visible lanes still. Zooming about the left
+  /// edge instead threw whatever was being looked at off the right of the
+  /// panel with every press. Same-turn jump, for the reason [_wheel] gives.
+  void _setZoom(double z) {
+    final next = z.clamp(1.0, 64.0);
+    if (next == _zoom) return;
+    final half =
+        _hLane.hasClients ? _hLane.position.viewportDimension / 2 : 0.0;
+    final centre = (_hLane.hasClients ? _hLane.offset : 0.0) + half;
+    final grew = next / _zoom;
+    setState(() => _zoom = next);
+    if (_hLane.hasClients) _hLane.jumpTo(max(0.0, centre * grew - half));
+  }
+
+  /// Which layer index a Project-panel drop landed on. The stack starts below
+  /// the pinned toolbar and column header and scrolls under them, so the drop
+  /// is measured in stack space; the slot is then read back as an index into
+  /// the whole comp, because the rows on screen may be a filtered subset.
+  int _dropIndex(LumitUiState ui, List<BridgeLayerEntry> layers,
+      List<double> heights, Offset global) {
+    final box = _dropArea.currentContext?.findRenderObject();
+    if (box is! RenderBox) return 0;
+    final y = box.globalToLocal(global).dy -
+        (_toolbarHeight + _headerHeight) +
+        (_vLane.hasClients ? _vLane.offset : 0);
+    final slot = layerDropSlot(heights, y);
+    if (slot >= layers.length) return ui.model.layers.length;
+    final id = layers[slot].layer.internallayerId;
+    final at = ui.model.layers
+        .indexWhere((e) => e.layer.internallayerId == id);
+    return at < 0 ? 0 : at;
+  }
+
   /// The gutter down the right of a scrollable half: a block level with that
   /// half's header (After Effects keeps the same reserved corner), then the
   /// scrollbar itself. Reserved whether or not a thumb shows, so the columns
@@ -1444,6 +1498,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
             onWillAcceptWithDetails: (details) =>
                 details.data is FootageDragData || details.data is CompDragData,
             onAcceptWithDetails: (details) {
+              // Where the pointer let go, not the top of the stack: dropping
+              // between two layers means "here", and a stack that ignores it
+              // has to be re-sorted by hand after every drop.
+              final at = _dropIndex(ui, layers, blockHeights, details.offset);
               switch (details.data) {
                 case FootageDragData(:final footage):
                   // Bottom-up, so a multi-item drop stacks in the order the
@@ -1452,16 +1510,31 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                     comp.addFootageLayer(
                         footage: f, asSequence: _videoAsSequence(context));
                   }
+                  ui.model.refresh();
+                  // They went on at the top; walk them down to the drop, the
+                  // bottom-most first so each one's slot is free when it moves.
+                  // ponytail: one undo step per layer — a drop-at-index on the
+                  // engine side would make it one, if that ever grates.
+                  final fresh = [
+                    for (var i = 0; i < footage.length; i++)
+                      ui.model.layers[i].layer,
+                  ];
+                  for (var i = fresh.length - 1; i >= 0; i--) {
+                    fresh[i].reorder(newIndex: BigInt.from(at + i));
+                  }
                 case CompDragData(comp: final dropped):
                   // A comp cannot nest into itself; the engine refuses and
                   // the drop simply does nothing.
                   try {
-                    comp.addPrecompLayer(comp: dropped);
+                    comp.addPrecompLayer(comp: dropped).reorder(
+                          newIndex: BigInt.from(at),
+                        );
                   } catch (_) {}
               }
               ui.model.refresh();
             },
             builder: (context, candidate, _) => Container(
+              key: _dropArea,
               // A live outline while something is over it, so the drop is
               // visibly going to land rather than being taken on faith.
               foregroundDecoration: candidate.isEmpty
@@ -1879,8 +1952,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                       magnet: _magnet,
                                       onToggleMagnet: () =>
                                           setState(() => _magnet = !_magnet),
-                                      onZoom: (z) => setState(
-                                          () => _zoom = z.clamp(1.0, 64.0)),
+                                      onZoom: _setZoom,
                                       lens: _graphLens,
                                       onLens: (lens) =>
                                           setState(() => _graphLens = lens),
@@ -2046,8 +2118,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                       magnet: _magnet,
                                       onToggleMagnet: () =>
                                           setState(() => _magnet = !_magnet),
-                                      onZoom: (z) => setState(
-                                          () => _zoom = z.clamp(1.0, 64.0)),
+                                      onZoom: _setZoom,
                                     ),
                                   ],
                                 ),
