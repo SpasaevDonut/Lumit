@@ -53,6 +53,7 @@ import 'graph_editor_frb.dart';
 import 'graph_maths.dart';
 import 'package:lumit_flutter/state/preview_throttle.dart';
 import 'timeline_extras_frb.dart';
+import 'sequence_view_frb.dart';
 import 'timeline_razor.dart';
 import 'effect_param_row_frb.dart';
 import 'keyframe_controls_frb.dart';
@@ -126,20 +127,26 @@ List<double> layerBlockHeights({
   required List<BridgeLayerEntry> layers,
   required Set<String> open,
   required Map<String, bool> hasAudio,
+  /// How much taller each open sequence view makes its layer's row, by layer
+  /// id (K-248). **Both halves of the Timeline read this**: the outline
+  /// reserves the same room the lanes draw the view in, or the two stop lining
+  /// up and every row below sits at a different height on each side.
+  Map<String, double> sequenceExtra = const {},
 }) =>
     [
       for (final entry in layers)
         _rowHeight *
-            (1 +
-                (open.contains(entry.layer.internallayerId.toString())
-                    ? layerFoldRows(
-                        entry: entry,
-                        open: open,
-                        hasAudio: hasAudio[
-                                entry.layer.internallayerId.toString()] ??
-                            false,
-                      ).length
-                    : 0)),
+                (1 +
+                    (open.contains(entry.layer.internallayerId.toString())
+                        ? layerFoldRows(
+                            entry: entry,
+                            open: open,
+                            hasAudio: hasAudio[
+                                    entry.layer.internallayerId.toString()] ??
+                                false,
+                          ).length
+                        : 0)) +
+            (sequenceExtra[entry.layer.internallayerId.toString()] ?? 0),
     ];
 
 /// How far the block at [index] slides while a drag is in flight, in pixels;
@@ -372,15 +379,15 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// One layer's bounds, from what its kind can be asked cheaply.
   BarBounds _boundsOf(BridgeLayerEntry entry, int fpsNum, int fpsDen) {
     final info = entry.info;
-    // Retime frees both ends (docs/04-RETIMING.md): the Retime property
-    // (K-197), and the Source card's speed map, which is the same promise by
-    // the older route and is still live in the interface.
-    var retimed = info.retime != null;
+    // Retime frees both ends (docs/04-RETIMING.md). One question now, not two:
+    // K-249 left the Retime property as the only map, so the read model's own
+    // field is the whole answer and the bar no longer crosses the bridge to
+    // ask a second time.
+    final retimed = info.retime != null;
     int? sourceFrames;
     try {
       switch (info.kind) {
         case BridgeLayerKind.footage:
-          retimed = retimed || entry.layer.getRetime() != null;
           sourceFrames = _footageFrames[entry.layer.internallayerId.toString()];
         case BridgeLayerKind.precomp:
           final source = entry.layer.getSourceItem();
@@ -559,6 +566,62 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// so the bottom bar's buttons and the shortcuts act on the same set.
   final Set<String> _graphKeySelection = {};
 
+  /// The Sequence layers whose view is open (K-248) — double-clicking one
+  /// opens its clips and their speed envelope inside its own row.
+  final Set<String> _sequenceOpen = {};
+
+  /// How tall each open view's **graph** half is, by layer id, once its
+  /// divider has been dragged. Absent means the default three rows.
+  ///
+  /// Only the graph resizes: the clip strip is where the cutting happens and
+  /// it is sized for that, while how much room a speed curve wants depends
+  /// entirely on how far the ramps go.
+  final Map<String, double> _sequenceGraph = {};
+
+  /// How much taller each open view makes its layer's row.
+  Map<String, double> get _sequenceExtra => {
+        for (final id in _sequenceOpen)
+          // The clips' top row *is* the layer's own bar row, so opening adds
+          // only the two under it — which is what keeps the layer's row
+          // looking exactly as it did when the view is shut (K-248).
+          id: sequenceClipExtra + (_sequenceGraph[id] ?? sequenceEnvelopeStrip),
+      };
+
+  /// Where each open sequence view sits down the table, as (top, bottom) in
+  /// the rows' own coordinates — what the row seams skip over, so an open view
+  /// reads as one cell rather than six ruled rows.
+  List<(double, double)> _sequenceBlanks(
+      List<BridgeLayerEntry> layers, List<double> heights) {
+    final out = <(double, double)>[];
+    var y = 0.0;
+    for (var i = 0; i < layers.length && i < heights.length; i++) {
+      final extra =
+          _sequenceExtra[layers[i].layer.internallayerId.toString()];
+      if (extra != null) {
+        // **From the top of the layer's own row.** The view takes that row as
+        // the first of its three clip rows, so a seam ruled under it would cut
+        // the clip region in two — which is the one place the region must read
+        // as a single block. The seams that *bound* the whole view are left
+        // alone: the range is exclusive at both ends, so the layer still has a
+        // line above it and the fold-out below still has one over it.
+        out.add((y, y + _rowHeight + extra));
+      }
+      y += heights[i];
+    }
+    return out;
+  }
+
+  /// Open or close a Sequence layer's view. Any other kind is left alone: a
+  /// double-click on a Precomp already means "open the comp", and a layer with
+  /// no clips has nothing to show.
+  void _toggleSequenceView(BridgeLayerEntry entry) {
+    if (entry.info.kind != BridgeLayerKind.sequence) return;
+    final id = entry.layer.internallayerId.toString();
+    setState(() {
+      if (!_sequenceOpen.remove(id)) _sequenceOpen.add(id);
+    });
+  }
+
   /// Which reading of the curves the graph shows (docs/07 §5.1).
   GraphLens _graphLens = GraphLens.value;
 
@@ -600,7 +663,39 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
         _graphKeySelection.clear();
         final cut = path.indexOf('/');
         if (cut > 0) _highlighted = path.substring(0, cut);
+        _openRetimeInItsDefaultLens(path);
       });
+
+  /// Opening a **Retime** row lands in the lens the user asked for (K-246):
+  /// with *Retime opens to Velocity* on, the speed view — which in that mode
+  /// is the Vegas envelope (K-247).
+  ///
+  /// Only on the way *in*, and only for a Retime: switching lens by hand
+  /// afterwards must stick, and selecting Position must not drag the Retime
+  /// preference onto it. Turn the preference off, reopen the row, and the Time
+  /// view is back — which is the point of it being a preference, not a mode.
+  void _openRetimeInItsDefaultLens(String path) {
+    if (!_vegas(context)) return;
+    final cut = path.indexOf('/');
+    if (cut <= 0 || path != retimePath(path.substring(0, cut))) return;
+    _graphLens = GraphLens.speed;
+  }
+
+  /// Settings ▸ Interface ▸ Editing ▸ *Video arrives as a Sequence layer*
+  /// (K-246). Forwarded to the engine, which decides whether this particular
+  /// media is something to cut.
+  bool _videoAsSequence(BuildContext context) =>
+      Provider.of<LumitUiState>(context, listen: false)
+          .workspace
+          .interface
+          .videoAsSequenceLayer;
+
+  /// Settings ▸ Interface ▸ Editing ▸ *Retime opens to Velocity* (K-246).
+  bool _vegas(BuildContext context) =>
+      Provider.of<LumitUiState>(context, listen: false)
+          .workspace
+          .interface
+          .retimeOpensToSpeed;
 
   /// Editing a value or keying a property selects it too (docs/07 §4.3) —
   /// quietly: an already-selected property stays where it is in the order.
@@ -1322,6 +1417,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     // blocks by these heights during a drag, so neither can measure the table
     // differently from the other (K-208).
     final blockHeights = layerBlockHeights(
+      sequenceExtra: _sequenceExtra,
         layers: layers, open: _open, hasAudio: _hasAudio);
     final graphColours = <String, List<Color>>{};
     for (final channel in channels) {
@@ -1353,7 +1449,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                   // Bottom-up, so a multi-item drop stacks in the order the
                   // panel listed them: each lands at the top of the stack.
                   for (final f in footage.reversed) {
-                    comp.addFootageLayer(footage: f);
+                    comp.addFootageLayer(
+                        footage: f, asSequence: _videoAsSequence(context));
                   }
                 case CompDragData(comp: final dropped):
                   // A comp cannot nest into itself; the engine refuses and
@@ -1492,6 +1589,10 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   child: _Outline(
                                                     comp: comp,
                                                     layers: layers,
+                                                    sequenceExtra:
+                                                        _sequenceExtra,
+                                                    onOpenSequence:
+                                                        _toggleSequenceView,
                                                     layerDrag: _layerDrag,
                                                     renameRequest:
                                                         _renameRequest,
@@ -1571,6 +1672,24 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                             -((_positionOf(_vOutline)?.pixels ??
                                                     0) %
                                                 _rowHeight),
+                                        // The grid here repeats from the
+                                        // panel's edge, so the blanks are
+                                        // carried up by however far the rows
+                                        // have scrolled.
+                                        blanks: [
+                                          for (final b in _sequenceBlanks(
+                                              layers, blockHeights))
+                                            (
+                                              b.$1 -
+                                                  (_positionOf(_vOutline)
+                                                          ?.pixels ??
+                                                      0),
+                                              b.$2 -
+                                                  (_positionOf(_vOutline)
+                                                          ?.pixels ??
+                                                      0),
+                                            ),
+                                        ],
                                       ),
                                     ),
                                   ),
@@ -1686,6 +1805,14 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                                     _graphLens,
                                                                 autoFit:
                                                                     _graphAutoFit,
+                                                                vegas: _vegas(
+                                                                    context),
+                                                                penArmed: ui
+                                                                        .tools
+                                                                        .tool
+                                                                        .group ==
+                                                                    ToolGroup
+                                                                        .pen,
                                                                 selectedKeys:
                                                                     _graphKeySelection,
                                                                 onSelectionChanged:
@@ -1787,6 +1914,33 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   layerDrag: _layerDrag,
                                                   blockHeights: blockHeights,
                                                   open: _open,
+                                                  sequenceExtra:
+                                                      _sequenceExtra,
+                                                  onOpenSequence:
+                                                      _toggleSequenceView,
+                                                  onGraphHeight: (entry, h) =>
+                                                      setState(() =>
+                                                          _sequenceGraph[entry
+                                                                  .layer
+                                                                  .internallayerId
+                                                                  .toString()] =
+                                                              h),
+                                                  sequenceBlanks:
+                                                      _sequenceBlanks(layers,
+                                                          blockHeights),
+                                                  hScroll: _hLane,
+                                                  onClipPreview:
+                                                      (entry, clip, keys) =>
+                                                          comp.renderFrameWithClipRetime(
+                                                    frame: BigInt.from(
+                                                        ui.playheadFrame.value),
+                                                    scale: 1.0,
+                                                    layer: entry.layer,
+                                                    clip: clip.id,
+                                                    retime:
+                                                        BridgeScalar.keyframed(
+                                                            keys),
+                                                  ),
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
                                                   fps: ui.model.fps,
@@ -2117,6 +2271,7 @@ class _FoldRow extends StatelessWidget {
           playheadFrame: playheadFrame,
           onSeek: onSeek,
           onChanged: onChanged,
+          onLabelTap: () => onSelectProperty(path),
         ),
       FoldMaskRow(:final mask) => _MaskRow(
           comp: comp,
@@ -2926,6 +3081,12 @@ class _RetimeRow extends StatefulWidget {
   final ValueChanged<int> onSeek;
   final VoidCallback onChanged;
 
+  /// Selects the channel, so its curve opens in the graph — the same handle
+  /// every other property row's name is. Retime was built without one, which
+  /// left it the one channel `graphChannels` could build and nobody could
+  /// choose.
+  final VoidCallback? onLabelTap;
+
   const _RetimeRow({
     required this.comp,
     required this.layer,
@@ -2934,6 +3095,7 @@ class _RetimeRow extends StatefulWidget {
     required this.playheadFrame,
     required this.onSeek,
     required this.onChanged,
+    this.onLabelTap,
   });
 
   @override
@@ -2977,7 +3139,14 @@ class _RetimeRowState extends State<_RetimeRow> {
               },
             ),
             const SizedBox(width: 4),
-            Expanded(child: Text('Retime', style: t.body)),
+            Expanded(
+              child: GestureDetector(
+                key: const ValueKey('tl-retime-name'),
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.onLabelTap,
+                child: Text('Retime', style: t.body),
+              ),
+            ),
             SizedBox(
               width: widget.valueColumn.width,
               child: animated
@@ -3872,6 +4041,12 @@ class _Outline extends StatelessWidget {
   final ValueChanged<String> onSelectProperty;
   final ValueChanged<String> onEditProperty;
   final Set<String> open;
+
+  /// How much taller each open sequence view makes its row, by layer id, and
+  /// how to toggle one (K-248). The outline reserves exactly what the lanes
+  /// draw, so the two halves stay in step.
+  final Map<String, double> sequenceExtra;
+  final void Function(BridgeLayerEntry entry)? onOpenSequence;
   final Map<String, bool> hasAudio;
   final ValueChanged<String> onToggle;
   final int playheadFrame;
@@ -3900,6 +4075,8 @@ class _Outline extends StatelessWidget {
     required this.onSelectProperty,
     required this.onEditProperty,
     required this.open,
+    this.sequenceExtra = const {},
+    this.onOpenSequence,
     required this.hasAudio,
     required this.onToggle,
     required this.playheadFrame,
@@ -3930,6 +4107,7 @@ class _Outline extends StatelessWidget {
             key: ValueKey<String>('tl-row-${layers[i].layer.internallayerId}'),
             comp: comp,
             entry: layers[i],
+            onOpenSequence: () => onOpenSequence?.call(layers[i]),
             layers: layers,
             groupOrder: groupOrder,
             widths: widths,
@@ -3952,6 +4130,19 @@ class _Outline extends StatelessWidget {
             renameRequest: renameRequest,
             blockHeights: blockHeights,
           ),
+          // The room the lanes draw an open sequence view in (K-248). The
+          // outline has nothing to put here — the clips and their envelope are
+          // the lane's to draw — but it must leave exactly the same gap, or
+          // every row below this one sits at a different height on the two
+          // sides of the Timeline and the halves stop lining up.
+          if (sequenceExtra
+              .containsKey(layers[i].layer.internallayerId.toString()))
+            SizedBox(
+              key: ValueKey<String>(
+                  'tl-seq-room-${layers[i].layer.internallayerId}'),
+              height:
+                  sequenceExtra[layers[i].layer.internallayerId.toString()],
+            ),
           // The fold-out, from the same list the lanes leave room for.
           if (open.contains(layers[i].layer.internallayerId.toString()))
             for (final row in layerFoldRows(
@@ -3996,6 +4187,10 @@ class _OutlineRow extends StatefulWidget {
   final CompositionReference comp;
   final BridgeLayerEntry entry;
 
+  /// Open or close this layer's sequence view (K-248) — what a double-click
+  /// on a Sequence layer means, where on other kinds it opens the source.
+  final VoidCallback? onOpenSequence;
+
   /// Every layer in the comp, for the parent picker's menu — from the same
   /// read model, so offering them costs nothing.
   final List<BridgeLayerEntry> layers;
@@ -4035,6 +4230,7 @@ class _OutlineRow extends StatefulWidget {
     super.key,
     required this.comp,
     required this.entry,
+    this.onOpenSequence,
     required this.layers,
     required this.groupOrder,
     required this.widths,
@@ -4436,11 +4632,18 @@ class _OutlineRowState extends State<_OutlineRow> {
     }
   }
 
-  /// Double-clicking a layer opens it (K-243). A Precomp opens the comp it
-  /// draws, the way it does in the Project panel and the Hierarchy; every other
-  /// kind will open in a Viewer of its own once there is one to open, and until
-  /// then does nothing. It no longer renames — `Enter` does that.
+  /// Double-clicking a layer opens it (K-243). A **Sequence** layer opens its
+  /// own view in place — its clips and their speed envelope, inside its row
+  /// (K-248) — because cutting is done against the beat you can see, so the
+  /// music and the ruler have to stay on screen. A Precomp opens the comp it
+  /// draws, the way it does in the Project panel and the Hierarchy; every
+  /// other kind will open in a Viewer of its own once there is one to open,
+  /// and until then does nothing. It no longer renames — `Enter` does that.
   void _openLayer() {
+    if (widget.entry.info.kind == BridgeLayerKind.sequence) {
+      widget.onOpenSequence?.call();
+      return;
+    }
     final comp = _sourceComp();
     if (comp == null) return;
     Provider.of<LumitUiState>(context, listen: false).setSelectedComp(comp);
@@ -4626,6 +4829,38 @@ class _OutlineRowState extends State<_OutlineRow> {
                 MenuRow(
                     onPressed: () => close('down'),
                     child: const Text('Send backward')),
+              // In and out of the clip-editing surface, for anyone. The Vegas
+              // preference decides what an *import* becomes (K-246), never
+              // what a layer is allowed to be — and coming back out is
+              // offered wherever going in is, so a user who tries it can
+              // change their mind.
+              if (widget.entry.info.kind == BridgeLayerKind.footage)
+                MenuRow(
+                    key: const ValueKey('tl-row-to-sequence'),
+                    onPressed: () => close('to-sequence'),
+                    child: const Text('Convert to sequence layer')),
+              if (widget.entry.info.kind == BridgeLayerKind.sequence)
+                MenuRow(
+                    key: const ValueKey('tl-row-from-sequence'),
+                    onPressed: () => close('from-sequence'),
+                    child: const Text('Convert to footage layer')),
+            ],
+            // The shape — the cuts, the gaps and the ramps, with no media in
+            // it — from the layer itself, so carrying a cut onto a depth pass
+            // never needs either row opened first (K-248). Offered on a locked
+            // layer too: copying is not editing.
+            if (widget.entry.info.kind == BridgeLayerKind.sequence) ...[
+              MenuRow(
+                  key: const ValueKey('tl-row-copy-shape'),
+                  onPressed: () => close('copy-shape'),
+                  child: const Text('Copy sequence shape')),
+              if (!locked && sequenceShapeClipboard != null)
+                MenuRow(
+                    key: const ValueKey('tl-row-paste-shape'),
+                    onPressed: () => close('paste-shape'),
+                    child: const Text('Paste sequence shape')),
+            ],
+            if (!locked) ...[
               MenuRow(
                   onPressed: () => close('delete'),
                   child: const Text('Delete')),
@@ -4643,6 +4878,29 @@ class _OutlineRowState extends State<_OutlineRow> {
         layer.reorder(newIndex: BigInt.from(index + 1));
       case 'delete':
         layer.delete();
+      case 'to-sequence':
+        layer.convertToSequenced();
+      case 'from-sequence':
+        // A row of several clips refuses: which one the layer would become is
+        // the user's decision, not the command's, and the engine says so.
+        try {
+          layer.convertFromSequenced();
+        } catch (_) {
+          return;
+        }
+      case 'copy-shape':
+        try {
+          sequenceShapeClipboard = layer.copySequenceShape();
+        } catch (_) {}
+        return; // nothing changed in the document
+      case 'paste-shape':
+        final shape = sequenceShapeClipboard;
+        if (shape == null) return;
+        try {
+          layer.pasteSequenceShape(text: shape);
+        } catch (_) {
+          return;
+        }
       case _:
         return;
     }
@@ -4663,6 +4921,28 @@ class _LayerArea extends StatelessWidget {
   /// Which layers are twirled open in the outline. Read only to leave the same
   /// room their property rows take, so a bar never drifts away from its name.
   final Set<String> open;
+
+  /// How much taller each open sequence view makes its row, by layer id, and
+  /// how to toggle one (K-248). The outline reserves exactly what the lanes
+  /// draw, so the two halves stay in step.
+  final Map<String, double> sequenceExtra;
+  final void Function(BridgeLayerEntry entry)? onOpenSequence;
+
+  /// The graph half of a sequence view has been dragged to a new height.
+  final void Function(BridgeLayerEntry entry, double height)? onGraphHeight;
+
+  /// A clip's envelope is being dragged: show it under the map it has not
+  /// been given yet (K-247).
+  final void Function(
+      BridgeLayerEntry entry, BridgeClip clip, List<BridgeKeyframe> keys)?
+      onClipPreview;
+
+  /// The lane's horizontal scroll, so an open view's axis labels can sit at
+  /// the window's edge rather than at the start of time.
+  final ScrollController? hScroll;
+
+  /// Where the open sequence views sit, so the row seams skip them (K-248).
+  final List<(double, double)> sequenceBlanks;
 
   /// Which layers carry sound — passed through only so the row list this side
   /// builds is identical to the outline's.
@@ -4740,6 +5020,12 @@ class _LayerArea extends StatelessWidget {
     required this.layers,
     required this.selectedIds,
     required this.open,
+    this.sequenceExtra = const {},
+    this.onOpenSequence,
+    this.onGraphHeight,
+    this.sequenceBlanks = const [],
+    this.hScroll,
+    this.onClipPreview,
     required this.hasAudio,
     required this.peaks,
     required this.fps,
@@ -4919,10 +5205,53 @@ class _LayerArea extends StatelessWidget {
                                         drag: layerDrag,
                                         heights: blockHeights,
                                         index: i,
-                                        child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.stretch,
-                                          children: [
+                                        child: Container(
+                                          // One outline around the layer's own
+                                          // bar row and everything its open
+                                          // view added, so it reads as one
+                                          // region belonging to one layer
+                                          // rather than as loose strips that
+                                          // happen to sit under it (K-248).
+                                          // A *foreground* decoration: a
+                                          // border in the ordinary one insets
+                                          // its child, which made the lane's
+                                          // block two pixels taller than the
+                                          // outline reserved and put the two
+                                          // halves back out of step. This
+                                          // paints over the content and
+                                          // occupies no layout at all.
+                                          foregroundDecoration:
+                                              sequenceExtra.containsKey(
+                                                  layers[i]
+                                                      .layer
+                                                      .internallayerId
+                                                      .toString())
+                                              ? BoxDecoration(
+                                                  border: Border.all(
+                                                    color: t.accent.withValues(
+                                                        alpha: 0.5),
+                                                  ),
+                                                  borderRadius:
+                                                      BorderRadius.circular(3),
+                                                )
+                                              : null,
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.stretch,
+                                            children: [
+                                            // An open sequence view takes the
+                                            // layer's own bar row as the top
+                                            // of its clip area, so the bar
+                                            // itself stands down: three rows
+                                            // of clips is one region, and a
+                                            // bar drawn across the first of
+                                            // them would put a seam through
+                                            // the middle of it (K-248).
+                                            if (!sequenceExtra.containsKey(
+                                                layers[i]
+                                                    .layer
+                                                    .internallayerId
+                                                    .toString()))
                                             _Bar(
                                               key: ValueKey<String>(
                                                   'tl-bar-${layers[i].layer.internallayerId}'),
@@ -4940,6 +5269,13 @@ class _LayerArea extends StatelessWidget {
                                                   onRazor(layers[i], frame),
                                               onSelect: () =>
                                                   onSelect(layers[i].layer),
+                                              onOpenSequence: layers[i]
+                                                          .info
+                                                          .kind ==
+                                                      BridgeLayerKind.sequence
+                                                  ? () => onOpenSequence
+                                                      ?.call(layers[i])
+                                                  : null,
                                               onChanged: onChanged,
                                               dragPreview: dragPreview,
                                               bounds: bounds[layers[i]
@@ -4948,6 +5284,45 @@ class _LayerArea extends StatelessWidget {
                                                       .toString()] ??
                                                   BarBounds.free,
                                             ),
+                                            // A Sequence layer's own clips and
+                                            // their speed envelope, in the room
+                                            // the row grew for them (K-248).
+                                            if (sequenceExtra.containsKey(
+                                                layers[i]
+                                                    .layer
+                                                    .internallayerId
+                                                    .toString()))
+                                              SequenceViewFrb(
+                                                key: ValueKey<String>(
+                                                    'tl-seq-${layers[i].layer.internallayerId}'),
+                                                entry: layers[i],
+                                                axis: axis,
+                                                fps: fps,
+                                                fpsNum: fpsNum,
+                                                fpsDen: fpsDen,
+                                                hScroll: hScroll,
+                                                razor: razor,
+                                                onRazor: (frame) =>
+                                                    onRazor(layers[i], frame),
+                                                onSelect: () =>
+                                                    onSelect(layers[i].layer),
+                                                onClose: () => onOpenSequence
+                                                    ?.call(layers[i]),
+                                                graphHeight: (sequenceExtra[
+                                                            layers[i]
+                                                                .layer
+                                                                .internallayerId
+                                                                .toString()] ??
+                                                        sequenceViewHeight) -
+                                                    sequenceClipExtra,
+                                                onGraphHeight: (h) =>
+                                                    onGraphHeight?.call(
+                                                        layers[i], h),
+                                                onPreview: (clip, keys) =>
+                                                    onClipPreview?.call(
+                                                        layers[i], clip, keys),
+                                                onChanged: onChanged,
+                                              ),
                                             // One lane per fold-out row the outline shows,
                                             // from the same list it builds: keyframe rows
                                             // draw their diamonds, the waveform row its
@@ -4969,7 +5344,8 @@ class _LayerArea extends StatelessWidget {
                                                     ),
                                                 ],
                                               ),
-                                          ],
+                                            ],
+                                          ),
                                         ),
                                       ),
                                   ],
@@ -5005,6 +5381,7 @@ class _LayerArea extends StatelessWidget {
                                       painter: _RowDividerPainter(
                                         step: _rowHeight,
                                         colour: t.hairline,
+                                        blanks: sequenceBlanks,
                                       ),
                                     ),
                                   ),
@@ -5256,6 +5633,14 @@ class _RowDividerPainter extends CustomPainter {
   final double step;
   final Color colour;
 
+  /// Vertical stretches to leave alone, as (top, bottom) pairs.
+  ///
+  /// An open sequence view is one table cell, not six rows of one — ruling it
+  /// into rows drew lines through the clips and straight across the middle of
+  /// the speed envelope, which read as the graph having been chopped up
+  /// (K-248).
+  final List<(double, double)> blanks;
+
   /// How far the first seam sits above the top edge — the outline's overlay
   /// is pinned to the panel rather than to the scrolled rows, so it carries
   /// the scroll offset here instead.
@@ -5265,6 +5650,7 @@ class _RowDividerPainter extends CustomPainter {
     required this.step,
     required this.colour,
     this.phase = 0,
+    this.blanks = const [],
   });
 
   @override
@@ -5275,13 +5661,20 @@ class _RowDividerPainter extends CustomPainter {
       ..strokeWidth = 1;
     for (var y = phase + step; y <= size.height; y += step) {
       if (y < 0) continue;
+      // Strictly inside a blank, so the seams that *bound* an open view stay:
+      // the row still has a top and a bottom, it simply has no rules through
+      // its middle.
+      if (blanks.any((b) => y > b.$1 + 0.5 && y < b.$2 - 0.5)) continue;
       canvas.drawLine(Offset(0, y - 0.5), Offset(size.width, y - 0.5), paint);
     }
   }
 
   @override
   bool shouldRepaint(_RowDividerPainter old) =>
-      old.step != step || old.colour != colour || old.phase != phase;
+      old.step != step ||
+      old.colour != colour ||
+      old.phase != phase ||
+      old.blanks != blanks;
 
   /// Never absorbs a pointer: a background painter's default would eat the
   /// gestures on the rows below it.
@@ -5553,6 +5946,11 @@ class _Bar extends StatefulWidget {
 
   /// Clicking (or grabbing) the bar selects its layer.
   final VoidCallback onSelect;
+
+  /// Double-clicking a Sequence layer's bar opens its view, the same as
+  /// double-clicking its name (K-248): the clips are what you came for, and
+  /// the bar is where you were already looking.
+  final VoidCallback? onOpenSequence;
   final VoidCallback onChanged;
 
   /// Where the live preview is published, for the waveform lane to follow.
@@ -5577,6 +5975,7 @@ class _Bar extends StatefulWidget {
     required this.playheadFrame,
     required this.onRazor,
     required this.onSelect,
+    this.onOpenSequence,
     required this.onChanged,
     required this.dragPreview,
     required this.bounds,
@@ -5587,6 +5986,10 @@ class _Bar extends StatefulWidget {
 }
 
 class _BarState extends State<_Bar> {
+  /// When this bar was last clicked, for spotting a double-click without
+  /// putting a recogniser in the razor’s way.
+  DateTime? _lastBarTap;
+
   /// Frames the gesture has moved so far, held here rather than committed.
   ///
   /// A bar drag has no cheap preview to show — moving a layer in time changes
@@ -5696,7 +6099,23 @@ class _BarState extends State<_Bar> {
             // to concede before the Effect controls learn the layer.
             child: Listener(
               onPointerDown: (event) {
-                if (event.buttons == kPrimaryButton) widget.onSelect();
+                if (event.buttons != kPrimaryButton) return;
+                widget.onSelect();
+                // A Sequence layer's bar opens its view on a double-click, the
+                // same as its name does (K-248) — counted here rather than
+                // with an `onDoubleTap` below, because a double-tap recogniser
+                // beside the razor's `onTapUp` makes the arena hold every
+                // single tap back, and the razor stops cutting. Two timestamps
+                // owe the arena nothing.
+                final open = widget.onOpenSequence;
+                if (open == null) return;
+                final now = DateTime.now();
+                final last = _lastBarTap;
+                _lastBarTap = now;
+                if (last != null && now.difference(last) < kDoubleTapTimeout) {
+                  _lastBarTap = null;
+                  open();
+                }
               },
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -5772,16 +6191,26 @@ class _BarState extends State<_Bar> {
                         : null,
                     borderRadius: BorderRadius.circular(2),
                   ),
-                  // A Sequence layer draws its clip splits, so the razor has
-                  // something to aim at and a cut is visible once made.
                   child: Stack(
                     children: [
-                      for (final clipFrame in info.clipFrames)
-                        Positioned(
-                          left: widget.axis.xOf(clipFrame.toInt()) - 0.5,
-                          top: 0,
-                          bottom: 0,
-                          child: Container(width: 1, color: t.surface0),
+                      // A Sequence layer's bar stays a plain bar: the clips and
+                      // their edit points are the sequence view's to draw, and
+                      // split lines up here only said the same thing twice
+                      // (K-248). What the bar does show is where its clips are
+                      // *not* — the gaps, faint, the way a trimmed footage
+                      // layer shows the source it is not using (K-212).
+                      if (info.kind == BridgeLayerKind.sequence)
+                        Positioned.fill(
+                          child: IgnorePointer(
+                            child: CustomPaint(
+                              painter: SequenceGapsPainter(
+                                clips: info.clips,
+                                axis: widget.axis,
+                                left: left,
+                                ink: t.surface0,
+                              ),
+                            ),
+                          ),
                         ),
                       // The two trim zones say so under the pointer: a bar
                       // whose ends can be taken hold of should not have to be

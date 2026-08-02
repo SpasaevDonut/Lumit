@@ -1,5 +1,5 @@
 # Regenerates every raster icon from the SVG sources in assets/brand/
-# (docs/15-DESIGN.md, brand section; decision K-246).
+# (docs/15-DESIGN.md, brand section; decision K-251).
 #
 # In plain terms: the SVGs are the only artwork anyone edits. The operating
 # systems want pixels, not drawings — Windows wants one .ico holding several

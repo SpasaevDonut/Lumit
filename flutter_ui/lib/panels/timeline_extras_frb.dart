@@ -1222,3 +1222,58 @@ class WorkAreaGroundPainter extends CustomPainter {
   @override
   bool? hitTest(Offset position) => false;
 }
+
+/// The stretches of a collapsed Sequence layer's bar that no clip covers
+/// (K-248).
+///
+/// A Sequence layer's bar runs from its first clip to its last, and the gaps
+/// in between render transparent — they are legal, and never closed for you.
+/// Shut, that used to be invisible: the bar read as solid footage all the way
+/// across. This washes the gaps out, the same idea as the faint outline a
+/// trimmed footage layer draws over the source it is not using (K-212): the
+/// bar says what is there, and what is only reserved.
+class SequenceGapsPainter extends CustomPainter {
+  final List<BridgeClip> clips;
+  final TimelineAxis axis;
+
+  /// The bar's own left edge in the same pixels [axis] speaks, so a gap can be
+  /// placed inside a box that does not start at time zero.
+  final double left;
+  final Color ink;
+
+  const SequenceGapsPainter({
+    required this.clips,
+    required this.axis,
+    required this.left,
+    required this.ink,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (clips.isEmpty) return;
+    final spans = [
+      for (final c in clips)
+        (axis.xOf(c.startFrame.toInt()) - left, axis.xOf(c.endFrame.toInt()) - left),
+    ]..sort((a, b) => a.$1.compareTo(b.$1));
+
+    final paint = Paint()..color = ink.withValues(alpha: 0.55);
+    var x = 0.0;
+    for (final (start, end) in spans) {
+      if (start > x) {
+        canvas.drawRect(Rect.fromLTRB(x, 0, start.clamp(0.0, size.width), size.height), paint);
+      }
+      if (end > x) x = end;
+    }
+    if (x < size.width) {
+      canvas.drawRect(
+          Rect.fromLTRB(x.clamp(0.0, size.width), 0, size.width, size.height), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(SequenceGapsPainter old) =>
+      old.clips != clips || old.left != left || old.ink != ink;
+
+  @override
+  bool? hitTest(Offset position) => false;
+}

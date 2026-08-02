@@ -630,14 +630,14 @@ The Lumit equivalent of the household §9 checklist. Every new panel or feature 
 10. Works at the dense end: test at minimum row height, minimum panel width, and 125%/150%
     Windows display scaling.
 
-## Brand: the mark and the splash (K-008, K-246)
+## Brand: the mark and the splash (K-008, K-251)
 
-**The mark: the twin keyframes** (K-246, replacing the Kiriko facet placeholder). Two
+**The mark: the twin keyframes** (K-251, replacing the Kiriko facet placeholder). Two
 rounded keyframe diamonds side by side, as on a timeline — cool blue on the left,
 violet-magenta on the right — and where they overlap the light goes additive white: a
 white keyframe burning in the middle. Keyframes are motion, the overlap is compositing,
 the white is luminance; the whole program in one glyph. The design followed a corpus
-study of ~1,270 top-chart and editing-app icons (K-246 records the findings): at most
+study of ~1,270 top-chart and editing-app icons (K-251 records the findings): at most
 two hue families, one large glyph, dark tile, and none of the category's burned imagery
 (play button, film strip, clapperboard, lens ring, colour wheel, AI sparkle).
 

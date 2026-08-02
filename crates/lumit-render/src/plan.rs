@@ -123,23 +123,13 @@ impl Quality {
     }
 }
 
-/// A live Retime override for one layer, so a "Time" drag decodes the dragged
-/// source frame rather than the committed one. Unlike a transform or effect
-/// drag, retiming changes *which* frame is shown, so it cannot be handled by
-/// re-compositing already-decoded pixels — it has to reach the plan.
-pub struct RetimeOverride {
-    pub layer: Uuid,
-    pub retime: lumit_core::retime::Retime,
-}
-
 /// The inputs a plan walk carries down the Precomp recursion, unchanged at
-/// every depth: what the media is, how coarsely to decode, and any live Retime
-/// drag. Bundled so the recursive walk stays readable.
+/// every depth: what the media is and how coarsely to decode. Bundled so the
+/// recursive walk stays readable.
 pub struct PlanContext<'a> {
     pub doc: &'a Document,
     pub quality: Quality,
     pub probes: &'a dyn SourceProbes,
-    pub retime_override: Option<&'a RetimeOverride>,
 }
 
 /// Recursively collect the decode jobs comp `comp` needs at comp time `t`
@@ -159,7 +149,6 @@ pub fn collect_comp_jobs(
         doc,
         quality,
         probes,
-        retime_override,
     } = *ctx;
     let in_span =
         |l: &lumit_core::model::Layer| t >= l.in_point.0.to_f64() && t < l.out_point.0.to_f64();
@@ -263,18 +252,7 @@ pub fn collect_comp_jobs(
                     visited.pop();
                 }
             }
-            LayerKind::Footage { item, retime } => {
-                // A live "Time" drag overrides this layer's retime so the
-                // decode picks the dragged source frame (the frame itself
-                // changes, unlike a transform/effect live patch).
-                let live_retime;
-                let retime: &Option<lumit_core::retime::Retime> = match retime_override {
-                    Some(o) if o.layer == layer.id => {
-                        live_retime = Some(o.retime.clone());
-                        &live_retime
-                    }
-                    _ => retime,
-                };
+            LayerKind::Footage { item } => {
                 let Some(ProjectItem::Footage(f)) = doc.item(*item) else {
                     continue;
                 };
@@ -307,27 +285,18 @@ pub fn collect_comp_jobs(
                     continue;
                 };
                 // Retime maps local time → source time before frame pick; the
-                // layer decides which map answers (K-197: the keyframable
-                // property, else the segment store). Its interpolation policy
-                // decides nearest vs blend.
-                let source_at = |t: f64| match retime {
-                    // A live "Time" drag is the segment store by construction,
-                    // so an override speaks for itself.
-                    Some(r) if retime_override.is_some_and(|o| o.layer == layer.id) => {
-                        r.evaluate(t)
-                    }
-                    _ => layer.source_time_at(t),
-                };
-                let source_time = source_at(lt);
+                // Retime maps local time → source time before the frame pick
+                // (K-249: the layer's own property is the only map). Its
+                // interpolation policy, which sits beside that map rather than
+                // inside it, decides nearest vs blend.
+                let source_time = layer.source_time_at(lt);
                 use lumit_core::retime::Interpolation;
-                let interp = retime.as_ref().map(|r| &r.interpolation);
-                let blend_on =
-                    matches!(interp, Some(Interpolation::Blend | Interpolation::Flow(_)));
-                let flow = matches!(interp, Some(Interpolation::Flow(_)));
-                let flow_full =
-                    matches!(interp, Some(Interpolation::Flow(p)) if !p.half_resolution);
+                let interp = &layer.interpolation;
+                let blend_on = matches!(interp, Interpolation::Blend | Interpolation::Flow(_));
+                let flow = matches!(interp, Interpolation::Flow(_));
+                let flow_full = matches!(interp, Interpolation::Flow(p) if !p.half_resolution);
                 let sample_fps = match interp {
-                    Some(Interpolation::Flow(p)) => p.input_fps_at(lt),
+                    Interpolation::Flow(p) => p.input_fps_at(lt),
                     _ => None,
                 };
                 let (source_frame, blend) = lumit_core::pixels::frame_pick(
@@ -351,7 +320,7 @@ pub fn collect_comp_jobs(
                             .filter(|&o| o != 0)
                             .map(|o| {
                                 let nlt = lt + f64::from(o) * comp_dt;
-                                let nst = source_at(nlt);
+                                let nst = layer.source_time_at(nlt);
                                 let (nf, _) = lumit_core::pixels::frame_pick(
                                     nst, fps, src_frames, false, None,
                                 );
@@ -396,13 +365,11 @@ pub fn plan_comp_frame(
     t: f64,
     quality: Quality,
     probes: &dyn SourceProbes,
-    retime_override: Option<&RetimeOverride>,
 ) -> Vec<CompJob> {
     let ctx = PlanContext {
         doc,
         quality,
         probes,
-        retime_override,
     };
     let mut jobs = Vec::new();
     let mut visited = vec![comp.id];

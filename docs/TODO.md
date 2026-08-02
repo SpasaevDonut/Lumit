@@ -54,7 +54,11 @@ Flutter is the only frontend (K-174, K-182); git history is the parity reference
 These are v1-scope surfaces it does not yet match.
 
 **Audio ([07-UI-SPEC.md](07-UI-SPEC.md) §10, [09-AUDIO.md](09-AUDIO.md)):**
-- Sequence-clip waveforms - Sequence layers' clips draw none.
+- Sequence-clip waveforms - a Sequence layer's clips draw none, so a clip in
+    the sequence view is a coloured box with its opening frame and its speed
+    on it. `audio_peaks` answers for a Footage layer only; a clip wants peaks
+    over its own trim of its own source, which is a new engine path beside the
+    decode-at-a-moment one the clip thumbnails already use (K-248).
 
 **Viewer bar ([07-UI-SPEC.md](07-UI-SPEC.md) §2.2):**
 - The wireframe/overlay *menu*; guides menu; region-of-interest;
@@ -64,9 +68,7 @@ These are v1-scope surfaces it does not yet match.
 
 **Toolbar tools ([07-UI-SPEC.md](07-UI-SPEC.md) §1.7):** what is armed is a
 *tool*; what each tool then does is the backlog.
-- **Razor** - a Sequence layer's eased ramps refuse a cut (`UncuttableClip`), and
-    its **clips'** own speed maps get no key at the cut the way a layer's Retime
-    does.
+- **Razor** - a Sequence layer's eased ramps refuse a cut (`UncuttableClip`).
 - **Shape layers** - built (K-237, [impl/shape-layers.md](impl/shape-layers.md)):
     with nothing selected a shape tool or the Pen makes a layer holding the art,
     in the toolbar's fill and stroke, listed in the Timeline under Contents.
@@ -188,14 +190,11 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The audio mix is rebuilt from scratch** whenever the comp's audio signature
     changes, rather than patched.
 
-**Retime: two ways to retime one layer (K-197).** A layer carries
-`retime: Option<Property>`, keyframable like any other property. The **old
-segment path** is still in the model (`LayerKind::Footage::retime`), still
-evaluated as the fallback in `Layer::source_time_at`, and still edited by the
-Source card's speed/reverse/frames rows. Decide its fate before building anything
-else on Retime: either the property grows what is worth keeping and the segment
-store is deleted, or the two are reconciled. **This is the state to leave, not to
-extend.**
+**Retime follow-up after K-249.** **The eased ramp shapes are gone from
+clips** — `Clip::with_ramp` takes two speeds and runs straight between them,
+which is what the envelope authors. Slow/Fast/Smooth/Sharp come back with the
+preset-shelf rework above, rebuilt on the property like everything else K-249
+moved.
 
 **System memory is only read on Windows.** `system_memory_bytes` and
 `video_memory_bytes` answer 0 elsewhere and the settings fall back to a 16 GB
@@ -220,9 +219,10 @@ colour individually; only the two Timeline tokens default from the mode.
 - **Workspace machinery beyond the presets** ([07-UI-SPEC.md](07-UI-SPEC.md)
     §1.6) - user workspaces (save-as/rename/export), the chrome switcher strip,
     and Alt+Shift+1-9.
-- **First-run setup screen** (K-006) - GATED: post-v1 polish, and its cards set
-    preferences that do not exist yet. Build those first or the screen writes
-    settings nothing reads.
+- **First-run setup screen** (K-006, K-251) - v1 ships minimal in the Vegas PR:
+    one AE-style / Vegas-style choice writing the two K-251 settings. Still owed
+    after that lands: the four-card version with a small image over each choice
+    ([07-UI-SPEC.md](07-UI-SPEC.md) §13.1).
 - **Command palette** - recents are session-lived, and only genuinely bound
     shortcuts are taught (today just undo/redo).
 
@@ -292,8 +292,13 @@ register a closed fd - or one the OS has since reissued. Either hold the previou
 `SharedDmabuf` for one generation, or `dup()` at export so the number in flight
 owns itself.
 
-**Retime UI wiring** (the engine is built; these are UI/command affordances -
-[04-RETIMING.md](04-RETIMING.md)):
+**Ramp preset shelf rework** - the Linear/Slow/Fast/Smooth/Sharp buttons need a
+general rethink (owner, 2026-08-02) before they return on the property path; not
+a Vegas-mode concern ([04-RETIMING.md](04-RETIMING.md) §12.2).
+
+**Retime UI wiring** (UI/command affordances - [04-RETIMING.md](04-RETIMING.md);
+post-K-249 these return on the **property** path — the segment calls named here
+are the reference for behaviour, not wiring targets):
 - Freeze-at-playhead (`insert_freeze` built, no caller); Hold preset button;
     RATE/MAP type chips; kink badge; graph overrun band + source-out reference
     line; compensating Alt-drag; copy/paste a retime between clips;
@@ -401,7 +406,7 @@ list, not a re-statement of the roadmap.
     notarisation (K-033). The Metal/IOSurface Viewer path is unverified on real
     hardware. The installer registers the `.lum`/`.lumfx` file associations with
     their document icons (`assets/brand/lumit-project.ico`, `lumit-preset.ico`,
-    K-246) - Windows registry/MSIX manifest, Linux .desktop + shared-mime-info.
+    K-251) - Windows registry/MSIX manifest, Linux .desktop + shared-mime-info.
 - **Phase 2 - Retime.** Flow interpolation policies; automatic beat snapping
     across edit/retime points ([04-RETIMING.md](04-RETIMING.md),
     [09-AUDIO.md](09-AUDIO.md)).

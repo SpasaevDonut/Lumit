@@ -4,13 +4,16 @@
 // Driven through the panel rather than in isolation, for the same reason as
 // everywhere else here: what matters is that a click reaches the document.
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
+import 'package:lumit_flutter/panels/graph_maths.dart';
 import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/shell/status_line_frb.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
+import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 
 import 'package:lumit_flutter/state/tools.dart';
@@ -335,11 +338,227 @@ void main() {
       await tester.pumpAndSettle();
     });
 
+    // --- the sequence view (K-248) --------------------------------------
+
+    /// A Sequence layer, ready to open. Added layers land at the top of the
+    /// stack, so it is always the first — which lets a test put something
+    /// underneath it first.
+    Future<LayerReference> sequencedLayer(dynamic p) async {
+      final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
+      p.comp.addFootageLayer(footage: footage, asSequence: false);
+      p.comp.getLayers().first.convertToSequenced();
+      return p.comp.getLayers().first as LayerReference;
+    }
+
+    testWidgets('double-clicking a Sequence layer opens its clips in its row',
+        (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+
+      final clip = layer.getClips().single;
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsNothing,
+          reason: 'shut until it is opened');
+
+      final name = find.byKey(
+          ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsOneWidget,
+          reason: 'the clip is on screen');
+      expect(find.byKey(const ValueKey('seq-envelope')), findsOneWidget,
+          reason: 'and so is the speed envelope beneath it');
+
+      // Double-clicking again shuts it.
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+      expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsNothing);
+    });
+
+    /// The two halves of the Timeline must agree about how tall every row is.
+    ///
+    /// The outline has nothing of its own to draw for an open sequence view —
+    /// the clips and their envelope are the lane's — so it has to reserve the
+    /// room anyway. It did not, which put every row below the opened layer at
+    /// a different height on each side: names stopped lining up with bars.
+    testWidgets('opening a view moves the outline down with the lanes',
+        (tester) async {
+      final p = withComp();
+      // The solid goes in *first*: a new layer lands at the top of the stack,
+      // so this is the one that ends up below the sequenced layer — and below
+      // is where the misalignment showed.
+      final below = p.comp.addSolidLayer();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      Rect nameOf() => tester.getRect(
+          find.byKey(ValueKey<String>('tl-row-${below.internallayerId}')));
+      Rect barOf() => tester.getRect(
+          find.byKey(ValueKey<String>('tl-bar-${below.internallayerId}')));
+
+      final gapBefore = nameOf().top - barOf().top;
+
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(nameOf().top - barOf().top, closeTo(gapBefore, 0.5),
+          reason: 'the row below moved by the same amount on both sides');
+    });
+
+    /// A drag must survive the readout appearing.
+    ///
+    /// The readout is a `Stack` child that only exists while a drag runs, and
+    /// unkeyed children are matched by position — so it took the gesture
+    /// detector's slot, Flutter rebuilt that element, and the recogniser
+    /// holding the drag went with it. The gesture ended the instant the
+    /// readout showed up, one frame in. Driven here one step at a time,
+    /// because a single synthetic move never reproduces it (the same reason
+    /// K-212's first round of tests all passed).
+    /// The velocity drag must stay linear.
+    ///
+    /// The axis grows to hold whatever a point reaches, so a point dragged
+    /// past the floor widened it, which stretched what the next pixel of
+    /// travel was worth, which pushed the point further still — a steady hand
+    /// sent the value off exponentially. The axis is frozen for the length of
+    /// a gesture now, so equal travel is equal change.
+    testWidgets('an envelope drag stays linear', (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      final clip = layer.getClips().single;
+      final strip = tester.getRect(find.byKey(const ValueKey('seq-envelope')));
+      final clipBox =
+          tester.getRect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')));
+      // Near the clip's own start, so the point grabbed is its first — the
+      // one whose speed is read back below.
+      final from = Offset(clipBox.left + 3, strip.top + strip.height * 0.3);
+
+      /// The first point's speed after dragging down by [by] pixels, in equal
+      /// steps. Read off the map rather than `speedPercent`, which is null the
+      /// moment the two ends differ — which is exactly what dragging one does.
+      Future<double> after(double by) async {
+        layer.setClipSpeed(clip: clip.id, percent: 100, endPercent: 100);
+        // The panel draws from the read model, so a write behind its back has
+        // to be published or the next drag starts from the last one's result.
+        p.uiState.model.refresh();
+        await tester.pumpAndSettle();
+        final gesture = await tester.startGesture(from);
+        for (var i = 0; i < 6; i++) {
+          await gesture.moveBy(Offset(0, by / 6));
+          await tester.pump();
+        }
+        await gesture.up();
+        await tester.pumpAndSettle();
+        final map = layer.getClips().single.retime;
+        return envelopeSpeeds(keysOf(map)).first;
+      }
+
+      final near = 100 - await after(20);
+      final far = 100 - await after(40);
+      // Twice the travel, twice the change — not four times, or forty.
+      expect(far, closeTo(near * 2, near * 0.25),
+          reason: 'equal pixels are equal per cent, however far it has gone');
+    });
+
+    testWidgets('a drag keeps going once the readout appears', (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      final before = layer.getClips().single;
+      final strip = tester.getRect(find.byKey(const ValueKey('seq-envelope')));
+      final clipBox =
+          tester.getRect(find.byKey(ValueKey<String>('seq-clip-${before.id}')));
+      final from = Offset(clipBox.center.dx, strip.top + strip.height * 0.3);
+
+      // One event at a time, because a single synthetic move never
+      // reproduces a drag that dies part way (the same reason K-212's first
+      // round of tests all passed).
+      final gesture = await tester.startGesture(from);
+      for (var i = 0; i < 6; i++) {
+        await gesture.moveBy(const Offset(0, 8));
+        await tester.pump();
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+
+      final after = layer.getClips().single;
+      expect(after.speedPercent, isNotNull);
+      // The whole 48px of travel, not the first step of it.
+      final oneStepOnly = 100 - (8 / strip.height) * 161;
+      expect(after.speedPercent!, lessThan(oneStepOnly - 20),
+          reason: 'every move counted, not just the one before the readout '
+              'appeared');
+    });
+
+    testWidgets('dragging an envelope point re-speeds only that clip',
+        (tester) async {
+      final p = withComp();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      final name = find.byKey(
+          ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      final before = layer.getClips().single;
+      expect(before.retimed, isFalse, reason: 'plays at source rate to start');
+
+      // Downwards is slower: the envelope runs fast at the top to backwards at
+      // the bottom, so a drag down the strip lowers the speed. Started over
+      // the clip's own span, which is what picks the clip whose line it is.
+      final strip = tester.getRect(find.byKey(const ValueKey('seq-envelope')));
+      final clipBox =
+          tester.getRect(find.byKey(ValueKey<String>('seq-clip-${before.id}')));
+      await tester.dragFrom(
+        Offset(clipBox.center.dx, strip.top + strip.height * 0.3),
+        const Offset(0, 30),
+      );
+      await tester.pumpAndSettle();
+
+      final after = layer.getClips().single;
+      expect(after.retimed, isTrue);
+      expect(after.speedPercent, isNotNull);
+      expect(after.speedPercent!, lessThan(100),
+          reason: 'dragging down the strip slows the clip');
+      // The covenant: the clip is still exactly where it was on the row.
+      expect(after.startFrame, before.startFrame);
+      expect(after.endFrame, before.endFrame);
+    });
+
     testWidgets('the razor cuts a sequence clip where it is clicked',
         (tester) async {
       final p = withComp();
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
-      p.comp.addFootageLayer(footage: footage);
+      p.comp.addFootageLayer(footage: footage, asSequence: false);
       final layer = p.comp.getLayers().single;
       layer.convertToSequenced();
       final sequenced = p.comp.getLayers().single;

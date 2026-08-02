@@ -556,6 +556,24 @@ class GraphEditorFrb extends StatefulWidget {
   /// range is the user's — the wheel pans it and `Alt`+wheel zooms it.
   final bool autoFit;
 
+  /// Whether the Pen tool is armed on the toolbar (docs/07 §1.7).
+  ///
+  /// With it in hand the graph plants and lifts keys on a single click — the
+  /// same thing the Pen does to a path, done to a curve. Everything it offers
+  /// is reachable without it (double-click, `Ctrl`-click, `Alt`-click), so
+  /// nobody has to hold a tool to edit a curve.
+  final bool penArmed;
+
+  /// Settings ▸ Interface ▸ Editing ▸ *Retime opens to Velocity* (K-246).
+  ///
+  /// On, a **Retime** channel's speed view becomes the Vegas envelope of
+  /// K-247: one point per key whose height is the playback speed in per cent,
+  /// straight lines between them, and the frames after a dragged point
+  /// re-integrated. Off — and for every channel that is not a Retime, in
+  /// either mode — the speed view is the ordinary two-sided derivative graph
+  /// with its in and out dots. Nothing about the value view changes either way.
+  final bool vegas;
+
   /// The selected keys, as `channelId#index` — owned by the Timeline panel so
   /// the bottom bar and the shortcuts act on the same set.
   final Set<String> selectedKeys;
@@ -579,6 +597,8 @@ class GraphEditorFrb extends StatefulWidget {
     required this.magnet,
     required this.lens,
     required this.autoFit,
+    this.vegas = false,
+    this.penArmed = false,
     required this.selectedKeys,
     required this.onSelectionChanged,
     required this.onChanged,
@@ -591,11 +611,33 @@ class GraphEditorFrb extends StatefulWidget {
 
 /// A key drag in flight: which key was grabbed and how far the gesture has
 /// moved, applied to every selected key for the preview and committed once.
+/// A key drag in flight. The gesture's travel is kept **raw**, and the
+/// `Shift` constraint is applied where it is read rather than where it is
+/// accumulated — so the axis can change as the pointer moves, and letting
+/// `Shift` go mid-drag restores the full travel instead of losing whatever
+/// was suppressed while it was held.
 class _KeyDrag {
   final String grabbedId;
-  double dxPx = 0;
-  double dyPx = 0;
+
+  /// Everything the pointer has travelled, `Shift` or no `Shift`.
+  double rawDx = 0;
+  double rawDy = 0;
+
   _KeyDrag(this.grabbedId);
+
+  /// Which way a `Shift`-constrained drag is going: whichever axis the
+  /// pointer has travelled further along **in pixels**.
+  ///
+  /// Pixels, not values: the two axes carry different units at different
+  /// zooms — seconds against source-seconds, or per cent — so comparing the
+  /// numbers themselves would make the constraint depend on how far the graph
+  /// happens to be zoomed rather than on the gesture the hand made.
+  bool get _horizontal => rawDx.abs() >= rawDy.abs();
+
+  double get dxPx =>
+      !HardwareKeyboard.instance.isShiftPressed || _horizontal ? rawDx : 0;
+  double get dyPx =>
+      !HardwareKeyboard.instance.isShiftPressed || !_horizontal ? rawDy : 0;
 }
 
 /// A tangent-handle drag in flight (value lens), or a speed-dot/influence
@@ -635,8 +677,29 @@ class _HandleDrag {
   final (double, double) range;
   final double height;
 
-  /// Pixels the dot has travelled sideways (speed lens dot drags only).
-  double dxPx = 0;
+  /// Pixels the dot has travelled sideways (speed lens dot drags only),
+  /// before the `Shift` constraint — see [dxPx].
+  double rawDx = 0;
+
+  /// The pointer's vertical travel in pixels, and the speed the dot sat at
+  /// when the gesture began. Together they let `Shift` hold the speed exactly
+  /// where it started while the key moves in time.
+  double rawDy = 0;
+  double startSpeed = 0;
+
+  /// Which way a `Shift`-constrained dot drag is going: whichever axis the
+  /// pointer has travelled further along in **pixels**, so the choice follows
+  /// the gesture rather than the zoom (see [_KeyDrag]).
+  bool get _horizontal => rawDx.abs() >= rawDy.abs();
+
+  bool get _constrained => HardwareKeyboard.instance.isShiftPressed;
+
+  /// Sideways travel, held at zero while `Shift` makes this a vertical drag.
+  double get dxPx => !_constrained || _horizontal ? rawDx : 0;
+
+  /// The speed to draw and to commit: the pointer's, or the one the gesture
+  /// started at while `Shift` makes this a horizontal drag.
+  double get shownSpeed => _constrained && _horizontal ? startSpeed : speed;
 
   _HandleDrag({
     required this.channel,
@@ -656,6 +719,11 @@ class _HandleDrag {
 
 class GraphEditorFrbState extends State<GraphEditorFrb> {
   _KeyDrag? _keyDrag;
+
+  /// When and where the pane was last clicked, for spotting a double-click
+  /// (see [_tapPane]).
+  DateTime? _lastPaneTap;
+  Offset? _lastPaneTapAt;
   _HandleDrag? _handleDrag;
 
   /// The vertical range on screen while a gesture is in flight — held still
@@ -749,15 +817,44 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   List<List<BridgeKeyframe>> get _channelKeys =>
       [for (final c in widget.channels) c.keys];
 
-  (double, double) _fitRange() => widget.lens == GraphLens.value
-      ? fitValueRange(
-          _channelKeys,
-          [
-            for (final c in widget.channels)
-              if (c.isStatic) c.staticValue,
-          ],
-        )
-      : fitSpeedRange(_channelKeys);
+  /// Whether [channel] draws as the Vegas speed envelope right now (K-247) —
+  /// a Retime, in the speed view, with the preference on.
+  bool isEnvelope(GraphChannel channel) =>
+      widget.vegas && channel.retime && widget.lens == GraphLens.speed;
+
+  bool get _anyEnvelope => widget.channels.any(isEnvelope);
+
+  (double, double) _fitRange() {
+    if (widget.lens == GraphLens.value) {
+      return fitValueRange(
+        _channelKeys,
+        [
+          for (final c in widget.channels)
+            if (c.isStatic) c.staticValue,
+        ],
+      );
+    }
+    if (!_anyEnvelope) return fitSpeedRange(_channelKeys);
+    // An envelope brings its own floor and ceiling (100% down to −25%), which
+    // the ordinary speed fit has no business inventing. Any other channel
+    // selected alongside is framed as before and the two ranges are unioned —
+    // the speed view has always put unlike units on one axis (px/s beside
+    // %/s), so this is not a new compromise, just a wider one.
+    final envelope = fitEnvelopeRange([
+      for (final c in widget.channels)
+        if (isEnvelope(c)) c.keys
+    ]);
+    final others = [
+      for (final c in widget.channels)
+        if (!isEnvelope(c)) c.keys
+    ];
+    if (others.isEmpty) return envelope;
+    final rest = fitSpeedRange(others);
+    return (
+      envelope.$1 < rest.$1 ? envelope.$1 : rest.$1,
+      envelope.$2 > rest.$2 ? envelope.$2 : rest.$2,
+    );
+  }
 
   /// The Timeline's horizontal scroll offset, or zero before the view has been
   /// laid out (and in tests, which build the pane on its own).
@@ -787,12 +884,16 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     return lo + (height - y) / (height <= 0 ? 1 : height) * span;
   }
 
-  /// A key's y in the current lens: its value, or one side's speed.
+  /// A key's y in the current lens: its value, one side's speed, or — as an
+  /// envelope point — its playback speed in per cent.
   double _keyY(
       GraphChannel channel, int index, (double, double) range, double height,
       {required bool isOut}) {
     if (widget.lens == GraphLens.value) {
       return _yOf(channel.keys[index].value, range, height);
+    }
+    if (isEnvelope(channel)) {
+      return _yOf(envelopeSpeeds(channel.keys)[index], range, height);
     }
     return _yOf(
         sideSpeedAtKey(channel.keys, index, isOut: isOut), range, height);
@@ -867,7 +968,27 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   /// key on the curve under the pointer (docs/07 §4.3's lane gesture, read
   /// through the graph).
   void _tapPane(Offset local, (double, double) range, double height) {
-    if (HardwareKeyboard.instance.isControlPressed) {
+    if (HardwareKeyboard.instance.isControlPressed || widget.penArmed) {
+      _addKeyAt(local, range, height);
+      return;
+    }
+    // The second click of a double-click plants a key on the curve.
+    //
+    // Counted here rather than with an `onDoubleTap` beside the pane's own
+    // gesture, because the pane reports taps through `onTapUp`, which claims
+    // the gesture arena the moment the first tap lifts — a double-tap
+    // recogniser next to it never gets to form, so the gesture simply never
+    // fired. Two timestamps do the same job with none of the arena's opinions.
+    final now = DateTime.now();
+    final last = _lastPaneTap;
+    final lastAt = _lastPaneTapAt;
+    _lastPaneTap = now;
+    _lastPaneTapAt = local;
+    if (last != null &&
+        lastAt != null &&
+        now.difference(last) < kDoubleTapTimeout &&
+        (lastAt - local).distance < _keyGrab) {
+      _lastPaneTap = null;
       _addKeyAt(local, range, height);
       return;
     }
@@ -876,45 +997,119 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     widget.onSelectionChanged();
   }
 
+  /// Plant a key on the curve under the pointer, without changing its shape.
+  ///
+  /// Works in **either lens**: the key's value is the curve's own value at
+  /// that moment, so the picture does not move — adding a point is a place to
+  /// grab, not an edit. In the Vegas envelope the new point also takes the
+  /// speed the envelope already reads there, so the straight line it sits on
+  /// stays straight (K-247).
   void _addKeyAt(Offset local, (double, double) range, double height) {
-    if (widget.lens != GraphLens.value) return;
     final frame = widget.magnet
         ? widget.axis.frameAt(local.dx).toDouble()
         : (local.dx / (widget.axis.perFrame <= 0 ? 1 : widget.axis.perFrame));
     final seconds = frame / (widget.fps <= 0 ? 1 : widget.fps);
-    // The curve nearest the pointer vertically takes the key.
+
+    // The curve nearest the pointer vertically takes the key — measured in
+    // whichever reading is on screen, so the speed view picks by the speed
+    // curve the user is actually looking at.
     GraphChannel? nearest;
     var best = 12.0;
     for (final channel in widget.channels) {
-      final v = evaluateScalar(channel.scalar, seconds);
-      final d = (_yOf(v, range, height) - local.dy).abs();
+      final keys = channel.keys;
+      final double drawn;
+      if (widget.lens == GraphLens.value) {
+        drawn = channel.isStatic
+            ? channel.staticValue
+            : evaluateKeys(keys, seconds);
+      } else {
+        drawn = channel.isStatic
+            ? 0
+            : evaluateKeysSpeed(keys, seconds) * (isEnvelope(channel) ? 100 : 1);
+      }
+      final d = (_yOf(drawn, range, height) - local.dy).abs();
       if (d < best) {
         best = d;
         nearest = channel;
       }
     }
-    if (nearest == null || nearest.isStatic && nearest.keys.isEmpty) {
-      // A static channel gains its first key where its flat line is.
-      if (nearest == null) return;
-    }
-    final keys = nearest.keys;
-    final value =
-        nearest.isStatic ? nearest.staticValue : evaluateKeys(keys, seconds);
-    final taken = {
-      for (final k in keys) _keyFrame(k, widget.fps).round(),
-    };
+    final channel = nearest;
+    if (channel == null) return;
+
+    final keys = channel.keys;
+    final taken = {for (final k in keys) _keyFrame(k, widget.fps).round()};
     if (taken.contains(frame.round())) return;
+    final time = timeOfSubframe(frame, widget.fpsNum, widget.fpsDen);
+
+    // An envelope keeps its shape by construction: give the new point the
+    // speed the line already has there and re-integrate through it.
+    if (isEnvelope(channel) && keys.length >= 2) {
+      final speeds = envelopeSpeeds(keys);
+      var at = keys.length;
+      for (var i = 0; i < keys.length; i++) {
+        if (seconds < rationalSeconds(keys[i].time)) {
+          at = i;
+          break;
+        }
+      }
+      final double planted;
+      if (at == 0) {
+        planted = speeds.first;
+      } else if (at == keys.length) {
+        planted = speeds.last;
+      } else {
+        final t0 = rationalSeconds(keys[at - 1].time);
+        final t1 = rationalSeconds(keys[at].time);
+        final f = t1 > t0 ? (seconds - t0) / (t1 - t0) : 0.0;
+        planted = speeds[at - 1] + (speeds[at] - speeds[at - 1]) * f;
+      }
+      final grown = [...keys]..insert(
+          at,
+          BridgeKeyframe(
+            time: time,
+            value: 0,
+            interpIn: const BridgeSideInterp.linear(),
+            interpOut: const BridgeSideInterp.linear(),
+          ));
+      final withSpeed = [...speeds]..insert(at, planted);
+      commitChannelEdits({
+        channel: BridgeScalar.keyframed(envelopeToKeys(grown, withSpeed)),
+      });
+      widget.onChanged();
+      return;
+    }
+
+    final value =
+        channel.isStatic ? channel.staticValue : evaluateKeys(keys, seconds);
     final next = [
       ...keys,
       BridgeKeyframe(
-        time: timeOfSubframe(frame, widget.fpsNum, widget.fpsDen),
+        time: time,
         value: value,
         interpIn: const BridgeSideInterp.linear(),
         interpOut: const BridgeSideInterp.linear(),
       ),
     ]..sort(
         (a, b) => rationalSeconds(a.time).compareTo(rationalSeconds(b.time)));
-    commitChannelEdits({nearest: BridgeScalar.keyframed(next)});
+    commitChannelEdits({channel: BridgeScalar.keyframed(next)});
+    widget.onChanged();
+  }
+
+  /// Take one key off [channel], keeping every other key exactly as it is.
+  ///
+  /// The counterpart of [_addKeyAt]: `Alt`-click or double-click a key, or
+  /// click one with the Pen armed. A channel's last key is refused rather than
+  /// leaving a keyframed property with nothing in it.
+  void _removeKey(GraphChannel channel, int index) {
+    final keys = channel.keys;
+    if (index < 0 || index >= keys.length || keys.length <= 1) return;
+    final next = [
+      for (var i = 0; i < keys.length; i++)
+        if (i != index) keys[i],
+    ];
+    widget.selectedKeys.removeWhere((id) => id.startsWith('${channel.id}#'));
+    commitChannelEdits({channel: BridgeScalar.keyframed(next)});
+    widget.onSelectionChanged();
     widget.onChanged();
   }
 
@@ -1023,7 +1218,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
         dot.channel.id == channel.id &&
         dot.index == index) {
       x += dot.dxPx;
-      if (dot.isOut == isOut) y = _yOf(dot.speed, range, height);
+      if (dot.isOut == isOut) y = _yOf(dot.shownSpeed, range, height);
     }
     return Offset(x, y);
   }
@@ -1108,7 +1303,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   }
 
   void _updateHandleDrag(Offset local, (double, double) range, double height,
-      {double dx = 0}) {
+      {double dx = 0, double dy = 0}) {
     final drag = _handleDrag;
     if (drag == null) return;
     final keys = drag.channel.keys;
@@ -1119,13 +1314,26 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
     final pointerValue = _valueAt(local.dy, range, height);
 
     setState(() {
+      if (isEnvelope(drag.channel)) {
+        // An envelope point: its height is the playback speed in per cent,
+        // straight off the axis, and it carries the key sideways like any
+        // speed dot. There is no influence to set — an envelope's sides are
+        // always the chord (K-247), which is what keeps its lines straight.
+        drag.speed = pointerValue;
+        if (drag.dotOnly) {
+          drag.rawDx += dx;
+          drag.rawDy += dy;
+        }
+        return;
+      }
       if (widget.lens == GraphLens.speed) {
         // The speed lens: a dot's height IS that side's speed and its sideways
         // travel moves the keyframe in time; an influence handle's reach sets
         // the influence.
         drag.speed = pointerValue;
         if (drag.dotOnly) {
-          drag.dxPx += dx;
+          drag.rawDx += dx;
+          drag.rawDy += dy;
         } else if (nb != null) {
           final dt = (rationalSeconds(nb.time) - keyTime).abs();
           if (dt > 1e-9) {
@@ -1274,11 +1482,24 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       if (i == drag.index) continue;
       if ((_keyFrame(keys[i], widget.fps) - frame).abs() < 1e-9) return null;
     }
+    final at = timeOfSubframe(frame, widget.fpsNum, widget.fpsDen);
+    if (isEnvelope(drag.channel)) {
+      return moveEnvelopePoint(keys, drag.index, at);
+    }
+    // An **envelope** point keeps its speed and re-integrates. A key's stored
+    // tangent is a speed; its span's chord is an average. Move a key in time
+    // and the chord changes while the tangent stays put, so a span that was
+    // straight stops being straight and the graph starts describing playback
+    // the points do not say. Everywhere else a key keeps its value and its
+    // easing, which is what moving a keyframe has always meant.
+    if (isEnvelope(drag.channel)) {
+      return moveEnvelopePoint(keys, drag.index, at);
+    }
     final moved = [
       for (var i = 0; i < keys.length; i++)
         if (i == drag.index)
           BridgeKeyframe(
-            time: timeOfSubframe(frame, widget.fpsNum, widget.fpsDen),
+            time: at,
             value: keys[i].value,
             interpIn: keys[i].interpIn,
             interpOut: keys[i].interpOut,
@@ -1295,6 +1516,12 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   /// move together while the pointer is down.
   List<BridgeKeyframe> _keysWithHandleDrag(
       _HandleDrag drag, List<BridgeKeyframe> keys) {
+    // An envelope point sets a speed and the source positions after it follow
+    // (K-247). Every keyframe *time* stays exactly put, so a beat already
+    // synced stays synced — the covenant this whole feature is built around.
+    if (isEnvelope(drag.channel)) {
+      return setEnvelopeSpeed(keys, drag.index, drag.speed);
+    }
     final dragged = BridgeSideInterp.bezier(
         BridgeBezierSide(speed: drag.speed, influence: drag.influence));
     final partner = drag.mirrored
@@ -1320,7 +1547,13 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
   List<BridgeKeyframe> _shownKeys(GraphChannel channel) {
     final drag = _handleDrag;
     if (drag == null || drag.channel.id != channel.id) return channel.keys;
-    return _keysWithHandleDrag(drag, channel.keys);
+    final shaped = _keysWithHandleDrag(drag, channel.keys);
+    // A dot carries its keyframe sideways as well as up, and the curve has to
+    // go with it: the dot is drawn at the pointer either way, so a curve left
+    // at the committed time simply comes adrift from the dot until the gesture
+    // ends. The same move the release will commit, applied to the preview.
+    if (!drag.dotOnly || drag.dxPx == 0) return shaped;
+    return _keysWithDotTimeMove(drag, shaped) ?? shaped;
   }
 
   // --- menus ---------------------------------------------------------------
@@ -1445,7 +1678,12 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
               Positioned.fill(
                 child: AnimatedBuilder(
                   animation: widget.hScroll ?? const AlwaysStoppedAnimation(0),
-                  builder: (context, _) => CustomPaint(
+                  // Clipped to the pane. The vertical range is frozen while a
+                  // drag runs, so a key taken past the top or the bottom would
+                  // otherwise be drawn outside the graph and over whatever
+                  // sits beside it; the framing catches up when the drag ends.
+                  builder: (context, _) => ClipRect(
+                    child: CustomPaint(
                     painter: _GraphPainter(
                       channels: widget.channels,
                       shownKeys: [
@@ -1459,6 +1697,8 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                       grid: t.hairline,
                       label: t.small.copyWith(color: t.textMuted),
                       viewportLeft: _viewportLeft,
+                      vegas: widget.vegas,
+                    ),
                     ),
                   ),
                 ),
@@ -1533,7 +1773,11 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       for (var i = 0; i < keys.length; i++) {
         final id = '${channel.id}#$i';
         final chosen = widget.selectedKeys.contains(id);
-        final sides = widget.lens == GraphLens.value
+        final sides = widget.lens == GraphLens.value || isEnvelope(channel)
+            // The value view, and the Vegas envelope: one point per key. The
+            // envelope's whole idea is that a key has *a* speed rather than
+            // two one-sided ones (K-247), so a second dot would be a second
+            // answer to a question with one.
             ? const [true]
             // Speed lens: an in dot and an out dot, moved independently —
             // the ends have only the side that exists.
@@ -1551,8 +1795,24 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                   ? 'graph-key-$id'
                   : 'graph-key-$id-${isOut ? 'out' : 'in'}'),
               behavior: HitTestBehavior.opaque,
-              onTap: () => _selectKey(id,
-                  toggle: HardwareKeyboard.instance.isControlPressed),
+              // `Alt`-click lifts the key, and so does a click with the Pen
+              // armed — the counterpart of planting one on the curve. A plain
+              // click still selects.
+              //
+              // Deliberately **not** `onDoubleTap`. Registering one makes
+              // Flutter hold every single tap back until the double-tap timer
+              // expires, so selecting a key — the commonest thing anyone does
+              // here — would gain a visible delay. Double-click stays the
+              // gesture for *planting* a key on empty curve, where there is no
+              // competing single click to slow down.
+              onTap: () {
+                if (HardwareKeyboard.instance.isAltPressed || widget.penArmed) {
+                  _removeKey(channel, i);
+                  return;
+                }
+                _selectKey(id,
+                    toggle: HardwareKeyboard.instance.isControlPressed);
+              },
               onSecondaryTapDown: (d) =>
                   _showKeyMenu(channel, i, d.globalPosition),
               onPanStart: (_) {
@@ -1570,8 +1830,8 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                 if (widget.lens == GraphLens.value) {
                   setState(() {
                     _keyDrag
-                      ?..dxPx += d.delta.dx
-                      ..dyPx += d.delta.dy;
+                      ?..rawDx += d.delta.dx
+                      ..rawDy += d.delta.dy;
                   });
                 } else {
                   final box = context.findRenderObject();
@@ -1711,6 +1971,9 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       );
       return (e.time, e.value);
     }
+    // An envelope point has no influence handle: its sides are always the
+    // chord, which is what keeps the lines between points straight (K-247).
+    if (isEnvelope(channel)) return null;
     // Speed lens: the influence handle reaches horizontally from the dot.
     final keyTime = rationalSeconds(key.time);
     final dt = (rationalSeconds(nb.time) - keyTime).abs();
@@ -1746,6 +2009,11 @@ class _GraphPainter extends CustomPainter {
   /// readable wherever the view is and at whatever zoom.
   final double viewportLeft;
 
+  /// Whether Retime channels draw as the Vegas envelope (K-247) — which puts
+  /// their curve on the axis in **per cent** rather than in source seconds per
+  /// second, so it lands on the points drawn over it.
+  final bool vegas;
+
   const _GraphPainter({
     required this.channels,
     required this.shownKeys,
@@ -1757,6 +2025,7 @@ class _GraphPainter extends CustomPainter {
     required this.grid,
     required this.label,
     required this.viewportLeft,
+    this.vegas = false,
   });
 
   double _yOf(double v, Size size) {
@@ -1772,6 +2041,10 @@ class _GraphPainter extends CustomPainter {
     for (var c = 0; c < channels.length; c++) {
       final channel = channels[c];
       final keys = shownKeys[c];
+      // A Retime drawn as the Vegas envelope reads in per cent, so its curve
+      // is scaled onto the same axis as its points (K-247).
+      final envelope = vegas && channel.retime && lens == GraphLens.speed;
+      final speedScale = envelope ? 100.0 : 1.0;
       final paint = Paint()
         ..color = palette[channel.colourIndex % palette.length]
         ..strokeWidth = 1.4
@@ -1796,7 +2069,7 @@ class _GraphPainter extends CustomPainter {
         final seconds = axis.perFrame <= 0 ? 0.0 : x / axis.perFrame / f;
         final v = lens == GraphLens.value
             ? evaluateKeys(keys, seconds)
-            : evaluateKeysSpeed(keys, seconds);
+            : evaluateKeysSpeed(keys, seconds) * speedScale;
         final point = Offset(x, _yOf(v, size));
         if (first) {
           path.moveTo(point.dx, point.dy);
@@ -1809,7 +2082,7 @@ class _GraphPainter extends CustomPainter {
 
       // Speed lens: the vertical join at each key, where in and out speed
       // step — drawn faint so a discontinuity reads as one key, not two.
-      if (lens == GraphLens.speed) {
+      if (lens == GraphLens.speed && !envelope) {
         final joinPaint = Paint()
           ..color = paint.color.withValues(alpha: 0.35)
           ..strokeWidth = 1;

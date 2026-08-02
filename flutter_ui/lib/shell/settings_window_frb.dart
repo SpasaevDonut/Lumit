@@ -386,6 +386,42 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
+      // The two the first-run screen sets (K-246). They sit here as ordinary
+      // rows, and independently of each other: the screen offers them as a
+      // pair, but somebody who wants Vegas ramps and After Effects imports is
+      // exactly the split docs/07 §13.1 expects to be common.
+      _section(t, 'Editing', [
+        _row(
+          t,
+          'Retime opens to Velocity',
+          'The Retime graph opens showing playback speed per cent — one point '
+              'per keyframe, dragged up to speed up and below zero to reverse '
+              '— instead of which moment of the source is showing.',
+          HouseCheckbox(
+            key: const ValueKey('settings-retime-speed-lens'),
+            value: settings.retimeOpensToSpeed,
+            onChanged: (on) => setState(() {
+              settings.retimeOpensToSpeed = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        _row(
+          t,
+          'Video arrives as a Sequence layer',
+          'Video and image sequences added to a composition become a Sequence '
+              'layer, which can be cut into clips on its own row. Still '
+              'images are never wrapped.',
+          HouseCheckbox(
+            key: const ValueKey('settings-video-as-sequence'),
+            value: settings.videoAsSequenceLayer,
+            onChanged: (on) => setState(() {
+              settings.videoAsSequenceLayer = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+      ]),
     ];
   }
 

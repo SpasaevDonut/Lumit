@@ -77,6 +77,7 @@ pub(crate) fn base_layer(
         label,
         volume_db: lumit_core::anim::Property::zero(),
         retime: None,
+        interpolation: Default::default(),
         blend: lumit_core::model::BlendMode::Normal,
         masks: Vec::new(),
         paint: Vec::new(),

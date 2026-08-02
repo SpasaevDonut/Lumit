@@ -236,7 +236,7 @@ mod tests {
             layers: vec![Layer {
                 id: Uuid::now_v7(),
                 name: "clip".into(),
-                kind: LayerKind::Footage { item, retime: None },
+                kind: LayerKind::Footage { item },
                 in_point: CompTime(Rational::ZERO),
                 out_point: CompTime(Rational::new(4, 1).unwrap()),
                 start_offset: CompTime(Rational::ZERO),
@@ -246,6 +246,7 @@ mod tests {
                 label: 0,
                 volume_db: lumit_core::anim::Property::zero(),
                 retime: None,
+                interpolation: Default::default(),
                 blend: Default::default(),
                 masks: Vec::new(),
                 paint: Vec::new(),

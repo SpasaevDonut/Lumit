@@ -905,6 +905,13 @@ A Sequence layer's row renders its clips back-to-back (glossary §2):
   second half there — rather than making a layer of no length.
 - Per-clip context menu: frame interpolation mode (nearest / blend / flow), Retime reset,
   reveal in Project panel, replace source (preserves trim and Retime where durations allow).
+- **The sequence view (K-248)**: double-clicking a Sequence layer — its outline name (where
+  a Precomp opens its comp) or its lane bar — grows the row **in place**: each clip draws a
+  start and an end thumbnail, the razor and `Ctrl+Shift+D` cut the clip under the
+  pointer/playhead, and a small **speed-envelope strip** (K-247, speed lens only) sits under
+  the clips, its points travelling with their clip. Clips may be **reordered and repeated**
+  (K-248 dropped K-071's source ordering). The layer's bar always spans first clip start →
+  last clip end. Double-clicking again collapses the row.
 
 ### 4.5 Snapping
 
@@ -1032,22 +1039,23 @@ shared scroll of §4.6, where the outline and lanes move together.
 
 ### 5.2 Retime's two lenses
 
-A **retimed footage layer** exposes its Retime as a channel in the graph editor's left column,
-beside the transform properties (K-075). Sequence layers do **not**; their retiming is edited
-inside the sequenced-layer view (K-071, §4.x) — see K-075.
+A **retimed layer** exposes its Retime as a channel in the graph editor's left column, beside
+the transform properties (K-197). A Sequence layer's clips are retimed in the sequence view
+instead (K-248, §4.4).
 
-- The **value lens** plots source position against layer/clip time, read as **frame timecode**
-  (`HH:MM:SS:FF` in the footage's own timebase — "which source frame is showing here"), not
-  seconds (AE-style editing).
-- The **speed lens** plots speed percentage against time (Vegas-style semantics). It is
-  drawn **in the graph pane, below or instead of the value lens — never overlaid on the
-  clip** in the Timeline (K-021). The clip itself only ever shows the read-only speed
-  readout and overrun hatching (§4.4).
-- **Default lens**: a Vegas-editor preference chooses which lens the Speed channel opens to —
-  on, the speed (per-cent) lens; off, the frame-timecode (value) lens (K-075, generalising
-  K-021).
-- Edits in either lens write retime segments; switching lenses never converts or degrades
-  data. Overrun regions render in both lenses as hatched spans beyond the source range.
+- The **value lens** plots source position against layer time — the ordinary property graph
+  (K-197). It reads in seconds for now; a **frame timecode** readout (`HH:MM:SS:FF` in the
+  footage's own timebase — "which source frame is showing here") is still to come.
+- The **speed lens** plots speed percentage against time, and its shape follows the Vegas
+  preference (K-246): **off**, the ordinary two-sided derivative view every property has;
+  **on**, the **envelope** of K-247 — one point per key, whose height *is* the speed, with a
+  default vertical range of 100% down to −25% that grows to fit the curve. Either way it is
+  drawn **in the graph pane, never overlaid on the clip** in the Timeline (K-021); the bar
+  shows only read-only indication.
+- **Default lens**: the Vegas preference chooses which lens a Retime channel opens to — on,
+  speed; off, value (K-246, realising K-075's preference in the property era).
+- The store is the one Retime property (K-249); switching lenses never converts or degrades
+  data. Reverse is legal in both lenses and both modes (K-247).
 
 ### 5.3 Editing behaviours
 
@@ -1407,7 +1415,7 @@ flowchart (the deferred node-graph view) grows from it.
 
 ## 13. Onboarding and empty states
 
-### 13.1 First-run setup (K-006, post-v1 polish)
+### 13.1 First-run setup (K-006; v1 ships minimal per K-246)
 
 On the very first launch only, before any project opens, one calm screen asks a single
 question: *"Where are you coming from?"* with four cards:
@@ -1424,6 +1432,11 @@ else asked. Every affected setting is an ordinary visible setting changeable lat
 the chooser can be re-run from the command palette (*First-run setup*). This MUST remain
 a single screen — it is a preference primer, not a tour, and does not breach §13's
 no-wizard rule below.
+
+The **v1 build** (K-246) ships the minimal form of this screen: two plain choices,
+**AE-style** and **Vegas-style**, where Vegas ticks the two K-246 settings (Retime opens to
+speed; video arrives as a Sequence layer) and AE ticks neither. The four cards above, with a
+small image over each choice, remain the destination (polish tracked in TODO).
 
 ### 13.2 Empty states
 

@@ -109,7 +109,8 @@ BridgeCacheLocation cacheLocationFromName(String name) =>
       orElse: () => BridgeCacheLocation.appData,
     );
 
-/// Interface (Settings → Interface): UI scale and tooltips (K-117).
+/// Interface (Settings → Interface): UI scale and tooltips (K-117), plus the
+/// two editing preferences that make Lumit behave the Vegas way (K-246).
 class InterfaceSettings {
   double uiScale;
   bool showTooltips;
@@ -123,16 +124,36 @@ class InterfaceSettings {
   /// After Effects users bring with them.
   bool transformInEffectControls;
 
+  /// Whether a Retime channel opens in the graph editor showing playback speed
+  /// rather than source position (K-246, realising K-075's preference).
+  ///
+  /// On, the channel opens to its Velocity lens and that lens is the **speed
+  /// envelope** of K-247 — one point per key, whose height is the speed. Off,
+  /// it opens to Time and the speed view keeps the ordinary two-sided
+  /// derivative shape every other property has. Ordinary properties are
+  /// unaffected either way; this is a Retime-only preference.
+  bool retimeOpensToSpeed;
+
+  /// Whether video footage and image sequences added to a comp arrive as a
+  /// one-clip Sequence layer rather than a Footage layer (K-246).
+  ///
+  /// Still images never do: there is nothing to cut in a single frame.
+  bool videoAsSequenceLayer;
+
   InterfaceSettings({
     this.uiScale = 1.0,
     this.showTooltips = true,
     this.transformInEffectControls = false,
+    this.retimeOpensToSpeed = false,
+    this.videoAsSequenceLayer = false,
   });
 
   Map<String, dynamic> toJson() => {
         'ui_scale': uiScale,
         'show_tooltips': showTooltips,
         'transform_in_effect_controls': transformInEffectControls,
+        'retime_opens_to_speed': retimeOpensToSpeed,
+        'video_as_sequence_layer': videoAsSequenceLayer,
       };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
@@ -140,5 +161,10 @@ class InterfaceSettings {
         showTooltips: j['show_tooltips'] as bool? ?? true,
         transformInEffectControls:
             j['transform_in_effect_controls'] as bool? ?? false,
+        // Absent means off, which is the After Effects behaviour Lumit had
+        // before these existed — a settings file written by an older build
+        // must not silently change how the editor works.
+        retimeOpensToSpeed: j['retime_opens_to_speed'] as bool? ?? false,
+        videoAsSequenceLayer: j['video_as_sequence_layer'] as bool? ?? false,
       );
 }

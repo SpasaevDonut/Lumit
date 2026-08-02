@@ -689,10 +689,9 @@ fn feed_source(
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
     match &layer.kind {
-        LayerKind::Footage { item, retime } => {
+        LayerKind::Footage { item } => {
             // The retime maps local time → source time; the cache key must key
             // the RETIMED source frame, so two different ramps never collide.
-            // The layer answers with whichever map it carries (K-197).
             let source_time = layer.source_time_at(lt);
             let (identity, frame) = stamper.stamp(*item, source_time)?;
             h.update(b"footage/");
@@ -713,13 +712,14 @@ fn feed_source(
             // middle" bug). Hashing the exact retimed time keys each fraction
             // distinctly; identical times reuse, so it never over-renders a
             // truly repeated position.
-            if let Some(r) = retime {
-                if !matches!(r.interpolation, lumit_core::retime::Interpolation::Nearest) {
-                    h.update(&[interp_tag(&r.interpolation)]);
+            {
+                let interpolation = &layer.interpolation;
+                if !matches!(interpolation, lumit_core::retime::Interpolation::Nearest) {
+                    h.update(&[interp_tag(interpolation)]);
                     feed_f64(h, source_time);
                     // A flow conform rate (K-095) synthesises from different
                     // source frames at the same source time, so it is content.
-                    if let lumit_core::retime::Interpolation::Flow(p) = &r.interpolation {
+                    if let lumit_core::retime::Interpolation::Flow(p) = interpolation {
                         // The conform rate is keyframeable (K-160): hash the
                         // value it reads at this local time, so each rate along
                         // an animated ramp keys its own synthesised frame.
@@ -896,6 +896,27 @@ mod tests {
         CompTime(Rational::from_f64_on_grid(s, Rational::FLICK_DEN).unwrap())
     }
 
+    /// A Retime property from `(layer time, source time)` pairs, straight
+    /// between them — the shape every constant-speed or ramped retime has once
+    /// it is keyframes rather than segments (K-249).
+    fn linear_retime(points: &[(f64, f64)]) -> lumit_core::anim::Property {
+        use lumit_core::anim::{Animation, Keyframe, Property, SideInterp};
+        Property {
+            animation: Animation::Keyframed(
+                points
+                    .iter()
+                    .map(|&(t, s)| Keyframe {
+                        time: Rational::from_f64_on_grid(t, Rational::FLICK_DEN).unwrap(),
+                        value: s,
+                        interp_in: SideInterp::Linear,
+                        interp_out: SideInterp::Linear,
+                    })
+                    .collect(),
+            ),
+            extra: serde_json::Map::new(),
+        }
+    }
+
     fn text_layer(text: &str, in_s: f64, out_s: f64, offset_s: f64) -> Layer {
         Layer {
             id: Uuid::now_v7(),
@@ -917,6 +938,7 @@ mod tests {
             label: 0,
             volume_db: lumit_core::anim::Property::zero(),
             retime: None,
+            interpolation: Default::default(),
             blend: Default::default(),
             masks: Vec::new(),
             paint: Vec::new(),
@@ -1772,7 +1794,6 @@ mod tests {
         let mut l = text_layer("", 0.0, 5.0, 0.0);
         l.kind = LayerKind::Footage {
             item: Uuid::now_v7(),
-            retime: None,
         };
         let comp = comp_with(vec![l]);
         assert!(comp_frame_key(&doc, &comp, 1.0, Quality::default(), &UnknownStamper).is_none());
@@ -1784,21 +1805,18 @@ mod tests {
     /// no-retime at t=2.
     #[test]
     fn retime_keys_the_source_frame_not_the_local_frame() {
-        use lumit_core::retime::Retime;
-        use lumit_core::time::Rational;
         let doc = Document::new();
         let item = Uuid::now_v7();
         let footage = |retime| {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
-            l.kind = LayerKind::Footage { item, retime };
+            l.kind = LayerKind::Footage { item };
+            l.retime = retime;
             comp_with(vec![l])
         };
         let plain = footage(None);
-        let half = footage(Some(Retime::constant_speed(
-            Rational::new(10, 1).unwrap(),
-            Rational::ZERO,
-            Rational::new(1, 2).unwrap(),
-        )));
+        // Half speed as the property expresses it (K-249): ten seconds of
+        // layer time reading five of source.
+        let half = footage(Some(linear_retime(&[(0.0, 0.0), (10.0, 5.0)])));
         let k = |c: &Composition, t| {
             comp_frame_key(&doc, c, t, Quality::default(), &StubStamper).unwrap()
         };
@@ -1813,37 +1831,31 @@ mod tests {
     /// frame, while Blend and Flow (and Flow's quality) each key apart.
     #[test]
     fn interpolation_policy_keys_only_when_it_synthesises() {
-        use lumit_core::retime::{FlowParams, Interpolation, Retime};
-        use lumit_core::time::Rational;
+        use lumit_core::retime::{FlowParams, Interpolation};
         let doc = Document::new();
         let item = Uuid::now_v7();
-        let footage = |interp: Option<Interpolation>| {
+        // The policy sits on the layer beside the map (K-249), so an
+        // un-retimed layer has one too — which is the point: a comp and a
+        // source at different rates ask for in-between frames with no retime
+        // in sight.
+        let footage = |interp: Interpolation| {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
-            let retime = interp.map(|i| {
-                let mut r = Retime::constant_speed(
-                    Rational::new(10, 1).unwrap(),
-                    Rational::ZERO,
-                    Rational::ONE,
-                );
-                r.interpolation = i;
-                r
-            });
-            l.kind = LayerKind::Footage { item, retime };
+            l.kind = LayerKind::Footage { item };
+            l.interpolation = interp;
             comp_with(vec![l])
         };
         let k = |c: &Composition| {
             comp_frame_key(&doc, c, 1.0, Quality::default(), &StubStamper).unwrap()
         };
-        let plain = k(&footage(None));
-        assert_eq!(plain, k(&footage(Some(Interpolation::Nearest))));
-        let blend = k(&footage(Some(Interpolation::Blend)));
+        let plain = k(&footage(Interpolation::Nearest));
+        let blend = k(&footage(Interpolation::Blend));
         assert_ne!(plain, blend);
-        let half = k(&footage(Some(Interpolation::Flow(FlowParams::default()))));
-        let full = k(&footage(Some(Interpolation::Flow(FlowParams {
+        let half = k(&footage(Interpolation::Flow(FlowParams::default())));
+        let full = k(&footage(Interpolation::Flow(FlowParams {
             half_resolution: false,
             input_fps: lumit_core::anim::Property::zero(),
             extra: serde_json::Map::new(),
-        }))));
+        })));
         assert_ne!(blend, half);
         assert_ne!(half, full);
     }
@@ -1857,22 +1869,13 @@ mod tests {
     /// so its keys stay shared (the "Nearest keys like no-retime" law holds).
     #[test]
     fn synthesising_interpolation_keys_each_sub_frame_position() {
-        use lumit_core::retime::{FlowParams, Interpolation, Retime};
-        use lumit_core::time::Rational;
+        use lumit_core::retime::{FlowParams, Interpolation};
         let doc = Document::new();
         let item = Uuid::now_v7();
         let footage = |interp: Interpolation| {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
-            let mut r = Retime::constant_speed(
-                Rational::new(10, 1).unwrap(),
-                Rational::ZERO,
-                Rational::ONE,
-            );
-            r.interpolation = interp;
-            l.kind = LayerKind::Footage {
-                item,
-                retime: Some(r),
-            };
+            l.kind = LayerKind::Footage { item };
+            l.interpolation = interp;
             comp_with(vec![l])
         };
         let key = |c: &Composition, t: f64| {
@@ -1918,7 +1921,7 @@ mod tests {
             let mut echo = lumit_core::fx::instantiate("echo").unwrap();
             echo.enabled = enabled;
             l.effects.push(echo);
-            l.kind = LayerKind::Footage { item, retime: None };
+            l.kind = LayerKind::Footage { item };
             comp_with(vec![l])
         };
         let k = |c: &Composition, t: f64| {
@@ -1946,7 +1949,7 @@ mod tests {
             let mut mb = lumit_core::fx::instantiate("motion_blur").unwrap();
             mb.enabled = enabled;
             l.effects.push(mb);
-            l.kind = LayerKind::Footage { item, retime: None };
+            l.kind = LayerKind::Footage { item };
             comp_with(vec![l])
         };
         let k = |c: &Composition, t: f64| {
@@ -2035,28 +2038,19 @@ mod tests {
     /// key — the cache can't serve a frame flowed at the wrong rate.
     #[test]
     fn flow_conform_rate_keys_distinctly() {
-        use lumit_core::retime::{FlowParams, Interpolation, Retime};
-        use lumit_core::time::Rational;
+        use lumit_core::retime::{FlowParams, Interpolation};
         let doc = Document::new();
         let item = Uuid::now_v7();
         let footage = |fps: Option<f64>| {
             let mut l = text_layer("", 0.0, 10.0, 0.0);
-            let mut r = Retime::constant_speed(
-                Rational::new(10, 1).unwrap(),
-                Rational::ZERO,
-                Rational::ONE,
-            );
-            r.interpolation = Interpolation::Flow(FlowParams {
+            l.kind = LayerKind::Footage { item };
+            l.interpolation = Interpolation::Flow(FlowParams {
                 half_resolution: true,
                 input_fps: fps
                     .map(lumit_core::anim::Property::fixed)
                     .unwrap_or_else(lumit_core::anim::Property::zero),
                 extra: serde_json::Map::new(),
             });
-            l.kind = LayerKind::Footage {
-                item,
-                retime: Some(r),
-            };
             comp_with(vec![l])
         };
         let k = |c: &Composition| {

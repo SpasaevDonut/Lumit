@@ -15,7 +15,8 @@
 //! it into `LayerKind` and the render paths is the next step and lives
 //! elsewhere; cutting (§8) and the graph lenses (§9) build on top.
 
-use crate::retime::{Ease, Interpolation, Retime};
+use crate::anim::{Animation, Keyframe, Property, SideInterp};
+use crate::retime::Interpolation;
 use crate::time::Rational;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -43,9 +44,19 @@ pub struct Clip {
     pub place_start: Rational,
     /// How long the clip occupies on the layer's timeline (seconds).
     pub place_duration: Rational,
-    /// The clip's retime map: clip-local time → source time. Its first
-    /// boundary's source position is the clip's effective source in.
-    pub retime: Retime,
+    /// The clip's retime map: clip-local time → source time, in seconds, as
+    /// an ordinary keyframable [`Property`] — the same shape a layer's Retime
+    /// has (K-197, K-249).
+    ///
+    /// `None` is "not retimed": the clip plays from [`Self::source_in`] at
+    /// source rate. That is a different state from a map that happens to be
+    /// 1×, exactly as it is on a layer, and only the first skips the map.
+    ///
+    /// It was a segment store until K-249. Two representations for one job is
+    /// what that decision existed to end, and clips were the second half of
+    /// it; a document written before then converts on open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retime: Option<Property>,
     /// How fractional source moments become pixels (render policy).
     #[serde(default)]
     pub interpolation: Interpolation,
@@ -71,7 +82,7 @@ impl Clip {
             source_out,
             place_start,
             place_duration,
-            retime: Retime::identity(place_duration, source_in),
+            retime: None,
             interpolation: Interpolation::default(),
             extra: serde_json::Map::new(),
         }
@@ -84,46 +95,212 @@ impl Clip {
             .unwrap_or(self.place_start)
     }
 
+    /// A two-key retime running from `source_in` at `v0` to `v1` across the
+    /// clip — the straight-line speed the Vegas envelope authors (K-247).
+    ///
+    /// The keys carry their endpoint speeds as tangents, and the source
+    /// position they reach is the area under that straight line: the average
+    /// of the two speeds times the duration. That makes the cubic between them
+    /// have an exactly linear derivative, so the ramp the envelope draws and
+    /// the curve stored here are the same curve rather than two descriptions
+    /// of one.
+    fn ramp_property(&self, v0: Rational, v1: Rational) -> Option<(Property, Rational)> {
+        let d = self.place_duration;
+        let mean = v0
+            .checked_add(v1)
+            .ok()?
+            .checked_div(Rational::new(2, 1).ok()?)
+            .ok()?;
+        let source_out = self.source_in.checked_add(mean.checked_mul(d).ok()?).ok()?;
+        let chord = if d > Rational::ZERO {
+            source_out
+                .checked_sub(self.source_in)
+                .ok()?
+                .checked_div(d)
+                .ok()?
+                .to_f64()
+        } else {
+            0.0
+        };
+        // A side whose speed is already the chord stays Linear: the two are
+        // the same curve, and the bezier form would only change how the key
+        // draws (the same rule the envelope editor follows).
+        let side = |v: Rational| {
+            if (v.to_f64() - chord).abs() < 1e-12 {
+                SideInterp::Linear
+            } else {
+                SideInterp::Bezier {
+                    speed: v.to_f64(),
+                    influence: 1.0 / 3.0,
+                }
+            }
+        };
+        Some((
+            Property {
+                animation: Animation::Keyframed(vec![
+                    Keyframe {
+                        time: Rational::ZERO,
+                        value: self.source_in.to_f64(),
+                        interp_in: SideInterp::Linear,
+                        interp_out: side(v0),
+                    },
+                    Keyframe {
+                        time: d,
+                        value: source_out.to_f64(),
+                        interp_in: side(v1),
+                        interp_out: SideInterp::Linear,
+                    },
+                ]),
+                extra: serde_json::Map::new(),
+            },
+            source_out,
+        ))
+    }
+
     /// This clip at a new constant `speed` (1.0 = source rate), its place on the
     /// layer unchanged (the beat-sync covenant — edit points never move). The
     /// source range it covers follows from the speed, so `source_out` is
-    /// re-derived from the retime; the clip id is preserved.
+    /// re-derived; the clip id is preserved.
     pub fn with_speed(&self, speed: Rational) -> Clip {
-        let retime = Retime::constant_speed(self.place_duration, self.source_in, speed);
-        let source_out = retime.boundaries.last().map_or(self.source_out, |b| b.s);
-        Clip {
-            retime,
-            source_out,
-            ..self.clone()
+        self.with_ramp(speed, speed)
+    }
+
+    /// This clip with a single speed *ramp* — speed running straight from `v0`
+    /// to `v1` across the clip — its place on the layer unchanged (beat-sync).
+    /// The montage velocity gesture; `source_out` follows from the integral.
+    ///
+    /// The eased shapes the segment store offered (Slow/Fast/Smooth/Sharp) are
+    /// not here: they belong to the preset shelf, which is being reworked
+    /// (docs/TODO.md) and will be rebuilt on the property like everything else
+    /// K-249 moved.
+    pub fn with_ramp(&self, v0: Rational, v1: Rational) -> Clip {
+        match self.ramp_property(v0, v1) {
+            Some((retime, source_out)) => Clip {
+                retime: Some(retime),
+                source_out,
+                ..self.clone()
+            },
+            // Arithmetic that will not fit leaves the clip exactly as it was,
+            // which is always a legal clip.
+            None => self.clone(),
         }
     }
 
-    /// The clip's single constant speed (1.0 = source rate), or None if it holds
-    /// a ramp or a more complex retime that the timeline can't show as one value.
+    /// The map this clip actually plays by: its own, or the identity it is
+    /// playing without one.
+    ///
+    /// The identity runs from [`Self::source_in`] — **not from zero**. That
+    /// distinction is the whole reason this exists: every clip after a cut
+    /// starts part way into its source, and anything that assumed a clip's
+    /// map began at source zero sent it back to the top of the media the
+    /// moment it was retimed. Read the effective map and there is nothing to
+    /// assume.
+    pub fn effective_retime(&self) -> Property {
+        if let Some(map) = &self.retime {
+            return map.clone();
+        }
+        let end = self
+            .source_in
+            .checked_add(self.place_duration)
+            .unwrap_or(self.source_in);
+        Property {
+            animation: Animation::Keyframed(vec![
+                Keyframe {
+                    time: Rational::ZERO,
+                    value: self.source_in.to_f64(),
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                },
+                Keyframe {
+                    time: self.place_duration,
+                    value: end.to_f64(),
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                },
+            ]),
+            extra: serde_json::Map::new(),
+        }
+    }
+
+    /// The clip's single constant speed (1.0 = source rate), or None when its
+    /// map says something one number cannot.
+    ///
+    /// Read across **every** span, not just a two-key map: extending a clip
+    /// adds a key at the same speed, and three keys in a straight line are
+    /// still one constant speed however many of them there are.
     pub fn constant_speed(&self) -> Option<f64> {
-        self.retime
-            .single_ramp_view()
-            .filter(|(v0, v1, _)| (v0 - v1).abs() < 1e-9)
-            .map(|(v0, _, _)| v0)
+        // Not retimed is the plainest constant speed there is: source rate.
+        let Some(speeds) = self.span_speeds() else {
+            return self.retime.is_none().then_some(1.0);
+        };
+        let first = *speeds.first()?;
+        speeds
+            .iter()
+            .all(|v| (v - first).abs() < 1e-9)
+            .then_some(first)
     }
 
-    /// This clip with a single speed *ramp* — speed eases from `v0` to `v1`
-    /// across the clip — its place on the layer unchanged (beat-sync). The
-    /// montage velocity gesture; `source_out` follows from the ramp integral.
-    pub fn with_ramp(&self, v0: Rational, v1: Rational, ease: Ease) -> Clip {
-        let retime = Retime::single_ramp(self.place_duration, self.source_in, v0, v1, ease);
-        let source_out = retime.boundaries.last().map_or(self.source_out, |b| b.s);
-        Clip {
-            retime,
-            source_out,
-            ..self.clone()
+    /// Every speed the map actually reaches: both ends of every span, in
+    /// order. None when the clip is not retimed, or its map is not keyframed.
+    ///
+    /// The *tangents*, not the chords. A chord is a span's average speed, so
+    /// reading chords cannot tell a ramp from a constant — 100% into 300% and
+    /// a flat 200% have the same chord, and the first is emphatically not one
+    /// speed. These are the same numbers the envelope draws its points at.
+    fn span_speeds(&self) -> Option<Vec<f64>> {
+        let Animation::Keyframed(keys) = &self.retime.as_ref()?.animation else {
+            return None;
+        };
+        if keys.len() < 2 {
+            return None;
         }
+        let side = |s: &SideInterp, chord: f64| match s {
+            SideInterp::Bezier { speed, .. } => *speed,
+            SideInterp::Hold => 0.0,
+            SideInterp::Linear => chord,
+        };
+        let mut out = Vec::with_capacity((keys.len() - 1) * 2);
+        for pair in keys.windows(2) {
+            let dt = pair[1].time.checked_sub(pair[0].time).ok()?.to_f64();
+            if dt <= 0.0 {
+                return None;
+            }
+            let chord = (pair[1].value - pair[0].value) / dt;
+            out.push(side(&pair[0].interp_out, chord));
+            out.push(side(&pair[1].interp_in, chord));
+        }
+        Some(out)
     }
 
-    /// The clip's ramp as `(start speed, end speed, ease)` when it is a single
-    /// Rate segment (constant or ramp); None for multi-segment / Map stores.
-    pub fn ramp_view(&self) -> Option<(f64, f64, Ease)> {
-        self.retime.single_ramp_view()
+    /// The speed the clip leaves at, and the one it arrives at — the ends of
+    /// [`Self::span_speeds`]. Used when a clip is extended, so the map is
+    /// carried on at the speed it was already going rather than at 1×.
+    fn end_speeds(&self) -> Option<(f64, f64)> {
+        let speeds = self.span_speeds()?;
+        Some((*speeds.first()?, *speeds.last()?))
+    }
+
+    /// The clip's ramp as `(start speed, end speed)` when its map is two keys
+    /// — the shape the envelope authors. None for anything richer, which the
+    /// timeline cannot show as a pair of numbers.
+    pub fn ramp_view(&self) -> Option<(f64, f64)> {
+        let Animation::Keyframed(keys) = &self.retime.as_ref()?.animation else {
+            return None;
+        };
+        let [first, last] = keys.as_slice() else {
+            return None;
+        };
+        let d = last.time.checked_sub(first.time).ok()?.to_f64();
+        if d <= 0.0 {
+            return None;
+        }
+        let chord = (last.value - first.value) / d;
+        let speed = |side: &SideInterp| match side {
+            SideInterp::Bezier { speed, .. } => *speed,
+            SideInterp::Hold => 0.0,
+            SideInterp::Linear => chord,
+        };
+        Some((speed(&first.interp_out), speed(&last.interp_in)))
     }
 
     /// True when layer-local time `lt` (seconds) falls within this clip.
@@ -136,7 +313,53 @@ impl Clip {
     /// meaningful when [`Self::contains`] is true.
     pub fn source_time(&self, lt: f64) -> f64 {
         let clip_time = lt - self.place_start.to_f64();
-        self.retime.evaluate(clip_time)
+        match &self.retime {
+            Some(map) => map.value_at(clip_time),
+            // Not retimed: the source runs alongside the clip's own clock,
+            // from wherever it was trimmed in.
+            None => self.source_in.to_f64() + clip_time,
+        }
+    }
+
+    /// The clip's map cut at clip-local time `tau`: the part before, the part
+    /// after re-based to start at zero, and the exact source position the two
+    /// meet at.
+    ///
+    /// An un-retimed clip splits trivially — both halves stay un-retimed and
+    /// the meeting point is its natural source position — which is the common
+    /// case the razor hits on a freshly imported clip.
+    fn map_split(&self, tau: Rational) -> Option<(Option<Property>, Option<Property>, Rational)> {
+        let Some(map) = self.retime.as_ref() else {
+            return Some((None, None, self.source_in.checked_add(tau).ok()?));
+        };
+        let on_grid = |v: f64| Rational::from_f64_on_grid(v, Rational::FLICK_DEN).ok();
+
+        let mut whole = map.clone();
+        whole.insert_key_preserving_shape(tau);
+        let Animation::Keyframed(keys) = &whole.animation else {
+            // A static map holds one source moment throughout, so both halves
+            // are the same map and the cut lands on that moment.
+            let s = on_grid(map.value_at(tau.to_f64()))?;
+            return Some((Some(map.clone()), Some(map.clone()), s));
+        };
+        let s_cut = on_grid(whole.value_at(tau.to_f64()))?;
+
+        let keyed = |keys: Vec<Keyframe>| {
+            Some(Property {
+                animation: Animation::Keyframed(keys),
+                extra: map.extra.clone(),
+            })
+        };
+        let left = keyed(keys.iter().filter(|k| k.time <= tau).copied().collect())?;
+        let mut rebased = Vec::new();
+        for k in keys.iter().filter(|k| k.time >= tau) {
+            rebased.push(Keyframe {
+                time: k.time.checked_sub(tau).ok()?,
+                ..*k
+            });
+        }
+        let right = keyed(rebased)?;
+        Some((Some(left), Some(right), s_cut))
     }
 
     /// Cut this clip at layer-local time `at` into two clips whose retimes
@@ -149,9 +372,7 @@ impl Clip {
         if tau_clip <= Rational::ZERO || tau_clip >= self.place_duration {
             return None;
         }
-        let (left_retime, right_retime) = self.retime.split_at(tau_clip)?;
-        // The shared cut source position — exact, C0 (both retimes agree).
-        let s_cut = left_retime.boundaries.last()?.s;
+        let (left_retime, right_retime, s_cut) = self.map_split(tau_clip)?;
         let right_duration = self.place_duration.checked_sub(tau_clip).ok()?;
         let left = Clip {
             id: Uuid::now_v7(),
@@ -205,7 +426,30 @@ impl Clip {
             return None;
         }
         let source_out = self.source_out.checked_add(delta).ok()?;
-        let retime = self.retime.shift_source(delta)?;
+        // Every source position moves by the same amount, so the curve's shape
+        // — and every keyframe time — is untouched. Tangent speeds are
+        // slopes and a constant offset does not change them.
+        let shift = delta.to_f64();
+        let retime = match &self.retime {
+            Some(map) => match &map.animation {
+                Animation::Keyframed(keys) => Some(Property {
+                    animation: Animation::Keyframed(
+                        keys.iter()
+                            .map(|k| Keyframe {
+                                value: k.value + shift,
+                                ..*k
+                            })
+                            .collect(),
+                    ),
+                    extra: map.extra.clone(),
+                }),
+                Animation::Static(v) => Some(Property {
+                    animation: Animation::Static(v + shift),
+                    extra: map.extra.clone(),
+                }),
+            },
+            None => None,
+        };
         Some(Clip {
             source_in,
             source_out,
@@ -225,8 +469,7 @@ impl Clip {
         if tau <= Rational::ZERO || tau >= self.place_duration {
             return None;
         }
-        let (left, _) = self.retime.split_at(tau)?;
-        let source_out = left.boundaries.last()?.s;
+        let (left, _, source_out) = self.map_split(tau)?;
         Some(Clip {
             source_out,
             place_duration: tau,
@@ -246,14 +489,113 @@ impl Clip {
         if tau <= Rational::ZERO || tau >= self.place_duration {
             return None;
         }
-        let (_, right) = self.retime.split_at(tau)?;
-        let source_in = right.boundaries.first()?.s;
+        let (_, right, source_in) = self.map_split(tau)?;
         let place_duration = self.place_duration.checked_sub(tau).ok()?;
         Some(Clip {
             source_in,
             place_start: new_start,
             place_duration,
             retime: right,
+            ..self.clone()
+        })
+    }
+
+    /// Extend the clip's tail outward to end at layer time `new_end`
+    /// (docs/04-RETIMING.md §7.3): the map is carried on at the speed it was
+    /// already going, so a tail that was frozen stays frozen and a moving one
+    /// keeps moving. The clip keeps its start; nothing else on the row moves.
+    ///
+    /// None when `new_end` is not actually past the current end, or on
+    /// overflow. Running past the media it has is *legal* — that is overrun,
+    /// and it renders as a held frame (§7.2) — so it is not refused here.
+    pub fn extend_end(&self, new_end: Rational) -> Option<Clip> {
+        let duration = new_end.checked_sub(self.place_start).ok()?;
+        if duration <= self.place_duration {
+            return None;
+        }
+        let added = duration.checked_sub(self.place_duration).ok()?;
+        let speed = self.end_speeds().map_or(1.0, |(_, v1)| v1);
+        let source_out = self
+            .source_out
+            .checked_add(
+                Rational::from_f64_on_grid(speed * added.to_f64(), Rational::FLICK_DEN).ok()?,
+            )
+            .ok()?;
+
+        let retime = match &self.retime {
+            None => None,
+            Some(map) => {
+                let Animation::Keyframed(keys) = &map.animation else {
+                    return None;
+                };
+                let last = keys.last()?;
+                let mut grown = keys.clone();
+                grown.push(Keyframe {
+                    time: duration,
+                    value: last.value + speed * added.to_f64(),
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                });
+                Some(Property {
+                    animation: Animation::Keyframed(grown),
+                    extra: map.extra.clone(),
+                })
+            }
+        };
+        Some(Clip {
+            place_duration: duration,
+            source_out,
+            retime,
+            ..self.clone()
+        })
+    }
+
+    /// Extend the clip's head outward to start at layer time `new_start`, the
+    /// mirror of [`Self::extend_end`]: the map is carried *backwards* at the
+    /// speed it starts with, so the clip enters earlier showing earlier
+    /// source. The clip's end never moves.
+    pub fn extend_start(&self, new_start: Rational) -> Option<Clip> {
+        if new_start >= self.place_start || new_start.is_negative() {
+            return None;
+        }
+        let added = self.place_start.checked_sub(new_start).ok()?;
+        let duration = self.place_duration.checked_add(added).ok()?;
+        let speed = self.end_speeds().map_or(1.0, |(v0, _)| v0);
+        let back = Rational::from_f64_on_grid(speed * added.to_f64(), Rational::FLICK_DEN).ok()?;
+        let source_in = self.source_in.checked_sub(back).ok()?;
+
+        let retime = match &self.retime {
+            None => None,
+            Some(map) => {
+                let Animation::Keyframed(keys) = &map.animation else {
+                    return None;
+                };
+                let first = keys.first()?;
+                // Every key moves later in clip time by what was added at the
+                // front, and a new one opens the map at the earlier source.
+                let mut grown = vec![Keyframe {
+                    time: Rational::ZERO,
+                    value: first.value - speed * added.to_f64(),
+                    interp_in: SideInterp::Linear,
+                    interp_out: SideInterp::Linear,
+                }];
+                for k in keys {
+                    grown.push(Keyframe {
+                        time: k.time.checked_add(added).ok()?,
+                        ..*k
+                    });
+                }
+                Some(Property {
+                    animation: Animation::Keyframed(grown),
+                    extra: map.extra.clone(),
+                })
+            }
+        };
+        Some(Clip {
+            place_start: new_start,
+            place_duration: duration,
+            source_in,
+            retime,
             ..self.clone()
         })
     }
@@ -265,12 +607,240 @@ impl Clip {
     /// never auto-closed — the beat-sync covenant K-022). None when there is no
     /// tail overrun, so the command can report "nothing to trim".
     pub fn trim_to_source_end(&self) -> Option<Clip> {
-        // Local time where the mapped source position first reaches source_out.
-        let crossing = self.retime.overrun_local_time(self.source_out)?;
-        let crossing = Rational::from_f64_on_grid(crossing, Rational::FLICK_DEN).ok()?;
+        let crossing = self.overrun_local_time()?;
         let new_end = self.place_start.checked_add(crossing).ok()?;
         self.trim_end(new_end)
     }
+
+    /// The clip-local time at which the map first reaches [`Self::source_out`],
+    /// or None when it never does — which is the ordinary case, and what makes
+    /// "nothing to trim" reportable rather than a silent no-op.
+    ///
+    /// Found by walking the clip's own frame-free domain in small steps and
+    /// bisecting the step that crosses. The map is monotone in every shape the
+    /// editor can author, and the answer only has to be good to a frame: it
+    /// decides where a *trim* lands, and rendering clamps per sample either way
+    /// (docs/04 §7.2 — "rendering correctness never depends on this solve").
+    fn overrun_local_time(&self) -> Option<Rational> {
+        let target = self.source_out.to_f64();
+        let d = self.place_duration.to_f64();
+        if d <= 0.0 || self.source_time(self.place_start.to_f64() + d) <= target {
+            return None; // never runs past the source it has
+        }
+        let at = |t: f64| self.source_time(self.place_start.to_f64() + t);
+        if at(0.0) > target {
+            return None; // over from the first moment: nothing to keep
+        }
+        let (mut lo, mut hi) = (0.0, d);
+        for _ in 0..60 {
+            let mid = (lo + hi) / 2.0;
+            if at(mid) <= target {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        Rational::from_f64_on_grid(lo, Rational::FLICK_DEN).ok()
+    }
+}
+
+/// The *shape* of a Sequence layer, apart from what it plays: where its cuts
+/// fall, where its gaps are, and how each piece is ramped (K-248).
+///
+/// **This is what a depth pass needs.** Cutting one layer to a beat and then
+/// cutting a second — a depth render, a mask pass, a duplicate with different
+/// effects — to exactly the same beats is work nobody should do twice by hand,
+/// and doing it by eye guarantees they drift. Copying the shape and applying
+/// it elsewhere makes the second layer follow the first exactly.
+///
+/// It deliberately carries no *source*: the clips it is applied to keep their
+/// own media, which is the entire point — the depth pass is not the footage.
+/// Times are the layer's own, so the shape is independent of where either
+/// layer sits in the composition.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SequenceShape {
+    pub pieces: Vec<ShapePiece>,
+}
+
+/// One piece of a [`SequenceShape`]: where it sits on the row, how far into
+/// its own source it starts, and its retime.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShapePiece {
+    pub place_start: Rational,
+    pub place_duration: Rational,
+    pub source_in: Rational,
+    pub retime: Option<Property>,
+}
+
+impl SequenceShape {
+    /// Read the shape of `clips` — all of them, or one, for the two things
+    /// the row's menu offers.
+    pub fn of(clips: &[Clip]) -> Self {
+        Self {
+            pieces: clips
+                .iter()
+                .map(|c| ShapePiece {
+                    place_start: c.place_start,
+                    place_duration: c.place_duration,
+                    source_in: c.source_in,
+                    retime: c.retime.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Rebuild `clips` in this shape, keeping their own source.
+    ///
+    /// `limit` is how far the target row reaches — the extent it already
+    /// occupied. A shape longer than that is applied as far as it goes and no
+    /// further: the piece straddling the end is trimmed to it and anything
+    /// wholly beyond is dropped, so a shape taken from a long clip lands
+    /// sensibly on a short one rather than inventing a row that runs past its
+    /// media.
+    ///
+    /// Every piece plays `source`, taking the shape's own trim-in and map, so
+    /// the two rows show the same moments of their respective media at the
+    /// same times — which is what makes a depth pass line up.
+    pub fn apply(&self, source: ClipSource, limit: Rational) -> Vec<Clip> {
+        let mut out = Vec::with_capacity(self.pieces.len());
+        for piece in &self.pieces {
+            if piece.place_start >= limit {
+                continue; // wholly past what this row reaches
+            }
+            let end = piece
+                .place_start
+                .checked_add(piece.place_duration)
+                .unwrap_or(limit);
+            let duration = if end > limit {
+                match limit.checked_sub(piece.place_start) {
+                    Ok(d) => d,
+                    Err(_) => continue,
+                }
+            } else {
+                piece.place_duration
+            };
+            if duration <= Rational::ZERO {
+                continue;
+            }
+            let mut clip = Clip::new(
+                source,
+                piece.source_in,
+                piece.source_in.checked_add(duration).unwrap_or(duration),
+                piece.place_start,
+                duration,
+            );
+            clip.retime = piece.retime.clone();
+            // A trimmed piece keeps only the part of its map it still has
+            // room for, exactly as trimming that clip by hand would.
+            if end > limit {
+                if let Some(shorter) =
+                    clip.trim_end(piece.place_start.checked_add(duration).unwrap_or(limit))
+                {
+                    clip = shorter;
+                }
+            }
+            if let Some(map) = &clip.retime {
+                if let Some(last) = map_last_value(map) {
+                    clip.source_out = last;
+                }
+            }
+            out.push(clip);
+        }
+        out
+    }
+}
+
+/// The last source position a map reaches.
+fn map_last_value(map: &Property) -> Option<Rational> {
+    let Animation::Keyframed(keys) = &map.animation else {
+        return None;
+    };
+    Rational::from_f64_on_grid(keys.last()?.value, Rational::FLICK_DEN).ok()
+}
+
+/// Resolve the overlaps a clip has just been dropped into — the **overwrite**
+/// edit every NLE does when one clip lands on another (K-248).
+///
+/// The dropped clip wins its whole span, and each clip already under it is
+/// dealt with by how much of it is covered:
+///
+/// * covered entirely — it goes;
+/// * covered at one end — that end is trimmed back to the dropped clip's edge;
+/// * covered in the middle — it becomes two clips, one either side.
+///
+/// Everything outside the dropped span is untouched, which is the point: an
+/// overwrite is destructive exactly where it lands and nowhere else, so no
+/// edit point beyond it moves and nothing ripples (K-022).
+///
+/// The surviving pieces keep playing the frames they played — the trims and
+/// the split go through [`Clip::trim_end`], [`Clip::trim_start`] and the same
+/// map arithmetic a razor uses, so the half of a clip left beside a dropped
+/// one shows exactly what it showed before.
+pub fn overwrite_with(clips: &[Clip], dropped: Uuid) -> Vec<Clip> {
+    let Some(over) = clips.iter().find(|c| c.id == dropped) else {
+        return clips.to_vec();
+    };
+    let (start, end) = (over.place_start, over.place_end());
+    let mut out = Vec::with_capacity(clips.len() + 1);
+    for c in clips {
+        if c.id == dropped {
+            out.push(c.clone());
+            continue;
+        }
+        // Clear of it on either side: nothing to do.
+        if c.place_end() <= start || c.place_start >= end {
+            out.push(c.clone());
+            continue;
+        }
+        // Buried: it goes.
+        if c.place_start >= start && c.place_end() <= end {
+            continue;
+        }
+        // Straddling: one clip either side, and the later piece needs an
+        // identity of its own — it is a new clip, not the one that was there.
+        if c.place_start < start && c.place_end() > end {
+            if let Some(left) = c.trim_end(start) {
+                out.push(left);
+            }
+            if let Some(mut right) = c.trim_start(end) {
+                right.id = Uuid::now_v7();
+                out.push(right);
+            }
+            continue;
+        }
+        // Covered at one end.
+        let trimmed = if c.place_start < start {
+            c.trim_end(start)
+        } else {
+            c.trim_start(end)
+        };
+        if let Some(trimmed) = trimmed {
+            out.push(trimmed);
+        }
+    }
+    out.sort_by(|a, b| {
+        a.place_start
+            .partial_cmp(&b.place_start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
+/// The layer-local span the clips occupy: the first clip's start to the last
+/// clip's end (K-248). None for a Sequence layer with no clips at all, which
+/// has no length of its own to take.
+///
+/// Clips are not required to be in order in the list, so both ends are found
+/// by scanning rather than by reading the ends — reordering a Sequence layer
+/// is exactly the operation this has to survive.
+pub fn clips_span(clips: &[Clip]) -> Option<(Rational, Rational)> {
+    let mut start: Option<Rational> = None;
+    let mut end: Option<Rational> = None;
+    for c in clips {
+        start = Some(start.map_or(c.place_start, |s: Rational| s.min(c.place_start)));
+        end = Some(end.map_or(c.place_end(), |e: Rational| e.max(c.place_end())));
+    }
+    Some((start?, end?))
 }
 
 /// The clip active at layer-local time `lt`, or None if `lt` is in a gap
@@ -373,18 +943,18 @@ mod tests {
 
     #[test]
     fn with_ramp_sets_a_velocity_ramp() {
-        use crate::retime::Ease;
-        // 4 s clip from source 0, speed ramping 1× → 3× (Linear): source used =
-        // 4·[1 + (3−1)·E(1)] = 4·(1 + 2·0.5) = 8.
+        // 4 s clip from source 0, speed running straight 1× → 3×: the source
+        // used is the area under that line, 4 · (1 + 3)/2 = 8.
         let base = clip(Uuid::now_v7(), 0, 4);
-        let ramp = base.with_ramp(rat(1, 1), rat(3, 1), Ease::Linear);
+        let ramp = base.with_ramp(rat(1, 1), rat(3, 1));
         assert_eq!(ramp.place_duration, base.place_duration); // place held
         assert_eq!(ramp.source_out, rat(8, 1));
-        let (v0, v1, ease) = ramp.ramp_view().unwrap();
+        let (v0, v1) = ramp.ramp_view().unwrap();
         assert!((v0 - 1.0).abs() < 1e-9 && (v1 - 3.0).abs() < 1e-9);
-        assert_eq!(ease, Ease::Linear);
         // A ramp has no single constant speed.
         assert_eq!(ramp.constant_speed(), None);
+        // And its first frame is still its own trim-in (K-070's pinning).
+        assert!((ramp.source_time(0.0) - 0.0).abs() < 1e-9);
     }
 
     #[test]
@@ -409,7 +979,8 @@ mod tests {
         // speed: at layer time 4 (clip-local 2) the source is 10 + 0.5·2 = 11.
         let src = Uuid::now_v7();
         let mut c = clip(src, 2, 4);
-        c.retime = Retime::constant_speed(rat(4, 1), rat(10, 1), rat(1, 2));
+        c.source_in = rat(10, 1);
+        c = c.with_speed(rat(1, 2));
         assert!((c.source_time(2.0) - 10.0).abs() < 1e-9); // clip start
         assert!((c.source_time(4.0) - 11.0).abs() < 1e-9); // half speed
         assert!((c.source_time(6.0) - 12.0).abs() < 1e-9); // clip end
@@ -518,14 +1089,67 @@ mod tests {
         let src = Uuid::now_v7();
         // Clip at layer [0,4), source [0,4). Retime it to 2× so f(t) = 2t runs
         // out of the source (out = 4) at local time 2.
-        let mut c = clip(src, 0, 4);
-        c.retime = Retime::constant_speed(rat(4, 1), rat(0, 1), rat(2, 1));
+        let mut c = clip(src, 0, 4).with_speed(rat(2, 1));
+        // Re-speeding re-derives how much source the clip *asks* for (8 s);
+        // the media it actually has is still the 4 s it was trimmed to, and
+        // that mismatch is exactly what overrun is.
+        c.source_out = rat(4, 1);
         let t = c.trim_to_source_end().expect("a tail overrun trims");
         assert_eq!(t.place_start, c.place_start); // non-ripple: start held
         assert!((t.place_duration.to_f64() - 2.0).abs() < 1e-6);
         assert!((t.source_out.to_f64() - 4.0).abs() < 1e-6); // ends at the source end
                                                              // A clip that fits inside its source has nothing to trim.
         assert!(clip(src, 0, 4).trim_to_source_end().is_none());
+    }
+
+    /// The overwrite edit (K-248): a clip dropped on others takes its whole
+    /// span, and each clip under it is trimmed, split, or removed.
+    #[test]
+    fn dropping_a_clip_overwrites_what_is_under_it() {
+        let src = Uuid::now_v7();
+        // Three in a row: [0,4) [4,8) [8,12).
+        let a = clip(src, 0, 4);
+        let b = clip(src, 4, 4);
+        let c = clip(src, 8, 4);
+
+        // A clip covering the whole middle one and nothing else: it goes.
+        let mut over = clip(src, 4, 4);
+        over.id = Uuid::now_v7();
+        let out = overwrite_with(&[a.clone(), b.clone(), c.clone(), over.clone()], over.id);
+        assert_eq!(out.len(), 3, "the buried clip went");
+        assert!(!out.iter().any(|k| k.id == b.id));
+        assert!(out.iter().any(|k| k.id == a.id) && out.iter().any(|k| k.id == c.id));
+
+        // Landing across the join of the first two: the first is trimmed back
+        // and the second trimmed forward, both keeping their identities.
+        let mut across = clip(src, 2, 4); // [2,6)
+        across.id = Uuid::now_v7();
+        let out = overwrite_with(&[a.clone(), b.clone(), across.clone()], across.id);
+        let left = out
+            .iter()
+            .find(|k| k.id == a.id)
+            .expect("the first survives");
+        let right = out.iter().find(|k| k.id == b.id).expect("the second too");
+        assert_eq!(left.place_end(), rat(2, 1), "trimmed back to the drop");
+        assert_eq!(right.place_start, rat(6, 1), "and forward from its end");
+
+        // Landing inside one clip: it becomes two, one either side.
+        let mut inside = clip(src, 5, 2); // [5,7) inside b's [4,8)
+        inside.id = Uuid::now_v7();
+        let out = overwrite_with(&[b.clone(), inside.clone()], inside.id);
+        assert_eq!(out.len(), 3, "the clip under it became two");
+        let pieces: Vec<_> = out.iter().filter(|k| k.id != inside.id).collect();
+        assert_eq!(pieces[0].place_start, rat(4, 1));
+        assert_eq!(pieces[0].place_end(), rat(5, 1));
+        assert_eq!(pieces[1].place_start, rat(7, 1));
+        assert_eq!(pieces[1].place_end(), rat(8, 1));
+        assert_ne!(pieces[0].id, pieces[1].id, "the halves are distinct clips");
+
+        // A clip clear of everything disturbs nothing.
+        let mut clear = clip(src, 20, 2);
+        clear.id = Uuid::now_v7();
+        let all = vec![a.clone(), b.clone(), c.clone(), clear.clone()];
+        assert_eq!(overwrite_with(&all, clear.id).len(), 4);
     }
 
     #[test]
@@ -567,7 +1191,6 @@ mod tests {
     /// frame exactly where it was — the speed change ripples forward only.
     #[test]
     fn re_speeding_a_cut_clip_keeps_its_start_frame() {
-        use crate::retime::{Ease, Retime};
         let src = Uuid::now_v7();
         // Clip [0,4), source 0→4 natural. Cut at layer 2 → right clip [2,4).
         let (_left, right) = clip(src, 0, 4).cut(rat(2, 1)).unwrap();
@@ -577,14 +1200,7 @@ mod tests {
         // Re-speed the right clip: 200% ramping to 100% over its 2 s, pinned at
         // its own source_in (this is exactly what per-clip speed editing must
         // build). Its first frame must NOT move.
-        let mut respeed = right.clone();
-        respeed.retime = Retime::single_ramp(
-            respeed.place_duration,
-            respeed.source_in,
-            rat(2, 1),
-            rat(1, 1),
-            Ease::Linear,
-        );
+        let respeed = right.with_ramp(rat(2, 1), rat(1, 1));
         // First frame unchanged; only later frames advance faster.
         assert!((respeed.source_time(2.0) - start_frame.to_f64()).abs() < 1e-9);
         assert!(respeed.source_time(3.0) > right.source_time(3.0));
