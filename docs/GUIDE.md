@@ -1432,6 +1432,10 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   (Frame interpolation — how in-between frames are synthesised, Nearest / Blend / Flow — is a
   per-layer retime setting in the data model, but is not surfaced in the timeline for now; it
   will return in a dedicated place.)
+- **A Sequence layer has no Retime of its own.** Ctrl+Alt+T and the Composition menu's
+  Enable Retime are greyed out on one, and the menu says why. Its *clips* each carry a
+  retime, ramped in the sequence view — a second map over the whole row would be a rival to
+  those, which is exactly the situation the one-retime-system work existed to end.
 - **The sequence view: a Sequence layer's row, grown tall (K-248).** Double-click a
   Sequence layer — its name in the outline, or its bar in the lanes — and its row **opens in
   place** rather than swapping the Timeline for another tab. That is deliberate: you cut
@@ -1485,6 +1489,14 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   thing twice. What the bar does show is where its clips are **not** — the gaps wash out
   faintly, the way a trimmed footage layer shows the source it is not using — so a collapsed
   Sequence layer still tells you it has holes in it.
+  **Dropping a clip on another overwrites it.** Drag a clip over its
+  neighbours and, when you let go, the one you dragged wins its whole span:
+  anything buried under it is gone, anything covered at one end is trimmed back
+  to its edge, and anything it lands in the middle of becomes two clips with
+  the dropped one between them. It is destructive exactly where it lands and
+  nowhere else — no edit point beyond the drop moves, and nothing ripples. The
+  pieces left either side keep playing the frames they played, because the
+  trims and the split go through the same arithmetic the razor uses.
   **A clip dragged back past the start takes the layer with it.** A clip's place is measured
   in the layer's own time, which cannot go negative — so dragging one before the start of the
   row carries the whole layer earlier instead, exactly as dragging any other layer's bar

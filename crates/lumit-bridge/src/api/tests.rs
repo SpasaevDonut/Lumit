@@ -3028,6 +3028,22 @@ fn sliding_a_clip_moves_it_without_changing_it() {
     assert_eq!(after.retimed, before.retimed, "and the same map");
 }
 
+/// A Sequence layer has no Retime of its own (K-075): its clips carry the
+/// retiming, and a second map over the whole row would be a rival to those —
+/// exactly what K-249 spent itself ending.
+#[test]
+fn a_sequence_layer_refuses_a_retime_of_its_own() {
+    let (_project, _comp, layer) = sequenced_layer();
+    assert!(matches!(
+        layer.toggle_retime_property(),
+        Err(BridgeError::NotRetimeable)
+    ));
+    assert!(
+        layer.get_retime_property().expect("read").is_none(),
+        "and nothing was installed on the way to refusing"
+    );
+}
+
 /// Dragging a clip back past the start of the row carries the **layer**
 /// earlier, the way dragging any other layer's bar before the start of the
 /// composition does — and every other clip stays exactly where it was on the

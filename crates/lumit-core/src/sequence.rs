@@ -644,6 +644,74 @@ impl Clip {
     }
 }
 
+/// Resolve the overlaps a clip has just been dropped into — the **overwrite**
+/// edit every NLE does when one clip lands on another (K-248).
+///
+/// The dropped clip wins its whole span, and each clip already under it is
+/// dealt with by how much of it is covered:
+///
+/// * covered entirely — it goes;
+/// * covered at one end — that end is trimmed back to the dropped clip's edge;
+/// * covered in the middle — it becomes two clips, one either side.
+///
+/// Everything outside the dropped span is untouched, which is the point: an
+/// overwrite is destructive exactly where it lands and nowhere else, so no
+/// edit point beyond it moves and nothing ripples (K-022).
+///
+/// The surviving pieces keep playing the frames they played — the trims and
+/// the split go through [`Clip::trim_end`], [`Clip::trim_start`] and the same
+/// map arithmetic a razor uses, so the half of a clip left beside a dropped
+/// one shows exactly what it showed before.
+pub fn overwrite_with(clips: &[Clip], dropped: Uuid) -> Vec<Clip> {
+    let Some(over) = clips.iter().find(|c| c.id == dropped) else {
+        return clips.to_vec();
+    };
+    let (start, end) = (over.place_start, over.place_end());
+    let mut out = Vec::with_capacity(clips.len() + 1);
+    for c in clips {
+        if c.id == dropped {
+            out.push(c.clone());
+            continue;
+        }
+        // Clear of it on either side: nothing to do.
+        if c.place_end() <= start || c.place_start >= end {
+            out.push(c.clone());
+            continue;
+        }
+        // Buried: it goes.
+        if c.place_start >= start && c.place_end() <= end {
+            continue;
+        }
+        // Straddling: one clip either side, and the later piece needs an
+        // identity of its own — it is a new clip, not the one that was there.
+        if c.place_start < start && c.place_end() > end {
+            if let Some(left) = c.trim_end(start) {
+                out.push(left);
+            }
+            if let Some(mut right) = c.trim_start(end) {
+                right.id = Uuid::now_v7();
+                out.push(right);
+            }
+            continue;
+        }
+        // Covered at one end.
+        let trimmed = if c.place_start < start {
+            c.trim_end(start)
+        } else {
+            c.trim_start(end)
+        };
+        if let Some(trimmed) = trimmed {
+            out.push(trimmed);
+        }
+    }
+    out.sort_by(|a, b| {
+        a.place_start
+            .partial_cmp(&b.place_start)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    out
+}
+
 /// The layer-local span the clips occupy: the first clip's start to the last
 /// clip's end (K-248). None for a Sequence layer with no clips at all, which
 /// has no length of its own to take.
@@ -918,6 +986,56 @@ mod tests {
         assert!((t.source_out.to_f64() - 4.0).abs() < 1e-6); // ends at the source end
                                                              // A clip that fits inside its source has nothing to trim.
         assert!(clip(src, 0, 4).trim_to_source_end().is_none());
+    }
+
+    /// The overwrite edit (K-248): a clip dropped on others takes its whole
+    /// span, and each clip under it is trimmed, split, or removed.
+    #[test]
+    fn dropping_a_clip_overwrites_what_is_under_it() {
+        let src = Uuid::now_v7();
+        // Three in a row: [0,4) [4,8) [8,12).
+        let a = clip(src, 0, 4);
+        let b = clip(src, 4, 4);
+        let c = clip(src, 8, 4);
+
+        // A clip covering the whole middle one and nothing else: it goes.
+        let mut over = clip(src, 4, 4);
+        over.id = Uuid::now_v7();
+        let out = overwrite_with(&[a.clone(), b.clone(), c.clone(), over.clone()], over.id);
+        assert_eq!(out.len(), 3, "the buried clip went");
+        assert!(!out.iter().any(|k| k.id == b.id));
+        assert!(out.iter().any(|k| k.id == a.id) && out.iter().any(|k| k.id == c.id));
+
+        // Landing across the join of the first two: the first is trimmed back
+        // and the second trimmed forward, both keeping their identities.
+        let mut across = clip(src, 2, 4); // [2,6)
+        across.id = Uuid::now_v7();
+        let out = overwrite_with(&[a.clone(), b.clone(), across.clone()], across.id);
+        let left = out
+            .iter()
+            .find(|k| k.id == a.id)
+            .expect("the first survives");
+        let right = out.iter().find(|k| k.id == b.id).expect("the second too");
+        assert_eq!(left.place_end(), rat(2, 1), "trimmed back to the drop");
+        assert_eq!(right.place_start, rat(6, 1), "and forward from its end");
+
+        // Landing inside one clip: it becomes two, one either side.
+        let mut inside = clip(src, 5, 2); // [5,7) inside b's [4,8)
+        inside.id = Uuid::now_v7();
+        let out = overwrite_with(&[b.clone(), inside.clone()], inside.id);
+        assert_eq!(out.len(), 3, "the clip under it became two");
+        let pieces: Vec<_> = out.iter().filter(|k| k.id != inside.id).collect();
+        assert_eq!(pieces[0].place_start, rat(4, 1));
+        assert_eq!(pieces[0].place_end(), rat(5, 1));
+        assert_eq!(pieces[1].place_start, rat(7, 1));
+        assert_eq!(pieces[1].place_end(), rat(8, 1));
+        assert_ne!(pieces[0].id, pieces[1].id, "the halves are distinct clips");
+
+        // A clip clear of everything disturbs nothing.
+        let mut clear = clip(src, 20, 2);
+        clear.id = Uuid::now_v7();
+        let all = vec![a.clone(), b.clone(), c.clone(), clear.clone()];
+        assert_eq!(overwrite_with(&all, clear.id).len(), 4);
     }
 
     #[test]

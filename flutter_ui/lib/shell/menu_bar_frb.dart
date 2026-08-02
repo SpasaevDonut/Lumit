@@ -449,7 +449,13 @@ List<MenuSection> lumitMenus(
       // keyboard (K-198's lesson: a command whose only route is a chord has no
       // route the day something intercepts the chord). The command names what
       // it will do, so a layer that already has one offers to take it away.
-      MenuEntry(_retimeLabel(layer), onLayer((l) => app.toggleRetime(l)),
+      // Greyed out on a Sequence layer: its clips carry the retiming and are
+      // ramped in the sequence view (K-075), so there is nothing here for the
+      // command to switch on. Said with a disabled row rather than an error
+      // after the click.
+      MenuEntry(
+          _retimeLabel(layer),
+          _retimeable(layer) ? onLayer((l) => app.toggleRetime(l)) : null,
           action: 'layer.retime.enable'),
       const MenuEntry.todo('Flow'),
       const MenuEntry.todo('3D layer'),
@@ -607,10 +613,24 @@ Map<String, List<BridgeEffectInfo>> _effectGroups() =>
 
 Map<String, List<BridgeEffectInfo>>? _effectGroupsCache;
 
+/// Whether this layer can carry a Retime at all. A Sequence layer cannot: its
+/// clips each have one of their own (K-075).
+bool _retimeable(LayerReference? layer) {
+  if (layer == null) return false;
+  try {
+    return layer.getKind() != BridgeLayerKind.sequence;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// What the Retime item says.
 String _retimeLabel(LayerReference? layer) {
   if (layer == null) return 'Enable Retime';
   try {
+    if (layer.getKind() == BridgeLayerKind.sequence) {
+      return 'Retime (open the layer to ramp its clips)';
+    }
     return layer.getRetimeProperty() == null
         ? 'Enable Retime'
         : 'Disable Retime';

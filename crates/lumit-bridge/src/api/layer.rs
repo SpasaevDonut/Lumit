@@ -1252,6 +1252,8 @@ impl LayerReference {
                     .map_err(|_| BridgeError::InvalidTime)?;
             }
             clips[index].place_start = Rational::ZERO;
+            let dropped = clips[index].id;
+            let clips = lumit_core::sequence::overwrite_with(&clips, dropped);
             let offset = layer
                 .start_offset
                 .0
@@ -1261,7 +1263,8 @@ impl LayerReference {
         }
 
         clips[index] = clips[index].slide(delta).ok_or(BridgeError::InvalidTime)?;
-        self.commit_clips(clips)
+        let dropped = clips[index].id;
+        self.commit_clips(lumit_core::sequence::overwrite_with(&clips, dropped))
     }
 
     /// Trim one edge of a clip inward (docs/04 §8.2, non-ripple).
@@ -2228,6 +2231,14 @@ impl LayerReference {
     #[frb(sync)]
     pub fn toggle_retime_property(&self) -> Result<bool, BridgeError> {
         let layer = self.item()?;
+        // **A Sequence layer has no Retime of its own** (K-075): its clips
+        // each carry one, edited in the sequence view, and a second map over
+        // the whole row would be a rival to those — the very thing K-249
+        // spent itself ending. Refused rather than quietly ignored, so the
+        // menu and the chord can say why.
+        if matches!(layer.kind, lumit_core::model::LayerKind::Sequence { .. }) {
+            return Err(BridgeError::NotRetimeable);
+        }
         let on = layer.retime.is_none();
         // The layer's own span in ITS time, which is where the two keys belong
         // (K-213): its comp in and out less where its zero sits. A layer that

@@ -89,6 +89,9 @@ pub enum BridgeError {
     NotSequence,
     /// Only a Footage layer converts to a Sequence layer.
     NotFootage,
+    /// A Sequence layer's retiming belongs to its clips, not to the layer
+    /// (K-075), so it has no Retime channel to switch on.
+    NotRetimeable,
     /// No clip sits under the playhead.
     NoClipThere,
     /// A mask path with fewer than two vertices — not a shape.
@@ -181,6 +184,10 @@ impl fmt::Display for BridgeError {
             BridgeError::NotFootage => {
                 write!(f, "Only footage layers convert to sequenced")
             }
+            BridgeError::NotRetimeable => write!(
+                f,
+                "A sequence layer retimes its clips, not the whole layer — open it and use its speed graph"
+            ),
             BridgeError::NoClipThere => write!(f, "No clip under the playhead"),
             BridgeError::EmptyPath => write!(f, "A mask needs at least two points"),
             BridgeError::NoSuchMask => write!(f, "No such mask on this layer"),

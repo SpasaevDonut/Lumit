@@ -1482,11 +1482,24 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
       if (i == drag.index) continue;
       if ((_keyFrame(keys[i], widget.fps) - frame).abs() < 1e-9) return null;
     }
+    final at = timeOfSubframe(frame, widget.fpsNum, widget.fpsDen);
+    if (isEnvelope(drag.channel)) {
+      return moveEnvelopePoint(keys, drag.index, at);
+    }
+    // An **envelope** point keeps its speed and re-integrates. A key's stored
+    // tangent is a speed; its span's chord is an average. Move a key in time
+    // and the chord changes while the tangent stays put, so a span that was
+    // straight stops being straight and the graph starts describing playback
+    // the points do not say. Everywhere else a key keeps its value and its
+    // easing, which is what moving a keyframe has always meant.
+    if (isEnvelope(drag.channel)) {
+      return moveEnvelopePoint(keys, drag.index, at);
+    }
     final moved = [
       for (var i = 0; i < keys.length; i++)
         if (i == drag.index)
           BridgeKeyframe(
-            time: timeOfSubframe(frame, widget.fpsNum, widget.fpsDen),
+            time: at,
             value: keys[i].value,
             interpIn: keys[i].interpIn,
             interpOut: keys[i].interpOut,
@@ -1665,7 +1678,12 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
               Positioned.fill(
                 child: AnimatedBuilder(
                   animation: widget.hScroll ?? const AlwaysStoppedAnimation(0),
-                  builder: (context, _) => CustomPaint(
+                  // Clipped to the pane. The vertical range is frozen while a
+                  // drag runs, so a key taken past the top or the bottom would
+                  // otherwise be drawn outside the graph and over whatever
+                  // sits beside it; the framing catches up when the drag ends.
+                  builder: (context, _) => ClipRect(
+                    child: CustomPaint(
                     painter: _GraphPainter(
                       channels: widget.channels,
                       shownKeys: [
@@ -1680,6 +1698,7 @@ class GraphEditorFrbState extends State<GraphEditorFrb> {
                       label: t.small.copyWith(color: t.textMuted),
                       viewportLeft: _viewportLeft,
                       vegas: widget.vegas,
+                    ),
                     ),
                   ),
                 ),

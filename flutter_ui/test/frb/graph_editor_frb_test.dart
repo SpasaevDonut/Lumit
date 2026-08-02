@@ -652,6 +652,15 @@ void main() {
       ], timesBefore, reason: 'no keyframe moved in time: beats stay synced');
     });
 
+    // The straightness invariant this lens shares with the sequence view —
+    // moving a point in time keeps its speed and re-works the values, so each
+    // span stays the line its two points describe — is pinned in
+    // `graph_maths_test.dart` against `moveEnvelopePoint` itself. A widget
+    // test here cannot see it: a dot's speed comes from the pointer's own
+    // height, so *every* drag re-integrates on commit and the bend never
+    // survives to be asserted on. The unit test fails without the fix; this
+    // one could not, so it is not written.
+
     // --- planting and lifting keys, and Shift-constrained drags -----------
 
     testWidgets('double-clicking the curve plants a key without moving it',
