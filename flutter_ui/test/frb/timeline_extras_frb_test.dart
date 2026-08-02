@@ -339,12 +339,14 @@ void main() {
 
     // --- the sequence view (K-248) --------------------------------------
 
-    /// A Sequence layer, ready to open.
+    /// A Sequence layer, ready to open. Added layers land at the top of the
+    /// stack, so it is always the first — which lets a test put something
+    /// underneath it first.
     Future<LayerReference> sequencedLayer(dynamic p) async {
       final footage = p.state.project!.importFootage(path: 'C:/clips/shot.mov');
       p.comp.addFootageLayer(footage: footage, asSequence: false);
-      p.comp.getLayers().single.convertToSequenced();
-      return p.comp.getLayers().single as LayerReference;
+      p.comp.getLayers().first.convertToSequenced();
+      return p.comp.getLayers().first as LayerReference;
     }
 
     testWidgets('double-clicking a Sequence layer opens its clips in its row',
@@ -376,6 +378,40 @@ void main() {
       await tester.tap(name);
       await tester.pumpAndSettle();
       expect(find.byKey(ValueKey<String>('seq-clip-${clip.id}')), findsNothing);
+    });
+
+    /// The two halves of the Timeline must agree about how tall every row is.
+    ///
+    /// The outline has nothing of its own to draw for an open sequence view —
+    /// the clips and their envelope are the lane's — so it has to reserve the
+    /// room anyway. It did not, which put every row below the opened layer at
+    /// a different height on each side: names stopped lining up with bars.
+    testWidgets('opening a view moves the outline down with the lanes',
+        (tester) async {
+      final p = withComp();
+      // The solid goes in *first*: a new layer lands at the top of the stack,
+      // so this is the one that ends up below the sequenced layer — and below
+      // is where the misalignment showed.
+      final below = p.comp.addSolidLayer();
+      final layer = await sequencedLayer(p);
+      await mount(tester, p);
+      await tester.pump();
+      Rect nameOf() => tester.getRect(
+          find.byKey(ValueKey<String>('tl-row-${below.internallayerId}')));
+      Rect barOf() => tester.getRect(
+          find.byKey(ValueKey<String>('tl-bar-${below.internallayerId}')));
+
+      final gapBefore = nameOf().top - barOf().top;
+
+      final name =
+          find.byKey(ValueKey<String>('tl-name-${layer.internallayerId}'));
+      await tester.tap(name);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(name);
+      await tester.pumpAndSettle();
+
+      expect(nameOf().top - barOf().top, closeTo(gapBefore, 0.5),
+          reason: 'the row below moved by the same amount on both sides');
     });
 
     testWidgets('dragging an envelope point re-speeds only that clip',

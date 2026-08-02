@@ -127,10 +127,11 @@ List<double> layerBlockHeights({
   required List<BridgeLayerEntry> layers,
   required Set<String> open,
   required Map<String, bool> hasAudio,
-  /// The Sequence layers whose view is open (K-248): their row is that much
-  /// taller, and the outline has to agree with the lanes about it or the two
-  /// halves of the Timeline stop lining up.
-  Set<String> sequenceOpen = const {},
+  /// How much taller each open sequence view makes its layer's row, by layer
+  /// id (K-248). **Both halves of the Timeline read this**: the outline
+  /// reserves the same room the lanes draw the view in, or the two stop lining
+  /// up and every row below sits at a different height on each side.
+  Map<String, double> sequenceExtra = const {},
 }) =>
     [
       for (final entry in layers)
@@ -145,9 +146,7 @@ List<double> layerBlockHeights({
                                 false,
                           ).length
                         : 0)) +
-            (sequenceOpen.contains(entry.layer.internallayerId.toString())
-                ? sequenceViewHeight
-                : 0),
+            (sequenceExtra[entry.layer.internallayerId.toString()] ?? 0),
     ];
 
 /// How far the block at [index] slides while a drag is in flight, in pixels;
@@ -571,6 +570,20 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
   /// opens its clips and their speed envelope inside its own row.
   final Set<String> _sequenceOpen = {};
 
+  /// How tall each open view's **graph** half is, by layer id, once its
+  /// divider has been dragged. Absent means the default three rows.
+  ///
+  /// Only the graph resizes: the clip strip is where the cutting happens and
+  /// it is sized for that, while how much room a speed curve wants depends
+  /// entirely on how far the ramps go.
+  final Map<String, double> _sequenceGraph = {};
+
+  /// How much taller each open view makes its layer's row.
+  Map<String, double> get _sequenceExtra => {
+        for (final id in _sequenceOpen)
+          id: sequenceClipStrip + (_sequenceGraph[id] ?? sequenceEnvelopeStrip),
+      };
+
   /// Where each open sequence view sits down the table, as (top, bottom) in
   /// the rows' own coordinates — what the row seams skip over, so an open view
   /// reads as one cell rather than six ruled rows.
@@ -579,11 +592,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     final out = <(double, double)>[];
     var y = 0.0;
     for (var i = 0; i < layers.length && i < heights.length; i++) {
-      if (_sequenceOpen
-          .contains(layers[i].layer.internallayerId.toString())) {
+      final extra =
+          _sequenceExtra[layers[i].layer.internallayerId.toString()];
+      if (extra != null) {
         // The view sits directly under the layer's own bar, above whatever
         // fold-out rows follow it.
-        out.add((y + _rowHeight, y + _rowHeight + sequenceViewHeight));
+        out.add((y + _rowHeight, y + _rowHeight + extra));
       }
       y += heights[i];
     }
@@ -1396,7 +1410,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
     // blocks by these heights during a drag, so neither can measure the table
     // differently from the other (K-208).
     final blockHeights = layerBlockHeights(
-      sequenceOpen: _sequenceOpen,
+      sequenceExtra: _sequenceExtra,
         layers: layers, open: _open, hasAudio: _hasAudio);
     final graphColours = <String, List<Color>>{};
     for (final channel in channels) {
@@ -1568,7 +1582,8 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   child: _Outline(
                                                     comp: comp,
                                                     layers: layers,
-                                                    sequenceOpen: _sequenceOpen,
+                                                    sequenceExtra:
+                                                        _sequenceExtra,
                                                     onOpenSequence:
                                                         _toggleSequenceView,
                                                     layerDrag: _layerDrag,
@@ -1892,9 +1907,17 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   layerDrag: _layerDrag,
                                                   blockHeights: blockHeights,
                                                   open: _open,
-                                                  sequenceOpen: _sequenceOpen,
+                                                  sequenceExtra:
+                                                      _sequenceExtra,
                                                   onOpenSequence:
                                                       _toggleSequenceView,
+                                                  onGraphHeight: (entry, h) =>
+                                                      setState(() =>
+                                                          _sequenceGraph[entry
+                                                                  .layer
+                                                                  .internallayerId
+                                                                  .toString()] =
+                                                              h),
                                                   sequenceBlanks:
                                                       _sequenceBlanks(layers,
                                                           blockHeights),
@@ -3999,8 +4022,10 @@ class _Outline extends StatelessWidget {
   final ValueChanged<String> onEditProperty;
   final Set<String> open;
 
-  /// The Sequence layers whose view is open, and how to toggle one (K-248).
-  final Set<String> sequenceOpen;
+  /// How much taller each open sequence view makes its row, by layer id, and
+  /// how to toggle one (K-248). The outline reserves exactly what the lanes
+  /// draw, so the two halves stay in step.
+  final Map<String, double> sequenceExtra;
   final void Function(BridgeLayerEntry entry)? onOpenSequence;
   final Map<String, bool> hasAudio;
   final ValueChanged<String> onToggle;
@@ -4030,7 +4055,7 @@ class _Outline extends StatelessWidget {
     required this.onSelectProperty,
     required this.onEditProperty,
     required this.open,
-    this.sequenceOpen = const {},
+    this.sequenceExtra = const {},
     this.onOpenSequence,
     required this.hasAudio,
     required this.onToggle,
@@ -4085,6 +4110,19 @@ class _Outline extends StatelessWidget {
             renameRequest: renameRequest,
             blockHeights: blockHeights,
           ),
+          // The room the lanes draw an open sequence view in (K-248). The
+          // outline has nothing to put here — the clips and their envelope are
+          // the lane's to draw — but it must leave exactly the same gap, or
+          // every row below this one sits at a different height on the two
+          // sides of the Timeline and the halves stop lining up.
+          if (sequenceExtra
+              .containsKey(layers[i].layer.internallayerId.toString()))
+            SizedBox(
+              key: ValueKey<String>(
+                  'tl-seq-room-${layers[i].layer.internallayerId}'),
+              height:
+                  sequenceExtra[layers[i].layer.internallayerId.toString()],
+            ),
           // The fold-out, from the same list the lanes leave room for.
           if (open.contains(layers[i].layer.internallayerId.toString()))
             for (final row in layerFoldRows(
@@ -4809,9 +4847,14 @@ class _LayerArea extends StatelessWidget {
   /// room their property rows take, so a bar never drifts away from its name.
   final Set<String> open;
 
-  /// The Sequence layers whose view is open, and how to toggle one (K-248).
-  final Set<String> sequenceOpen;
+  /// How much taller each open sequence view makes its row, by layer id, and
+  /// how to toggle one (K-248). The outline reserves exactly what the lanes
+  /// draw, so the two halves stay in step.
+  final Map<String, double> sequenceExtra;
   final void Function(BridgeLayerEntry entry)? onOpenSequence;
+
+  /// The graph half of a sequence view has been dragged to a new height.
+  final void Function(BridgeLayerEntry entry, double height)? onGraphHeight;
 
   /// Where the open sequence views sit, so the row seams skip them (K-248).
   final List<(double, double)> sequenceBlanks;
@@ -4892,8 +4935,9 @@ class _LayerArea extends StatelessWidget {
     required this.layers,
     required this.selectedIds,
     required this.open,
-    this.sequenceOpen = const {},
+    this.sequenceExtra = const {},
     this.onOpenSequence,
+    this.onGraphHeight,
     this.sequenceBlanks = const [],
     required this.hasAudio,
     required this.peaks,
@@ -5113,10 +5157,11 @@ class _LayerArea extends StatelessWidget {
                                             // A Sequence layer's own clips and
                                             // their speed envelope, in the room
                                             // the row grew for them (K-248).
-                                            if (sequenceOpen.contains(layers[i]
-                                                .layer
-                                                .internallayerId
-                                                .toString()))
+                                            if (sequenceExtra.containsKey(
+                                                layers[i]
+                                                    .layer
+                                                    .internallayerId
+                                                    .toString()))
                                               SequenceViewFrb(
                                                 key: ValueKey<String>(
                                                     'tl-seq-${layers[i].layer.internallayerId}'),
@@ -5125,6 +5170,16 @@ class _LayerArea extends StatelessWidget {
                                                 fps: fps,
                                                 fpsNum: fpsNum,
                                                 fpsDen: fpsDen,
+                                                graphHeight: (sequenceExtra[
+                                                            layers[i]
+                                                                .layer
+                                                                .internallayerId
+                                                                .toString()] ??
+                                                        sequenceViewHeight) -
+                                                    sequenceClipStrip,
+                                                onGraphHeight: (h) =>
+                                                    onGraphHeight?.call(
+                                                        layers[i], h),
                                                 onChanged: onChanged,
                                               ),
                                             // One lane per fold-out row the outline shows,

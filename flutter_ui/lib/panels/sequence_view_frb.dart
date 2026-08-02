@@ -44,6 +44,12 @@ const double sequenceClipStrip = sequenceRow * 3;
 const double sequenceEnvelopeStrip = sequenceRow * 3;
 const double sequenceViewHeight = sequenceClipStrip + sequenceEnvelopeStrip;
 
+/// How short and how tall the graph half may be dragged. The floor is one row
+/// — below that a curve has nowhere to be — and the ceiling stops a view
+/// swallowing the whole panel by accident.
+const double sequenceGraphMin = sequenceRow;
+const double sequenceGraphMax = sequenceRow * 16;
+
 /// How near an edge counts as grabbing it rather than the clip's body.
 const double _edgeGrab = 7;
 
@@ -55,6 +61,12 @@ class SequenceViewFrb extends StatefulWidget {
   final int fpsNum;
   final int fpsDen;
 
+  /// How tall the graph half is right now, and where to report a drag of its
+  /// divider. Only the graph resizes: the clip strip is sized for cutting,
+  /// while how much room a speed curve wants depends on how far its ramps go.
+  final double graphHeight;
+  final ValueChanged<double>? onGraphHeight;
+
   /// Committed a gesture; the panel refreshes its read model.
   final VoidCallback onChanged;
 
@@ -65,6 +77,8 @@ class SequenceViewFrb extends StatefulWidget {
     required this.fps,
     required this.fpsNum,
     required this.fpsDen,
+    this.graphHeight = sequenceEnvelopeStrip,
+    this.onGraphHeight,
     required this.onChanged,
   });
 
@@ -103,7 +117,8 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
           child: Stack(children: [for (final c in _clips) _clip(t, c)]),
         ),
         SizedBox(
-          height: sequenceEnvelopeStrip,
+          height: (widget.graphHeight - _dividerHeight)
+              .clamp(sequenceGraphMin, sequenceGraphMax),
           child: _EnvelopeStrip(
             entry: widget.entry,
             axis: widget.axis,
@@ -117,6 +132,15 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
               _lastEnvelopeTap = now;
               return last != null && now.difference(last) < kDoubleTapTimeout;
             },
+          ),
+        ),
+        // The divider, at the very bottom of the view: drag it to give the
+        // graph more or less room. Only here, and only on a Sequence layer —
+        // every other row's height is the table's business, not the user's.
+        _GraphDivider(
+          onDrag: (dy) => widget.onGraphHeight?.call(
+            (widget.graphHeight + dy)
+                .clamp(sequenceGraphMin + _dividerHeight, sequenceGraphMax),
           ),
         ),
       ],
@@ -227,6 +251,38 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
 
 /// What a clip drag has hold of.
 enum _Grab { body, start, end }
+
+/// How much of the view's height the divider itself takes.
+const double _dividerHeight = 5;
+
+/// The grab bar along the bottom of a sequence view.
+class _GraphDivider extends StatelessWidget {
+  final ValueChanged<double> onDrag;
+  const _GraphDivider({required this.onDrag});
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeUpDown,
+      child: GestureDetector(
+        key: const ValueKey('seq-graph-divider'),
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragUpdate: (d) => onDrag(d.delta.dy),
+        child: SizedBox(
+          height: _dividerHeight,
+          child: Center(
+            child: Container(
+              height: 1,
+              margin: const EdgeInsets.symmetric(horizontal: 40),
+              color: t.hairline,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
 /// The speed envelope: every clip's map drawn as points and straight lines,
 /// against an axis that grows to hold whatever the curves reach.
