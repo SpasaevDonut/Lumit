@@ -205,6 +205,11 @@ Full API contract in [08-EFFECTS.md](08-EFFECTS.md).
 
 ## 7. Instrumentation
 
+**v1 status:** this section is the target. What runs in CI today is fmt, clippy, the full
+test suites on macOS/Windows/Linux, the engine-crate coverage gate and the no-hex lint
+(`.github/workflows/ci.yml`); the per-node profiler (§7.1) and the headless benchmark
+harness with budget gates (§7.3) are not built — [TODO.md](TODO.md) tracks them.
+
 ### 7.1 Per-node profiler
 
 A built-in profiler, surfaced in the UI — After Effects' composition profiler done properly:

@@ -93,7 +93,13 @@ wgpu surfaces loss as: `Device::on_uncaptured_error` callback, submissions faili
 Test it in CI on Windows with `dxgi` debug tricks or by wrapping device in a test shim that
 injects loss; do not ship recovery untested — it is the kind of code that silently rots.
 
-## 6. egui integration and the Viewer
+## 6. egui integration and the Viewer (historical — the egui shell went with K-182)
+
+> This section described the egui-era Viewer. The shipping frontend is Flutter: frames
+> reach it as zero-copy shared textures per
+> [17-BRIDGE-CONTRACT.md](../17-BRIDGE-CONTRACT.md) §The frame paths, and the
+> neutral-surround rule is enforced by the Flutter theme. Kept for the display-transform
+> reasoning, which still holds wherever the blit lives.
 
 - Use `eframe` with the wgpu backend; Lumit's renderer registers its output texture with
   `egui_wgpu::Renderer::register_native_texture` → paint as an `egui::Image` inside the

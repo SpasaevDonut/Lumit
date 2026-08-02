@@ -111,7 +111,10 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
   `todo!`/`unimplemented!`, indexing that can panic in hot paths, and arithmetic that can
   overflow-panic, in all non-test code of engine crates (clippy: `unwrap_used`,
   `expect_used`, `panic`, `indexing_slicing`, `arithmetic_side_effects` — allow-listed per
-  crate only with a comment). Tests and build scripts may panic freely.
+  crate only with a comment). **v1 status:** the workspace denies `unwrap_used`,
+  `expect_used`, `panic`, `todo` and `unimplemented`; `indexing_slicing` and
+  `arithmetic_side_effects` are not on yet — they await a sweep of the existing hot paths
+  (noted in the root `Cargo.toml`). Tests and build scripts may panic freely.
 - Every fallible boundary returns a **typed error** (`thiserror` enums per crate); errors
   carry enough context (asset UUID, node id, file path) to be actionable in the UI. No
   `Box<dyn Error>` across crate boundaries; no stringly-typed errors.
@@ -149,7 +152,9 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
   oracle is always shipping code, never a test-only sketch.
 - **Golden-frame tests:** a corpus of small projects renders to reference EXRs; CI compares
   export output per platform. Golden updates are explicit, reviewed diffs (with visual
-  side-by-sides in the PR), never regenerated silently.
+  side-by-sides in the PR), never regenerated silently. **The EXR corpus is not built yet**
+  ([TODO.md](TODO.md)); today's goldens are in-crate oracles (CPU/GPU effect agreement, the
+  Dart graph-maths goldens).
 - **Property tests** (proptest) for retime maths per [04-RETIMING.md](04-RETIMING.md):
   integrate(speed) ↔ differentiate(map) round-trips, monotone-segment invariants, overrun
   boundary behaviour (K-022: retime never moves edit points); for rational time (associativity,
@@ -157,6 +162,7 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 - **Fuzzing** (cargo-fuzz, in CI on a schedule): the `.lum` deserialiser and journal
   replayer (arbitrary bytes MUST produce a typed error, never a panic or hang) and the OFX
   host boundary (malformed plugin responses, wrong-size frames, dead processes).
+  **Not yet set up** — no fuzz targets exist; an obligation, tracked in [TODO.md](TODO.md).
 - **Performance regression gates in CI**, on the reference machine: every budget in
   [13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §2 is a gate, and that document owns
   every number. Regressions beyond 10% fail the build.
@@ -165,8 +171,9 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 
 ## 7. Code style and boundaries
 
-- **Workspace lints** (`[workspace.lints]`): `rust_2024_idioms`, `clippy::all`,
-  `clippy::pedantic` (curated allows), plus the §4 panic lints. Warnings are errors in CI.
+- **Workspace lints** (`[workspace.lints]`): the §4 panic lints plus `deny(unsafe_code)`;
+  warnings are errors in CI (`clippy --workspace -- -D warnings`). `clippy::pedantic` with
+  curated allows is the intended end state, not yet switched on.
 - **Unsafe policy:** `unsafe` is permitted only in `lumit-gpu`, `lumit-media`,
   `lumit-expr` FFI edges, and the plugin hosts — each block wrapped in a safe API within
   its crate, carrying a `// SAFETY:` comment stating the invariant and who upholds it, and
@@ -208,12 +215,14 @@ machine". Exceptions require a decision entry in [02-DECISIONS.md](02-DECISIONS.
 
 - New workspace dependencies require justification in the PR description: what it does, why
   not std/an existing dep, licence (GPLv3-compatible), maintenance signal. `cargo deny`
-  runs in CI for licences, advisories, and duplicate versions.
+  for licences, advisories, and duplicate versions is intended for CI but not yet wired
+  ([TODO.md](TODO.md)).
 - FFI-heavy and slow-to-compile crates (wgpu, rsmpeg, cudarc, QuickJS bindings) stay in
   their one owning leaf crate ([05-ARCHITECTURE.md](05-ARCHITECTURE.md) §1.1) so incremental
   builds of app-level crates stay in seconds.
-- Pinned toolchain via `rust-toolchain.toml`; edition 2024; MSRV bumps are deliberate,
-  logged in the changelog, never incidental.
+- The workspace is edition 2021 today; a `rust-toolchain.toml` pin and the edition-2024
+  move are owed ([TODO.md](TODO.md)). MSRV bumps are deliberate, logged in the changelog,
+  never incidental.
 
 ## 10. Definition of done
 

@@ -112,7 +112,6 @@ These are v1-scope surfaces it does not yet match.
 - **Roto** and **Puppet** - disabled on the strip until there is an engine behind
     them ([16-ROADMAP.md](16-ROADMAP.md)). Roto wants a segmentation model and
     per-frame stroke propagation; Puppet wants a mesh, pins and a deformer.
-- **Snapping** is a switch nothing reads ([07-UI-SPEC.md](07-UI-SPEC.md) §4.5).
 - **The workspace strip shows no preset after a restart** -
     `Workspace.activePreset` is session-only.
 
@@ -179,6 +178,11 @@ The Timeline matters most - it is zoomed constantly while cutting.
 - **The Linux DMA-BUF path has never run on a Linux machine with a GPU** (K-033).
     It fails calmly on the adapter-less CI runner, which proves the failure is
     calm and nothing about the path working.
+- **`cargo build -p lumit_bridge --no-default-features` does not build** - the
+    render worker is part of the API surface, which is deliberately one shape
+    whatever the features ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Feature
+    gates). Either make the worker feature-clean or drop the pretence that the
+    features are independent.
 - **frb's SSE codec encodes `Vec<u8>` one byte at a time** - now taxes only
     thumbnails and scope traces, but worth the bulk codec if traces feel late.
 - **Engine subsystems with no frb API** - masks (`add_mask`,
@@ -262,9 +266,6 @@ colour individually; only the two Timeline tokens default from the mode.
     suspend mid-drag).
 - **Volume keyframes draw no lane diamonds and no graph curve** - volume is not
     in the comp read model; fold it into `BridgeLayerInfo` if either matters.
-- **A Null layer cannot be selected in the Viewer** - no size, no pixels, nothing
-    to hit-test. A drawn, selectable handle for transform-only layers is the fix
-    and would serve Camera layers too.
 - **Effects on a Null are accepted and never run** - either refuse the drop or
     say plainly that the stack is inert.
 
@@ -275,6 +276,13 @@ in the Effect controls panel ([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md)
 §7.1).
 
 ## Next - engine/bridge follow-ups
+
+**The LUT effect's GPU path ignores a non-default domain**
+([impl/lut.md](impl/lut.md) §3 status): `fx_lut.wgsl` skips the
+`DOMAIN_MIN`/`DOMAIN_MAX` remap the CPU oracle applies, so such a cube renders
+silently wrong. Pass the six domain floats through `LutParams`, or refuse
+non-default-domain cubes as a labelled no-op. The LUT caches also key by path
+alone - no mtime, no LRU bound (§4).
 
 **Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
 text stair-step, worst on a slow rotation. Two questions decide where the setting
@@ -336,6 +344,21 @@ plugins/decoder page; autosave interval/keep; export defaults (preset + filename
 template). Each lands wired to the engine through the bridge, not as a Dart-side
 setting nothing reads.
 
+**The no-hex lint only greps Rust** ([15-DESIGN.md](15-DESIGN.md) §4.1) - a Dart-side gate
+over `flutter_ui/lib` outside `theme/` would catch the literals where widgets actually live.
+
+**Engineering-rules tooling still owed** ([14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md)):
+`cargo deny` in CI (§9); fuzz targets for the `.lum` deserialiser and journal replayer (§6);
+a `rust-toolchain.toml` pin and the edition-2024 move (§9); the `indexing_slicing` /
+`arithmetic_side_effects` clippy denies after a hot-path sweep (§4); `clippy::pedantic`
+with curated allows (§7); the golden-frame EXR export corpus (§6).
+
+**The performance harness and its CI gates are not built**
+([13-PERFORMANCE-RULES.md](13-PERFORMANCE-RULES.md) §7.3): no reference comp in the
+repository, no headless benchmark scenarios, no budget gates per merge. The per-node
+profiler (§7.1) is likewise unbuilt - the render-time indicator entry above is its first
+visible piece.
+
 **CI coverage the Flutter port left thin:**
 - **Nothing in CI proves a Viewer frame arrives.** The Linux job is the only one
     running the Flutter suite and has no GPU, so the six Viewer tests that wait
@@ -353,7 +376,9 @@ setting nothing reads.
 - **Move footage probing off-thread** - synchronous today; needs a probe worker
     drained on `lumit_bridge_snapshot` plus a synchronous `ensure_probed` fallback
     for `convert_to_sequenced`, `trim_to_source_end`, `add_footage_layer` and
-    relink.
+    relink. **Beat detection is the same shape** - it runs on the calling thread
+    ([17-BRIDGE-CONTRACT.md](17-BRIDGE-CONTRACT.md) §Threading) and wants the same
+    worker treatment.
 - **Shared-texture producer/consumer fence** - only if a live run shows tearing;
     verify on the machine first.
 - **Linux packaging** - the Flutter Linux build needs its own packaging when a
@@ -395,8 +420,8 @@ list, not a re-statement of the roadmap.
     `flow/` directories (only `frames/` and the global media index exist).
 - **Design ([15-DESIGN.md](15-DESIGN.md)).** Bundle JetBrains Mono, Schibsted
     Grotesk and Source Serif 4 (only Inter is wired); add the 13/14/20 px
-    type-scale steps to the theme; add `ScopeColours` to the Flutter theme (Rust
-    has it).
+    type-scale steps to the theme; identity colour tokens for Shape and Null
+    layers (§6.1 reserves the values; both kinds borrow today).
 - **Platform.** The macOS pass - native menu bar, VideoToolbox, ProRes,
     notarisation (K-033). The Metal/IOSurface Viewer path is unverified on real
     hardware.

@@ -26,9 +26,9 @@ the picture (K-224 does that for mask points).
 A **shape layer** is a layer whose content is vector art rather than pixels: you
 draw a rectangle or a path, and the layer *is* that shape — filled, stroked, and
 resolution-independent, so it stays crisp at any scale. After Effects makes one
-whenever you drag a shape tool with nothing selected. Lumit cannot: `LayerKind`
-has footage, solid, precomp, text, camera, sequence, adjustment and null in it,
-and no shape. That is the gap.
+whenever you drag a shape tool with nothing selected. Lumit could not, when this
+plan was written: `LayerKind` had footage, solid, precomp, text, camera, sequence,
+adjustment and null in it, and no shape. That was the gap this plan closed.
 
 A mask (K-222, shipped) is a *path on another layer* that decides which pixels
 show. A shape layer is a path that **is** the picture. The geometry is the same
