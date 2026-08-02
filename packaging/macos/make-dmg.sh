@@ -75,13 +75,44 @@ else
     echo "warning: nothing in the app links Homebrew - is the media feature on?" >&2
 fi
 
+# libavdevice exists to talk to capture/playback devices, which the engine
+# never does (decode and encode go through avformat/avcodec) — yet it drags
+# in sdl2-compat, whose libSDL2 dlopens SDL3 at load time: a dependency no
+# bundler can see, so a shipped app dies with "failed loading SDL3 library".
+# The bridge imports zero avdevice symbols (guarded below), so its load
+# command is repointed at libavutil — already loaded, nothing missed — and
+# avdevice leaves the bundle with the SDL/X11 tail nothing else references.
+bridge="$app/Contents/Frameworks/lumit_bridge.framework/Versions/A/lumit_bridge"
+if [ -f "$bridge" ] && ! nm -u "$bridge" 2>/dev/null | grep -qi avdevice; then
+    avdev="$(otool -L "$bridge" | awk '/libavdevice/{print $1}')"
+    avutil="$(otool -L "$bridge" | awk '/libavutil/{print $1}')"
+    if [ -n "$avdev" ] && [ -n "$avutil" ]; then
+        install_name_tool -change "$avdev" "$avutil" "$bridge"
+        rm -f "$app/Contents/Frameworks/libavdevice."*
+        for cand in "$app/Contents/Frameworks"/libSDL2* \
+                    "$app/Contents/Frameworks"/libxcb* \
+                    "$app/Contents/Frameworks"/libX11* \
+                    "$app/Contents/Frameworks"/libXau* \
+                    "$app/Contents/Frameworks"/libXdmcp*; do
+            [ -e "$cand" ] || continue
+            base="$(basename "$cand")"
+            if ! find "$app/Contents" -type f ! -path "$cand" -exec otool -L {} + 2>/dev/null \
+                    | grep -q "/$base "; then
+                rm -f "$cand"
+            fi
+        done
+    fi
+fi
+
 # dyld (macOS 15+) refuses to launch a binary carrying duplicate LC_RPATH
 # entries, and dylibbundler adds its -p path as an rpath on each binary it
-# fixes — on top of Xcode's default '@executable_path/../Frameworks'. Drop
-# the slashed twin outright, then collapse any exact duplicates to one.
-for bin in "$app/Contents/MacOS/lumit_flutter" $fixlist; do
+# fixes — on top of Xcode's default '@executable_path/../Frameworks'. Every
+# binary in the app gets the sweep (a rerun of this script must clean marks
+# the previous run left, so the set cannot be limited to freshly-fixed
+# files): drop the slashed twin outright, collapse exact duplicates to one.
+for bin in "$app/Contents/MacOS/lumit_flutter" $(find "$app/Contents/Frameworks" -type f); do
     while install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$bin" 2>/dev/null; do :; done
-    for rp in $(otool -l "$bin" | awk '$1=="path"{print $2}' | sort | uniq -d); do
+    for rp in $(otool -l "$bin" 2>/dev/null | awk '$1=="path"{print $2}' | sort | uniq -d); do
         while install_name_tool -delete_rpath "$rp" "$bin" 2>/dev/null; do :; done
         install_name_tool -add_rpath "$rp" "$bin"
     done
