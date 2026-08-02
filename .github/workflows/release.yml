@@ -6,11 +6,12 @@
 # (same FFmpeg 7.1 shared build, same LLVM 18 pin, same Flutter 3.44.7); when
 # one changes, change the other.
 #
-# No macOS job yet, deliberately: the built app would link Homebrew's ffmpeg@7
-# at its keg path and the Metal Viewer is unverified on real hardware — a DMG
-# would only pretend to work. It lands with the macOS pass (K-033,
-# docs/TODO.md); until then packaging/macos/make-dmg.sh builds one locally for
-# experiments.
+# The macOS job is EXPERIMENTAL (continue-on-error): make-dmg.sh bundles the
+# Homebrew FFmpeg dylibs into the .app and re-signs ad hoc, so the DMG runs
+# without Homebrew — but it is unsigned (Gatekeeper warns) and the Metal
+# Viewer is unverified on real hardware. Signing and notarisation land with
+# the macOS pass (K-033, docs/TODO.md); a release still publishes if this job
+# fails, just without the DMG.
 
 name: release
 
@@ -140,9 +141,38 @@ jobs:
           path: lumit-*-linux-x64.tar.gz
           if-no-files-found: error
 
+  macos-dmg:
+    name: macOS disk image (experimental)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      # Mirrors ci.yml's `check` job: keg-only ffmpeg@7 found via the explicit
+      # pkg-config override (K-204).
+      - name: Install FFmpeg 7.1 and dylibbundler
+        run: |
+          brew install ffmpeg@7 dylibbundler
+          echo "FFMPEG_PKG_CONFIG_PATH=$(brew --prefix ffmpeg@7)/lib/pkgconfig" >> "$GITHUB_ENV"
+      - uses: Swatinem/rust-cache@v2
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.44.7
+          channel: stable
+          cache: true
+      - name: Build the disk image
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          packaging/macos/make-dmg.sh "${version:-0.0.0}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-dmg
+          path: packaging/macos/dist/*.dmg
+          if-no-files-found: error
+
   publish:
     name: GitHub release
-    needs: [windows-installer, linux-bundle]
+    needs: [windows-installer, linux-bundle, macos-dmg]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5

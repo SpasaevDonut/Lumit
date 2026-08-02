@@ -5472,6 +5472,8 @@ machine builds a run-anywhere bundle (FFmpeg's libraries ride inside it), and
 both land attached to a GitHub Release under that tag. Flutter cannot
 cross-build — a Windows machine can only make the Windows app — which is why
 the answer to "can I release everything from Windows" is "yes, by letting the
-tag do it". There is no macOS artifact yet, deliberately: the app it would
-build only runs on a machine with the same Homebrew FFmpeg installed, so it
-waits for the proper macOS pass in the TODO.
+tag do it". A macOS disk image builds too, marked experimental: the FFmpeg
+libraries are folded into the app itself (so it runs without Homebrew), but
+it carries no paid Apple signature yet, so macOS warns before first launch —
+the proper signing lands with the macOS pass in the TODO, and a release still
+publishes even if this job fails.
