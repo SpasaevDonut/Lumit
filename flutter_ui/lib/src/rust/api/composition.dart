@@ -596,6 +596,29 @@ class CompositionReference {
       BridgeLib.instance.api.crateApiCompositionCompositionReferenceRenderFrame(
           that: this, frame: frame, scale: scale, mode: mode);
 
+  /// Ask for `frame` with one clip's retime replaced — the live envelope
+  /// drag, which never touches the document.
+  ///
+  /// A retime decides *which frame of the source* is decoded, so unlike a
+  /// transform it cannot be previewed by re-compositing pixels that are
+  /// already in hand: the provisional map has to reach the render plan, and
+  /// it does that by riding along with the request and being patched onto a
+  /// clone (K-247).
+  void renderFrameWithClipRetime(
+          {required BigInt frame,
+          required double scale,
+          required LayerReference layer,
+          required UuidValue clip,
+          required BridgeScalar retime}) =>
+      BridgeLib.instance.api
+          .crateApiCompositionCompositionReferenceRenderFrameWithClipRetime(
+              that: this,
+              frame: frame,
+              scale: scale,
+              layer: layer,
+              clip: clip,
+              retime: retime);
+
   /// Ask for `frame` with `layer`'s masks replaced by `masks` — the mask's
   /// half of the two calls above (K-240).
   void renderFrameWithMaskPreview(

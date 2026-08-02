@@ -1302,6 +1302,39 @@ impl CompositionReference {
             paint: None,
             contents: None,
             masks: None,
+            clip_retime: None,
+        }))
+    }
+
+    /// Ask for `frame` with one clip's retime replaced — the live envelope
+    /// drag, which never touches the document.
+    ///
+    /// A retime decides *which frame of the source* is decoded, so unlike a
+    /// transform it cannot be previewed by re-compositing pixels that are
+    /// already in hand: the provisional map has to reach the render plan, and
+    /// it does that by riding along with the request and being patched onto a
+    /// clone (K-247).
+    #[frb(sync)]
+    pub fn render_frame_with_clip_retime(
+        &self,
+        frame: u64,
+        scale: f32,
+        layer: LayerReference,
+        clip: Uuid,
+        retime: crate::api::effect::BridgeScalar,
+    ) -> Result<(), BridgeError> {
+        self.dispatch(RenderCompWithPreview(RenderCompRequestWithPreview {
+            comp: self.clone(),
+            frame,
+            scale,
+            layer,
+            effects: None,
+            transform: None,
+            text: None,
+            paint: None,
+            contents: None,
+            masks: None,
+            clip_retime: Some((clip, retime)),
         }))
     }
 
@@ -1440,6 +1473,7 @@ impl CompositionReference {
             paint: None,
             contents: None,
             masks: None,
+            clip_retime: None,
         }))
     }
 
@@ -1469,6 +1503,7 @@ impl CompositionReference {
             paint: None,
             contents: None,
             masks: None,
+            clip_retime: None,
         }))
     }
 
@@ -1502,6 +1537,7 @@ impl CompositionReference {
             paint: Some(strokes),
             contents: None,
             masks: None,
+            clip_retime: None,
         }))
     }
 
@@ -1526,6 +1562,7 @@ impl CompositionReference {
             paint: None,
             contents: Some(contents),
             masks: None,
+            clip_retime: None,
         }))
     }
 
@@ -1549,6 +1586,7 @@ impl CompositionReference {
             text: None,
             paint: None,
             contents: None,
+            clip_retime: None,
             masks: Some(masks),
         }))
     }

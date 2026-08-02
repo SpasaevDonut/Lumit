@@ -592,10 +592,15 @@ String _number(double v) {
 // ---------------------------------------------------------------------------
 
 /// The vertical range a Retime channel's envelope opens at, in per cent
-/// (K-247): normal playback at the top, and enough below zero to show that
-/// dragging a point down there runs the clip backwards. It only ever grows —
-/// a curve reaching past either end is framed, never clipped.
-const (double, double) envelopeDefaultRange = (-25.0, 100.0);
+/// (K-247, K-250).
+///
+/// Headroom over normal playback, and enough below zero to show that dragging
+/// a point down there runs the clip backwards. The room above 100% is the
+/// point of the top figure: at exactly 100 the flat line every un-retimed clip
+/// draws sat on the very top edge of the graph, with nowhere to go but down —
+/// which reads as a ceiling rather than as the ordinary speed it is. It only
+/// ever grows: a curve reaching past either end reframes the axis.
+const (double, double) envelopeDefaultRange = (-25.0, 125.0);
 
 /// The influence that makes a cubic side lie on its chord — the polynomial
 /// subclass (K-078). The envelope authors every side at this influence, which

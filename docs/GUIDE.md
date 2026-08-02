@@ -1558,9 +1558,23 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   set of keyframes, and a ramp built in either is read back honestly in the other. (There
   is a test that samples along the curve and checks it sits on the envelope's line; if that
   ever fails, the two views have started disagreeing.)
-  The axis opens at **100% down to −25%**, and only ever grows: the strip of negative space
-  is deliberate, so it is visible that dragging down there is allowed and what it does. Push
-  a ramp to 850% and the axis reframes to fit it.
+  The axis opens at **125% down to −25%** (K-250), and only ever grows. The headroom above
+  normal playback is the point of the top figure: at exactly 100 the flat line an un-retimed
+  clip draws sat on the graph's very top edge with nowhere to go but up and out of sight,
+  which reads as a ceiling rather than as the ordinary speed it is — and speeding a clip up
+  is the commonest thing anyone does here. The negative strip is deliberate too, so it is
+  visible that dragging below zero is allowed and what it does. Push a ramp to 850% and the
+  axis reframes to fit it — though **not while you are dragging**: the axis is frozen for
+  the length of a gesture (or the range would grow as you drag, which stretches what the
+  next pixel is worth and sends the value off exponentially), and the drawing is clipped to
+  the graph's own bounds so a point taken past an edge never draws over the rows beside it.
+  The framing catches up when you let go.
+  **The picture follows the point as you drag it.** A retime decides *which frame* of the
+  source is on screen, so unlike dragging a position — where the pixels are already in hand
+  and only get moved about — nothing can update until the provisional map reaches the render
+  plan. It rides along with the frame request and is patched onto a throwaway copy of the
+  document, so the picture keeps up without a single edit being written or an undo step
+  being made.
   Two smaller things came with it. The Retime row's **name is now clickable**, like every
   other property row's — it never was, which meant the Retime curve could be built but not
   opened. And with the preference off, everything above is unchanged: the speed view is the

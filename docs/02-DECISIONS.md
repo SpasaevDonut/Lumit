@@ -4936,3 +4936,22 @@ K-213 already marked: **the property survives, and everything else converges on 
 - 04-RETIMING §0's framing — the property as the current surface, the segment engine as the
   destination — inverts: the property is both. Segment-era affordances (freeze, presets,
   overrun indication…) return by being rebuilt on the property, per K-197's own rule.
+
+---
+
+**K-250 · DECIDED · The speed envelope opens with headroom: 125% to −25%.** From the owner
+(2026-08-02), refining K-247's figure after using it. K-247 set the Vegas envelope's default
+range at 100% down to −25%; the top figure is now **125%**.
+
+The room above normal playback is the whole point of the change. At exactly 100 the flat
+line every un-retimed clip draws sat on the very top edge of the graph with nowhere to go
+but down, which reads as a ceiling rather than as the ordinary speed it is — and speeding a
+clip *up* is the commonest thing anyone does here. The floor stays where it was: −25% is
+enough negative space to show that dragging below zero runs the clip backwards, without
+giving up half the graph to a state most clips never reach. The range still only ever grows:
+a curve reaching past either end reframes the axis, and while a drag is in flight the axis
+is *frozen* and the drawing clipped to the graph's own bounds, so a point taken past an edge
+never draws over the rows beside it and the framing catches up when the pointer is let go.
+
+Both readings of the envelope take it — the layer's Retime channel in the graph editor, and
+the sequence view's strip — because they are one editor over one representation (K-249).

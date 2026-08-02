@@ -359,7 +359,7 @@ void envelopeTests() {
       expect(envelopeSpeeds(ramped), [closeTo(100, 1e-9), closeTo(300, 1e-9)]);
     });
 
-    test('the default range is 100 down to -25, and only ever grows', () {
+    test('the default range is 125 down to -25, and only ever grows', () {
       final flat = [key(0, 1, 0.0), key(4, 1, 4.0)];
       expect(fitEnvelopeRange([flat]), envelopeDefaultRange,
           reason: 'an ordinary clip opens at exactly the documented range');
@@ -369,11 +369,14 @@ void envelopeTests() {
       expect(hi, greaterThan(850),
           reason: 'a fast ramp is framed, not clipped');
       expect(lo, -25.0, reason: 'the floor did not move');
+      // The headroom above normal playback is the point of the top figure
+      // (K-250): a flat 100% line must not sit on the graph's own edge.
+      expect(envelopeDefaultRange.$2, 125.0);
 
       final reversed = setEnvelopeSpeed(flat, 1, -400);
       final (rlo, rhi) = fitEnvelopeRange([reversed]);
       expect(rlo, lessThan(-400));
-      expect(rhi, 100.0);
+      expect(rhi, 125.0, reason: 'the ceiling did not move either');
     });
 
     /// **The invariant the whole envelope rests on**, checked after the

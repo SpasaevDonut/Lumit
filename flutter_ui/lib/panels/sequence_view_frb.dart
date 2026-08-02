@@ -98,6 +98,10 @@ class SequenceViewFrb extends StatefulWidget {
   /// Committed a gesture; the panel refreshes its read model.
   final VoidCallback onChanged;
 
+  /// Show `clip` playing under a map it has not been given yet — the live
+  /// drag, which never touches the document (K-247).
+  final void Function(BridgeClip clip, List<BridgeKeyframe> keys)? onPreview;
+
   const SequenceViewFrb({
     super.key,
     required this.entry,
@@ -112,6 +116,7 @@ class SequenceViewFrb extends StatefulWidget {
     this.onClose,
     this.graphHeight = sequenceEnvelopeStrip,
     this.onGraphHeight,
+    this.onPreview,
     required this.onChanged,
   });
 
@@ -257,6 +262,7 @@ class _SequenceViewFrbState extends State<SequenceViewFrb> {
             fpsNum: widget.fpsNum,
             fpsDen: widget.fpsDen,
             onChanged: widget.onChanged,
+            onPreview: widget.onPreview,
             onTapped: () {
               final now = DateTime.now();
               final last = _lastEnvelopeTap;
@@ -513,6 +519,7 @@ class _EnvelopeStrip extends StatefulWidget {
   final int fpsNum;
   final int fpsDen;
   final VoidCallback onChanged;
+  final void Function(BridgeClip clip, List<BridgeKeyframe> keys)? onPreview;
 
   /// Reports a click and answers whether it was the second of a double.
   final bool Function() onTapped;
@@ -525,6 +532,7 @@ class _EnvelopeStrip extends StatefulWidget {
     required this.fpsNum,
     required this.fpsDen,
     required this.onChanged,
+    this.onPreview,
     required this.onTapped,
   });
 
@@ -584,12 +592,12 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     final frozen = _frozen;
     if (frozen != null) return frozen;
     final (lo, hi) = fitEnvelopeRange([for (final c in _clips) _keysOf(c)]);
-    // Air at both ends, always. K-247's 100%-to-−25% is what the axis has to
-    // *contain*, and contained is not the same as touching the edge: without
-    // this an un-retimed clip's flat 100% line drew exactly on the strip's top
-    // edge, half of it outside its own row.
-    const air = 18.0;
-    return (lo - air, hi + air);
+    // A little air past whatever the curves reach, so a point at the extreme
+    // is not drawn half outside its own row. The *default* range carries its
+    // own headroom (K-250), so an ordinary clip needs none added.
+    const air = 8.0;
+    final (dlo, dhi) = envelopeDefaultRange;
+    return (lo < dlo ? lo - air : dlo, hi > dhi ? hi + air : dhi);
   }
 
   double _y(double speed, double height) {
@@ -619,7 +627,13 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
             Positioned.fill(
               key: const ValueKey('seq-envelope-curves'),
               child: IgnorePointer(
-                child: CustomPaint(
+                // Clipped to the strip's own bounds. The axis is frozen for
+                // the length of a gesture, so a point dragged past the top or
+                // the bottom would otherwise be drawn outside this row and
+                // over the layers below it — the picture reframes when the
+                // pointer is let go and the freeze lifts.
+                child: ClipRect(
+                  child: CustomPaint(
                   painter: _EnvelopePainter(
                     lanes: [
                       for (final c in _clips)
@@ -638,6 +652,7 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                         ? widget.hScroll!.offset
                         : 0,
                   ),
+                ),
                 ),
               ),
             ),
@@ -679,6 +694,10 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
                     speed: _grabbedAt - _travelled / (height <= 0 ? 1 : height) * span,
                     dx: held.dx + e.delta.dx,
                   );
+                  // The picture follows the point. A retime decides *which*
+                  // frame is decoded, so this is the one drag where nothing
+                  // moves on screen until it is asked to.
+                  widget.onPreview?.call(held.clip, _shown(held.clip));
                 }),
                 onPointerUp: (e) {
                   setState(() => _frozen = null);

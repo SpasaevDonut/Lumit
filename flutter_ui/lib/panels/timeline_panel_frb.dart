@@ -1929,6 +1929,18 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                       _sequenceBlanks(layers,
                                                           blockHeights),
                                                   hScroll: _hLane,
+                                                  onClipPreview:
+                                                      (entry, clip, keys) =>
+                                                          comp.renderFrameWithClipRetime(
+                                                    frame: BigInt.from(
+                                                        ui.playheadFrame.value),
+                                                    scale: 1.0,
+                                                    layer: entry.layer,
+                                                    clip: clip.id,
+                                                    retime:
+                                                        BridgeScalar.keyframed(
+                                                            keys),
+                                                  ),
                                                   hasAudio: _hasAudio,
                                                   peaks: _peaks,
                                                   fps: ui.model.fps,
@@ -4864,6 +4876,12 @@ class _LayerArea extends StatelessWidget {
   /// The graph half of a sequence view has been dragged to a new height.
   final void Function(BridgeLayerEntry entry, double height)? onGraphHeight;
 
+  /// A clip's envelope is being dragged: show it under the map it has not
+  /// been given yet (K-247).
+  final void Function(
+      BridgeLayerEntry entry, BridgeClip clip, List<BridgeKeyframe> keys)?
+      onClipPreview;
+
   /// The lane's horizontal scroll, so an open view's axis labels can sit at
   /// the window's edge rather than at the start of time.
   final ScrollController? hScroll;
@@ -4952,6 +4970,7 @@ class _LayerArea extends StatelessWidget {
     this.onGraphHeight,
     this.sequenceBlanks = const [],
     this.hScroll,
+    this.onClipPreview,
     required this.hasAudio,
     required this.peaks,
     required this.fps,
@@ -5244,6 +5263,9 @@ class _LayerArea extends StatelessWidget {
                                                 onGraphHeight: (h) =>
                                                     onGraphHeight?.call(
                                                         layers[i], h),
+                                                onPreview: (clip, keys) =>
+                                                    onClipPreview?.call(
+                                                        layers[i], clip, keys),
                                                 onChanged: onChanged,
                                               ),
                                             // One lane per fold-out row the outline shows,
