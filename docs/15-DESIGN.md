@@ -177,13 +177,14 @@ The Viewer toolbar sits outside the zone; its active-state ticks use `accent` li
 toolbar. Scopes panels are exempt (their traces are content), but their chrome follows the
 same neutral rule since they sit beside the Viewer in the Colour workspace.
 
-## 4. Tokens in Rust
+## 4. The token layer
 
 ### 4.1 The theme struct
 
 There is no cascade, so the token layer is a plain struct, constructed once per theme and
-passed by reference. Shape (illustrative — exact module layout per
-[05-ARCHITECTURE.md](05-ARCHITECTURE.md)):
+passed by reference. Since the Flutter port (K-174/K-182) it lives Dart-side as `LumitTheme`
+(`flutter_ui/lib/theme/theme.dart`); the sketch below keeps the original Rust-flavoured
+shape as the token inventory (illustrative — `Color32` reads as `Color`):
 
 ```rust
 /// Every colour Lumit ever paints. Constructed by `Theme::dark()` (and later
@@ -254,11 +255,11 @@ done as each area is next touched; the no-hex rule already holds regardless.
 
 Binding rules:
 
-- **All colours in widget code come from `&Theme`.** `Color32::from_rgb`,
-  `Color32::from_hex`, and hex literals are permitted only inside the theme module. This is
-  enforced in CI (clippy `disallowed-methods` outside `theme/`, plus a grep gate), per
-  [14-ENGINEERING-RULES.md](14-ENGINEERING-RULES.md). A hex literal in widget code is a lint
-  failure, exactly as it would be in a household component.
+- **All colours in widget code come from the theme.** Hex literals and colour constructors
+  are permitted only inside `flutter_ui/lib/theme/`. CI's `no-hex-outside-theme` job greps
+  every Rust crate (no colour may live engine-side at all); on the Dart side the rule holds
+  by convention and review today — a Dart-side lint gate is owed ([TODO.md](TODO.md)). A hex
+  literal in widget code is a defect, exactly as it would be in a household component.
 - Derived alphas (e.g. `accent` @ 16% selection fill) are computed in the theme constructor and
   stored as their own fields — widget code does not do colour arithmetic either.
 - The app icon is the sole hex exception, mirroring the household favicon rule.
@@ -298,9 +299,10 @@ them.
 
 ## 5. Iconography
 
-The **Iconoir** set (MIT), embedded as an icon font via the `iconflow` crate (K-085,
-reversing this section's earlier hand-drawn-only rule): one consistent, professionally drawn
-family, rendered as glyphs so every icon takes the theme colour exactly like text —
+The **Iconoir** set (MIT), embedded via the `iconoir_flutter` package (K-085 picked the set,
+reversing this section's earlier hand-drawn-only rule; the icon-font `iconflow` crate went
+with the egui shell in K-182): one consistent, professionally drawn
+family, every icon taking the theme colour exactly like text —
 `text_secondary` at rest, `text_primary` on hover, `accent` when active — at 16px for panel
 toolbars, 20px for the transport. **16 is a floor, not a preference** (K-209): an Iconoir
 glyph carries a 1.5-unit stroke on a 24-unit grid, so 16px is the size at which that stroke
@@ -331,9 +333,9 @@ read as *muted siblings* — desaturated, mid-lightness, clearly quieter than `a
 full Timeline looks organised, not carnival. Selection (accent) must visibly beat every one
 of them.
 
-v1 ships an identity colour token for each of the six layer kinds that exist today. The
-`LayerColours` class (`flutter_ui/lib/theme/theme.dart`) carries exactly these six; the
-panels map each layer kind to its token and glyph.
+v1 ships an identity colour token for six layer kinds. The `LayerColours` class
+(`flutter_ui/lib/theme/theme.dart`) carries exactly these six; the panels map each layer
+kind to its token and glyph.
 
 | Layer type | Token | Value | v1 |
 |---|---|---|---|
@@ -344,11 +346,14 @@ panels map each layer kind to its token and glyph.
 | Text layer | `layer.text` | `#8c8468` (parchment) | ✓ |
 | Camera layer | `layer.camera` | `#806f4a` (dry gold) | ✓ |
 
-The seventh kind that exists today, the **Adjustment layer**, has no token of its own in v1:
-it borrows `layer.solid` (neutral) and the Solid glyph, since it renders no source of its own.
-When it earns a distinct identity the natural value is `#8c6b58` (kraft-brown).
+Three further kinds exist today without a token of their own: the **Adjustment layer**
+borrows `layer.solid` (neutral) and the Solid glyph, since it renders no source of its own
+(when it earns a distinct identity the natural value is `#8c6b58`, kraft-brown); the
+**Shape layer** (K-237) and **Null layer** (K-206) likewise borrow — their reserved values
+below stand for when each earns its token.
 
-Reserved for the layer kinds v1 does not yet model (no `LayerKind` variant, no token):
+Reserved values (Shape and Null are modelled but untokened; Audio and Light have no
+`LayerKind` variant yet):
 
 | Layer type | Token | Value |
 |---|---|---|
@@ -678,7 +683,7 @@ shown while the application boots:
 
 - **Exact ramp values under real hardware.** §2.1 targets were chosen on paper; they MUST be
   validated on a consumer gaming monitor (the audience's hardware — often wide-gamut,
-  aggressively vivid presets) before being frozen. Does `surface_0` at `#141618` hold up on an
+  aggressively vivid presets) before being frozen. Does `surface_0` at `#0b0c0e` hold up on an
   sRGB laptop panel at low brightness?
 - **Viewer surround options.** Should the neutral-surround slider expose named stops
   (Dark/Mid/Match panel) or a continuous value? Grading convention favours a couple of fixed,

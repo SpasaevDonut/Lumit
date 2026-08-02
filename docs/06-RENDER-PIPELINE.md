@@ -301,9 +301,6 @@ the effect Mode param both list them from one source (`BlendMode::ALL`), in AE's
 | Darker colour, Lighter colour | perceptual (non-separable) | Whole-pixel min/max by perceptual luma. |
 | Difference, Exclusion, Divide | perceptual | |
 | Hue, Saturation, Colour, Luminosity | perceptual | HSL decomposition on encoded values (W3C non-separable). |
-| Stencil alpha, Silhouette alpha | n/a (alpha only) | Gate the alpha of the entire composite below. |
-| Stencil luma, Silhouette luma | luma per §3.5a | |
-| Alpha add | n/a (alpha only) | Sums alphas without re-compositing colour; fixes seams on edge-abutting layers. |
 
 **(a) Luma extraction** — everywhere luma is needed (luma mattes, stencil/silhouette luma):
 luma = Rec.709 Y of the sRGB-encoded signal (perceptual luma), so a 50% grey solid yields

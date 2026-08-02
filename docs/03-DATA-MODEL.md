@@ -153,6 +153,7 @@ struct Layer {
     matte: Option<MatteRef>,           // { layer, channel: Alpha|Luma, inverted, source } (K-142)
     transform: TransformGroup,         // §6
     masks: Vec<Mask>,                  // §7
+    paint: Vec<PaintStroke>,           // §7.1, stamped before masks
     effects: Vec<EffectInstance>,      // §8, ordered top-to-bottom
     volume_db: Property,               // K-172: animatable Volume (docs/09 §6); 0 dB unity, −100 = −∞
     retime: Option<Property>,          // K-197: Retime as an ordinary keyframable property —
@@ -212,7 +213,7 @@ Invariants:
 | `Camera { zoom: Property }` | yes | — | AE camera: `zoom` is focal distance in comp pixels (z=0 maps 1:1). Only affects 3D-switch layers; the topmost visible camera is active. |
 | `Adjustment` | yes | — | No source of its own; its masks + effect stack apply to the composite of every layer beneath it, within its span. (There is no `adjustment` switch — it is this kind.) |
 | `Null` | yes | — | No source and no size; carries only a transform, so layers parent to it and move as a rig. Never draws, emits no node in the evaluation graph, and reports no picture — so it is not offered as a matte or a layer-valued effect parameter. Masks and effects can be added to it but never run (as on a Camera). The bridge enum names this kind `NullLayer` for Dart's sake only (K-206). |
-| `Shape { contents: Vec<ShapeElement> }` | future | §9.2 | |
+| `Shape { contents: Vec<ShapeItem> }` | yes | Its vector art | §7.2 (K-237). Flat list; nested groups and modifiers are future (§9.2). |
 | `Audio { item: Uuid }` | future | An audio item | v1 audio is only a footage layer's own stream (§5.2, docs/09). |
 | `Light { light: LightProps }` | future | §9.3 | Paired with Camera; 3D only, not in v1. |
 
@@ -449,12 +450,12 @@ leading, point vs paragraph text, alignment, and per-character animators — is 
 document stays structured (never rasterised into the project) so runs and animators bolt on
 later.
 
-### 9.2 Shape (future — no Shape layer in v1)
+### 9.2 Shape — how the shipped flat list grows
 
-There is no `LayerKind::Shape` yet. The intended `ShapeElement` tree: groups; parametric
-rectangle/ellipse/polystar; bezier path; fill (solid, linear/radial gradient); stroke (width,
-caps, joins, dashes); trim paths. Repeater, offset, wiggle-path are tier 2
-([08-EFFECTS.md](08-EFFECTS.md) keeps the list).
+`LayerKind::Shape` ships as §7.2's flat `Vec<ShapeItem>` (K-237). The intended growth is a
+`ShapeElement` tree: groups; parametric rectangle/ellipse/polystar; fill (solid, linear/radial
+gradient); stroke (width, caps, joins, dashes); trim paths. Repeater, offset, wiggle-path are
+tier 2 ([08-EFFECTS.md](08-EFFECTS.md) keeps the list).
 
 ### 9.3 2.5D (K-023)
 

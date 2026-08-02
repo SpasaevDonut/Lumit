@@ -123,9 +123,10 @@ for pixels.
 `lumit-core` holds the project as an **immutable snapshot + command journal**:
 
 - Every edit is a **command**: a small, serialisable operation (`SetKeyframe`, `TrimClip`,
-  `AddLayer`, …) with a computed inverse. Applying a command produces a **new snapshot**;
-  unchanged subtrees are structurally shared (persistent data structures — `im`-style maps/
-  vectors keyed by UUID), so a snapshot is cheap to take and cheap to keep.
+  `AddLayer`, …) with a computed inverse. Applying a command produces a **new snapshot**.
+  v1 builds the new snapshot by cloning the whole `Document` (`DocumentStore::commit`) —
+  cheap at current project sizes; structural sharing (`im`-style persistent maps/vectors)
+  is the intended upgrade if profiling shows the clone on the edit path.
 - **Undo/redo** is the command journal walked backwards/forwards. **Autosave** is the same
   journal appended to disk as edits happen (fsync on a short timer), plus periodic compacted
   snapshots; crash recovery is last snapshot + journal replay. See

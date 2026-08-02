@@ -1877,11 +1877,11 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   produced nothing. It is *not* invisible to the frame cache, though, and that distinction
   matters: the transform still feeds the key that decides which cached frames are still
   good, so nudging a null correctly throws away the cached frames of everything hanging off
-  it. Two honest limits for now. You cannot click a null in the Viewer — After Effects draws
-  its null as a grabbable 100×100 box, whereas Lumit's has no size at all, so you move it
-  from its Timeline property rows. And effects added to a null are accepted and then never
-  run, since there are no pixels for them to touch; harmless, the same as on a camera, but
-  not yet either refused or labelled.
+  it. A null draws a grabbable 100×100 wireframe box in the Viewer (K-230 — After Effects'
+  own convention; the box is a drawing convention, not pixels), so it can be clicked and
+  dragged like any layer. One honest limit for now: effects added to a null are accepted and
+  then never run, since there are no pixels for them to touch; harmless, the same as on a
+  camera, but not yet either refused or labelled.
 - **The window layout** (K-074, refined by K-086) — the picture (the Viewer) fills the middle
   with nothing above it: no tab, no strip, just the image. Around it sit the other panels:
   Project and the effect panels stacked as tabs on the left, scopes on the right, the
@@ -3065,8 +3065,9 @@ glance what will play. Mint means the frame is held at the resolution you are
 watching — it plays now. A dimmed mint means it is held only at a coarser
 resolution: there is something, but it would be rendered again to show at this
 size. Nothing drawn means nothing kept. The design language reserves a blue for
-frames kept on disk; there is no disk cache in this engine yet, so that state
-cannot happen and is not drawn.
+frames kept on disk; at the time this landed there was no disk cache, so that
+state could not happen and was not drawn. (It exists now — the K-214 section at
+the end of this guide covers the disk tier and the blue it earned.)
 
 Building it meant asking the engine a question it could not answer. The bridge
 reported only totals — how many megabytes, how many hits — never *which* frames,

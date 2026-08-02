@@ -205,7 +205,7 @@ Selection (§2.3), Hand, Zoom (§2.2), Rotation, Anchor point, Razor (§4.4), th
 tools and the Pen (§2.3.1), Horizontal type (§2.3.2), the three painting tools (§2.3.4) and the
 three camera tools (§2.3.5). **Disabled** (K-228 — shown, not armable): vertical type, the Pen's
 four editing siblings, the Roto tools and the Puppet pins. Each tool's behaviour is tracked
-separately in [TODO.md](TODO.md); the snapping switch is likewise a switch nothing reads yet.
+separately in [TODO.md](TODO.md).
 
 ### 1.8 The menu bar (K-244)
 
@@ -718,7 +718,10 @@ layer lanes.
 
 **Shipped header arrangement (K-188).** The comp tabs span the panel; each tab is an
 *open* comp — fronting a comp opens its tab, its × closes only the tab, and closing the
-fronted tab fronts its nearest neighbour. Below them the outline carries two header rows
+fronted tab fronts its nearest neighbour. The strip is in the user's order, not the
+project's: a tab dragged onto another takes its place, and the order rides along in the
+session. Right-clicking a tab opens **Composition settings…** for that comp, the same
+dialog the Project panel's context menu opens, reached from the comp being worked in. Below them the outline carries two header rows
 of its own: the **toolbar** (the playhead as `HH:MM:SS:FF` timecode plus a zero-based
 frame readout `f72`, the layer search, the master motion-blur button, the shy filter, the
 Lane and Graph view buttons, and a ⋯ menu with the layer / razor / work-area / marker /
@@ -954,7 +957,9 @@ column header — so the columns never shift as the view changes. The lane botto
 carries − / + / Fit time zoom, the magnet, and the horizontal scrollbar. **The wheel
 scrolls, dragging never does**: a plain wheel moves the rows, `Shift+wheel` scrolls
 sideways, `Ctrl+wheel` zooms time about the pointer, and a drag on empty lane space is the
-keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
+keyframe marquee. A zoom with no pointer to zoom about — the bottom bar's − / + — holds
+the middle of the visible lanes still instead of the left edge, so what is being looked at
+stays on screen. Still to build: `=`/`-`/`\`, and edge-follow during playback.
 
 ### 4.7 Editing behaviours
 
@@ -964,6 +969,9 @@ keyframe marquee. Still to build: `=`/`-`/`\`, and edge-follow during playback.
   **Shipped (K-193):** dragging a layer's **bar** moves it in time, and dragging a layer's
   **name** in the outline moves it up or down the stack — drop it on a row and it takes
   that row's place, as one undo step. A locked layer neither drags nor accepts a drop.
+  Footage or a comp dragged in from the Project panel lands **where it was dropped** —
+  the slot the pointer let go over, by the same midpoint rule — rather than always at the
+  top of the stack; a drop past the last layer lands at the bottom.
 
   **The ends are handles, and the source is the limit (K-211).** Dragging the last few
   pixels of either end of a bar trims that end — the pointer shows the horizontal resize

@@ -170,11 +170,12 @@ shared helper `fxops::render_layer_input`, which preview and export both call
   (the matte block's shape — matching the source-only render), guarded by the
   precomp visited set.
 
-This unblocks **DoF v1** (a depth layer + focus/range/aperture/mix). Remaining:
-the inspector **Layer picker** and the set-param op (the owner's follow-up — an
-unpicked Layer renders as nothing for now); the preview decode planner gate
-above; a placement/effects-aware depth; and the fuller "DOF PRO" second effect
-with shaped bokeh highlights and the deferred bright-rim "Highlight bloom" param.
+This unblocks **DoF v1** (a depth layer + focus/range/aperture/mix). The
+inspector **Layer picker** has since landed (`effect_param_row_frb.dart`'s
+`BridgeParamKind_Layer` arm — a dropdown of the comp's other layers, filtered to
+ones with a picture). Remaining: a placement/effects-aware depth, and the fuller
+"DOF PRO" second effect with shaped bokeh highlights and the deferred bright-rim
+"Highlight bloom" param.
 Logged as K-123 (Layer-input parameter kind) and K-124 (DoF effect).
 
 ## DoF lens controls — landed (K-128)
