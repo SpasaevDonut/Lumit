@@ -681,6 +681,36 @@ List<BridgeKeyframe> envelopeToKeys(
   ];
 }
 
+/// [keys] with the envelope point at [index] moved to [time], keeping the
+/// speed it had.
+///
+/// **The values are re-integrated, not carried over.** A key's stored tangent
+/// is a speed; the span's *chord* is its average. Move a key in time and the
+/// chord changes while the tangent does not, so a span that was straight stops
+/// being straight — the curve bulges and the graph starts describing playback
+/// that is not what the points say. Re-running the integration through the
+/// same speeds puts every span back on its own straight line, which is what a
+/// later speed drag was silently doing and why the fault appeared to fix
+/// itself the second time you touched a point.
+List<BridgeKeyframe> moveEnvelopePoint(
+    List<BridgeKeyframe> keys, int index, BridgeRational time) {
+  if (index < 0 || index >= keys.length) return keys;
+  final speeds = envelopeSpeeds(keys);
+  final moved = [
+    for (var i = 0; i < keys.length; i++)
+      if (i == index)
+        BridgeKeyframe(
+          time: time,
+          value: keys[i].value,
+          interpIn: keys[i].interpIn,
+          interpOut: keys[i].interpOut,
+        )
+      else
+        keys[i],
+  ];
+  return envelopeToKeys(moved, speeds);
+}
+
 /// [keys] with the envelope point at [index] moved to [percent].
 List<BridgeKeyframe> setEnvelopeSpeed(
     List<BridgeKeyframe> keys, int index, double percent) {

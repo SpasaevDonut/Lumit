@@ -376,6 +376,45 @@ void envelopeTests() {
       expect(rhi, 100.0);
     });
 
+    /// **The invariant the whole envelope rests on**, checked after the
+    /// operation that used to break it.
+    ///
+    /// A key's stored tangent is a speed; its span's chord is an average. Move
+    /// a key in time and the chord changes while the tangent does not, so a
+    /// span that was straight stopped being straight — the curve bulged and
+    /// the graph described playback the points did not say. It looked like it
+    /// fixed itself, because the next speed drag re-ran the integration.
+    test('moving a point in time leaves every span straight', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(6, 1, 10.0)];
+      final ramped = setEnvelopeSpeed(keys, 1, 250);
+      final speedsBefore = envelopeSpeeds(ramped);
+
+      // Drag the middle point later, which is what bent it.
+      final moved = moveEnvelopePoint(ramped, 1, rat(3, 1));
+
+      expect(rationalSeconds(moved[1].time), closeTo(3.0, 1e-9));
+      expect(envelopeSpeeds(moved), [
+        closeTo(speedsBefore[0], 1e-6),
+        closeTo(speedsBefore[1], 1e-6),
+        closeTo(speedsBefore[2], 1e-6),
+      ], reason: 'the point keeps the speed it had');
+
+      // And every span reads as the straight line between its two points —
+      // sampled inside each one, which is where a bulge would show.
+      for (var span = 0; span + 1 < moved.length; span++) {
+        final t0 = rationalSeconds(moved[span].time);
+        final t1 = rationalSeconds(moved[span + 1].time);
+        final v0 = envelopeSpeeds(moved)[span];
+        final v1 = envelopeSpeeds(moved)[span + 1];
+        for (var i = 1; i < 8; i++) {
+          final f = i / 8;
+          final t = t0 + (t1 - t0) * f;
+          expect(evaluateKeysSpeed(moved, t) * 100, closeTo(v0 + (v1 - v0) * f, 1e-4),
+              reason: 'span \$span at t=\$t sits on its own straight line');
+        }
+      }
+    });
+
     test('an empty or mismatched envelope leaves the keys alone', () {
       expect(envelopeToKeys(const [], const []), isEmpty);
       final keys = [key(0, 1, 0.0), key(4, 1, 4.0)];

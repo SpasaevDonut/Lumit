@@ -1459,6 +1459,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   `Ctrl`-click or double-click the line plants a point, `Alt`-click lifts one, and dragging
   a point moves it **both ways**: up and down for the speed, left and right for *when* the
   ramp reaches it — which matters as much as the speed does when you are cutting to a beat.
+  Moving one sideways keeps the speed it had and **re-works the frames around it**, so every
+  stretch of the line stays straight. That is not a detail: a keyframe stores a *speed*,
+  while the stretch between two of them has an *average* — move a key in time and the
+  average changes while the stored speed does not, so a line that was straight quietly bows
+  and the graph starts describing playback the points do not say. Re-running the sums
+  through the same speeds puts it back on its line.
   A point carries a little readout of the per cent it is setting, because reading a speed off
   the height of a dot against an axis that reframes as you drag is not aiming. The two end
   points stay put: they are the clip's own edges, and a clip's length is trimmed on the clip,

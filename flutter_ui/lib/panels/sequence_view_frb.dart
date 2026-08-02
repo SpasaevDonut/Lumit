@@ -744,18 +744,10 @@ class _EnvelopeStripState extends State<_EnvelopeStrip> {
     final hi = rationalSeconds(keys[index + 1].time) - 1 / fps;
     if (lo >= hi) return keys;
     final at = wanted.clamp(lo, hi);
-    return [
-      for (var i = 0; i < keys.length; i++)
-        if (i == index)
-          BridgeKeyframe(
-            time: timeOfSubframe(at * fps, widget.fpsNum, widget.fpsDen),
-            value: keys[i].value,
-            interpIn: keys[i].interpIn,
-            interpOut: keys[i].interpOut,
-          )
-        else
-          keys[i],
-    ];
+    // Through `moveEnvelopePoint`, which re-integrates: keeping the stored
+    // tangents while the span's length changes is what bent a straight line.
+    return moveEnvelopePoint(
+        keys, index, timeOfSubframe(at * fps, widget.fpsNum, widget.fpsDen));
   }
 
   /// [keys] with the drag applied — one point, or the whole line.
