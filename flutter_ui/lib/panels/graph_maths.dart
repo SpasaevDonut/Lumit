@@ -636,29 +636,49 @@ List<double> envelopeSpeeds(List<BridgeKeyframe> keys) => [
 List<BridgeKeyframe> envelopeToKeys(
     List<BridgeKeyframe> keys, List<double> speeds) {
   if (keys.isEmpty || speeds.length != keys.length) return keys;
-  final out = <BridgeKeyframe>[];
-  var value = keys.first.value;
-  for (var i = 0; i < keys.length; i++) {
-    if (i > 0) {
-      final dt =
-          rationalSeconds(keys[i].time) - rationalSeconds(keys[i - 1].time);
-      // Non-positive only for keys sharing a time, which the editing ops
-      // forbid; treated as no advance rather than as a reason to fail.
-      if (dt > 0) {
-        value += (speeds[i - 1] + speeds[i]) / 2 / 100 * dt;
-      }
-    }
-    final side = BridgeSideInterp.bezier(
-      BridgeBezierSide(speed: speeds[i] / 100, influence: _chordInfluence),
-    );
-    out.add(BridgeKeyframe(
-      time: keys[i].time,
-      value: value,
-      interpIn: side,
-      interpOut: side,
-    ));
+  // Every key's new source position first, so each side can be compared
+  // against the chord of the span it governs.
+  final values = <double>[keys.first.value];
+  for (var i = 1; i < keys.length; i++) {
+    final dt = rationalSeconds(keys[i].time) - rationalSeconds(keys[i - 1].time);
+    // Non-positive only for keys sharing a time, which the editing ops
+    // forbid; treated as no advance rather than as a reason to fail.
+    values.add(dt > 0
+        ? values[i - 1] + (speeds[i - 1] + speeds[i]) / 2 / 100 * dt
+        : values[i - 1]);
   }
-  return out;
+
+  /// The side governing the span between `a` and `b`, as seen from whichever
+  /// end this is. **Linear when the speed is the span's own chord** — the two
+  /// are then the same curve, and writing the bezier form anyway would change
+  /// how the key *looks* (a diamond becomes a circle) for no change in what it
+  /// does. Dragging one point of a flat envelope used to re-shape every key on
+  /// the channel that way.
+  BridgeSideInterp side(int at, int a, int b) {
+    final dt = rationalSeconds(keys[b].time) - rationalSeconds(keys[a].time);
+    final chord = dt > 0 ? (values[b] - values[a]) / dt : 0.0;
+    final speed = speeds[at] / 100;
+    if ((speed - chord).abs() < 1e-9) return const BridgeSideInterp.linear();
+    return BridgeSideInterp.bezier(
+      BridgeBezierSide(speed: speed, influence: _chordInfluence),
+    );
+  }
+
+  return [
+    for (var i = 0; i < keys.length; i++)
+      BridgeKeyframe(
+        time: keys[i].time,
+        value: values[i],
+        // The first key has no span before it and the last none after it;
+        // those sides govern nothing, so they stay as plain as possible.
+        interpIn: i == 0
+            ? const BridgeSideInterp.linear()
+            : side(i, i - 1, i),
+        interpOut: i == keys.length - 1
+            ? const BridgeSideInterp.linear()
+            : side(i, i, i + 1),
+      ),
+  ];
 }
 
 /// [keys] with the envelope point at [index] moved to [percent].

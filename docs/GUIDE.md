@@ -1448,6 +1448,28 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   undo step, and every route into a composition (a drop on the timeline, footage dropped on
   the New composition button, the menus) goes through the same funnel and cannot disagree
   about what a video import becomes.
+- **Planting and lifting keys on a curve, and holding a drag to one axis.** Four small
+  gestures the graph editor was missing, all of them working in either lens and whether or
+  not Vegas mode is on.
+  **Double-click the curve to plant a key** where you clicked. The key takes the value the
+  curve already has there, so nothing moves — a planted point is somewhere to grab, not an
+  edit. On the Vegas envelope it also takes the speed the line already reads there, so the
+  straight line it lands on stays straight. `Ctrl`-click does the same thing, and so does a
+  plain click with the **Pen** armed.
+  **`Alt`-click a key to lift it**, or click one with the Pen armed. Everything else on the
+  channel stays exactly as it was, and the last key of a channel refuses to go — an animated
+  property with no keyframes at all is not a state worth being able to reach by accident.
+  (Double-clicking a *key* deliberately does nothing. Flutter holds every single tap back
+  until the double-tap timer expires once a double-tap is registered on the same widget, and
+  a single click on a key — selecting it — is the commonest gesture in the pane. It is not
+  worth a visible delay on every selection to save one modifier.)
+  **Hold `Shift` while dragging a key** and it moves in one direction only: along time, or
+  along value, whichever way the pointer has travelled further **in pixels**. Pixels rather
+  than the numbers themselves, because the two axes carry different units — seconds against
+  source-seconds, or per cent — so comparing values would make the constraint depend on how
+  far the graph happened to be zoomed rather than on the gesture your hand made. It follows
+  the pointer live: sweep the other way mid-drag and the constraint switches with you, and
+  letting `Shift` go gives back the full travel rather than losing whatever it suppressed.
 - **The Vegas speed envelope (K-247).** With *Retime opens to Velocity* ticked, the Retime
   channel's speed view stops being the After Effects speed graph and becomes the thing Vegas
   editors already know: a **velocity envelope**. The difference is what a keyframe is on it.

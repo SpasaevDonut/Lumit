@@ -20,6 +20,7 @@ BridgeKeyframe key(
 
 void main() {
   envelopeTests();
+  envelopeShapeTests();
   group('evaluateKeys', () {
     test('clamps past the ends and lerps a straight span', () {
       final keys = [key(0, 1, 10), key(1, 1, 20)];
@@ -380,6 +381,60 @@ void envelopeTests() {
       final keys = [key(0, 1, 0.0), key(4, 1, 4.0)];
       expect(envelopeToKeys(keys, const [100.0]), same(keys));
       expect(setEnvelopeSpeed(keys, 9, 200), same(keys));
+    });
+  });
+}
+
+void envelopeShapeTests() {
+  group('the envelope leaves untouched keys alone', () {
+    test('a flat envelope is all linear sides', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(4, 1, 4.0)];
+      final out = envelopeToKeys(keys, const [100.0, 100.0, 100.0]);
+      for (final k in out) {
+        expect(k.interpIn, isA<BridgeSideInterp_Linear>());
+        expect(k.interpOut, isA<BridgeSideInterp_Linear>());
+      }
+    });
+
+    // The bug: dragging one point re-shaped every key on the channel, so keys
+    // nobody touched changed glyph from a diamond to a circle.
+    test('a key whose speed is still its chord keeps a linear side', () {
+      final keys = [
+        key(0, 1, 0.0),
+        key(2, 1, 2.0),
+        key(4, 1, 4.0),
+        key(6, 1, 6.0),
+      ];
+      // Ramp only the middle span: keys 0 and 3 are nowhere near it.
+      final out = envelopeToKeys(keys, const [100.0, 100.0, 300.0, 300.0]);
+      expect(out[0].interpOut, isA<BridgeSideInterp_Linear>(),
+          reason: 'the first span is still a flat 100%');
+      expect(out[3].interpIn, isA<BridgeSideInterp_Linear>(),
+          reason: 'and so is the last');
+      expect(out[1].interpOut, isA<BridgeSideInterp_Bezier>(),
+          reason: 'the ramped span genuinely leaves at a non-chord speed');
+      expect(out[2].interpIn, isA<BridgeSideInterp_Bezier>());
+    });
+
+    test('flattening a ramp puts the linear sides back', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(4, 1, 4.0)];
+      final ramped = setEnvelopeSpeed(keys, 1, 300);
+      final flat = setEnvelopeSpeed(ramped, 1, 100);
+      for (final k in flat) {
+        expect(k.interpIn, isA<BridgeSideInterp_Linear>());
+        expect(k.interpOut, isA<BridgeSideInterp_Linear>());
+      }
+      expect(envelopeSpeeds(flat), everyElement(closeTo(100, 1e-9)));
+    });
+
+    test('the speeds still read back after the linear-side tidying', () {
+      final keys = [key(0, 1, 0.0), key(2, 1, 2.0), key(4, 1, 4.0)];
+      final out = envelopeToKeys(keys, const [100.0, 300.0, 50.0]);
+      expect(envelopeSpeeds(out), [
+        closeTo(100, 1e-9),
+        closeTo(300, 1e-9),
+        closeTo(50, 1e-9),
+      ]);
     });
   });
 }

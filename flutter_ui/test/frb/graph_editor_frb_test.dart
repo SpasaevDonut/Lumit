@@ -651,6 +651,154 @@ void main() {
         for (final k in after) p.comp.frameAtTime(time: k.time)
       ], timesBefore, reason: 'no keyframe moved in time: beats stay synced');
     });
+
+    // --- planting and lifting keys, and Shift-constrained drags -----------
+
+    testWidgets('double-clicking the curve plants a key without moving it',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 100]);
+      await mountGraph(tester, p);
+
+      final before = opacityKeys(p.layer);
+      expect(before, hasLength(2));
+      final atHalf = evaluateKeys(before, 0.5);
+
+      // Halfway between the two keys: on a straight span that is exactly on
+      // the curve, whatever the framing happens to be.
+      final base = 'graph-key-${p.layer.internallayerId}/transform/opacity@opacity';
+      final a = tester.getCenter(find.byKey(ValueKey<String>('$base#0')));
+      final b = tester.getCenter(find.byKey(ValueKey<String>('$base#1')));
+      final mid = Offset((a.dx + b.dx) / 2, (a.dy + b.dy) / 2);
+      await tester.tapAt(mid);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tapAt(mid);
+      await tester.pumpAndSettle();
+
+      final after = opacityKeys(p.layer);
+      expect(after, hasLength(3), reason: 'a key was planted');
+      // The curve is unchanged where it already was: planting a point is a
+      // place to grab, not an edit.
+      expect(evaluateKeys(after, 0.5), closeTo(atHalf, 1e-6));
+    });
+
+    testWidgets('Alt-clicking a key lifts it', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+      expect(opacityKeys(p.layer), hasLength(3));
+
+      final key = find.byKey(ValueKey<String>(
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1'));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.tap(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pumpAndSettle();
+
+      expect(opacityKeys(p.layer), hasLength(2), reason: 'the middle key went');
+    });
+
+    /// Lifting a key is `Alt`-click or the Pen, never a double-click on the
+    /// key itself.
+    ///
+    /// Registering a double-tap there would make Flutter hold *every* single
+    /// tap back until the double-tap timer expired, and a single tap is the
+    /// commonest gesture in the pane — so clicking a key to select it would
+    /// have gained a visible delay. Clicking a key twice therefore does
+    /// nothing but select it, twice.
+    testWidgets('clicking a key twice does not lift it', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+      final key = find.byKey(ValueKey<String>(
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1'));
+
+      await tester.tap(key);
+      await tester.pump();
+      expect(opacityKeys(p.layer), hasLength(3));
+
+      await tester.tap(key);
+      await tester.pump(kDoubleTapMinTime);
+      await tester.tap(key);
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer), hasLength(3),
+          reason: 'the key is still there — double-click plants, it does not lift');
+    });
+
+    testWidgets('the last key of a channel refuses to be lifted',
+        (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0]);
+      await mountGraph(tester, p);
+      final key = find.byKey(ValueKey<String>(
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#0'));
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.altLeft);
+      await tester.tap(key);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.altLeft);
+      await tester.pumpAndSettle();
+      expect(opacityKeys(p.layer), hasLength(1),
+          reason: 'a keyframed property is never left with no keys at all');
+    });
+
+    /// Shift holds a key drag to one axis, chosen by which way the pointer
+    /// went furthest in pixels.
+    testWidgets('Shift holds a key drag to one axis', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      final id =
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1';
+      // Compared as sets, because a key dragged far enough in time overtakes
+      // its neighbour and the list re-sorts — which says nothing about
+      // whether the constraint held.
+      List<double> values() => [for (final k in opacityKeys(p.layer)) k.value]
+        ..sort();
+      List<int> frames() => [
+            for (final k in opacityKeys(p.layer))
+              p.comp.frameAtTime(time: k.time)
+          ]..sort();
+      final beforeValues = values();
+      final beforeFrames = frames();
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      // Mostly sideways, a little up: the sideways travel wins, so the value
+      // must not move at all.
+      await _drag(tester, find.byKey(ValueKey<String>(id)),
+          const Offset(40, -12));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+      expect(frames(), isNot(beforeFrames), reason: 'it moved in time');
+      for (var i = 0; i < beforeValues.length; i++) {
+        expect(values()[i], closeTo(beforeValues[i], 1e-6),
+            reason: 'and not at all in value');
+      }
+    });
+
+    testWidgets('Shift the other way holds the frame instead', (tester) async {
+      final p = withLayer();
+      animateOpacity(p.comp, p.layer, frames: [0, 50, 100]);
+      await mountGraph(tester, p);
+
+      final id =
+          'graph-key-${p.layer.internallayerId}/transform/opacity@opacity#1';
+      final beforeFrames = [
+        for (final k in opacityKeys(p.layer)) p.comp.frameAtTime(time: k.time)
+      ];
+      final beforeValue = opacityKeys(p.layer)[1].value;
+
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await _drag(tester, find.byKey(ValueKey<String>(id)),
+          const Offset(-12, 60));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+
+      expect([
+        for (final k in opacityKeys(p.layer)) p.comp.frameAtTime(time: k.time)
+      ], beforeFrames, reason: 'every frame is held');
+      expect(opacityKeys(p.layer)[1].value, lessThan(beforeValue),
+          reason: 'and the value moved');
+    });
+
   }, skip: !engineAvailable);
 }
 

@@ -1721,6 +1721,12 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                                     _graphAutoFit,
                                                                 vegas: _vegas(
                                                                     context),
+                                                                penArmed: ui
+                                                                        .tools
+                                                                        .tool
+                                                                        .group ==
+                                                                    ToolGroup
+                                                                        .pen,
                                                                 selectedKeys:
                                                                     _graphKeySelection,
                                                                 onSelectionChanged:
