@@ -75,33 +75,42 @@ else
     echo "warning: nothing in the app links Homebrew - is the media feature on?" >&2
 fi
 
-# libavdevice exists to talk to capture/playback devices, which the engine
-# never does (decode and encode go through avformat/avcodec) — yet it drags
-# in sdl2-compat, whose libSDL2 dlopens SDL3 at load time: a dependency no
-# bundler can see, so a shipped app dies with "failed loading SDL3 library".
-# The bridge imports zero avdevice symbols (guarded below), so its load
-# command is repointed at libavutil — already loaded, nothing missed — and
-# avdevice leaves the bundle with the SDL/X11 tail nothing else references.
-bridge="$app/Contents/Frameworks/lumit_bridge.framework/Versions/A/lumit_bridge"
-if [ -f "$bridge" ] && ! nm -u "$bridge" 2>/dev/null | grep -qi avdevice; then
-    avdev="$(otool -L "$bridge" | awk '/libavdevice/{print $1}')"
-    avutil="$(otool -L "$bridge" | awk '/libavutil/{print $1}')"
-    if [ -n "$avdev" ] && [ -n "$avutil" ]; then
-        install_name_tool -change "$avdev" "$avutil" "$bridge"
-        rm -f "$app/Contents/Frameworks/libavdevice."*
-        for cand in "$app/Contents/Frameworks"/libSDL2* \
-                    "$app/Contents/Frameworks"/libxcb* \
-                    "$app/Contents/Frameworks"/libX11* \
-                    "$app/Contents/Frameworks"/libXau* \
-                    "$app/Contents/Frameworks"/libXdmcp*; do
-            [ -e "$cand" ] || continue
-            base="$(basename "$cand")"
-            if ! find "$app/Contents" -type f ! -path "$cand" -exec otool -L {} + 2>/dev/null \
-                    | grep -q "/$base "; then
-                rm -f "$cand"
-            fi
-        done
+# Homebrew's libSDL2 is the sdl2-compat shim: its module initializer dlopens
+# SDL3, and when that fails the process aborts before main() ever runs — and
+# a dlopen is invisible to otool, so no bundler can ship its target. Nothing
+# in Lumit calls SDL; it rides in through libavdevice's output devices, and
+# libavdevice cannot leave (the bridge imports its version symbols). So the
+# bundled libSDL2 is replaced with a generated stub: a dylib exporting no-op
+# versions of exactly the symbols the other bundled binaries import from it.
+# No initializer, no SDL3, no abort.
+sdl="$(find "$app/Contents/Frameworks" -maxdepth 1 -name 'libSDL2*.dylib' | head -1)"
+if [ -n "$sdl" ]; then
+    sdlbase="$(basename "$sdl")"
+    stub="$(mktemp -d)"
+    # nm -m names the source library of every undefined symbol under the
+    # two-level namespace, so this is the exact import list to satisfy.
+    find "$app/Contents/Frameworks" -maxdepth 1 -type f ! -name "$sdlbase" \
+        -exec nm -m {} + 2>/dev/null \
+        | awk '/from libSDL2/{print $(NF-2)}' | sort -u > "$stub/syms"
+    if [ -s "$stub/syms" ]; then
+        while read -r s; do
+            printf 'void %s(void) {}\n' "${s#_}"
+        done < "$stub/syms" > "$stub/stub.c"
+        # dyld checks the compatibility version the importers were linked
+        # against; carry the real library's numbers over to the stub.
+        line="$(otool -L "$app/Contents/Frameworks/"libavdevice.*.dylib 2>/dev/null | grep "$sdlbase" | head -1)"
+        compat="$(printf '%s' "$line" | sed -n 's/.*compatibility version \([0-9.]*\).*/\1/p')"
+        curr="$(printf '%s' "$line" | sed -n 's/.*current version \([0-9.]*\).*/\1/p')"
+        cc -dynamiclib -o "$sdl" "$stub/stub.c" \
+            -install_name "@executable_path/../Frameworks/$sdlbase" \
+            -compatibility_version "${compat:-1.0}" \
+            -current_version "${curr:-1.0}"
+        echo "Stubbed $sdlbase ($(wc -l < "$stub/syms" | tr -d ' ') symbols)"
+    else
+        # nothing imports from it: it has no reason to ship at all
+        rm -f "$sdl"
     fi
+    rm -rf "$stub"
 fi
 
 # dyld (macOS 15+) refuses to launch a binary carrying duplicate LC_RPATH
