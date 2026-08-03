@@ -509,6 +509,32 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   raises coverage there, so the spill reads as light over transparency instead of
   stopping dead at the matte. At Intensity 0 the effect passes pixels through
   bit-exactly — a test pins that promise.
+- **Lens flare** (K-256) is the first effect that *simulates* something instead of
+  filtering pixels. A camera lens is a stack of curved glass discs with an iris in the
+  middle; when a bright light is in shot, a whisper of it reflects off the inside of one
+  glass surface, bounces backward, reflects off another, and still reaches the sensor —
+  that faint double-bounce image is one **ghost**, and a lens with fifteen surfaces has
+  dozens of such paths, which is the train of coloured blobs sliding across real footage.
+  Lumit doesn't draw those blobs; it ships the actual measurements of real lenses (the
+  curvature, spacing and glass of each element, from published patents) and every frame
+  shoots a grid of imaginary light rays through that geometry on the graphics card, letting
+  each ghost land where the physics puts it. That is why the ghosts stretch, flip through
+  the centre as the light crosses frame, grow when you open the F-stop, and wear
+  blue-green-magenta tints — the tint is the anti-reflective coating on each surface
+  interfering with itself, computed per wavelength, not a colour swatch. The **starburst**
+  (the spiky star on the light itself) is different physics: light bending around the iris
+  blades, which Lumit gets by taking a Fourier transform of the iris shape — an
+  established bit of optics maths — so an 8-blade iris genuinely makes an 8-spike star,
+  and the spikes fringe into rainbows because each wavelength bends by a different amount.
+  The expensive maths (the Fourier transforms, the iris image) runs once on the CPU when
+  you change a parameter and is remembered; only the ray shooting and drawing happen per
+  frame, which is what keeps it scrubbable. When it's doing too much, the dials to reach
+  for are Intensity, the separate Ghost/Starburst intensities, Max ghosts (thins the
+  train), and Quality (Draft renders the flare at half resolution). One honest caveat
+  lives in the decision log: the trace has an exact CPU twin the tests hold to, but the
+  final drawn frame is checked against a *close* reference rather than bit-for-bit,
+  because two rasterisers never fill triangle edges identically — the full story is in
+  docs/impl/lens-flare.md.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

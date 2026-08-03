@@ -633,6 +633,14 @@ pub enum Resolved {
         /// 0..1.
         mix: f32,
     },
+    /// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256): traced
+    /// ghosts and the Fourier starburst. The op carries its full parameter
+    /// bundle ([`LensFlareParams`], all plain numbers); the baked resources
+    /// (disc/starburst textures, ghost ranking) derive from those numbers
+    /// through `lens_flare::bake`, cached GPU-side by [`lens_flare::bake_key`]
+    /// — so nothing travels beside the op. GPU-only: the CPU degradation rung
+    /// renders it as a labelled no-op (the K-114 LUT precedent).
+    LensFlare(crate::fx::lens_flare::LensFlareParams),
 }
 
 /// Resolve a layer's live stack at layer time `lt` for a raster whose
@@ -1097,6 +1105,69 @@ fn resolve_one(
             // the Resolved::Lut ops — the whole threading contract.
             let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
             Some(Resolved::Lut { mix })
+        }
+        "lens_flare" => {
+            // Lens flare (docs/08 §3.27, K-256). Everything resolves to plain
+            // numbers; the bake derives from them GPU-side (cached by
+            // lens_flare::bake_key), so nothing travels beside the op. Light
+            // position is a raster fraction (the Radial blur centre shape);
+            // % of the frame keeps it resolution-independent (§2.3).
+            let lx = (e.float_at("light_x", lt).unwrap_or(33.0) / 100.0) as f32;
+            let ly = (e.float_at("light_y", lt).unwrap_or(30.0) / 100.0) as f32;
+            let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let lens = match e.param("lens_model") {
+                Some(EffectValue::Choice(c)) => *c,
+                _ => 2,
+            };
+            let fstop = (e.float_at("fstop", lt).unwrap_or(2.8) as f32).clamp(0.7, 32.0);
+            let quality = match e.param("quality") {
+                Some(EffectValue::Choice(c)) => (*c).min(3),
+                _ => 1,
+            };
+            let anamorphic = (e.float_at("anamorphic", lt).unwrap_or(1.0) as f32).clamp(0.5, 3.0);
+            // Blades and Max ghosts are host-rounded floats (the Flash
+            // Nth-beat shape — no integer ParamKind exists).
+            let blades = (e.float_at("blades", lt).unwrap_or(8.0).round() as i64).clamp(3, 16);
+            let aperture_rotation = e.float_at("aperture_rotation", lt).unwrap_or(0.0) as f32;
+            let roundness = (e.float_at("roundness", lt).unwrap_or(0.15) as f32).clamp(0.0, 1.0);
+            let aperture_softness =
+                (e.float_at("aperture_softness", lt).unwrap_or(0.05) as f32).clamp(0.0, 1.0);
+            let ghost_intensity =
+                (e.float_at("ghost_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let max_ghosts =
+                (e.float_at("max_ghosts", lt).unwrap_or(60.0).round() as i64).clamp(0, 200);
+            let dispersion = (e.float_at("dispersion", lt).unwrap_or(1.0) as f32).max(0.0);
+            let coating = (e.float_at("coating", lt).unwrap_or(0.75) as f32).clamp(0.0, 1.0);
+            let sb_intensity =
+                (e.float_at("starburst_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let sb_scale = (e.float_at("starburst_scale", lt).unwrap_or(1.0) as f32).max(0.0);
+            let sb_rotation = e.float_at("starburst_rotation", lt).unwrap_or(0.0) as f32;
+            let sb_softness =
+                (e.float_at("starburst_softness", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
+            let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
+            Some(Resolved::LensFlare(
+                crate::fx::lens_flare::LensFlareParams {
+                    light: [lx, ly],
+                    intensity,
+                    lens,
+                    fstop,
+                    blades: blades as u32,
+                    aperture_rotation_deg: aperture_rotation,
+                    roundness,
+                    aperture_softness,
+                    ghost_intensity,
+                    max_ghosts: max_ghosts as u32,
+                    dispersion,
+                    coating,
+                    starburst_intensity: sb_intensity,
+                    starburst_scale: sb_scale,
+                    starburst_rotation_deg: sb_rotation,
+                    starburst_softness: sb_softness,
+                    anamorphic,
+                    quality,
+                    mix,
+                },
+            ))
         }
         "dof" => {
             // Scalars only; the depth pass (the referenced layer's rendered

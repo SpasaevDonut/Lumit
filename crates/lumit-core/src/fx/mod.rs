@@ -15,6 +15,14 @@
 //! agree with the CPU" a testable promise.
 
 mod builtins;
+/// Spectral colour tables for the Lens flare (docs/impl/lens-flare.md §5).
+pub mod cie;
+/// The in-house FFT / fractional Fourier transform the Lens flare bakes use.
+pub mod fft;
+/// The bundled lens prescription library (docs/impl/lens-flare.md §1).
+pub mod lens_data;
+/// The Lens flare optics core, bake, and CPU reference (docs/08 §3.27).
+pub mod lens_flare;
 mod markers;
 mod maths;
 mod resolved;

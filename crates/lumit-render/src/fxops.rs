@@ -757,6 +757,71 @@ pub fn run_ops(
                     );
                 }
             }
+            Resolved::LensFlare(p) => {
+                // Lens flare (docs/08 §3.27, K-256). Every frame-time number
+                // the GPU needs is derived here through the one lumit-core
+                // module that owns the formulas (K-031: the CPU reference and
+                // the kernels read identical values); the heavy bake is a lazy
+                // closure the GPU side calls only when its parameter-hash
+                // cache misses.
+                use lumit_core::fx::lens_flare as lf;
+                let (grid, lambda_count, flare_div) = lf::quality_ladder(p.quality);
+                let aspect = h as f32 / w.max(1) as f32;
+                let model = lf::lens_of(p);
+                let dir = lf::light_direction(p.light, aspect, model.focal_length_mm);
+                let energy = lf::GHOST_ENERGY_SCALE * p.ghost_intensity;
+                let lambdas = lf::lambda_weights(lambda_count, p.dispersion)
+                    .into_iter()
+                    .map(|(nm, rgb)| (nm, [rgb[0] * energy, rgb[1] * energy, rgb[2] * energy]))
+                    .collect();
+                let op = lumit_gpu::fx::LensFlareOp {
+                    dir,
+                    light_frac: p.light,
+                    intensity: p.intensity,
+                    lambdas,
+                    max_ghosts: p.max_ghosts,
+                    coating: p.coating,
+                    disc_scale: lf::ghost_disc_scale(p.fstop),
+                    grid,
+                    flare_div,
+                    screen_transform: lf::screen_transform(w),
+                    starburst_intensity: p.starburst_intensity,
+                    starburst_scale: p.starburst_scale,
+                    starburst_rotation_deg: p.starburst_rotation_deg,
+                    anamorphic: p.anamorphic,
+                    mix: p.mix,
+                    bake_key: lf::bake_key(p),
+                };
+                let params = *p;
+                tex = fx.lens_flare(ctx, &tex, w, h, &op, &move || {
+                    let b = lf::bake(&params);
+                    lumit_gpu::fx::FlareBakeData {
+                        surfaces: b
+                            .surfaces
+                            .iter()
+                            .map(|s| {
+                                [
+                                    s.radius_mm,
+                                    s.center_z_mm,
+                                    s.height_mm,
+                                    s.cauchy_a,
+                                    s.cauchy_b,
+                                    s.coating_nm,
+                                    s.is_iris,
+                                    s.is_sensor,
+                                ]
+                            })
+                            .collect(),
+                        ghosts: b.ghosts.clone(),
+                        launch_mm: b.launch_mm,
+                        energy_gain: b.energy_gain,
+                        disc: b.disc,
+                        disc_res: lf::DISC_RES,
+                        starburst: b.starburst,
+                        sb_res: lf::STARBURST_RES,
+                    }
+                });
+            }
         }
     }
     tex

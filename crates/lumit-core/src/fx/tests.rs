@@ -4644,3 +4644,315 @@ fn cpu_scanlines_darken_a_periodic_band() {
     assert_eq!(red_at(&inter, 8), 1.0, "period 2 (even) unflipped again");
     assert_eq!(red_at(&inter, 10), 0.5, "period 2 (even) unflipped again");
 }
+
+// ---------------------------------------------------------------------------
+// Lens flare (docs/08 §3.27, docs/impl/lens-flare.md §8, K-256)
+// ---------------------------------------------------------------------------
+
+// §8.1 — the in-house FFT: a forward-then-inverse round trip returns the
+// input, an 8-point transform matches the direct DFT sum, and Parseval's
+// identity holds under the ortho normalisation.
+#[test]
+fn lens_flare_fft_round_trips_matches_dft_and_conserves_energy() {
+    use crate::fx::fft::{fft_inplace, Cx};
+    let src: Vec<Cx> = (0..8)
+        .map(|i| Cx::new((i as f64 * 0.7).sin(), (i as f64 * 1.3).cos()))
+        .collect();
+
+    // Round trip.
+    let mut data = src.clone();
+    fft_inplace(&mut data, false);
+    let spectrum = data.clone();
+    fft_inplace(&mut data, true);
+    for (a, b) in data.iter().zip(src.iter()) {
+        assert!((a.re - b.re).abs() < 1e-12 && (a.im - b.im).abs() < 1e-12);
+    }
+
+    // Direct ortho DFT.
+    let n = src.len();
+    for (k, s) in spectrum.iter().enumerate() {
+        let mut sum = Cx::ZERO;
+        for (j, x) in src.iter().enumerate() {
+            let ang = -std::f64::consts::TAU * k as f64 * j as f64 / n as f64;
+            sum = sum + *x * Cx::cis(ang);
+        }
+        sum = sum.scale(1.0 / (n as f64).sqrt());
+        assert!((s.re - sum.re).abs() < 1e-12 && (s.im - sum.im).abs() < 1e-12);
+    }
+
+    // Parseval (ortho: energies equal exactly).
+    let e_time: f64 = src.iter().map(|z| z.norm_sq()).sum();
+    let e_freq: f64 = spectrum.iter().map(|z| z.norm_sq()).sum();
+    assert!((e_time - e_freq).abs() < 1e-9);
+}
+
+// §8.2 — the FRFT, pinned against the reference implementation: golden
+// probe values computed by realflare's `frft.py` (numpy, f64) on a fixed
+// 8×8 input, at order 1.0 (exercising the plain branch) and at 0.12 (the
+// small-alpha normalisation branch the ghost-disc bake actually uses —
+// which routes through an extra inverse FFT). Note the discrete FrFT at
+// order 1 is NOT the plain DFT (it approximates the continuous transform);
+// the golden is the truth, not an identity.
+#[test]
+fn lens_flare_frft_matches_the_reference_goldens() {
+    use crate::fx::fft::{frft2, Cx};
+    let (w, h) = (8usize, 8usize);
+    let src: Vec<Cx> = (0..w * h)
+        .map(|i| Cx::new((i as f64 * 0.7).sin() + 0.5 * (i as f64 * 1.3).cos(), 0.0))
+        .collect();
+    type FrftGolden = (f64, [(usize, usize, f64, f64); 4]);
+    let goldens: [FrftGolden; 2] = [
+        (
+            1.0,
+            [
+                (0, 0, 0.009899350669, 0.0),
+                (1, 3, 0.019183561776, -0.002196803383),
+                (4, 4, 0.012801348175, 0.0),
+                (7, 5, 0.019183561776, 0.002196803383),
+            ],
+        ),
+        (
+            0.12,
+            [
+                (0, 0, 0.018843641651, -0.050445840078),
+                (1, 3, 0.093980541881, -0.074974910874),
+                (4, 4, 0.051332648711, -0.015411838816),
+                (7, 5, -0.059131178422, 0.142959643795),
+            ],
+        ),
+    ];
+    for (alpha, probes) in goldens {
+        let mut out = src.clone();
+        frft2(&mut out, w, h, alpha);
+        assert!(out.iter().all(|z| z.re.is_finite() && z.im.is_finite()));
+        for (y, x, re, im) in probes {
+            let z = out[y * w + x];
+            assert!(
+                (z.re - re).abs() < 1e-9 && (z.im - im).abs() < 1e-9,
+                "alpha {alpha} [{y},{x}]: got {} {:+}, want {re} {im:+}",
+                z.re,
+                z.im,
+            );
+        }
+    }
+}
+
+// §8.3 — optics units: the Cauchy fit reproduces n_d exactly and the Abbe
+// number within tolerance; refraction matches Snell; Fresnel at normal
+// incidence is the textbook ((n1-n2)/(n1+n2))²; a zero-thickness coating
+// degrades fresnel_ar to plain Fresnel.
+#[test]
+fn lens_flare_optics_match_the_textbook() {
+    use crate::fx::lens_flare::*;
+    let (a, b) = cauchy_from_abbe(1.62, 60.3);
+    let n_d = cauchy_ior(a, b, 587.56);
+    assert!((n_d - 1.62).abs() < 1e-5, "n_d {n_d}");
+    let n_f = cauchy_ior(a, b, 486.13);
+    let n_c = cauchy_ior(a, b, 656.27);
+    let v = (n_d - 1.0) / (n_f - n_c);
+    assert!((v - 60.3).abs() < 0.05, "V {v}");
+
+    // Snell at 45° into n = 1.5 glass: sin(t) = sin(45°)/1.5.
+    let i = [(0.5f32).sqrt(), 0.0, -(0.5f32).sqrt()];
+    let t = refract3(i, [0.0, 0.0, 1.0], 1.0 / 1.5);
+    let sin_t = t[0].hypot(t[1]);
+    assert!((sin_t - (0.5f32).sqrt() / 1.5).abs() < 1e-6);
+
+    // Normal-incidence Fresnel.
+    let r = fresnel(1e-9, 1.0, 1.5);
+    let expect = ((1.0f32 - 1.5) / (1.0 + 1.5)).powi(2);
+    assert!((r - expect).abs() < 1e-4, "{r} vs {expect}");
+
+    // A quarter-wave coating at its tuned wavelength reflects LESS than the
+    // bare surface — the whole point of the coating — and with the textbook
+    // optimum index nc = √(n1·n2) it drives reflectance toward zero at
+    // near-normal incidence. (No d = 0 ≈ plain-Fresnel identity is asserted:
+    // the two-beam interference formula composes amplitudes and does not
+    // reduce exactly to the single-interface value.)
+    let theta = 0.05f32;
+    let plain = fresnel(theta, 1.0, 1.9);
+    let nc = (1.0f32 * 1.9).sqrt().max(1.38);
+    let d = 550.0 / (4.0 * nc);
+    let tuned = fresnel_ar(theta, 550.0, d, 1.0, nc, 1.9);
+    assert!(tuned < plain, "coated {tuned} should be below bare {plain}");
+    assert!(
+        tuned < 0.01,
+        "optimal quarter-wave should near-cancel: {tuned}"
+    );
+}
+
+// §8.4 — ghost enumeration: no pair straddles the iris, the count matches a
+// direct re-derivation, and the bake (ranking and textures) is deterministic
+// across two runs.
+#[test]
+fn lens_flare_ghost_enumeration_counts_and_ranks_deterministically() {
+    use crate::fx::lens_data::LENS_MODELS;
+    use crate::fx::lens_flare::*;
+    let model = &LENS_MODELS[0]; // Vintage 105: 9 surfaces, iris at 5.
+    let ghosts = enumerate_ghosts(model);
+    let n = model.surfaces.len();
+    let mut expect = 0;
+    for b1 in 1..n - 1 {
+        for b2 in 0..b1 {
+            let before = b1 < model.aperture_index && b2 < model.aperture_index;
+            let after = b1 > model.aperture_index && b2 > model.aperture_index;
+            if before || after {
+                expect += 1;
+            }
+        }
+    }
+    assert_eq!(ghosts.len(), expect);
+    for g in &ghosts {
+        let same_side = (g[0] < model.aperture_index as u32 && g[1] < model.aperture_index as u32)
+            || (g[0] > model.aperture_index as u32 && g[1] > model.aperture_index as u32);
+        assert!(same_side, "ghost {g:?} straddles the iris");
+        assert!(g[1] < g[0]);
+    }
+
+    // Deterministic bake: two runs agree entirely (ranking, textures).
+    let p = default_flare_params();
+    let a = bake(&p);
+    let b = bake(&p);
+    assert_eq!(a.ghosts, b.ghosts);
+    assert_eq!(a.disc, b.disc);
+    assert_eq!(a.starburst, b.starburst);
+    assert!(!a.ghosts.is_empty());
+}
+
+// §8.5 (CPU side) — the trace lands rays: at the default light the top
+// ghosts put finite rays on the sensor with sane aperture UVs and
+// reflectances.
+#[test]
+fn lens_flare_trace_lands_live_rays_with_sane_uvs() {
+    use crate::fx::lens_flare::*;
+    let p = default_flare_params();
+    let baked = bake(&p);
+    let dir = light_direction([0.33, 0.30], 9.0 / 16.0, baked.focal_mm);
+    let mut live = 0u32;
+    let grid = 8u32;
+    for &ghost in baked.ghosts.iter().take(10) {
+        for cy in 0..grid {
+            for cx in 0..grid {
+                let r = trace_ray(&baked, ghost, 560.0, [cx, cy], grid, 0.75, dir);
+                if r.reflectance.is_finite() {
+                    live += 1;
+                    assert!(r.pos_mm[0].is_finite() && r.pos_mm[1].is_finite());
+                    assert!(r.uv[0].abs() < 8.0 && r.uv[1].abs() < 8.0, "uv {:?}", r.uv);
+                    assert!(r.reflectance >= 0.0 && r.reflectance <= 1.0);
+                    assert!(r.rrel >= 0.0);
+                }
+            }
+        }
+    }
+    // Off-axis bundles legitimately lose most rays to sphere misses, TIR
+    // and the housing; the pin is that a solid population still lands.
+    assert!(live > 40, "only {live} live rays across the top ghosts");
+}
+
+// §8.7 — neutral points: Intensity 0 and Mix 0 leave the working buffer
+// bit-exactly untouched through the combine (the flare buffer is irrelevant
+// then), and a fresh instance resolves to the documented defaults.
+#[test]
+fn lens_flare_neutral_points_and_default_resolve() {
+    use crate::fx::lens_flare::*;
+    let p = default_flare_params();
+    let baked = bake(&p);
+    let (w, h) = (8u32, 6u32);
+    let src: Vec<f32> = (0..(w * h * 4) as usize)
+        .map(|i| (i % 17) as f32 / 16.0)
+        .collect();
+    let flare = vec![0.5f32; (w * h * 3) as usize];
+
+    let mut zero_intensity = src.clone();
+    let pi0 = LensFlareParams {
+        intensity: 0.0,
+        ..p
+    };
+    cpu_combine(&mut zero_intensity, w, h, &pi0, &baked, &flare, w, h);
+    assert_eq!(zero_intensity, src, "Intensity 0 must be bit-exact");
+
+    let mut zero_mix = src.clone();
+    let pm0 = LensFlareParams { mix: 0.0, ..p };
+    cpu_combine(&mut zero_mix, w, h, &pm0, &baked, &flare, w, h);
+    assert_eq!(zero_mix, src, "Mix 0 must be bit-exact");
+
+    // A live combine changes pixels (the effect is not a silent no-op).
+    let mut live = src.clone();
+    cpu_combine(&mut live, w, h, &p, &baked, &flare, w, h);
+    assert_ne!(live, src);
+
+    // Fresh instance -> resolve carries the documented defaults.
+    let inst = instantiate("lens_flare").unwrap();
+    let ops = resolve_stack(
+        std::slice::from_ref(&inst),
+        0.0,
+        2202.9075,
+        1.0,
+        &MarkerContext::NONE,
+    );
+    match ops.as_slice() {
+        [Resolved::LensFlare(rp)] => {
+            assert!((rp.light[0] - 0.33).abs() < 1e-6);
+            assert!((rp.light[1] - 0.30).abs() < 1e-6);
+            assert_eq!(rp.intensity, 1.0);
+            assert_eq!(rp.lens, 2, "default lens is the cine prime");
+            assert_eq!(rp.blades, 8);
+            assert_eq!(rp.max_ghosts, 60);
+            assert_eq!(rp.quality, 1);
+            assert_eq!(rp.mix, 1.0);
+        }
+        other => panic!("expected one LensFlare op, got {other:?}"),
+    }
+}
+
+// §8.6 (CPU half) — the reference renderer produces finite energy at the
+// defaults and follows the light. The full GPU-vs-CPU frame bound lives in
+// the lumit-gpu tests.
+#[test]
+fn lens_flare_cpu_reference_renders_energy_and_reacts_to_the_light() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        quality: 0,
+        max_ghosts: 12,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (w, h) = (96u32, 54u32);
+    let a = cpu_flare(&p, &baked, w, h);
+    let energy_a: f32 = a.iter().sum();
+    assert!(energy_a > 0.0, "the default flare renders no energy");
+    assert!(a.iter().all(|v| v.is_finite()));
+
+    // Moving the light moves the picture.
+    let p2 = LensFlareParams {
+        light: [0.7, 0.6],
+        ..p
+    };
+    let b = cpu_flare(&p2, &baked, w, h);
+    assert_ne!(a, b, "the flare must follow the light");
+}
+
+/// The documented drop-on defaults, shared by the lens flare tests.
+fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
+    crate::fx::lens_flare::LensFlareParams {
+        light: [0.33, 0.30],
+        intensity: 1.0,
+        lens: 2,
+        fstop: 2.8,
+        blades: 8,
+        aperture_rotation_deg: 0.0,
+        roundness: 0.15,
+        aperture_softness: 0.05,
+        ghost_intensity: 1.0,
+        max_ghosts: 60,
+        dispersion: 1.0,
+        coating: 0.75,
+        starburst_intensity: 1.0,
+        starburst_scale: 1.0,
+        starburst_rotation_deg: 0.0,
+        starburst_softness: 0.1,
+        anamorphic: 1.0,
+        quality: 1,
+        mix: 1.0,
+    }
+}

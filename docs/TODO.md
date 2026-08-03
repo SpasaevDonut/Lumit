@@ -292,6 +292,13 @@ silently wrong. Pass the six domain floats through `LutParams`, or refuse
 non-default-domain cubes as a labelled no-op. The LUT caches also key by path
 alone - no mtime, no LRU bound (§4).
 
+**Lens flare follow-ups (K-256, [impl/lens-flare.md](impl/lens-flare.md))** — the shipped
+core is docs/08 §3.27; still owed, each stable against the shipped parameters:
+**Layer highlights mode** (top-K bright-source detection feeding the trace, impl note §6);
+aperture **dirt / scratches / grating** overlays and an **image aperture** file parameter;
+**custom lens prescription files**; an **Occlusion layer** reference fading the flare when
+the light is covered; per-wavelength sub-interpolation at Ultra quality.
+
 **Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
 text stair-step, worst on a slow rotation. Two questions decide where the setting
 lives: whether the sample count is a **project** property (it changes what a comp

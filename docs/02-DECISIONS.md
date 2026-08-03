@@ -5120,3 +5120,28 @@ The same pass made the Keymap page's clash test wait for the engine rather than 
 rebind it makes before opening the page is an frb call onto the worker thread, not done when
 it returns, and the Linux runner built the banner before the clash existed. It now settles on
 `keymapConflicts()` first. A test that passes because the machine is quick is not passing.
+
+**K-256 · DECIDED · Lens flare is simulated, not sprited — and its oracle is staged.**
+The Tier 1 suite gains a Lens flare effect (docs/08 §3.27, docs/impl/lens-flare.md):
+ghosts ray-traced per frame through bundled real lens prescriptions (static data in
+`lumit-core`, sourced from published patents), coloured by quarter-wave coating
+interference, rasterised as warped ray grids through a hardware render pass; the
+starburst is the aperture's Fourier diffraction pattern, baked on the CPU at
+parameter-change time along with the aperture image and the FRFT ghost disc. The
+reference implementation studied end-to-end is the GPLv3 realflare renderer; the port's
+four deviations are pinned in the impl note (Cauchy-from-Abbe dispersion instead of a
+glass catalogue; deterministic per-element coating wavelengths instead of a per-element
+editor; wgpu hardware rasterisation instead of realflare's software binner, which existed
+only because OpenCL has no raster pipeline; Rec.709 working primaries instead of AP1).
+Three consequences are decisions rather than details. **(1) The §1.6 oracle is staged**:
+the CPU twin matches the GPU trace ray-for-ray at tight absolute bounds (positions to
+microns, reflectance to 1% — GPU transcendental builtins are not correctly rounded, so
+an ULP promise through sin/asin/acos would be unimplementable) and the baked textures are
+shared bit-for-bit, but the rasterised frame is held to a perceptual bound (mean error +
+total energy), because hardware fill rules pin no per-pixel contract a CPU scanline twin
+could meet at ULP tolerance — the flow-field precedent (§1.6) extended to raster fill.
+**(2) The CPU degradation rung renders the effect as a labelled no-op**, the K-114 LUT
+precedent: a software rasterisation of a heavy flare is not a usable fallback rung.
+**(3) Full-image convolution is a non-goal**: flaring every pixel of an HDR frame (the
+offline batch-tool technique) costs seconds per frame and cannot preview; the recorded
+path for image-driven flares is the top-K highlight detection spec'd in the impl note §6.

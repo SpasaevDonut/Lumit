@@ -223,6 +223,7 @@ specified in §3.1's original text but surfaced as layer UI, not an effect. Summ
 | 3.24 | Tint | AE Tint / duotone | cheap | `{0}` |
 | 3.25 | Posterize time | AE Posterize Time | cheap | `{0}` |
 | 3.26 | Motion blur (accumulation) | RSMB / ReelSmart (accumulation) | heavy | `{0}` |
+| 3.27 | Lens flare | Optical Flares / Knoll Light Factory | heavy | `{0}` |
 
 ### 3.1 Flow engine — optical-flow retime interpolation (Twixtor-class)
 
@@ -1387,6 +1388,99 @@ temporal, Category **Temporal**.
 effect (a particle system) is pinned to the playhead while the rest of the scene holds. The
 split is `lumit_core::fx::resolve_stack_temporal`; with the frame and held times equal it is
 byte-identical to the plain resolve, so an ordinary render is unchanged.
+
+### 3.27 Lens flare — physically-based lens flare (Realflare-class)
+
+A **simulated** lens flare, not a sprite stack: ghosts are ray-traced through a real lens
+prescription (the element radii, glasses and spacings of an actual photographic lens), so
+they scale, stretch, colour and slide across frame exactly as a camera's do, and the
+starburst is the true diffraction pattern of the aperture, computed by Fourier transform.
+This is the [Hullin et al. 2011] / [Ritschel et al. 2009] approach, studied end-to-end in
+the realflare renderer (GPLv3, the reference implementation) and adapted to run per-frame
+inside the compositor — the full derivation, formulas and deviations are pinned in
+[docs/impl/lens-flare.md](impl/lens-flare.md). K-256.
+
+**Why simulation matters.** Sprite-based flares (the stock-plugin kind) fake the ghost
+train with drawn ellipses, so every light looks the same and nothing responds to the
+aperture. Traced ghosts get the behaviour for free: iris-shaped discs that grow with a
+wider f-stop, chromatic fringing from real glass dispersion, ghosts that flip through the
+optical centre as the light crosses frame, and coating colours — each internal reflection
+tinted by its anti-reflective coating's interference, which is where the blue/green/magenta
+cast of real flares comes from.
+
+**Algorithm sketch** (full detail in the impl note):
+1. **Bake** (CPU, on parameter change only, cached): the aperture image (blade-polygon
+   SDF with roundness, rotation, softness); the **ghost disc** texture (fractional Fourier
+   transform of the aperture — the softly ringed disc every ghost projects); the
+   **starburst sprite** (FFT power spectrum of the aperture under a Fresnel propagation
+   term, integrated across the visible spectrum with CIE XYZ weights so the spikes disperse
+   into rainbow fringes); and the **ghost list** (every two-reflection path through the
+   prescription, ranked by traced footprint so the brightest ghosts survive the cap).
+2. **Trace** (GPU compute, per frame): for each surviving ghost × wavelength, a grid of
+   rays enters the front element toward the light, refracts through every surface (Abbe
+   dispersion), reflects at the ghost's two surfaces (Fresnel, blended toward quarter-wave
+   coating interference by the Coating parameter), records its aperture crossing (UV),
+   worst housing height (vignette clip) and accumulated reflectance, and lands on the
+   sensor.
+3. **Rasterise** (GPU raster, additive): the warped ray grid draws as triangles into an
+   fp16 flare buffer; per-quad intensity is grid-cell area ÷ landed area (energy
+   conservation — a ghost focused small burns bright, spread large sits dim), the fragment
+   samples the ghost disc by aperture UV, clips at the housing, and tints by the
+   wavelength's CIE weight.
+4. **Combine** (GPU compute): `out = input + intensity · (flare + starburst)` in linear
+   light, alpha saturating toward 1 (the Glow shape); the starburst is sampled as a baked
+   sprite placed at the light with its scale/rotation, and the whole flare takes the
+   anamorphic squeeze. Mix blends against the untouched input.
+
+**Parameters.** Top level: **Light x / Light y** (% of the frame, open both sides — an
+off-frame light keeps flaring, as real ones do), **Intensity** (0–4, open above, default 1),
+**Lens** (choice: the bundled prescription library), **F-stop** (0.7–32, default 2.8 — a
+wider stop grows the ghost discs and softens the starburst), **Quality** (Draft / Normal /
+High / Ultra — the ray-grid density and wavelength count; Draft renders the flare at half
+resolution), **Mix**. Three collapsed groups:
+
+| Group | Parameters |
+|---|---|
+| *Aperture* | Blades (5–16, default 8), Rotation, Roundness, Softness |
+| *Ghosts* | Ghost intensity (0–4), Max ghosts (0–150, default 60 — the brightest survive), Dispersion (0–2, scales chromatic spread), Coating (0–1 — 0 uncoated white ghosts, 1 fully coated colour-cast ghosts) |
+| *Starburst* | Starburst intensity (0–4), Scale, Rotation, Softness |
+
+Plus **Anamorphic squeeze** (0.5–3, default 1): stretches the whole flare horizontally,
+the cheap honest form of the anamorphic look (a true cylindrical-element trace is a
+recorded non-goal for v1).
+
+**Reducing it.** The "it's doing too much" dials, in order: Intensity (everything),
+Ghost intensity / Starburst intensity (each half separately), Max ghosts (thins the
+train), Quality (cost), Mix (final blend). Defaults are tuned to read well on 1080p
+footage without touching anything (§1.2).
+
+**Cost and traits.** `heavy` cost (the one effect that owns a render pass), `full-frame`
+ROI, `{0}` temporal, premultiplied (an additive light overlay), not seeded — the flare is
+a pure function of parameters; even the starburst's sample jitter is a fixed hash baked
+into the sprite. Category **Stylise**, beside Glow. The per-frame GPU work is a few
+hundred thousand ray threads and ~2 ms of additive fill at Normal quality; the FFTs never
+run per frame.
+
+**Oracle (K-256, a documented §1.6 deviation).** The trace — the physics — has a CPU twin
+compared ray-for-ray at tight absolute bounds (positions to microns; reflectance to 1%,
+since GPU transcendental builtins are not correctly rounded); the baked textures are
+CPU-built and consumed by both paths, so they are their own reference; the rasterised
+frame is compared against a CPU scanline reference at a perceptual bound (mean error +
+total energy), because hardware rasterisation pins no per-pixel fill contract a CPU twin
+could hit at ULP tolerance — the same staged-oracle shape flow effects already use. The
+CPU degradation rung renders the effect as a labelled no-op, like the LUT (K-114
+precedent). Exact numbers in the impl note §8.
+
+**Status (v1 core, shipped):** everything above — manual light, the bundled lens library
+(static data in `lumit-core`, no files), traced ghosts with coating colour and Abbe
+dispersion, FRFT ghost discs, the baked spectral starburst, the aperture group, both
+intensity groups, quality ladder, anamorphic squeeze, Mix. Pinned follow-ups (spec'd in
+the impl note, tracked in TODO): **Layer highlights mode** (the flare spawned from the
+layer's own brightest sources — detection exists in the impl note's design, §6), aperture
+**dirt / scratches / grating** overlays and an **image aperture** (file), **custom lens
+prescription files**, an **Occlusion layer** reference fading the flare when the light is
+covered, and per-wavelength sub-interpolation at Ultra. Every shipped parameter is stable
+when they land.
 
 ---
 

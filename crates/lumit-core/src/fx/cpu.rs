@@ -218,6 +218,12 @@ pub fn apply(rgba: &mut [f32], w: u32, h: u32, fx: &Resolved) {
         // `dof_reference` in the lumit-gpu test (the depth is a texture, not
         // a number), not through cpu::apply.
         Resolved::Dof { .. } => {}
+        // Lens flare is GPU-only (K-256, the K-114 LUT precedent): its render
+        // pass and baked textures never reach this single-buffer dispatcher,
+        // so the CPU-degradation rung renders it as identity. The §1.6 oracle
+        // is staged in the lumit-gpu tests (trace at ULP, frame at the
+        // perceptual bound) against `lens_flare::cpu_flare`/`cpu_combine`.
+        Resolved::LensFlare(..) => {}
     }
 }
 
