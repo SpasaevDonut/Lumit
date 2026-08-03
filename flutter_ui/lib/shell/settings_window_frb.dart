@@ -386,10 +386,13 @@ class _SettingsWindowState extends State<_SettingsWindow> {
           ),
         ),
       ]),
-      // The two the first-run screen sets (K-246). They sit here as ordinary
-      // rows, and independently of each other: the screen offers them as a
-      // pair, but somebody who wants Vegas ramps and After Effects imports is
-      // exactly the split docs/07 §13.1 expects to be common.
+      // The two the first-run screen sets (K-246), plus the transport's one
+      // (K-254). They sit here as ordinary rows, and independently of each
+      // other: the screen offers its pair together, but somebody who wants
+      // Vegas ramps and After Effects imports is exactly the split docs/07
+      // §13.1 expects to be common. The playhead row is not one the screen
+      // touches — both answers want the returning playhead, so there is
+      // nothing for the question to decide.
       _section(t, 'Editing', [
         _row(
           t,
@@ -417,6 +420,22 @@ class _SettingsWindowState extends State<_SettingsWindow> {
             value: settings.videoAsSequenceLayer,
             onChanged: (on) => setState(() {
               settings.videoAsSequenceLayer = on;
+              ui.workspace.settingsChanged();
+            }),
+          ),
+        ),
+        _row(
+          t,
+          'Playhead stays where playback stopped',
+          'Leave the playhead on the frame that was on screen when playback '
+              'stopped, instead of putting it back where playing started. '
+              'Dragging the ruler while playing always stops and follows the '
+              'pointer, whichever way this is set.',
+          HouseCheckbox(
+            key: const ValueKey('settings-playhead-stays'),
+            value: settings.playheadStaysOnStop,
+            onChanged: (on) => setState(() {
+              settings.playheadStaysOnStop = on;
               ui.workspace.settingsChanged();
             }),
           ),

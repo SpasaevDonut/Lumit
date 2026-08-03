@@ -97,6 +97,7 @@ fn posterize_sample_times_snap_covered_layers_to_the_grid() {
     use crate::time::{CompTime, Rational};
     let secs = |n: i64, d: i64| CompTime(Rational::new(n, d).unwrap());
     let layer = |kind: LayerKind, effects: Vec<EffectInstance>| Layer {
+        markers: Vec::new(),
         id: uuid::Uuid::now_v7(),
         name: "l".into(),
         kind,
@@ -4108,6 +4109,7 @@ fn marker_rig(
         extra: serde_json::Map::new(),
     };
     let layer = Layer {
+        markers: Vec::new(),
         id: uuid::Uuid::now_v7(),
         name: "l".into(),
         kind: LayerKind::Adjustment,

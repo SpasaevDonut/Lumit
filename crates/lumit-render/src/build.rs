@@ -1105,6 +1105,7 @@ mod parent_placement_tests {
 
     fn layer(px: f64, py: f64, parent: Option<uuid::Uuid>) -> Layer {
         Layer {
+            markers: Vec::new(),
             id: uuid::Uuid::now_v7(),
             name: "l".into(),
             kind: LayerKind::Solid {
@@ -1212,6 +1213,7 @@ mod render_below_at_tests {
 
     fn text_layer(x: f64) -> Layer {
         Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: "t".into(),
             kind: LayerKind::Text {
@@ -1351,6 +1353,7 @@ mod render_below_at_tests {
             }
         }
         Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: "posterize".into(),
             kind: LayerKind::Adjustment,
@@ -1634,6 +1637,7 @@ mod render_below_at_tests {
             }
         }
         Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: "accumulation".into(),
             kind: LayerKind::Adjustment,

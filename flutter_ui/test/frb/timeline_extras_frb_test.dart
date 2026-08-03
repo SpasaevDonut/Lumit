@@ -16,6 +16,7 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 
+import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
 import 'frb_test_support.dart';
@@ -389,6 +390,239 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('marker-close')));
       await tester.pumpAndSettle();
+    });
+
+    /// Scrubbing during playback used to be unwinnable: the engine handed back
+    /// a frame every tick and each one put the playhead straight back where the
+    /// transport wanted it. Taking hold of the playhead takes it off the
+    /// transport (K-254), and it stays where the drag left it — the
+    /// return-to-start of a normal stop would undo the very gesture.
+    testWidgets('dragging the ruler during playback stops it and holds',
+        (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      await mount(tester, p);
+
+      p.uiState.play();
+      await tester.pump();
+      expect(p.uiState.playing.value, isTrue);
+
+      await tester.drag(
+          find.byKey(const ValueKey('tl-ruler')), const Offset(120, 0));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.playing.value, isFalse,
+          reason: 'taking hold of the playhead stops the transport');
+      expect(p.uiState.playheadFrame.value, greaterThan(0),
+          reason: 'and it stays where the drag left it, not back at the start');
+    });
+
+    /// Markers on the ruler are direct manipulation now (K-254): a flag can be
+    /// dragged to another moment, and its text changed from its own menu. The
+    /// dialogue in the ⋯ menu is still there for adding one by hand.
+    testWidgets('a marker flag drags along the ruler', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      final id = p.comp.getMarkers().single.id;
+      final flag = find.byKey(ValueKey<String>('tl-marker-$id'));
+      expect(flag, findsOneWidget, reason: 'the marker draws on the ruler');
+
+      await tester.drag(flag, const Offset(80, 0));
+      await tester.pumpAndSettle();
+
+      final moved = p.comp.getMarkers().single;
+      expect(p.comp.frameAtTime(time: moved.time), greaterThan(10),
+          reason: 'the drag moved the marker later in the comp');
+      expect(moved.label, 'Chorus', reason: 'and left what it says alone');
+      expect(moved.id, id, reason: 'it is the same marker, not a new one');
+    });
+
+    testWidgets('right-clicking a marker edits what it says', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      final id = p.comp.getMarkers().single.id;
+      await tester.tap(find.byKey(ValueKey<String>('tl-marker-$id')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('marker-menu-edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('marker-edit-label')), 'Drop');
+      await tester.tap(find.byKey(const ValueKey('marker-edit-ok')));
+      await tester.pumpAndSettle();
+
+      final edited = p.comp.getMarkers().single;
+      expect(edited.label, 'Drop');
+      expect(p.comp.frameAtTime(time: edited.time), 10,
+          reason: 'renaming did not move it');
+    });
+
+    testWidgets('a marker can be deleted from its own menu', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-marker-${p.comp.getMarkers().single.id}')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('marker-menu-delete')));
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getMarkers(), isEmpty);
+    });
+
+    /// Markers do not stack. Two flags on one frame are two things to click and
+    /// one place, and the second hides the first exactly — so the newcomer wins,
+    /// whether it arrives by shortcut or by being dragged on top.
+    test('a marker added to an occupied frame replaces what is there', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 20, label: 'Chorus');
+      addMarkerFrb(comp, frame: 20, label: 'Drop');
+      expect(comp.getMarkers(), hasLength(1));
+      expect(comp.getMarkers().single.label, 'Drop');
+    });
+
+    /// The drop half of the same rule: a flag dragged onto another takes its
+    /// place, and keeps its own identity rather than being deleted and remade.
+    test('a marker dragged onto another replaces it', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 10, label: 'Chorus');
+      addMarkerFrb(comp, frame: 60, label: 'Drop');
+      final drop = markersOf(comp).firstWhere((m) => m.label == 'Drop');
+
+      writeMarkers(
+          comp,
+          markersWithFrb(comp,
+              frame: 10, label: drop.label, id: drop.id));
+
+      final left = comp.getMarkers();
+      expect(left, hasLength(1), reason: 'the two did not stack');
+      expect(left.single.label, 'Drop', reason: 'the dragged one won');
+      expect(left.single.id, drop.id, reason: 'and it is the same marker');
+      expect(comp.frameAtTime(time: left.single.time), 10);
+    });
+
+    /// The flag's **point** is what says which frame, so it sits on the
+    /// playhead rather than beside it — the whole reason the flag is centred on
+    /// its frame instead of hung off to the right of it.
+    testWidgets('a marker flag points at the frame it marks', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 40, label: 'Chorus');
+      p.uiState.playheadFrame.value = 40;
+      await mount(tester, p);
+
+      final flag = tester.getTopLeft(find.byKey(
+          ValueKey<String>('tl-marker-${markersOf(p.comp).single.id}')));
+      final playhead = tester.getCenter(find.byType(PlayheadMarker).first);
+      expect(flag.dx + MarkerFlag.width / 2, closeTo(playhead.dx, 1.5),
+          reason: 'the point and the playhead are on the same frame');
+    });
+
+    /// A numbered marker names one place, so setting it again moves it rather
+    /// than leaving two for the bare digit to choose between. Unlabelled cues
+    /// are dropped as freely as you like.
+    test('a numbered marker is replaced, an unlabelled one is not', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 10, label: '1');
+      addMarkerFrb(comp, frame: 40, label: '1');
+      expect(comp.getMarkers(), hasLength(1));
+      expect(markerFrameFrb(comp, '1'), 40);
+
+      addMarkerFrb(comp, frame: 5);
+      addMarkerFrb(comp, frame: 7);
+      expect(comp.getMarkers(), hasLength(3));
+      expect(markerFrameFrb(comp, '2'), isNull,
+          reason: 'a digit with no marker is nothing to jump to');
+    });
+
+    // --- layer markers (K-254) -------------------------------------------
+
+    /// A composition dropped into another brings its markers along as the
+    /// layer's own. Copies, with ids of their own: from here the two lists are
+    /// unrelated, so editing the layer's never reaches into the comp it came
+    /// from — or into anywhere else that comp is used.
+    test('a comp dropped in brings its markers along as the layer\'s', () {
+      final p = freshProject();
+      final source = p.state.project!.newComposition(name: 'Beats');
+      addMarkerFrb(source, frame: 12, label: 'Drop');
+      final into = p.state.project!.newComposition(name: 'Scene');
+
+      final layer = into.addPrecompLayer(comp: source);
+      final onLayer = layer.getMarkers();
+      expect(onLayer, hasLength(1));
+      expect(onLayer.single.label, 'Drop');
+      expect(onLayer.single.id, isNot(source.getMarkers().single.id),
+          reason: 'a copy, not the same marker');
+
+      // And the copy is genuinely independent.
+      layer.setMarkers(markers: const []);
+      expect(layer.getMarkers(), isEmpty);
+      expect(source.getMarkers(), hasLength(1),
+          reason: 'clearing the layer left the composition alone');
+    });
+
+    /// Pre-composing carries the comp's markers into the new comp, and leaves
+    /// the Precomp layer without any: the same cues are on the ruler above, and
+    /// drawing them again on the layer would say it twice.
+    test('pre-composing carries markers in and leaves the layer bare', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final solid = comp.addSolidLayer();
+      addMarkerFrb(comp, frame: 30, label: 'Chorus');
+
+      final precomp = comp.precompose(
+        layerIds: [solid.internallayerId],
+        name: 'Packed',
+        leaveAttributes: false,
+        adjustDuration: false,
+      );
+      expect(precomp.getMarkers(), isEmpty,
+          reason: 'the Precomp layer draws no markers of its own');
+      expect(comp.getMarkers(), hasLength(1),
+          reason: 'the outer comp keeps its own');
+
+      final inner = precomp.getSourceItem();
+      expect(inner, isA<ItemReference_Composition>());
+      final packed = (inner as ItemReference_Composition).field0;
+      expect(packed.getMarkers(), hasLength(1),
+          reason: 'and the packed comp got a copy');
+      expect(packed.getMarkers().single.label, 'Chorus');
+      expect(packed.frameAtTime(time: packed.getMarkers().single.time), 30);
+    });
+
+    testWidgets('a layer marker draws on the bar and deletes from its menu',
+        (tester) async {
+      final p = withComp();
+      final source = p.state.project!.newComposition(name: 'Beats');
+      addMarkerFrb(source, frame: 20, label: 'Drop');
+      final layer = p.comp.addPrecompLayer(comp: source);
+      await mount(tester, p);
+
+      final id = layer.getMarkers().single.id;
+      final flag = find.byKey(ValueKey<String>('tl-layer-marker-$id'));
+      expect(flag, findsOneWidget, reason: 'it draws on the layer\'s bar');
+
+      await tester.tap(flag, buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('tl-layer-marker-delete')));
+      await tester.pumpAndSettle();
+
+      expect(layer.getMarkers(), isEmpty);
+      expect(source.getMarkers(), hasLength(1),
+          reason: 'the composition it came from is untouched');
     });
 
     // --- the sequence view (K-248) --------------------------------------

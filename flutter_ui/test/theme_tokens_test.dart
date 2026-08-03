@@ -21,6 +21,7 @@ void main() {
         'textPrimary', 'textSecondary', 'textMuted', 'textDisabled',
         'hairline', 'hairlineStrong',
         'accent', 'accentHover', 'success', 'warning', 'error', 'cacheDisk',
+        'marker',
         'timelineOutOfRange', 'selectionFill',
         'curve0', 'curve1', 'curve2', 'curve3',
         'layerFootage', 'layerSequence', 'layerPrecomp',

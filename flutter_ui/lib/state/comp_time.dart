@@ -1,4 +1,5 @@
-// One answer to "what time is frame N?", shared by everything that draws.
+// One answer to "what time is frame N?" — and to "what markers does this comp
+// have?" — shared by everything that draws.
 //
 // The conversion belongs to the engine (docs/17 §, `CompositionReference::
 // time_of_frame` exists so no frontend does frame-rate arithmetic itself), but
@@ -51,8 +52,36 @@ int frameAtTime(CompositionReference comp, BridgeRational time) {
   return frames[time] ??= comp.frameAtTime(time: time);
 }
 
+/// A comp's markers, remembered until the document changes (K-254).
+///
+/// Same bargain as the two above, and the one that made it worth having: the
+/// time ruler draws markers on every rebuild — sixty times a second while
+/// playback runs — and `get_markers` walks the whole list across the boundary
+/// each time. What it answers can only change when the document changes.
+final _markers = <CompositionReference, List<BridgeMarker>>{};
+
+/// The comp's markers, from memory when they are there.
+///
+/// Prefer this to `comp.getMarkers()` anywhere that runs during a build or a
+/// paint. Anything that *writes* markers must go through [writeMarkers], which
+/// is what keeps this honest.
+List<BridgeMarker> markersOf(CompositionReference comp) =>
+    _markers[comp] ??= comp.getMarkers();
+
+/// Replace a comp's whole marker list and forget the remembered copy.
+///
+/// The one way markers are written. A caller that reached for `setMarkers`
+/// directly would leave [markersOf] answering the old list until something
+/// else happened to clear it, which is the sort of bug that shows up as a
+/// marker springing back after you drag it.
+void writeMarkers(CompositionReference comp, List<BridgeMarker> markers) {
+  comp.setMarkers(markers: markers);
+  _markers.remove(comp);
+}
+
 /// Forget everything. Called on every committed engine change.
 void clearCompTimeCache() {
   _times.clear();
   _frames.clear();
+  _markers.clear();
 }

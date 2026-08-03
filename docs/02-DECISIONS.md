@@ -5010,7 +5010,95 @@ Flutter Linux embedder needs GTK 3, which only the GNOME runtime ships. Sandbox 
 verbatim. Published as a single-file `.flatpak` on the GitHub Release; Flathub submission,
 if ever, is a separate decision.
 
-**K-254 · DECIDED · Menus navigate by hover, and the barrier stops blocking the pointer.**
+**K-254 · PROPOSED · The playhead returns when playback stops, a scrub takes it off the
+transport, and markers are flags you can drag, name and jump to by number.**
+Three things the owner asked for on 2026-08-03, all about the playhead.
+
+*Scrubbing during playback.* The engine chooses frames and hands each one back, and
+`_arrived` moves the playhead to follow the picture (K-181). A drag on the ruler was
+therefore unwinnable — every tick put the playhead back where the transport wanted it.
+Taking hold of the playhead now **takes it off the transport**: every ruler and lane seek
+goes through one new `LumitUiState.scrubTo`, which stops playback first. One funnel rather
+than a guard per call site, because the three `onSeek` closures were three copies of
+`playheadFrame.value = …` and a fourth would have been written without the guard.
+
+*Returning on stop.* Stopping now puts the playhead back where `play` was asked for —
+including when the composition simply runs out, since where you are when the transport
+stops should not depend on why it stopped. This realises §9's long-standing
+"stop-to-start toggle behaviour as a setting" line. The default is the returning one:
+playback is a preview of the moment being worked on. Settings ▸ Interface ▸ Editing ▸
+*Playhead stays where playback stopped* restores the older After Effects behaviour, and
+unlike the K-246 pair it does **not** defer to a settings file's silence — an install
+written before the field adopts the new default rather than being pinned to the old
+behaviour by omission. The first-run screen does not touch it: both answers want the
+returning playhead (real Vegas returns its cursor too), so there is nothing for the
+question to decide, and K-246's pair stays a pair.
+
+*Markers.* The engine has had markers since docs/03 §11 and the ⋯ menu has had a dialogue
+for them; what was missing was the ruler. Comp markers are now small flags with the
+**point at the top**, **centred on the frame** so the point sits on the playhead — the
+point is what carries the meaning, *this* frame and not the one next door, so a shape hung
+off to one side was marking the wrong thing. They hang into the ruler's lower row beside
+the work-area band, drawn last so a flag wins the pointer over a work-area handle it sits
+on. What a marker says rides in a box of the same colour flying from the flag's **centre
+point** — the pole is the marker's centre line and the cloth hangs off it — rather than as
+loose text over the ticks, where it crossed the ruler and the work-area wash and read as
+neither. Both carry a hairline outline in the darkest surface and sit on the floor of the
+ruler: a pale flag on the pale work-area band lost its silhouette, and the point was the
+first part to go. Colour is a `marker` token of its own — a plain grey, light on dark and dark on
+light, editable like any other role — because a marker says *here*, not *good* or
+*careful*, and the accent is already spent on the work area.
+
+**Markers do not stack.** Adding one where a marker already sits replaces it, and so does
+dragging one on top of another; both go through one `markersWithFrb`, so the shortcut and
+the drag cannot drift into different ideas of what placing a marker means. Two flags on one
+frame are two things to click and one place, and the second hides the first exactly.
+
+A drag **writes once, on release**. Committing per frame crossed — what the work-area edges
+do — cost a document write, a cache flush and a panel rebuild for every frame of travel,
+which is what made the drag feel heavy; the work-area edge can afford it because the
+Viewer's preview range changes as it moves, and a marker has nothing to show until it
+lands. In the same vein the marker list is now remembered in Dart (`markersOf`, beside the
+frame/time memo, cleared by the same committed-change hook) rather than fetched across the
+bridge on every ruler rebuild — sixty times a second while playback runs, for a list only
+an edit can change. `bridge_call_budget_test` pins both: nothing per rebuild, exactly one
+`set_markers` per drag.
+
+**Right-click** offers *Edit marker…* and *Delete marker*.
+
+The keyboard is the numbered pair every NLE has: **`Shift+0…9`** sets marker *N* at the
+playhead and the **bare digit** returns to it — `Shift`+digit rather than `Ctrl`+digit,
+which is the chord After Effects itself uses. Setting a numbered marker that already
+exists *moves* it rather than adding a second — a digit has to name one place. A digit
+with no marker behind it is left unhandled, not swallowed. The plain marker key is
+**`Shift+M`** alongside AE's numpad `*`: Premiere and Vegas both use `M`, but `M` reveals
+Masks in the Timeline and that reflex is older, so the letter stays put and the marker
+takes Shift. Twenty new action ids, described by prefix (`marker.add.N`, `marker.goto.N`)
+the way `workspace.switch.N` already is, and the shipped keymap stays conflict-free.
+
+**Markers travel with the material (2026-08-03).** A layer carries its own marker list
+(`Layer::markers`, docs/03 §11, drawn on its bar and moving with it), and two moments fill
+it. Dropping a composition into another **copies** that comp's markers onto the layer: a
+comp placed in a comp is a piece of material and its beats are part of what you are
+placing. Copies with fresh ids, not a live view of the source list — the alternative makes
+deleting one flag on one row change a different composition, and every other place that
+composition is used, which is spooky action at a distance for a right-click menu.
+**Pre-composing** copies the comp's markers into the new composition (shifted by the same
+amount `adjust_duration` shifts the layers, and dropped if they fall outside the new span
+rather than parked where nothing can reach them) and gives the Precomp layer **none**: the
+cues are on the ruler above it already, and drawing them on the layer too would say it
+twice. `BridgeLayerInfo` carries the list with each marker's comp frame precomputed —
+layer-local time plus the layer's start offset, exactly as a Sequence clip's is — so the
+bar draws them with no bridge call, and dragging the layer moves them.
+
+Two things this leaves: §10's *`8` during playback = beat tap* now wants a key of its own
+or a modal reading, since the bare digits are spoken for; and `set_markers` still flattens
+every marker to `MarkerKind::User`, so dragging a marker turns detected beats into ordinary
+cues and *Clear beat markers* stops finding them. That was already true of the dialogue's
+remove button and is not made worse here, but it is now much easier to hit — it wants a
+kind carried across the bridge.
+
+**K-255 · DECIDED · Menus navigate by hover, and the barrier stops blocking the pointer.**
 K-194 gave the menus submenus and left every one of them behind a click: with File open,
 reaching Window meant dismissing File and clicking Window, and a submenu — Open recent,
 Layer ▸ New, an Effect category — only appeared when its row was clicked. Every desktop menu
@@ -5027,3 +5115,8 @@ bar out of menus too. Each `FloatSurface` carries the hovered row of its own sur
 the row that flies a submenu out is never the row that has to take it back — the sibling the
 pointer moves to is — and scoping it to the surface keeps a flyout's own rows from disturbing
 the menu it came from. Regression tests: the two hover tests in `menu_bar_frb_test.dart`.
+
+The same pass made the Keymap page's clash test wait for the engine rather than for luck: the
+rebind it makes before opening the page is an frb call onto the worker thread, not done when
+it returns, and the Linux runner built the banner before the clash existed. It now settles on
+`keymapConflicts()` first. A test that passes because the machine is quick is not passing.

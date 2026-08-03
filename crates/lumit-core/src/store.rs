@@ -340,6 +340,7 @@ mod tests {
 
     fn test_layer(item: Uuid) -> Layer {
         Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: "clip.mp4".into(),
             kind: LayerKind::Footage { item },
@@ -763,6 +764,7 @@ mod tests {
                 comp: comp_id,
                 index: 0,
                 layer: Box::new(Layer {
+                    markers: Vec::new(),
                     id: seq_id,
                     name: "Seq".into(),
                     kind: LayerKind::Sequence {
@@ -948,6 +950,7 @@ mod tests {
                 comp: comp_id,
                 index: 0,
                 layer: Box::new(Layer {
+                    markers: Vec::new(),
                     id: cam_id,
                     name: "Camera".into(),
                     kind: LayerKind::Camera {

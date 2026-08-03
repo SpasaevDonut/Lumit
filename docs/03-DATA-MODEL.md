@@ -159,9 +159,13 @@ struct Layer {
     retime: Option<Property>,          // K-197: Retime as an ordinary keyframable property —
                                        // layer-local time → source time, in seconds. None = not
                                        // retimed (no row, no map). Ctrl+Alt+T installs the identity.
+    markers: Vec<Marker>,              // §11, K-254: the layer's OWN cues, drawn on its bar.
+                                       // Times are layer-local. A comp dropped into another
+                                       // brings a copy of its markers here; the two lists are
+                                       // unrelated from then on.
     switches: Switches,
 }
-// Future (not in v1): `stretch` (uniform rate multiplier) and per-layer `markers`.
+// Future (not in v1): `stretch` (uniform rate multiplier).
 // Mute stays the `audible` switch, and audio comes only from a footage layer's own
 // stream (§5.2, docs/09); the once-sketched `audio: AudioProps` grouping collapsed
 // to the single `volume_db` property when it shipped (K-172) — fades are its
@@ -493,6 +497,14 @@ struct Marker {
 
 Beat markers are ordinary markers with provenance; regenerating beats replaces only
 `Beat`-kind markers ([09-AUDIO.md](09-AUDIO.md)).
+
+**Two owners (K-254).** A composition holds markers on its ruler; a layer holds markers of
+its own on its bar, in `Layer::markers`, timed in the layer's own time so they move with it.
+A layer's list is always a **copy**, never a view: dropping a composition into another
+copies that comp's markers onto the layer with fresh ids, and editing either list afterwards
+leaves the other alone. Pre-composing copies the comp's markers into the new composition and
+leaves the Precomp layer's list empty — the cues are on the ruler above it already. One
+marker per frame per owner: placing one where a marker already sits replaces it.
 
 ## 12. Schema evolution
 

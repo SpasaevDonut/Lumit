@@ -304,6 +304,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeLayerKind dco_decode_bridge_layer_kind(dynamic raw);
 
   @protected
+  BridgeLayerMarker dco_decode_bridge_layer_marker(dynamic raw);
+
+  @protected
   BridgeLayerSwitch dco_decode_bridge_layer_switch(dynamic raw);
 
   @protected
@@ -484,6 +487,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeLayerEntry> dco_decode_list_bridge_layer_entry(dynamic raw);
+
+  @protected
+  List<BridgeLayerMarker> dco_decode_list_bridge_layer_marker(dynamic raw);
 
   @protected
   List<BridgeMarker> dco_decode_list_bridge_marker(dynamic raw);
@@ -915,6 +921,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeLayerKind sse_decode_bridge_layer_kind(SseDeserializer deserializer);
 
   @protected
+  BridgeLayerMarker sse_decode_bridge_layer_marker(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeLayerSwitch sse_decode_bridge_layer_switch(
       SseDeserializer deserializer);
 
@@ -1116,6 +1126,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeLayerEntry> sse_decode_list_bridge_layer_entry(
+      SseDeserializer deserializer);
+
+  @protected
+  List<BridgeLayerMarker> sse_decode_list_bridge_layer_marker(
       SseDeserializer deserializer);
 
   @protected
@@ -1590,6 +1604,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeLayerKind self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_layer_marker(
+      BridgeLayerMarker self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_layer_switch(
       BridgeLayerSwitch self, SseSerializer serializer);
 
@@ -1810,6 +1828,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_bridge_layer_entry(
       List<BridgeLayerEntry> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_layer_marker(
+      List<BridgeLayerMarker> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_marker(

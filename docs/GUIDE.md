@@ -5425,6 +5425,85 @@ through a side door that skips all three (`set_ui_state`), and the frontend call
 it in the one instant it is genuinely wanted — immediately before a save, when the
 arrangement it describes is the one on the screen.
 
+### The playhead, playback, and where you end up (K-254)
+
+Three small things that all turn out to be the same thing.
+
+**The playhead is not always yours.** Normally the playhead is a number the interface
+owns: you move it, and the engine is told to draw that frame. During playback it is the
+other way round. The engine picks which frame to render — it is the one watching the clock
+and the cache — and each finished frame arrives saying *this is the frame you are looking
+at*, at which point the playhead is moved to match. That is deliberate: the number under
+the timecode is the frame genuinely on screen, not the frame something hoped to show.
+
+The catch is that it made scrubbing during playback impossible. You would drag the ruler,
+the playhead would move, and about a sixtieth of a second later the next frame would
+arrive and put it straight back. Not a bug in the drag — the drag worked perfectly, sixty
+times a second, and lost every time. So taking hold of the playhead now **stops playback
+first**. Every place that moves the playhead by pointer goes through one function
+(`scrubTo`) that does exactly that, rather than each of them remembering to.
+
+**Stopping puts you back where you started.** Press play, watch ten seconds go by, press
+stop — and the playhead returns to the frame you were on when you pressed play. This is
+what playback is *for*: you are looking at one moment, you want to see it move, and then
+you want to be back at that moment to change something. The alternative — being left
+wherever the picture happened to stop — means hunting for your place after every press of
+the space bar. It works the same way when the composition simply runs out, because "where
+am I now" should not depend on why it stopped. The one exception is the scrub above: that
+gesture stops playback *in order to* go somewhere else, so putting the playhead back would
+undo the very thing you did. If you preferred the old way, Settings ▸ Interface ▸ Editing
+has a tick box.
+
+**Markers are labelled flags on the ruler.** A marker is just a moment with a name on it —
+the drop of a track, the frame a door closes, wherever you want to be able to get back to.
+Lumit has had them in the document for a long time; what it did not have was a way to
+touch them. Now they draw as small flags in the lower row of the time ruler, and you can
+drag one along, right-click it to change what it says, or delete it.
+
+The flag points *upwards*, and the point is centred on the frame it marks, so it lands on
+the playhead. That is the whole of the design: the point is the bit that means "this
+frame", and a shape sitting to one side of it would be pointing at the frame next door.
+Whatever the marker says flies from the flag's centre point, like a flag from a pole — as
+loose text it crossed the ruler's ticks and the work-area band and read as belonging to
+neither. Both the flag and the box are outlined in the darkest surface, because a pale grey
+shape on the pale work-area band otherwise loses its edges.
+
+Two markers can never sit on the same frame. Drop one where another already is — with the
+keyboard or by dragging — and the newcomer takes its place. Two flags on one moment would
+be two things to click and one place, and the second would hide the first exactly.
+
+**Markers on a layer.** A layer can carry markers of its own, drawn on its bar rather than
+on the ruler, and they slide along with the layer when you move it. There are two ways a
+layer gets them. Drop a composition into another composition and that comp's markers come
+along for the ride — a comp placed in a comp is a piece of material, and its beats are part
+of what you are placing. Or pre-compose a selection, in which case the *opposite* happens:
+the markers go into the new composition, and the Precomp layer is left bare, because those
+cues are already on the ruler right above it and showing them twice is just clutter.
+
+The important word is **copy**. A layer's markers are the layer's, not a live window onto
+the composition they came from. Delete one on a layer and it is gone from that layer only —
+the composition still has it, and so does every other place that composition is used. The
+alternative sounds tidier until you try it: a right-click on one row silently editing a
+different composition is the kind of surprise that makes people stop trusting a menu.
+
+**A note on cost, because it is the reason this feels smooth.** Two habits keep markers
+cheap. First, the list is *remembered*: asking the engine for a comp's markers is a trip
+across the Rust/Flutter boundary, and the ruler redraws sixty times a second while playback
+runs — so the answer is kept on the Flutter side and thrown away only when the document
+actually changes. Second, dragging a flag writes nothing until you let go. The earlier
+version saved the new position every time the flag crossed a frame, which meant a document
+write, a memory flush and a panel redraw for every few pixels of travel — the drag worked,
+but it felt like dragging something heavy. A work-area edge can afford that, because the
+Viewer's preview range genuinely changes as the edge moves; a marker has nothing to show
+until it lands.
+
+The keyboard is where they earn their keep. **Shift and a digit** puts a marker with that
+number at the playhead; **the digit on its own** jumps back to it. Press `Shift+1` again
+somewhere else and marker 1 *moves* — a number names one place, so there is never a second
+marker 1 for the plain `1` to have to choose between. `Shift+M` drops an unnumbered one.
+(Why not plain `M`, which is what Premiere and Vegas use? Because `M` reveals a layer's
+masks in the Timeline, and that is a much older reflex to break.)
+
 ## 10. The app icon and the brand files
 
 The icon you see in the taskbar is not one picture — it is a small bag of
