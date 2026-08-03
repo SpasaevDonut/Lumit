@@ -1,6 +1,47 @@
 use super::*;
 use crate::anim::{Animation, Property};
+use crate::expression::ExpressionContext;
 use crate::model::{Composition, EffectInstance, EffectNamespace, EffectValue, Layer};
+
+// These tests are about *parameter resolution*, not about expressions, so they
+// call the resolvers without an expression context and get the detached one.
+// Shadowing the two entry points here keeps that out of every call below —
+// otherwise the same argument would be spelled out ninety times.
+fn resolve_stack(
+    effects: &[EffectInstance],
+    lt: f64,
+    diag_px: f32,
+    px_scale: f32,
+    markers: &MarkerContext,
+) -> Vec<Resolved> {
+    super::resolve_stack(
+        effects,
+        lt,
+        diag_px,
+        px_scale,
+        markers,
+        &ExpressionContext::detached(),
+    )
+}
+
+fn resolve_stack_temporal(
+    effects: &[EffectInstance],
+    sample_lt: f64,
+    frame_lt: f64,
+    diag_px: f32,
+    px_scale: f32,
+    markers: &MarkerContext,
+) -> Vec<Resolved> {
+    super::resolve_stack_temporal(
+        effects,
+        sample_lt,
+        frame_lt,
+        diag_px,
+        px_scale,
+        markers,
+        &ExpressionContext::detached(),
+    )
+}
 
 // Posterize time (docs/08 §3.25): the held comp time snaps down to the coarser
 // grid. The two comp times that share a held frame MUST return the exact same

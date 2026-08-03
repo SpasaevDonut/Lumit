@@ -71,18 +71,25 @@ class BridgeSolidDef {
 class BridgeTextDocument {
   final String text;
 
+  /// When set, the layer's words come from this expression at each frame
+  /// rather than from `text`, which is kept so switching the expression off
+  /// restores what was typed.
+  final String? expression;
+
   /// Pixel size at natural scale.
   final double size;
   final BridgeColourRgba fill;
 
   const BridgeTextDocument({
     required this.text,
+    this.expression,
     required this.size,
     required this.fill,
   });
 
   @override
-  int get hashCode => text.hashCode ^ size.hashCode ^ fill.hashCode;
+  int get hashCode =>
+      text.hashCode ^ expression.hashCode ^ size.hashCode ^ fill.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -90,6 +97,7 @@ class BridgeTextDocument {
       other is BridgeTextDocument &&
           runtimeType == other.runtimeType &&
           text == other.text &&
+          expression == other.expression &&
           size == other.size &&
           fill == other.fill;
 }

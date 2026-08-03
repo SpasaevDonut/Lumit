@@ -269,7 +269,7 @@ fn feed_effect_stack(
                             h.update(&[1]);
                             h.update(src.id.as_bytes());
                             let slt = t - src.start_offset.0.to_f64();
-                            feed_source(h, doc, src, slt, quality, stamper, visited)?;
+                            feed_source(h, doc, comp, src, slt, quality, stamper, visited)?;
                             let dtr = &src.transform;
                             for v in [
                                 dtr.position_x.value_at(slt),
@@ -388,7 +388,7 @@ fn feed_layer(
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
     h.update(b"layer/");
-    feed_source(h, doc, layer, lt, quality, stamper, visited)?;
+    feed_source(h, doc, comp, layer, lt, quality, stamper, visited)?;
 
     let context = ExpressionContext {
         document: doc,
@@ -535,7 +535,7 @@ fn feed_layer(
                     mr.source.key_byte(),
                 ]);
                 let mlt = t - src.start_offset.0.to_f64();
-                feed_source(h, doc, src, mlt, quality, stamper, visited)?;
+                feed_source(h, doc, comp, src, mlt, quality, stamper, visited)?;
                 let mtr = &src.transform;
                 for v in [
                     mtr.position_x.value_at(mlt),
@@ -624,6 +624,10 @@ fn blend_tag(b: lumit_core::model::BlendMode) -> u8 {
 fn feed_source(
     h: &mut blake3::Hasher,
     doc: &Document,
+    // The comp the layer sits in — the expression context a text layer's words
+    // may be resolved through, so the key hashes the line the rasteriser will
+    // actually draw.
+    owner: &Composition,
     layer: &lumit_core::model::Layer,
     lt: f64,
     quality: Quality,
@@ -688,7 +692,16 @@ fn feed_source(
         },
         LayerKind::Text { document } => {
             h.update(b"text/");
-            h.update(document.text.as_bytes());
+            // The *resolved* line, not the stored one: an expression-driven
+            // caption says something different at every frame, and hashing the
+            // stored text would key them all the same and freeze the first
+            // frame it rendered on screen for the rest of the comp.
+            let context = ExpressionContext {
+                document: doc,
+                comp: Some(owner.id),
+                layer: Some(layer.id),
+            };
+            h.update(document.resolved_text(lt, &context).as_bytes());
             h.update(&[0]); // length delimiter: text then size never collide
             feed_f64(h, document.size);
             for c in document.fill.0 {
@@ -834,6 +847,7 @@ mod tests {
             kind: LayerKind::Text {
                 document: TextDocument {
                     text: text.into(),
+                    expression: None,
                     size: 72.0,
                     fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                     extra: serde_json::Map::new(),
@@ -1585,6 +1599,41 @@ mod tests {
             }
         }
         assert_ne!(base, key(&doc2, &parent, 1.0));
+    }
+
+    /// An expression-driven caption says something different at every frame, so
+    /// consecutive frames must key differently — otherwise the cache serves the
+    /// first line it rendered for the whole comp and the number on screen never
+    /// moves. This is the regression test for hashing the stored text.
+    #[test]
+    fn expression_driven_text_keys_per_frame() {
+        let doc = Document::new();
+        let mut l = text_layer("ignored", 0.0, 10.0, 0.0);
+        if let LayerKind::Text { document } = &mut l.kind {
+            document.expression = Some("time".into());
+        }
+        let comp = comp_with(vec![l]);
+        assert_ne!(key(&doc, &comp, 1.0), key(&doc, &comp, 2.0));
+        // Same time, same words, same key — the resolution stays deterministic.
+        assert_eq!(key(&doc, &comp, 1.0), key(&doc, &comp, 1.0));
+    }
+
+    /// The stored `text` is dead while an expression drives the layer: editing
+    /// it must not retire cached frames that look exactly the same.
+    #[test]
+    fn stored_text_is_inert_under_an_expression() {
+        let doc = Document::new();
+        let with_expression = |body: &str| {
+            let mut l = text_layer(body, 0.0, 10.0, 0.0);
+            if let LayerKind::Text { document } = &mut l.kind {
+                document.expression = Some("1 + 1".into());
+            }
+            comp_with(vec![l])
+        };
+        assert_eq!(
+            key(&doc, &with_expression("one"), 1.0),
+            key(&doc, &with_expression("another"), 1.0)
+        );
     }
 
     /// Unprobed footage → unkeyable (None), never a wrong key.

@@ -443,6 +443,7 @@ impl CompositionReference {
             lumit_core::model::LayerKind::Text {
                 document: TextDocument {
                     text: text.into(),
+                    expression: None,
                     size,
                     fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                     extra: serde_json::Map::new(),

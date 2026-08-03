@@ -364,11 +364,25 @@ Effects and masks, K-142), the same three-way source a matte carries in §5.1.
 
 ### 9.1 Text
 
-v1 `TextDocument` is a **single run**: `{ text, size, fill }` — one font (embedded Inter), one
-size, one fill, single line. The styled-runs model — font family/weight, stroke, tracking,
-leading, point vs paragraph text, alignment, and per-character animators — is **future**; the
-document stays structured (never rasterised into the project) so runs and animators bolt on
-later.
+v1 `TextDocument` is a **single run**: `{ text, expression, size, fill }` — one font (embedded
+Inter), one size, one fill, single line. The styled-runs model — font family/weight, stroke,
+tracking, leading, point vs paragraph text, alignment, and per-character animators — is
+**future**; the document stays structured (never rasterised into the project) so runs and
+animators bolt on later.
+
+**The words can come from an expression.** `expression` is optional and absent from the file
+when unset. When it is set, the layer's line at layer time *t* is that expression evaluated at
+*t* and printed — the same language the numeric properties use (§6.4), except the answer is
+shown rather than measured, so any result type is accepted and an evaluation error prints
+nothing rather than failing the frame. `text` is untouched while an expression drives the
+layer and is what the layer says again once the expression is cleared; an empty or
+whitespace-only expression *is* "cleared", never "an expression that says nothing".
+
+The rasteriser and the frame cache key both read the line through one resolver, so they can
+never disagree about what the layer says — a disagreement would serve a cached frame of the
+previous line. A frame-varying expression therefore keys per frame by construction, and a
+constant one keys once. Per-character animation of an expression-driven line is **future**,
+with the styled-runs model.
 
 ### 9.2 Shape (future — no Shape layer in v1)
 

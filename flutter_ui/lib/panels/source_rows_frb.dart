@@ -11,6 +11,7 @@
 // does.
 
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/data/expressions_metadata.dart';
 import 'package:lumit_flutter/src/rust/api/assets.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
@@ -47,10 +48,12 @@ class SourceRowsFrb extends StatefulWidget {
 
 class _SourceRowsFrbState extends State<SourceRowsFrb> {
   TextEditingController? _text;
+  TextEditingController? _expression;
 
   @override
   void dispose() {
     _text?.dispose();
+    _expression?.dispose();
     super.dispose();
   }
 
@@ -92,11 +95,25 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
       _text?.dispose();
       _text = TextEditingController(text: document.text);
     }
+    final expression = document.expression ?? '';
+    if (_expression == null ||
+        (_expression!.text != expression && !_expression!.selection.isValid)) {
+      _expression?.dispose();
+      _expression = TextEditingController(text: expression);
+    }
 
-    void write({String? body, double? size, BridgeColourRgba? fill}) {
+    void write({
+      String? body,
+      String? expression,
+      double? size,
+      BridgeColourRgba? fill,
+    }) {
       widget.layer.setText(
         document: BridgeTextDocument(
           text: body ?? _text!.text,
+          // An empty box is no expression at all, which the engine settles —
+          // so emptying the field simply hands the layer back to its words.
+          expression: expression ?? _expression!.text,
           size: size ?? document.size,
           fill: fill ?? document.fill,
         ),
@@ -115,6 +132,43 @@ class _SourceRowsFrbState extends State<SourceRowsFrb> {
             controller: _text!,
             width: _cellWidth + 60,
             onSubmitted: (value) => write(body: value),
+          ),
+        ),
+      ),
+      // The words can come from an expression instead — the same language the
+      // numeric properties use, printed rather than measured, which is how a
+      // caption shows a live value. The Text box above stays as it was: it is
+      // what the layer says again once this one is empty.
+      _row(
+        t,
+        'Expression',
+        SizedBox(
+          width: _cellWidth + 60,
+          child: HouseTextField(
+            key: const ValueKey('src-text-expression'),
+            controller: _expression!,
+            width: _cellWidth + 60,
+            style: t.mono,
+            submitOnLostFocus: true,
+            getSuggestions: (text) => ExpressionsMetadata.api.functions
+                .map((f) => AutofillSuggestion(f, f.name))
+                .where((s) => s.word.startsWith(text))
+                .toList(),
+            suggestionBuilder: (suggestion) {
+              final data = suggestion.value as FunctionDef;
+              return Row(
+                spacing: 8,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(data.name, style: t.mono.copyWith(color: t.accent)),
+                  Text(
+                    data.signature.replaceFirst(data.name, ''),
+                    style: t.mono,
+                  ),
+                ],
+              );
+            },
+            onSubmitted: (value) => write(expression: value),
           ),
         ),
       ),

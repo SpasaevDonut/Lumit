@@ -4,8 +4,12 @@ import 'package:lumit_flutter/src/rust/api/expressions.dart';
 
 class ExpressionsMetadata {
 
-  static late ExpressionsApi api;
-  
+  // Empty until [load] has run, rather than uninitialised: anything that offers
+  // completions is built before the engine has answered, and an empty list is a
+  // field with no suggestions yet, not a crash.
+  static ExpressionsApi api = ExpressionsApi(functions: []);
+
+
 
   static Future<void> load() async {
     var data = await Expressions.getExpressionsMetadata();

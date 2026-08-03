@@ -4569,3 +4569,49 @@ range as an empty one. A guard against something the layer above now prevents
 sounds like belt and braces, but the rule in docs/14 is not "validate at the
 edges", it is *no panics in engine crates* — and a document from disk is not
 something the ops layer has vetted.
+
+### A text layer that says whatever the expression works out
+
+Until now a text layer said one fixed thing. You typed some words, and those
+words were what appeared, for the whole length of the layer. Everything else on
+a layer can be animated — position, opacity, an effect's knob — and now, with
+expressions in, animated by a little sum instead of by keyframes. The words were
+the one thing that could not move.
+
+A text layer now has a second box next to its words: **Expression**. Leave it
+empty and nothing changes; the layer says what you typed. Put something in it —
+`time`, or `time * 30`, or `"frame " + (time * comp_fps)` — and the layer says
+whatever that works out to, freshly, at every frame. It is the same little
+language the numeric knobs use. The only difference is what happens to the
+answer: a knob *measures* it, and a text layer *prints* it.
+
+That is deliberately the whole feature. It is there so a number can be put on
+screen — a counter, a readout, and above all the value of an expression you are
+in the middle of writing, which is much easier to debug when you can watch it
+rather than infer it. Letters do not fly in one at a time; that is per-character
+animation and it belongs with the styled-text work, later.
+
+Three details are worth knowing, because each is a trap avoided rather than a
+feature added:
+
+**Your typed words are kept.** Setting an expression does not overwrite them.
+They sit underneath, and clearing the Expression box hands the layer straight
+back to them. An empty box means "no expression", never "an expression that
+produces nothing" — otherwise emptying the field would leave you with a blank
+layer and no way back.
+
+**A broken expression prints nothing rather than stopping the render.** You will
+be typing these while the preview is live, and half a typed expression is not
+valid for most of the time it takes to write one. An unreadable caption for a
+moment is a much smaller problem than a render that falls over, and an empty
+line is the same thing the editor already shows you for empty text.
+
+**The cache is told the truth.** Lumit keeps rendered frames and reuses them,
+and it decides whether two frames are the same by hashing everything that went
+into them. If it hashed the *typed* words for a layer whose words come from an
+expression, every frame of that layer would hash identically — and the number on
+screen would freeze on whatever it read the first time, which is the exact bug
+this feature would otherwise ship with. So the rasteriser and the cache key ask
+the same one function for the line, and by construction cannot disagree: a
+counter keys a new frame each frame, and an expression that always says the same
+thing keys once and is reused, with nothing to configure either way.

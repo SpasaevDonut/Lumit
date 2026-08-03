@@ -884,11 +884,35 @@ impl Composition {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TextDocument {
     pub text: String,
+    /// When set, the words come from this expression at each frame instead of
+    /// from `text` — the same expression language the numeric properties use,
+    /// printed rather than measured (docs/03-DATA-MODEL.md §9.1).
+    ///
+    /// `text` is left alone while an expression drives the layer, so switching
+    /// the expression off restores the words that were typed there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
     /// Pixel size at natural scale.
     pub size: f64,
     pub fill: LinearColour,
     #[serde(flatten, default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub extra: serde_json::Map<String, serde_json::Value>,
+}
+
+impl TextDocument {
+    /// The words this document shows at layer time `lt`.
+    ///
+    /// **Every reader of a text layer's content goes through here**, so the
+    /// rasteriser and the cache key can never disagree about what the layer
+    /// says — a disagreement that would serve a cached frame of the old words.
+    pub fn resolved_text(&self, lt: f64, context: &ExpressionContext) -> std::borrow::Cow<'_, str> {
+        match &self.expression {
+            None => std::borrow::Cow::Borrowed(&self.text),
+            Some(e) => {
+                std::borrow::Cow::Owned(crate::expression::evaluate_text(e, lt, Some(context)))
+            }
+        }
+    }
 }
 
 /// Per-layer composite operator (docs/06-RENDER-PIPELINE.md §blend domains).
@@ -1739,6 +1763,7 @@ mod tests {
         inner.kind = LayerKind::Text {
             document: TextDocument {
                 text: "m".into(),
+                expression: None,
                 size: 12.0,
                 fill: LinearColour([1.0, 1.0, 1.0, 1.0]),
                 extra: serde_json::Map::new(),

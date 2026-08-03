@@ -6757,10 +6757,12 @@ impl SseDecode for crate::api::assets::BridgeTextDocument {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
         let mut var_text = <String>::sse_decode(deserializer);
+        let mut var_expression = <Option<String>>::sse_decode(deserializer);
         let mut var_size = <f64>::sse_decode(deserializer);
         let mut var_fill = <crate::api::assets::BridgeColourRgba>::sse_decode(deserializer);
         return crate::api::assets::BridgeTextDocument {
             text: var_text,
+            expression: var_expression,
             size: var_size,
             fill: var_fill,
         };
@@ -9240,6 +9242,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::assets::BridgeTextDocument {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
             self.text.into_into_dart().into_dart(),
+            self.expression.into_into_dart().into_dart(),
             self.size.into_into_dart().into_dart(),
             self.fill.into_into_dart().into_dart(),
         ]
@@ -10467,6 +10470,7 @@ impl SseEncode for crate::api::assets::BridgeTextDocument {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
         <String>::sse_encode(self.text, serializer);
+        <Option<String>>::sse_encode(self.expression, serializer);
         <f64>::sse_encode(self.size, serializer);
         <crate::api::assets::BridgeColourRgba>::sse_encode(self.fill, serializer);
     }

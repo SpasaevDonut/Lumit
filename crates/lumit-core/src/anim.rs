@@ -9,7 +9,7 @@
 //! note's bracketed-Newton method: fast like Newton, and mathematically
 //! incapable of escaping the valid range like plain Newton can.
 
-use crate::{Document, expression::ExpressionContext, time::Rational};
+use crate::{expression::ExpressionContext, time::Rational};
 use serde::{Deserialize, Serialize};
 
 /// Per-side interpolation of a keyframe (docs/03-DATA-MODEL.md §6.2).

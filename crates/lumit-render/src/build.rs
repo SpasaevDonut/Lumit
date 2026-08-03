@@ -302,8 +302,17 @@ pub fn build_comp_draws_at(
             }),
             LayerKind::Text { document } => in_span(layer).then(|| {
                 let fill = solid_rgba(document.fill);
+                // The words at *this* layer time — a plain document hands back
+                // what was typed; an expression-driven one is evaluated here,
+                // which is what makes a caption able to print a live value.
+                let context = ExpressionContext {
+                    document: doc,
+                    comp: Some(comp.id),
+                    layer: Some(layer.id),
+                };
+                let lt = t_comp - layer.start_offset.0.to_f64();
                 let r = lumit_text::rasterise_line(
-                    &document.text,
+                    &document.resolved_text(lt, &context),
                     document.size as f32,
                     [fill[0], fill[1], fill[2]],
                 );
@@ -1211,6 +1220,7 @@ mod render_below_at_tests {
             kind: LayerKind::Text {
                 document: TextDocument {
                     text: "hello".into(),
+                    expression: None,
                     size: 48.0,
                     fill: LinearColour([1.0, 0.5, 0.2, 1.0]),
                     extra: serde_json::Map::new(),
@@ -1235,6 +1245,48 @@ mod render_below_at_tests {
             switches: Switches::default(),
             extra: serde_json::Map::new(),
         }
+    }
+
+    // An expression-driven text layer must actually rasterise the line the
+    // expression works out, at the time the frame is being drawn — otherwise
+    // the feature is a document field the picture never reads. The two times
+    // give lines of different lengths, so the raster's own size proves it
+    // without inspecting glyphs.
+    #[test]
+    fn expression_driven_text_rasterises_the_line_at_this_time() {
+        let mut l = text_layer(0.0);
+        if let LayerKind::Text { document } = &mut l.kind {
+            document.expression = Some("time * 100000".into());
+        }
+        let comp = Composition {
+            id: Uuid::now_v7(),
+            name: "c".into(),
+            width: 320,
+            height: 180,
+            frame_rate: FrameRate::new(30, 1).unwrap(),
+            duration: Duration(Rational::new(10, 1).unwrap()),
+            background: LinearColour::BLACK,
+            work_area: None,
+            layers: vec![l],
+            markers: Vec::new(),
+            motion_blur: Default::default(),
+            extra: serde_json::Map::new(),
+        };
+        let doc = Document::new();
+        let pixels: HashMap<Uuid, &CompLayerPixels> = HashMap::new();
+
+        let width_at = |t: f64| {
+            let mut visited = vec![comp.id];
+            let draws = build_comp_draws(&doc, &comp, t, &pixels, &mut visited);
+            match &draws.first().expect("one draw").source {
+                DrawSource::Pixels { tex_w, .. } => *tex_w,
+                _ => panic!("a text layer draws its own pixels"),
+            }
+        };
+
+        // "0.0" against "500000.0" — a longer line, so a wider raster.
+        assert!(width_at(5.0) > width_at(0.0));
+        assert_eq!(width_at(5.0), width_at(5.0), "and it is deterministic");
     }
 
     // docs/impl/temporal-rerender.md §7 step 1: a re-render of a still scene at

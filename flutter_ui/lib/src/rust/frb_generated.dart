@@ -6249,12 +6249,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   BridgeTextDocument dco_decode_bridge_text_document(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
-    if (arr.length != 3)
-      throw Exception('unexpected arr length: expect 3 but see ${arr.length}');
+    if (arr.length != 4)
+      throw Exception('unexpected arr length: expect 4 but see ${arr.length}');
     return BridgeTextDocument(
       text: dco_decode_String(arr[0]),
-      size: dco_decode_f_64(arr[1]),
-      fill: dco_decode_bridge_colour_rgba(arr[2]),
+      expression: dco_decode_opt_String(arr[1]),
+      size: dco_decode_f_64(arr[2]),
+      fill: dco_decode_bridge_colour_rgba(arr[3]),
     );
   }
 
@@ -7853,9 +7854,14 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_text = sse_decode_String(deserializer);
+    var var_expression = sse_decode_opt_String(deserializer);
     var var_size = sse_decode_f_64(deserializer);
     var var_fill = sse_decode_bridge_colour_rgba(deserializer);
-    return BridgeTextDocument(text: var_text, size: var_size, fill: var_fill);
+    return BridgeTextDocument(
+        text: var_text,
+        expression: var_expression,
+        size: var_size,
+        fill: var_fill);
   }
 
   @protected
@@ -9536,6 +9542,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       BridgeTextDocument self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     sse_encode_String(self.text, serializer);
+    sse_encode_opt_String(self.expression, serializer);
     sse_encode_f_64(self.size, serializer);
     sse_encode_bridge_colour_rgba(self.fill, serializer);
   }
