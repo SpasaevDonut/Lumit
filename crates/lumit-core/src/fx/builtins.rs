@@ -2650,6 +2650,9 @@ pub const BUILTINS: &[EffectSchema] = &[
                         "Vintage single coat",
                         "Warm bias",
                         "Cool bias",
+                        "Amber single coat",
+                        "Two-tone vintage",
+                        "Broad multicoat",
                     ],
                     default: 0,
                     dividers_after: &[],
@@ -2827,6 +2830,18 @@ pub const BUILTINS: &[EffectSchema] = &[
                     dividers_after: &[],
                 },
             },
+            ParamSchema {
+                id: "background",
+                label: "Background",
+                // Transparent keeps the layer's own alpha; Black makes the
+                // output opaque — the flare-element-over-black export for
+                // Screen/Add workflows (K-258).
+                kind: ParamKind::Choice {
+                    options: &["Transparent", "Black"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
             MIX_PARAM,
         ],
     },
@@ -2869,6 +2884,54 @@ pub fn instantiate_for_raster(match_name: &str, w: f64, h: f64) -> Option<Effect
     Some(inst)
 }
 
+/// The value a parameter kind starts at (docs/08 §1.2): what `instantiate`
+/// fills a fresh instance with, and what [`backfill_builtin_params`] appends
+/// for a parameter the saved instance predates.
+pub fn default_param_value(kind: &ParamKind) -> EffectValue {
+    match *kind {
+        ParamKind::Float { default, .. } => EffectValue::Float(Property::fixed(default)),
+        // Int is a display/rounding kind; the value is a Float like any
+        // other scalar (see the schema's Int docs).
+        ParamKind::Int { default, .. } => EffectValue::Float(Property::fixed(default as f64)),
+        ParamKind::Choice { default, .. } => EffectValue::Choice(default),
+        ParamKind::Bool { default } => EffectValue::Bool(default),
+        ParamKind::Colour { default, .. } => EffectValue::Colour(default.map(Property::fixed)),
+        ParamKind::Seed => EffectValue::Seed(fresh_seed()),
+        ParamKind::File { .. } => EffectValue::File(FileParam::empty()),
+        // A fresh layer reference is unset (docs/impl/layer-input.md): the
+        // effect is a labelled no-op until the owner picks a layer, the same
+        // sanctioned exception the File parameter takes to the "no no-op
+        // default" rule.
+        ParamKind::Layer {} => EffectValue::Layer(None),
+    }
+}
+
+/// Forward-migrate a stack loaded from disk (K-258): a built-in instance
+/// saved before its schema grew a parameter simply lacks it, which left the
+/// panel drawing a dash and `set_value` refusing the id. Append every
+/// missing declared parameter at its default. Never touches present values,
+/// unknown effects, or plugin namespaces — a project round-trips untouched
+/// unless its schema really did grow.
+pub fn backfill_builtin_params(effects: &mut [EffectInstance]) {
+    for e in effects.iter_mut() {
+        if e.effect.namespace != EffectNamespace::Builtin {
+            continue;
+        }
+        let Some(s) = schema(&e.effect.match_name) else {
+            continue;
+        };
+        for p in s.params {
+            if !e.params.iter().any(|have| have.id == p.id) {
+                e.params.push(EffectParam {
+                    id: p.id.to_owned(),
+                    value: default_param_value(&p.kind),
+                    extra: serde_json::Map::new(),
+                });
+            }
+        }
+    }
+}
+
 pub fn instantiate(match_name: &str) -> Option<EffectInstance> {
     let s = schema(match_name)?;
     Some(EffectInstance {
@@ -2885,28 +2948,7 @@ pub fn instantiate(match_name: &str) -> Option<EffectInstance> {
             .iter()
             .map(|p| EffectParam {
                 id: p.id.to_owned(),
-                value: match p.kind {
-                    ParamKind::Float { default, .. } => {
-                        EffectValue::Float(Property::fixed(default))
-                    }
-                    // Int is a display/rounding kind; the value is a Float
-                    // like any other scalar (see the schema's Int docs).
-                    ParamKind::Int { default, .. } => {
-                        EffectValue::Float(Property::fixed(default as f64))
-                    }
-                    ParamKind::Choice { default, .. } => EffectValue::Choice(default),
-                    ParamKind::Bool { default } => EffectValue::Bool(default),
-                    ParamKind::Colour { default, .. } => {
-                        EffectValue::Colour(default.map(Property::fixed))
-                    }
-                    ParamKind::Seed => EffectValue::Seed(fresh_seed()),
-                    ParamKind::File { .. } => EffectValue::File(FileParam::empty()),
-                    // A fresh layer reference is unset (docs/impl/
-                    // layer-input.md): the effect is a labelled no-op until the
-                    // owner picks a layer, the same sanctioned exception the
-                    // File parameter takes to the "no no-op default" rule.
-                    ParamKind::Layer {} => EffectValue::Layer(None),
-                },
+                value: default_param_value(&p.kind),
                 extra: serde_json::Map::new(),
             })
             .collect(),

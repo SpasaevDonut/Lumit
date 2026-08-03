@@ -1436,10 +1436,11 @@ cast of real flares comes from.
 the `_x`/`_y` pair convention of docs/07 §6.1 — with a pick-on-Viewer dropper;
 % of the frame, open both sides, since an off-frame light keeps flaring),
 **Intensity** (0–4, open above), **F-stop** (0.7–32 — wider grows the ghost
-discs and softens the starburst ringing), **Coating type** (Modern multicoat /
-Vintage single coat / Warm bias / Cool bias — the per-surface coating-tuning
-pattern, i.e. the ghost train's colour character; it sits above the lens it
-colours), **Lens** (the bundled prescription library, six real lenses), then
+discs and softens the starburst ringing), **Coating type** (seven presets — Modern multicoat, Vintage single coat, Warm
+bias, Cool bias, Amber single coat, Two-tone vintage, Broad multicoat — the
+per-surface coating-tuning pattern, i.e. the ghost train's colour character; it
+sits above the lens it colours), **Lens** (the bundled prescription library: six real lenses and four classic
+public-domain designs — Cooke triplet, Tessar, Petzval, Double Gauss), then
 three folds and the tail:
 
 | Group | Parameters |
@@ -1448,7 +1449,10 @@ three folds and the tail:
 | *Flare options* (twirl) | Ghost intensity (0–4), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
 | *Source* | Source type (Manual light / Matte / Lights), then — Matte only, shown conditionally — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
 
-and **Quality** (Draft / Normal / High / Ultra), **Mix**. Blades and Max
+and **Quality** (Draft / Normal / High / Ultra), **Background** (Transparent /
+Black, K-258 — Black makes the output opaque, the flare-element-over-black
+export for Screen/Add workflows; the neutral passthroughs stay bit-exact
+regardless), **Mix**. Blades and Max
 ghosts are the first **Int-kind** parameters (§1.2): stored and animated as
 Float scalars, but declared whole-number so the row steps, displays and
 commits integers.
@@ -1470,7 +1474,8 @@ footage without touching anything (§1.2).
 
 **Chromatic smoothness.** The traced wavelength count is what separates a smooth
 spectral fringe from a stacked-copies RGB-split look, so the Quality ladder
-carries it: 3 bands at Draft, 5 at Normal, 7 at High, 9 at Ultra — each band
+carries it: 4 bands at Draft, 8 at Normal, 16 at High, 32 at Ultra (K-258 —
+the extreme tier is deliberately expensive; Normal stays real-time), each band
 weighted by its **integral** of the CIE colour-matching functions, not a point
 sample (impl note deviation D5).
 

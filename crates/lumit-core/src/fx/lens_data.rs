@@ -907,6 +907,264 @@ const NIKON_28_70_SURFACES: &[LensSurface] = &[
     },
 ];
 
+/// Cooke triplet (H. D. Taylor, 1893; textbook f/3.5 form) - the classic
+/// three-element design, few surfaces, a clean sparse ghost train.
+const COOKE_50_SURFACES: &[LensSurface] = &[
+    LensSurface {
+        radius_mm: 22.01,
+        thickness_mm: 3.26,
+        ior_d: 1.617,
+        abbe_v: 55.0,
+        height_mm: 7.5,
+    },
+    LensSurface {
+        radius_mm: -435.8,
+        thickness_mm: 6.01,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 7.5,
+    },
+    LensSurface {
+        radius_mm: -22.21,
+        thickness_mm: 1.0,
+        ior_d: 1.649,
+        abbe_v: 33.8,
+        height_mm: 6.0,
+    },
+    LensSurface {
+        radius_mm: 20.29,
+        thickness_mm: 1.75,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 6.0,
+    },
+    LensSurface {
+        radius_mm: 0.0,
+        thickness_mm: 3.0,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 5.2,
+    },
+    LensSurface {
+        radius_mm: 79.68,
+        thickness_mm: 2.95,
+        ior_d: 1.617,
+        abbe_v: 55.0,
+        height_mm: 6.5,
+    },
+    LensSurface {
+        radius_mm: -18.4,
+        thickness_mm: 41.0,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 6.5,
+    },
+];
+
+/// Tessar (P. Rudolph, 1902; textbook f/2.8 form) - front singlet, negative
+/// singlet, cemented rear doublet.
+const TESSAR_50_SURFACES: &[LensSurface] = &[
+    LensSurface {
+        radius_mm: 16.29,
+        thickness_mm: 3.57,
+        ior_d: 1.612,
+        abbe_v: 56.9,
+        height_mm: 9.0,
+    },
+    LensSurface {
+        radius_mm: -276.4,
+        thickness_mm: 1.89,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 9.0,
+    },
+    LensSurface {
+        radius_mm: -34.57,
+        thickness_mm: 1.22,
+        ior_d: 1.605,
+        abbe_v: 38.0,
+        height_mm: 7.5,
+    },
+    LensSurface {
+        radius_mm: 15.87,
+        thickness_mm: 1.8,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 7.0,
+    },
+    LensSurface {
+        radius_mm: 0.0,
+        thickness_mm: 1.5,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 6.4,
+    },
+    LensSurface {
+        radius_mm: 274.5,
+        thickness_mm: 1.2,
+        ior_d: 1.517,
+        abbe_v: 64.2,
+        height_mm: 7.5,
+    },
+    LensSurface {
+        radius_mm: 21.25,
+        thickness_mm: 3.04,
+        ior_d: 1.611,
+        abbe_v: 58.8,
+        height_mm: 7.5,
+    },
+    LensSurface {
+        radius_mm: -16.63,
+        thickness_mm: 38.0,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 7.5,
+    },
+];
+
+/// Petzval portrait (J. Petzval, 1840; scaled textbook form) - two widely
+/// spaced doublets, the historic fast-portrait design; big soft ghosts.
+const PETZVAL_85_SURFACES: &[LensSurface] = &[
+    LensSurface {
+        radius_mm: 55.5,
+        thickness_mm: 6.8,
+        ior_d: 1.517,
+        abbe_v: 64.2,
+        height_mm: 16.0,
+    },
+    LensSurface {
+        radius_mm: -42.8,
+        thickness_mm: 1.5,
+        ior_d: 1.576,
+        abbe_v: 41.0,
+        height_mm: 16.0,
+    },
+    LensSurface {
+        radius_mm: -190.0,
+        thickness_mm: 32.0,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 16.0,
+    },
+    LensSurface {
+        radius_mm: 0.0,
+        thickness_mm: 12.0,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 13.0,
+    },
+    LensSurface {
+        radius_mm: -63.0,
+        thickness_mm: 1.6,
+        ior_d: 1.576,
+        abbe_v: 41.0,
+        height_mm: 14.0,
+    },
+    LensSurface {
+        radius_mm: 46.5,
+        thickness_mm: 1.4,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 14.0,
+    },
+    LensSurface {
+        radius_mm: 52.0,
+        thickness_mm: 5.6,
+        ior_d: 1.517,
+        abbe_v: 64.2,
+        height_mm: 14.0,
+    },
+    LensSurface {
+        radius_mm: -55.0,
+        thickness_mm: 55.0,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 14.0,
+    },
+];
+
+/// Double Gauss (Biotar-type, 1927 lineage; textbook f/2 form) - the
+/// symmetric six-element workhorse behind most fast normal lenses.
+const DGAUSS_58_SURFACES: &[LensSurface] = &[
+    LensSurface {
+        radius_mm: 38.1,
+        thickness_mm: 5.2,
+        ior_d: 1.673,
+        abbe_v: 47.2,
+        height_mm: 16.0,
+    },
+    LensSurface {
+        radius_mm: 114.4,
+        thickness_mm: 0.2,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 16.0,
+    },
+    LensSurface {
+        radius_mm: 20.8,
+        thickness_mm: 6.6,
+        ior_d: 1.67,
+        abbe_v: 51.7,
+        height_mm: 14.0,
+    },
+    LensSurface {
+        radius_mm: 37.4,
+        thickness_mm: 1.6,
+        ior_d: 1.7,
+        abbe_v: 30.1,
+        height_mm: 14.0,
+    },
+    LensSurface {
+        radius_mm: 14.1,
+        thickness_mm: 5.9,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 10.0,
+    },
+    LensSurface {
+        radius_mm: 0.0,
+        thickness_mm: 5.6,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 9.6,
+    },
+    LensSurface {
+        radius_mm: -15.2,
+        thickness_mm: 1.5,
+        ior_d: 1.7,
+        abbe_v: 30.1,
+        height_mm: 10.0,
+    },
+    LensSurface {
+        radius_mm: 33.1,
+        thickness_mm: 6.5,
+        ior_d: 1.67,
+        abbe_v: 51.7,
+        height_mm: 12.0,
+    },
+    LensSurface {
+        radius_mm: -20.3,
+        thickness_mm: 0.2,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 12.0,
+    },
+    LensSurface {
+        radius_mm: 78.0,
+        thickness_mm: 4.5,
+        ior_d: 1.673,
+        abbe_v: 47.2,
+        height_mm: 13.0,
+    },
+    LensSurface {
+        radius_mm: -41.7,
+        thickness_mm: 36.0,
+        ior_d: 1.0,
+        abbe_v: 0.0,
+        height_mm: 13.0,
+    },
+];
+
 /// Every bundled lens, in the Lens parameter's Choice order (stable: new
 /// models append, existing indices never move â€” saved projects store the
 /// index).
@@ -953,6 +1211,34 @@ pub const LENS_MODELS: &[LensModel] = &[
         aperture_index: 14,
         surfaces: NIKON_28_70_SURFACES,
     },
+    LensModel {
+        label: "Cooke triplet 50mm f/3.5",
+        focal_length_mm: 50.0,
+        native_fstop: 3.5,
+        aperture_index: 4,
+        surfaces: COOKE_50_SURFACES,
+    },
+    LensModel {
+        label: "Tessar 50mm f/2.8",
+        focal_length_mm: 50.0,
+        native_fstop: 2.8,
+        aperture_index: 4,
+        surfaces: TESSAR_50_SURFACES,
+    },
+    LensModel {
+        label: "Petzval 85mm f/2.2",
+        focal_length_mm: 85.0,
+        native_fstop: 2.2,
+        aperture_index: 3,
+        surfaces: PETZVAL_85_SURFACES,
+    },
+    LensModel {
+        label: "Double Gauss 58mm f/2",
+        focal_length_mm: 58.0,
+        native_fstop: 2.0,
+        aperture_index: 5,
+        surfaces: DGAUSS_58_SURFACES,
+    },
 ];
 
 /// The Lens Choice's option labels, in [`LENS_MODELS`] order (the schema
@@ -964,4 +1250,8 @@ pub const LENS_OPTIONS: &[&str] = &[
     "Nikon 50-135mm f/3.5",
     "Kodak 100mm f/3.8",
     "Nikon 28-70mm f/2.8",
+    "Cooke triplet 50mm f/3.5",
+    "Tessar 50mm f/2.8",
+    "Petzval 85mm f/2.2",
+    "Double Gauss 58mm f/2",
 ];

@@ -83,13 +83,15 @@ deterministic. The first `max_ghosts` survive at frame time. This is realflare's
 preprocess cull, moved into the cached bake and upgraded from a bbox proxy to the real
 energy term.
 
-The same probe drives the **auto-exposure gain**: lens designs legitimately differ by
-~1000× in how tightly their ghosts focus (measured: the cine prime's probe median sits
-~250× above the vintage triplet's), so one global energy constant cannot make every lens
-read at default Intensity. The bake steers the top-24 ghosts' median probe energy to a
-fixed target (`TARGET_PROBE_E`, calibrated so the default cine prime keeps its look) and
-stores the resulting `energy_gain` (clamped 0.02..200) in the bake; relative brightness
-*between* a lens's own ghosts stays physical, only the overall exposure is normalised.
+The **auto-exposure gain** closes the loop (K-258): the bake renders the actual CPU
+reference at thumbnail size (96×54, fixed frame-time settings so only bake-key inputs
+steer it) with gain 1, measures the mean, and normalises it to `TARGET_PROBE_MEAN`
+(clamped 0.02..400). Two cheaper proxies were tried and killed: the per-ghost probe
+median and the on-sensor probe flux both mispredicted real lenses by orders of magnitude,
+because ghost energy depends on where a design's caustics land at the render framing —
+the Petzval carried bright probe cells that never reached the frame and rendered 30× dim.
+Relative brightness *between* a lens's own ghosts stays physical; only the overall
+exposure is normalised.
 
 The **launch square** rides the iris, not the front element: `2.6 × iris half-height`,
 clamped to `1.6 × front half-height` — the iris is what gates the bundle, so this keeps
@@ -102,8 +104,9 @@ launch square that landed 5 rays in 3072).
 Direct port of realflare's `raytracing.cl`, in WGSL and (as the oracle) Rust. Per
 (ghost, wavelength): a `grid × grid` bundle of parallel rays over a launch square is aimed
 at the front element along the light direction. The launch square is fixed per lens at
-1.6 × the front element's half-height — full clear diameter plus off-axis margin,
-realflare's fixed 50 mm default made lens-relative; cells whose rays miss are culled, so
+2.3 × the front element's half-height — the full clear diameter plus margin (K-258: an
+undersized square shows in the picture as a rectangular ghost boundary, the bundle's own
+clip instead of the housing's feathered vignette); cells whose rays miss are culled, so
 overshoot costs only rays, never artefacts.
 
 Light direction from the parameter position: `dir = normalize(px_frac·s, py_frac·ratio·s,
@@ -142,9 +145,10 @@ again after the second — realflare's `delta` walk):
   index — the variety is what matters visually, and a per-element editor is UI the effect
   does not need. (Custom prescriptions later can carry their own list.)
 
-**Wavelengths.** `quality` picks the count (3 / 5 / 7 / 9 for Draft / Normal / High /
-Ultra — raised from 3/3/5/7 in the K-257 pass: three bands read as a stacked
-RGB split at ghost rims, five and up as smooth dispersion); λ_k = centred steps over [390, 730] nm, exactly realflare's `wavelength_array`.
+**Wavelengths.** `quality` picks the count (4 / 8 / 16 / 32 for Draft / Normal / High /
+Ultra, grids 16/48/80/128 — K-258's photo-real ladder; three bands read as a
+stacked RGB split at ghost rims, and the extreme tier is deliberately
+expensive while Normal stays real-time); λ_k = centred steps over [390, 730] nm, exactly realflare's `wavelength_array`.
 Each traced λ's RGB weight is its **band's integral** of the CIE colour-matching
 functions (sampled at 2 nm), not a point sample — deviation D5 from realflare's per-λ
 point sampling: with only 3 traced wavelengths, point-sampling red at 673 nm weighs it at
@@ -206,7 +210,7 @@ rebakes; animating *blades* does (documented: the aperture group is cheap to ani
   `blades` axes, a sine bulge `+ roundness · sin(blade_gradient · π)`, and
   `1 − smoothstep(1 − softness, 1 + softness, sdf)`. Realflare's `aperture_shape` kernel,
   on the CPU.
-- **Ghost disc** (256² f32): the fractional Fourier transform of the aperture at order
+- **Ghost disc** (512² f32): the fractional Fourier transform of the aperture at order
   `α = 0.15 · (λ_mid/400) · (fstop/18)` — [Ritschel 2009] §3.3's "ringing pattern", the
   softly diffraction-ringed disc a defocused iris projects. FRFT per Ozaktas: normalise α
   into [0.5, 1.5) with whole FFT/flip steps, then the chirp-multiply / FFT / chirp
@@ -301,7 +305,7 @@ Alongside the feature (docs/14 §10.2), in `lumit-core` unless noted:
    < 0.5 mm — deliberately no absolute max: near a caustic fold a few-ULP difference
    legitimately lands a single ray on the other branch, millimetres away (measured on the
    dev RTX: mean ~2e-3, single-ray worst ~9 on the 26-surface cine prime) — UV and rrel likewise at
-   the 99th percentile (1e-3 / 0.02), reflectance within max(10% relative, 2e-3 absolute) — the coating formula runs through tan() poles at grazing incidence, where a physically invisible reflectance is hugely sensitive — over light
+   the 99th percentile (1e-3 / 0.02), reflectance at the 99th percentile within 5% relative (2e-2 absolute floor) — the coating formula runs through tan() poles at grazing incidence, where a physically invisible reflectance is hugely sensitive — over light
    positions × lenses × wavelengths, with live/dead agreement on ≥ 99% of rays. Not
    ULP-exact: GPU transcendental builtins (sin, asin, acos, tan) are not correctly
    rounded, Fresnel runs through them, and a 26-surface f32 walk compounds rounding — a

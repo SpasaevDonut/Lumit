@@ -63,6 +63,8 @@ pub struct LensFlareOp {
     pub threshold: f32,
     /// See `threshold`.
     pub threshold_softness: f32,
+    /// 1 = Black background: the output is made opaque (K-258).
+    pub background: u32,
     /// 0..1.
     pub mix: f32,
     /// `lumit_core::fx::lens_flare::bake_key` of the op — the bake cache key.
@@ -194,7 +196,7 @@ struct CombineParams {
     fscale: f32,
     mix_amt: f32,
     light_count: u32,
-    _pad0: f32,
+    background: u32,
 }
 
 #[repr(C)]
@@ -912,7 +914,7 @@ impl FxEngine {
             fscale,
             mix_amt: op.mix,
             light_count,
-            _pad0: 0.0,
+            background: op.background.min(1),
         };
         let cp_buf = ctx
             .device

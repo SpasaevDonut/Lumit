@@ -27,7 +27,9 @@ struct CombineParams {
     fscale: f32,
     mix_amt: f32,
     light_count: u32,
-    _pad0: f32,
+    // 1 = Black background: the output is made opaque (K-258). Only reached
+    // while live -- the neutral early-out above the flare maths returns first.
+    background: u32,
 };
 
 @group(0) @binding(0) var src_tex: texture_2d<f32>;
@@ -106,6 +108,9 @@ fn combine(@builtin(global_invocation_id) gid: vec3<u32>) {
     let add = (f + sb) * cp.intensity;
     let luma = 0.2126 * add.r + 0.7152 * add.g + 0.0722 * add.b;
     let flared = vec4<f32>(o.rgb + add, min(o.a + luma, 1.0));
-    let outv = o * (1.0 - cp.mix_amt) + flared * cp.mix_amt;
+    var outv = o * (1.0 - cp.mix_amt) + flared * cp.mix_amt;
+    if (cp.background == 1u) {
+        outv.a = 1.0;
+    }
     textureStore(dst_tex, xy, outv);
 }

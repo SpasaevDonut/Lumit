@@ -5175,3 +5175,28 @@ codenames for the lenses' actual names. The **lens designer** — a window where
 builds a prescription element by element with a live diagram, as the reference apps do —
 is recorded as the intended custom-lens path (TODO, Later), ahead of flat custom-file
 loading.
+
+**K-258 · DECIDED · The flare's exposure closes the loop, its quality ladder goes
+photo-real, and stacks forward-migrate on load.** The owner's second pass over the Lens
+flare. **(1) Loaded stacks backfill**: a built-in instance saved before its schema grew a
+parameter lacked it — the panel drew a dash and `set_value` refused the id. `open()` now
+appends every missing declared parameter at its default (`backfill_builtin_params`);
+values present are never touched. This is the general forward-migration for every effect,
+not a flare fix. **(2) Closed-loop auto-exposure**: the probe-median and probe-flux
+exposure proxies both mispredicted real lenses by orders of magnitude (ghost energy
+depends on where a design's caustics land at render framing — the Petzval read 30× dim),
+so the bake now renders the actual CPU reference at thumbnail size with gain 1 and
+normalises the measured mean to a target. Deterministic, milliseconds, and every bundled
+lens lands in one exposure band by construction. **(3) The quality ladder rises** to
+4/8/16/32 traced bands with grids 16/48/80/128 and a 512² ghost disc — at Ultra the
+spectral rims are effectively continuous (the owner's "photo-real to the extreme" tier,
+~250 ms a frame at 960×540 on the dev RTX; Normal stays real-time at ~24 ms). **(4) The
+launch square covers the whole front element** (2.3× its half-height): the previous
+undersized square was visible in the picture as a rectangular ghost boundary — the
+bundle's own clip instead of the housing's feathered vignette. **(5) Background**
+(Transparent / Black): Black makes the live output opaque — the flare-element-over-black
+export for Screen/Add workflows; the neutral passthroughs stay bit-exact. **(6) Four
+classic public-domain designs join the library** (Cooke triplet 50/3.5, Tessar 50/2.8,
+Petzval 85/2.2, Double Gauss 58/2 — the design names, era-authentic) for ten lenses
+total, and three coating presets join (Amber single coat, Two-tone vintage, Broad
+multicoat) for seven.

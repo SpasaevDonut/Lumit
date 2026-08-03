@@ -1121,13 +1121,18 @@ fn resolve_one(
                 _ => 2,
             };
             let coating_preset = match e.param("coating_preset") {
-                Some(EffectValue::Choice(c)) => (*c).min(3),
+                // Unknown future indices clamp inside coating_cycle.
+                Some(EffectValue::Choice(c)) => *c,
                 _ => 0,
             };
             let fstop = (e.float_at("fstop", lt).unwrap_or(2.8) as f32).clamp(0.7, 32.0);
             let quality = match e.param("quality") {
                 Some(EffectValue::Choice(c)) => (*c).min(3),
                 _ => 1,
+            };
+            let background = match e.param("background") {
+                Some(EffectValue::Choice(c)) => (*c).min(1),
+                _ => 0,
             };
             // Source mode (K-257): Lights resolves as Manual until light
             // layers land (the option is prepared, not wired).
@@ -1177,6 +1182,7 @@ fn resolve_one(
                     threshold_softness,
                     anamorphic,
                     quality,
+                    background,
                     mix,
                 },
             ))

@@ -76,6 +76,12 @@ pub struct LensFlareParams {
     /// 0 Draft, 1 Normal, 2 High, 3 Ultra (ray grid and wavelength count;
     /// Draft renders the flare buffer at half resolution).
     pub quality: u32,
+    /// 0 Transparent (the layer's own alpha carries the flare — today's
+    /// behaviour), 1 Black (the output is made opaque, the flare-element-
+    /// over-black export the Screen/Add workflow wants). Applies only while
+    /// the effect is live: the Intensity-0 / Mix-0 passthroughs stay
+    /// bit-exact whatever this holds.
+    pub background: u32,
     /// 0..1.
     pub mix: f32,
 }
@@ -84,10 +90,10 @@ pub struct LensFlareParams {
 /// scale divisor (docs/08 §3.27's Quality ladder).
 pub fn quality_ladder(quality: u32) -> (u32, u32, u32) {
     match quality {
-        0 => (16, 3, 2),
-        2 => (64, 7, 1),
-        3 => (96, 9, 1),
-        _ => (32, 5, 1),
+        0 => (16, 4, 2),
+        2 => (80, 16, 1),
+        3 => (128, 32, 1),
+        _ => (48, 8, 1),
     }
 }
 
@@ -97,7 +103,7 @@ pub const SENSOR_MM: [f32; 2] = [36.0, 24.0];
 
 /// Baked texture side for the ghost disc and aperture (power of two — the
 /// FFTs need it).
-pub const DISC_RES: u32 = 256;
+pub const DISC_RES: u32 = 512;
 /// Baked starburst sprite side (power of two).
 pub const STARBURST_RES: u32 = 256;
 /// Spectral samples integrated into the starburst bake.
@@ -636,7 +642,7 @@ pub fn lens_of(p: &LensFlareParams) -> &'static LensModel {
 /// Deterministic per-surface coating tuning wavelengths (impl note §1
 /// deviation D2), one cycle per Coating preset (docs/08 §3.27): the pattern
 /// sets the ghost train's colour character. Cycled by surface index.
-const COATING_CYCLES: [&[f32]; 4] = [
+const COATING_CYCLES: [&[f32]; 7] = [
     // Modern multicoat: staggered across the band — varied casts.
     &[440.0, 480.0, 520.0, 560.0, 600.0],
     // Vintage single coat: one tuning everywhere — the uniform amber/magenta
@@ -647,6 +653,14 @@ const COATING_CYCLES: [&[f32]; 4] = [
     &[430.0, 455.0, 480.0],
     // Cool bias: tuned long — blue ghosts.
     &[580.0, 610.0, 640.0],
+    // Amber single coat: uniformly short — the deep amber cast of early
+    // magnesium-fluoride coatings.
+    &[465.0],
+    // Two-tone vintage: alternating short/long — the blue-and-amber pairs
+    // mid-century lenses show.
+    &[480.0, 620.0],
+    // Broad multicoat: six tunings across the whole band — maximum variety.
+    &[420.0, 465.0, 510.0, 555.0, 600.0, 645.0],
 ];
 
 /// The cycle for a stored preset index (unknown values read as Modern).
@@ -848,11 +862,14 @@ pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
     out
 }
 
-/// The probe brightness the auto-exposure gain steers every lens toward
-/// (the cine prime's own measured median under the 5×5 probe, so the
-/// default lens's look defines the scale and every other prescription is
-/// lifted or trimmed to comparable exposure).
-const TARGET_PROBE_E: f32 = 5.0;
+/// The mean flare-buffer brightness the auto-exposure steers every lens
+/// toward, measured by actually rendering the CPU reference at thumbnail
+/// size inside the bake (K-258). Every cheaper proxy tried — per-cell probe
+/// medians, on-sensor probe flux — mispredicted some lens by orders of
+/// magnitude, because ghost energy depends on where a design's caustics
+/// land at the render framing; the closed loop cannot. Calibrated so the
+/// default cine prime keeps its tuned look.
+const TARGET_PROBE_MEAN: f32 = 0.010;
 
 /// Run the full bake for a params bundle — pure, deterministic, CPU-only.
 /// Ghosts are ranked brightest-first by a 5×5 probe trace at a reference
@@ -867,17 +884,14 @@ const TARGET_PROBE_E: f32 = 5.0;
 pub fn bake(p: &LensFlareParams) -> FlareBaked {
     let model = lens_of(p);
     let surfaces = build_surfaces(model, p.coating_preset);
-    // The launch square rides the iris rather than the front element (2.6×
-    // the iris half-height, clamped to 1.6× the front housing): the iris is
-    // what ultimately gates the bundle, so this keeps the grid dense where
-    // rays can actually pass, whatever the front element's size.
+    // The launch square covers the WHOLE front element with margin: side =
+    // 2.3 × its half-height (the clear diameter is 2×, plus 15% so edge rays
+    // exist to vignette). An undersized square is visible in the picture — a
+    // ghost's boundary becomes the square's image instead of the housing's
+    // feathered clip (K-258; the owner's screenshot caught exactly that
+    // rectangle). Rays beyond the housing die cheaply in the trace.
     let front_h = model.surfaces.first().map(|s| s.height_mm).unwrap_or(25.0);
-    let iris_h = model
-        .surfaces
-        .get(model.aperture_index)
-        .map(|s| s.height_mm)
-        .unwrap_or(front_h);
-    let launch_mm = (iris_h.max(1.0) * 2.6).min(front_h.max(1.0) * 1.6);
+    let launch_mm = front_h.max(1.0) * 2.3;
     let mut baked = FlareBaked {
         surfaces,
         aperture_index: model.aperture_index as u32,
@@ -895,7 +909,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
     let cell_mm = baked.launch_mm / (PROBE - 1) as f32;
     let cell_area = cell_mm * cell_mm;
     let min_area = MIN_AREA_FRAC * cell_area;
-    let mut ranked: Vec<([u32; 2], f32)> = ghosts
+    let mut ranked: Vec<([u32; 2], f32, f32)> = ghosts
         .iter()
         .map(|&g| {
             let mut rays = [[TracedRay {
@@ -917,7 +931,14 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
                     );
                 }
             }
+            // Only cells that LAND ON THE SENSOR count (with a small
+            // margin): a ghost can carry bright probe cells that never reach
+            // the frame and would otherwise read as exposure it does not
+            // deliver (K-258 — the Petzval did exactly that).
+            let sensor_reach =
+                (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt() / 2.0 * 1.2;
             let mut energies: Vec<f32> = Vec::new();
+            let mut flux = 0.0_f32;
             for cy in 0..(PROBE - 1) as usize {
                 for cx in 0..(PROBE - 1) as usize {
                     let c = [
@@ -933,7 +954,17 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
                         let a0 = e(c[0].pos_mm, c[1].pos_mm, c[2].pos_mm);
                         let a1 = e(c[0].pos_mm, c[2].pos_mm, c[3].pos_mm);
                         let area = ((a0 + a1) / 2.0).abs().max(min_area);
-                        energies.push(cell_area / area);
+                        let centre_x =
+                            (c[0].pos_mm[0] + c[1].pos_mm[0] + c[2].pos_mm[0] + c[3].pos_mm[0])
+                                / 4.0;
+                        let centre_y =
+                            (c[0].pos_mm[1] + c[1].pos_mm[1] + c[2].pos_mm[1] + c[3].pos_mm[1])
+                                / 4.0;
+                        if (centre_x * centre_x + centre_y * centre_y).sqrt() <= sensor_reach {
+                            let en = cell_area / area;
+                            energies.push(en);
+                            flux += en;
+                        }
                     }
                 }
             }
@@ -943,7 +974,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
             } else {
                 0.0
             };
-            (g, brightness)
+            (g, brightness, flux)
         })
         .collect();
     // Descending brightness; ties by pair order (deterministic).
@@ -952,19 +983,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
-    // Auto exposure from the top ghosts' median brightness.
-    let top: Vec<f32> = ranked
-        .iter()
-        .take(24)
-        .map(|r| r.1)
-        .filter(|b| *b > 0.0)
-        .collect();
-    baked.energy_gain = if top.is_empty() {
-        1.0
-    } else {
-        (TARGET_PROBE_E / top[top.len() / 2]).clamp(0.02, 200.0)
-    };
-    baked.ghosts = ranked.into_iter().map(|(g, _)| g).collect();
+    baked.ghosts = ranked.into_iter().map(|(g, _, _)| g).collect();
 
     let aperture = bake_aperture(p, DISC_RES);
     baked.disc = bake_ghost_disc(&aperture, DISC_RES, p.fstop);
@@ -974,6 +993,44 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         bake_aperture(p, STARBURST_RES)
     };
     baked.starburst = bake_starburst(&sb_aperture, STARBURST_RES);
+
+    // Closed-loop auto exposure (K-258): render the reference thumbnail with
+    // gain 1 at FIXED frame-time settings — only bake-key inputs may steer
+    // the gain, or animating a frame-time dial would rebake — and normalise
+    // the mean to the target. Deterministic, and a few milliseconds.
+    baked.energy_gain = 1.0;
+    let probe_frame = LensFlareParams {
+        light: [0.33, 0.30],
+        intensity: 1.0,
+        lens: p.lens,
+        fstop: p.fstop,
+        blades: p.blades,
+        aperture_rotation_deg: p.aperture_rotation_deg,
+        roundness: p.roundness,
+        aperture_softness: p.aperture_softness,
+        ghost_intensity: 1.0,
+        max_ghosts: 32,
+        dispersion: 1.0,
+        coating: 0.6,
+        starburst_intensity: 0.0,
+        scale: 1.0,
+        coating_preset: p.coating_preset,
+        source: 0,
+        threshold: 1.0,
+        threshold_softness: 0.25,
+        anamorphic: 1.0,
+        quality: 0,
+        background: 0,
+        mix: 1.0,
+    };
+    let (pw, ph) = (96u32, 54u32);
+    let thumb = cpu_flare(&probe_frame, &baked, pw, ph, &manual_light(&probe_frame));
+    let mean: f32 = thumb.iter().sum::<f32>() / thumb.len().max(1) as f32;
+    baked.energy_gain = if mean > 1e-9 {
+        (TARGET_PROBE_MEAN / mean).clamp(0.02, 400.0)
+    } else {
+        1.0
+    };
     baked
 }
 
@@ -1399,6 +1456,13 @@ pub fn cpu_combine(
             rgba[i + 1] = o[1] * (1.0 - p.mix) + flared[1] * p.mix;
             rgba[i + 2] = o[2] * (1.0 - p.mix) + flared[2] * p.mix;
             rgba[i + 3] = o[3] * (1.0 - p.mix) + flared[3] * p.mix;
+            // Black background (K-258): the output is made opaque — laying
+            // the premultiplied result over black changes nothing but alpha.
+            // Only while live: the Intensity-0/Mix-0 early return above keeps
+            // the passthroughs bit-exact.
+            if p.background == 1 {
+                rgba[i + 3] = 1.0;
+            }
         }
     }
 }

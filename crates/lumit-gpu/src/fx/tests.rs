@@ -2937,6 +2937,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         threshold_softness: 0.25,
         anamorphic: 1.0,
         quality: 0,
+        background: 0,
         mix: 1.0,
     }
 }
@@ -2969,6 +2970,7 @@ fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> 
         source: p.source,
         threshold: p.threshold,
         threshold_softness: p.threshold_softness,
+        background: p.background,
         mix: p.mix,
         bake_key: lf::bake_key(p),
     }
@@ -3057,6 +3059,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
             let mut pos_errs: Vec<f32> = Vec::new();
             let mut uv_errs: Vec<f32> = Vec::new();
             let mut rrel_errs: Vec<f32> = Vec::new();
+            let mut refl_errs: Vec<f32> = Vec::new();
             let mut worst_pos = 0.0f32;
             let mut worst_uv = 0.0f32;
             let mut worst_rrel = 0.0f32;
@@ -3093,8 +3096,9 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
                         // sensitive, and a 3e-4 absolute wobble on a 1e-6
                         // reflectance is invisible (the frame oracle guards
                         // the picture).
-                        worst_refl_rel = worst_refl_rel
-                            .max((g[5] - c.reflectance).abs() / c.reflectance.max(2e-2));
+                        let refl_err = (g[5] - c.reflectance).abs() / c.reflectance.max(2e-2);
+                        refl_errs.push(refl_err);
+                        worst_refl_rel = worst_refl_rel.max(refl_err);
                     }
                 }
             }
@@ -3127,10 +3131,16 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
                 rrel_p99 < 0.02,
                 "p99 rrel error {rrel_p99} (worst {worst_rrel})"
             );
+            // Reflectance at the tail only: the coating formula's tan() poles
+            // make single grazing rays hugely sensitive (the same fold story
+            // as position), and the wider K-258 launch square traces more of
+            // them.
+            let refl_p99 = p99(&mut refl_errs);
             assert!(
-                worst_refl_rel < 0.1,
-                "worst reflectance error {worst_refl_rel}"
+                refl_p99 < 0.05,
+                "p99 reflectance error {refl_p99} (worst {worst_refl_rel})"
             );
+
             let flip_rate = mismatched_liveness as f32 / total.max(1) as f32;
             assert!(
                 flip_rate < 0.01,

@@ -4943,6 +4943,74 @@ fn lens_flare_cpu_reference_renders_energy_and_reacts_to_the_light() {
     assert_ne!(a, b, "the flare must follow the light");
 }
 
+// Forward migration (K-258): a built-in instance saved before its schema
+// grew a parameter gains it at the default on load — the panel had been
+// drawing a dash and set_value refusing the id.
+#[test]
+fn lens_flare_backfill_restores_missing_params() {
+    let mut inst = instantiate("lens_flare").unwrap();
+    // Simulate a pre-K-257 save: strip the params that pass added.
+    inst.params.retain(|p| {
+        !matches!(
+            p.id.as_str(),
+            "coating_preset" | "source_type" | "background"
+        )
+    });
+    assert!(inst.params.iter().all(|p| p.id != "source_type"));
+    let mut effects = vec![inst];
+    backfill_builtin_params(&mut effects);
+    let inst = &effects[0];
+    for id in ["coating_preset", "source_type", "background"] {
+        assert!(
+            inst.params.iter().any(|p| p.id == id),
+            "{id} must be backfilled"
+        );
+    }
+    // Present values are never touched, and a second pass is a no-op.
+    let count = inst.params.len();
+    backfill_builtin_params(&mut effects);
+    assert_eq!(effects[0].params.len(), count);
+}
+
+// Background (K-258): Black makes the live output opaque and changes nothing
+// else; the Intensity-0 passthrough stays bit-exact whatever it holds.
+#[test]
+fn lens_flare_black_background_sets_alpha_only_while_live() {
+    use crate::fx::lens_flare::*;
+    let p = LensFlareParams {
+        background: 1,
+        ..default_flare_params()
+    };
+    let baked = bake(&p);
+    let (w, h) = (8u32, 6u32);
+    let src: Vec<f32> = (0..(w * h * 4) as usize)
+        .map(|i| (i % 13) as f32 / 24.0)
+        .collect();
+    let flare = vec![0.25f32; (w * h * 3) as usize];
+    let lights = manual_light(&p);
+
+    let mut black = src.clone();
+    cpu_combine(&mut black, w, h, &p, &baked, &flare, w, h, &lights);
+    let mut transparent = src.clone();
+    let pt = LensFlareParams { background: 0, ..p };
+    cpu_combine(&mut transparent, w, h, &pt, &baked, &flare, w, h, &lights);
+    for i in 0..(w * h) as usize {
+        assert_eq!(black[i * 4 + 3], 1.0, "alpha must be opaque");
+        for c in 0..3 {
+            assert_eq!(black[i * 4 + c], transparent[i * 4 + c], "rgb untouched");
+        }
+    }
+
+    // Neutral points ignore the background: bit-exact passthrough.
+    let mut neutral = src.clone();
+    let p0 = LensFlareParams {
+        intensity: 0.0,
+        ..p
+    };
+    cpu_combine(&mut neutral, w, h, &p0, &baked, &flare, w, h, &lights);
+    assert_eq!(neutral, src);
+}
+
 /// The documented drop-on defaults, shared by the lens flare tests.
 fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
     crate::fx::lens_flare::LensFlareParams {
@@ -4966,6 +5034,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         threshold_softness: 0.25,
         anamorphic: 1.0,
         quality: 1,
+        background: 0,
         mix: 1.0,
     }
 }

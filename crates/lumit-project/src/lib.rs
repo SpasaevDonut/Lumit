@@ -292,6 +292,18 @@ pub fn open(path: &Path) -> Result<(Document, Manifest), ProjectError> {
             _ => serde_json::from_str(&s)?,
         }
     };
+    let mut doc = doc;
+    // Forward-migrate effect stacks (K-258): a built-in whose schema grew
+    // since this file was saved gains the new parameters at their defaults,
+    // so the panel has values to draw and edits have ids to write.
+    for item in &mut doc.items {
+        if let lumit_core::model::ProjectItem::Composition(comp) = item {
+            for layer in &mut comp.layers {
+                lumit_core::fx::backfill_builtin_params(&mut layer.effects);
+            }
+        }
+    }
+
     Ok((doc, manifest))
 }
 
