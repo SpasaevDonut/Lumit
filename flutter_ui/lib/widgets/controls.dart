@@ -133,11 +133,19 @@ class MenuRow extends StatefulWidget {
   final Widget child;
   final VoidCallback onPressed;
   final bool selected;
+
+  /// What this row calls itself in its surface's hover state, for the rows that
+  /// have to know which of them the pointer is over. Defaults to the row's own
+  /// state; [SubmenuRow] passes its own, because the flyout belongs to the
+  /// submenu row rather than to the plain row it draws itself with.
+  final Object? hoverId;
+
   const MenuRow({
     super.key,
     required this.child,
     required this.onPressed,
     this.selected = false,
+    this.hoverId,
   });
 
   @override
@@ -157,7 +165,12 @@ class _MenuRowState extends State<MenuRow> {
             : null;
     return MouseRegion(
       cursor: SystemMouseCursors.click,
-      onEnter: (_) => setState(() => _hover = true),
+      onEnter: (_) {
+        setState(() => _hover = true);
+        // Tell the surface which row the pointer is on, so a submenu that is
+        // out can take itself back when the pointer moves to another row.
+        FloatSurface.hoveredRow(context)?.value = widget.hoverId ?? this;
+      },
       onExit: (_) => setState(() => _hover = false),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
@@ -177,26 +190,62 @@ class _MenuRowState extends State<MenuRow> {
 
 /// The floating popup surface every menu and dropdown shares: `surface3`
 /// fill, hairline edge, the float radius and the real drop shadow.
-class FloatSurface extends StatelessWidget {
+///
+/// It also carries the surface's hover state — which of its rows the pointer is
+/// over — because opening a flyout is one row's business and closing it again is
+/// every other row's (see [SubmenuRow]). Scoped to the surface, so the rows of a
+/// flyout never disturb the menu the flyout came from.
+class FloatSurface extends StatefulWidget {
   final Widget child;
   final double? width;
   const FloatSurface({super.key, required this.child, this.width});
 
+  /// The row of the nearest floating surface the pointer is on, or null outside
+  /// one, where no menu is being drawn.
+  static ValueNotifier<Object?>? hoveredRow(BuildContext context) =>
+      context.getInheritedWidgetOfExactType<_MenuHoverScope>()?.hovered;
+
+  @override
+  State<FloatSurface> createState() => _FloatSurfaceState();
+}
+
+class _FloatSurfaceState extends State<FloatSurface> {
+  final _hovered = ValueNotifier<Object?>(null);
+
+  @override
+  void dispose() {
+    _hovered.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return Container(
-      width: width,
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: t.surface3,
-        borderRadius: BorderRadius.circular(t.tokens.floatRadius),
-        border: Border.all(color: t.hairline, width: 1),
-        boxShadow: t.floatShadow,
+    return _MenuHoverScope(
+      hovered: _hovered,
+      child: Container(
+        width: widget.width,
+        padding: const EdgeInsets.all(6),
+        decoration: BoxDecoration(
+          color: t.surface3,
+          borderRadius: BorderRadius.circular(t.tokens.floatRadius),
+          border: Border.all(color: t.hairline, width: 1),
+          boxShadow: t.floatShadow,
+        ),
+        child: widget.child,
       ),
-      child: child,
     );
   }
+}
+
+class _MenuHoverScope extends InheritedWidget {
+  final ValueNotifier<Object?> hovered;
+
+  const _MenuHoverScope({required this.hovered, required super.child});
+
+  // The notifier itself never changes; the rows listen to it directly.
+  @override
+  bool updateShouldNotify(_MenuHoverScope old) => false;
 }
 
 /// A dropdown drawn as a bare label + caret; the open list floats on the
@@ -724,7 +773,14 @@ class _HouseTextFieldState extends State<HouseTextField> {
 /// first would take this row's `BuildContext` with it, and the overlay the
 /// submenu needs is reached *through* that context. Picking something in the
 /// submenu dismisses both.
-class SubmenuRow extends StatelessWidget {
+///
+/// **Hovering is enough.** Resting on the row flies the submenu out and moving
+/// on to another row of the same menu takes it back, which is how every menu on
+/// every desktop behaves; clicking still works for anyone who clicks. The row
+/// cannot see the pointer leave for a sibling — the flyout's own barrier is in
+/// the way — so it watches the surface's hover state instead ([FloatSurface]),
+/// which the sibling sets when the pointer arrives on it.
+class SubmenuRow extends StatefulWidget {
   final Widget child;
 
   /// Closes the menu this row belongs to.
@@ -742,32 +798,85 @@ class SubmenuRow extends StatelessWidget {
   });
 
   @override
+  State<SubmenuRow> createState() => _SubmenuRowState();
+}
+
+class _SubmenuRowState extends State<SubmenuRow> {
+  ValueNotifier<Object?>? _hovered;
+
+  /// True from the moment the flyout is asked for; [_close] arrives a frame
+  /// later, when the overlay builds it.
+  bool _out = false;
+  VoidCallback? _close;
+
+  @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    return Builder(
-      builder: (rowContext) => MenuRow(
-        onPressed: () {
-          final box = rowContext.findRenderObject();
-          if (box is! RenderBox) return;
-          // Beside the row, overlapping it slightly, the way a flyout sits.
-          final at = box.localToGlobal(Offset(box.size.width - 6, -4));
-          showLumitPopup<void>(
-            context: rowContext,
-            position: at,
-            builder: (close) => submenu(() {
-              close(null);
-              closeParent();
-            }),
-          );
-        },
-        child: Row(
-          children: [
-            Expanded(child: child),
-            Text('›', style: t.body.copyWith(color: t.textMuted)),
-          ],
-        ),
+    final hovered = FloatSurface.hoveredRow(context);
+    if (hovered != _hovered) {
+      _hovered?.removeListener(_hoverMoved);
+      _hovered = hovered?..addListener(_hoverMoved);
+    }
+    return MenuRow(
+      hoverId: this,
+      onPressed: _open,
+      child: Row(
+        children: [
+          Expanded(child: widget.child),
+          Text('›', style: t.body.copyWith(color: t.textMuted)),
+        ],
       ),
     );
+  }
+
+  void _hoverMoved() {
+    if (_hovered?.value == this) {
+      _open();
+    } else {
+      _out = false;
+      _close?.call();
+      _close = null;
+    }
+  }
+
+  void _open() {
+    if (_out) return;
+    final box = context.findRenderObject();
+    if (box is! RenderBox) return;
+    // Beside the row, overlapping it slightly, the way a flyout sits.
+    final at = box.localToGlobal(Offset(box.size.width - 6, -4));
+    _out = true;
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      // So the menu underneath still feels the pointer: moving to another row
+      // is what takes this flyout back.
+      hoverThrough: true,
+      builder: (close) {
+        _close = () => close(null);
+        return widget.submenu(() {
+          close(null);
+          widget.closeParent();
+        });
+      },
+    ).then((_) {
+      _out = false;
+      _close = null;
+    });
+  }
+
+  @override
+  void dispose() {
+    _hovered?.removeListener(_hoverMoved);
+    // The menu this row belongs to has gone (another heading took over, say);
+    // its flyout goes with it rather than being left behind. After the frame,
+    // because removing an overlay entry sets the overlay's state and this is
+    // the middle of a tear-down.
+    final close = _close;
+    if (close != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => close());
+    }
+    super.dispose();
   }
 }
 
@@ -775,6 +884,11 @@ Future<T?> showLumitPopup<T>({
   required BuildContext context,
   required Offset position,
   required Widget Function(void Function(T?) close) builder,
+  // Whether what is underneath still feels the pointer while this popup is up.
+  // Menus want it — hovering another heading or another row is how a menu is
+  // navigated — and nothing else does: a dropdown that let the panel behind it
+  // light up under the pointer would be answering to a click it will not get.
+  bool hoverThrough = false,
 }) {
   final overlay = Overlay.of(context);
   final completer = Completer<T?>();
@@ -795,8 +909,13 @@ Future<T?> showLumitPopup<T>({
       builder: (context, constraints) => Stack(
         children: [
           Positioned.fill(
+            // Translucent still takes the click — it is above whatever it
+            // covers, so it wins the gesture arena — but lets hover through to
+            // the menu bar and to the menu this one flew out of.
             child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
+              behavior: hoverThrough
+                  ? HitTestBehavior.translucent
+                  : HitTestBehavior.opaque,
               onTap: () => close(null),
               onSecondaryTap: () => close(null),
             ),
