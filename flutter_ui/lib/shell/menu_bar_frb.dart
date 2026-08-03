@@ -953,6 +953,15 @@ class _PaletteHotkeyState extends State<_PaletteHotkey> {
   }
 }
 
+/// The heading whose menu is up, and the handle that takes it down.
+///
+/// While one menu is open the bar is *in menus*: crossing another heading hands
+/// over to it rather than making the user click a second time, which is how the
+/// bar behaves in every application these menus sit beside. One pair for the
+/// whole bar, because only one menu is ever open.
+String? _openHeading;
+VoidCallback? _closeHeading;
+
 class _MenuButton extends StatelessWidget {
   final String title;
   final List<MenuEntry> items;
@@ -960,12 +969,19 @@ class _MenuButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return HouseButton(
-      key: ValueKey<String>('menu-$title'),
-      frameless: true,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      onPressed: () => _open(context),
-      child: Text(title),
+    return MouseRegion(
+      // Only once a menu is already open: hovering the bar with nothing open
+      // must not start dropping menus at a passing pointer.
+      onEnter: (_) {
+        if (_openHeading != null && _openHeading != title) _open(context);
+      },
+      child: HouseButton(
+        key: ValueKey<String>('menu-$title'),
+        frameless: true,
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        onPressed: () => _open(context),
+        child: Text(title),
+      ),
     );
   }
 
@@ -973,11 +989,52 @@ class _MenuButton extends StatelessWidget {
     final box = context.findRenderObject();
     if (box is! RenderBox) return;
     final origin = box.localToGlobal(Offset(0, box.size.height));
+    _closeHeading?.call();
+    _openHeading = title;
     showLumitPopup<void>(
       context: context,
       position: origin,
-      builder: (close) => _MenuList(items: items, close: () => close(null)),
+      // The bar underneath has to keep feeling the pointer; that is the whole
+      // mechanism of handing over to the next heading.
+      hoverThrough: true,
+      builder: (close) {
+        if (_openHeading == title) _closeHeading = () => close(null);
+        return _OpenMenu(
+          title: title,
+          child: _MenuList(items: items, close: () => close(null)),
+        );
+      },
     );
+  }
+}
+
+/// The open menu itself, which forgets it is open when it goes.
+///
+/// Told by disposal rather than by the close call, so a menu that goes with its
+/// window — a test ending, a reload — leaves the bar out of menus too, rather
+/// than with a heading it thinks is still open.
+class _OpenMenu extends StatefulWidget {
+  final String title;
+  final Widget child;
+  const _OpenMenu({required this.title, required this.child});
+
+  @override
+  State<_OpenMenu> createState() => _OpenMenuState();
+}
+
+class _OpenMenuState extends State<_OpenMenu> {
+  @override
+  Widget build(BuildContext context) => widget.child;
+
+  @override
+  void dispose() {
+    // Not if another heading has already taken over: this menu's disposal
+    // arrives a frame after the one that replaced it opened.
+    if (_openHeading == widget.title) {
+      _openHeading = null;
+      _closeHeading = null;
+    }
+    super.dispose();
   }
 }
 

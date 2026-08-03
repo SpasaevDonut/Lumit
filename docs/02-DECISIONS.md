@@ -5097,3 +5097,26 @@ every marker to `MarkerKind::User`, so dragging a marker turns detected beats in
 cues and *Clear beat markers* stops finding them. That was already true of the dialogue's
 remove button and is not made worse here, but it is now much easier to hit — it wants a
 kind carried across the bridge.
+
+**K-255 · DECIDED · Menus navigate by hover, and the barrier stops blocking the pointer.**
+K-194 gave the menus submenus and left every one of them behind a click: with File open,
+reaching Window meant dismissing File and clicking Window, and a submenu — Open recent,
+Layer ▸ New, an Effect category — only appeared when its row was clicked. Every desktop menu
+bar these sit beside hands over on hover once a menu is open, and flies a submenu out under
+the resting pointer. The obstacle was `showLumitPopup`'s full-window barrier: `HitTestBehavior
+.opaque` swallowed hover as well as clicks, so neither the bar nor the menu underneath ever
+felt the pointer move. Menus now pass `hoverThrough: true`, which makes that barrier
+*translucent* — it still wins the click, being above what it covers, but the pointer reaches
+through. Only menus opt in: a dropdown that let the panel behind it light up under the pointer
+would be answering to a click it will never get. Two pieces of state follow. The bar keeps one
+`_openHeading`/`_closeHeading` pair (only one menu is ever open) and clears it on the open
+menu's *disposal* rather than on its close call, so a menu that goes with its window leaves the
+bar out of menus too. Each `FloatSurface` carries the hovered row of its own surface, because
+the row that flies a submenu out is never the row that has to take it back — the sibling the
+pointer moves to is — and scoping it to the surface keeps a flyout's own rows from disturbing
+the menu it came from. Regression tests: the two hover tests in `menu_bar_frb_test.dart`.
+
+The same pass made the Keymap page's clash test wait for the engine rather than for luck: the
+rebind it makes before opening the page is an frb call onto the worker thread, not done when
+it returns, and the Linux runner built the banner before the clash existed. It now settles on
+`keymapConflicts()` first. A test that passes because the machine is quick is not passing.

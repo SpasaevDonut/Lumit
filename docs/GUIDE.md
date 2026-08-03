@@ -5351,6 +5351,18 @@ you rebind Save in Settings ▸ Keymap, the menu changes to match without anyone
 a menu can never teach you a shortcut that does nothing, because the same table answers both the
 menu and the keyboard.
 
+**Menus follow the pointer.** Once a menu is open, the bar is *in menus*: sliding across to
+Window or Effect swaps to that menu without another click, and resting on a row that has a
+submenu — Open recent, Layer ▸ New, an Effect category — flies it out, then takes it back when
+you move on to another row. Clicking still does everything it did.
+
+Getting that to work took one small trick worth knowing about. An open menu covers the whole
+window with an invisible sheet, which is what catches a click anywhere else and closes the menu.
+That sheet also swallowed the *pointer*, so the menu bar underneath never felt it move. Menus now
+use a sheet that still takes the click but lets hovering through, and each floating menu keeps
+track of which of its rows the pointer is on — because the row that opens a submenu is never the
+row that has to close it again.
+
 **Closing a panel is just rearranging.** The Window menu lists every panel with a tick beside
 it. Ticking one off does not set a "hidden" flag anywhere; it takes the panel out of the
 workspace arrangement, which is the thing Lumit already saves to disk when you drag panels

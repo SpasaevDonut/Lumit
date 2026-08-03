@@ -16,6 +16,7 @@
 
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
@@ -697,6 +698,85 @@ void main() {
       await tester.tap(find.text('Open recent'));
       await tester.pump();
       expect(find.text('C:/projects/yesterday.lum'), findsOneWidget);
+    });
+
+    /// A pointer that can hover, for the two tests below. The menus are driven
+    /// by hover as much as by clicks, and a test's synthetic taps carry no
+    /// pointer at all unless one is added.
+    Future<TestGesture> mouse(WidgetTester tester) async {
+      final gesture =
+          await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      return gesture;
+    }
+
+    /// **Once a menu is open the bar is in menus.** Crossing another heading
+    /// hands over to it, rather than leaving the first menu up until it is
+    /// clicked away and the second one clicked open.
+    testWidgets('a heading hands over to the next one on hover', (tester) async {
+      await mount(tester);
+      final pointer = await mouse(tester);
+
+      // Nothing open: the bar is inert under a passing pointer.
+      await pointer
+          .moveTo(tester.getCenter(find.byKey(const ValueKey('menu-Edit'))));
+      await tester.pump();
+      expect(find.text('Redo'), findsNothing,
+          reason: 'hover alone must not start dropping menus');
+
+      // Onto the heading being clicked, the way a real pointer arrives: the
+      // handover is an *arrival* on a heading, and a pointer that never left
+      // Edit has not arrived anywhere.
+      await pointer
+          .moveTo(tester.getCenter(find.byKey(const ValueKey('menu-File'))));
+      await tester.tap(find.byKey(const ValueKey<String>('menu-File')));
+      await tester.pump();
+      expect(find.text('Open recent'), findsOneWidget);
+
+      await pointer
+          .moveTo(tester.getCenter(find.byKey(const ValueKey('menu-Edit'))));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('Redo'), findsOneWidget, reason: 'Edit took over');
+      expect(find.text('Open recent'), findsNothing,
+          reason: 'and File went with it');
+
+      await dismiss(tester);
+      await pointer
+          .moveTo(tester.getCenter(find.byKey(const ValueKey('menu-Layer'))));
+      await tester.pump();
+      expect(find.text('Pre-compose…'), findsNothing,
+          reason: 'dismissed means out of menus again');
+    });
+
+    /// A submenu flies out under the pointer and takes itself back when the
+    /// pointer moves on to another row — Open recent here, the Effect
+    /// categories by the same mechanism.
+    testWidgets('a submenu opens on hover and closes when you move off',
+        (tester) async {
+      final p = await mount(tester);
+      p.uiState.workspace.rememberProject('C:/projects/yesterday.lum');
+      p.state.notifyDocumentChanged();
+      await tester.pump();
+      final pointer = await mouse(tester);
+
+      await tester.tap(find.byKey(const ValueKey<String>('menu-File')));
+      await tester.pump();
+
+      await pointer.moveTo(tester.getCenter(find.text('Open recent')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('C:/projects/yesterday.lum'), findsOneWidget,
+          reason: 'resting on the row is enough to see what is behind it');
+
+      await pointer.moveTo(tester.getCenter(find.text('Save')));
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('C:/projects/yesterday.lum'), findsNothing,
+          reason: 'the flyout goes back when another row takes the pointer');
+      expect(find.text('Open recent'), findsOneWidget,
+          reason: 'the menu it flew out of is still up');
     });
   }, skip: !engineAvailable);
 }
