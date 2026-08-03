@@ -77,6 +77,12 @@ core-foundation = { version = "0.9", optional = true }
 [dev-dependencies]
 # The CPU oracle the WGSL kernels are held to (docs/08 §1.6).
 lumit-core = { path = "../lumit-core" }
+# The shader front end wgpu itself is built on, used by tests/wgsl_validates.rs
+# to parse and validate every kernel WITHOUT a graphics card (K-263) — until
+# that test existed, a broken shader could only be caught by a machine with a
+# GPU, at pipeline-creation time. Pinned to wgpu 24's own naga so the two agree
+# about what is valid.
+naga = { version = "24", features = ["wgsl-in"] }
 # The walking-skeleton proof that the eval executor drives these kernels
 # through the 05 §1.1 trait seams (tests/exec_skeleton.rs). Dev-only: the
 # production dependency direction stays eval-independent-of-gpu.

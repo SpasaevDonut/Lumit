@@ -3038,6 +3038,264 @@ fn lens_flare_pair_grid_mirrors_lumit_core() {
     }
 }
 
+/// The frame's dispatch plan covers every combo exactly once, for every
+/// light, and no batch's scratch passes the budget (K-263).
+///
+/// The budget is the whole point: a batch that overran it is the
+/// hundred-megabyte allocation a frame used to make at Ultra across eight
+/// matte sources, and "allocate what the settings ask for" is how a flare
+/// ends up taking the graphics device down with it.
+#[test]
+fn lens_flare_batches_cover_every_combo_within_the_scratch_budget() {
+    use crate::fx::lens_flare::{plan_batches, CELL_BYTES, RAY_BYTES, SCRATCH_BYTE_BUDGET};
+    // Grid-major tables as the frame builds them, including the worst case
+    // (every combo at the widest grid) and a mixed one.
+    let tables: Vec<Vec<u32>> = vec![
+        vec![32; 480],
+        vec![64; 8],
+        {
+            let mut t = vec![32u32; 300];
+            t.extend(std::iter::repeat_n(64u32, 120));
+            t.extend(std::iter::repeat_n(160u32, 60));
+            t
+        },
+        vec![256; 40],
+        vec![8; 1],
+    ];
+    for lights in [1u32, 8] {
+        for table in &tables {
+            let plan = plan_batches(table, lights);
+            // Every (combo, light) appears exactly once.
+            let mut seen = vec![0u32; table.len() * lights as usize];
+            for b in &plan {
+                assert_eq!(
+                    b.grid, table[b.combo_offset as usize],
+                    "a batch must dispatch at its combos' own grid"
+                );
+                let rays = u64::from(b.grid) * u64::from(b.grid);
+                let quads = u64::from(b.grid - 1) * u64::from(b.grid - 1);
+                let slots = u64::from(b.lights) * u64::from(b.combos);
+                assert_eq!(b.ray_bytes, slots * rays * RAY_BYTES);
+                assert_eq!(b.vert_bytes, slots * quads * CELL_BYTES);
+                assert!(
+                    b.ray_bytes + b.vert_bytes <= SCRATCH_BYTE_BUDGET,
+                    "batch at grid {} × {} combos × {} lights wants {} bytes",
+                    b.grid,
+                    b.combos,
+                    b.lights,
+                    b.ray_bytes + b.vert_bytes
+                );
+                for c in b.combo_offset..b.combo_offset + b.combos {
+                    assert_eq!(
+                        table[c as usize], b.grid,
+                        "a batch may not straddle two grids"
+                    );
+                    for l in b.light_offset..b.light_offset + b.lights {
+                        seen[c as usize * lights as usize + l as usize] += 1;
+                    }
+                }
+            }
+            assert!(
+                seen.iter().all(|&n| n == 1),
+                "every combo × light renders exactly once (lights {lights}, grids {:?}…)",
+                &table[..table.len().min(3)]
+            );
+        }
+    }
+}
+
+/// What one default-settings flare frame costs, printed. Not a gate — the
+/// number is whatever the machine running it can do, and CI runs on
+/// everything from a software rasteriser to a workstation card — so it is
+/// `#[ignore]`d and run by hand:
+///
+/// ```text
+/// cargo test -p lumit-gpu --release lens_flare_frame_cost -- --ignored --nocapture
+/// ```
+///
+/// It exists because "the flare is faster now" is the sort of claim that
+/// rots quietly. Run it before and after a change to the pipeline.
+#[test]
+#[ignore = "a measurement, not a gate: prints a time, asserts nothing"]
+fn lens_flare_frame_cost() {
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (960u32, 540u32);
+    let img = corpus(w, h);
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    // The shipped defaults (docs/08 §3.27): Normal quality, 60 ghosts.
+    let p = lf::LensFlareParams {
+        light: [317.0, 162.0],
+        max_ghosts: 60,
+        quality: 1,
+        ..flare_params()
+    };
+    let op = flare_op(&p, w, h);
+    let data = flare_bake_data(&p);
+    // Warm: shader compilation and the bake upload are one-off costs.
+    let warm = fx.lens_flare(&ctx, &tex, w, h, &op, None, &|| data.clone());
+    drop(readback_linear_f32(&ctx, &warm, w, h));
+    let runs = 3;
+    let started = std::time::Instant::now();
+    for _ in 0..runs {
+        let out = fx.lens_flare(&ctx, &tex, w, h, &op, None, &|| data.clone());
+        // Read back so the timing includes the card finishing the work.
+        drop(readback_linear_f32(&ctx, &out, w, h));
+    }
+    let each = started.elapsed() / runs;
+    eprintln!("lens flare {w}×{h} Normal/60 ghosts: {each:?} per frame");
+}
+
+/// The Ghost blur agrees with the CPU reference at a radius wide enough to
+/// span several of the line cache's tiles (K-263).
+///
+/// The frame oracle cannot cover this: its small test frame puts the default
+/// Ghost softness at a radius of zero, so the blur is skipped entirely. This
+/// one uses a frame large enough for a radius in the tens of pixels, which is
+/// where the cache's halo — the 2r texels a tile needs beyond its own 64 —
+/// either lines up with the direct loop's clamped reads or does not.
+#[test]
+fn wgsl_lens_flare_ghost_blur_matches_the_cpu_reference() {
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping WGSL parity test");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    // Big enough that the flare buffer is many tiles wide and the blur radius
+    // is a real one; few enough ghosts that it stays a quick test.
+    let (w, h) = (768u32, 432u32);
+    let p = lf::LensFlareParams {
+        light: [380.0, 130.0],
+        ghost_softness: 2.0,
+        max_ghosts: 3,
+        ..flare_params()
+    };
+    let (_, _, div) = lf::quality_ladder(p.quality);
+    let (fw, fh) = ((w / div).max(1), (h / div).max(1));
+    let radius = lf::ghost_blur_radius(p.ghost_softness, fw, fh);
+    assert!(
+        radius >= 8,
+        "the test frame must produce a multi-tile blur radius, got {radius}"
+    );
+
+    let img = corpus(w, h);
+    let baked = lf::bake(&p);
+    let op = flare_op(&p, w, h);
+    let lights = lf::manual_light(&p, w, h);
+    let flare = lf::cpu_flare(&p, &baked, fw, fh, &lights);
+    let mut cpu = img.clone();
+    lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh, &lights);
+
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    let out = fx.lens_flare(&ctx, &tex, w, h, &op, None, &|| flare_bake_data(&p));
+    let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+    let added: f32 = gpu
+        .iter()
+        .zip(&img)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / (w * h) as f32;
+    assert!(added > 1e-4, "the blurred flare adds no energy: {added}");
+    let mean: f32 = cpu
+        .iter()
+        .zip(&gpu)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / cpu.len() as f32;
+    let worst = cpu
+        .iter()
+        .zip(&gpu)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0f32, f32::max);
+    // Tighter than the frame oracle's 2e-3 ON PURPOSE. A blur that reads the
+    // wrong texels — a tile that forgets its halo, an off-by-r cache index —
+    // shifts a soft, dim wash a little sideways, and the frame bound does not
+    // notice: measured, dropping the halo entirely left the mean at 8.5e-4,
+    // comfortably inside 2e-3. These bounds sit about three times above what
+    // the correct kernel produces and three times below what that break did,
+    // so they hold across cards and still fail the break.
+    assert!(
+        mean < 2.5e-4,
+        "mean |Δ| {mean} at blur radius {radius} (added {added})"
+    );
+    assert!(worst < 3e-3, "worst |Δ| {worst} at blur radius {radius}");
+}
+
+/// A heavy frame is handed to the card in several submissions, and a light
+/// one in exactly one (K-263).
+///
+/// This is the guard against the failure the owner hit: a submission long
+/// enough for the operating system's watchdog to kill does not cost a frame,
+/// it costs the device — after which the Viewer is frozen for the rest of the
+/// session and re-opening the project does not help.
+#[test]
+fn lens_flare_splits_a_heavy_frame_into_several_submissions() {
+    use crate::fx::lens_flare::{plan_batches, plan_flushes, STEPS_PER_SUBMIT};
+    let surfaces = 20u32;
+    // A working-tier frame: Normal's base grid across a default ghost count.
+    let heavy = plan_batches(&vec![64u32; 480], 1);
+    let flushes = plan_flushes(&heavy, surfaces);
+    assert!(
+        flushes.iter().filter(|f| **f).count() >= 2,
+        "a default Normal frame must not be one giant submission"
+    );
+    // No submission holds more work than the budget plus the one batch that
+    // crossed it — the bound the watchdog guard rests on.
+    let biggest_batch = heavy
+        .iter()
+        .map(|b| b.steps(surfaces))
+        .max()
+        .unwrap_or_default();
+    let mut run = 0u64;
+    for (b, flush) in heavy.iter().zip(&flushes) {
+        run += b.steps(surfaces);
+        assert!(
+            run <= STEPS_PER_SUBMIT + biggest_batch,
+            "a submission grew to {run} steps"
+        );
+        if *flush {
+            run = 0;
+        }
+    }
+    // A small frame stays a single submission: the split must not cost
+    // ordinary work extra queue round trips.
+    let light = plan_batches(&[32u32; 24], 1);
+    assert!(
+        plan_flushes(&light, surfaces).iter().all(|f| !f),
+        "a light frame should submit once"
+    );
+}
+
+/// The bake cache keeps its most recent entries and drops the oldest — it
+/// does not empty itself (K-263). Emptying is what made trying lenses
+/// quadratic: every overflow threw away a full cap's worth of bakes, and a
+/// bake is the effect's one slow, blocking step.
+#[test]
+fn lens_flare_bake_cache_evicts_the_oldest_not_everything() {
+    let mut cache = crate::fx::lens_flare::BakeCache::new(4);
+    for k in 0..4u64 {
+        cache.insert(k, k * 10);
+    }
+    assert_eq!(cache.len(), 4);
+    // One past the cap: only the oldest goes.
+    cache.insert(4, 40);
+    assert_eq!(cache.len(), 4);
+    assert_eq!(cache.get(0), None, "the oldest is the one evicted");
+    for k in 1..=4u64 {
+        assert_eq!(cache.get(k), Some(k * 10), "{k} was still recent");
+    }
+    // Re-inserting a held key keeps the held value and does not evict.
+    assert_eq!(cache.insert(4, 999), 40);
+    assert_eq!(cache.len(), 4);
+    assert_eq!(cache.get(1), Some(10));
+}
+
 /// Impl note §8.5: the WGSL trace agrees with the CPU trace corner-for-
 /// corner (K-261 splat model): landing positions at a mean/percentile pixel
 /// bound, weights at a relative bound, with ≥ 99% live/dead agreement,

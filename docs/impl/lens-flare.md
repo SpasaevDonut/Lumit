@@ -106,10 +106,29 @@ the pair's on-axis image extent as a fraction of the sensor diagonal, measured b
 probe at bake: under 0.12 → ½ base, under 0.5 → base, under 1.5 → 1.75×, else 2.5×
 (clamped 8..256). A ghost that lands in a tight blob is oversampled by a flat grid while a
 frame-filling one is undersampled and shows its cell facets — spending the budget by size
-is what lets Normal hold up. The GPU sorts combos grid-major and dispatches a batch per
-run of equal grid, with the ray/quad scratch strided by the widest grid in the frame; the
-build pass runs over that stride so cells a narrower batch does not fill are parked rather
-than left as a previous batch's stale vertices.
+is what lets Normal hold up.
+
+**The frame's dispatch plan (K-263).** The GPU sorts combos grid-major, so the table
+falls into runs of one grid; `plan_batches` cuts each run into batches of combos and
+chunks of lights, and **every batch strides the scratch by its own grid**. Through K-262
+one stride served the whole frame — the widest grid in it — and the build pass ran over
+that stride to park the cells a narrower batch did not fill, so a single frame-filling
+ghost made every compact ghost dispatch and draw at *that* ghost's cell count. With a
+per-batch stride the batch's cells are contiguous from zero and nothing outside them is
+dispatched, written or drawn; the parking that stride demanded is gone with it. Three
+bounds hold the plan:
+
+- **`SCRATCH_BYTE_BUDGET` (48 MB) is hard.** K-262's batch size bottomed out at one
+  combo and then let eight lights at an Ultra grid ask for ~100 MB anyway. The light
+  dimension splits too now (`light_offset` in the trace uniform), so no setting can
+  push the allocation past the budget. Lights are chunked *inside* the combo batch, which
+  keeps the drawn order light-major within a batch exactly as it was.
+- **`STEPS_PER_SUBMIT` (48 M ray–surface steps) cuts the frame into command buffers.**
+  See §7's trap: an over-long submission does not cost a frame, it costs the device.
+- **The scratch is pooled, not allocated per frame** (`Scratch`, one slot deep). A driver
+  recycles a dropped buffer only when the submission it belonged to retires, so a
+  continuously re-rendering Viewer used to hold a rolling backlog of abandoned
+  tens-of-megabyte buffers.
 
 ## 4. Rasterising the ghosts (the energy-conserving quad grid)
 
@@ -134,14 +153,27 @@ exposure gain. Two guards:
   straddling a caustic fold or a housing clip; see §7's trap for what happens without
   this.
 
+**One pass, not two (K-263).** The energy and the geometry were separate compute passes
+through K-262, and the second re-read the same four rays to recompute the same cell area.
+They are one pass now: the cell is read once, its area computed once, and the
+intermediate energy buffer is gone. **A cell stores four corners at 20 bytes, once**
+(K-263) — through K-262 it wrote the two triangles' six vertices at 32 bytes each — and
+the raster's vertex shader maps its six vertex indices onto them (`corner_of`, the index
+buffer spelled in the shader). Same triangles, same winding, same primitive order, 2.4×
+less vertex memory written and read.
+
 The additive raster (hardware, one-one blend, fp16 buffer; Draft at half resolution) is
 followed by the **Ghost blur**: 3 separable box passes (≈ Gaussian) at a radius of
 `Ghost softness × 0.01 × frame diagonal` — FlareSim's Ghost Blur, a touch of
 out-of-focus softness that also hides quad facets at low qualities.
 
-The blur radius is capped at 80 px (K-262): the box pass is a naive `2r+1`-tap loop run
-six times, so an uncapped 2% radius on a 4K frame submits ~1000 taps per pixel — a GPU
-timeout. Three passes of an 80 px box already read as heavy defocus.
+The blur radius is capped at 80 px (K-262) and the sum runs through a **workgroup line
+cache** (K-263): a workgroup covers 64 consecutive pixels along the blur axis, so the
+64 + 2r texels they need between them are fetched once into shared memory and every
+thread sums out of that — about 3.5 fetches a pixel where the direct loop's worst case
+was 161, across six passes. The summation order is unchanged, so the result is bit-for-bit
+what the naive loop produced. The dispatch shape changes with it: x runs *along* the blur
+axis in tiles of 64 and y across it, so the vertical pass dispatches `(⌈h/64⌉, w, 1)`.
 
 **Known limit**: a lens whose ghosts are ALL extreme frame-filling defocus (some process
 lenses) still resolves one pupil cell to several pixels at Draft; the adaptive budget
@@ -165,6 +197,30 @@ amplify the residue into a lit-up artefact field — capped, such a lens renders
 dim, which is what that glass does. The bake key hashes lens, f-stop, blades, rotation,
 roundness and iris softness; light position, intensities, dispersion, coating, Ghost
 softness, focus, quality and mix are frame-time and never rebake.
+
+**The bake blocks the render thread, so its cost is a freeze.** About 0.66 s for a
+24-surface prescription on a middling CPU, of which the exposure probe's trace is roughly
+0.5 s and the starburst 0.12 s — the rest is pair ranking. Three K-263 economies, all
+exact:
+
+- spreads are measured **after** the ranking and only for the first `MAX_RENDERED_PAIRS`
+  (200, the Max ghosts ceiling), not for every surviving pair — a 60-surface prescription
+  leaves well over a thousand, and a frame can never reach them;
+- the starburst's spectral ladder (chromatic scale and CIE weights per sample) is built
+  once instead of inside the per-texel loop, which was interpolating the CIE table 6.5
+  million times to produce a hundred distinct answers;
+- `cpu_flare` computes the iris mask once per pair rather than once per pair *per
+  wavelength* — it is the shape of the hole, not a function of colour, and it costs an
+  `atan2` and a `cos` a corner.
+
+What remains is the trace itself, near the arithmetic floor for scalar code. The
+outstanding fix is not a faster bake but a bake that does not block: see TODO's preview
+progress indicator.
+
+The GPU side caches uploaded bakes by key, **evicting oldest-first at 24** (K-263).
+Emptying the map at the cap, as K-262 did, made trying lenses quadratic: every ninth pick
+threw away the eight bakes just paid for, so stepping back to a lens seen a moment ago
+paid the half-second again.
 
 **Wavelengths**: the ladder spreads `lambda_count` bands (3/8/16/32 by Quality) about
 the 550 nm midpoint, scaled by the Dispersion dial; each band's RGB weight is the CIE
@@ -220,6 +276,17 @@ fits a compositor.
   probe can see.
 - **Roundness must be an SDF lerp to the circle, not an additive bulge** (K-260): the
   sine-bulge form pinches into a flower near 1, and the wide-open blend drives it there.
+- **An over-long submission costs the DEVICE, not a frame.** macOS and Windows both kill
+  a graphics submission that runs too long, and wgpu then reports a lost device: every
+  later frame fails, the Viewer freezes, and — the detail that identifies it — opening a
+  different project does not help, because a project is a fresh worker but the *process*
+  keeps the device. Any effect whose cost the user can wind up (here Quality, Max ghosts,
+  eight matte sources) must break its frame into bounded submissions. This is the K-263
+  fault the owner reported.
+- **Dropping a big GPU buffer does not give the memory back promptly.** A driver recycles
+  it when the submission it belonged to retires, so a per-frame allocation in a
+  continuously re-rendering Viewer (a drag, or the idle cache fill) is a rolling backlog,
+  not a steady state. Pool anything measured in tens of megabytes.
 - **The backward walk's media indices flip.** Travelling backward through surface s, the
   ray leaves the medium AFTER s and enters the medium BEFORE it; reflecting at the far
   bounce restores the forward convention. Get one wrong and every ghost lands wrong by
@@ -250,8 +317,26 @@ fits a compositor.
 6. **GPU frame oracle** (§8.6): full pipeline vs the CPU reference at mean |Δ| < 2e-3
    with total energy within 1%, visible energy floor, bit-stable across runs, and
    Intensity-0 / Mix-0 bit-exact passthroughs.
+6b. **Ghost blur (K-263)**: the blur alone against the CPU reference on a frame large
+   enough for a multi-tile radius (`wgsl_lens_flare_ghost_blur_matches_the_cpu_reference`).
+   Its bounds are *tighter* than the frame oracle's on purpose — measured, removing the
+   line cache's halo entirely left the frame oracle's mean at 8.5e-4, well inside its
+   2e-3, so that bound cannot see a misaligned blur. The tight pair (mean 2.5e-4, worst
+   3e-3) sits about 3× above the correct kernel and 3× below that break.
+6c. **Frame plan (K-263, no GPU needed)**: every (combo × light) is dispatched exactly
+   once, no batch straddles two grids, no batch's scratch passes the budget
+   (`lens_flare_batches_cover_every_combo_within_the_scratch_budget`); a default Normal
+   frame splits into several submissions and a light one into exactly one
+   (`lens_flare_splits_a_heavy_frame_into_several_submissions`); the bake cache evicts
+   oldest-first rather than emptying (`lens_flare_bake_cache_evicts_the_oldest_not_everything`).
 7. **Matte mode**: GPU detection + per-light flare against the CPU reference at the
    frame bound; the shared MAX_LIGHTS / DETECT_TILE constants pinned.
 8. **Neutrals and background**: Black background flips alpha only while live; the
    passthroughs ignore it.
 9. **Focus**: the thin-lens shift is 0 at infinity, `f²/(1000·d − f)` near, ≤ f always.
+10. **Shader validity** (K-263, `lumit-gpu/tests/wgsl_validates.rs`): every `.wgsl` in
+   the crate parses and validates through naga, with no graphics card involved — so a
+   broken kernel fails everywhere rather than only where a card exists to reject it.
+11. **Cost** (`lens_flare_frame_cost`, `#[ignore]`d): prints one default frame's time.
+   Not a gate — the number is whatever the machine can do — but run it either side of a
+   pipeline change, because "the flare is faster now" rots quietly otherwise.

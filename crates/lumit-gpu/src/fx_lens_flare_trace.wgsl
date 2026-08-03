@@ -1,5 +1,5 @@
-// Lens flare (docs/08-EFFECTS.md §3.27, docs/impl/lens-flare.md, K-261).
-// Three compute entry points of the per-frame ghost pipeline:
+// Lens flare (docs/08-EFFECTS.md §3.27, docs/impl/lens-flare.md, K-261,
+// K-263). Two compute entry points of the per-frame ghost pipeline:
 //   trace       — one thread per pupil-grid corner: refract the ray through
 //                 the prescription with the FlareSim three-phase walk
 //                 (reflecting at the pair's two surfaces), weight by the
@@ -7,13 +7,16 @@
 //                 land on the sensor. Mirrors lumit_core's `trace_splat`
 //                 op-for-op; the dead sentinel is weight −1 (the CPU
 //                 returns None).
-//   quad_energy — one thread per grid cell: launch cell area ÷ landed area
-//                 in raster px² (energy conservation), dead-corner cells 0.
-//   build_verts — one thread per cell: emits the cell's two triangles with
-//                 per-corner weighted colour; sub-pixel fold quads inflate
-//                 about their centroid with flux conserved (K-261) so the
-//                 hardware raster cannot drop caustic flux; culled cells
-//                 park off-screen.
+//   build_verts — one thread per grid cell: the cell's energy (launch cell
+//                 area ÷ landed area in raster px², the energy-conserving
+//                 density) and the four corners it draws with, in one pass.
+//                 Energy and geometry were two passes through K-262 and the
+//                 second recomputed the first's areas from the same four
+//                 rays; merged (K-263) the cell is read once, its area is
+//                 computed once, and the intermediate energy buffer is gone.
+//                 Sub-pixel fold quads inflate about their centroid with
+//                 flux conserved (K-261) so the hardware raster cannot drop
+//                 caustic flux; culled cells park off-screen.
 // The additive raster lives in fx_lens_flare_draw.wgsl, the box blur in
 // fx_lens_flare_blur.wgsl, detection in fx_lens_flare_detect.wgsl and the
 // final combine in fx_lens_flare_combine.wgsl.
@@ -52,15 +55,18 @@ struct Ray {
     _pad: f32,
 };
 
+// One drawn corner (K-263): clip position and additive colour, nothing else.
+// Through K-262 this carried three pad floats AND was written six times per
+// cell (the two triangles' vertex lists spelled out). A cell now stores its
+// four corners once at 20 bytes each — 80 bytes a cell where it was 192 — and
+// the raster's vertex shader maps its six vertex indices onto them. Same
+// triangles, same order, 2.4× less vertex memory to write and to read back.
 struct Vertex {
     ndc_x: f32,
     ndc_y: f32,
     r: f32,
     g: f32,
     b: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
 
 // One flare source (see fx_lens_flare_detect.wgsl): position as a raster
@@ -95,21 +101,21 @@ struct TraceParams {
     sensor_z_mm: f32,
     stop_scale: f32,       // scales the stop surface's semi-aperture
     cell_area_px: f32,     // launch cell area in flare-buffer px²
-    ray_stride: u32,       // rays per slot (max grid², K-262)
-    quad_stride: u32,      // quads per slot (max (grid-1)², K-262)
+    ray_stride: u32,       // rays per slot — THIS batch's grid² (K-263)
+    quad_stride: u32,      // quads per slot — THIS batch's (grid-1)² (K-263)
     blades: u32,
     rot_rad: f32,
     roundness: f32,        // effective (wide-open blended)
     softness: f32,
+    light_offset: u32,     // first light of this chunk (K-263)
 };
 
 @group(0) @binding(0) var<storage, read> surfaces: array<Surface>;
 @group(0) @binding(1) var<storage, read> combos: array<Combo>;
 @group(0) @binding(2) var<storage, read_write> rays: array<Ray>;
-@group(0) @binding(3) var<storage, read_write> energies: array<f32>;
-@group(0) @binding(4) var<storage, read_write> verts: array<Vertex>;
-@group(0) @binding(5) var<uniform> tp: TraceParams;
-@group(0) @binding(6) var<storage, read> lights: array<Light>;
+@group(0) @binding(3) var<storage, read_write> verts: array<Vertex>;
+@group(0) @binding(4) var<uniform> tp: TraceParams;
+@group(0) @binding(5) var<storage, read> lights: array<Light>;
 
 // The light direction for a source at raster fraction (px, py) — the exact
 // WGSL twin of lumit_core's `light_direction` (sensor y up, so the y
@@ -316,7 +322,7 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     dead.weight = -1.0;
     dead._pad = 0.0;
 
-    let light = lights[gid.z];
+    let light = lights[tp.light_offset + gid.z];
     if (light_dead(light)) {
         rays[slot] = dead;
         return;
@@ -345,8 +351,11 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     var weight = 1.0;
     var current = 1.0;
     // Worst relative aperture crossing (K-261): grazing rays fade via the
-    // 0.95..1 feather below instead of the hard clip alone.
-    var rrel = 0.0;
+    // 0.95..1 feather below instead of the hard clip alone. Tracked SQUARED
+    // and rooted once at the end (K-263) — `max` and `sqrt` commute for
+    // non-negative values, so it is the same number for one square root a ray
+    // instead of one per surface crossed, on the effect's hottest loop.
+    var rrel2 = 0.0;
     let lambda = combo.lambda_nm;
 
     // Phase 1: forward through 0..=b, reflecting at b.
@@ -358,7 +367,8 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
         pos = hit.pos;
-        rrel = max(rrel, sqrt(pos.x * pos.x + pos.y * pos.y) / max(semi_of(s), 1e-6));
+        let semi_r = max(semi_of(s), 1e-6);
+        rrel2 = max(rrel2, (pos.x * pos.x + pos.y * pos.y) / (semi_r * semi_r));
         let n2 = cauchy_ior(s.cauchy_a, s.cauchy_b, lambda);
         let cos_i = abs(dot(hit.normal, dir));
         let r = surface_refl(cos_i, current, n2, s.coating_layers, lambda);
@@ -387,7 +397,8 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
         pos = hit.pos;
-        rrel = max(rrel, sqrt(pos.x * pos.x + pos.y * pos.y) / max(semi_of(s), 1e-6));
+        let semi_r = max(semi_of(s), 1e-6);
+        rrel2 = max(rrel2, (pos.x * pos.x + pos.y * pos.y) / (semi_r * semi_r));
         var n2 = 1.0;
         if (s_idx > 0u) {
             let before = surfaces[s_idx - 1u];
@@ -420,7 +431,8 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
             return;
         }
         pos = hit.pos;
-        rrel = max(rrel, sqrt(pos.x * pos.x + pos.y * pos.y) / max(semi_of(s), 1e-6));
+        let semi_r = max(semi_of(s), 1e-6);
+        rrel2 = max(rrel2, (pos.x * pos.x + pos.y * pos.y) / (semi_r * semi_r));
         let n2 = cauchy_ior(s.cauchy_a, s.cauchy_b, lambda);
         let cos_i = abs(dot(hit.normal, dir));
         let r = surface_refl(cos_i, current, n2, s.coating_layers, lambda);
@@ -452,7 +464,7 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     // Housing feather: full inside 0.95, gone at 1.0 (smoothstep).
-    let ft = clamp((1.0 - rrel) / 0.05, 0.0, 1.0);
+    let ft = clamp((1.0 - sqrt(rrel2)) / 0.05, 0.0, 1.0);
     weight = weight * ft * ft * (3.0 - 2.0 * ft);
     var out: Ray;
     out.pos_x = px;
@@ -466,83 +478,68 @@ fn edge_px(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
     return (a.x - b.x) * (c.y - a.y) - (a.y - b.y) * (c.x - a.x);
 }
 
-@compute @workgroup_size(64)
-fn quad_energy(@builtin(global_invocation_id) gid: vec3<u32>) {
-    let side = tp.grid - 1u;
-    let quad_count = side * side;
-    if (gid.x >= quad_count || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
-        return;
+// Park a culled cell: four degenerate, black, off-screen corners. The cell
+// still occupies its slot in the batch's contiguous draw range, so it must be
+// written rather than skipped.
+fn park_cell(out_base: u32) {
+    var park: Vertex;
+    park.ndc_x = -4.0;
+    park.ndc_y = -4.0;
+    park.r = 0.0;
+    park.g = 0.0;
+    park.b = 0.0;
+    for (var i = 0u; i < 4u; i = i + 1u) {
+        verts[out_base + i] = park;
     }
-    let qx = gid.x % side;
-    let qy = gid.x / side;
-    let base = (gid.z * tp.combo_count + gid.y) * tp.ray_stride;
-    let r00 = rays[base + qy * tp.grid + qx];
-    let r10 = rays[base + qy * tp.grid + qx + 1u];
-    let r11 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
-    let r01 = rays[base + (qy + 1u) * tp.grid + qx];
-    var e = 0.0;
-    if (r00.weight >= 0.0 && r10.weight >= 0.0 && r11.weight >= 0.0 && r01.weight >= 0.0) {
-        let p00 = vec2<f32>(r00.pos_x, r00.pos_y);
-        let p10 = vec2<f32>(r10.pos_x, r10.pos_y);
-        let p11 = vec2<f32>(r11.pos_x, r11.pos_y);
-        let p01 = vec2<f32>(r01.pos_x, r01.pos_y);
-        let a0 = edge_px(p00, p10, p11);
-        let a1 = edge_px(p00, p11, p01);
-        // MIN_AREA_FRAC (K-262): a cap on caustic density, not a
-        // formality — see the CPU twin's comment.
-        let landed = max(abs((a0 + a1) / 2.0), 3e-3 * tp.cell_area_px);
-        e = tp.cell_area_px / landed;
-    }
-    energies[(gid.z * tp.combo_count + gid.y) * tp.quad_stride + gid.x] = e;
 }
 
 @compute @workgroup_size(64)
 fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = tp.grid - 1u;
-    let live_quads = side * side;
-    // Dispatched over the STRIDE, not this batch's quad count (K-262): the
-    // scratch is strided by the widest grid in the frame, so every cell the
-    // batch does not fill must be parked or a previous batch's vertices are
-    // drawn again.
+    // Dispatched over THIS batch's cells (K-263). Through K-262 the scratch
+    // was strided by the widest grid in the whole frame and this pass ran over
+    // that stride to park the cells a narrower batch did not fill — so a frame
+    // holding one frame-filling ghost made every compact ghost pay that
+    // ghost's cell count. A batch is a run of combos at ONE grid, so the
+    // stride is now the batch's own and its cells are contiguous: nothing
+    // outside them is dispatched, written, or drawn.
     if (gid.x >= tp.quad_stride || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
         return;
     }
     let slot = gid.z * tp.combo_count + gid.y;
-    let combo = combos[tp.combo_offset + gid.y];
-    let light = lights[gid.z];
+    let out_base = (slot * tp.quad_stride + gid.x) * 4u;
     let qx = gid.x % side;
     let qy = gid.x / side;
-    let out_base = (slot * tp.quad_stride + gid.x) * 6u;
-    var e = 0.0;
-    if (gid.x < live_quads) {
-        e = energies[slot * tp.quad_stride + gid.x];
-    }
-    if (e <= 0.0) {
-        var park: Vertex;
-        park.ndc_x = -4.0;
-        park.ndc_y = -4.0;
-        park.r = 0.0;
-        park.g = 0.0;
-        park.b = 0.0;
-        park._pad0 = 0.0;
-        park._pad1 = 0.0;
-        park._pad2 = 0.0;
-        for (var i = 0u; i < 6u; i = i + 1u) {
-            verts[out_base + i] = park;
-        }
-        return;
-    }
     let base = slot * tp.ray_stride;
     let c0 = rays[base + qy * tp.grid + qx];
     let c1 = rays[base + qy * tp.grid + qx + 1u];
     let c2 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
     let c3 = rays[base + (qy + 1u) * tp.grid + qx];
+    if (c0.weight < 0.0 || c1.weight < 0.0 || c2.weight < 0.0 || c3.weight < 0.0) {
+        park_cell(out_base);
+        return;
+    }
     var p = array<vec2<f32>, 4>(
         vec2<f32>(c0.pos_x, c0.pos_y),
         vec2<f32>(c1.pos_x, c1.pos_y),
         vec2<f32>(c2.pos_x, c2.pos_y),
         vec2<f32>(c3.pos_x, c3.pos_y),
     );
+    // The cell's landed area, computed ONCE (K-263) and used for both the
+    // energy density and the sub-pixel guard below.
+    let a0 = edge_px(p[0], p[1], p[2]);
+    let a1 = edge_px(p[0], p[2], p[3]);
+    let area_px = abs((a0 + a1) / 2.0);
+    // MIN_AREA_FRAC (K-262): a cap on caustic density, not a formality —
+    // see the CPU twin's comment.
+    let landed = max(area_px, 3e-3 * tp.cell_area_px);
+    let e = tp.cell_area_px / landed;
+    if (e <= 0.0) {
+        park_cell(out_base);
+        return;
+    }
+    let combo = combos[tp.combo_offset + gid.y];
+    let light = lights[tp.light_offset + gid.z];
     let tint = vec3<f32>(combo.rgb_r * light.r, combo.rgb_g * light.g, combo.rgb_b * light.b);
     var col = array<vec3<f32>, 4>(
         tint * (e * max(c0.weight, 0.0)),
@@ -561,9 +558,6 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let max_inflate_edge_px = 6.0;
     let streak_len_frac = 0.04;
     let streak_aspect = 8.0;
-    let a0 = edge_px(p[0], p[1], p[2]);
-    let a1 = edge_px(p[0], p[2], p[3]);
-    let area_px = abs((a0 + a1) / 2.0);
     var longest = 0.0;
     for (var i = 0; i < 4; i = i + 1) {
         let d = p[i] - p[(i + 1) % 4];
@@ -575,18 +569,7 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let streak = longest > streak_len_frac * diag_px
         && longest * longest > streak_aspect * area_px;
     if (streak || (area_px < min_quad_px && longest > max_inflate_edge_px)) {
-        var park: Vertex;
-        park.ndc_x = -4.0;
-        park.ndc_y = -4.0;
-        park.r = 0.0;
-        park.g = 0.0;
-        park.b = 0.0;
-        park._pad0 = 0.0;
-        park._pad1 = 0.0;
-        park._pad2 = 0.0;
-        for (var i = 0u; i < 6u; i = i + 1u) {
-            verts[out_base + i] = park;
-        }
+        park_cell(out_base);
         return;
     }
     if (area_px < min_quad_px) {
@@ -599,6 +582,9 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
             col[i] = col[i] * scale;
         }
     }
+    // Corner order 0,1,2,3 around the cell; the raster expands it into the
+    // two triangles (0,1,2) and (0,2,3) — the same winding and the same
+    // primitive order the six spelled-out vertices had.
     for (var i = 0; i < 4; i = i + 1) {
         var vert: Vertex;
         vert.ndc_x = p[i].x / tp.raster_w * 2.0 - 1.0;
@@ -606,20 +592,6 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
         vert.r = col[i].x;
         vert.g = col[i].y;
         vert.b = col[i].z;
-        vert._pad0 = 0.0;
-        vert._pad1 = 0.0;
-        vert._pad2 = 0.0;
-        // Stash in a scratch slot pattern below.
-        if (i == 0) {
-            verts[out_base] = vert;
-            verts[out_base + 3u] = vert;
-        } else if (i == 1) {
-            verts[out_base + 1u] = vert;
-        } else if (i == 2) {
-            verts[out_base + 2u] = vert;
-            verts[out_base + 4u] = vert;
-        } else {
-            verts[out_base + 5u] = vert;
-        }
+        verts[out_base + u32(i)] = vert;
     }
 }

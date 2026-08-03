@@ -1494,6 +1494,7 @@ dependencies = [
  "lumit-core",
  "lumit-eval",
  "metal",
+ "naga",
  "objc",
  "pollster",
  "thiserror 2.0.18",

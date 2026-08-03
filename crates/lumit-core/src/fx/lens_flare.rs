@@ -148,6 +148,13 @@ pub const SUPPRESS_TILES: i64 = 2;
 /// Ghost pairs dimmer than this on the on-axis probe are dropped at bake
 /// (FlareSim's `min_intensity`).
 pub const PAIR_MIN_INTENSITY: f32 = 1e-7;
+
+/// Ranked pairs a frame can ever render — the Max ghosts parameter's own
+/// ceiling (docs/08 §3.27), and so the number of pairs the bake measures an
+/// image spread for (K-263). A pair past it keeps the neutral spread of 1.0
+/// and would render at the Quality ladder's base grid, which is what an
+/// unmeasurable pair has always done.
+pub const MAX_RENDERED_PAIRS: usize = 200;
 /// Rays start this far in front of the first surface, mm.
 pub const START_Z_BACKOFF_MM: f32 = 20.0;
 
@@ -715,7 +722,11 @@ pub fn trace_splat(
     // housing edge fade smoothly (the 0.95..1 feather below) instead of the
     // hard clip alone — without it, a defocused ghost's cull boundary shows
     // as giant staircase quads (K-261, the K-256 rrel feather reinstated).
-    let mut rrel = 0.0_f32;
+    // Tracked SQUARED and rooted once at the end (K-263): the worst crossing
+    // is the largest ratio either way — `max` and `sqrt` commute for
+    // non-negative values — so this is the same number for one square root a
+    // ray instead of one per surface, on the hottest loop the effect has.
+    let mut rrel2 = 0.0_f32;
 
     let semi_of = |s: &FlareSurface| -> f32 {
         if s.is_stop > 0.5 {
@@ -738,7 +749,7 @@ pub fn trace_splat(
         let semi = semi_of(s);
         let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
         pos = hit;
-        rrel = rrel.max((pos[0] * pos[0] + pos[1] * pos[1]).sqrt() / semi.max(1e-6));
+        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi.max(1e-6) * semi.max(1e-6)));
         let n1 = current_ior;
         let n2 = ior_at(s);
         let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
@@ -759,7 +770,7 @@ pub fn trace_splat(
         let semi = semi_of(s);
         let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
         pos = hit;
-        rrel = rrel.max((pos[0] * pos[0] + pos[1] * pos[1]).sqrt() / semi.max(1e-6));
+        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi.max(1e-6) * semi.max(1e-6)));
         let n1 = current_ior;
         let n2 = ior_before(s_idx);
         let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
@@ -780,7 +791,7 @@ pub fn trace_splat(
         let semi = semi_of(s);
         let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
         pos = hit;
-        rrel = rrel.max((pos[0] * pos[0] + pos[1] * pos[1]).sqrt() / semi.max(1e-6));
+        rrel2 = rrel2.max((pos[0] * pos[0] + pos[1] * pos[1]) / (semi.max(1e-6) * semi.max(1e-6)));
         let n1 = current_ior;
         let n2 = ior_at(s);
         let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
@@ -804,7 +815,7 @@ pub fn trace_splat(
         return None;
     }
     // Housing feather: full inside 0.95, gone at 1.0 (smoothstep).
-    let ft = ((1.0 - rrel) / 0.05).clamp(0.0, 1.0);
+    let ft = ((1.0 - rrel2.sqrt()) / 0.05).clamp(0.0, 1.0);
     weight *= ft * ft * (3.0 - 2.0 * ft);
     Some(([x, y], weight))
 }
@@ -962,21 +973,29 @@ pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
         let b = pattern[y1 * n + x0] * (1.0 - tx) + pattern[y1 * n + x1] * tx;
         a * (1.0 - ty) + b * ty
     };
+    // The spectral ladder, built ONCE (K-263): its chromatic scale and its
+    // colour-matching weights are the same for every texel of the sprite, but
+    // they used to be derived inside the per-texel loop — so the CIE table was
+    // interpolated 6.5 million times to produce a hundred distinct answers.
+    // Same numbers, same order, hoisted out.
+    let bands: Vec<(f32, [f32; 3])> = (0..samples)
+        .map(|k| {
+            let step = k as f32 / samples as f32;
+            let lambda = cie::LAMBDA_MIN + step * range;
+            // Chromatic scale: diffraction grows with wavelength, so the
+            // sample position shrinks by λ_mid/λ.
+            (lambda / cie::LAMBDA_MID, cie::xyz_at(lambda))
+        })
+        .collect();
     for y in 0..n {
         for x in 0..n {
             let ndc_x = 2.0 * (x as f32 / (n - 1) as f32) - 1.0;
             let ndc_y = 2.0 * (y as f32 / (n - 1) as f32) - 1.0;
             let mut xyz = [0.0_f32; 3];
-            for k in 0..samples {
-                let step = k as f32 / samples as f32;
-                let lambda = cie::LAMBDA_MIN + step * range;
-                // Chromatic scale: diffraction grows with wavelength, so the
-                // sample position shrinks by λ_mid/λ.
-                let s = lambda / cie::LAMBDA_MID;
+            for &(s, w) in &bands {
                 let px = ndc_x / s;
                 let py = ndc_y / s;
                 let val = bilinear(px * 0.5 + 0.5, py * 0.5 + 0.5);
-                let w = cie::xyz_at(lambda);
                 xyz[0] += w[0] * val;
                 xyz[1] += w[1] * val;
                 xyz[2] += w[2] * val;
@@ -1081,7 +1100,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
     };
     let centre = [0.0, 0.0, baked.start_z_mm];
     let axis = [0.0, 0.0, 1.0];
-    let mut ranked: Vec<([u32; 2], f32, f32)> = Vec::new();
+    let mut ranked: Vec<([u32; 2], f32)> = Vec::new();
     for a in 0..n {
         if !has_interface(a) {
             continue;
@@ -1103,38 +1122,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
             if est < PAIR_MIN_INTENSITY {
                 continue;
             }
-            // Image extent: an 8×8 on-axis spray's landing bounding box
-            // against the sensor diagonal (K-262) — the grid budget's
-            // input. Cheap: 64 rays per surviving pair, at bake only.
-            const G: u32 = 8;
-            let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
-            let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
-            let mut seen = 0u32;
-            for gy in 0..G {
-                for gx in 0..G {
-                    let u = ((gx as f32 + 0.5) / G as f32) * 2.0 - 1.0;
-                    let v = ((gy as f32 + 0.5) / G as f32) * 2.0 - 1.0;
-                    if u * u + v * v > 1.0 {
-                        continue;
-                    }
-                    let o = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
-                    if let Some((pos, _)) = trace_splat(&baked, pair, 550.0, o, axis, 1.0, 1.0, 0.0)
-                    {
-                        min_x = min_x.min(pos[0]);
-                        max_x = max_x.max(pos[0]);
-                        min_y = min_y.min(pos[1]);
-                        max_y = max_y.max(pos[1]);
-                        seen += 1;
-                    }
-                }
-            }
-            let sensor_diag = (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt();
-            let spread = if seen >= 2 {
-                ((max_x - min_x).hypot(max_y - min_y) / sensor_diag).clamp(0.0, 8.0)
-            } else {
-                1.0
-            };
-            ranked.push((pair, est, spread));
+            ranked.push((pair, est));
         }
     }
     // Descending probe brightness; ties by pair order (deterministic).
@@ -1143,8 +1131,51 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
-    baked.pairs = ranked.iter().map(|&(g, _, _)| g).collect();
-    baked.spreads = ranked.iter().map(|&(_, _, sp)| sp).collect();
+    baked.pairs = ranked.iter().map(|&(g, _)| g).collect();
+    // Image extent per pair: an 8×8 on-axis spray's landing bounding box
+    // against the sensor diagonal (K-262) — the adaptive grid budget's input.
+    //
+    // Measured AFTER the ranking and only for the pairs a frame can reach
+    // (K-263). It costs 64 traced rays a pair, and a 60-surface prescription
+    // leaves well over a thousand surviving pairs of which a frame renders at
+    // most `MAX_RENDERED_PAIRS` — so probing them all spent most of the bake
+    // measuring ghosts nothing would ever draw. Beyond the cap the spread is
+    // the neutral 1.0, the same value an unmeasurable pair has always had.
+    let mut spreads = vec![1.0_f32; baked.pairs.len()];
+    let sensor_diag = (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt();
+    let probe_pairs: Vec<[u32; 2]> = baked
+        .pairs
+        .iter()
+        .take(MAX_RENDERED_PAIRS)
+        .copied()
+        .collect();
+    for (pi, &pair) in probe_pairs.iter().enumerate() {
+        const G: u32 = 8;
+        let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
+        let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
+        let mut seen = 0u32;
+        for gy in 0..G {
+            for gx in 0..G {
+                let u = ((gx as f32 + 0.5) / G as f32) * 2.0 - 1.0;
+                let v = ((gy as f32 + 0.5) / G as f32) * 2.0 - 1.0;
+                if u * u + v * v > 1.0 {
+                    continue;
+                }
+                let o = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
+                if let Some((pos, _)) = trace_splat(&baked, pair, 550.0, o, axis, 1.0, 1.0, 0.0) {
+                    min_x = min_x.min(pos[0]);
+                    max_x = max_x.max(pos[0]);
+                    min_y = min_y.min(pos[1]);
+                    max_y = max_y.max(pos[1]);
+                    seen += 1;
+                }
+            }
+        }
+        if seen >= 2 {
+            spreads[pi] = ((max_x - min_x).hypot(max_y - min_y) / sensor_diag).clamp(0.0, 8.0);
+        }
+    }
+    baked.spreads = spreads;
 
     let aperture = bake_aperture(p, native_fstop, APERTURE_RES);
     baked.starburst = bake_starburst(&aperture, STARBURST_RES);
@@ -1380,13 +1411,36 @@ fn raster_triangle(out: &mut [f32], w: u32, h: u32, v: [FlareVertex; 3]) {
     if area.abs() < 1e-9 {
         return;
     }
+    // The two edge functions with their constant terms lifted out of the
+    // loop, and the inside test done on their raw values (K-263). Dividing by
+    // the area does not change a sign, so a pixel outside the triangle is now
+    // rejected by two multiplies rather than by two multiplies AND two
+    // divisions — and most of a triangle's bounding box is outside it. The
+    // pixels that ARE covered go through the identical expressions as before,
+    // so the picture is unchanged down to the last bit.
+    let (e0_dx, e0_dy) = (v[2].pos[0] - v[1].pos[0], v[2].pos[1] - v[1].pos[1]);
+    let (e1_dx, e1_dy) = (v[0].pos[0] - v[2].pos[0], v[0].pos[1] - v[2].pos[1]);
+    let positive = area > 0.0;
     for y in min_y..=max_y {
+        let py = y as f32 + 0.5;
         for x in min_x..=max_x {
-            let (px, py) = (x as f32 + 0.5, y as f32 + 0.5);
-            let w0 = edge(v[1].pos, v[2].pos, px, py) / area;
-            let w1 = edge(v[2].pos, v[0].pos, px, py) / area;
+            let px = x as f32 + 0.5;
+            let e0 = e0_dx * (py - v[1].pos[1]) - e0_dy * (px - v[1].pos[0]);
+            let e1 = e1_dx * (py - v[2].pos[1]) - e1_dy * (px - v[2].pos[0]);
+            // `e / area < 0` without the divide, zero included: a barycentric
+            // of exactly zero sits ON the edge and has always been drawn.
+            let outside = if positive {
+                e0 < 0.0 || e1 < 0.0
+            } else {
+                e0 > 0.0 || e1 > 0.0
+            };
+            if outside {
+                continue;
+            }
+            let w0 = e0 / area;
+            let w1 = e1 / area;
             let w2 = 1.0 - w0 - w1;
-            if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
+            if w2 < 0.0 {
                 continue;
             }
             let i = ((y as u32 * w + x as u32) * 3) as usize;
@@ -1432,6 +1486,9 @@ pub fn cpu_flare(
     // Per-corner trace results for one (pair, λ): landing px and weight
     // (Fresnel × mask); None = dead. Sized for the widest grid in play.
     let mut corners: Vec<Option<([f32; 2], f32)>> = Vec::new();
+    // The pair's iris mask per pupil corner — wavelength-independent, so it
+    // is computed once a pair and read by every wavelength (K-263).
+    let mut masks: Vec<f32> = Vec::new();
     for light in lights {
         if light.rgb[0] <= 0.0 && light.rgb[1] <= 0.0 && light.rgb[2] <= 0.0 {
             continue;
@@ -1446,11 +1503,31 @@ pub fn cpu_flare(
             let cell_area_px = cell_mm * cell_mm * st * st;
             corners.clear();
             corners.resize(side * side, None);
+            // The iris mask per pupil corner, computed ONCE for the pair
+            // (K-263). It does not depend on the wavelength — it is the shape
+            // of the hole the light comes through — but it used to be
+            // recomputed inside the wavelength loop, so every corner paid for
+            // an `atan2` and a `cos` three to thirty-two times over depending
+            // on the Quality tier. Same numbers, computed once.
+            masks.clear();
+            masks.resize(side * side, 0.0);
+            for j in 0..side {
+                for i in 0..side {
+                    masks[j * side + i] = pupil_mask(
+                        unit(i),
+                        unit(j),
+                        p.blades,
+                        rot,
+                        roundness,
+                        p.aperture_softness,
+                    );
+                }
+            }
             for &(nm, rgb_w) in &weights {
                 for j in 0..side {
                     for i in 0..side {
                         let (u, v) = (unit(i), unit(j));
-                        let mask = pupil_mask(u, v, p.blades, rot, roundness, p.aperture_softness);
+                        let mask = masks[j * side + i];
                         corners[j * side + i] = if mask <= 0.0 {
                             None
                         } else {

@@ -581,6 +581,43 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   see the grid. And the Lens list, at 1299 entries, became a **searchable
   picker** grouped by manufacturer — the plain dropdown was building all 1299
   rows at once, which crashed the app.
+  The next pass (K-263) chased the worst report yet: after a few passes through
+  the lens picker on a Mac, the picture simply stopped updating, and opening a
+  different project did not bring it back. That last part is the clue. Every
+  project gets its own worker, but they all share one *graphics device* — the
+  connection to the card that the whole program holds — so a frozen picture that
+  survives a new project means the device itself has died. It had. Work is given
+  to a graphics card in parcels called submissions, and both macOS and Windows
+  kill a submission that takes too long, on the assumption that anything running
+  that long has hung; the kill takes the device with it, and everything after
+  fails silently. The flare was sending an entire frame as **one** parcel whose
+  size you set with Quality, Max ghosts and the source mode — so winding those up
+  did not make a slow frame, it made a dead device. The frame is now cut into
+  parcels small enough that no combination of settings can reach the limit. That
+  changes nothing about the picture: the pieces are handed over in the same order
+  and add up the same way, they just go in several loads instead of one.
+  Two other things were feeding it. The flare was asking the card for tens of
+  megabytes of scratch memory **every frame** and throwing it away — and a
+  graphics driver only really reclaims that when the work it belonged to has
+  finished, so a Viewer redrawing continuously built up a backlog of abandoned
+  memory; on a Mac, where the card shares memory with everything else, that is a
+  slow squeeze. It now keeps one set of scratch buffers and reuses them. And the
+  work itself was being done at the wrong size: the biggest ghost in the frame set
+  the working grid for *all* of them, so fifty compact ghosts each did the work of
+  the one enormous one. Each group of ghosts now works at its own size. Add a
+  handful of smaller economies — the two passes that read the same rays merged
+  into one, a drawn cell shrunk from 192 bytes to 80, the softness blur reading
+  each texel once for a whole row of pixels instead of once per pixel, a square
+  root per ray instead of one per glass surface — and a heavy frame measured about
+  a quarter faster on a slow test machine, with nothing about the result changed:
+  the same tests that check the picture against the reference maths still pass.
+  Choosing a lens is still a pause of about half a second, because the one-off
+  maths for a new lens runs on the same thread that draws — the fix for that is
+  the progress indicator on the TODO list, not a shortcut in the optics. What did
+  improve is that Lumit now remembers the last two dozen lenses you tried instead
+  of eight, and forgets them one at a time instead of all at once; before, every
+  ninth lens threw away the eight before it, so going back to one you had just
+  looked at made you wait all over again.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the
@@ -2602,6 +2639,16 @@ performance rules so it can't be forgotten.
 What the suite guards *today*: time maths exactness (6 property suites), undo/redo
 symmetry, journal replay, the crash-recovery drill both ways, file-format round-trips,
 unknown-field survival, autosave rotation, version refusal.
+
+**Shaders get checked without a graphics card (K-263).** The little programs that run on
+the card — the `.wgsl` files — used to be checked by exactly one thing: the card itself,
+at the moment Lumit built the pipeline. That is a bad place to find a typo. It means a
+broken shader builds fine, ships fine, and turns up as a black picture on somebody's
+machine, while any test runner without a graphics card sails past it. So there is now a
+test that runs the *same* shader compiler wgpu uses (naga) over every kernel in the crate
+and fails on anything it would reject. It needs no card, so it runs everywhere and
+finishes in milliseconds. It checks that a shader is *valid*, not that it is *right* —
+being right is what the CPU-reference comparisons are for, and those do need a card.
 
 ## 7. Words you'll meet in the code
 

@@ -5300,3 +5300,43 @@ so grouping and typing both work. Also capped the Ghost-softness blur radius at 
 an uncapped 2% radius on a 4K frame is ~1000 taps per pixel across six passes, a GPU
 timeout waiting to happen. The default lens index moves with the re-sort (pre-release; a
 saved index lands on a different valid lens).
+
+**K-263 · DECIDED · The flare's frame is bounded, batched by its own grid, and pooled —
+no submission the watchdog can kill, no per-frame megabyte churn.** The owner tried the
+shipped K-262 flare on a Mac: after a few passes through the lens picker the Viewer
+stopped updating and nothing brought it back, not even opening a different project. That
+last detail is the diagnosis — a project is a fresh worker but the *process* keeps the
+graphics device, so a frozen picture that survives a new project means the device itself
+is gone. Three things fed it, and all three are fixed at the cause rather than by
+lowering quality; the picture is unchanged (the CPU-oracle parity, determinism and
+bit-exact-neutral tests all hold). **(1) One unbounded submission.** The whole frame —
+every ghost, wavelength and light — went to the card as a single command buffer whose
+size the user sets through Quality, Max ghosts and the source mode. macOS and Windows
+both kill a submission that runs too long, and that kill takes the device, which is
+exactly the symptom. The frame is now cut into submissions at a fixed ray–surface-step
+budget; the batches queue in the same order and blend in the same order, they are merely
+handed over in pieces. **(2) The scratch was allocated per frame and sized by hope.**
+K-262's budget bottomed out at one combo and then let eight lights at an Ultra grid ask
+for ~100 MB anyway — allocated and dropped every frame, which on a unified-memory Mac is
+how a flare fills the memory it shares with everything else. The budget is now a hard
+bound (the light dimension splits too) and the buffers are pooled and reused. **(3) One
+stride for the whole frame.** The scratch was strided by the widest grid in the frame and
+the vertex pass ran over that stride to park what a narrower batch did not fill — so a
+single frame-filling ghost made every compact ghost dispatch and draw at *its* cell
+count. A batch is a run of combos at one grid, so each now strides by its own and draws
+exactly its own cells. Alongside those: the energy pass folded into the vertex pass (it
+re-read the same four rays to recompute the same area); a drawn corner is 20 bytes stored
+once per cell instead of six 32-byte vertices; the Ghost blur sums through a workgroup
+line cache (~3.5 texture fetches a pixel where 161 was the worst case); the aperture
+feather tracks its radius squared and takes one square root a ray instead of one per
+surface; the bake stops interpolating the CIE table 6.5 million times for a hundred
+answers, hoists the wavelength-independent iris mask out of the wavelength loop, and
+measures ghost spreads only for the 200 pairs a frame can reach. The bake cache stops
+emptying itself at the cap and evicts oldest-first at 24 — clearing the lot made trying
+lenses quadratic. Measured on a software rasteriser: a 960×540 Normal/60-ghost frame
+3.03 s → 2.30 s, and a bake 0.80 s → 0.66 s. Also new: `tests/wgsl_validates.rs` parses
+and validates every shipped WGSL kernel with naga, so a broken shader fails on any
+machine instead of only on one with a graphics card. **Not** fixed here and recorded in
+TODO: the bake still runs on the render thread, so picking a lens blocks the picture for
+about half a second — the fix is the progress indicator and an off-thread bake; and the
+raster still draws culled cells, which a deterministic prefix-sum compaction would skip.
