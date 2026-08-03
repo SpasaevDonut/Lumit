@@ -2566,6 +2566,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 label: "Flare options",
                 params: &[
                     "ghost_intensity",
+                    "ghost_softness",
                     "max_ghosts",
                     "dispersion",
                     "starburst_intensity",
@@ -2594,7 +2595,7 @@ pub const BUILTINS: &[EffectSchema] = &[
         ],
         match_name: "lens_flare",
         label: "Lens flare",
-        version: 3,
+        version: 4,
         category: FxCategory::Stylise,
         traits: EffectTraits {
             cost: CostClass::Heavy,
@@ -2652,32 +2653,17 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "coating_preset",
-                label: "Coating type",
-                // The lambda-c assignment pattern (docs/08 §3.27): the ghost
-                // train's colour character. Sits above the lens it colours.
-                kind: ParamKind::Choice {
-                    options: &[
-                        "Modern multicoat",
-                        "Vintage single coat",
-                        "Warm bias",
-                        "Cool bias",
-                        "Amber single coat",
-                        "Two-tone vintage",
-                        "Broad multicoat",
-                    ],
-                    default: 0,
-                    dividers_after: &[],
-                },
-            },
-            ParamSchema {
                 id: "lens_model",
                 label: "Lens",
-                // The bundled prescription library (lens_data::LENS_MODELS,
-                // same order). Indices are stable: new models append.
+                // The embedded prescription library (K-261): 1303 real
+                // lenses, transcribed patent data. Sorted by name; the
+                // default is the Master Prime 50 (the reference cine prime
+                // the effect was tuned against). The Coating-type preset
+                // dropdown of K-257 is gone — each prescription carries its
+                // own per-surface coating layers now.
                 kind: ParamKind::Choice {
-                    options: crate::fx::lens_data::LENS_OPTIONS,
-                    default: 2,
+                    options: &crate::fx::lens_library::LENS_OPTIONS,
+                    default: 12,
                     dividers_after: &[],
                 },
             },
@@ -2762,6 +2748,18 @@ pub const BUILTINS: &[EffectSchema] = &[
                     default: 1.0,
                     slider: (0.0, 4.0),
                     hard: (Some(0.0), None),
+                },
+            },
+            ParamSchema {
+                id: "ghost_softness",
+                label: "Ghost softness",
+                // Box-blur radius as % of the frame diagonal (K-261,
+                // FlareSim's Ghost Blur): a touch of out-of-focus softness
+                // that also hides splat grain at lower qualities.
+                kind: ParamKind::Float {
+                    default: 0.3,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(2.0)),
                 },
             },
             ParamSchema {

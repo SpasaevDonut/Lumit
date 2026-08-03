@@ -556,7 +556,18 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   50mm" actually measures 64.8 mm). It also added a **Focus (m)** dial: refocusing a
   real lens slides the sensor a fraction of a millimetre, and that tiny slide visibly
   rearranges the whole ghost train — the same lens at 1 m and at infinity throws
-  completely different flares, and now Lumit's does too.
+  completely different flares, and now Lumit's does too. The third pass (K-261)
+  swapped the whole optical engine for the one in FlareSim, an open Nuke plugin the
+  owner pointed at: instead of ten hand-built lenses, Lumit now embeds **1,299 real
+  lens prescriptions** — text files transcribed from patents, each one the actual
+  glass recipe of a Nikon, Canon, Zeiss and so on — and the Lens dropdown picks
+  among them. Each file says how each glass surface is coated, so the old
+  "coating preset" menu became unnecessary: the lens itself knows. The tracing
+  follows FlareSim's method faithfully, but the drawing keeps Lumit's own
+  smooth-grid approach — FlareSim splats millions of ray dots and blurs the noise
+  away, which needs far more rays than drawing the ray grid as connected little
+  panels that brighten where rays bunch up. A new **Ghost softness** dial (borrowed
+  from FlareSim's Ghost Blur) adds a touch of out-of-focus softness on top.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

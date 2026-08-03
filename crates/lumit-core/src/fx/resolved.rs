@@ -1118,14 +1118,12 @@ fn resolve_one(
             let lx = e.float_at("light_x", lt).unwrap_or(640.0) as f32 * px_scale;
             let ly = e.float_at("light_y", lt).unwrap_or(360.0) as f32 * px_scale;
             let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            // Library index (K-261; out-of-range clamps inside lens_entry).
+            // A pre-K-261 save's index pointed into the old ten-lens table;
+            // pre-release, it simply lands on a different (valid) lens.
             let lens = match e.param("lens_model") {
                 Some(EffectValue::Choice(c)) => *c,
-                _ => 2,
-            };
-            let coating_preset = match e.param("coating_preset") {
-                // Unknown future indices clamp inside coating_cycle.
-                Some(EffectValue::Choice(c)) => *c,
-                _ => 0,
+                _ => 12,
             };
             let fstop = (e.float_at("fstop", lt).unwrap_or(2.8) as f32).clamp(0.7, 32.0);
             let focus_m = (e.float_at("focus", lt).unwrap_or(100.0) as f32).max(0.2);
@@ -1164,6 +1162,8 @@ fn resolve_one(
                 (e.float_at("aperture_softness", lt).unwrap_or(0.05) as f32).clamp(0.0, 1.0);
             let ghost_intensity =
                 (e.float_at("ghost_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
+            let ghost_softness =
+                (e.float_at("ghost_softness", lt).unwrap_or(0.3) as f32).clamp(0.0, 2.0);
             let max_ghosts =
                 (e.float_at("max_ghosts", lt).unwrap_or(60.0).round() as i64).clamp(0, 200);
             let dispersion = (e.float_at("dispersion", lt).unwrap_or(1.0) as f32).max(0.0);
@@ -1184,12 +1184,12 @@ fn resolve_one(
                     roundness,
                     aperture_softness,
                     ghost_intensity,
+                    ghost_softness,
                     max_ghosts: max_ghosts as u32,
                     dispersion,
                     coating,
                     starburst_intensity: sb_intensity,
                     scale,
-                    coating_preset,
                     source,
                     threshold,
                     threshold_softness,

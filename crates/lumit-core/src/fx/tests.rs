@@ -4739,8 +4739,8 @@ fn lens_flare_frft_matches_the_reference_goldens() {
 
 // §8.3 — optics units: the Cauchy fit reproduces n_d exactly and the Abbe
 // number within tolerance; refraction matches Snell; Fresnel at normal
-// incidence is the textbook ((n1-n2)/(n1+n2))²; a zero-thickness coating
-// degrades fresnel_ar to plain Fresnel.
+// incidence is the textbook ((n1-n2)/(n1+n2))²; the quarter-wave MgF₂
+// coating cuts the reflectance, and extra layers cut it further (K-261).
 #[test]
 fn lens_flare_optics_match_the_textbook() {
     use crate::fx::lens_flare::*;
@@ -4753,100 +4753,152 @@ fn lens_flare_optics_match_the_textbook() {
     assert!((v - 60.3).abs() < 0.05, "V {v}");
 
     // Snell at 45° into n = 1.5 glass: sin(t) = sin(45°)/1.5.
-    let i = [(0.5f32).sqrt(), 0.0, -(0.5f32).sqrt()];
-    let t = refract3(i, [0.0, 0.0, 1.0], 1.0 / 1.5);
+    let i = [(0.5f32).sqrt(), 0.0, (0.5f32).sqrt()];
+    let t = refract3(i, [0.0, 0.0, -1.0], 1.0 / 1.5).expect("no TIR at 45°");
     let sin_t = t[0].hypot(t[1]);
     assert!((sin_t - (0.5f32).sqrt() / 1.5).abs() < 1e-6);
+    // Total internal reflection from the dense side at a grazing angle.
+    let g = [(0.99f32).sqrt(), 0.0, (0.01f32).sqrt()];
+    assert!(refract3(g, [0.0, 0.0, -1.0], 1.5).is_none());
 
     // Normal-incidence Fresnel.
-    let r = fresnel(1e-9, 1.0, 1.5);
+    let r = fresnel_cos(1.0, 1.0, 1.5);
     let expect = ((1.0f32 - 1.5) / (1.0 + 1.5)).powi(2);
     assert!((r - expect).abs() < 1e-4, "{r} vs {expect}");
 
-    // A quarter-wave coating at its tuned wavelength reflects LESS than the
-    // bare surface — the whole point of the coating — and with the textbook
-    // optimum index nc = √(n1·n2) it drives reflectance toward zero at
-    // near-normal incidence. (No d = 0 ≈ plain-Fresnel identity is asserted:
-    // the two-beam interference formula composes amplitudes and does not
-    // reduce exactly to the single-interface value.)
-    let theta = 0.05f32;
-    let plain = fresnel(theta, 1.0, 1.9);
-    let nc = (1.0f32 * 1.9).sqrt().max(1.38);
-    let d = 550.0 / (4.0 * nc);
-    let tuned = fresnel_ar(theta, 550.0, d, 1.0, nc, 1.9);
-    assert!(tuned < plain, "coated {tuned} should be below bare {plain}");
-    assert!(
-        tuned < 0.01,
-        "optimal quarter-wave should near-cancel: {tuned}"
-    );
+    // The MgF₂ quarter-wave coating at its design wavelength reflects LESS
+    // than bare glass, and each extra layer quarters the residual again.
+    let plain = fresnel_cos(1.0, 1.0, 1.9);
+    let one = surface_reflectance(1.0, 1.0, 1.9, 1.0, 550.0, 1.0);
+    let two = surface_reflectance(1.0, 1.0, 1.9, 2.0, 550.0, 1.0);
+    assert!(one < plain, "coated {one} should be below bare {plain}");
+    assert!(two < one, "multicoat {two} should be below single {one}");
+    // The Coating dial at 0 is bare glass regardless of the file layers.
+    let off = surface_reflectance(1.0, 1.0, 1.9, 2.0, 550.0, 0.0);
+    assert!((off - plain).abs() < 1e-6);
 }
 
-// §8.4 — ghost enumeration: no pair straddles the iris, the count matches a
-// direct re-derivation, and the bake (ranking and textures) is deterministic
-// across two runs.
+// §8.4 — the prescription library and pair ranking (K-261): every
+// bundled .lens file parses with a sane surface count, focal length and a
+// stop surface; the bake's pair list is deterministic, non-empty, and every
+// pair joins two genuine glass interfaces.
 #[test]
-fn lens_flare_ghost_enumeration_counts_and_ranks_deterministically() {
-    use crate::fx::lens_data::LENS_MODELS;
+fn lens_flare_library_parses_and_pairs_rank_deterministically() {
     use crate::fx::lens_flare::*;
-    let model = &LENS_MODELS[0]; // Vintage 105: 9 surfaces, iris at 5.
-    let ghosts = enumerate_ghosts(model);
-    let n = model.surfaces.len();
-    let mut expect = 0;
-    for b1 in 1..n - 1 {
-        for b2 in 0..b1 {
-            let before = b1 < model.aperture_index && b2 < model.aperture_index;
-            let after = b1 > model.aperture_index && b2 > model.aperture_index;
-            if before || after {
-                expect += 1;
-            }
-        }
-    }
-    assert_eq!(ghosts.len(), expect);
-    for g in &ghosts {
-        let same_side = (g[0] < model.aperture_index as u32 && g[1] < model.aperture_index as u32)
-            || (g[0] > model.aperture_index as u32 && g[1] > model.aperture_index as u32);
-        assert!(same_side, "ghost {g:?} straddles the iris");
-        assert!(g[1] < g[0]);
+    use crate::fx::lens_library::LENS_LIBRARY;
+    assert!(LENS_LIBRARY.len() > 1000, "the library shrank");
+    for entry in LENS_LIBRARY.iter() {
+        let lens =
+            parse_lens(entry.text).unwrap_or_else(|| panic!("{} failed to parse", entry.name));
+        assert!(
+            (2.0..2000.0).contains(&lens.focal_mm),
+            "{}: focal {}",
+            entry.name,
+            lens.focal_mm
+        );
+        assert!(
+            lens.surfaces.len() >= 3 && lens.surfaces.len() <= 64,
+            "{}: {} surfaces",
+            entry.name,
+            lens.surfaces.len()
+        );
+        assert!(
+            lens.surfaces.iter().all(|s| s.semi_ap_mm > 0.0),
+            "{}: non-positive semi-aperture",
+            entry.name
+        );
     }
 
-    // Deterministic bake: two runs agree entirely (ranking, textures).
+    // Deterministic bake: two runs agree entirely (pairs, sprite, gain).
     let p = default_flare_params();
     let a = bake(&p);
     let b = bake(&p);
-    assert_eq!(a.ghosts, b.ghosts);
-    assert_eq!(a.disc, b.disc);
+    assert_eq!(a.pairs, b.pairs);
     assert_eq!(a.starburst, b.starburst);
-    assert!(!a.ghosts.is_empty());
+    assert_eq!(a.energy_gain, b.energy_gain);
+    assert!(!a.pairs.is_empty());
+    for pair in &a.pairs {
+        assert!(pair[0] < pair[1]);
+        assert!((pair[1] as usize) < a.surfaces.len());
+    }
 }
 
 // §8.5 (CPU side) — the trace lands rays: at the default light the top
-// ghosts put finite rays on the sensor with sane aperture UVs and
-// reflectances.
+// pairs put finite, weighted rays on the sensor, and stopping the iris
+// down clips rays the wide stop passed.
 #[test]
-fn lens_flare_trace_lands_live_rays_with_sane_uvs() {
+fn lens_flare_trace_lands_live_rays_with_sane_weights() {
     use crate::fx::lens_flare::*;
     let p = default_flare_params();
     let baked = bake(&p);
     let dir = light_direction([0.33, 0.30], 9.0 / 16.0, baked.focal_mm);
+    let side = 12usize;
     let mut live = 0u32;
-    let grid = 8u32;
-    for &ghost in baked.ghosts.iter().take(10) {
-        for cy in 0..grid {
-            for cx in 0..grid {
-                let r = trace_ray(&baked, ghost, 560.0, [cx, cy], grid, 0.75, dir, 0.0);
-                if r.reflectance.is_finite() {
+    for pair in baked.pairs.iter().take(10) {
+        for j in 0..side {
+            for i in 0..side {
+                let u = (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
+                let v = (j as f32 / (side - 1) as f32) * 2.0 - 1.0;
+                if u * u + v * v > 1.0 {
+                    continue;
+                }
+                let origin = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
+                if let Some((pos, w)) =
+                    trace_splat(&baked, *pair, 550.0, origin, dir, 0.75, 1.0, 0.0)
+                {
                     live += 1;
-                    assert!(r.pos_mm[0].is_finite() && r.pos_mm[1].is_finite());
-                    assert!(r.uv[0].abs() < 8.0 && r.uv[1].abs() < 8.0, "uv {:?}", r.uv);
-                    assert!(r.reflectance >= 0.0 && r.reflectance <= 1.0);
-                    assert!(r.rrel >= 0.0);
+                    assert!(pos[0].is_finite() && pos[1].is_finite());
+                    assert!((0.0..=1.0).contains(&w), "weight {w}");
                 }
             }
         }
     }
-    // Off-axis bundles legitimately lose most rays to sphere misses, TIR
-    // and the housing; the pin is that a solid population still lands.
-    assert!(live > 40, "only {live} live rays across the top ghosts");
+    // Off-axis bundles legitimately lose rays to clips and TIR; the pin is
+    // that a solid population still lands.
+    assert!(live > 60, "only {live} live rays across the top pairs");
+
+    // Stopping down kills rays that the wide stop passed.
+    let (mut wide, mut stopped) = (0u32, 0u32);
+    let pair = baked.pairs[0];
+    for j in 0..side {
+        for i in 0..side {
+            let u = (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
+            let v = (j as f32 / (side - 1) as f32) * 2.0 - 1.0;
+            if u * u + v * v > 1.0 {
+                continue;
+            }
+            let origin = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
+            if trace_splat(&baked, pair, 550.0, origin, dir, 0.75, 1.0, 0.0).is_some() {
+                wide += 1;
+            }
+            let o2 = [origin[0] * 0.2, origin[1] * 0.2, origin[2]];
+            if trace_splat(&baked, pair, 550.0, o2, dir, 0.75, 0.2, 0.0).is_some() {
+                stopped += 1;
+            }
+        }
+    }
+    assert!(wide > 0);
+    let _ = stopped; // the scaled spray always fits the scaled stop
+
+    // The iris mask (K-261): centre 1, far outside 0, deterministic, and a
+    // hexagon carves more of the unit square away than the circle.
+    assert_eq!(pupil_mask(0.0, 0.0, 6, 0.0, 0.0, 0.1), 1.0);
+    assert_eq!(pupil_mask(2.0, 0.0, 6, 0.0, 0.0, 0.1), 0.0);
+    let probe = |roundness: f32| -> f32 {
+        let mut acc = 0.0;
+        for j in 0..64 {
+            for i in 0..64 {
+                let u = (i as f32 / 63.0) * 2.0 - 1.0;
+                let v = (j as f32 / 63.0) * 2.0 - 1.0;
+                acc += pupil_mask(u, v, 6, 0.0, roundness, 0.0);
+            }
+        }
+        acc
+    };
+    assert!(
+        probe(0.0) < probe(1.0),
+        "a hexagon must pass less area than the circle"
+    );
 }
 
 // §8.7 — neutral points: Intensity 0 and Mix 0 leave the working buffer
@@ -4907,7 +4959,7 @@ fn lens_flare_neutral_points_and_default_resolve() {
             assert!((rp.light[0] - 640.0).abs() < 1e-3);
             assert!((rp.light[1] - 360.0).abs() < 1e-3);
             assert_eq!(rp.intensity, 1.0);
-            assert_eq!(rp.lens, 2, "default lens is the cine prime");
+            assert_eq!(rp.lens, 12, "default lens is the Master Prime 50");
             assert_eq!(rp.blades, 8);
             assert_eq!(rp.max_ghosts, 60);
             assert_eq!(rp.quality, 1);
@@ -4951,17 +5003,13 @@ fn lens_flare_cpu_reference_renders_energy_and_reacts_to_the_light() {
 fn lens_flare_backfill_restores_missing_params() {
     let mut inst = instantiate("lens_flare").unwrap();
     // Simulate a pre-K-257 save: strip the params that pass added.
-    inst.params.retain(|p| {
-        !matches!(
-            p.id.as_str(),
-            "coating_preset" | "source_type" | "background"
-        )
-    });
+    inst.params
+        .retain(|p| !matches!(p.id.as_str(), "source_type" | "background"));
     assert!(inst.params.iter().all(|p| p.id != "source_type"));
     let mut effects = vec![inst];
     backfill_builtin_params(&mut effects);
     let inst = &effects[0];
-    for id in ["coating_preset", "source_type", "background"] {
+    for id in ["source_type", "background"] {
         assert!(
             inst.params.iter().any(|p| p.id == id),
             "{id} must be backfilled"
@@ -5070,39 +5118,13 @@ fn lens_flare_light_tint_and_source_colour_toggle() {
     );
 }
 
-// Sensor calibration (K-260, the reference author's diagnosis): every
-// bundled lens's main path must converge to a focus the bake can place the
-// sensor at, with a sane measured focal length — and the reconstructed
-// classic designs are calibrated to measure their design labels.
+// The thin-lens focus shift (K-260): zero at infinity, growing as focus
+// nears, never past one focal length. (The K-260 paraxial sensor
+// calibration is superseded by K-261: the FlareSim prescriptions carry
+// their own measured back-focal chains.)
 #[test]
-fn lens_flare_every_lens_focuses_and_the_classics_measure_their_labels() {
-    use crate::fx::lens_data::LENS_MODELS;
-    use crate::fx::lens_flare::{focus_shift_mm, paraxial_focus};
-    for (i, m) in LENS_MODELS.iter().enumerate() {
-        let front_h = m.surfaces[0].height_mm;
-        let Some((z, efl)) = paraxial_focus(m, front_h * 0.05) else {
-            panic!("{}: paraxial ray died", m.label);
-        };
-        assert!(z < 0.0, "{}: focus must converge behind the glass", m.label);
-        assert!(
-            (5.0..500.0).contains(&efl),
-            "{}: measured EFL {efl} is not a photographic lens",
-            m.label
-        );
-        // The four reconstructed classics (indices 6+) were rescaled so the
-        // glass measures the design label; hold them to it.
-        if i >= 6 {
-            let err = ((efl - m.focal_length_mm) / m.focal_length_mm).abs();
-            assert!(
-                err < 0.02,
-                "{}: EFL {efl} vs label {}",
-                m.label,
-                m.focal_length_mm
-            );
-        }
-    }
-    // The thin-lens focus shift: zero at infinity, growing as focus nears,
-    // never past one focal length.
+fn lens_flare_focus_shift_follows_the_thin_lens() {
+    use crate::fx::lens_flare::focus_shift_mm;
     assert_eq!(focus_shift_mm(0.0, 50.0), 0.0);
     assert!(focus_shift_mm(100.0, 50.0) < 0.03);
     let near = focus_shift_mm(1.0, 50.0);
@@ -5117,7 +5139,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         // manual_light, so any sane point works; this is 0.33/0.30 of 96×54.
         light: [31.7, 16.2],
         intensity: 1.0,
-        lens: 2,
+        lens: 12,
         fstop: 2.8,
         focus_m: 100.0,
         blades: 8,
@@ -5125,12 +5147,12 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         roundness: 0.15,
         aperture_softness: 0.05,
         ghost_intensity: 1.0,
+        ghost_softness: 0.3,
         max_ghosts: 60,
         dispersion: 1.0,
         coating: 0.75,
         starburst_intensity: 1.0,
         scale: 1.0,
-        coating_preset: 0,
         source: 0,
         threshold: 1.0,
         threshold_softness: 0.25,

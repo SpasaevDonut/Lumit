@@ -2920,7 +2920,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         // Raster pixels of a 192×108 probe framing (K-260).
         light: [63.4, 32.4],
         intensity: 1.0,
-        lens: 2,
+        lens: 12,
         fstop: 2.8,
         focus_m: 100.0,
         blades: 8,
@@ -2928,12 +2928,12 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         roundness: 0.15,
         aperture_softness: 0.05,
         ghost_intensity: 1.0,
+        ghost_softness: 0.3,
         max_ghosts: 10,
         dispersion: 1.0,
         coating: 0.75,
         starburst_intensity: 1.0,
         scale: 1.0,
-        coating_preset: 0,
         source: 0,
         threshold: 1.0,
         threshold_softness: 0.25,
@@ -2952,7 +2952,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
 fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> LensFlareOp {
     use lumit_core::fx::lens_flare as lf;
     let (grid, lambda_count, flare_div) = lf::quality_ladder(p.quality);
-    let energy = lf::GHOST_ENERGY_SCALE * p.ghost_intensity;
+    let energy = p.ghost_intensity;
     let lambdas = lf::lambda_weights(lambda_count, p.dispersion)
         .into_iter()
         .map(|(nm, rgb)| (nm, [rgb[0] * energy, rgb[1] * energy, rgb[2] * energy]))
@@ -2964,7 +2964,12 @@ fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> 
         max_ghosts: p.max_ghosts,
         coating: p.coating,
         focus_m: p.focus_m,
-        disc_scale: lf::ghost_disc_scale(p.fstop),
+        fstop: p.fstop,
+        blades: p.blades,
+        aperture_rotation_deg: p.aperture_rotation_deg,
+        roundness: p.roundness,
+        aperture_softness: p.aperture_softness,
+        ghost_softness: p.ghost_softness,
         grid,
         flare_div,
         screen_transform: lf::screen_transform(w),
@@ -2992,32 +2997,33 @@ fn flare_bake_data(p: &lumit_core::fx::lens_flare::LensFlareParams) -> FlareBake
             .map(|s| {
                 [
                     s.radius_mm,
-                    s.center_z_mm,
-                    s.height_mm,
+                    s.z_mm,
+                    s.semi_ap_mm,
                     s.cauchy_a,
                     s.cauchy_b,
-                    s.coating_nm,
-                    s.is_iris,
-                    s.is_sensor,
+                    s.coating_layers,
+                    s.is_stop,
+                    0.0,
                 ]
             })
             .collect(),
-        ghosts: b.ghosts.clone(),
-        launch_mm: b.launch_mm,
+        ghosts: b.pairs.clone(),
+        sensor_z_mm: b.sensor_z_mm,
         focal_mm: b.focal_mm,
+        native_fstop: b.native_fstop,
+        pupil_mm: b.pupil_mm,
+        start_z_mm: b.start_z_mm,
         energy_gain: b.energy_gain,
-        disc: b.disc,
-        disc_res: lf::DISC_RES,
         starburst: b.starburst,
         sb_res: lf::STARBURST_RES,
     }
 }
 
-/// Impl note §8.5: the WGSL trace agrees with the CPU trace ray-for-ray at
-/// the documented absolute bounds (positions/UV 5e-3, rrel 1e-3, reflectance
-/// max(1e-5, 1%)), with ≥ 99% live/dead agreement, across two lenses and two
-/// light positions. Not ULP-exact — GPU transcendentals are not correctly
-/// rounded (the note's stated reason).
+/// Impl note §8.5: the WGSL trace agrees with the CPU trace corner-for-
+/// corner (K-261 splat model): landing positions at a mean/percentile pixel
+/// bound, weights at a relative bound, with ≥ 99% live/dead agreement,
+/// across two lenses and two light positions. Not ULP-exact — GPU
+/// transcendentals are not correctly rounded (the note's stated reason).
 #[test]
 fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
     let Ok(ctx) = GpuContext::headless() else {
@@ -3027,7 +3033,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
     let fx = FxEngine::new(&ctx);
     use lumit_core::fx::lens_flare as lf;
     let (w, h) = (192u32, 108u32);
-    for lens in [0u32, 2] {
+    for lens in [12u32, 500] {
         for light_frac in [[0.33f32, 0.30f32], [0.85, 0.75]] {
             let p = lf::LensFlareParams {
                 lens,
@@ -3042,125 +3048,119 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
                 fx.lens_flare_trace_debug(&ctx, &op, &|| flare_bake_data(&p), combo_limit, w, h);
             assert!(!gpu.is_empty(), "trace debug returned nothing");
 
-            // Rebuild the same combo order the GPU used: ghost-major over
+            // Rebuild the same combo order the GPU used: pair-major over
             // the ranked list, wavelength-minor.
             let (grid, lambda_count, _) = lf::quality_ladder(p.quality);
             let lambdas = lf::lambda_weights(lambda_count, p.dispersion);
             let mut combos = Vec::new();
-            'outer: for &ghost in baked.ghosts.iter().take(p.max_ghosts as usize) {
+            'outer: for &pair in baked.pairs.iter().take(p.max_ghosts as usize) {
                 for &(nm, _) in &lambdas {
                     if combos.len() >= combo_limit as usize {
                         break 'outer;
                     }
-                    combos.push((ghost, nm));
+                    combos.push((pair, nm));
                 }
             }
             let ray_count = (grid * grid) as usize;
             assert_eq!(gpu.len(), combos.len() * ray_count);
+
+            // The frame-time optics the CPU side mirrors.
+            let stop_scale = lf::fstop_scale(baked.native_fstop, p.fstop);
+            let roundness = lf::effective_roundness(p.roundness, p.fstop, baked.native_fstop);
+            let rot = p.aperture_rotation_deg.to_radians();
+            let st = lf::screen_transform(w);
+            let shift = lf::focus_shift_mm(p.focus_m, baked.focal_mm);
 
             let mut mismatched_liveness = 0u32;
             let mut total = 0u32;
             let mut live = 0u32;
             let mut sum_pos = 0.0f32;
             let mut pos_errs: Vec<f32> = Vec::new();
-            let mut uv_errs: Vec<f32> = Vec::new();
-            let mut rrel_errs: Vec<f32> = Vec::new();
-            let mut refl_errs: Vec<f32> = Vec::new();
+            let mut weight_errs: Vec<f32> = Vec::new();
             let mut worst_pos = 0.0f32;
-            let mut worst_uv = 0.0f32;
-            let mut worst_rrel = 0.0f32;
-            let mut worst_refl_rel = 0.0f32;
-            for (ci, &(ghost, nm)) in combos.iter().enumerate() {
+            let mut worst_weight = 0.0f32;
+            for (ci, &(pair, nm)) in combos.iter().enumerate() {
                 for ry in 0..grid {
                     for rx in 0..grid {
                         let g = gpu[ci * ray_count + (ry * grid + rx) as usize];
-                        let c = lf::trace_ray(
-                            &baked,
-                            ghost,
-                            nm,
-                            [rx, ry],
-                            grid,
-                            p.coating,
-                            dir,
-                            lf::focus_shift_mm(p.focus_m, baked.focal_mm),
-                        );
+                        let g1 = (grid.max(2) - 1) as f32;
+                        let u = (rx as f32 / g1) * 2.0 - 1.0;
+                        let v = (ry as f32 / g1) * 2.0 - 1.0;
+                        let mask =
+                            lf::pupil_mask(u, v, p.blades, rot, roundness, p.aperture_softness);
+                        let cpu = if mask <= 0.0 {
+                            None
+                        } else {
+                            let origin = [
+                                u * baked.pupil_mm * stop_scale,
+                                v * baked.pupil_mm * stop_scale,
+                                baked.start_z_mm,
+                            ];
+                            lf::trace_splat(
+                                &baked, pair, nm, origin, dir, p.coating, stop_scale, shift,
+                            )
+                            .map(|(pos, wt)| {
+                                (
+                                    [pos[0] * st + w as f32 / 2.0, h as f32 / 2.0 - pos[1] * st],
+                                    wt * mask,
+                                )
+                            })
+                        };
                         total += 1;
-                        let cpu_live = c.reflectance.is_finite();
-                        let gpu_live = g[5] >= 0.0;
-                        if cpu_live != gpu_live {
-                            mismatched_liveness += 1;
-                            continue;
+                        let gpu_live = g[2] >= 0.0;
+                        match cpu {
+                            None => {
+                                if gpu_live {
+                                    mismatched_liveness += 1;
+                                }
+                            }
+                            Some((pos, wt)) => {
+                                if !gpu_live {
+                                    mismatched_liveness += 1;
+                                    continue;
+                                }
+                                live += 1;
+                                let pos_err = (g[0] - pos[0]).abs().max((g[1] - pos[1]).abs());
+                                sum_pos += pos_err;
+                                pos_errs.push(pos_err);
+                                worst_pos = worst_pos.max(pos_err);
+                                let werr = (g[2] - wt).abs() / wt.max(2e-4);
+                                weight_errs.push(werr);
+                                worst_weight = worst_weight.max(werr);
+                            }
                         }
-                        if !cpu_live {
-                            continue;
-                        }
-                        live += 1;
-                        let pos_err = (g[0] - c.pos_mm[0]).abs().max((g[1] - c.pos_mm[1]).abs());
-                        sum_pos += pos_err;
-                        pos_errs.push(pos_err);
-                        worst_pos = worst_pos.max(pos_err);
-                        let uv_err = (g[2] - c.uv[0]).abs().max((g[3] - c.uv[1]).abs());
-                        uv_errs.push(uv_err);
-                        worst_uv = worst_uv.max(uv_err);
-                        let rrel_err = (g[4] - c.rrel).abs();
-                        rrel_errs.push(rrel_err);
-                        worst_rrel = worst_rrel.max(rrel_err);
-                        // Hybrid bound: relative for visible reflectances,
-                        // absolute floor for near-zero ones — the coating
-                        // formula's tan() poles make grazing rays hugely
-                        // sensitive, and a 3e-4 absolute wobble on a 1e-6
-                        // reflectance is invisible (the frame oracle guards
-                        // the picture).
-                        let refl_err = (g[5] - c.reflectance).abs() / c.reflectance.max(2e-2);
-                        refl_errs.push(refl_err);
-                        worst_refl_rel = worst_refl_rel.max(refl_err);
                     }
                 }
             }
             eprintln!(
-                "lens {lens} light {light_frac:?}: pos {worst_pos} uv {worst_uv} rrel {worst_rrel} refl-rel {worst_refl_rel}"
+                "lens {lens} light {light_frac:?}: pos {worst_pos}px weight-rel {worst_weight}"
             );
-            // The documented §8.5 bounds (docs/impl/lens-flare.md): the MEAN
-            // position error is what a porting bug would blow up by orders
-            // of magnitude. There is deliberately NO absolute max bound:
-            // near a caustic fold (exactly the bright, tightly-focused
-            // ghosts the ranking puts on top) a few-ULP input difference
-            // legitimately lands a single ray on the other branch of the
-            // fold, millimetres away — so the tail is pinned at the 99th
-            // percentile instead, which a real geometry bug still blows.
+            // Mean position error is what a porting bug blows up by orders
+            // of magnitude; the tail is pinned at the 99th percentile (a
+            // few-ULP input difference near a caustic fold legitimately
+            // lands a ray on the other branch, far away).
             let mean_pos = sum_pos / live.max(1) as f32;
-            assert!(mean_pos < 0.02, "mean position error {mean_pos} mm");
+            assert!(mean_pos < 0.2, "mean position error {mean_pos} px");
             let p99 = |v: &mut Vec<f32>| {
                 v.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
                 v[(v.len() * 99) / 100]
             };
             let pos_p99 = p99(&mut pos_errs);
             assert!(
-                pos_p99 < 0.5,
-                "p99 position error {pos_p99} mm (worst {worst_pos})"
+                pos_p99 < 3.0,
+                "p99 position error {pos_p99} px (worst {worst_pos})"
             );
-            let uv_p99 = p99(&mut uv_errs);
-            assert!(uv_p99 < 1e-3, "p99 uv error {uv_p99} (worst {worst_uv})");
-            let rrel_p99 = p99(&mut rrel_errs);
+            let w_p99 = p99(&mut weight_errs);
             assert!(
-                rrel_p99 < 0.02,
-                "p99 rrel error {rrel_p99} (worst {worst_rrel})"
+                w_p99 < 0.05,
+                "p99 weight error {w_p99} (worst {worst_weight})"
             );
-            // Reflectance at the tail only: the coating formula's tan() poles
-            // make single grazing rays hugely sensitive (the same fold story
-            // as position), and the wider K-258 launch square traces more of
-            // them.
-            let refl_p99 = p99(&mut refl_errs);
-            assert!(
-                refl_p99 < 0.05,
-                "p99 reflectance error {refl_p99} (worst {worst_refl_rel})"
-            );
-
             let flip_rate = mismatched_liveness as f32 / total.max(1) as f32;
             assert!(
                 flip_rate < 0.01,
                 "lens {lens}: {mismatched_liveness}/{total} rays flipped live/dead"
             );
+            assert!(live > 100, "too few live rays ({live}) to mean anything");
         }
     }
 }

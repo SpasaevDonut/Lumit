@@ -1409,45 +1409,45 @@ tinted by its anti-reflective coating's interference, which is where the blue/gr
 cast of real flares comes from.
 
 **Algorithm sketch** (full detail in the impl note):
-1. **Bake** (CPU, on parameter change only, cached): the aperture image (blade-polygon
-   SDF with roundness, rotation, softness); the **ghost disc** texture (fractional Fourier
-   transform of the aperture — the softly ringed disc every ghost projects); the
-   **starburst sprite** (FFT power spectrum of the aperture under a Fresnel propagation
-   term, integrated across the visible spectrum with CIE XYZ weights so the spikes disperse
-   into rainbow fringes); and the **ghost list** (every two-reflection path through the
-   prescription, ranked by traced footprint so the brightest ghosts survive the cap).
-2. **Trace** (GPU compute, per frame): for each surviving ghost × wavelength, a grid of
-   rays enters the front element toward the light, refracts through every surface (Abbe
-   dispersion), reflects at the ghost's two surfaces (Fresnel, blended toward quarter-wave
-   coating interference by the Coating parameter), records its aperture crossing (UV),
-   worst housing height (vignette clip) and accumulated reflectance, and lands on the
-   sensor.
-3. **Rasterise** (GPU raster, additive): the warped ray grid draws as triangles into an
-   fp16 flare buffer; per-quad intensity is grid-cell area ÷ landed area (energy
-   conservation — a ghost focused small burns bright, spread large sits dim), the fragment
-   samples the ghost disc by aperture UV, clips at the housing, and tints by the
-   wavelength's CIE weight.
-4. **Combine** (GPU compute): `out = input + intensity · (flare + starburst)` in linear
-   light, alpha saturating toward 1 (the Glow shape); the starburst is sampled as a baked
-   sprite placed at the light with its scale/rotation, and the whole flare takes the
+1. **Bake** (CPU, on parameter change only, cached): parse the selected .lens
+   prescription; enumerate every two-surface bounce pair, filter by interface
+   and an on-axis brightness probe, rank brightest-first; bake the
+   **starburst sprite** (Fourier amplitude of the iris image under a Fresnel
+   propagation term, integrated across the visible spectrum with CIE
+   weights); close the **auto-exposure loop** by rendering a thumbnail.
+2. **Trace** (GPU compute, per frame): for each surviving pair × wavelength,
+   a regular grid of rays over the entrance pupil — each corner weighted by
+   the iris mask (blades, roundness, softness) — refracts through every
+   surface with per-surface Fresnel/MgF₂-coating weights (the FlareSim
+   three-phase walk, K-261), reflecting at the pair's two surfaces, landing
+   on the focus-shifted sensor.
+3. **Rasterise** (GPU raster, additive): each live grid cell draws as two
+   triangles at density `launch cell area ÷ landed area` (energy
+   conservation — a ghost focused small burns bright; fold caustics blow up
+   into the bright rims real flares show), with sub-pixel fold quads
+   inflated flux-exactly so no rasteriser can drop them, then the Ghost
+   softness box blur.
+4. **Combine** (GPU compute): `out = input + intensity · (flare + starburst)`
+   in linear light, alpha saturating toward 1 (the Glow shape); the starburst
+   is a baked sprite at each light; the whole flare takes Scale and the
    anamorphic squeeze. Mix blends against the untouched input.
 
 **Parameters (K-257 panel design).** Top level: **Light** (one x/y point row —
 the `_x`/`_y` pair convention of docs/07 §6.1 — with a pick-on-Viewer dropper;
 **px@comp**, open both sides since an off-frame light keeps flaring — point
 parameters are always authored in comp pixels, K-260),
-**Intensity** (0–4, open above), **F-stop** (0.7–32 — wider grows the ghost
-discs and softens the starburst ringing), **Coating type** (seven presets — Modern multicoat, Vintage single coat, Warm
-bias, Cool bias, Amber single coat, Two-tone vintage, Broad multicoat — the
-per-surface coating-tuning pattern, i.e. the ghost train's colour character; it
-sits above the lens it colours), **Lens** (the bundled prescription library: six real lenses and four classic
-public-domain designs — Cooke triplet, Tessar, Petzval, Double Gauss), then
-three folds and the tail:
+**Intensity** (0–4, open above), **F-stop** (0.7–32 — stops the iris down
+from the lens's native f-number; wide open the ghosts are big and round,
+stopped down small and bladed), **Lens** (the embedded prescription library,
+K-261: **1299 real lenses** transcribed from patents via the FlareSim /
+PhotonsToPhotos collection, sorted by name — every prescription carries its
+own per-surface anti-reflective coating layers, which is what replaced the
+K-257 Coating-type presets), then three folds and the tail:
 
 | Group | Parameters |
 |---|---|
 | *Lens options* (twirl) | Focus (m) (0.5–100 slider, hard min 0.2 — the focus distance; K-260, refocusing shifts the sensor plane and visibly rearranges the whole ghost train, the "same lens, different focus" look), Anamorphic squeeze (0.5–3), Blades (int 3–16), Rotation, Coating (0 uncoated → 1 fully coated), Roundness, Softness |
-| *Flare options* (twirl) | Ghost intensity (0–4), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
+| *Flare options* (twirl) | Ghost intensity (0–4), Ghost softness (0–1 slider, % of the frame diagonal — FlareSim's Ghost Blur, K-261: a touch of out-of-focus softness on the ghost train), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
 | *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
 
 and **Quality** (Draft / Normal / High / Ultra), **Background** (Transparent /
@@ -1506,21 +1506,19 @@ could hit at ULP tolerance — the same staged-oracle shape flow effects already
 CPU degradation rung renders the effect as a labelled no-op, like the LUT (K-114
 precedent). Exact numbers in the impl note §8.
 
-**Status (v1 core K-256; panel + sources K-257, shipped):** everything above —
-the point-pair light row with its Viewer dropper, the six-lens library (real
-prescriptions: Voigtländer 105/3.5, Leica 35/1.4, Zeiss 50 T1.3, Nikon
-50-135/3.5, Kodak 100/3.8, Nikon 28-70/2.8), coating presets, traced ghosts
-with per-bake auto-exposure, FRFT ghost discs, the baked spectral starburst,
-whole-flare Scale, the Matte source mode, quality ladder, anamorphic squeeze,
-Mix; K-260 adds the paraxially calibrated sensor (placed at each
-prescription's *measured* infinity focus, not the patent's trailing gap), the
-Focus distance parameter, wide-open iris rounding at the native stop, and the
-padded ghost-disc FRFT. Pinned follow-ups (TODO): aperture **dirt / scratches / grating** overlays
-and an **image aperture** (file), **custom lens prescription files** and the
-**lens designer** (a window where the user builds a prescription element by
-element, the reference apps' diagram view), the **Lights** source wiring (waits
-on light layers as flare sources), an **Occlusion layer** reference fading the
-flare when the light is covered, and per-wavelength sub-interpolation. Every
+**Status (core K-256..K-260; FlareSim model K-261, shipped):** everything
+above — the 1299-lens embedded library with per-surface coatings, the
+three-phase pupil-grid trace with energy-conserving quad raster and
+flux-exact caustic inflation, the Ghost softness blur, Focus distance, the
+point-pair light row with its Viewer dropper, the Matte source mode, quality
+ladder, anamorphic squeeze, Mix. Pinned follow-ups (TODO): **adaptive grid
+refinement** for extreme-defocus ghosts (a few process-lens prescriptions
+resolve one pupil cell to tens of pixels at low quality and show grid-aligned
+steps); a **searchable Lens picker** (1299 entries deserve better than one
+long dropdown); aperture **dirt / scratches** overlays and an **image
+aperture**; **custom .lens file loading** (the parser already reads the
+standard format) and the **lens designer** window; the **Lights** source
+wiring (waits on light layers); an **Occlusion layer** reference. Every
 shipped parameter is stable when they land.
 
 ---

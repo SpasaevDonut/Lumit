@@ -1,24 +1,31 @@
-//! The Lens flare effect's engine-pure core (docs/08 §3.27,
-//! docs/impl/lens-flare.md, K-256): the optics maths (the exact CPU twin the
-//! WGSL trace must match ray-for-ray), the parameter-change bake (aperture,
-//! FRFT ghost disc, spectral starburst — all CPU, cached by the GPU side),
-//! and the CPU reference renderer the §1.6 staged oracle compares against.
+//! Lens flare — the physically-based built-in (docs/08-EFFECTS.md §3.27,
+//! docs/impl/lens-flare.md; K-256..K-261).
 //!
-//! In plain terms: this file is the physics. It knows how a ray bends at a
-//! glass surface, how much of it reflects (and in what colour, once the
-//! anti-reflective coating interferes with itself), which two-bounce paths
-//! through a lens produce ghosts, and what the iris does to light that
-//! diffracts around it. The GPU runs the same maths fast; this is the
-//! readable copy that the tests hold it to.
+//! In plain terms: a camera lens is a stack of glass surfaces with an iris
+//! somewhere in the middle. A tiny fraction of the light reflects off the
+//! inside of one surface, bounces backward, reflects off another, and lands
+//! on the sensor anyway — one faint "ghost" per such two-bounce pair. This
+//! module simulates that literally, in the FlareSim manner (K-261): for each
+//! light source it fires a quasi-random spray of parallel rays across the
+//! front of a real lens prescription, refracts each ray surface by surface
+//! (reflecting at the pair's two surfaces), and SPLATS every survivor onto
+//! the sensor as a point of light. Brightness is ray density — where the
+//! optics focus rays into folds and rims, many rays land on the same pixel
+//! and it burns bright; nothing is a drawn shape. The starburst is separate
+//! physics (diffraction at the iris) and stays a baked Fourier sprite.
+//!
+//! The bake (pure CPU, cached by [`bake_key`]) parses the selected
+//! prescription, enumerates and ranks every ghost pair, measures each pair's
+//! defocus spread, renders a thumbnail to close the auto-exposure loop, and
+//! bakes the starburst. The per-frame splat runs on the GPU with this CPU
+//! implementation as its reference (§1.6 staged oracle, K-114 pattern for
+//! the CPU rung).
 
 use super::cie;
-use super::fft::{fft2_inplace, fftshift2, frft2, Cx};
-use super::lens_data::{LensModel, LENS_MODELS};
+use super::fft::{fft2_inplace, fftshift2, Cx};
+use super::lens_library::LENS_LIBRARY;
 
-/// The resolved Lens flare parameter bundle (docs/08 §3.27): plain numbers
-/// both the CPU reference and the GPU pipeline consume, so preview and
-/// export match (K-031). Positions are fractions of the processed raster
-/// (0..1 inside frame; off-frame values are legal and meaningful).
+/// Resolved Lens flare parameters (docs/08 §3.27).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LensFlareParams {
     /// Light position in RASTER PIXELS (px@comp converted through the §2.3
@@ -29,45 +36,46 @@ pub struct LensFlareParams {
     /// Master gain on everything the effect adds; 0 is the neutral point
     /// (bit-exact passthrough, pinned by test).
     pub intensity: f32,
-    /// Index into [`LENS_MODELS`] (clamped by the resolve step).
+    /// Index into [`LENS_LIBRARY`] (clamped by the resolve step).
     pub lens: u32,
-    /// The working f-stop: scales the ghost discs (wider = bigger) and the
-    /// ghost disc's diffraction ringing.
+    /// The working f-stop: stops the iris down from the lens's native
+    /// f-number (scales the stop and the pupil mask together).
     pub fstop: f32,
-    /// Focus distance, metres (K-260): shifts the sensor from its calibrated
-    /// infinity position by the thin-lens image shift `f²/(1000·d − f)` mm.
-    /// Real flares change shape dramatically with focus — the reference
-    /// renderer's images at two focus distances barely resemble each other.
-    /// Frame-time (animatable, no rebake); large values are infinity.
+    /// Focus distance, metres (K-260): shifts the sensor plane by the
+    /// thin-lens image shift `f²/(1000·d − f)` mm. Real flares change shape
+    /// dramatically with focus. Frame-time (animatable, no rebake); large
+    /// values are infinity.
     pub focus_m: f32,
     /// Iris blade count, 3..=16 (host-rounded).
     pub blades: u32,
     /// Iris rotation, degrees.
     pub aperture_rotation_deg: f32,
-    /// 0..1: bulges the blade edges toward a circle.
+    /// 0..1: blends the blade polygon toward a circle.
     pub roundness: f32,
-    /// 0..1: softens the iris edge (and with it every ghost's rim).
+    /// 0..1: softens the iris edge (feathers the pupil mask and with it
+    /// every ghost's rim).
     pub aperture_softness: f32,
     /// Gain on the ghost train alone.
     pub ghost_intensity: f32,
-    /// How many of the brightest-ranked ghosts render, 0..=200.
+    /// Softens the rendered ghosts (K-261): a box-blur radius as a
+    /// percentage of the frame diagonal (3 passes approximate a Gaussian).
+    /// This is FlareSim's Ghost Blur — a touch of out-of-focus softness
+    /// that also hides the point-splat grain at lower qualities.
+    pub ghost_softness: f32,
+    /// How many of the brightest-ranked ghost pairs render, 0..=200.
     pub max_ghosts: u32,
     /// Scales each traced wavelength's offset from the spectrum midpoint:
     /// 0 = monochrome trace (no fringing), 1 = physical, 2 = doubled.
     pub dispersion: f32,
     /// 0..1: blends every reflection from plain Fresnel (uncoated, bright
-    /// neutral ghosts) toward quarter-wave coating interference (dim,
-    /// colour-cast ghosts).
+    /// neutral ghosts) toward the prescription's own anti-reflective
+    /// coating (K-261: per-surface MgF₂ layer counts from the lens file).
     pub coating: f32,
     /// Gain on the starburst alone.
     pub starburst_intensity: f32,
     /// Scale of the WHOLE flare about the optical centre (ghost train and
     /// starburst together); 1 is natural size.
     pub scale: f32,
-    /// Coating character preset (docs/08 §3.27): the lambda-c assignment
-    /// pattern. 0 Modern multicoat, 1 Vintage single coat, 2 Warm bias,
-    /// 3 Cool bias. A bake input.
-    pub coating_preset: u32,
     /// Where the light comes from: 0 Manual (the light point above),
     /// 1 Matte (bright sources detected in a referenced layer), 2 Lights
     /// (prepared for light layers; resolves as Manual until they land).
@@ -89,8 +97,8 @@ pub struct LensFlareParams {
     /// Horizontal stretch of the whole flare about the frame centre
     /// (1 = spherical, 1.33/2 = anamorphic looks).
     pub anamorphic: f32,
-    /// 0 Draft, 1 Normal, 2 High, 3 Ultra (ray grid and wavelength count;
-    /// Draft renders the flare buffer at half resolution).
+    /// 0 Draft, 1 Normal, 2 High, 3 Ultra (pupil sample density and
+    /// wavelength count; Draft renders the flare buffer at half resolution).
     pub quality: u32,
     /// 0 Transparent (the layer's own alpha carries the flare — today's
     /// behaviour), 1 Black (the output is made opaque, the flare-element-
@@ -102,11 +110,13 @@ pub struct LensFlareParams {
     pub mix: f32,
 }
 
-/// Per-quality ray-grid side, traced wavelength count, and flare-buffer
-/// scale divisor (docs/08 §3.27's Quality ladder).
+/// Per-quality pupil grid side, traced wavelength count, and flare-buffer
+/// scale divisor (docs/08 §3.27's Quality ladder). The pupil grid is the
+/// Halton candidate count's square root — the accepted sample count is a
+/// little under `side²` after the aperture mask.
 pub fn quality_ladder(quality: u32) -> (u32, u32, u32) {
     match quality {
-        0 => (16, 4, 2),
+        0 => (24, 3, 2),
         2 => (80, 16, 1),
         3 => (128, 32, 1),
         _ => (48, 8, 1),
@@ -117,30 +127,12 @@ pub fn quality_ladder(quality: u32) -> (u32, u32, u32) {
 /// prescriptions are all full-frame stills/cine designs).
 pub const SENSOR_MM: [f32; 2] = [36.0, 24.0];
 
-/// Baked texture side for the ghost disc and aperture (power of two — the
-/// FFTs need it).
-pub const DISC_RES: u32 = 512;
-/// Baked starburst sprite side (power of two).
+/// Baked starburst sprite side (power of two — the FFT needs it).
 pub const STARBURST_RES: u32 = 256;
 /// Spectral samples integrated into the starburst bake.
 pub const STARBURST_SAMPLES: u32 = 100;
-/// The empirical energy scale that makes a default ghost train read well at
-/// default Intensity (realflare's own `intensity * 1e3` constant, re-tuned
-/// for the normalised disc texture and the Y-normalised wavelength weights;
-/// set by eye against the reference renders, not derived).
-pub const GHOST_ENERGY_SCALE: f32 = 1.0;
-/// Floor on a landed quad's area as a fraction of its launch area — stops
-/// caustic-focused cells burning to infinity (the impl note §7 trap). K-261:
-/// 1e-4, not realflare's 0.01 — the caustic dynamic range IS the reference
-/// look; the screen-space quad inflation below is what keeps it drawable.
-pub const MIN_AREA_FRAC: f32 = 1e-4;
-/// Minimum screen area a drawn quad may have, px² (K-261). A caustic-folded
-/// quad shrinks below a pixel, and a rasteriser drops triangles that cover
-/// no pixel centre — deleting exactly the flux that makes a flare's bright
-/// rims and fold lines. Quads below this inflate about their centroid to
-/// this area with their colour scaled by (true / inflated) area, so the
-/// deposited flux is conserved and every quad reliably covers samples.
-pub const MIN_QUAD_PX: f32 = 4.0;
+/// Aperture-image side for the starburst FFT.
+pub const APERTURE_RES: u32 = 256;
 
 /// Most flare sources a frame renders (Matte mode's top-K cap; Manual is one).
 pub const MAX_LIGHTS: usize = 8;
@@ -149,6 +141,12 @@ pub const DETECT_TILE: u32 = 32;
 /// Non-max suppression radius, in tiles (Chebyshev): one highlight must not
 /// spend the whole light budget on its own neighbouring tiles.
 pub const SUPPRESS_TILES: i64 = 2;
+
+/// Ghost pairs dimmer than this on the on-axis probe are dropped at bake
+/// (FlareSim's `min_intensity`).
+pub const PAIR_MIN_INTENSITY: f32 = 1e-7;
+/// Rays start this far in front of the first surface, mm.
+pub const START_Z_BACKOFF_MM: f32 = 20.0;
 
 /// One flare source: where it sits (raster fraction) and its colour already
 /// multiplied by its gate weight. Manual mode is one white light at the
@@ -172,9 +170,9 @@ pub fn manual_light(p: &LensFlareParams, w: u32, h: u32) -> Vec<FlareLight> {
 }
 
 /// The sensor shift for a focus distance (K-260): the thin-lens image shift
-/// from the calibrated infinity position, `f²/(1000·d − f)` mm, clamped so a
-/// degenerate distance cannot fling the sensor. Shared by the CPU reference
-/// and the GPU uniform fill.
+/// from the infinity position, `f²/(1000·d − f)` mm, clamped so a degenerate
+/// distance cannot fling the sensor. Shared by the CPU reference and the GPU
+/// uniform fill.
 pub fn focus_shift_mm(focus_m: f32, efl_mm: f32) -> f32 {
     if focus_m <= 0.0 {
         return 0.0;
@@ -282,81 +280,172 @@ pub fn detect_lights(
     out
 }
 
-/// One optical surface, flattened for the trace: the Cauchy pair replaces
-/// (n_d, V) so no per-ray fitting happens, and the iris flag/coating ride
-/// along. Mirrored field-for-field by the WGSL struct.
+// ---------------------------------------------------------------------------
+// The lens prescription (K-261: parsed from the embedded .lens library).
+// ---------------------------------------------------------------------------
+
+/// One optical surface, flattened for the trace and mirrored field-for-field
+/// by the WGSL struct. The Cauchy pair describes the medium AFTER this
+/// surface (1.0/0.0 = air); `coating_layers` is the .lens coating column
+/// (0 bare glass, 1 single-layer MgF₂, 2+ multicoat).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FlareSurface {
     /// Signed sphere radius, mm; 0 = flat.
     pub radius_mm: f32,
-    /// Sphere-centre z (flat: plane z), mm — precomputed running offset.
-    pub center_z_mm: f32,
-    /// Housing half-height, mm.
-    pub height_mm: f32,
-    /// Cauchy A (dimensionless); 1.0 for air.
+    /// Surface vertex z, mm (front vertex at 0, increasing toward sensor).
+    pub z_mm: f32,
+    /// Clear semi-aperture, mm — rays beyond it die.
+    pub semi_ap_mm: f32,
+    /// Cauchy A of the medium after this surface (1.0 = air).
     pub cauchy_a: f32,
     /// Cauchy B, µm²; 0 for air.
     pub cauchy_b: f32,
-    /// The quarter-wave coating's tuned wavelength, nm (0 on the iris and
-    /// sensor rows, where no reflection happens).
-    pub coating_nm: f32,
-    /// 1.0 on the iris surface, else 0.0.
-    pub is_iris: f32,
-    /// 1.0 on the appended sensor surface, else 0.0.
-    pub is_sensor: f32,
-}
-
-/// A ray landed on the sensor (or dead): the trace's per-ray output, and
-/// the exact struct the WGSL trace writes. `reflectance` is NaN for a dead
-/// ray (missed a surface, total internal reflection) — death is positional,
-/// not zero-brightness (impl note §7).
-#[derive(Debug, Clone, Copy)]
-pub struct TracedRay {
-    /// Sensor-plane position, mm (y up).
-    pub pos_mm: [f32; 2],
-    /// Iris crossing, normalised to the iris height (the ghost-disc UV).
-    pub uv: [f32; 2],
-    /// Worst relative housing height along the walk; > 1 = vignetted.
-    pub rrel: f32,
-    /// Accumulated reflectance of the two bounces; NaN = dead.
-    pub reflectance: f32,
+    /// AR coating layer count (as f32 for the POD mirror).
+    pub coating_layers: f32,
+    /// 1.0 on the aperture-stop surface, else 0.0 (the f-stop scales it).
+    pub is_stop: f32,
+    /// Padding (POD mirror alignment).
+    pub _pad: f32,
 }
 
 /// Everything the bake produces: pure function of the bake-relevant subset
 /// of [`LensFlareParams`] (see [`bake_key`]), consumed by the GPU (uploaded
-/// once, cached) and by the CPU reference directly — one bake, two
-/// consumers, so the textures cannot disagree.
+/// once, cached) and by the CPU reference directly.
 #[derive(Debug, Clone)]
 pub struct FlareBaked {
-    /// The trace surface table: the lens front-to-back plus the appended
-    /// sensor row.
+    /// The trace surface table, front to back (no appended sensor row — the
+    /// sensor plane is `sensor_z_mm`).
     pub surfaces: Vec<FlareSurface>,
-    /// Index of the iris surface.
-    pub aperture_index: u32,
-    /// Ranked two-bounce ghost pairs, brightest first, already capped is
-    /// NOT applied here — the frame slices the first `max_ghosts`.
-    pub ghosts: Vec<[u32; 2]>,
-    /// Launch-square side, mm (the ray grid's extent at the front element).
-    pub launch_mm: f32,
-    /// Focal length, mm (the light-direction z).
+    /// Sensor plane z, mm (the prescription's back focal chain).
+    pub sensor_z_mm: f32,
+    /// The prescription's stated focal length, mm (light direction, focus).
     pub focal_mm: f32,
-    /// The auto-exposure gain (see [`bake`]): multiplies every ghost's
-    /// energy so all bundled lenses read comparably at default Intensity.
+    /// Native f-number (from the collection filename; estimated from the
+    /// front aperture when unknown).
+    pub native_fstop: f32,
+    /// Front-element clear semi-aperture, mm.
+    pub front_semi_ap: f32,
+    /// The pupil spray's radius, mm (K-261): the entrance pupil
+    /// `focal / (2 · native_fstop)` with half again as margin (ghost paths
+    /// accept rays the imaging pupil rejects), clamped to the front
+    /// element. Spraying the whole front bezel instead wastes most rays —
+    /// the Master Prime's 63 mm bezel passes ~4% of a full-width spray.
+    pub pupil_mm: f32,
+    /// Ray start z, mm (in front of the first surface).
+    pub start_z_mm: f32,
+    /// Ranked ghost pairs, brightest first; the frame renders the first
+    /// `max_ghosts`.
+    pub pairs: Vec<[u32; 2]>,
+    /// The auto-exposure gain (closed loop, K-258): multiplies every splat
+    /// so all bundled lenses read comparably at default Intensity.
     pub energy_gain: f32,
-    /// The ghost-disc texture (FRFT ringing), `DISC_RES`², max-normalised.
-    pub disc: Vec<f32>,
-    /// The starburst sprite, `STARBURST_RES`² × RGB, energy-normalised.
+    /// The starburst sprite, `STARBURST_RES`² × RGB, peak-normalised.
     pub starburst: Vec<f32>,
 }
 
+/// A parsed .lens prescription before flattening.
+pub struct Prescription {
+    /// The stated focal length, mm.
+    pub focal_mm: f32,
+    /// Surfaces front to back with running vertex z.
+    pub surfaces: Vec<FlareSurface>,
+    /// Sensor plane z (the thickness chain's end), mm.
+    pub sensor_z_mm: f32,
+}
+
+/// Parse a .lens text (K-261, the FlareSim/PhotonsToPhotos format): metadata
+/// lines (`name:`, `focal_length:`), then `surfaces:` rows of
+/// `radius thickness ior abbe semi_ap coating` with `stop`/`inf` keywords.
+/// Malformed rows are skipped; a file with under 3 surfaces is rejected.
+pub fn parse_lens(text: &str) -> Option<Prescription> {
+    let mut focal = 0.0_f32;
+    let mut in_surfaces = false;
+    let mut rows: Vec<(f32, f32, f32, f32, f32, f32, bool)> = Vec::new();
+    for raw in text.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if !in_surfaces {
+            if let Some(v) = line.strip_prefix("focal_length:") {
+                focal = v.trim().parse().unwrap_or(0.0);
+            } else if line.starts_with("surfaces:") {
+                in_surfaces = true;
+            }
+            continue;
+        }
+        let mut it = line.split_whitespace();
+        let radius_tok = it.next().unwrap_or("");
+        let is_stop = radius_tok.eq_ignore_ascii_case("stop");
+        let radius = if is_stop || radius_tok.eq_ignore_ascii_case("inf") {
+            0.0
+        } else {
+            match radius_tok.parse::<f32>() {
+                Ok(r) => r,
+                Err(_) => continue,
+            }
+        };
+        let mut f = |d: f32| it.next().and_then(|t| t.parse::<f32>().ok()).unwrap_or(d);
+        let thickness = f(0.0);
+        let ior = f(1.0);
+        let abbe = f(0.0);
+        let semi_ap = f(0.0);
+        let coating = f(0.0);
+        if semi_ap <= 0.0 {
+            continue;
+        }
+        rows.push((radius, thickness, ior, abbe, semi_ap, coating, is_stop));
+    }
+    if rows.len() < 3 || focal <= 0.0 {
+        return None;
+    }
+    let mut z = 0.0_f32;
+    let mut surfaces = Vec::with_capacity(rows.len());
+    for &(radius, thickness, ior, abbe, semi_ap, coating, is_stop) in &rows {
+        let (a, b) = cauchy_from_abbe(ior, abbe);
+        surfaces.push(FlareSurface {
+            radius_mm: radius,
+            z_mm: z,
+            semi_ap_mm: semi_ap,
+            cauchy_a: a,
+            cauchy_b: b,
+            coating_layers: coating.max(0.0),
+            is_stop: if is_stop { 1.0 } else { 0.0 },
+            _pad: 0.0,
+        });
+        z += thickness;
+    }
+    Some(Prescription {
+        focal_mm: focal,
+        surfaces,
+        sensor_z_mm: z,
+    })
+}
+
+/// The library entry a params bundle selects (index clamped).
+pub fn lens_entry(lens: u32) -> &'static super::lens_library::LensFile {
+    let i = (lens as usize).min(LENS_LIBRARY.len() - 1);
+    &LENS_LIBRARY[i]
+}
+
+/// The stop-down scale for the working f-stop against the lens's native
+/// f-number: 1 wide open, smaller stopped down. Scales the stop surface's
+/// semi-aperture and the pupil mask together.
+pub fn fstop_scale(native_fstop: f32, fstop: f32) -> f32 {
+    if native_fstop <= 0.0 || fstop <= 0.0 {
+        return 1.0;
+    }
+    (native_fstop / fstop).clamp(0.05, 1.0)
+}
+
 // ---------------------------------------------------------------------------
-// Optics primitives — the exact maths the WGSL trace mirrors op-for-op.
+// Optics primitives — the exact maths the WGSL splat kernel mirrors.
 // ---------------------------------------------------------------------------
 
 /// Cauchy dispersion pair from a prescription's (n_d, V) — impl note §1
 /// deviation D1. Returns (A, B[µm²]); air (n ≤ 1 or V ≤ 0) is (n_d, 0).
 pub fn cauchy_from_abbe(n_d: f32, v: f32) -> (f32, f32) {
-    if n_d <= 1.0 || v <= 0.0 {
+    if n_d <= 1.0001 || v <= 0.1 {
         return (n_d.max(1.0), 0.0);
     }
     let lam_f = 0.486_13_f64; // hydrogen F line, µm
@@ -374,299 +463,379 @@ pub fn cauchy_ior(a: f32, b: f32, lambda_nm: f32) -> f32 {
     a + b / (um * um)
 }
 
-/// Plain unpolarised Fresnel reflectance at incidence `theta0` between
-/// media `n1` → `n2` (realflare's `fresnel`).
-pub fn fresnel(theta0: f32, n1: f32, n2: f32) -> f32 {
-    let s = (theta0.sin() * n1 / n2).clamp(-1.0, 1.0);
-    let theta1 = s.asin();
-    let (ci, ct) = (theta0.cos(), theta1.cos());
-    let rs = (n1 * ci - n2 * ct) / (n1 * ci + n2 * ct);
-    let rp = (n1 * ct - n2 * ci) / (n1 * ct + n2 * ci);
-    (rs * rs + rp * rp) / 2.0
+/// Unpolarised Fresnel reflectance at a dielectric interface, by incidence
+/// cosine (K-261, the FlareSim formulation the WGSL mirrors).
+pub fn fresnel_cos(cos_i: f32, n1: f32, n2: f32) -> f32 {
+    let cos_i = cos_i.abs();
+    let eta = n1 / n2;
+    let sin2_t = eta * eta * (1.0 - cos_i * cos_i);
+    if sin2_t >= 1.0 {
+        return 1.0; // total internal reflection
+    }
+    let cos_t = (1.0 - sin2_t).sqrt();
+    let rs = (n1 * cos_i - n2 * cos_t) / (n1 * cos_i + n2 * cos_t);
+    let rp = (n2 * cos_i - n1 * cos_t) / (n2 * cos_i + n1 * cos_t);
+    0.5 * (rs * rs + rp * rp)
 }
 
-/// Single-layer anti-reflective coating reflectance ([Ritschel et al. 2009]
-/// supplemental; realflare's `fresnel_ar`): incidence `theta0`, ray
-/// wavelength `lambda_nm`, coating thickness `d_nm`, media `n0` (outer),
-/// `n1` (coating), `n2` (inner).
-pub fn fresnel_ar(theta0: f32, lambda_nm: f32, d_nm: f32, n0: f32, n1: f32, n2: f32) -> f32 {
-    let theta1 = (theta0.sin() * n0 / n1).clamp(-1.0, 1.0).asin();
-    let theta2 = (theta0.sin() * n0 / n2).clamp(-1.0, 1.0).asin();
-
-    let rs01 = -(theta0 - theta1).sin() / (theta0 + theta1).sin();
-    let rp01 = (theta0 - theta1).tan() / (theta0 + theta1).tan();
-    let ts01 = 2.0 * theta1.sin() * theta0.cos() / (theta0 + theta1).sin();
-    let tp01 = ts01 * (theta0 - theta1).cos();
-
-    let rs12 = -(theta1 - theta2).sin() / (theta1 + theta2).sin();
-    let rp12 = (theta1 - theta2).tan() / (theta1 + theta2).tan();
-
-    let ris = ts01 * ts01 * rs12;
-    let rip = tp01 * tp01 * rp12;
-
-    let dy = d_nm * n1;
-    let dx = theta1.tan() * dy;
-    let delay = (dx * dx + dy * dy).sqrt();
-    let rel_phase = 4.0 * std::f32::consts::PI / lambda_nm * (delay - dx * theta0.sin());
-
-    let out_s2 = rs01 * rs01 + ris * ris + 2.0 * rs01 * ris * rel_phase.cos();
-    let out_p2 = rp01 * rp01 + rip * rip + 2.0 * rp01 * rip * rel_phase.cos();
-    (out_s2 + out_p2) / 2.0
+/// Single-layer thin-film reflectance (Airy summation): coating index
+/// `coating_n`, physical thickness `d_nm`.
+pub fn coating_reflectance(
+    cos_i: f32,
+    n1: f32,
+    n2: f32,
+    coating_n: f32,
+    d_nm: f32,
+    lambda_nm: f32,
+) -> f32 {
+    let cos_i = cos_i.abs();
+    let sin2_c = (n1 / coating_n) * (n1 / coating_n) * (1.0 - cos_i * cos_i);
+    if sin2_c >= 1.0 {
+        return fresnel_cos(cos_i, n1, n2);
+    }
+    let cos_c = (1.0 - sin2_c).sqrt();
+    let delta = 2.0 * std::f32::consts::PI * coating_n * d_nm * cos_c / lambda_nm;
+    let r01 = (n1 * cos_i - coating_n * cos_c) / (n1 * cos_i + coating_n * cos_c);
+    let sin2_2 = (coating_n / n2) * (coating_n / n2) * (1.0 - cos_c * cos_c);
+    if sin2_2 >= 1.0 {
+        return fresnel_cos(cos_i, n1, n2);
+    }
+    let cos_2 = (1.0 - sin2_2).sqrt();
+    let r12 = (coating_n * cos_c - n2 * cos_2) / (coating_n * cos_c + n2 * cos_2);
+    let cos_2d = (2.0 * delta).cos();
+    let num = r01 * r01 + r12 * r12 + 2.0 * r01 * r12 * cos_2d;
+    let den = 1.0 + r01 * r01 * r12 * r12 + 2.0 * r01 * r12 * cos_2d;
+    (num / den).clamp(0.0, 1.0)
 }
 
-/// Snell refraction in vector form (realflare's `refract`): incidence `i`
-/// and normal `n` unit vectors, `o = n1/n2`. Total internal reflection
-/// returns the zero vector (the caller's dir.z == 0 death sentinel).
-pub fn refract3(i: [f32; 3], n: [f32; 3], o: f32) -> [f32; 3] {
-    let cost = -(i[0] * n[0] + i[1] * n[1] + i[2] * n[2]);
-    let sint2 = o * o * (1.0 - cost * cost);
-    let k = o * cost - (1.0 - sint2).abs().sqrt();
-    let live = if sint2 < 1.0 { 1.0 } else { 0.0 };
-    [
-        (o * i[0] + k * n[0]) * live,
-        (o * i[1] + k * n[1]) * live,
-        (o * i[2] + k * n[2]) * live,
-    ]
+/// Reflectance of one lens surface: uncoated Fresnel blended toward the
+/// prescription's AR coating by the Coating dial. `layers` is the .lens
+/// coating column: 1 = single-layer MgF₂ quarter-wave at 550 nm; each extra
+/// layer quarters the residual (FlareSim's multicoat approximation).
+pub fn surface_reflectance(
+    cos_i: f32,
+    n1: f32,
+    n2: f32,
+    layers: f32,
+    lambda_nm: f32,
+    coating_mix: f32,
+) -> f32 {
+    let plain = fresnel_cos(cos_i, n1, n2);
+    if layers < 0.5 || coating_mix <= 0.0 {
+        return plain;
+    }
+    const MGF2_N: f32 = 1.38;
+    const DESIGN_NM: f32 = 550.0;
+    let qw = DESIGN_NM / (4.0 * MGF2_N);
+    let mut coated = coating_reflectance(cos_i, n1, n2, MGF2_N, qw, lambda_nm);
+    let extra = (layers - 1.0).clamp(0.0, 8.0).round() as u32;
+    for _ in 0..extra {
+        coated *= 0.25;
+    }
+    (plain + (coated - plain) * coating_mix.clamp(0.0, 1.0)).clamp(0.0, 1.0)
+}
+
+/// Snell refraction in vector form: incidence `i` and normal `n` (opposing
+/// the ray) unit vectors, `o = n1/n2`. Total internal reflection returns
+/// None.
+// Negated comparison deliberate: NaN reads as dead (see `intersect`).
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+pub fn refract3(i: [f32; 3], n: [f32; 3], o: f32) -> Option<[f32; 3]> {
+    let cos_i = -(i[0] * n[0] + i[1] * n[1] + i[2] * n[2]);
+    let sin2_t = o * o * (1.0 - cos_i * cos_i);
+    if sin2_t >= 1.0 {
+        return None;
+    }
+    let k = o * cos_i - (1.0 - sin2_t).sqrt();
+    let v = [
+        o * i[0] + k * n[0],
+        o * i[1] + k * n[1],
+        o * i[2] + k * n[2],
+    ];
+    let sq = v[0] * v[0] + v[1] * v[1] + v[2] * v[2];
+    if !(sq > 1e-18) || !sq.is_finite() {
+        return None;
+    }
+    let inv = 1.0 / sq.sqrt();
+    Some([v[0] * inv, v[1] * inv, v[2] * inv])
 }
 
 /// Mirror reflection of incidence `i` about unit normal `n`.
 pub fn reflect3(i: [f32; 3], n: [f32; 3]) -> [f32; 3] {
-    let d = -(i[0] * n[0] + i[1] * n[1] + i[2] * n[2]);
-    [
-        i[0] + 2.0 * d * n[0],
-        i[1] + 2.0 * d * n[1],
-        i[2] + 2.0 * d * n[2],
-    ]
-}
-
-/// A ray–surface intersection: position, unit normal, incidence angle.
-struct Hit {
-    pos: [f32; 3],
-    normal: [f32; 3],
-    incident: f32,
-    hit: bool,
-}
-
-/// Intersect a ray with one surface (flat plane or sphere), realflare's
-/// `intersect` verbatim.
-fn intersect(pos: [f32; 3], dir: [f32; 3], s: &FlareSurface) -> Hit {
-    let dead = Hit {
-        pos: [0.0; 3],
-        normal: [0.0, 0.0, 1.0],
-        incident: 0.0,
-        hit: false,
-    };
-    if dir[2] == 0.0 {
-        return dead;
-    }
-    if s.radius_mm == 0.0 {
-        // Flat plane at z = −center.
-        let dz = -s.center_z_mm - pos[2];
-        let t = dz / dir[2];
-        let p = [
-            pos[0] + dir[0] * t,
-            pos[1] + dir[1] * t,
-            pos[2] + dir[2] * t,
-        ];
-        let n = if dir[2] < 0.0 {
-            [0.0, 0.0, 1.0]
-        } else {
-            [0.0, 0.0, -1.0]
-        };
-        return Hit {
-            pos: p,
-            normal: n,
-            incident: 0.0,
-            hit: true,
-        };
-    }
-    // Sphere centred at (0, 0, −center) with radius |r|.
-    let r = s.radius_mm.abs();
-    let c = [0.0, 0.0, -s.center_z_mm];
-    let u = [c[0] - pos[0], c[1] - pos[1], c[2] - pos[2]];
-    let du = u[0] * dir[0] + u[1] * dir[1] + u[2] * dir[2];
-    let u1 = [dir[0] * du, dir[1] * du, dir[2] * du];
-    let perp = [u[0] - u1[0], u[1] - u1[1], u[2] - u1[2]];
-    let d = (perp[0] * perp[0] + perp[1] * perp[1] + perp[2] * perp[2]).sqrt();
-    if d > r {
-        return dead;
-    }
-    let sgn = if s.radius_mm * dir[2] > 0.0 {
-        -1.0
-    } else {
-        1.0
-    };
-    let m = (r * r - d * d).sqrt();
-    let p = [
-        pos[0] + u1[0] - m * dir[0] * sgn,
-        pos[1] + u1[1] - m * dir[1] * sgn,
-        pos[2] + u1[2] - m * dir[2] * sgn,
-    ];
-    let mut n = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
-    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
-    n = [n[0] / len * sgn, n[1] / len * sgn, n[2] / len * sgn];
-    let cosi = (-(dir[0] * n[0] + dir[1] * n[1] + dir[2] * n[2])).clamp(-1.0, 1.0);
-    Hit {
-        pos: p,
-        normal: n,
-        incident: cosi.acos(),
-        hit: true,
-    }
-}
-
-/// The light direction for a light at `light` (raster fraction, y down) on
-/// a lens of `focal_mm`, aspect `h/w` — realflare's `update_direction`,
-/// normalised. Sensor y is up, so the y fraction flips sign.
-pub fn light_direction(light: [f32; 2], aspect_h_over_w: f32, focal_mm: f32) -> [f32; 3] {
-    let half_w = SENSOR_MM[0] / 2.0;
-    let x = (light[0] * 2.0 - 1.0) * half_w;
-    let y = -(light[1] * 2.0 - 1.0) * aspect_h_over_w * half_w;
-    let v = [-x, -y, -focal_mm];
+    let d = 2.0 * (i[0] * n[0] + i[1] * n[1] + i[2] * n[2]);
+    let v = [i[0] - d * n[0], i[1] - d * n[1], i[2] - d * n[2]];
     let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
     [v[0] / len, v[1] / len, v[2] / len]
 }
 
-/// Trace one ray of the launch grid through one ghost path — the CPU twin
-/// the WGSL trace must match within 2 f32 ULP (impl note §8.5). `cell` is
-/// the ray's (x, y) on a `grid`-sided launch square of `launch_mm`;
-/// `ghost` the two bounce surface indices; `coating_mix` the 0..1 Coating
-/// blend; `dir` the (unit) light direction.
-#[allow(clippy::too_many_arguments)]
-pub fn trace_ray(
-    baked: &FlareBaked,
-    ghost: [u32; 2],
-    lambda_nm: f32,
-    cell: [u32; 2],
-    grid: u32,
-    coating_mix: f32,
+/// Intersect a ray with one surface (K-261, the FlareSim rule): flat plane
+/// at the vertex z, else ray–sphere picking the intersection closest to the
+/// vertex. The clear semi-aperture clips with a 10% skirt: rays inside it
+/// stay formally alive (the housing feather zeroes their weight), so quads
+/// at a housing boundary fade instead of dying corner-by-corner — a
+/// frame-filling defocused ghost otherwise shows its cull boundary as giant
+/// staircase rectangles. Returns (hit position, normal opposing the ray) or
+/// None. `semi_ap` is passed separately so the f-stop can scale the stop
+/// surface without touching the table.
+// The negated comparisons are deliberate: `!(t > eps)` is false for NaN, so
+// a degenerate ray reads as dead instead of propagating NaN (the FlareSim
+// guard style the WGSL twin mirrors).
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+fn intersect(
+    pos: [f32; 3],
     dir: [f32; 3],
-    sensor_shift_mm: f32,
-) -> TracedRay {
-    let dead = TracedRay {
-        pos_mm: [0.0; 2],
-        uv: [0.0; 2],
-        rrel: 0.0,
-        reflectance: f32::NAN,
+    radius: f32,
+    z_mm: f32,
+    semi_ap: f32,
+) -> Option<([f32; 3], [f32; 3])> {
+    if radius.abs() < 1e-6 {
+        if dir[2].abs() < 1e-12 {
+            return None;
+        }
+        let t = (z_mm - pos[2]) / dir[2];
+        if !(t > 1e-6) {
+            return None;
+        }
+        let hit = [
+            pos[0] + dir[0] * t,
+            pos[1] + dir[1] * t,
+            pos[2] + dir[2] * t,
+        ];
+        let skirt = semi_ap * 1.1;
+        if hit[0] * hit[0] + hit[1] * hit[1] > skirt * skirt {
+            return None;
+        }
+        let n = if dir[2] > 0.0 {
+            [0.0, 0.0, -1.0]
+        } else {
+            [0.0, 0.0, 1.0]
+        };
+        return Some((hit, n));
+    }
+    let centre = [0.0, 0.0, z_mm + radius];
+    let oc = [pos[0] - centre[0], pos[1] - centre[1], pos[2] - centre[2]];
+    let a = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+    let b = 2.0 * (oc[0] * dir[0] + oc[1] * dir[1] + oc[2] * dir[2]);
+    let c = oc[0] * oc[0] + oc[1] * oc[1] + oc[2] * oc[2] - radius * radius;
+    let disc = b * b - 4.0 * a * c;
+    if disc < 0.0 {
+        return None;
+    }
+    let sd = disc.sqrt();
+    let inv2a = 0.5 / a;
+    let t1 = (-b - sd) * inv2a;
+    let t2 = (-b + sd) * inv2a;
+    let t = if t1 > 1e-6 && t2 > 1e-6 {
+        let z1 = pos[2] + t1 * dir[2];
+        let z2 = pos[2] + t2 * dir[2];
+        if (z1 - z_mm).abs() < (z2 - z_mm).abs() {
+            t1
+        } else {
+            t2
+        }
+    } else if t1 > 1e-6 {
+        t1
+    } else if t2 > 1e-6 {
+        t2
+    } else {
+        return None;
     };
-    let surfaces = &baked.surfaces;
-    let count = surfaces.len();
-    if count < 3 {
-        return dead;
-    }
-
-    // Launch-grid point, mapped onto the first surface by a straight −z
-    // probe, then backed up one unit along the true direction (realflare's
-    // `init_ray`).
-    let g = grid.max(2) as f32;
-    let px = baked.launch_mm * (cell[0] as f32 / (g - 1.0) - 0.5);
-    let py = baked.launch_mm * (0.5 - cell[1] as f32 / (g - 1.0));
-    let probe = intersect([px, py, 1.0], [0.0, 0.0, -1.0], &surfaces[0]);
-    if !probe.hit {
-        return dead;
-    }
-    let mut pos = [
-        probe.pos[0] - dir[0],
-        probe.pos[1] - dir[1],
-        probe.pos[2] - dir[2],
+    let hit = [
+        pos[0] + dir[0] * t,
+        pos[1] + dir[1] * t,
+        pos[2] + dir[2] * t,
     ];
+    let skirt = semi_ap * 1.1;
+    if !(hit[0] * hit[0] + hit[1] * hit[1] <= skirt * skirt) {
+        return None;
+    }
+    let inv_r = 1.0 / radius.abs();
+    let mut n = [
+        (hit[0] - centre[0]) * inv_r,
+        (hit[1] - centre[1]) * inv_r,
+        (hit[2] - centre[2]) * inv_r,
+    ];
+    if n[0] * dir[0] + n[1] * dir[1] + n[2] * dir[2] > 0.0 {
+        n = [-n[0], -n[1], -n[2]];
+    }
+    Some((hit, n))
+}
+
+/// The light direction for a light at `light` (raster fraction, y down) on
+/// a lens of `focal_mm`, aspect `h/w`. Sensor y is up, so the y fraction
+/// flips sign; a light at the frame corner enters at the true corner field
+/// angle.
+pub fn light_direction(light: [f32; 2], aspect_h_over_w: f32, focal_mm: f32) -> [f32; 3] {
+    let half_w = SENSOR_MM[0] / 2.0;
+    let x = (light[0] * 2.0 - 1.0) * half_w;
+    let y = -(light[1] * 2.0 - 1.0) * aspect_h_over_w * half_w;
+    let v = [-x, -y, focal_mm];
+    let len = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt().max(1e-12);
+    [v[0] / len, v[1] / len, v[2] / len]
+}
+
+/// Trace one pupil sample through one ghost pair at one wavelength — the
+/// FlareSim three-phase walk (K-261), the CPU twin the WGSL splat kernel
+/// mirrors op-for-op. `origin` is the ray start (mm), `dir` the unit beam
+/// direction; the ray transmits through every surface except the pair's
+/// two, where it reflects (weight × R; transmits weight × (1−R)). Returns
+/// the sensor landing (mm, y up) and the accumulated Fresnel weight.
+#[allow(clippy::too_many_arguments)]
+// Negated comparisons deliberate: NaN reads as dead (see `intersect`).
+#[allow(clippy::neg_cmp_op_on_partial_ord)]
+pub fn trace_splat(
+    baked: &FlareBaked,
+    pair: [u32; 2],
+    lambda_nm: f32,
+    origin: [f32; 3],
+    dir: [f32; 3],
+    coating_mix: f32,
+    stop_scale: f32,
+    sensor_shift_mm: f32,
+) -> Option<([f32; 2], f32)> {
+    let surfs = &baked.surfaces;
+    let n = surfs.len();
+    let (a_idx, b_idx) = (pair[0] as usize, pair[1] as usize);
+    if n < 3 || a_idx >= b_idx || b_idx >= n {
+        return None;
+    }
+    let mut pos = origin;
     let mut rdir = dir;
-    let mut uv = [0.0_f32; 2];
+    let mut weight = 1.0_f32;
+    let mut current_ior = 1.0_f32;
+    // Worst relative aperture crossing along the walk: rays that graze a
+    // housing edge fade smoothly (the 0.95..1 feather below) instead of the
+    // hard clip alone — without it, a defocused ghost's cull boundary shows
+    // as giant staircase quads (K-261, the K-256 rrel feather reinstated).
     let mut rrel = 0.0_f32;
-    let mut reflectance = 1.0_f32;
 
-    let mut step = 0i32;
-    let mut delta = 1i64;
-    let mut lens_id = 0i64;
-    // Bounded walk: forward, back after bounce one, forward after bounce
-    // two — at most ~3× the surface count, so the loop cannot run away.
-    let max_iters = count * 4;
-    let mut iters = 0usize;
-    while (0..count as i64).contains(&lens_id) {
-        iters += 1;
-        if iters > max_iters {
-            return dead;
-        }
-        let mut s = surfaces[lens_id as usize];
-        // Focus (K-260): the sensor plane rides the focus shift; the glass
-        // stays put.
-        if s.is_sensor > 0.5 {
-            s.center_z_mm += sensor_shift_mm;
-        }
-        let hit = intersect(pos, rdir, &s);
-        if !hit.hit {
-            return dead;
-        }
-        pos = hit.pos;
-
-        if s.is_iris > 0.5 {
-            uv = [pos[0] / s.height_mm, pos[1] / s.height_mm];
-            lens_id += delta;
-            continue;
-        }
-        let r = (pos[0] * pos[0] + pos[1] * pos[1]).sqrt() / s.height_mm;
-        rrel = rrel.max(r);
-
-        if s.is_sensor > 0.5 {
-            lens_id += delta;
-            continue;
-        }
-
-        let do_reflect =
-            (step == 0 && lens_id == ghost[0] as i64) || (step == 1 && lens_id == ghost[1] as i64);
-        if do_reflect {
-            step += 1;
-            delta = -delta;
-        }
-
-        // Previous medium by travel direction (impl note §7's backward-walk
-        // trap): the medium the ray is leaving.
-        let n_index = if rdir[2] < 0.0 {
-            lens_id - 1
+    let semi_of = |s: &FlareSurface| -> f32 {
+        if s.is_stop > 0.5 {
+            s.semi_ap_mm * stop_scale
         } else {
-            lens_id + 1
-        };
-        let n1 = if (0..count as i64).contains(&n_index) {
-            let ns = surfaces[n_index as usize];
-            cauchy_ior(ns.cauchy_a, ns.cauchy_b, lambda_nm)
-        } else {
+            s.semi_ap_mm
+        }
+    };
+    let ior_at = |s: &FlareSurface| cauchy_ior(s.cauchy_a, s.cauchy_b, lambda_nm);
+    let ior_before = |idx: usize| -> f32 {
+        if idx == 0 {
             1.0
-        };
-        let n2 = cauchy_ior(s.cauchy_a, s.cauchy_b, lambda_nm);
-
-        if do_reflect {
-            rdir = reflect3(rdir, hit.normal);
-            let theta = hit.incident + 1e-9;
-            let plain = fresnel(theta, n1, n2);
-            let r = if coating_mix > 0.0 && s.coating_nm > 0.0 {
-                // Optimal single-layer index √(n1·n2), floored at MgF₂'s
-                // 1.38; quarter-wave thickness at the surface's tuned λ.
-                let nc = (n1 * n2).sqrt().max(1.38);
-                let d = s.coating_nm / (4.0 * nc);
-                let coated = fresnel_ar(theta, lambda_nm, d, n1, nc, n2);
-                plain + (coated - plain) * coating_mix
-            } else {
-                plain
-            };
-            if r > 0.0 {
-                reflectance *= r;
-            }
         } else {
-            rdir = refract3(rdir, hit.normal, n1 / n2);
-            if rdir[2] == 0.0 {
-                return dead;
-            }
+            ior_at(&surfs[idx - 1])
         }
-        lens_id += delta;
+    };
+
+    // Phase 1: forward through 0..=b, reflecting at b.
+    for (s_idx, s) in surfs.iter().enumerate().take(b_idx + 1) {
+        let semi = semi_of(s);
+        let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
+        pos = hit;
+        rrel = rrel.max((pos[0] * pos[0] + pos[1] * pos[1]).sqrt() / semi.max(1e-6));
+        let n1 = current_ior;
+        let n2 = ior_at(s);
+        let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
+        let r = surface_reflectance(cos_i, n1, n2, s.coating_layers, lambda_nm, coating_mix);
+        if s_idx == b_idx {
+            rdir = reflect3(rdir, norm);
+            weight *= r;
+        } else {
+            rdir = refract3(rdir, norm, n1 / n2)?;
+            weight *= 1.0 - r;
+            current_ior = n2;
+        }
     }
-    if lens_id < count as i64 {
-        return dead;
+
+    // Phase 2: backward through b-1..=a, reflecting at a.
+    for s_idx in (a_idx..b_idx).rev() {
+        let s = &surfs[s_idx];
+        let semi = semi_of(s);
+        let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
+        pos = hit;
+        rrel = rrel.max((pos[0] * pos[0] + pos[1] * pos[1]).sqrt() / semi.max(1e-6));
+        let n1 = current_ior;
+        let n2 = ior_before(s_idx);
+        let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
+        let r = surface_reflectance(cos_i, n1, n2, s.coating_layers, lambda_nm, coating_mix);
+        if s_idx == a_idx {
+            rdir = reflect3(rdir, norm);
+            weight *= r;
+            current_ior = ior_at(s);
+        } else {
+            rdir = refract3(rdir, norm, n1 / n2)?;
+            weight *= 1.0 - r;
+            current_ior = n2;
+        }
     }
-    TracedRay {
-        pos_mm: [pos[0], pos[1]],
-        uv,
-        rrel,
-        reflectance,
+
+    // Phase 3: forward through a+1..n.
+    for s in surfs.iter().skip(a_idx + 1) {
+        let semi = semi_of(s);
+        let (hit, norm) = intersect(pos, rdir, s.radius_mm, s.z_mm, semi)?;
+        pos = hit;
+        rrel = rrel.max((pos[0] * pos[0] + pos[1] * pos[1]).sqrt() / semi.max(1e-6));
+        let n1 = current_ior;
+        let n2 = ior_at(s);
+        let cos_i = (norm[0] * rdir[0] + norm[1] * rdir[1] + norm[2] * rdir[2]).abs();
+        let r = surface_reflectance(cos_i, n1, n2, s.coating_layers, lambda_nm, coating_mix);
+        rdir = refract3(rdir, norm, n1 / n2)?;
+        weight *= 1.0 - r;
+        current_ior = n2;
     }
+
+    // Propagate to the (focus-shifted) sensor plane.
+    if rdir[2].abs() < 1e-12 {
+        return None;
+    }
+    let t = (baked.sensor_z_mm + sensor_shift_mm - pos[2]) / rdir[2];
+    if !(t > 0.0) {
+        return None;
+    }
+    let x = pos[0] + rdir[0] * t;
+    let y = pos[1] + rdir[1] * t;
+    if !x.is_finite() || !y.is_finite() || !weight.is_finite() {
+        return None;
+    }
+    // Housing feather: full inside 0.95, gone at 1.0 (smoothstep).
+    let ft = ((1.0 - rrel) / 0.05).clamp(0.0, 1.0);
+    weight *= ft * ft * (3.0 - 2.0 * ft);
+    Some(([x, y], weight))
+}
+
+// ---------------------------------------------------------------------------
+// Pupil sampling (K-261): deterministic Halton spray over the front element,
+// masked by the iris polygon with roundness and softness.
+// ---------------------------------------------------------------------------
+
+/// The pupil mask weight for a unit-disc point: 1 inside the iris shape,
+/// feathering to 0 at the edge over `softness`. The polygon bound blends
+/// toward the circle by `roundness`. Shared by the pupil grid and the
+/// aperture image bake so the starburst and the ghosts agree.
+pub fn pupil_mask(u: f32, v: f32, blades: u32, rot_rad: f32, roundness: f32, softness: f32) -> f32 {
+    let r = (u * u + v * v).sqrt();
+    let blades = blades.clamp(3, 16);
+    let sector = std::f32::consts::TAU / blades as f32;
+    let apothem = (std::f32::consts::PI / blades as f32).cos();
+    let angle = v.atan2(u) - rot_rad;
+    let mut a = angle % sector;
+    if a < 0.0 {
+        a += sector;
+    }
+    // Polygon radial bound at this angle, blended toward the unit circle.
+    let poly_bound = apothem / (a - sector * 0.5).cos();
+    let bound = poly_bound + (1.0 - poly_bound) * roundness.clamp(0.0, 1.0);
+    let soft = (softness.clamp(0.0, 1.0) * bound).max(1e-4);
+    let t = ((r - (bound - soft)) / soft).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// The effective iris roundness for a working f-stop (K-260): wide open a
+/// real iris retracts behind the housing's circular bore, so ghosts go
+/// round whatever the blade count; two stops down the polygon is fully
+/// back.
+pub fn effective_roundness(roundness: f32, fstop: f32, native_fstop: f32) -> f32 {
+    let native = native_fstop.max(0.7);
+    let wide_open = (1.0 - (fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+    roundness.max(wide_open)
 }
 
 // ---------------------------------------------------------------------------
@@ -674,10 +843,10 @@ pub fn trace_ray(
 // ---------------------------------------------------------------------------
 
 /// The bake-relevant parameter subset hashed into the cache key: everything
-/// the baked textures / tables depend on, quantised through `to_bits` so
-/// equal floats key equally. Light position, intensities, dispersion,
-/// coating, quality and mix are frame-time inputs and deliberately absent —
-/// animating them never rebakes.
+/// the baked tables depend on, quantised through `to_bits` so equal floats
+/// key equally. Light position, intensities, dispersion, coating, quality
+/// and mix are frame-time inputs and deliberately absent — animating them
+/// never rebakes.
 pub fn bake_key(p: &LensFlareParams) -> u64 {
     let mut h = 0xcbf2_9ce4_8422_2325_u64; // FNV offset basis
     let mut fold = |v: u32| {
@@ -690,259 +859,43 @@ pub fn bake_key(p: &LensFlareParams) -> u64 {
     fold(p.aperture_rotation_deg.to_bits());
     fold(p.roundness.to_bits());
     fold(p.aperture_softness.to_bits());
-    fold(p.coating_preset);
     h
 }
 
-/// The lens model a params bundle selects (index clamped into the library).
-pub fn lens_of(p: &LensFlareParams) -> &'static LensModel {
-    let i = (p.lens as usize).min(LENS_MODELS.len() - 1);
-    &LENS_MODELS[i]
-}
-
-/// Deterministic per-surface coating tuning wavelengths (impl note §1
-/// deviation D2), one cycle per Coating preset (docs/08 §3.27): the pattern
-/// sets the ghost train's colour character. Cycled by surface index.
-const COATING_CYCLES: [&[f32]; 7] = [
-    // Modern multicoat: staggered across the band — varied casts.
-    &[440.0, 480.0, 520.0, 560.0, 600.0],
-    // Vintage single coat: one tuning everywhere — the uniform amber/magenta
-    // cast of an early coated lens.
-    &[550.0],
-    // Warm bias: tuned short, so the reflections it fails to kill are long —
-    // amber ghosts.
-    &[430.0, 455.0, 480.0],
-    // Cool bias: tuned long — blue ghosts.
-    &[580.0, 610.0, 640.0],
-    // Amber single coat: uniformly short — the deep amber cast of early
-    // magnesium-fluoride coatings.
-    &[465.0],
-    // Two-tone vintage: alternating short/long — the blue-and-amber pairs
-    // mid-century lenses show.
-    &[480.0, 620.0],
-    // Broad multicoat: six tunings across the whole band — maximum variety.
-    &[420.0, 465.0, 510.0, 555.0, 600.0, 645.0],
-];
-
-/// The cycle for a stored preset index (unknown values read as Modern).
-fn coating_cycle(preset: u32) -> &'static [f32] {
-    COATING_CYCLES[(preset as usize).min(COATING_CYCLES.len() - 1)]
-}
-
-/// Trace one meridional ray, parallel to the axis at height `h_mm`, through
-/// the model's refracting surfaces (the iris passes light straight through),
-/// and return `(z_cross, efl)`: the z where it crosses the axis — the
-/// **infinity-focus sensor position** — and the effective focal length
-/// `h / |exit slope|`. This is the calibration K-260 adds on the reference
-/// author's diagnosis ("sensor position may be wrong"): the patent's
-/// trailing gap is NOT trusted to be the back focus any more; the main
-/// imaging path's own focus is. None when the ray dies (a broken table).
-pub fn paraxial_focus(model: &LensModel, h_mm: f32) -> Option<(f32, f32)> {
-    // A temporary surface walk in the meridional plane: track (y, z) and a
-    // unit-free slope, using the full sphere intersection (not the paraxial
-    // approximation) at a small height, at the d-line.
-    let mut pos = [0.0_f32, h_mm, 40.0];
-    let mut dir = [0.0_f32, 0.0, -1.0];
-    let mut offset = 0.0_f32;
-    for (i, surf) in model.surfaces.iter().enumerate() {
-        let (a, b) = cauchy_from_abbe(surf.ior_d, surf.abbe_v);
-        let fs = FlareSurface {
-            radius_mm: surf.radius_mm,
-            center_z_mm: offset + surf.radius_mm,
-            height_mm: surf.height_mm.max(1e-3),
-            cauchy_a: a,
-            cauchy_b: b,
-            coating_nm: 0.0,
-            is_iris: 0.0,
-            is_sensor: 0.0,
-        };
-        offset += surf.thickness_mm;
-        let hit = intersect(pos, dir, &fs);
-        if !hit.hit {
-            return None;
-        }
-        pos = hit.pos;
-        if i == model.aperture_index {
-            continue;
-        }
-        // The medium the ray is leaving: the previous surface's glass (or
-        // air outside the system) — the same rule the ghost walk uses.
-        let n1 = if i == 0 {
-            1.0
-        } else {
-            let ps = &model.surfaces[i - 1];
-            let (pa, pb) = cauchy_from_abbe(ps.ior_d, ps.abbe_v);
-            cauchy_ior(pa, pb, 587.56)
-        };
-        let n2 = cauchy_ior(a, b, 587.56);
-        dir = refract3(dir, hit.normal, n1 / n2);
-        if dir[2] == 0.0 {
-            return None;
-        }
-    }
-    // y(z) = y + slope·(z − pos.z) reaches 0 at z = pos.z − y/slope; the
-    // effective focal length is h over the exit slope's magnitude.
-    let slope = dir[1] / dir[2];
-    if slope.abs() < 1e-9 {
-        return None;
-    }
-    Some((pos[2] - pos[1] / slope, (h_mm / slope).abs()))
-}
-
-/// Build the flat surface table for a model: running z offsets, Cauchy
-/// pairs, coating wavelengths, and the appended sensor row.
-fn build_surfaces(model: &LensModel, coating_preset: u32) -> (Vec<FlareSurface>, f32) {
-    let cycle = coating_cycle(coating_preset);
-    let mut out = Vec::with_capacity(model.surfaces.len() + 1);
-    let mut offset = 0.0_f32;
-    for (i, s) in model.surfaces.iter().enumerate() {
-        let (a, b) = cauchy_from_abbe(s.ior_d, s.abbe_v);
-        let is_iris = i == model.aperture_index;
-        out.push(FlareSurface {
-            radius_mm: s.radius_mm,
-            center_z_mm: offset + s.radius_mm,
-            height_mm: s.height_mm.max(1e-3),
-            cauchy_a: a,
-            cauchy_b: b,
-            coating_nm: if is_iris { 0.0 } else { cycle[i % cycle.len()] },
-            is_iris: if is_iris { 1.0 } else { 0.0 },
-            is_sensor: 0.0,
-        });
-        offset += s.thickness_mm;
-    }
-    // The sensor sits at the main path's own infinity focus (K-260, the
-    // reference author's diagnosis: "sensor position may be wrong" — the
-    // patent's trailing gap is a starting point, not the truth). A near-
-    // paraxial marginal ray finds it; a broken table falls back to the
-    // running offset. The measured EFL rides along — it is what the light
-    // direction and the focus shift use, keeping field angles consistent
-    // with the glass rather than the label.
-    let front_h = model.surfaces.first().map(|s| s.height_mm).unwrap_or(20.0);
-    let (sensor_z, efl) = match paraxial_focus(model, front_h * 0.05) {
-        Some((z, efl)) if z < 0.0 && efl.is_finite() => (-z, efl),
-        _ => (offset, model.focal_length_mm),
-    };
-    let sensor_half_norm = (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt() / 2.0;
-    out.push(FlareSurface {
-        radius_mm: 0.0,
-        center_z_mm: sensor_z,
-        height_mm: sensor_half_norm,
-        cauchy_a: 1.0,
-        cauchy_b: 0.0,
-        coating_nm: 0.0,
-        is_iris: 0.0,
-        is_sensor: 1.0,
-    });
-    (out, efl)
-}
-
-/// Every legal two-bounce ghost pair for a model: `b2 < b1`, both strictly
-/// inside the element run, both on the same side of the iris (realflare's
-/// `ray_paths`).
-pub fn enumerate_ghosts(model: &LensModel) -> Vec<[u32; 2]> {
-    let count = model.surfaces.len();
-    let mut ghosts = Vec::new();
-    let mut index_min = 0usize;
-    for b1 in 1..count.saturating_sub(1) {
-        if b1 == model.aperture_index {
-            index_min = b1 + 1;
-        }
-        for b2 in index_min..b1 {
-            ghosts.push([b1 as u32, b2 as u32]);
-        }
-    }
-    ghosts
-}
-
-/// The procedural iris image (realflare's `aperture_shape` on the CPU):
-/// blade-polygon SDF + roundness bulge + softness smoothstep, `res`².
-pub fn bake_aperture(p: &LensFlareParams, res: u32) -> Vec<f32> {
+/// The aperture image for the starburst FFT: the pupil mask rendered into a
+/// texture (iris at 0.75 of the half-extent, leaving rim room for the
+/// diffraction spread).
+pub fn bake_aperture(p: &LensFlareParams, native_fstop: f32, res: u32) -> Vec<f32> {
     let n = res as usize;
     let mut img = vec![0.0_f32; n * n];
-    let blades = p.blades.clamp(3, 16) as i32;
     let rot = p.aperture_rotation_deg.to_radians();
-    let softness = (p.aperture_softness / 10.0).max(1e-4);
-    // Wide open, a real iris retracts behind the circular housing: no blade
-    // corners exist at the lens's native stop (K-260). Blend the polygon
-    // toward a circle as the working f-stop approaches native; two stops
-    // down the blades are fully theirs again.
-    let native = lens_of(p).native_fstop.max(0.7);
-    let wide_open = (1.0 - (p.fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
-    let roundness = p.roundness.max(wide_open);
-    // The iris fills 0.75 of the texture's half-extent (realflare's default
-    // shape size), leaving rim room for the FRFT ringing.
+    let roundness = effective_roundness(p.roundness, p.fstop, native_fstop);
+    let softness = (p.aperture_softness * 0.25).max(0.004);
     let size = 0.75_f32;
     for y in 0..n {
         for x in 0..n {
             let ndc_x = 2.0 * (x as f32 / (n - 1) as f32) - 1.0;
             let ndc_y = 2.0 * (y as f32 / (n - 1) as f32) - 1.0;
-            let (px, py) = (ndc_x / size, ndc_y / size);
-            // Rotate (realflare's `rot`: x·c + y·s, y·c − x·s).
-            let (s, c) = (rot.sin(), rot.cos());
-            let (px, py) = (px * c + py * s, py * c - px * s);
-            let mut poly = 0.0_f32;
-            for i in 0..blades {
-                let ang = (i as f32 / blades as f32 + 0.25) * std::f32::consts::TAU;
-                poly = poly.max(ang.cos() * px + ang.sin() * py);
-            }
-            // Roundness is an SDF lerp toward the true circle (K-260): at 1
-            // the iris IS circular — which the wide-open blend above relies
-            // on. The earlier additive sine bulge only worked for small
-            // values; near 1 it pinched the iris into a flower (caught
-            // against the reference renderer's round wide-open ghosts).
-            let circle = (px * px + py * py).sqrt();
-            let sdf = poly + (circle - poly) * roundness;
-            let t = ((sdf - (1.0 - softness)) / (2.0 * softness)).clamp(0.0, 1.0);
-            img[y * n + x] = 1.0 - t * t * (3.0 - 2.0 * t);
+            img[y * n + x] = pupil_mask(
+                ndc_x / size,
+                ndc_y / size,
+                p.blades,
+                rot,
+                roundness,
+                softness,
+            );
         }
     }
     img
 }
 
-/// The ghost-disc texture: the FRFT "ringing pattern" of the aperture at
-/// `alpha = 0.15 · (λ_mid/400) · (fstop/18)` ([Ritschel 2009] §3.3), max-
-/// normalised so per-ghost brightness stays with the energy terms.
-pub fn bake_ghost_disc(aperture: &[f32], res: u32, fstop: f32) -> Vec<f32> {
-    let n = res as usize;
-    let alpha = 0.15 * (cie::LAMBDA_MID as f64 / 400.0) * (fstop.max(0.1) as f64 / 18.0);
-    // Pad to a 2× field before the transform (K-260, the reference author's
-    // fix): the FRFT's chirp convolution is circular, so ringing that runs
-    // past the texture edge wraps back across the disc without head-room.
-    // The aperture sits centred in a zero field twice the side; the ringing
-    // decays into the padding, and the centre crops back out.
-    let m = n * 2;
-    let off = n / 2;
-    let mut cx = vec![Cx::ZERO; m * m];
-    for y in 0..n {
-        for x in 0..n {
-            cx[(y + off) * m + (x + off)] = Cx::new(aperture[y * n + x] as f64, 0.0);
-        }
-    }
-    fftshift2(&mut cx, m, m);
-    frft2(&mut cx, m, m, alpha);
-    fftshift2(&mut cx, m, m);
-    let mut disc = vec![0.0_f32; n * n];
-    for y in 0..n {
-        for x in 0..n {
-            disc[y * n + x] = cx[(y + off) * m + (x + off)].norm_sq().sqrt() as f32;
-        }
-    }
-    let peak = disc.iter().fold(0.0_f32, |m, &v| m.max(v)).max(1e-9);
-    for v in disc.iter_mut() {
-        *v /= peak;
-    }
-    disc
-}
-
 /// The starburst sprite: the aperture's Fourier amplitude under the Fresnel
 /// propagation term, integrated over the visible spectrum with the chromatic
 /// scale `λ_mid/λ`, CIE-weighted into linear working RGB ([Ritschel 2009]
-/// §4–5). The spectral integration is the only smear — the old stochastic
-/// blur jitter speckled and was removed with its parameter (owner pass 2).
-/// Peak-normalised so blade edits keep overall brightness.
+/// §4–5). Peak-normalised so blade edits keep overall brightness.
 pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
     let n = res as usize;
-    // Pattern: |fftshift(fft(A · e^{iπ/(λd)(x²+y²)}))|², λ_mid, d = 1 m.
+    // Pattern: |fftshift(fft(A · e^{iπ/(λd)(x²+y²)}))|, λ_mid, d = 1 m.
     let lambda_mm = cie::LAMBDA_MID as f64 * 1e-6;
     let d_mm = 1.0e3_f64;
     let mut cx = vec![Cx::ZERO; n * n];
@@ -991,7 +944,7 @@ pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
                 let step = k as f32 / samples as f32;
                 let lambda = cie::LAMBDA_MIN + step * range;
                 // Chromatic scale: diffraction grows with wavelength, so the
-                // sample position shrinks by λ_mid/λ (realflare's `scale`).
+                // sample position shrinks by λ_mid/λ.
                 let s = lambda / cie::LAMBDA_MID;
                 let px = ndc_x / s;
                 let py = ndc_y / s;
@@ -1008,7 +961,7 @@ pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
             out[i + 2] = rgb[2].max(0.0);
         }
     }
-    // Energy-normalise: the brightest texel becomes 1, the intensity dials
+    // Peak-normalise: the brightest texel becomes 1, the intensity dials
     // own the rest.
     let peak = out.iter().fold(0.0_f32, |m, &v| m.max(v)).max(1e-9);
     for v in out.iter_mut() {
@@ -1019,136 +972,122 @@ pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
 
 /// The mean flare-buffer brightness the auto-exposure steers every lens
 /// toward, measured by actually rendering the CPU reference at thumbnail
-/// size inside the bake (K-258). Every cheaper proxy tried — per-cell probe
-/// medians, on-sensor probe flux — mispredicted some lens by orders of
-/// magnitude, because ghost energy depends on where a design's caustics
-/// land at the render framing; the closed loop cannot. Calibrated so the
-/// default cine prime keeps its tuned look.
+/// size inside the bake (K-258). Cheaper proxies mispredicted real lenses
+/// by orders of magnitude; the closed loop cannot.
 const TARGET_PROBE_MEAN: f32 = 0.010;
 
-/// Run the full bake for a params bundle — pure, deterministic, CPU-only.
-/// Ghosts are ranked brightest-first by a 5×5 probe trace at a reference
-/// off-axis angle, using the render's own energy term (launch cell area ÷
-/// landed cell area, min-area floored) per probe cell; a ghost's brightness
-/// proxy is its live cells' median energy. Ties break by pair order so the
-/// ranking is deterministic. The same probe drives the **auto-exposure
-/// gain**: lens designs legitimately differ by ~1000× in ghost focus, so a
-/// per-bake gain steers the top ghosts' median brightness to a fixed target
-/// — every bundled lens reads well at default Intensity, and the relative
-/// brightness *between* a lens's own ghosts stays physical.
+/// Run the full bake for a params bundle — pure, deterministic, CPU-only
+/// (K-261): parse the prescription, enumerate and rank the ghost pairs,
+/// measure per-pair defocus boosts, bake the starburst, close the exposure
+/// loop.
 pub fn bake(p: &LensFlareParams) -> FlareBaked {
-    let model = lens_of(p);
-    let (surfaces, efl) = build_surfaces(model, p.coating_preset);
-    // The launch square covers the WHOLE front element with margin: side =
-    // 2.3 × its half-height (the clear diameter is 2×, plus 15% so edge rays
-    // exist to vignette). An undersized square is visible in the picture — a
-    // ghost's boundary becomes the square's image instead of the housing's
-    // feathered clip (K-258; the owner's screenshot caught exactly that
-    // rectangle). Rays beyond the housing die cheaply in the trace.
-    let front_h = model.surfaces.first().map(|s| s.height_mm).unwrap_or(25.0);
-    let launch_mm = front_h.max(1.0) * 2.3;
+    let entry = lens_entry(p.lens);
+    let lens = parse_lens(entry.text).unwrap_or_else(|| Prescription {
+        // A degenerate fallback biconvex singlet: the library is regression-
+        // tested to parse in full, so this exists only to keep the engine
+        // panic-free if a future import breaks a file.
+        focal_mm: 50.0,
+        surfaces: vec![
+            FlareSurface {
+                radius_mm: 50.0,
+                z_mm: 0.0,
+                semi_ap_mm: 15.0,
+                cauchy_a: 1.5,
+                cauchy_b: 0.004,
+                coating_layers: 0.0,
+                is_stop: 0.0,
+                _pad: 0.0,
+            },
+            FlareSurface {
+                radius_mm: 0.0,
+                z_mm: 4.0,
+                semi_ap_mm: 12.0,
+                cauchy_a: 1.0,
+                cauchy_b: 0.0,
+                coating_layers: 0.0,
+                is_stop: 1.0,
+                _pad: 0.0,
+            },
+            FlareSurface {
+                radius_mm: -50.0,
+                z_mm: 8.0,
+                semi_ap_mm: 15.0,
+                cauchy_a: 1.0,
+                cauchy_b: 0.0,
+                coating_layers: 0.0,
+                is_stop: 0.0,
+                _pad: 0.0,
+            },
+        ],
+        sensor_z_mm: 55.0,
+    });
+    let front_semi_ap = lens.surfaces[0].semi_ap_mm;
+    let native_fstop = if entry.native_fstop > 0.0 {
+        entry.native_fstop
+    } else {
+        (lens.focal_mm / (2.0 * front_semi_ap.max(0.1))).max(0.7)
+    };
+    let pupil_mm = (lens.focal_mm / (2.0 * native_fstop) * 1.5).clamp(1.0, front_semi_ap);
     let mut baked = FlareBaked {
-        surfaces,
-        aperture_index: model.aperture_index as u32,
-        ghosts: Vec::new(),
-        launch_mm,
-        focal_mm: efl,
+        pupil_mm,
+        start_z_mm: lens.surfaces[0].z_mm - START_Z_BACKOFF_MM,
+        sensor_z_mm: lens.sensor_z_mm,
+        focal_mm: lens.focal_mm,
+        native_fstop,
+        front_semi_ap,
+        surfaces: lens.surfaces,
+        pairs: Vec::new(),
         energy_gain: 1.0,
-        disc: Vec::new(),
         starburst: Vec::new(),
     };
 
-    let ghosts = enumerate_ghosts(model);
-    let dir = light_direction([0.35, 0.4], 1.0, baked.focal_mm);
-    const PROBE: u32 = 5;
-    let cell_mm = baked.launch_mm / (PROBE - 1) as f32;
-    let cell_area = cell_mm * cell_mm;
-    let min_area = MIN_AREA_FRAC * cell_area;
-    let mut ranked: Vec<([u32; 2], f32, f32)> = ghosts
-        .iter()
-        .map(|&g| {
-            let mut rays = [[TracedRay {
-                pos_mm: [0.0; 2],
-                uv: [0.0; 2],
-                rrel: 0.0,
-                reflectance: f32::NAN,
-            }; PROBE as usize]; PROBE as usize];
-            for (cy, row) in rays.iter_mut().enumerate() {
-                for (cx, r) in row.iter_mut().enumerate() {
-                    *r = trace_ray(
-                        &baked,
-                        g,
-                        cie::LAMBDA_MID,
-                        [cx as u32, cy as u32],
-                        PROBE,
-                        0.0,
-                        dir,
-                        0.0,
-                    );
+    // Enumerate every a<b pair where both surfaces actually change medium
+    // (a reflection needs an interface; the stop is air-air and drops out),
+    // probe each on-axis, rank by probe brightness.
+    let n = baked.surfaces.len();
+    let ior_at =
+        |i: usize| baked.surfaces[i].cauchy_a + baked.surfaces[i].cauchy_b / (0.587_56 * 0.587_56);
+    let has_interface = |i: usize| {
+        let before = if i == 0 { 1.0 } else { ior_at(i - 1) };
+        (before - ior_at(i)).abs() >= 0.001
+    };
+    let centre = [0.0, 0.0, baked.start_z_mm];
+    let axis = [0.0, 0.0, 1.0];
+    let mut ranked: Vec<([u32; 2], f32)> = Vec::new();
+    for a in 0..n {
+        if !has_interface(a) {
+            continue;
+        }
+        for b in (a + 1)..n {
+            if !has_interface(b) {
+                continue;
+            }
+            let pair = [a as u32, b as u32];
+            // On-axis brightness probe at the R/G/B wavelengths, full file
+            // coating (the Coating dial is frame-time).
+            let mut est = 0.0_f32;
+            for nm in [650.0, 550.0, 450.0] {
+                if let Some((_, w)) = trace_splat(&baked, pair, nm, centre, axis, 1.0, 1.0, 0.0) {
+                    est += w;
                 }
             }
-            // Only cells that LAND ON THE SENSOR count (with a small
-            // margin): a ghost can carry bright probe cells that never reach
-            // the frame and would otherwise read as exposure it does not
-            // deliver (K-258 — the Petzval did exactly that).
-            let sensor_reach =
-                (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt() / 2.0 * 1.2;
-            let mut energies: Vec<f32> = Vec::new();
-            let mut flux = 0.0_f32;
-            for cy in 0..(PROBE - 1) as usize {
-                for cx in 0..(PROBE - 1) as usize {
-                    let c = [
-                        rays[cy][cx],
-                        rays[cy][cx + 1],
-                        rays[cy + 1][cx + 1],
-                        rays[cy + 1][cx],
-                    ];
-                    if c.iter().all(|r| r.reflectance.is_finite()) {
-                        let e = |a: [f32; 2], b: [f32; 2], q: [f32; 2]| {
-                            (a[0] - b[0]) * (q[1] - a[1]) - (a[1] - b[1]) * (q[0] - a[0])
-                        };
-                        let a0 = e(c[0].pos_mm, c[1].pos_mm, c[2].pos_mm);
-                        let a1 = e(c[0].pos_mm, c[2].pos_mm, c[3].pos_mm);
-                        let area = ((a0 + a1) / 2.0).abs().max(min_area);
-                        let centre_x =
-                            (c[0].pos_mm[0] + c[1].pos_mm[0] + c[2].pos_mm[0] + c[3].pos_mm[0])
-                                / 4.0;
-                        let centre_y =
-                            (c[0].pos_mm[1] + c[1].pos_mm[1] + c[2].pos_mm[1] + c[3].pos_mm[1])
-                                / 4.0;
-                        if (centre_x * centre_x + centre_y * centre_y).sqrt() <= sensor_reach {
-                            let en = cell_area / area;
-                            energies.push(en);
-                            flux += en;
-                        }
-                    }
-                }
+            est /= 3.0;
+            if est < PAIR_MIN_INTENSITY {
+                continue;
             }
-            energies.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            let brightness = if energies.len() >= 3 {
-                energies[energies.len() / 2]
-            } else {
-                0.0
-            };
-            (g, brightness, flux)
-        })
-        .collect();
-    // Descending brightness; ties by pair order (deterministic).
+            ranked.push((pair, est));
+        }
+    }
+    // Descending probe brightness; ties by pair order (deterministic).
     ranked.sort_by(|a, b| {
         b.1.partial_cmp(&a.1)
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
-    baked.ghosts = ranked.into_iter().map(|(g, _, _)| g).collect();
+    baked.pairs = ranked.iter().map(|&(g, _)| g).collect();
 
-    let aperture = bake_aperture(p, DISC_RES);
-    baked.disc = bake_ghost_disc(&aperture, DISC_RES, p.fstop);
-    let sb_aperture = if STARBURST_RES == DISC_RES {
-        aperture
-    } else {
-        bake_aperture(p, STARBURST_RES)
-    };
-    baked.starburst = bake_starburst(&sb_aperture, STARBURST_RES);
+    let aperture = bake_aperture(p, native_fstop, APERTURE_RES);
+    baked.starburst = bake_starburst(&aperture, STARBURST_RES);
 
     // Closed-loop auto exposure (K-258): render the reference thumbnail with
     // gain 1 at FIXED frame-time settings — only bake-key inputs may steer
@@ -1167,12 +1106,12 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         roundness: p.roundness,
         aperture_softness: p.aperture_softness,
         ghost_intensity: 1.0,
+        ghost_softness: 0.3,
         max_ghosts: 32,
         dispersion: 1.0,
         coating: 0.6,
         starburst_intensity: 0.0,
         scale: 1.0,
-        coating_preset: p.coating_preset,
         source: 0,
         threshold: 1.0,
         threshold_softness: 0.25,
@@ -1192,8 +1131,13 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         &manual_light(&probe_frame, pw, ph),
     );
     let mean: f32 = thumb.iter().sum::<f32>() / thumb.len().max(1) as f32;
-    baked.energy_gain = if mean > 1e-9 {
-        (TARGET_PROBE_MEAN / mean).clamp(0.02, 400.0)
+    // The gain ceiling matters (K-261): a lens whose every ghost is an
+    // extreme defocused wash has almost no probe energy after the
+    // giant-quad fade, and an unbounded loop would amplify the residue into
+    // a lit-up artefact field. Capped, such a lens renders honestly dim —
+    // a bright star and little else, which is what that glass does.
+    baked.energy_gain = if mean > 1e-12 {
+        (TARGET_PROBE_MEAN / mean).clamp(1e-2, 64.0)
     } else {
         1.0
     };
@@ -1249,17 +1193,10 @@ pub fn lambda_weights(count: u32, dispersion: f32) -> Vec<(f32, [f32; 3])> {
         .collect()
 }
 
-/// The ghost-disc UV scale for the working f-stop (realflare's
-/// `ghost_scale = 1 − fstop/32`, floored so extreme stops keep a disc).
-pub fn ghost_disc_scale(fstop: f32) -> f32 {
-    (1.0 - fstop / 32.0).clamp(0.05, 1.0)
-}
-
-/// Raster pixels per sensor mm for a `w`-wide target (realflare's
-/// `screen_transform`): resolution-independent framing (§2.3).
+/// Raster pixels per sensor mm for a `w`-wide target: resolution-independent
+/// framing (§2.3), matching [`light_direction`]'s half-sensor convention.
 pub fn screen_transform(w: u32) -> f32 {
-    let half_norm = (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt() / 2.0;
-    w as f32 / half_norm
+    w as f32 / SENSOR_MM[0]
 }
 
 // ---------------------------------------------------------------------------
@@ -1269,198 +1206,30 @@ pub fn screen_transform(w: u32) -> f32 {
 // ---------------------------------------------------------------------------
 
 /// One rasterisation vertex (matches the WGSL vertex buffer): raster
-/// position, disc UV, RGB-weighted intensity, housing rrel.
+/// position, RGB-weighted intensity.
 #[derive(Debug, Clone, Copy)]
 struct FlareVertex {
     pos: [f32; 2],
-    uv: [f32; 2],
     rgb: [f32; 3],
-    rrel: f32,
 }
 
-/// Render the ghost train alone into an RGB flare buffer (`w × h × 3`),
-/// mirroring the GPU's trace → quad energy → corner average → two-triangle
-/// raster chain, once per live light in `lights` (Manual mode passes
-/// [`manual_light`]; Matte mode the [`detect_lights`] top-K). Used by tests
-/// and small enough to read as the spec of the GPU path.
-pub fn cpu_flare(
-    p: &LensFlareParams,
-    baked: &FlareBaked,
-    w: u32,
-    h: u32,
-    lights: &[FlareLight],
-) -> Vec<f32> {
-    let mut out = vec![0.0_f32; (w * h * 3) as usize];
-    let (grid, lambda_count, _) = quality_ladder(p.quality);
-    let ghost_count = (p.max_ghosts as usize).min(baked.ghosts.len());
-    if ghost_count == 0 || p.ghost_intensity <= 0.0 {
-        return out;
-    }
-    let weights = lambda_weights(lambda_count, p.dispersion);
-    let aspect = h as f32 / w.max(1) as f32;
-    let sensor_shift = focus_shift_mm(p.focus_m, baked.focal_mm);
-    let st = screen_transform(w);
-    let disc_scale = ghost_disc_scale(p.fstop);
-    let g = grid as usize;
-    let cell_mm = baked.launch_mm / (grid.max(2) - 1) as f32;
-    let area_launch = cell_mm * cell_mm;
-    let min_area = MIN_AREA_FRAC * area_launch;
-    let energy = GHOST_ENERGY_SCALE * p.ghost_intensity * baked.energy_gain;
+/// Minimum screen area a drawn quad may have, px² (K-261). A caustic-folded
+/// quad shrinks below a pixel, and a rasteriser drops triangles that cover
+/// no pixel centre — deleting exactly the flux that makes a flare's bright
+/// rims and fold lines. Quads below this inflate about their centroid to
+/// this area with their colour scaled by (true / inflated) area, so the
+/// deposited flux is conserved and every quad reliably covers samples.
+pub const MIN_QUAD_PX: f32 = 4.0;
 
-    let disc_res = DISC_RES as usize;
-    let disc_sample = |u: f32, v: f32| -> f32 {
-        // uv arrives iris-normalised in [−1, 1]; scale by the f-stop disc,
-        // then into texture space, clamped.
-        let tu = ((u / disc_scale) + 1.0) / 2.0;
-        let tv = ((v / disc_scale) + 1.0) / 2.0;
-        if !(0.0..=1.0).contains(&tu) || !(0.0..=1.0).contains(&tv) {
-            return 0.0;
-        }
-        let fx = tu * (disc_res - 1) as f32;
-        let fy = tv * (disc_res - 1) as f32;
-        let x0 = fx.floor() as usize;
-        let y0 = fy.floor() as usize;
-        let x1 = (x0 + 1).min(disc_res - 1);
-        let y1 = (y0 + 1).min(disc_res - 1);
-        let (tx, ty) = (fx - x0 as f32, fy - y0 as f32);
-        let a = baked.disc[y0 * disc_res + x0] * (1.0 - tx) + baked.disc[y0 * disc_res + x1] * tx;
-        let b = baked.disc[y1 * disc_res + x0] * (1.0 - tx) + baked.disc[y1 * disc_res + x1] * tx;
-        a * (1.0 - ty) + b * ty
-    };
-
-    let mut rays = vec![
-        TracedRay {
-            pos_mm: [0.0; 2],
-            uv: [0.0; 2],
-            rrel: 0.0,
-            reflectance: f32::NAN,
-        };
-        g * g
-    ];
-    let mut cell_e = vec![0.0_f32; (g - 1) * (g - 1)];
-
-    for light in lights {
-        if light.rgb[0] <= 0.0 && light.rgb[1] <= 0.0 && light.rgb[2] <= 0.0 {
-            continue;
-        }
-        let dir = light_direction(light.pos, aspect, baked.focal_mm);
-        for gi in 0..ghost_count {
-            let ghost = baked.ghosts[gi];
-            for &(traced_nm, rgb_w) in &weights {
-                // Trace the grid.
-                for cy in 0..g {
-                    for cx in 0..g {
-                        rays[cy * g + cx] = trace_ray(
-                            baked,
-                            ghost,
-                            traced_nm,
-                            [cx as u32, cy as u32],
-                            grid,
-                            p.coating,
-                            dir,
-                            sensor_shift,
-                        );
-                    }
-                }
-                // Per-cell energy: launch area / landed area, dead-corner cells
-                // culled (energy 0).
-                for cy in 0..g - 1 {
-                    for cx in 0..g - 1 {
-                        let r00 = rays[cy * g + cx];
-                        let r10 = rays[cy * g + cx + 1];
-                        let r11 = rays[(cy + 1) * g + cx + 1];
-                        let r01 = rays[(cy + 1) * g + cx];
-                        let live = r00.reflectance.is_finite()
-                            && r10.reflectance.is_finite()
-                            && r11.reflectance.is_finite()
-                            && r01.reflectance.is_finite();
-                        cell_e[cy * (g - 1) + cx] = if live {
-                            let e = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| {
-                                (a[0] - b[0]) * (c[1] - a[1]) - (a[1] - b[1]) * (c[0] - a[0])
-                            };
-                            let a0 = e(r00.pos_mm, r10.pos_mm, r11.pos_mm);
-                            let a1 = e(r00.pos_mm, r11.pos_mm, r01.pos_mm);
-                            let area = ((a0 + a1) / 2.0).abs().max(min_area);
-                            area_launch / area
-                        } else {
-                            0.0
-                        };
-                    }
-                }
-                // Rasterise each live cell as two triangles with corner-averaged
-                // energies (the GPU's exact split: (0,1,2), (0,2,3) of the
-                // corners (x,y), (x+1,y), (x+1,y+1), (x,y+1)).
-                for cy in 0..g - 1 {
-                    for cx in 0..g - 1 {
-                        if cell_e[cy * (g - 1) + cx] <= 0.0 {
-                            continue;
-                        }
-                        let corner = |ox: usize, oy: usize| -> FlareVertex {
-                            let r = rays[(cy + oy) * g + cx + ox];
-                            // Average the energies of the live cells sharing
-                            // this corner.
-                            let (vx, vy) = (cx + ox, cy + oy);
-                            let mut sum = 0.0_f32;
-                            let mut count = 0u32;
-                            for (nx, ny) in [
-                                (vx.wrapping_sub(1), vy.wrapping_sub(1)),
-                                (vx, vy.wrapping_sub(1)),
-                                (vx.wrapping_sub(1), vy),
-                                (vx, vy),
-                            ] {
-                                if nx < g - 1 && ny < g - 1 {
-                                    let e = cell_e[ny * (g - 1) + nx];
-                                    if e > 0.0 {
-                                        sum += e;
-                                        count += 1;
-                                    }
-                                }
-                            }
-                            let e_avg = if count > 0 { sum / count as f32 } else { 0.0 };
-                            let refl = if r.reflectance.is_finite() {
-                                r.reflectance
-                            } else {
-                                0.0
-                            };
-                            let gain = e_avg * refl * energy;
-                            FlareVertex {
-                                pos: [
-                                    r.pos_mm[0] * st + w as f32 / 2.0,
-                                    h as f32 / 2.0 - r.pos_mm[1] * st,
-                                ],
-                                uv: r.uv,
-                                rgb: [
-                                    rgb_w[0] * gain * light.rgb[0],
-                                    rgb_w[1] * gain * light.rgb[1],
-                                    rgb_w[2] * gain * light.rgb[2],
-                                ],
-                                rrel: r.rrel,
-                            }
-                        };
-                        let mut v = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
-                        inflate_quad(&mut v);
-                        for tri in [[0usize, 1, 2], [0, 2, 3]] {
-                            raster_triangle(
-                                &mut out,
-                                w,
-                                h,
-                                [v[tri[0]], v[tri[1]], v[tri[2]]],
-                                &disc_sample,
-                            );
-                        }
-                    }
-                }
-            }
-        }
-    }
-    out
-}
+/// Floor on a landed quad's area as a fraction of its launch cell — a
+/// guard against a fully-degenerate fold burning to infinity; the visual
+/// cap is the screen-space inflation, not this.
+pub const MIN_AREA_FRAC: f32 = 1e-4;
 
 /// Flux-conserving screen-space floor on a quad's size (K-261, mirrored by
-/// the WGSL `inflate_quad`): a quad smaller than [`MIN_QUAD_PX`] on screen
-/// inflates about its centroid to that area, its colour scaled by the true ÷
-/// inflated area ratio — so a caustic fold's flux lands instead of being
-/// dropped as a sub-pixel triangle.
+/// the WGSL build): a quad smaller than [`MIN_QUAD_PX`] on screen inflates
+/// about its centroid to that area, its colour scaled by the true ÷
+/// inflated area ratio.
 fn inflate_quad(v: &mut [FlareVertex; 4]) {
     let e = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| {
         (a[0] - b[0]) * (c[1] - a[1]) - (a[1] - b[1]) * (c[0] - a[0])
@@ -1471,8 +1240,6 @@ fn inflate_quad(v: &mut [FlareVertex; 4]) {
     if area_px >= MIN_QUAD_PX {
         return;
     }
-    // The epsilon keeps a fully-degenerate (point) quad finite: its scale
-    // tends to 0, so it fades out rather than spiking.
     let eps = MIN_QUAD_PX * 1e-4;
     let s = (MIN_QUAD_PX / area_px.max(eps)).sqrt();
     let cx = (v[0].pos[0] + v[1].pos[0] + v[2].pos[0] + v[3].pos[0]) / 4.0;
@@ -1481,22 +1248,16 @@ fn inflate_quad(v: &mut [FlareVertex; 4]) {
     for c in v.iter_mut() {
         c.pos[0] = cx + (c.pos[0] - cx) * s;
         c.pos[1] = cy + (c.pos[1] - cy) * s;
-        for ch in 0..3 {
-            c.rgb[ch] *= scale;
+        for ch in &mut c.rgb {
+            *ch *= scale;
         }
     }
 }
 
-/// Scanline-rasterise one triangle with barycentric attribute interpolation
-/// into the additive RGB buffer — the CPU twin of the hardware fill (agreeing
-/// to the impl note §8.6 perceptual bound, not per-pixel ULP).
-fn raster_triangle(
-    out: &mut [f32],
-    w: u32,
-    h: u32,
-    v: [FlareVertex; 3],
-    disc_sample: &dyn Fn(f32, f32) -> f32,
-) {
+/// Scanline-rasterise one triangle with barycentric colour interpolation
+/// into the additive RGB buffer — the CPU twin of the hardware fill
+/// (agreeing to the impl note perceptual bound, not per-pixel ULP).
+fn raster_triangle(out: &mut [f32], w: u32, h: u32, v: [FlareVertex; 3]) {
     let min_x = v[0].pos[0]
         .min(v[1].pos[0])
         .min(v[2].pos[0])
@@ -1528,22 +1289,204 @@ fn raster_triangle(
             if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
                 continue;
             }
-            let u = w0 * v[0].uv[0] + w1 * v[1].uv[0] + w2 * v[2].uv[0];
-            let vv = w0 * v[0].uv[1] + w1 * v[1].uv[1] + w2 * v[2].uv[1];
-            let rrel = w0 * v[0].rrel + w1 * v[1].rrel + w2 * v[2].rrel;
-            // Housing feather: full inside 0.95, gone at 1.0.
-            let t = ((1.0 - rrel) / 0.05).clamp(0.0, 1.0);
-            let clip = t * t * (3.0 - 2.0 * t);
-            let d = disc_sample(u, vv);
-            if d <= 0.0 || clip <= 0.0 {
-                continue;
-            }
             let i = ((y as u32 * w + x as u32) * 3) as usize;
-            out[i] += (w0 * v[0].rgb[0] + w1 * v[1].rgb[0] + w2 * v[2].rgb[0]) * d * clip;
-            out[i + 1] += (w0 * v[0].rgb[1] + w1 * v[1].rgb[1] + w2 * v[2].rgb[1]) * d * clip;
-            out[i + 2] += (w0 * v[0].rgb[2] + w1 * v[1].rgb[2] + w2 * v[2].rgb[2]) * d * clip;
+            out[i] += w0 * v[0].rgb[0] + w1 * v[1].rgb[0] + w2 * v[2].rgb[0];
+            out[i + 1] += w0 * v[0].rgb[1] + w1 * v[1].rgb[1] + w2 * v[2].rgb[1];
+            out[i + 2] += w0 * v[0].rgb[2] + w1 * v[1].rgb[2] + w2 * v[2].rgb[2];
         }
     }
+}
+
+/// Render the ghost train alone into an RGB flare buffer (`w × h × 3`),
+/// mirroring the GPU chain (K-261): a REGULAR grid of rays over the pupil
+/// square is traced through each ranked pair per wavelength (the FlareSim
+/// optics), and each live grid cell draws as two triangles whose density is
+/// the energy-conservation ratio `launch cell area ÷ landed area` — smooth
+/// noise-free ghosts, with sub-pixel fold quads inflated so caustic flux
+/// survives. The iris mask (blades, roundness, softness) weights each
+/// corner, which is what shapes the ghosts. Used by tests and small enough
+/// to read as the spec of the GPU path.
+pub fn cpu_flare(
+    p: &LensFlareParams,
+    baked: &FlareBaked,
+    w: u32,
+    h: u32,
+    lights: &[FlareLight],
+) -> Vec<f32> {
+    let mut out = vec![0.0_f32; (w * h * 3) as usize];
+    if w == 0 || h == 0 || p.ghost_intensity <= 0.0 {
+        return out;
+    }
+    let (side, lambda_count, _) = quality_ladder(p.quality);
+    let side = side.max(2) as usize;
+    let weights = lambda_weights(lambda_count, p.dispersion);
+    let roundness = effective_roundness(p.roundness, p.fstop, baked.native_fstop);
+    let rot = p.aperture_rotation_deg.to_radians();
+    let stop_scale = fstop_scale(baked.native_fstop, p.fstop);
+    let sensor_shift = focus_shift_mm(p.focus_m, baked.focal_mm);
+    let aspect = h as f32 / w.max(1) as f32;
+    let st = screen_transform(w);
+    let gain = p.ghost_intensity * baked.energy_gain;
+    let pair_count = baked.pairs.len().min(p.max_ghosts as usize);
+
+    // The pupil grid: corner (i, j) at unit coords, masked by the iris.
+    let unit = |i: usize| (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
+    let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (side - 1) as f32;
+    let cell_area_px = cell_mm * cell_mm * st * st;
+
+    // Per-corner trace results for one (pair, λ): landing px and weight
+    // (Fresnel × mask); None = dead.
+    let mut corners: Vec<Option<([f32; 2], f32)>> = vec![None; side * side];
+    for light in lights {
+        if light.rgb[0] <= 0.0 && light.rgb[1] <= 0.0 && light.rgb[2] <= 0.0 {
+            continue;
+        }
+        let dir = light_direction(light.pos, aspect, baked.focal_mm);
+        for pair in baked.pairs.iter().take(pair_count) {
+            for &(nm, rgb_w) in &weights {
+                for j in 0..side {
+                    for i in 0..side {
+                        let (u, v) = (unit(i), unit(j));
+                        let mask = pupil_mask(u, v, p.blades, rot, roundness, p.aperture_softness);
+                        corners[j * side + i] = if mask <= 0.0 {
+                            None
+                        } else {
+                            let origin = [
+                                u * baked.pupil_mm * stop_scale,
+                                v * baked.pupil_mm * stop_scale,
+                                baked.start_z_mm,
+                            ];
+                            trace_splat(
+                                baked,
+                                *pair,
+                                nm,
+                                origin,
+                                dir,
+                                p.coating,
+                                stop_scale,
+                                sensor_shift,
+                            )
+                            .map(|(pos, wt)| {
+                                (
+                                    [pos[0] * st + w as f32 / 2.0, h as f32 / 2.0 - pos[1] * st],
+                                    wt * mask,
+                                )
+                            })
+                        };
+                    }
+                }
+                for j in 0..side - 1 {
+                    for i in 0..side - 1 {
+                        let c = [
+                            corners[j * side + i],
+                            corners[j * side + i + 1],
+                            corners[(j + 1) * side + i + 1],
+                            corners[(j + 1) * side + i],
+                        ];
+                        let [Some(c0), Some(c1), Some(c2), Some(c3)] = c else {
+                            continue;
+                        };
+                        // Energy conservation: launch cell area ÷ landed
+                        // area (in px² both), floored against degeneracy.
+                        let e = |a: [f32; 2], b: [f32; 2], q: [f32; 2]| {
+                            (a[0] - b[0]) * (q[1] - a[1]) - (a[1] - b[1]) * (q[0] - a[0])
+                        };
+                        let a0 = e(c0.0, c1.0, c2.0);
+                        let a1 = e(c0.0, c2.0, c3.0);
+                        let landed = ((a0 + a1) / 2.0).abs().max(MIN_AREA_FRAC * cell_area_px);
+                        let density = cell_area_px / landed * gain;
+                        let mut v: [FlareVertex; 4] = [
+                            FlareVertex {
+                                pos: c0.0,
+                                rgb: [0.0; 3],
+                            },
+                            FlareVertex {
+                                pos: c1.0,
+                                rgb: [0.0; 3],
+                            },
+                            FlareVertex {
+                                pos: c2.0,
+                                rgb: [0.0; 3],
+                            },
+                            FlareVertex {
+                                pos: c3.0,
+                                rgb: [0.0; 3],
+                            },
+                        ];
+                        for (vert, corner) in v.iter_mut().zip([c0, c1, c2, c3]) {
+                            let b = density * corner.1;
+                            vert.rgb = [
+                                b * rgb_w[0] * light.rgb[0],
+                                b * rgb_w[1] * light.rgb[1],
+                                b * rgb_w[2] * light.rgb[2],
+                            ];
+                        }
+                        inflate_quad(&mut v);
+                        raster_triangle(&mut out, w, h, [v[0], v[1], v[2]]);
+                        raster_triangle(&mut out, w, h, [v[0], v[2], v[3]]);
+                    }
+                }
+            }
+        }
+    }
+    blur_flare(&mut out, w, h, ghost_blur_radius(p.ghost_softness, w, h), 3);
+    out
+}
+
+/// Separable box blur over an RGB buffer/// Separable box blur over an RGB buffer, `passes` times (3 passes
+/// approximate a Gaussian) — FlareSim's Ghost Blur (K-261), shared by the
+/// CPU reference and mirrored by the WGSL blur kernel. `radius_px` 0 is a
+/// no-op.
+pub fn blur_flare(buf: &mut [f32], w: u32, h: u32, radius_px: u32, passes: u32) {
+    if radius_px == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let (w, h, r) = (w as usize, h as usize, radius_px as usize);
+    let norm = 1.0 / (2 * r + 1) as f32;
+    let mut tmp = vec![0.0_f32; buf.len()];
+    for _ in 0..passes.max(1) {
+        // Horizontal into tmp.
+        for y in 0..h {
+            for x in 0..w {
+                let mut acc = [0.0_f32; 3];
+                for dx in -(r as i64)..=(r as i64) {
+                    let sx = (x as i64 + dx).clamp(0, w as i64 - 1) as usize;
+                    let i = (y * w + sx) * 3;
+                    acc[0] += buf[i];
+                    acc[1] += buf[i + 1];
+                    acc[2] += buf[i + 2];
+                }
+                let o = (y * w + x) * 3;
+                tmp[o] = acc[0] * norm;
+                tmp[o + 1] = acc[1] * norm;
+                tmp[o + 2] = acc[2] * norm;
+            }
+        }
+        // Vertical back into buf.
+        for y in 0..h {
+            for x in 0..w {
+                let mut acc = [0.0_f32; 3];
+                for dy in -(r as i64)..=(r as i64) {
+                    let sy = (y as i64 + dy).clamp(0, h as i64 - 1) as usize;
+                    let i = (sy * w + x) * 3;
+                    acc[0] += tmp[i];
+                    acc[1] += tmp[i + 1];
+                    acc[2] += tmp[i + 2];
+                }
+                let o = (y * w + x) * 3;
+                buf[o] = acc[0] * norm;
+                buf[o + 1] = acc[1] * norm;
+                buf[o + 2] = acc[2] * norm;
+            }
+        }
+    }
+}
+
+/// The Ghost-softness blur radius in pixels for a buffer size: the dial is
+/// a percentage of the frame diagonal (0.3 ≈ FlareSim's suggested 0.003).
+pub fn ghost_blur_radius(softness: f32, w: u32, h: u32) -> u32 {
+    let diag = ((w * w + h * h) as f32).sqrt();
+    (softness.clamp(0.0, 2.0) * 0.01 * diag).round() as u32
 }
 
 /// The combine stage, mirrored by the WGSL combine kernel: `out = orig +

@@ -776,7 +776,7 @@ pub fn run_ops(
                 let matte = flare_mattes.get(flare_i).and_then(|o| o.as_ref());
                 flare_i += 1;
                 let (grid, lambda_count, flare_div) = lf::quality_ladder(p.quality);
-                let energy = lf::GHOST_ENERGY_SCALE * p.ghost_intensity;
+                let energy = p.ghost_intensity;
                 let lambdas = lf::lambda_weights(lambda_count, p.dispersion)
                     .into_iter()
                     .map(|(nm, rgb)| (nm, [rgb[0] * energy, rgb[1] * energy, rgb[2] * energy]))
@@ -790,7 +790,12 @@ pub fn run_ops(
                     max_ghosts: p.max_ghosts,
                     coating: p.coating,
                     focus_m: p.focus_m,
-                    disc_scale: lf::ghost_disc_scale(p.fstop),
+                    fstop: p.fstop,
+                    blades: p.blades,
+                    aperture_rotation_deg: p.aperture_rotation_deg,
+                    roundness: p.roundness,
+                    aperture_softness: p.aperture_softness,
+                    ghost_softness: p.ghost_softness,
                     grid,
                     flare_div,
                     screen_transform: lf::screen_transform(w),
@@ -816,22 +821,23 @@ pub fn run_ops(
                             .map(|s| {
                                 [
                                     s.radius_mm,
-                                    s.center_z_mm,
-                                    s.height_mm,
+                                    s.z_mm,
+                                    s.semi_ap_mm,
                                     s.cauchy_a,
                                     s.cauchy_b,
-                                    s.coating_nm,
-                                    s.is_iris,
-                                    s.is_sensor,
+                                    s.coating_layers,
+                                    s.is_stop,
+                                    0.0,
                                 ]
                             })
                             .collect(),
-                        ghosts: b.ghosts.clone(),
-                        launch_mm: b.launch_mm,
+                        ghosts: b.pairs.clone(),
+                        sensor_z_mm: b.sensor_z_mm,
                         focal_mm: b.focal_mm,
+                        native_fstop: b.native_fstop,
+                        pupil_mm: b.pupil_mm,
+                        start_z_mm: b.start_z_mm,
                         energy_gain: b.energy_gain,
-                        disc: b.disc,
-                        disc_res: lf::DISC_RES,
                         starburst: b.starburst,
                         sb_res: lf::STARBURST_RES,
                     }

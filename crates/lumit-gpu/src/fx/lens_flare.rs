@@ -42,11 +42,22 @@ pub struct LensFlareOp {
     /// 0..1 coating blend.
     pub coating: f32,
     /// Focus distance, metres (K-260); the sensor shift derives from it and
-    /// the bake's measured focal length inside the apply.
+    /// the bake's focal length inside the apply.
     pub focus_m: f32,
-    /// Ghost-disc UV scale (lumit_core `ghost_disc_scale`).
-    pub disc_scale: f32,
-    /// Ray-grid side for this quality.
+    /// Working f-stop (K-261): the stop-down scale derives from it and the
+    /// bake's native f-number inside the apply.
+    pub fstop: f32,
+    /// Iris blade count for the in-shader pupil mask.
+    pub blades: u32,
+    /// Iris rotation, degrees.
+    pub aperture_rotation_deg: f32,
+    /// 0..1 iris roundness (the wide-open blend applies inside the apply).
+    pub roundness: f32,
+    /// 0..1 iris edge softness.
+    pub aperture_softness: f32,
+    /// Ghost blur radius as % of the frame diagonal (K-261).
+    pub ghost_softness: f32,
+    /// Pupil-grid side for this quality.
     pub grid: u32,
     /// Flare-buffer divisor (2 on Draft, else 1).
     pub flare_div: u32,
@@ -85,21 +96,23 @@ pub struct LensFlareOp {
 /// [`FxEngine::lens_flare`] is lazy).
 #[derive(Debug, Clone)]
 pub struct FlareBakeData {
-    /// Surface rows: radius, center_z, height, cauchy_a, cauchy_b,
-    /// coating_nm, is_iris, is_sensor — the WGSL `Surface` layout.
+    /// Surface rows: radius, z, semi_ap, cauchy_a, cauchy_b,
+    /// coating_layers, is_stop, pad — the WGSL `Surface` layout (K-261).
     pub surfaces: Vec<[f32; 8]>,
     /// Ranked ghost pairs, brightest first.
     pub ghosts: Vec<[u32; 2]>,
-    /// Launch-square side, mm.
-    pub launch_mm: f32,
+    /// Sensor plane z, mm.
+    pub sensor_z_mm: f32,
     /// Focal length, mm — the in-shader light direction's z.
     pub focal_mm: f32,
+    /// Native f-number (the stop-down and wide-open-roundness reference).
+    pub native_fstop: f32,
+    /// Pupil spray radius, mm.
+    pub pupil_mm: f32,
+    /// Ray start z, mm.
+    pub start_z_mm: f32,
     /// The bake's auto-exposure gain, multiplied into every ghost's energy.
     pub energy_gain: f32,
-    /// Ghost-disc texture, `disc_res`² luminance.
-    pub disc: Vec<f32>,
-    /// See `disc`.
-    pub disc_res: u32,
     /// Starburst sprite, `sb_res`² RGB triplets.
     pub starburst: Vec<f32>,
     /// See `starburst`.
@@ -111,10 +124,12 @@ struct GpuBaked {
     surfaces: wgpu::Buffer,
     surface_count: u32,
     ghosts: Vec<[u32; 2]>,
-    launch_mm: f32,
+    sensor_z_mm: f32,
     focal_mm: f32,
+    native_fstop: f32,
+    pupil_mm: f32,
+    start_z_mm: f32,
     energy_gain: f32,
-    disc: wgpu::Texture,
     starburst: wgpu::Texture,
 }
 
@@ -126,10 +141,12 @@ pub struct LensFlareFx {
     detect_tiles: wgpu::ComputePipeline,
     detect_pick: wgpu::ComputePipeline,
     draw: wgpu::RenderPipeline,
+    blur: wgpu::ComputePipeline,
     combine: wgpu::ComputePipeline,
     trace_layout: wgpu::BindGroupLayout,
     detect_layout: wgpu::BindGroupLayout,
     draw_layout: wgpu::BindGroupLayout,
+    blur_layout: wgpu::BindGroupLayout,
     combine_layout: wgpu::BindGroupLayout,
     /// Baked resources keyed by `bake_key`. Small and bluntly bounded:
     /// animating a bake-relevant parameter (blades…) creates one entry per
@@ -160,7 +177,6 @@ struct TraceParams {
     combo_count: u32,
     grid: u32,
     combo_offset: u32,
-    launch_mm: f32,
     coating: f32,
     aspect: f32,
     focal_mm: f32,
@@ -169,6 +185,15 @@ struct TraceParams {
     raster_h: f32,
     light_count: u32,
     sensor_shift_mm: f32,
+    pupil_mm: f32,
+    start_z_mm: f32,
+    sensor_z_mm: f32,
+    stop_scale: f32,
+    cell_area_px: f32,
+    blades: u32,
+    rot_rad: f32,
+    roundness: f32,
+    softness: f32,
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
@@ -191,9 +216,11 @@ struct DetectParams {
 
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
-struct DrawParams {
-    disc_scale: f32,
-    _pad: [f32; 3],
+struct BlurParams {
+    w: u32,
+    h: u32,
+    radius: u32,
+    dir: u32,
 }
 
 #[repr(C)]
@@ -299,10 +326,23 @@ impl LensFlareFx {
         });
         let draw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("fx-lens-flare-draw-layout"),
+            entries: &[storage_entry(0, true, wgpu::ShaderStages::VERTEX)],
+        });
+        let blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("fx-lens-flare-blur-layout"),
             entries: &[
-                storage_entry(0, true, wgpu::ShaderStages::VERTEX),
-                texture_entry(1, wgpu::ShaderStages::FRAGMENT),
-                uniform_entry(2, wgpu::ShaderStages::FRAGMENT),
+                texture_entry(0, c),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: c,
+                    ty: wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: WORKING_FORMAT,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                    count: None,
+                },
+                uniform_entry(2, c),
             ],
         });
         let combine_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -341,6 +381,10 @@ impl LensFlareFx {
         let combine_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("fx-lens-flare-combine"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../fx_lens_flare_combine.wgsl").into()),
+        });
+        let blur_mod = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("fx-lens-flare-blur"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../fx_lens_flare_blur.wgsl").into()),
         });
 
         let trace_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -438,6 +482,12 @@ impl LensFlareFx {
             &combine_mod,
             &combine_pl,
         );
+        let blur_pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("fx-lens-flare-blur-pl"),
+            bind_group_layouts: &[&blur_layout],
+            push_constant_ranges: &[],
+        });
+        let blur = compute("blur", "fx-lens-flare-blur", &blur_mod, &blur_pl);
 
         Self {
             trace,
@@ -446,10 +496,12 @@ impl LensFlareFx {
             detect_tiles,
             detect_pick,
             draw,
+            blur,
             combine,
             trace_layout,
             detect_layout,
             draw_layout,
+            blur_layout,
             combine_layout,
             cache: Mutex::new(HashMap::new()),
         }
@@ -521,13 +573,6 @@ fn upload_bake(ctx: &GpuContext, data: &FlareBakeData) -> GpuBaked {
             bytes,
         )
     };
-    let disc = float_texture(
-        "fx-lens-flare-disc",
-        data.disc_res,
-        data.disc_res,
-        wgpu::TextureFormat::R32Float,
-        bytemuck::cast_slice(&data.disc),
-    );
     // The starburst's RGB triplets pad to rgba32float rows (alpha unused);
     // f32 keeps the CPU/GPU oracle tight.
     let mut rgba = Vec::with_capacity(data.starburst.len() / 3 * 4);
@@ -546,10 +591,12 @@ fn upload_bake(ctx: &GpuContext, data: &FlareBakeData) -> GpuBaked {
         surfaces,
         surface_count: data.surfaces.len() as u32,
         ghosts: data.ghosts.clone(),
-        launch_mm: data.launch_mm,
+        sensor_z_mm: data.sensor_z_mm,
         focal_mm: data.focal_mm,
+        native_fstop: data.native_fstop,
+        pupil_mm: data.pupil_mm,
+        start_z_mm: data.start_z_mm,
         energy_gain: data.energy_gain,
-        disc,
         starburst,
     }
 }
@@ -775,45 +822,36 @@ impl FxEngine {
                     })
                 };
                 let slots = u64::from(light_count) * u64::from(batch_cap);
-                let rays_buf = scratch("fx-lens-flare-rays", slots * u64::from(ray_count) * 24);
+                let rays_buf = scratch("fx-lens-flare-rays", slots * u64::from(ray_count) * 16);
                 let energies_buf =
                     scratch("fx-lens-flare-energies", slots * u64::from(quad_count) * 4);
                 let verts_buf = scratch("fx-lens-flare-verts", slots * quad_bytes);
-                let draw_params =
-                    ctx.device
-                        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                            label: Some("fx-lens-flare-draw-params"),
-                            contents: bytemuck::bytes_of(&DrawParams {
-                                disc_scale: op.disc_scale.max(1e-3),
-                                _pad: [0.0; 3],
-                            }),
-                            usage: wgpu::BufferUsages::UNIFORM,
-                        });
                 let draw_bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("fx-lens-flare-draw-bind"),
                     layout: &lf.draw_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: verts_buf.as_entire_binding(),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(
-                                &baked.disc.create_view(&Default::default()),
-                            ),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: draw_params.as_entire_binding(),
-                        },
-                    ],
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: verts_buf.as_entire_binding(),
+                    }],
                 });
 
                 let flare_view = flare_tex.create_view(&Default::default());
                 let mut offset = 0u32;
                 while (offset as usize) < combos.len() {
                     let batch = batch_cap.min(combos.len() as u32 - offset);
+                    // Frame-time optics shared with the CPU reference
+                    // (K-261): the stop-down scale, the wide-open roundness
+                    // blend, and the launch cell area in flare-buffer px².
+                    let stop_scale = if baked.native_fstop > 0.0 && op.fstop > 0.0 {
+                        (baked.native_fstop / op.fstop).clamp(0.05, 1.0)
+                    } else {
+                        1.0
+                    };
+                    let native = baked.native_fstop.max(0.7);
+                    let wide_open =
+                        (1.0 - (op.fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+                    let st_flare = op.screen_transform / div as f32;
+                    let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (grid.max(2) - 1) as f32;
                     let params = ctx
                         .device
                         .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -823,17 +861,15 @@ impl FxEngine {
                                 combo_count: batch,
                                 grid,
                                 combo_offset: offset,
-                                launch_mm: baked.launch_mm,
                                 coating: op.coating,
                                 aspect: h as f32 / w.max(1) as f32,
                                 focal_mm: baked.focal_mm,
                                 // Project into the flare buffer's raster.
-                                screen_transform: op.screen_transform / div as f32,
+                                screen_transform: st_flare,
                                 raster_w: fw as f32,
                                 raster_h: fh as f32,
                                 light_count,
-                                // Focus (K-260): thin-lens shift from the
-                                // bake's measured focal length — the same
+                                // Focus (K-260): thin-lens shift, the same
                                 // f²/(1000·d − f) the CPU reference uses.
                                 sensor_shift_mm: {
                                     let f = baked.focal_mm;
@@ -843,6 +879,15 @@ impl FxEngine {
                                         (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
                                     }
                                 },
+                                pupil_mm: baked.pupil_mm * stop_scale,
+                                start_z_mm: baked.start_z_mm,
+                                sensor_z_mm: baked.sensor_z_mm,
+                                stop_scale,
+                                cell_area_px: cell_mm * cell_mm * st_flare * st_flare,
+                                blades: op.blades.clamp(3, 16),
+                                rot_rad: op.aperture_rotation_deg.to_radians(),
+                                roundness: op.roundness.max(wide_open),
+                                softness: op.aperture_softness,
                                 _pad0: 0.0,
                                 _pad1: 0.0,
                                 _pad2: 0.0,
@@ -917,6 +962,69 @@ impl FxEngine {
                         rpass.draw(0..light_count * batch * quad_count * 6, 0..1);
                     }
                     offset += batch;
+                }
+            }
+
+            // Ghost blur (K-261, FlareSim's Ghost Blur): 3 separable box
+            // passes over the flare buffer, ping-ponging through a scratch
+            // texture — an even pass count lands the result back in
+            // `flare_tex` for the combine.
+            let radius = {
+                let diag = ((fw * fw + fh * fh) as f32).sqrt();
+                (op.ghost_softness.clamp(0.0, 2.0) * 0.01 * diag).round() as u32
+            };
+            if radius > 0 {
+                let scratch_tex = work_texture(ctx, fw, fh, "fx-lens-flare-blur-scratch");
+                for pass in 0..3u32 {
+                    for dir in 0..2u32 {
+                        let _ = pass;
+                        let (src_t, dst_t) = if dir == 0 {
+                            (&flare_tex, &scratch_tex)
+                        } else {
+                            (&scratch_tex, &flare_tex)
+                        };
+                        let bp = ctx
+                            .device
+                            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                                label: Some("fx-lens-flare-blur-params"),
+                                contents: bytemuck::bytes_of(&BlurParams {
+                                    w: fw,
+                                    h: fh,
+                                    radius,
+                                    dir,
+                                }),
+                                usage: wgpu::BufferUsages::UNIFORM,
+                            });
+                        let bind = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("fx-lens-flare-blur-bind"),
+                            layout: &lf.blur_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(
+                                        &src_t.create_view(&Default::default()),
+                                    ),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(
+                                        &dst_t.create_view(&Default::default()),
+                                    ),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: bp.as_entire_binding(),
+                                },
+                            ],
+                        });
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("fx-lens-flare-blur-pass"),
+                            timestamp_writes: None,
+                        });
+                        cpass.set_pipeline(&lf.blur);
+                        cpass.set_bind_group(0, &bind, &[]);
+                        cpass.dispatch_workgroups(fw.div_ceil(8), fh.div_ceil(8), 1);
+                    }
                 }
             }
         }
@@ -1005,12 +1113,12 @@ impl FxEngine {
     }
 
     /// The trace-oracle hook (docs/impl/lens-flare.md §8.5): run the trace
-    /// pass alone for the first `combo_limit` (ghost × wavelength) combos of
+    /// pass alone for the first `combo_limit` (pair × wavelength) combos of
     /// the op's MANUAL light and read the ray buffer back — rows `[pos_x,
-    /// pos_y, uv_x, uv_y, rrel, reflectance]` per ray, combo-major
-    /// (reflectance −1 is the GPU's dead sentinel where the CPU returns
-    /// NaN). `w`/`h` feed the aspect the in-shader light direction uses.
-    /// Diagnostics and tests only; no production path calls it.
+    /// pos_y, weight, pad]` per corner, combo-major (weight −1 is the GPU's
+    /// dead sentinel where the CPU returns None). `w`/`h` feed the aspect
+    /// the in-shader light direction uses. Diagnostics and tests only; no
+    /// production path calls it.
     pub fn lens_flare_trace_debug(
         &self,
         ctx: &GpuContext,
@@ -1019,7 +1127,7 @@ impl FxEngine {
         combo_limit: u32,
         w: u32,
         h: u32,
-    ) -> Vec<[f32; 6]> {
+    ) -> Vec<[f32; 4]> {
         use wgpu::util::DeviceExt;
         let lf = &self.lens_flare;
         let baked = lf.baked(ctx, op, bake);
@@ -1072,7 +1180,7 @@ impl FxEngine {
                 contents: bytemuck::cast_slice(&light_rows),
                 usage: wgpu::BufferUsages::STORAGE,
             });
-        let rays_size = combos.len() as u64 * u64::from(ray_count) * 24;
+        let rays_size = combos.len() as u64 * u64::from(ray_count) * 16;
         let rays_buf = ctx.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("fx-lens-flare-dbg-rays"),
             size: rays_size,
@@ -1095,30 +1203,49 @@ impl FxEngine {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("fx-lens-flare-dbg-params"),
-                contents: bytemuck::bytes_of(&TraceParams {
-                    surface_count: baked.surface_count,
-                    combo_count: combos.len() as u32,
-                    grid,
-                    combo_offset: 0,
-                    launch_mm: baked.launch_mm,
-                    coating: op.coating,
-                    aspect: h as f32 / w.max(1) as f32,
-                    focal_mm: baked.focal_mm,
-                    screen_transform: op.screen_transform,
-                    raster_w: w as f32,
-                    raster_h: h as f32,
-                    light_count: 1,
-                    sensor_shift_mm: {
-                        let f = baked.focal_mm;
-                        if op.focus_m <= 0.0 {
-                            0.0
-                        } else {
-                            (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
-                        }
-                    },
-                    _pad0: 0.0,
-                    _pad1: 0.0,
-                    _pad2: 0.0,
+                contents: bytemuck::bytes_of(&{
+                    let stop_scale = if baked.native_fstop > 0.0 && op.fstop > 0.0 {
+                        (baked.native_fstop / op.fstop).clamp(0.05, 1.0)
+                    } else {
+                        1.0
+                    };
+                    let native = baked.native_fstop.max(0.7);
+                    let wide_open =
+                        (1.0 - (op.fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+                    let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (grid.max(2) - 1) as f32;
+                    TraceParams {
+                        surface_count: baked.surface_count,
+                        combo_count: combos.len() as u32,
+                        grid,
+                        combo_offset: 0,
+                        coating: op.coating,
+                        aspect: h as f32 / w.max(1) as f32,
+                        focal_mm: baked.focal_mm,
+                        screen_transform: op.screen_transform,
+                        raster_w: w as f32,
+                        raster_h: h as f32,
+                        light_count: 1,
+                        sensor_shift_mm: {
+                            let f = baked.focal_mm;
+                            if op.focus_m <= 0.0 {
+                                0.0
+                            } else {
+                                (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
+                            }
+                        },
+                        pupil_mm: baked.pupil_mm * stop_scale,
+                        start_z_mm: baked.start_z_mm,
+                        sensor_z_mm: baked.sensor_z_mm,
+                        stop_scale,
+                        cell_area_px: cell_mm * cell_mm * op.screen_transform * op.screen_transform,
+                        blades: op.blades.clamp(3, 16),
+                        rot_rad: op.aperture_rotation_deg.to_radians(),
+                        roundness: op.roundness.max(wide_open),
+                        softness: op.aperture_softness,
+                        _pad0: 0.0,
+                        _pad1: 0.0,
+                        _pad2: 0.0,
+                    }
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });
@@ -1188,10 +1315,10 @@ impl FxEngine {
             return Vec::new();
         }
         let data = slice.get_mapped_range();
-        data.chunks_exact(24)
+        data.chunks_exact(16)
             .map(|row| {
                 let f = |i: usize| f32::from_le_bytes([row[i], row[i + 1], row[i + 2], row[i + 3]]);
-                [f(0), f(4), f(8), f(12), f(16), f(20)]
+                [f(0), f(4), f(8), f(12)]
             })
             .collect()
     }

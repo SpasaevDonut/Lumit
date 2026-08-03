@@ -1,70 +1,47 @@
 # Lens flare — traced ghosts and Fourier starburst
 
 **Status: authoritative implementation note** for the Lens flare effect
-([08-EFFECTS.md](../08-EFFECTS.md) §3.27, K-256). Specs say *what*; this note is the *how*:
-the optical model, the exact formulas, the GPU pass structure, the deviations from the
-reference implementation, and the test plan. Sources: *Physically-Based Real-Time Lens
-Flare Rendering* [Hullin, Eisemann, Seidel 2011] and its supplemental; *Temporal Glare*
-[Ritschel et al. 2009] for the diffraction maths; and the realflare renderer
-(github.com/beatreichenbach/realflare, GPLv3), read end-to-end as the reference — its
-pipeline is ported, not re-derived, with the deviations of §5.
+([08-EFFECTS.md](../08-EFFECTS.md) §3.27; K-256..K-261). Specs say *what*; this note is
+the *how*: the optical model, the exact formulas, the GPU pass structure, and the test
+plan. Sources: the FlareSim renderer (github.com/SeanBRVFX/FlareSim_Nuke_builded, itself
+built on space55/blackhole-rt) for the optical model and the lens-file collection — its
+model is reimplemented here from understanding, not translated; *Physically-Based
+Real-Time Lens Flare Rendering* [Hullin et al. 2011] for the quad-grid energy method the
+renderer keeps; *Temporal Glare* [Ritschel et al. 2009] for the starburst maths.
 
 **In plain terms.** A camera lens is a stack of curved glass discs with an iris somewhere
 in the middle. Most light goes straight through to the sensor — that is the picture. A
 tiny fraction reflects off the *inside* of a glass surface, bounces backward, reflects off
 another surface, and lands on the sensor anyway: that faint doubly-reflected image is one
-**ghost**, and a lens with 15 surfaces has dozens of such two-bounce paths, which is the
-train of coloured blobs you see when a bright light is in shot. The **starburst** is a
-different phenomenon: light bending (diffracting) around the iris blades, which is why its
-spikes match the blade count. This effect simulates both — the ghosts by shooting a grid
-of rays through the real lens geometry each frame, the starburst by taking the Fourier
-transform of the iris shape once and stamping it at the light. Nothing is a drawn sprite;
-every shape falls out of the physics.
+**ghost**, and a lens with 20 surfaces has dozens of such two-bounce pairs — the train of
+coloured blobs you see when a bright light is in shot. The **starburst** is different
+physics: light diffracting around the iris blades, which is why its spikes match the blade
+count. This effect simulates both — the ghosts by refracting a grid of rays through a real
+lens prescription each frame, the starburst by a Fourier transform of the iris shape,
+baked once. Nothing is a drawn sprite; every shape falls out of the physics.
 
 ---
 
-## 1. The lens prescription
+## 1. The lens prescription (K-261)
 
-A lens model is an ordered list of surfaces, front to back, plus the iris position:
+Lenses are plain-text **.lens files** (the FlareSim / PhotonsToPhotos Optical Bench
+format): metadata lines (`name:`, `focal_length:`), then `surfaces:` rows of
 
-```rust
-pub struct LensSurface {
-    pub radius_mm: f32,      // signed sphere radius; 0 = flat (the iris plane)
-    pub thickness_mm: f32,   // axial distance to the NEXT surface
-    pub ior_d: f32,          // refractive index at the d-line (587.6 nm); 1.0 = air gap
-    pub abbe_v: f32,         // Abbe number (dispersion); 0 for air
-    pub height_mm: f32,      // aperture half-height of the element (housing clip)
-}
-pub struct LensModel {
-    pub label: &'static str,
-    pub focal_length_mm: f32,
-    pub native_fstop: f32,
-    pub aperture_index: usize, // which surface is the iris
-    pub surfaces: &'static [LensSurface],
-}
+```
+radius  thickness  ior  abbe  semi_ap  coating
 ```
 
-Prescriptions are **static data in `lumit-core`** (`fx/lens_data.rs`) — no files, no IO,
-deterministic. They come from published patents (a patent's optical table is public
-information; realflare bundles the same ones) plus four reconstructed classic designs
-(Cooke triplet, Tessar, Petzval, Double Gauss), ten lenses total.
-
-**The sensor is calibrated, not copied (K-260).** The sensor is appended as a final flat
-"surface" whose height is half the sensor diagonal — but its position comes from the
-prescription itself, not the patent's trailing gap: the bake traces one paraxial marginal
-ray (parallel to the axis at 5% of the front height) through the main path and places the
-sensor where it crosses the axis — the lens's *measured* infinity focus
-(`paraxial_focus`). The same trace yields the measured EFL, which replaces the label
-focal length everywhere downstream (light direction, focus shift). This was the reference
-author's first correction, and measuring proved him right twice over: patent trailing
-gaps were off by up to 10 mm, and the Zeiss "50mm" table actually measures 64.8 mm —
-patent tables are not always normalised to the label. The four classic reconstructions
-are rescaled by their measured factor so they land within 0.03% of their labels
-(regression-tested; a real-patent table is left as published and only *measured*).
-
-**Dispersion — deviation D1.** Realflare ships a glass catalogue and nearest-matches each
-element's (n, V) to a real Sellmeier table. We compute the index directly from the
-prescription's (n_d, V) with the two-term Cauchy model:
+front to back — signed sphere radius in mm (`0`/`inf` flat, `stop` marks the aperture
+stop), axial gap to the next surface, refractive index and Abbe number of the medium
+AFTER the surface (`1.0 0.0` = air), clear semi-diameter, and the AR-coating layer count
+(0 bare glass, 1 single-layer MgF₂, 2+ multicoat). The last thickness is the back-focal
+distance: the running z sum is the sensor plane. **1299 prescriptions are embedded** in
+`lumit-core` (`lens_files/` + the generated `fx/lens_library.rs`), transcribed patent
+data — each file cites its patent — sorted by name; the native f-number is parsed from
+the collection filename (estimated from `focal / (2·front semi-aperture)` when absent).
+`parse_lens` (no panics; malformed rows skipped, files under 3 surfaces rejected) turns
+one into the flat `FlareSurface` table the trace consumes, with the (n_d, V) pair
+pre-fitted to a two-term Cauchy model:
 
 ```
 B = (n_d − 1) / (V · (1/λ_F² − 1/λ_C²))      λ_F = 486.13 nm, λ_C = 656.27 nm
@@ -72,187 +49,105 @@ A = n_d − B/λ_d²                              λ_d = 587.56 nm
 n(λ) = A + B/λ²
 ```
 
-This reproduces n_d exactly and the Abbe number exactly (it is the definition of V solved
-for a two-term model), which is all the flare can see — the difference against a true
-Sellmeier fit is in the third decimal at spectrum edges, far below visibility here, and it
-deletes the whole catalogue + matching machinery.
+This reproduces n_d and the Abbe number exactly, which is all the flare can see.
 
-## 2. Ghost enumeration and ranking
+**Reflectance.** Bare glass is unpolarised Fresnel by incidence cosine. A coated surface
+is the Airy two-interface summation for a single MgF₂ (n 1.38) quarter-wave layer tuned
+at 550 nm; each extra layer quarters the residual (the FlareSim multicoat
+approximation). The Coating dial blends bare → coated per surface, so 0 is a vintage
+uncoated look and 1 the prescription's own character.
 
-A ghost is a pair `(b1, b2)` of surface indices with `b2 < b1`, both strictly inside the
-element run, and **both on the same side of the iris** (a ray cannot usefully double back
-through the iris; same rule as realflare's `ray_paths`). For n surfaces that is O(n²)
-ghosts — the 14-element prime yields ~120.
+## 2. Ghost pairs: enumeration, filter, ranking
 
-At bake time every ghost is traced with a 5×5 probe grid (fixed off-axis reference light,
-one wavelength) on the CPU; each probe cell scores the render's own energy term (launch
-cell area ÷ landed cell area, min-area floored) and the ghost's brightness proxy is its
-live cells' **median** energy. Ghosts rank by descending brightness, ties by pair order —
-deterministic. The first `max_ghosts` survive at frame time. This is realflare's
-preprocess cull, moved into the cached bake and upgraded from a bbox proxy to the real
-energy term.
+Every pair `(a, b)` with `a < b` is a candidate — including pairs straddling the stop
+(the FlareSim rule; the stop is air-to-air and cannot reflect, which the interface filter
+below removes naturally). At bake time:
 
-The **auto-exposure gain** closes the loop (K-258): the bake renders the actual CPU
-reference at thumbnail size (96×54, fixed frame-time settings so only bake-key inputs
-steer it) with gain 1, measures the mean, and normalises it to `TARGET_PROBE_MEAN`
-(clamped 0.02..400). Two cheaper proxies were tried and killed: the per-ghost probe
-median and the on-sensor probe flux both mispredicted real lenses by orders of magnitude,
-because ghost energy depends on where a design's caustics land at the render framing —
-the Petzval carried bright probe cells that never reached the frame and rendered 30× dim.
-Relative brightness *between* a lens's own ghosts stays physical; only the overall
-exposure is normalised.
+1. **Interface filter**: both surfaces must change medium by ≥ 0.001 in n_d.
+2. **Brightness probe**: one on-axis centre ray per pair at 650/550/450 nm with the
+   file's coating fully on; the mean surviving weight must reach `PAIR_MIN_INTENSITY`
+   (1e-7) or the pair is dropped.
+3. **Ranking**: descending probe brightness, ties by pair order — deterministic. The
+   frame renders the first `max_ghosts`.
 
-## 3. The per-frame trace
+No per-pair area boost (FlareSim's `ghost_normalize`) exists here: the quad-grid energy
+term makes defocus dilution physical, so compensating it would double-count.
 
-Direct port of realflare's `raytracing.cl`, in WGSL and (as the oracle) Rust. Per
-(ghost, wavelength): a `grid × grid` bundle of parallel rays over a launch square is aimed
-at the front element along the light direction. The launch square is fixed per lens at
-2.3 × the front element's half-height — the full clear diameter plus margin (K-258: an
-undersized square shows in the picture as a rectangular ghost boundary, the bundle's own
-clip instead of the housing's feathered vignette); cells whose rays miss are culled, so
-overshoot costs only rays, never artefacts.
+## 3. The per-frame trace (the FlareSim three-phase walk)
 
-Light direction from the parameter position: `dir = normalize(px_frac·s, py_frac·ratio·s,
-focal_mm)` with `s` = half the sensor width and `focal_mm` the **measured** EFL (§1),
-matching realflare's `update_direction` — so a light at the frame corner enters at the
-true corner field angle.
+Rays launch from a **regular pupil grid**: `side²` corners over the pupil square (side
+from the Quality ladder), at `z = front vertex − 20 mm`, all parallel to the light
+direction `normalize(−x, −y, focal)` from the light's raster fraction (36 mm sensor
+width, y up). The spray radius is the **entrance pupil** `focal / (2 · native f-number)
+× 1.5` clamped to the front semi-aperture — spraying the whole front bezel instead
+wastes most rays (the Master Prime's 63 mm bezel passes ~4% of a full-width spray), and
+the ×1.5 margin keeps the ghost paths that accept rays the imaging pupil rejects.
 
-**Focus distance (K-260).** The Focus (m) parameter shifts the sensor plane by the
-thin-lens focusing extension `Δ = f² / (1000·d − f)` mm (f = measured EFL, d = focus in
-metres), clamped to `[0, f]`. The shift is applied at trace time to the sensor surface
-only — it is a frame-time value outside the bake key, so pulling focus never rebakes, and
-it visibly rearranges the whole ghost train (every ghost's caustic lands differently on a
-defocused sensor), the reference author's "same lens, completely different flare" point.
+Each corner carries an **iris mask weight**: the blade polygon's radial bound at the
+corner's pupil angle, blended toward the unit circle by Roundness (plus the K-260
+wide-open blend — at the native stop the iris retracts behind the circular bore),
+feathered by Softness. Zero-mask corners never trace. The same `pupil_mask` renders the
+aperture image the starburst FFT consumes, so the two agree by construction.
 
-Per surface, in order (walking forward, then backward after the first bounce, then forward
-again after the second — realflare's `delta` walk):
+Per (pair × wavelength), the walk is FlareSim's three phases: **forward** through
+surfaces `0..=b` (transmitting with weight × (1−R), reflecting at `b` with weight × R),
+**backward** through `b−1..=a` (reflecting at `a`), **forward** again through `a+1..end`,
+then a final propagation to the sensor plane (shifted by the K-260 thin-lens focus term
+`f²/(1000·d − f)` mm). Intersection picks the sphere solution closest to the surface
+vertex; the clear semi-aperture clips with a **10% skirt** — rays inside the skirt stay
+formally alive while the housing feather (`smoothstep` on the worst relative aperture
+crossing, full inside 0.95, gone at 1.0) zeroes their weight, so bundle boundaries fade
+instead of dying quad-by-quad. The working f-stop scales the stop surface's semi-aperture
+and the pupil spray together by `native/f` (clamped 0.05..1).
 
-- **Intersect**: flat plane for radius 0, else ray–sphere with the centre at
-  `z = −(offset + radius)`; a miss kills the ray. `incident = acos(clamp(dot(−dir, n)))`.
-- **Iris surface**: record `uv = hit.xy / iris_height` (the ghost-disc texture
-  coordinate; no refraction — the iris is an absorber, not glass). The **f-stop scales
-  the ghost disc at sampling time**, not the trace: the fragment reads the disc at
-  `uv / ghost_scale` with `ghost_scale = clamp(1 − fstop/32, 0.05, 1)` (realflare's
-  rule), so stopping down shrinks every ghost's disc while the trace stays f-stop-free —
-  which is also what lets the bake cache ignore per-frame f-stop animation for the trace
-  tables (only the disc's FRFT ringing rebakes).
-- **Everywhere else**: track `rrel = max(rrel, |hit.xy| / height)` — a ray that ever
-  leaves the housing (`rrel > 1`) is vignetted; the fragment fades it by
-  `smoothstep(1.0, 0.95, rrel)`.
-- **Refract** by Snell in vector form (`refract()`), with `n1/n2` from the Cauchy model at
-  this ray's λ; total internal reflection kills the ray (dir.z == 0 sentinel, as in
-  realflare).
-- **Reflect** at the ghost's two surfaces, multiplying the ray's reflectance by:
-  - uncoated: the plain Fresnel average `(r_s² + r_p²)/2`;
-  - coated: `fresnel_ar(θ, λ, d, n0, nc, n2)` — the Ritschel supplemental single-layer
-    interference formula, with coating index `nc = max(√(n1·n2), 1.38)` (MgF₂ floor) and
-    quarter-wave thickness `d = λ_c / (4·nc)` tuned at `λ_c`, the element's coating
-    wavelength;
-  - the **Coating** parameter lerps between the two, so 0 is a vintage uncoated lens
-    (bright neutral ghosts) and 1 a modern multicoat look (dim, strongly colour-cast).
+## 4. Rasterising the ghosts (the energy-conserving quad grid)
 
-  **Coating wavelengths — deviation D2**: realflare lets the user list a λ_c per element;
-  we assign them deterministically, cycling `{480, 510, 540, 570, 600} nm` by surface
-  index — the variety is what matters visually, and a per-element editor is UI the effect
-  does not need. (Custom prescriptions later can carry their own list.)
+Each live grid cell draws as two triangles whose density is `launch cell area ÷ landed
+area` (both in flare-buffer px²) — a bundle focused small burns bright, spread large sits
+dim, and fold caustics blow up exactly as real rims do. Per-corner colour = density ×
+Fresnel weight × mask × the wavelength's CIE band RGB × the light's colour × the
+exposure gain. Two guards:
 
-**Wavelengths.** `quality` picks the count (4 / 8 / 16 / 32 for Draft / Normal / High /
-Ultra, grids 16/48/80/128 — K-258's photo-real ladder; three bands read as a
-stacked RGB split at ghost rims, and the extreme tier is deliberately
-expensive while Normal stays real-time); λ_k = centred steps over [390, 730] nm, exactly realflare's `wavelength_array`.
-Each traced λ's RGB weight is its **band's integral** of the CIE colour-matching
-functions (sampled at 2 nm), not a point sample — deviation D5 from realflare's per-λ
-point sampling: with only 3 traced wavelengths, point-sampling red at 673 nm weighs it at
-a tenth of its true band energy and tints every flare blue-green (found by eye on the
-first renders).
-The **Dispersion** parameter scales each λ's *offset from λ_mid* before the trace, so 0
-collapses the spectrum onto 560 nm (a monochrome trace — cheap and fringe-free) and 2
-doubles the fringing; the CIE colour weights (§4.3) keep reading the *unscaled* λ so
-tinting stays honest.
+- **Degeneracy floor**: landed area is floored at 1e-4 of the launch cell (a formality —
+  the visual cap is the next guard).
+- **Sub-pixel inflation (K-261)**: a quad below 4 px² would be dropped by any rasteriser
+  as a zero-coverage triangle — deleting exactly the caustic flux that makes bright rims
+  and fold lines. Such quads inflate about their centroid to 4 px² with colour scaled by
+  true ÷ inflated area: flux exact, nothing dropped.
 
-Ray output (a storage buffer, one struct per ray): sensor `pos.xy` (mm), iris `uv`,
-`rrel`, `reflectance` (NaN = dead ray).
+The additive raster (hardware, one-one blend, fp16 buffer; Draft at half resolution) is
+followed by the **Ghost blur**: 3 separable box passes (≈ Gaussian) at a radius of
+`Ghost softness × 0.01 × frame diagonal` — FlareSim's Ghost Blur, a touch of
+out-of-focus softness that also hides quad facets at low qualities.
 
-## 4. Rasterising the ghosts
+**Known limit**: a lens whose ghosts are ALL extreme frame-filling defocus (some process
+lenses) resolves one pupil cell to tens of pixels; cull boundaries then show as
+grid-aligned steps at low quality. Higher quality shrinks them; adaptive grid refinement
+is the pinned follow-up (TODO).
 
-Realflare hand-rolls a binned software rasteriser because OpenCL has no raster pipeline —
-**wgpu has one, so we use it** (deviation D3, the big simplification). Structure:
+## 5. The bake (CPU, cached by parameter hash)
 
-1. **Quad pass** (compute, one thread per grid cell per ghost×λ): read the cell's four
-   corner rays; a cell with any dead corner is culled. Cell energy
-   `E = area_launch / max(area_landed, min_area)` where `area_landed` is the shoelace area
-   of the landed quad and `min_area` stops edge cells burning to infinity (realflare's
-   `min_area`, fixed at 1% of the launch cell). Store per-cell E.
-2. **Vertex pass** (compute, one thread per cell corner): write a duplicated-vertex
-   buffer — 4 vertices per cell, each carrying sensor position (→ NDC via
-   `screen_transform = raster_width / sensor_half_diag`, so framing is
-   resolution-independent and Half preview matches Full), iris uv, rrel, reflectance, and
-   an intensity that **averages the energies of the ≤ 4 live cells sharing that corner**
-   (realflare's neighbour smoothing, kept — without it cell edges band visibly). A culled
-   cell's four vertices park off-screen at zero intensity, which is what makes duplicated
-   vertices worth their memory: per-cell culling without dynamic index buffers.
-3. **Draw** (render pass): one static index buffer (two triangles per cell), one
-   instanced-style concatenated vertex buffer for all ghosts × λ, additive blend
-   (ONE/ONE) into an fp16 flare buffer cleared to black. Fragment:
-   `ghost_disc(uv) · smoothstep(1.0, 0.95, rrel) · intensity · reflectance · cie_rgb(λ) ·
-   ghost_intensity / n_λ`.
-4. **Combine** (compute, the Glow-combine shape): `out = orig + master_intensity ·
-   (flare(p′) + starburst(p″))` where `p′` applies the anamorphic squeeze about the frame
-   centre and `p″` the starburst sprite's inverse placement affine (position at the
-   light, scale, rotation, squeeze). Alpha saturates at `min(1, a + …)`; Mix lerps
-   against `orig`. Intensity 0 (or Mix 0) short-circuits to the bit-exact input, the
-   standard neutral-point contract, pinned by test.
+Pure and deterministic: parse the prescription, filter and rank the pairs (§2), render
+the aperture image from `pupil_mask` and bake the **starburst sprite** — the aperture's
+Fourier amplitude under the Fresnel propagation term at λ_mid, spectrally integrated
+(100 samples, sample position scaled by λ_mid/λ so diffraction grows with wavelength)
+with CIE weights into linear RGB, peak-normalised. Amplitude |F|, not power |F|² — the
+power spectrum's DC core buries the blade spikes.
 
-Draft quality renders the flare buffer at half raster size and the combine upsamples
-bilinearly — the flare is all soft gradients, so half res is visually free and quarters
-the fill cost.
+The **auto-exposure gain** closes the loop (K-258): the bake renders the CPU reference
+at thumbnail size (96×54, fixed frame-time settings so only bake-key inputs steer it)
+with gain 1 and normalises the mean to `TARGET_PROBE_MEAN` (0.010). The gain ceiling is
+**64** (K-261): a wash-only lens has almost no probe energy, and an unbounded loop would
+amplify the residue into a lit-up artefact field — capped, such a lens renders honestly
+dim, which is what that glass does. The bake key hashes lens, f-stop, blades, rotation,
+roundness and iris softness; light position, intensities, dispersion, coating, Ghost
+softness, focus, quality and mix are frame-time and never rebake.
 
-## 5. The bake (CPU, cached)
-
-Everything below is a pure function of (lens_model, fstop, blades, roundness,
-aperture_rotation, aperture_softness, starburst params, quality), rebuilt only when one
-of those changes, cached in the `FxEngine` behind a short-held mutex (never held across a
-submit; on a miss the bake computes outside the lock — a racing double-bake is harmless
-because the function is pure). Animating the *light position or intensities* never
-rebakes; animating *blades* does (documented: the aperture group is cheap to animate at
-256², but it is a per-keyframe rebake).
-
-- **Aperture image** (256² f32): the blade polygon as `poly = max_i(dot(axis_i, p))`
-  over `blades` axes, an SDF lerp toward the circle
-  `sdf = poly + (|p| − poly) · roundness` (K-260 — see §7's trap), and
-  `1 − smoothstep(1 − softness, 1 + softness, sdf)`. Realflare's `aperture_shape` kernel,
-  on the CPU. **Wide-open rounding (K-260)**: near the lens's native stop a real iris
-  retracts behind the housing's circular bore, so the effective roundness is
-  `max(user, wide_open)` with `wide_open = 1 − clamp(fstop/native − 1, 0, 2)/2` — wide
-  open the ghosts are round whatever the blade count, stopped down the polygon shows.
-- **Ghost disc** (512² f32): the fractional Fourier transform of the aperture at order
-  `α = 0.15 · (λ_mid/400) · (fstop/18)` — [Ritschel 2009] §3.3's "ringing pattern", the
-  softly diffraction-ringed disc a defocused iris projects. The aperture is embedded
-  centred in a 2× zero-padded field before the transform and centre-cropped after
-  (K-260, the reference author's advice): the FRFT is circular, so an unpadded aperture
-  wraps its own ringing back across the disc as banded arcs. FRFT per Ozaktas: normalise
-  α into [0.5, 1.5) with whole FFT/flip steps, then the chirp-multiply / FFT / chirp
-  decomposition (realflare's `frft.py`, ported). Needs one in-house complex radix-2 FFT
-  (`fx/fft.rs`): power-of-two sizes only, iterative Cooley–Tukey, ~80 lines, tested
-  against DFT identities — no dependency for a bake that runs on parameter change.
-- **Starburst sprite** (256² RGB f32): per [Ritschel 2009] §4: `F = FFT(A · e^{iπ/(λd)
-  (x²+y²)})` at λ_mid, pattern `= |F|` — the **amplitude**, not the power `|F|²`
-  (deviation D6: the power spectrum's DC core sits orders of magnitude above the blade
-  streaks, so after normalisation the spikes vanish; amplitude keeps them at a displayable
-  ~1e-2 of the core, which is how reference starbursts read — the core clips to white
-  either way) — then per output pixel integrate ~100 spectral samples — each sample reads the pattern at the pixel scaled by `λ/λ_mid` (diffraction
-  grows with wavelength → rainbow rim), accumulated with the CIE XYZ weight of its λ (the stochastic Softness
-  jitter and Rotation smear were removed with their parameters, K-257 — the
-  spectral integration is the smear), then
-  XYZ→working-RGB. The jitter hash is the fixed `fract(sin(dot))` lattice realflare uses —
-  deterministic, no seed parameter, identical on every machine.
-- **CIE tables** (`fx/cie.rs`): the 1931 2° observer at 5 nm over [390, 730], and the
-  XYZ → linear-Rec.709 matrix (the working space's primaries — realflare targets ACES AP1
-  instead; deviation D4, ours must match the compositor).
-- **Ghost list**: §2's enumeration + probe ranking.
-
-The GPU consumes the baked buffers as uploaded textures; the CPU reference reads them
-directly. One bake, two consumers — the textures cannot disagree.
+**Wavelengths**: the ladder spreads `lambda_count` bands (3/8/16/32 by Quality) about
+the 550 nm midpoint, scaled by the Dispersion dial; each band's RGB weight is the CIE
+1931 integral over its band (2 nm steps), Y-normalised so the band count never changes
+exposure. Point-sampling instead of integrating tints everything blue-green (found by
+eye) — deviation D5, kept from K-256.
 
 ## 6. Matte source mode (shipped, K-257)
 
@@ -276,68 +171,50 @@ the mode can land later without moving any shipped parameter. Full-image convolu
 seconds-per-frame offline technique, not an interactive effect; the top-K model is what
 fits a compositor.
 
-## 7. Traps (learned from the reference, do not rediscover)
+## 7. Traps (learned the hard way — do not rediscover)
 
-- **`min_area` is load-bearing.** Without it, a caustic-focused cell's energy `1/area`
-  explodes into fireflies. Realflare clamps at `min_area · area_launch`; keep 0.01.
-- **Vignette clip must be smooth.** A hard `rrel > 1` cut aliases along the clip edge;
-  the `smoothstep(1.0, 0.95, rrel)` feather is the fix (realflare's `fragment_shader`).
-- **Dead rays are NaN, not zero.** A zero-reflectance ray still carries a valid position
-  (a legitimately dark ghost); death is positional (missed a surface, TIR). Realflare
-  poisons `reflectance = NaN` and culls in the prim shader; we cull whole cells in the
-  quad pass. Never let a NaN position reach the vertex buffer — park culled vertices at a
-  finite off-screen constant.
-- **The iris skips refraction.** It is a stop, not a surface; realflare `continue`s past
-  it. Refracting there doubles up the medium walk and bends the whole trace.
-- **Backward walks index the *previous* medium by direction.** `n1` comes from
-  `lens[id − 1]` going forward but `lens[id + 1]` going backward (realflare's `n_index`
-  select on `dir.z`); getting this wrong looks *almost* right, which is why it is listed.
-- **fp16 accumulation is fine, fp16 trace is not.** The flare buffer is rgba16float
-  (peaks ~10³, well under 65504) but every trace quantity is f32 — a 14-surface refract
-  chain in half precision visibly warps ghosts.
-- **Roundness must be an SDF lerp to the circle, not an additive bulge.** Realflare's
-  sine-bulge roundness only behaves for small values; pushed toward 1 (which the K-260
-  wide-open blend does at the native stop) it pinches the iris into a flower. Blend the
-  blade-polygon SDF toward `length(p)` instead — at 1 the iris is exactly circular.
-- **The FRFT branches on α.** Ozaktas normalisation changes the transform applied for
-  small α (extra inverse FFT); the ghost-disc α at ordinary f-stops sits near 0.1–0.5, so
-  the branch *is* exercised — test both sides.
+- **Sub-pixel quads are silently dropped by every rasteriser.** The caustic flux that
+  makes a flare's bright rims lives exactly there. The inflation of §4 is load-bearing;
+  measured without it, the frame's dynamic range collapsed from ~116× to 6.6×.
+- **Do not spray the front bezel.** Prescriptions list housing semi-apertures far wider
+  than the entrance beam; a full-width spray wastes ~96% of its rays on some lenses and
+  the survivors render as noise. Size the spray to the entrance pupil (§3).
+- **Point splatting cannot reach reference smoothness at photographic ghost sizes.**
+  The Monte-Carlo variant of this model (tried first for K-261) needs orders of
+  magnitude more rays than the quad grid for the same smooth rim; the quad-grid energy
+  term is the noise-free integral of the same physics. Splats were kept only as history.
+- **The exposure loop amplifies whatever survives rendering.** Any attempt to fade an
+  artefact that also carries the lens's probe energy is undone by the gain; suppress
+  artefacts geometrically (feather, skirt) or cap the gain, never by scaling energy the
+  probe can see.
+- **Roundness must be an SDF lerp to the circle, not an additive bulge** (K-260): the
+  sine-bulge form pinches into a flower near 1, and the wide-open blend drives it there.
+- **The backward walk's media indices flip.** Travelling backward through surface s, the
+  ray leaves the medium AFTER s and enters the medium BEFORE it; reflecting at the far
+  bounce restores the forward convention. Get one wrong and every ghost lands wrong by
+  centimetres — the pair filter's on-axis probe catches it instantly.
 
-## 8. Test plan
+## 8. Test plan (all shipped; names in `fx/tests.rs` and lumit-gpu `fx/tests.rs`)
 
-Alongside the feature (docs/14 §10.2), in `lumit-core` unless noted:
-
-1. **FFT**: forward-then-inverse round-trips within 1e-5; a known 8-point DFT matches the
-   direct sum; Parseval's identity holds.
-2. **FRFT**: α = 1 equals the plain FFT (through the normalisation); the branch below
-   α = 0.5 runs and round-trips.
-3. **Optics units**: Cauchy reproduces n_d exactly and n_F − n_C = (n_d − 1)/V within
-   1e-6; `refract` matches Snell at normal and 45° incidence; `fresnel` at normal
-   incidence equals ((n1−n2)/(n1+n2))²; `fresnel_ar` with coating thickness 0 degrades
-   to plain Fresnel within 1e-4; sphere intersection hits a known circle at the exact
-   analytic point.
-4. **Ghost enumeration**: the 6-element model yields the closed-form pair count with no
-   pair straddling the iris; ranking is deterministic across two runs.
-5. **Trace oracle (lumit-gpu)**: the WGSL trace's ray buffer read back agrees with the
-   CPU trace ray-for-ray — mean sensor-position error < 0.02 mm and 99th-percentile
-   < 0.5 mm — deliberately no absolute max: near a caustic fold a few-ULP difference
-   legitimately lands a single ray on the other branch, millimetres away (measured on the
-   dev RTX: mean ~2e-3, single-ray worst ~9 on the 26-surface cine prime) — UV and rrel likewise at
-   the 99th percentile (1e-3 / 0.02), reflectance at the 99th percentile within 5% relative (2e-2 absolute floor) — the coating formula runs through tan() poles at grazing incidence, where a physically invisible reflectance is hugely sensitive — over light
-   positions × lenses × wavelengths, with live/dead agreement on ≥ 99% of rays. Not
-   ULP-exact: GPU transcendental builtins (sin, asin, acos, tan) are not correctly
-   rounded, Fresnel runs through them, and a 26-surface f32 walk compounds rounding — a
-   porting bug moves the MEAN by orders of magnitude, which is what the bound pins; the
-   frame oracle (below) is the visual-agreement gate.
-6. **Frame oracle (lumit-gpu, the K-256 staged bound)**: GPU frame vs CPU scanline
-   reference at 128²: mean |Δ| ≤ 2e-3 linear and total energy within 1%, on ≥ 3 light
-   positions × 2 lenses. Not per-pixel ULP — hardware fill rules differ legitimately at
-   triangle edges.
-7. **Neutral points**: Intensity 0 and Mix 0 are bit-exact passthroughs on both paths
-   (the standard pin); a zeroed Ghost intensity + Starburst intensity likewise.
-8. **Determinism**: two renders of one frame are byte-identical (no wall-clock anywhere;
-   the bake cache warm/cold paths produce identical output).
-9. **Resolution independence**: the flare at 128² up-sampled matches the flare at 256²
-   structurally (positions scale, per §2.3 — a loose perceptual assertion, not ULP).
-10. **Regression net**: the resolve arm defaults (a fresh instance resolves to the
-    documented defaults); schema/version participate in the cache key.
+1. **FFT**: round trip, 8-point DFT match, Parseval (ortho).
+2. **Optics units**: Cauchy reproduces (n_d, V); Snell at 45°; TIR returns None;
+   normal-incidence Fresnel = ((n1−n2)/(n1+n2))²; the MgF₂ quarter-wave cuts bare-glass
+   reflectance and each extra layer cuts it further; Coating 0 is bare glass exactly.
+3. **Library**: all 1299 files parse with sane focal lengths (2..2000 mm), surface
+   counts (3..64) and positive semi-apertures; the bake is deterministic (pairs, sprite,
+   gain bit-equal across runs); every ranked pair indexes real surfaces.
+4. **Trace**: the top pairs land a solid live population with finite positions and
+   weights in [0, 1]; the pupil mask is 1 at centre, 0 far outside, and passes less area
+   as a hexagon than as a circle.
+5. **GPU trace oracle** (§8.5 shape, K-261 bounds): corner-for-corner against
+   `trace_splat` across two lenses × two lights — mean position error < 0.2 px, p99
+   < 3 px (a few-ULP difference near a fold legitimately lands a ray on the other
+   branch), p99 relative weight error < 5% (2e-4 absolute floor), live/dead flips < 1%.
+6. **GPU frame oracle** (§8.6): full pipeline vs the CPU reference at mean |Δ| < 2e-3
+   with total energy within 1%, visible energy floor, bit-stable across runs, and
+   Intensity-0 / Mix-0 bit-exact passthroughs.
+7. **Matte mode**: GPU detection + per-light flare against the CPU reference at the
+   frame bound; the shared MAX_LIGHTS / DETECT_TILE constants pinned.
+8. **Neutrals and background**: Black background flips alpha only while live; the
+   passthroughs ignore it.
+9. **Focus**: the thin-lens shift is 0 at infinity, `f²/(1000·d − f)` near, ≤ f always.

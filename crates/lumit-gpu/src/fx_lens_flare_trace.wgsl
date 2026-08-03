@@ -1,42 +1,40 @@
-// Lens flare (docs/08-EFFECTS.md §3.27, docs/impl/lens-flare.md, K-256).
-// Five entry points, one frame pipeline:
-//   trace         — one thread per ray: refract/reflect the launch grid
-//                   through the lens for one (ghost × wavelength) combo.
-//                   Mirrors lumit_core::fx::lens_flare::trace_ray op-for-op
-//                   (the §1.6 staged oracle holds it to ≤ 2 f32 ULP); the
-//                   one deliberate difference is the dead-ray sentinel:
-//                   reflectance −1 here, NaN on the CPU (WGSL does not
-//                   guarantee NaN propagation).
-//   quad_energy   — one thread per grid cell: launch area / landed area
-//                   (energy conservation), dead-corner cells culled to 0.
-//   build_verts   — one thread per cell: emits the cell's two triangles (six
-//                   duplicated vertices) with corner-averaged energies;
-//                   culled cells park off-screen at zero intensity.
-//   vs_flare / fs_flare — the render pass: vertex pulling from the built
-//                   buffer, additive blend into the fp16 flare buffer;
-//                   fragment = disc(uv) · housing feather · rgb intensity.
-//   combine       — out = orig + intensity · (flare(squeezed) + starburst);
-//                   alpha saturates toward 1; Mix lerps against the input.
-//                   Mirrors lens_flare::cpu_combine (manual bilinear taps so
-//                   the CPU reference and this kernel read the same maths).
+// Lens flare (docs/08-EFFECTS.md §3.27, docs/impl/lens-flare.md, K-261).
+// Three compute entry points of the per-frame ghost pipeline:
+//   trace       — one thread per pupil-grid corner: refract the ray through
+//                 the prescription with the FlareSim three-phase walk
+//                 (reflecting at the pair's two surfaces), weight by the
+//                 per-surface Fresnel/coating product and the iris mask,
+//                 land on the sensor. Mirrors lumit_core's `trace_splat`
+//                 op-for-op; the dead sentinel is weight −1 (the CPU
+//                 returns None).
+//   quad_energy — one thread per grid cell: launch cell area ÷ landed area
+//                 in raster px² (energy conservation), dead-corner cells 0.
+//   build_verts — one thread per cell: emits the cell's two triangles with
+//                 per-corner weighted colour; sub-pixel fold quads inflate
+//                 about their centroid with flux conserved (K-261) so the
+//                 hardware raster cannot drop caustic flux; culled cells
+//                 park off-screen.
+// The additive raster lives in fx_lens_flare_draw.wgsl, the box blur in
+// fx_lens_flare_blur.wgsl, detection in fx_lens_flare_detect.wgsl and the
+// final combine in fx_lens_flare_combine.wgsl.
 
 struct Surface {
-    radius_mm: f32,
-    center_z_mm: f32,
-    height_mm: f32,
-    cauchy_a: f32,
+    radius_mm: f32,     // 0 = flat
+    z_mm: f32,          // vertex z (front vertex at 0, +z toward sensor)
+    semi_ap_mm: f32,    // clear semi-aperture (the stop's scales by fstop)
+    cauchy_a: f32,      // medium AFTER this surface (1.0 = air)
     cauchy_b: f32,
-    coating_nm: f32,
-    is_iris: f32,
-    is_sensor: f32,
+    coating_layers: f32,
+    is_stop: f32,
+    _pad: f32,
 };
 
-// One (ghost × wavelength) combo: the two bounce surfaces, the traced
-// wavelength, and the wavelength's normalised linear-RGB weight already
-// multiplied by the ghost-energy gain.
+// One (pair × wavelength) combo: the two bounce surfaces, the traced
+// wavelength, and the wavelength's RGB weight already multiplied by the
+// exposure gain and Ghost intensity.
 struct Combo {
-    bounce1: u32,
-    bounce2: u32,
+    bounce_a: u32,
+    bounce_b: u32,
     lambda_nm: f32,
     _pad: f32,
     rgb_r: f32,
@@ -45,24 +43,24 @@ struct Combo {
     _pad2: f32,
 };
 
+// One traced corner: raster position (flare-buffer px) and the ray's
+// Fresnel × iris-mask weight; weight < 0 = dead.
 struct Ray {
     pos_x: f32,
     pos_y: f32,
-    uv_x: f32,
-    uv_y: f32,
-    rrel: f32,
-    reflectance: f32, // −1 = dead (the GPU's NaN stand-in)
+    weight: f32,
+    _pad: f32,
 };
 
 struct Vertex {
     ndc_x: f32,
     ndc_y: f32,
-    uv_x: f32,
-    uv_y: f32,
     r: f32,
     g: f32,
     b: f32,
-    rrel: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 // One flare source (see fx_lens_flare_detect.wgsl): position as a raster
@@ -82,21 +80,25 @@ struct Light {
 struct TraceParams {
     surface_count: u32,
     combo_count: u32,
-    grid: u32,
-    combo_offset: u32, // first combo of this batch
-    launch_mm: f32,
-    coating: f32,
-    // The light-direction inputs (lumit_core `light_direction`, mirrored in
-    // `dir_of` below): frame aspect h/w and the lens focal length.
-    aspect: f32,
+    grid: u32,          // pupil corners per axis
+    combo_offset: u32,  // first combo of this batch
+    coating: f32,       // 0..1 Coating dial
+    aspect: f32,        // frame h/w for the light direction
     focal_mm: f32,
-    // Projection for build_verts.
-    screen_transform: f32, // raster px per sensor mm
+    screen_transform: f32, // flare-buffer px per sensor mm
     raster_w: f32,
     raster_h: f32,
     light_count: u32,
-    // Focus (K-260): the sensor plane's shift from calibrated infinity, mm.
-    sensor_shift_mm: f32,
+    sensor_shift_mm: f32,  // focus shift (K-260)
+    pupil_mm: f32,         // spray radius, already × the f-stop scale
+    start_z_mm: f32,
+    sensor_z_mm: f32,
+    stop_scale: f32,       // scales the stop surface's semi-aperture
+    cell_area_px: f32,     // launch cell area in flare-buffer px²
+    blades: u32,
+    rot_rad: f32,
+    roundness: f32,        // effective (wide-open blended)
+    softness: f32,
     _pad0: f32,
     _pad1: f32,
     _pad2: f32,
@@ -111,13 +113,14 @@ struct TraceParams {
 @group(0) @binding(6) var<storage, read> lights: array<Light>;
 
 // The light direction for a source at raster fraction (px, py) — the exact
-// WGSL twin of lumit_core::fx::lens_flare::light_direction (sensor y up, so
-// the y fraction flips sign; half the 36 mm sensor width is 18).
+// WGSL twin of lumit_core's `light_direction` (sensor y up, so the y
+// fraction flips sign; half the 36 mm sensor width is 18; z toward the
+// sensor is positive).
 fn dir_of(px: f32, py: f32) -> vec3<f32> {
     let half_w = 18.0;
     let x = (px * 2.0 - 1.0) * half_w;
     let y = -(py * 2.0 - 1.0) * tp.aspect * half_w;
-    return normalize(vec3<f32>(-x, -y, -tp.focal_mm));
+    return normalize(vec3<f32>(-x, -y, tp.focal_mm));
 }
 
 fn light_dead(l: Light) -> bool {
@@ -129,217 +132,176 @@ fn cauchy_ior(a: f32, b: f32, lambda_nm: f32) -> f32 {
     return a + b / (um * um);
 }
 
-fn fresnel_plain(theta0: f32, n1: f32, n2: f32) -> f32 {
-    let s = clamp(sin(theta0) * n1 / n2, -1.0, 1.0);
-    let theta1 = asin(s);
-    let ci = cos(theta0);
-    let ct = cos(theta1);
-    let rs = (n1 * ci - n2 * ct) / (n1 * ci + n2 * ct);
-    let rp = (n1 * ct - n2 * ci) / (n1 * ct + n2 * ci);
-    return (rs * rs + rp * rp) / 2.0;
+// The iris mask (lumit_core `pupil_mask`): polygon bound blended toward the
+// circle by roundness, feathered by softness.
+fn pupil_mask(u: f32, v: f32) -> f32 {
+    let r = sqrt(u * u + v * v);
+    let blades = f32(clamp(tp.blades, 3u, 16u));
+    let tau = 6.283185307179586;
+    let sector = tau / blades;
+    let apothem = cos(3.141592653589793 / blades);
+    let angle = atan2(v, u) - tp.rot_rad;
+    var a = angle % sector;
+    if (a < 0.0) {
+        a = a + sector;
+    }
+    let poly_bound = apothem / cos(a - sector * 0.5);
+    let bound = poly_bound + (1.0 - poly_bound) * clamp(tp.roundness, 0.0, 1.0);
+    let soft = max(clamp(tp.softness, 0.0, 1.0) * bound, 1e-4);
+    let t = clamp((r - (bound - soft)) / soft, 0.0, 1.0);
+    return 1.0 - t * t * (3.0 - 2.0 * t);
 }
 
-fn fresnel_ar(theta0: f32, lambda_nm: f32, d_nm: f32, n0: f32, n1: f32, n2: f32) -> f32 {
-    let theta1 = asin(clamp(sin(theta0) * n0 / n1, -1.0, 1.0));
-    let theta2 = asin(clamp(sin(theta0) * n0 / n2, -1.0, 1.0));
-
-    let rs01 = -sin(theta0 - theta1) / sin(theta0 + theta1);
-    let rp01 = tan(theta0 - theta1) / tan(theta0 + theta1);
-    let ts01 = 2.0 * sin(theta1) * cos(theta0) / sin(theta0 + theta1);
-    let tp01 = ts01 * cos(theta0 - theta1);
-
-    let rs12 = -sin(theta1 - theta2) / sin(theta1 + theta2);
-    let rp12 = tan(theta1 - theta2) / tan(theta1 + theta2);
-
-    let ris = ts01 * ts01 * rs12;
-    let rip = tp01 * tp01 * rp12;
-
-    let dy = d_nm * n1;
-    let dx = tan(theta1) * dy;
-    let delay = sqrt(dx * dx + dy * dy);
-    let rel_phase = 4.0 * 3.14159265358979 / lambda_nm * (delay - dx * sin(theta0));
-
-    let out_s2 = rs01 * rs01 + ris * ris + 2.0 * rs01 * ris * cos(rel_phase);
-    let out_p2 = rp01 * rp01 + rip * rip + 2.0 * rp01 * rip * cos(rel_phase);
-    return (out_s2 + out_p2) / 2.0;
+// Unpolarised Fresnel by incidence cosine (lumit_core `fresnel_cos`).
+fn fresnel_cos(cos_i_in: f32, n1: f32, n2: f32) -> f32 {
+    let cos_i = abs(cos_i_in);
+    let eta = n1 / n2;
+    let sin2_t = eta * eta * (1.0 - cos_i * cos_i);
+    if (sin2_t >= 1.0) {
+        return 1.0;
+    }
+    let cos_t = sqrt(1.0 - sin2_t);
+    let rs = (n1 * cos_i - n2 * cos_t) / (n1 * cos_i + n2 * cos_t);
+    let rp = (n2 * cos_i - n1 * cos_t) / (n2 * cos_i + n1 * cos_t);
+    return 0.5 * (rs * rs + rp * rp);
 }
 
-fn refract3(i: vec3<f32>, n: vec3<f32>, o: f32) -> vec3<f32> {
-    let cost = dot(-i, n);
-    let sint2 = o * o * (1.0 - cost * cost);
-    let k = o * cost - sqrt(abs(1.0 - sint2));
-    return (o * i + k * n) * f32(sint2 < 1.0);
+// Single-layer thin-film reflectance (lumit_core `coating_reflectance`).
+fn coating_refl(cos_i_in: f32, n1: f32, n2: f32, coating_n: f32, d_nm: f32, lambda_nm: f32) -> f32 {
+    let cos_i = abs(cos_i_in);
+    let sin2_c = (n1 / coating_n) * (n1 / coating_n) * (1.0 - cos_i * cos_i);
+    if (sin2_c >= 1.0) {
+        return fresnel_cos(cos_i, n1, n2);
+    }
+    let cos_c = sqrt(1.0 - sin2_c);
+    let delta = 2.0 * 3.141592653589793 * coating_n * d_nm * cos_c / lambda_nm;
+    let r01 = (n1 * cos_i - coating_n * cos_c) / (n1 * cos_i + coating_n * cos_c);
+    let sin2_2 = (coating_n / n2) * (coating_n / n2) * (1.0 - cos_c * cos_c);
+    if (sin2_2 >= 1.0) {
+        return fresnel_cos(cos_i, n1, n2);
+    }
+    let cos_2 = sqrt(1.0 - sin2_2);
+    let r12 = (coating_n * cos_c - n2 * cos_2) / (coating_n * cos_c + n2 * cos_2);
+    let cos_2d = cos(2.0 * delta);
+    let num = r01 * r01 + r12 * r12 + 2.0 * r01 * r12 * cos_2d;
+    let den = 1.0 + r01 * r01 * r12 * r12 + 2.0 * r01 * r12 * cos_2d;
+    return clamp(num / den, 0.0, 1.0);
 }
 
-struct SurfHit {
+// Reflectance of one surface: bare Fresnel blended toward the file's AR
+// coating by the Coating dial (lumit_core `surface_reflectance`).
+fn surface_refl(cos_i: f32, n1: f32, n2: f32, layers: f32, lambda_nm: f32) -> f32 {
+    let plain = fresnel_cos(cos_i, n1, n2);
+    if (layers < 0.5 || tp.coating <= 0.0) {
+        return plain;
+    }
+    let mgf2_n = 1.38;
+    let qw = 550.0 / (4.0 * mgf2_n);
+    var coated = coating_refl(cos_i, n1, n2, mgf2_n, qw, lambda_nm);
+    let extra = clamp(i32(round(layers - 1.0)), 0, 8);
+    for (var i = 0; i < extra; i = i + 1) {
+        coated = coated * 0.25;
+    }
+    return clamp(plain + (coated - plain) * clamp(tp.coating, 0.0, 1.0), 0.0, 1.0);
+}
+
+// Ray–surface intersection (lumit_core `intersect`, the FlareSim rule):
+// flat plane at the vertex z, else ray–sphere picking the intersection
+// closest to the vertex; the clear semi-aperture clips. ok=false = dead.
+struct Isect {
     pos: vec3<f32>,
     normal: vec3<f32>,
-    incident: f32,
-    hit: bool,
+    ok: bool,
 };
 
-fn intersect(pos: vec3<f32>, dir: vec3<f32>, s: Surface) -> SurfHit {
-    var out: SurfHit;
-    out.pos = vec3<f32>(0.0);
-    out.normal = vec3<f32>(0.0, 0.0, 1.0);
-    out.incident = 0.0;
-    out.hit = false;
-    if (dir.z == 0.0) {
-        return out;
-    }
-    if (s.radius_mm == 0.0) {
-        let dz = -s.center_z_mm - pos.z;
-        let t = dz / dir.z;
-        out.pos = pos + dir * t;
-        if (dir.z < 0.0) {
-            out.normal = vec3<f32>(0.0, 0.0, 1.0);
-        } else {
-            out.normal = vec3<f32>(0.0, 0.0, -1.0);
+fn intersect(pos: vec3<f32>, dir: vec3<f32>, radius: f32, z_mm: f32, semi_ap: f32) -> Isect {
+    var out: Isect;
+    out.ok = false;
+    if (abs(radius) < 1e-6) {
+        if (abs(dir.z) < 1e-12) {
+            return out;
         }
-        out.hit = true;
+        let t = (z_mm - pos.z) / dir.z;
+        if (!(t > 1e-6)) {
+            return out;
+        }
+        let hit = pos + dir * t;
+        // 10% clip skirt (see the CPU `intersect`): boundary quads fade via
+        // the housing feather instead of dying corner-by-corner.
+        let skirt = semi_ap * 1.1;
+        if (hit.x * hit.x + hit.y * hit.y > skirt * skirt) {
+            return out;
+        }
+        out.pos = hit;
+        out.normal = vec3<f32>(0.0, 0.0, select(1.0, -1.0, dir.z > 0.0));
+        out.ok = true;
         return out;
     }
-    let r = abs(s.radius_mm);
-    let c = vec3<f32>(0.0, 0.0, -s.center_z_mm);
-    let u = c - pos;
-    let du = dot(u, dir);
-    let u1 = dir * du;
-    let perp = u - u1;
-    let d = length(perp);
-    if (d > r) {
+    let centre = vec3<f32>(0.0, 0.0, z_mm + radius);
+    let oc = pos - centre;
+    let a = dot(dir, dir);
+    let b = 2.0 * dot(oc, dir);
+    let c = dot(oc, oc) - radius * radius;
+    let disc = b * b - 4.0 * a * c;
+    if (disc < 0.0) {
         return out;
     }
-    var sgn = 1.0;
-    if (s.radius_mm * dir.z > 0.0) {
-        sgn = -1.0;
+    let sd = sqrt(disc);
+    let inv2a = 0.5 / a;
+    let t1 = (-b - sd) * inv2a;
+    let t2 = (-b + sd) * inv2a;
+    var t = -1.0;
+    if (t1 > 1e-6 && t2 > 1e-6) {
+        let z1 = pos.z + t1 * dir.z;
+        let z2 = pos.z + t2 * dir.z;
+        t = select(t2, t1, abs(z1 - z_mm) < abs(z2 - z_mm));
+    } else if (t1 > 1e-6) {
+        t = t1;
+    } else if (t2 > 1e-6) {
+        t = t2;
+    } else {
+        return out;
     }
-    let m = sqrt(r * r - d * d);
-    let p = pos + u1 - m * dir * sgn;
-    var n = p - c;
-    let len = max(length(n), 1e-12);
-    n = n / len * sgn;
-    let cosi = clamp(dot(-dir, n), -1.0, 1.0);
-    out.pos = p;
+    let hit = pos + dir * t;
+    let skirt = semi_ap * 1.1;
+    if (!(hit.x * hit.x + hit.y * hit.y <= skirt * skirt)) {
+        return out;
+    }
+    var n = (hit - centre) / abs(radius);
+    if (dot(n, dir) > 0.0) {
+        n = -n;
+    }
+    out.pos = hit;
     out.normal = n;
-    out.incident = acos(cosi);
-    out.hit = true;
+    out.ok = true;
     return out;
 }
 
-// Trace one ray for one combo. Returns a dead ray (reflectance −1) on any
-// miss / total internal reflection, exactly where the CPU returns NaN.
-fn trace_one(combo: Combo, cell: vec2<u32>, dir: vec3<f32>) -> Ray {
-    var dead: Ray;
-    dead.pos_x = 0.0;
-    dead.pos_y = 0.0;
-    dead.uv_x = 0.0;
-    dead.uv_y = 0.0;
-    dead.rrel = 0.0;
-    dead.reflectance = -1.0;
-
-    let count = i32(tp.surface_count);
-    let g = f32(max(tp.grid, 2u));
-    let px = tp.launch_mm * (f32(cell.x) / (g - 1.0) - 0.5);
-    let py = tp.launch_mm * (0.5 - f32(cell.y) / (g - 1.0));
-
-    let probe = intersect(vec3<f32>(px, py, 1.0), vec3<f32>(0.0, 0.0, -1.0), surfaces[0]);
-    if (!probe.hit) {
-        return dead;
+fn refract_dir(dir: vec3<f32>, n: vec3<f32>, o: f32) -> vec4<f32> {
+    // xyz = direction, w = 1 live / 0 dead (TIR or degenerate).
+    let cos_i = -dot(dir, n);
+    let sin2_t = o * o * (1.0 - cos_i * cos_i);
+    if (sin2_t >= 1.0) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
-    var pos = probe.pos - dir;
-    var rdir = dir;
-    var uv = vec2<f32>(0.0);
-    var rrel = 0.0;
-    var reflectance = 1.0;
-
-    var step_n = 0;
-    var delta = 1;
-    var lens_id = 0;
-    let max_iters = count * 4;
-    var iters = 0;
-    loop {
-        if (lens_id < 0 || lens_id >= count) {
-            break;
-        }
-        iters = iters + 1;
-        if (iters > max_iters) {
-            return dead;
-        }
-        var s = surfaces[lens_id];
-        // Focus (K-260): the sensor plane rides the shift; the glass stays.
-        if (s.is_sensor > 0.5) {
-            s.center_z_mm = s.center_z_mm + tp.sensor_shift_mm;
-        }
-        let hit = intersect(pos, rdir, s);
-        if (!hit.hit) {
-            return dead;
-        }
-        pos = hit.pos;
-
-        if (s.is_iris > 0.5) {
-            uv = vec2<f32>(pos.x / s.height_mm, pos.y / s.height_mm);
-            lens_id = lens_id + delta;
-            continue;
-        }
-        let r = length(pos.xy) / s.height_mm;
-        rrel = max(rrel, r);
-
-        if (s.is_sensor > 0.5) {
-            lens_id = lens_id + delta;
-            continue;
-        }
-
-        let do_reflect = (step_n == 0 && lens_id == i32(combo.bounce1))
-            || (step_n == 1 && lens_id == i32(combo.bounce2));
-        if (do_reflect) {
-            step_n = step_n + 1;
-            delta = -delta;
-        }
-
-        var n_index = lens_id + 1;
-        if (rdir.z < 0.0) {
-            n_index = lens_id - 1;
-        }
-        var n1 = 1.0;
-        if (n_index >= 0 && n_index < count) {
-            let ns = surfaces[n_index];
-            n1 = cauchy_ior(ns.cauchy_a, ns.cauchy_b, combo.lambda_nm);
-        }
-        let n2 = cauchy_ior(s.cauchy_a, s.cauchy_b, combo.lambda_nm);
-
-        if (do_reflect) {
-            rdir = reflect(rdir, hit.normal);
-            let theta = hit.incident + 1e-9;
-            let plain = fresnel_plain(theta, n1, n2);
-            var refl = plain;
-            if (tp.coating > 0.0 && s.coating_nm > 0.0) {
-                let nc = max(sqrt(n1 * n2), 1.38);
-                let d = s.coating_nm / (4.0 * nc);
-                let coated = fresnel_ar(theta, combo.lambda_nm, d, n1, nc, n2);
-                refl = plain + (coated - plain) * tp.coating;
-            }
-            if (refl > 0.0) {
-                reflectance = reflectance * refl;
-            }
-        } else {
-            rdir = refract3(rdir, hit.normal, n1 / n2);
-            if (rdir.z == 0.0) {
-                return dead;
-            }
-        }
-        lens_id = lens_id + delta;
+    let k = o * cos_i - sqrt(1.0 - sin2_t);
+    let v = dir * o + n * k;
+    let sq = dot(v, v);
+    if (!(sq > 1e-18)) {
+        return vec4<f32>(0.0, 0.0, 0.0, 0.0);
     }
-    if (lens_id < count) {
-        return dead;
+    return vec4<f32>(normalize(v), 1.0);
+}
+
+fn reflect_dir(dir: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+    return normalize(dir - n * (2.0 * dot(dir, n)));
+}
+
+fn semi_of(s: Surface) -> f32 {
+    if (s.is_stop > 0.5) {
+        return s.semi_ap_mm * tp.stop_scale;
     }
-    var out: Ray;
-    out.pos_x = pos.x;
-    out.pos_y = pos.y;
-    out.uv_x = uv.x;
-    out.uv_y = uv.y;
-    out.rrel = rrel;
-    out.reflectance = reflectance;
-    return out;
+    return s.semi_ap_mm;
 }
 
 @compute @workgroup_size(64)
@@ -348,29 +310,160 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= ray_count || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
         return;
     }
-    let slot = gid.z * tp.combo_count + gid.y;
-    let light = lights[gid.z];
+    let slot = (gid.z * tp.combo_count + gid.y) * ray_count + gid.x;
     var dead: Ray;
     dead.pos_x = 0.0;
     dead.pos_y = 0.0;
-    dead.uv_x = 0.0;
-    dead.uv_y = 0.0;
-    dead.rrel = 0.0;
-    dead.reflectance = -1.0;
+    dead.weight = -1.0;
+    dead._pad = 0.0;
+
+    let light = lights[gid.z];
     if (light_dead(light)) {
-        // A dead slot still writes: the scratch buffers are reused across
-        // batches and stale rays must never leak into the raster.
-        rays[slot * ray_count + gid.x] = dead;
+        rays[slot] = dead;
         return;
     }
     let combo = combos[tp.combo_offset + gid.y];
-    let cell = vec2<u32>(gid.x % tp.grid, gid.x / tp.grid);
-    let dir = dir_of(light.pos_x, light.pos_y);
-    rays[slot * ray_count + gid.x] = trace_one(combo, cell, dir);
+    let a_idx = combo.bounce_a;
+    let b_idx = combo.bounce_b;
+    if (a_idx >= b_idx || b_idx >= tp.surface_count) {
+        rays[slot] = dead;
+        return;
+    }
+
+    let gi = gid.x % tp.grid;
+    let gj = gid.x / tp.grid;
+    let g1 = f32(max(tp.grid, 2u) - 1u);
+    let u = (f32(gi) / g1) * 2.0 - 1.0;
+    let v = (f32(gj) / g1) * 2.0 - 1.0;
+    let mask = pupil_mask(u, v);
+    if (mask <= 0.0) {
+        rays[slot] = dead;
+        return;
+    }
+
+    var pos = vec3<f32>(u * tp.pupil_mm, v * tp.pupil_mm, tp.start_z_mm);
+    var dir = dir_of(light.pos_x, light.pos_y);
+    var weight = 1.0;
+    var current = 1.0;
+    // Worst relative aperture crossing (K-261): grazing rays fade via the
+    // 0.95..1 feather below instead of the hard clip alone.
+    var rrel = 0.0;
+    let lambda = combo.lambda_nm;
+
+    // Phase 1: forward through 0..=b, reflecting at b.
+    for (var s_idx = 0u; s_idx <= b_idx; s_idx = s_idx + 1u) {
+        let s = surfaces[s_idx];
+        let hit = intersect(pos, dir, s.radius_mm, s.z_mm, semi_of(s));
+        if (!hit.ok) {
+            rays[slot] = dead;
+            return;
+        }
+        pos = hit.pos;
+        rrel = max(rrel, sqrt(pos.x * pos.x + pos.y * pos.y) / max(semi_of(s), 1e-6));
+        let n2 = cauchy_ior(s.cauchy_a, s.cauchy_b, lambda);
+        let cos_i = abs(dot(hit.normal, dir));
+        let r = surface_refl(cos_i, current, n2, s.coating_layers, lambda);
+        if (s_idx == b_idx) {
+            dir = reflect_dir(dir, hit.normal);
+            weight = weight * r;
+        } else {
+            let refr = refract_dir(dir, hit.normal, current / n2);
+            if (refr.w < 0.5) {
+                rays[slot] = dead;
+                return;
+            }
+            dir = refr.xyz;
+            weight = weight * (1.0 - r);
+            current = n2;
+        }
+    }
+
+    // Phase 2: backward through b-1..=a, reflecting at a.
+    for (var k = b_idx; k > a_idx; k = k - 1u) {
+        let s_idx = k - 1u;
+        let s = surfaces[s_idx];
+        let hit = intersect(pos, dir, s.radius_mm, s.z_mm, semi_of(s));
+        if (!hit.ok) {
+            rays[slot] = dead;
+            return;
+        }
+        pos = hit.pos;
+        rrel = max(rrel, sqrt(pos.x * pos.x + pos.y * pos.y) / max(semi_of(s), 1e-6));
+        var n2 = 1.0;
+        if (s_idx > 0u) {
+            let before = surfaces[s_idx - 1u];
+            n2 = cauchy_ior(before.cauchy_a, before.cauchy_b, lambda);
+        }
+        let cos_i = abs(dot(hit.normal, dir));
+        let r = surface_refl(cos_i, current, n2, s.coating_layers, lambda);
+        if (s_idx == a_idx) {
+            dir = reflect_dir(dir, hit.normal);
+            weight = weight * r;
+            current = cauchy_ior(s.cauchy_a, s.cauchy_b, lambda);
+        } else {
+            let refr = refract_dir(dir, hit.normal, current / n2);
+            if (refr.w < 0.5) {
+                rays[slot] = dead;
+                return;
+            }
+            dir = refr.xyz;
+            weight = weight * (1.0 - r);
+            current = n2;
+        }
+    }
+
+    // Phase 3: forward through a+1..n.
+    for (var s_idx = a_idx + 1u; s_idx < tp.surface_count; s_idx = s_idx + 1u) {
+        let s = surfaces[s_idx];
+        let hit = intersect(pos, dir, s.radius_mm, s.z_mm, semi_of(s));
+        if (!hit.ok) {
+            rays[slot] = dead;
+            return;
+        }
+        pos = hit.pos;
+        rrel = max(rrel, sqrt(pos.x * pos.x + pos.y * pos.y) / max(semi_of(s), 1e-6));
+        let n2 = cauchy_ior(s.cauchy_a, s.cauchy_b, lambda);
+        let cos_i = abs(dot(hit.normal, dir));
+        let r = surface_refl(cos_i, current, n2, s.coating_layers, lambda);
+        let refr = refract_dir(dir, hit.normal, current / n2);
+        if (refr.w < 0.5) {
+            rays[slot] = dead;
+            return;
+        }
+        dir = refr.xyz;
+        weight = weight * (1.0 - r);
+        current = n2;
+    }
+
+    // Propagate to the (focus-shifted) sensor plane.
+    if (abs(dir.z) < 1e-12) {
+        rays[slot] = dead;
+        return;
+    }
+    let t = (tp.sensor_z_mm + tp.sensor_shift_mm - pos.z) / dir.z;
+    if (!(t > 0.0)) {
+        rays[slot] = dead;
+        return;
+    }
+    let land = pos + dir * t;
+    let px = land.x * tp.screen_transform + tp.raster_w / 2.0;
+    let py = tp.raster_h / 2.0 - land.y * tp.screen_transform;
+    if (!(abs(px) < 1e9) || !(abs(py) < 1e9)) {
+        rays[slot] = dead;
+        return;
+    }
+    // Housing feather: full inside 0.95, gone at 1.0 (smoothstep).
+    let ft = clamp((1.0 - rrel) / 0.05, 0.0, 1.0);
+    weight = weight * ft * ft * (3.0 - 2.0 * ft);
+    var out: Ray;
+    out.pos_x = px;
+    out.pos_y = py;
+    out.weight = weight * mask;
+    out._pad = 0.0;
+    rays[slot] = out;
 }
 
-// Shoelace edge function on landed sensor positions (mm).
-fn edge_mm(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
+fn edge_px(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
     return (a.x - b.x) * (c.y - a.y) - (a.y - b.y) * (c.x - a.x);
 }
 
@@ -390,65 +483,17 @@ fn quad_energy(@builtin(global_invocation_id) gid: vec3<u32>) {
     let r11 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
     let r01 = rays[base + (qy + 1u) * tp.grid + qx];
     var e = 0.0;
-    if (r00.reflectance >= 0.0 && r10.reflectance >= 0.0
-        && r11.reflectance >= 0.0 && r01.reflectance >= 0.0) {
+    if (r00.weight >= 0.0 && r10.weight >= 0.0 && r11.weight >= 0.0 && r01.weight >= 0.0) {
         let p00 = vec2<f32>(r00.pos_x, r00.pos_y);
         let p10 = vec2<f32>(r10.pos_x, r10.pos_y);
         let p11 = vec2<f32>(r11.pos_x, r11.pos_y);
         let p01 = vec2<f32>(r01.pos_x, r01.pos_y);
-        let cell_mm = tp.launch_mm / (f32(max(tp.grid, 2u)) - 1.0);
-        let area_launch = cell_mm * cell_mm;
-        let min_area = 1e-4 * area_launch; // MIN_AREA_FRAC (impl note §7, K-261)
-        let a0 = edge_mm(p00, p10, p11);
-        let a1 = edge_mm(p00, p11, p01);
-        let area = max(abs((a0 + a1) / 2.0), min_area);
-        e = area_launch / area;
+        let a0 = edge_px(p00, p10, p11);
+        let a1 = edge_px(p00, p11, p01);
+        let landed = max(abs((a0 + a1) / 2.0), 1e-4 * tp.cell_area_px);
+        e = tp.cell_area_px / landed;
     }
     energies[(gid.z * tp.combo_count + gid.y) * quad_count + gid.x] = e;
-}
-
-// The energy averaged over the live cells sharing corner (vx, vy).
-// `slot` is the flattened (light, combo) index.
-fn corner_energy(slot: u32, vx: i32, vy: i32) -> f32 {
-    let side = i32(tp.grid - 1u);
-    let quad_count = u32(side * side);
-    var sum = 0.0;
-    var count = 0.0;
-    for (var oy = -1; oy <= 0; oy = oy + 1) {
-        for (var ox = -1; ox <= 0; ox = ox + 1) {
-            let nx = vx + ox;
-            let ny = vy + oy;
-            if (nx >= 0 && nx < side && ny >= 0 && ny < side) {
-                let e = energies[slot * quad_count + u32(ny * side + nx)];
-                if (e > 0.0) {
-                    sum = sum + e;
-                    count = count + 1.0;
-                }
-            }
-        }
-    }
-    return sum / max(count, 1.0);
-}
-
-fn build_corner(combo: Combo, slot: u32, tint: vec3<f32>, cx: u32, cy: u32) -> Vertex {
-    let ray_count = tp.grid * tp.grid;
-    let r = rays[slot * ray_count + cy * tp.grid + cx];
-    let e = corner_energy(slot, i32(cx), i32(cy));
-    let refl = max(r.reflectance, 0.0);
-    let gain = e * refl;
-    // Sensor mm → raster px (y flip) → NDC (y up).
-    let px = r.pos_x * tp.screen_transform + tp.raster_w / 2.0;
-    let py = tp.raster_h / 2.0 - r.pos_y * tp.screen_transform;
-    var v: Vertex;
-    v.ndc_x = px / tp.raster_w * 2.0 - 1.0;
-    v.ndc_y = 1.0 - py / tp.raster_h * 2.0;
-    v.uv_x = r.uv_x;
-    v.uv_y = r.uv_y;
-    v.r = combo.rgb_r * gain * tint.x;
-    v.g = combo.rgb_g * gain * tint.y;
-    v.b = combo.rgb_b * gain * tint.z;
-    v.rrel = r.rrel;
-    return v;
 }
 
 @compute @workgroup_size(64)
@@ -461,72 +506,83 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let slot = gid.z * tp.combo_count + gid.y;
     let combo = combos[tp.combo_offset + gid.y];
     let light = lights[gid.z];
-    let tint = vec3<f32>(light.r, light.g, light.b);
     let qx = gid.x % side;
     let qy = gid.x / side;
     let out_base = (slot * quad_count + gid.x) * 6u;
-    let live = energies[slot * quad_count + gid.x] > 0.0;
-    if (!live) {
-        // Park the whole cell off-screen at zero intensity.
+    let e = energies[slot * quad_count + gid.x];
+    if (e <= 0.0) {
         var park: Vertex;
         park.ndc_x = -4.0;
         park.ndc_y = -4.0;
-        park.uv_x = 0.0;
-        park.uv_y = 0.0;
         park.r = 0.0;
         park.g = 0.0;
         park.b = 0.0;
-        park.rrel = 0.0;
+        park._pad0 = 0.0;
+        park._pad1 = 0.0;
+        park._pad2 = 0.0;
         for (var i = 0u; i < 6u; i = i + 1u) {
             verts[out_base + i] = park;
         }
         return;
     }
-    // Corners (x, y), (x+1, y), (x+1, y+1), (x, y+1); triangles (0,1,2) and
-    // (0,2,3) — the split the CPU reference mirrors exactly.
-    var c0 = build_corner(combo, slot, tint, qx, qy);
-    var c1 = build_corner(combo, slot, tint, qx + 1u, qy);
-    var c2 = build_corner(combo, slot, tint, qx + 1u, qy + 1u);
-    var c3 = build_corner(combo, slot, tint, qx, qy + 1u);
+    let ray_count = tp.grid * tp.grid;
+    let base = slot * ray_count;
+    let c0 = rays[base + qy * tp.grid + qx];
+    let c1 = rays[base + qy * tp.grid + qx + 1u];
+    let c2 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
+    let c3 = rays[base + (qy + 1u) * tp.grid + qx];
+    var p = array<vec2<f32>, 4>(
+        vec2<f32>(c0.pos_x, c0.pos_y),
+        vec2<f32>(c1.pos_x, c1.pos_y),
+        vec2<f32>(c2.pos_x, c2.pos_y),
+        vec2<f32>(c3.pos_x, c3.pos_y),
+    );
+    let tint = vec3<f32>(combo.rgb_r * light.r, combo.rgb_g * light.g, combo.rgb_b * light.b);
+    var col = array<vec3<f32>, 4>(
+        tint * (e * max(c0.weight, 0.0)),
+        tint * (e * max(c1.weight, 0.0)),
+        tint * (e * max(c2.weight, 0.0)),
+        tint * (e * max(c3.weight, 0.0)),
+    );
     // Flux-conserving sub-pixel inflation (K-261, the CPU `inflate_quad`
-    // twin): a caustic-folded quad below MIN_QUAD_PX px² would be dropped by
-    // the hardware raster as a zero-coverage triangle; inflate it about its
-    // centroid to that floor and scale its colour by true ÷ inflated area.
+    // twin): a caustic-folded quad below 4 px² would be dropped by the
+    // hardware raster as a zero-coverage triangle; inflate it about its
+    // centroid and scale its colour by true ÷ inflated area.
     let min_quad_px = 4.0;
-    let p0 = vec2<f32>((c0.ndc_x + 1.0) / 2.0 * tp.raster_w, (1.0 - c0.ndc_y) / 2.0 * tp.raster_h);
-    let p1 = vec2<f32>((c1.ndc_x + 1.0) / 2.0 * tp.raster_w, (1.0 - c1.ndc_y) / 2.0 * tp.raster_h);
-    let p2 = vec2<f32>((c2.ndc_x + 1.0) / 2.0 * tp.raster_w, (1.0 - c2.ndc_y) / 2.0 * tp.raster_h);
-    let p3 = vec2<f32>((c3.ndc_x + 1.0) / 2.0 * tp.raster_w, (1.0 - c3.ndc_y) / 2.0 * tp.raster_h);
-    let a0 = edge_mm(p0, p1, p2);
-    let a1 = edge_mm(p0, p2, p3);
+    let a0 = edge_px(p[0], p[1], p[2]);
+    let a1 = edge_px(p[0], p[2], p[3]);
     let area_px = abs((a0 + a1) / 2.0);
     if (area_px < min_quad_px) {
         let eps = min_quad_px * 1e-4;
         let s = sqrt(min_quad_px / max(area_px, eps));
         let scale = max(area_px, eps) / min_quad_px;
-        let centre = (p0 + p1 + p2 + p3) / 4.0;
-        let q0 = centre + (p0 - centre) * s;
-        let q1 = centre + (p1 - centre) * s;
-        let q2 = centre + (p2 - centre) * s;
-        let q3 = centre + (p3 - centre) * s;
-        c0.ndc_x = q0.x / tp.raster_w * 2.0 - 1.0;
-        c0.ndc_y = 1.0 - q0.y / tp.raster_h * 2.0;
-        c1.ndc_x = q1.x / tp.raster_w * 2.0 - 1.0;
-        c1.ndc_y = 1.0 - q1.y / tp.raster_h * 2.0;
-        c2.ndc_x = q2.x / tp.raster_w * 2.0 - 1.0;
-        c2.ndc_y = 1.0 - q2.y / tp.raster_h * 2.0;
-        c3.ndc_x = q3.x / tp.raster_w * 2.0 - 1.0;
-        c3.ndc_y = 1.0 - q3.y / tp.raster_h * 2.0;
-        c0.r = c0.r * scale; c0.g = c0.g * scale; c0.b = c0.b * scale;
-        c1.r = c1.r * scale; c1.g = c1.g * scale; c1.b = c1.b * scale;
-        c2.r = c2.r * scale; c2.g = c2.g * scale; c2.b = c2.b * scale;
-        c3.r = c3.r * scale; c3.g = c3.g * scale; c3.b = c3.b * scale;
+        let centre = (p[0] + p[1] + p[2] + p[3]) / 4.0;
+        for (var i = 0; i < 4; i = i + 1) {
+            p[i] = centre + (p[i] - centre) * s;
+            col[i] = col[i] * scale;
+        }
     }
-    verts[out_base] = c0;
-    verts[out_base + 1u] = c1;
-    verts[out_base + 2u] = c2;
-    verts[out_base + 3u] = c0;
-    verts[out_base + 4u] = c2;
-    verts[out_base + 5u] = c3;
+    for (var i = 0; i < 4; i = i + 1) {
+        var vert: Vertex;
+        vert.ndc_x = p[i].x / tp.raster_w * 2.0 - 1.0;
+        vert.ndc_y = 1.0 - p[i].y / tp.raster_h * 2.0;
+        vert.r = col[i].x;
+        vert.g = col[i].y;
+        vert.b = col[i].z;
+        vert._pad0 = 0.0;
+        vert._pad1 = 0.0;
+        vert._pad2 = 0.0;
+        // Stash in a scratch slot pattern below.
+        if (i == 0) {
+            verts[out_base] = vert;
+            verts[out_base + 3u] = vert;
+        } else if (i == 1) {
+            verts[out_base + 1u] = vert;
+        } else if (i == 2) {
+            verts[out_base + 2u] = vert;
+            verts[out_base + 4u] = vert;
+        } else {
+            verts[out_base + 5u] = vert;
+        }
+    }
 }
-

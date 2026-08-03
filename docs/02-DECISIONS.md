@@ -5241,3 +5241,35 @@ wide-open ghosts). **(5) Point parameters are comp pixels** — standing convent
 x/y point parameter (the flare's Light, and every future one) is authored in px@comp,
 never % of frame; the Viewer dropper converts its fraction through the comp size at click
 time. Radial blur's legacy % centre is grandfathered until migrated.
+
+**K-261 · DECIDED · The flare adopts the FlareSim optical model and its 1299-lens
+library, rendered through the energy-conserving quad grid.** The owner pointed at
+FlareSim (github.com/SeanBRVFX/FlareSim_Nuke_builded, building on space55's renderer) as
+the reference and asked for its lens files in Lumit; its model is reimplemented here from
+understanding — not translated (the repo carries no licence; the lens files are
+transcribed patent data from PhotonsToPhotos, each citing its patent). **(1) The
+library**: 1299 .lens prescriptions embedded in lumit-core as text, parsed on selection
+(no IO, no panics); the Lens dropdown lists them all; native f-numbers come from the
+collection filenames. The K-256 ten-lens hand-built table and the K-257 Coating-type
+presets are gone — every prescription carries its own per-surface AR coating layer
+counts, and the Coating dial blends bare glass toward them. **(2) The optics**:
+FlareSim's three-phase walk (forward to the far bounce, backward to the near, forward
+out), all-pairs ghost enumeration with an interface filter and on-axis brightness probe,
+per-surface MgF₂ quarter-wave/multicoat reflectance, an iris mask (blades / roundness /
+softness) weighting a regular pupil grid sized to the entrance pupil, and the f-stop
+scaling the stop and pupil together. The K-260 focus shift and wide-open roundness
+carry over; the K-260 paraxial sensor calibration is superseded — these files carry
+measured back-focal chains. **(3) The renderer**: FlareSim's own Monte-Carlo point
+splatting was built first and measured — at photographic ghost sizes it needs orders of
+magnitude more rays than the K-256 quad-grid area method for the same smoothness, so the
+quad grid (with the K-261 flux-exact sub-pixel caustic inflation, and a housing feather
+with a 10% clip skirt so bundle edges fade instead of stepping) renders the FlareSim
+optics noise-free. The FRFT ghost-disc texture is gone — the ghost's shape IS the warped
+grid × mask. **(4) Ghost softness** (new parameter, FlareSim's Ghost Blur): a 3-pass box
+blur in % of the frame diagonal, frame-time. **(5) The exposure gain cap drops to 64**:
+a lens whose every ghost is extreme defocused wash has almost no probe energy, and the
+unbounded K-258 loop amplified the residue into artefact fields; capped, such glass
+renders honestly dim. Schema v3 → v4 (coating_preset removed, ghost_softness added;
+pre-release, old lens indices land on different-but-valid library entries). Known limit,
+pinned in TODO: extreme-defocus prescriptions show grid-aligned steps at low quality —
+adaptive refinement is the follow-up.
