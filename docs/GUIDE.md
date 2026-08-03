@@ -5457,8 +5457,15 @@ installers live in `packaging/` (decision K-252):
 - **Linux** — `packaging/linux/install.sh` copies a built bundle into
   `~/.local`, and installs the desktop entry, the file-type declarations, and
   the icons where any desktop environment looks for them. No root needed.
+  Releases also ship a Flatpak: a format that packs the app together with
+  everything it needs, so one file installs the same way on Ubuntu, Fedora or
+  Arch (`flatpak install lumit-….flatpak`). The recipe in `packaging/flatpak/`
+  does no building of its own — it repacks the already-built bundle, FFmpeg
+  included.
 - **macOS** — `packaging/macos/make-dmg.sh` produces the usual drag-to-
-  Applications disk image (on a Mac; it uses Apple's own tooling). The
+  Applications disk image (on a Mac): a white window with the app on the
+  left, the Applications folder on the right, and a curved arrow showing
+  the drag. The
   file-type declarations are in the app's Info.plist already, but their icons
   and double-click opening land with the larger macOS pass in the TODO.
 
@@ -5468,8 +5475,9 @@ into the executable) but registers nothing.
 Releases do not depend on your machines at all. Pushing a git tag that starts
 with `v` (say `v0.1.0`) wakes `.github/workflows/release.yml`, and GitHub's
 own computers do the work: a Windows machine builds the setup.exe, a Linux
-machine builds a run-anywhere bundle (FFmpeg's libraries ride inside it), and
-both land attached to a GitHub Release under that tag. Flutter cannot
+machine builds a run-anywhere bundle (FFmpeg's libraries ride inside it) plus
+a Flatpak repacked from it, and everything lands attached to a GitHub Release
+under that tag. Flutter cannot
 cross-build — a Windows machine can only make the Windows app — which is why
 the answer to "can I release everything from Windows" is "yes, by letting the
 tag do it". A macOS disk image builds too, marked experimental: the FFmpeg

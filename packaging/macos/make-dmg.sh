@@ -1,8 +1,9 @@
 #!/bin/sh
 # Builds the macOS disk image (K-252): a release build, the Homebrew FFmpeg
 # dylibs bundled INTO the .app (so the image runs on machines without
-# Homebrew), an ad-hoc re-sign, then a compressed DMG with an Applications
-# shortcut. macOS only.
+# Homebrew), an ad-hoc re-sign, then a DMG laid out by create-dmg: white
+# background (dmg-background.png), the app on the left, an Applications
+# shortcut on the right, a curved arrow between them. macOS only.
 #
 #   packaging/macos/make-dmg.sh [version]
 #
@@ -47,7 +48,7 @@ export FLUTTER_XCODE_ARCHS
 
 (cd "$root/flutter_ui" && flutter build macos --release)
 
-app="$root/flutter_ui/build/macos/Build/Products/Release/lumit_flutter.app"
+app="$root/flutter_ui/build/macos/Build/Products/Release/Lumit.app"
 [ -d "$app" ] || { echo "No app at $app" >&2; exit 1; }
 
 # Every Mach-O in the app that still links a Homebrew path gets handed to
@@ -119,7 +120,7 @@ fi
 # binary in the app gets the sweep (a rerun of this script must clean marks
 # the previous run left, so the set cannot be limited to freshly-fixed
 # files): drop the slashed twin outright, collapse exact duplicates to one.
-for bin in "$app/Contents/MacOS/lumit_flutter" $(find "$app/Contents/Frameworks" -type f); do
+for bin in "$app/Contents/MacOS/Lumit" $(find "$app/Contents/Frameworks" -type f); do
     while install_name_tool -delete_rpath "@executable_path/../Frameworks/" "$bin" 2>/dev/null; do :; done
     for rp in $(otool -l "$bin" 2>/dev/null | awk '$1=="path"{print $2}' | sort | uniq -d); do
         while install_name_tool -delete_rpath "$rp" "$bin" 2>/dev/null; do :; done
@@ -131,9 +132,13 @@ done
 # existing signatures.
 codesign --force --deep --sign - "$app"
 
+# create-dmg copies the CONTENTS of its source folder, so the app goes into a
+# staging folder first. The icon coordinates are centres in a 660x400 window,
+# matching the arrow baked into dmg-background.png; --hide-extension keeps the
+# app labelled "Lumit" even for people who show all filename extensions.
 stage="$(mktemp -d)"
 trap 'rm -rf "$stage"' EXIT
-cp -R "$app" "$stage/Lumit.app"
+cp -R "$app" "$stage/"
 
 mkdir -p "$here/dist"
 out="$here/dist/lumit-$version-macos-$arch.dmg"
@@ -141,8 +146,9 @@ rm -f "$out"
 if command -v create-dmg >/dev/null; then
     # The proper drag-into-Applications window (brew install create-dmg).
     create-dmg --volname "Lumit" \
-        --window-size 540 380 --icon-size 128 \
-        --icon "Lumit.app" 140 185 --app-drop-link 400 185 \
+        --background "$here/dmg-background.png" \
+        --window-size 660 400 --icon-size 128 \
+        --icon "Lumit.app" 165 190 --app-drop-link 495 190 \
         --hide-extension "Lumit.app" \
         "$out" "$stage"
 else
