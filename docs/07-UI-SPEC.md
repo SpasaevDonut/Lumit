@@ -727,8 +727,32 @@ frame readout `f72`, the layer search, the master motion-blur button, the shy fi
 Lane and Graph view buttons, and a ⋯ menu with the layer / razor / work-area / marker /
 beat commands) and the **column-group header** (§4.2). The lane side gives those two
 rows' height to a taller, labelled time ruler — a bigger playhead grab — with the cache
-bar tucked under it. Markers currently draw on the ruler itself; the separate ribbon,
-double-click-to-create and marker dragging are still to come.
+bar tucked under it. Markers draw on the ruler itself rather than in a ribbon of their
+own (K-254): a small flag with its **point at the top**, centred on the frame it marks so
+the point sits on the playhead, hanging into the ruler's lower row beside the work-area
+band. What a marker says rides in a box of the same colour flying from the flag's **centre
+point**, like a flag from a pole, not as loose text over the ticks; both carry a hairline
+outline, and both sit on the floor of the ruler. Styling — a grey `marker` token, editable like any other
+— is in [15-DESIGN.md](15-DESIGN.md) §6.4.
+
+**One marker per frame**: adding one where a marker already sits replaces it, and so does
+dragging one on top of another. Two flags on one moment are two things to click and one
+place, and the second hides the first exactly. A flag can be **dragged** along the ruler —
+the document hears about the move once, on release, not per frame crossed — and
+**right-clicking** one offers *Edit marker…* and *Delete marker*. The separate ribbon, span
+markers and double-click-to-create are still to come.
+
+**Layer markers (K-254)** draw on the layer's own bar, in the same flags, and travel with
+it when it is moved. A layer's markers are **its own copy**: dropping a composition into
+another brings that comp's markers along as the layer's, and from then on the two lists are
+unrelated — deleting one on a layer never reaches into the composition it came from, or
+into anywhere else that composition is used. Right-clicking a flag on a bar offers *Edit
+marker…*, *Delete marker* and *Delete all markers*; the layer's own row menu carries
+*Delete all markers* too, and only when there are some. Pre-composing copies the comp's
+markers **into the new composition** (shifted with everything else when the dialogue's
+*Adjust duration* moves time back to zero, and any falling outside the new span are left
+behind) and leaves the Precomp layer with none — those cues are on the ruler above it
+already, and drawing them on the layer as well would say the same thing twice.
 
 ### 4.2 Layer outline columns
 
@@ -943,7 +967,10 @@ edit point near a beat marker lands exactly on it.
 - `=`/`-` zoom time in/out; `Shift+=` zooms to the work area; `\` toggles between full-comp
   zoom and the previous zoom (AE-compatible).
 - Dragging in the ruler scrubs the playhead. Scrubbing previews video always; holding
-  `Ctrl` while scrubbing also scrubs audio.
+  `Ctrl` while scrubbing also scrubs audio. **Scrubbing while playing stops playback**
+  (K-254) and the playhead stays where the drag left it: the engine hands back a frame
+  every tick, so a scrub fought against playback could never win, and a playhead that
+  returned to where play started would undo the very gesture that stopped it.
 - The playhead MUST stay visible during playback via edge-follow scrolling (page-flip or
   smooth per user setting); the timeline MUST NOT recentre while the user is dragging
   anything.
@@ -1314,7 +1341,12 @@ the T14 viewfinder), and the on-Viewer crosshair handle for point parameters.
 A slim transport strip is docked beneath the Viewer bar by default; the same controls exist
 as the dockable **Preview panel**.
 
-- **Play/pause** (Space), stop-to-start toggle behaviour as a setting.
+- **Play/pause** (Space). **Stopping returns the playhead to where play started** — the
+  default, because playback is a preview of the moment being worked on and coming back to
+  a different frame means finding your place again after every space bar. This holds
+  however playback ends, the composition running out included. Settings ▸ Interface ▸
+  Editing ▸ *Playhead stays where playback stopped* puts the older behaviour back (K-254).
+  The exception is a ruler scrub, which stops playback in order to move the playhead (§4.6).
 - **Loop modes**: loop work area (default) / play once / ping-pong.
 - **Cache status**: a readout of how much of the work area is preview-ready (backed by the
   cache bar), plus a *fill cache* action that renders the work area ahead of playback while
@@ -1668,7 +1700,9 @@ them away the day dispatch started going through the keymap.
 | Global | `,` / `.` | Previous / next keyframe on revealed properties |
 | Global | `Ctrl+,` / `Ctrl+.` | Previous / next edit point or layer boundary |
 | Global | `B` / `N` | Set work area start / end at playhead |
-| Global | `*` (numpad or `Shift+8`) | Add marker at playhead (`8` during playback: beat tap, §10) |
+| Global | `*` (numpad or `Shift+8`) / `Shift+M` | Add marker at playhead. `M` keeps Reveal Masks, so the letter form takes Shift (K-254) |
+| Global | `Shift+0…9` | Set numbered marker at playhead — pressing it again *moves* that marker, and it replaces whatever is on that frame (K-254) |
+| Global | `0…9` | Go to that numbered marker; nothing happens until one has been set (K-254) |
 | Global | `Delete` / `Backspace` | Delete the selection — keyframes when any are selected, else the layer (TF-6) |
 | Global | `Ctrl+Shift+P` | Command palette |
 | Global | `Ctrl+M` | Add active comp to export queue |

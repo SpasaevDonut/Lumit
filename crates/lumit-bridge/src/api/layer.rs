@@ -7,6 +7,7 @@ use lumit_core::time::{CompTime, Duration, Rational, SourceTime};
 use uuid::Uuid;
 
 use crate::api::{
+    composition::{bridge_marker, core_marker, BridgeMarker},
     effect::{BridgeEffectInstance, BridgeRational, BridgeScalar},
     project_item::ItemReference,
     state::{LumitBridgeState, PROJECTS},
@@ -454,6 +455,21 @@ pub struct BridgeLayerInfo {
     /// Carried for the same reason again — and for one more: the art *is* the
     /// layer's size, so the Viewer's wireframe reads it here.
     pub shape_contents: Vec<BridgeShapeItem>,
+    /// The layer's own markers (K-254), and the comp frame each falls on — the
+    /// marker's layer-local time carried out by the layer's start offset — so
+    /// the bar needs no time↔frame trip to draw one. In the read model because
+    /// the Timeline draws them on every rebuild, which is the cost K-184 exists
+    /// to remove.
+    pub markers: Vec<BridgeLayerMarker>,
+}
+
+/// One marker on a layer's bar: the marker itself plus where it lands at the
+/// comp's rate, worked out here so drawing costs nothing across the seam.
+#[frb(non_opaque)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BridgeLayerMarker {
+    pub marker: BridgeMarker,
+    pub frame: i64,
 }
 
 /// Build one layer's [`BridgeLayerInfo`] from an already-fetched composition —
@@ -572,6 +588,24 @@ pub(crate) fn read_layer_info(
             .map(|r| BridgeScalar::read_at(r, layer.start_offset.0)),
         masks: layer.masks.iter().map(BridgeMask::read).collect(),
         paint: layer.paint.iter().map(BridgeStroke::read).collect(),
+        markers: layer
+            .markers
+            .iter()
+            .map(|m| BridgeLayerMarker {
+                marker: bridge_marker(m),
+                // A layer marker's time is the layer's own, so where it lands
+                // on the comp is that time carried out by the layer's start
+                // offset — exactly as a Sequence clip's is. That is what makes
+                // markers travel when the layer is dragged along the timeline.
+                frame: comp.frame_rate.frame_at(CompTime(
+                    layer
+                        .start_offset
+                        .0
+                        .checked_add(m.time.0)
+                        .unwrap_or(m.time.0),
+                )),
+            })
+            .collect(),
         shape_contents: match &layer.kind {
             lumit_core::model::LayerKind::Shape { contents } => {
                 contents.iter().map(BridgeShapeItem::read).collect()
@@ -1940,6 +1974,33 @@ impl LayerReference {
     pub fn set_label(&self, label: u8) -> Result<(), BridgeError> {
         let (comp, layer) = (self.comp_id, self.layer_id);
         self.commit(lumit_core::Op::SetLayerLabel { comp, layer, label })
+    }
+
+    /// This layer's own markers (docs/03 §11), drawn on its bar rather than on
+    /// the comp's ruler.
+    ///
+    /// The layer's, not the source composition's: a comp dropped into another
+    /// brings a **copy** along, and from then on the two lists are unrelated
+    /// (K-254). Deleting one here never reaches into another composition.
+    #[frb(sync)]
+    pub fn get_markers(&self) -> Result<Vec<BridgeMarker>, BridgeError> {
+        Ok(self.item()?.markers.iter().map(bridge_marker).collect())
+    }
+
+    /// Replace this layer's whole marker list — one op, trivially invertible,
+    /// the same shape as the composition's.
+    #[frb(sync)]
+    pub fn set_markers(&self, markers: Vec<BridgeMarker>) -> Result<(), BridgeError> {
+        let markers = markers
+            .into_iter()
+            .map(core_marker)
+            .collect::<Result<Vec<_>, BridgeError>>()?;
+        let (comp, layer) = (self.comp_id, self.layer_id);
+        self.commit(lumit_core::Op::SetLayerMarkers {
+            comp,
+            layer,
+            markers,
+        })
     }
 
     /// Where this layer sits on the comp timeline.

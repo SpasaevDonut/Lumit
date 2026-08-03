@@ -39,6 +39,20 @@ void main() {
     expect(i.videoAsSequenceLayer, isFalse);
   });
 
+  /// The returning playhead is the *new* default (K-254), so unlike the Vegas
+  /// pair it does not defer to what a settings file leaves out — an install
+  /// that predates the field adopts the new behaviour rather than being pinned
+  /// to the old one by its own silence.
+  test('the playhead returns on stop unless a settings file says otherwise',
+      () {
+    expect(InterfaceSettings().playheadStaysOnStop, isFalse);
+    expect(
+        InterfaceSettings.fromJson(const {'ui_scale': 1.25}).playheadStaysOnStop,
+        isFalse);
+    final on = InterfaceSettings()..playheadStaysOnStop = true;
+    expect(InterfaceSettings.fromJson(on.toJson()).playheadStaysOnStop, isTrue);
+  });
+
   test('the Vegas pair survives a settings round-trip', () {
     final i = InterfaceSettings()
       ..retimeOpensToSpeed = true

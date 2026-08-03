@@ -533,9 +533,19 @@ class LumitUiState extends ChangeNotifier {
             start: comp.frameAtTime(time: set.inPoint),
             end: comp.frameAtTime(time: set.outPoint)
           );
+    _playedFrom = playheadFrame.value;
     _playFrom(comp, playheadFrame.value);
     playing.value = true;
   }
+
+  /// Where the playhead stood when [play] was called, so stopping can put it
+  /// back (K-254). Null when nothing is playing.
+  ///
+  /// Held here rather than read off the comp because it is a fact about *this
+  /// run of the transport*, not about the document: it must survive the frames
+  /// arriving and moving the playhead, and it must be forgotten the moment
+  /// playback ends however it ends.
+  int? _playedFrom;
 
   /// The work area playback loops round, or null when the comp has not been
   /// narrowed — in which case playback ends at the end, as it always did.
@@ -549,10 +559,35 @@ class LumitUiState extends ChangeNotifier {
             : BridgePlaybackMode.everyFrame,
       );
 
-  void stopPlayback() {
+  /// Stop the transport, and — unless the user is taking hold of the playhead
+  /// themselves — put the playhead back where play started (K-254).
+  ///
+  /// Returning is the default because playback is a *preview*: you park the
+  /// playhead where you are working, watch it run, and expect to still be where
+  /// you were when it stops. Somebody who wants the playhead to stay where the
+  /// picture stopped ticks Settings ▸ Interface ▸ Editing.
+  ///
+  /// `restorePlayhead: false` is for the one case where returning would fight
+  /// the user: scrubbing the ruler stops playback *in order to* move the
+  /// playhead, so putting it back would undo the very gesture that stopped it.
+  void stopPlayback({bool restorePlayhead = true}) {
     playing.value = false;
     _loop = null;
     selectedComp?.stopPlayback();
+    _returnPlayhead(restore: restorePlayhead);
+  }
+
+  /// The half of stopping that moves the playhead — shared by the user's stop
+  /// and by playback running off the end on its own, because "where am I when
+  /// it stops" should not depend on *why* it stopped.
+  void _returnPlayhead({bool restore = true}) {
+    final from = _playedFrom;
+    _playedFrom = null;
+    if (!restore || from == null) return;
+    if (workspace.interface.playheadStaysOnStop) return;
+    // Setting the notifier is the whole of it: the Viewer listens and asks the
+    // engine for the frame there, exactly as it does for any other move.
+    playheadFrame.value = from;
   }
 
   /// Ask for the frame under the playhead as the document now stands.
@@ -598,6 +633,20 @@ class LumitUiState extends ChangeNotifier {
       playheadFrame.value = loop.start;
       _playFrom(comp, loop.start);
     }
+  }
+
+  /// Move the playhead because the user is taking hold of it — a drag on the
+  /// time ruler, a click in the lane area (K-254).
+  ///
+  /// Different from setting [playheadFrame] directly in one way that matters:
+  /// it **stops the transport first**. Scrubbing against running playback was
+  /// unwinnable — the engine hands back a frame every tick and each one moved
+  /// the playhead straight back off the pointer — so taking hold of it means
+  /// taking it off the transport. The playhead does *not* return to where play
+  /// started here: the point of the gesture is to end up somewhere else.
+  void scrubTo(int frame) {
+    if (playing.value) stopPlayback(restorePlayhead: false);
+    playheadFrame.value = frame;
   }
 
   /// Move the playhead by `delta` frames, clamped to the fronted composition.
@@ -921,6 +970,10 @@ class LumitUiState extends ChangeNotifier {
         // needs no message — `stopPlayback` already set the flag.
         case WorkerResponse_PlaybackEnded():
           playing.value = false;
+          // Running off the end returns the playhead too (K-254): where you are
+          // when the transport stops should not depend on whether you stopped
+          // it or the composition ran out.
+          _returnPlayhead();
         case WorkerResponse_CacheFilled():
           cacheChanged.value++;
         // The pixels under the dropper. Held rather than acted on: the
@@ -1521,6 +1574,42 @@ class _LumitAppViewState extends State<LumitAppView> {
             ),
           );
           state.notifyDocumentChanged();
+        }
+      // Markers (K-254). `Shift+M` (or AE's numpad `*`) drops a plain cue at
+      // the playhead; `Ctrl`+digit sets the numbered one and the bare digit
+      // returns to it. The numbered pair is the whole point — the key that
+      // marks a moment is the key that goes back to it.
+      case 'marker.add':
+        if (comp == null) {
+          handled = false;
+        } else {
+          addMarkerFrb(comp, frame: ui.playheadFrame.value);
+          state.notifyDocumentChanged();
+        }
+      case final id when id.startsWith('marker.add.'):
+        if (comp == null) {
+          handled = false;
+        } else {
+          addMarkerFrb(
+            comp,
+            frame: ui.playheadFrame.value,
+            label: id.substring('marker.add.'.length),
+          );
+          state.notifyDocumentChanged();
+        }
+      case final id when id.startsWith('marker.goto.'):
+        // Nothing bound to that digit yet is not a failure to report — it is a
+        // key that has not been given a meaning. Left unhandled so it still
+        // reaches whatever else wants it.
+        final at = comp == null
+            ? null
+            : markerFrameFrb(comp, id.substring('marker.goto.'.length));
+        if (at == null) {
+          handled = false;
+        } else {
+          // Through the scrub, so a digit pressed mid-playback lands where it
+          // says rather than being overwritten by the next frame that arrives.
+          ui.scrubTo(at);
         }
       case 'edit.delete.selection':
         // A panel holding a finer selection than the layer one gets the key

@@ -1022,6 +1022,21 @@ pub struct Layer {
     /// organisational — never rendered into the picture.
     #[serde(default)]
     pub label: u8,
+    /// The layer's own markers (docs/03 §11): cues drawn on its bar rather than
+    /// on the comp's ruler.
+    ///
+    /// **A copy, not a view.** Dropping a composition into another one brings
+    /// that comp's markers along as the layer's, so its beats are visible where
+    /// the layer sits — but they are this layer's from then on, and deleting
+    /// one here never reaches into the composition it came from. The alternative
+    /// (drawing the source comp's live list) makes a delete on one row change a
+    /// different comp, and every other place that comp is used.
+    ///
+    /// Pre-composing deliberately leaves this empty: the markers it copies into
+    /// the new comp are the ones already on the ruler above, and drawing them
+    /// again on the Precomp layer would say the same thing twice.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub markers: Vec<crate::markers::Marker>,
     /// Per-layer audio volume in dB (docs/09 §6): 0 = unity, boostable to
     /// +50; −100 and below reads as −∞ (exact silence). Animatable like any
     /// property — fades are volume keyframes. Only heard on layers whose
@@ -1734,6 +1749,7 @@ mod tests {
             extra: serde_json::Map::new(),
         };
         let cam = |name: &str, zoom: f64, z_pos: f64, visible: bool, in_s: i64, out_s: i64| Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: name.into(),
             kind: LayerKind::Camera {

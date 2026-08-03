@@ -71,6 +71,7 @@ LumitTheme _with(
   LayerColours? layer,
   Color? timelineOutOfRange,
   Color? selectionFill,
+  Color? marker,
 }) =>
     LumitTheme(
       mode: t.mode,
@@ -101,6 +102,7 @@ LumitTheme _with(
       layer: layer ?? t.layer,
       timelineOutOfRange: timelineOutOfRange ?? t.timelineOutOfRange,
       selectionFill: selectionFill ?? t.selectionFill,
+      marker: marker ?? t.marker,
     );
 
 LayerColours _layerWith(
@@ -288,6 +290,15 @@ final List<ThemeToken> themeTokens = [
     group: 'Roles',
     read: (t) => t.error,
     write: (t, c) => _with(t, error: c),
+  ),
+  ThemeToken(
+    key: 'marker',
+    label: 'Marker',
+    description: 'Comp markers on the time ruler, and the box holding what '
+        'one says. A grey by default — a marker says *here*, not *careful*.',
+    group: 'Roles',
+    read: (t) => t.marker,
+    write: (t, c) => _with(t, marker: c),
   ),
   ThemeToken(
     key: 'cacheDisk',

@@ -201,11 +201,19 @@ class LumitTheme {
   /// the surface ramp cannot express because it is a ramp.
   final Color selectionFill;
 
-  /// The two Timeline tokens default from the mode rather than being spelled
+  /// Comp markers on the time ruler (K-254). A plain grey, not a role colour:
+  /// a marker says *here*, not *good* or *careful*, and the ruler already has
+  /// the accent doing the work area. Light on a dark scheme and dark on a light
+  /// one — After Effects' own reading, and the one that stays legible over the
+  /// work-area band either way.
+  final Color marker;
+
+  /// The three Timeline tokens default from the mode rather than being spelled
   /// out by every scheme: they are a *relationship* to the surface ramp (a
-  /// shade beyond `surface1`, a fill that out-contrasts it), and seven schemes
-  /// restating that relationship would be seven chances to get it wrong. A
-  /// custom theme, or any scheme that wants its own, passes them explicitly.
+  /// shade beyond `surface1`, a fill that out-contrasts it, a grey that reads
+  /// against it), and seven schemes restating that relationship would be seven
+  /// chances to get it wrong. A custom theme, or any scheme that wants its own,
+  /// passes them explicitly.
   LumitTheme({
     required this.mode,
     this.shape = ThemeShape.sharp,
@@ -232,9 +240,11 @@ class LumitTheme {
     required this.layer,
     Color? timelineOutOfRange,
     Color? selectionFill,
+    Color? marker,
   })  : timelineOutOfRange =
             timelineOutOfRange ?? defaultOutOfRange(mode, surface1),
-        selectionFill = selectionFill ?? defaultSelectionFill(mode, surface2);
+        selectionFill = selectionFill ?? defaultSelectionFill(mode, surface2),
+        marker = marker ?? defaultMarker(mode);
 
   /// The ground outside the work area: a step *away* from the surface ramp's
   /// direction — darker under a dark scheme, and darker again under a light
@@ -252,6 +262,14 @@ class LumitTheme {
     final by = mode == ThemeMode2.dark ? 0x0e : -0x1c;
     return _shift(surface2, by);
   }
+
+  /// The marker grey. A fixed pair rather than a shift off the surface ramp:
+  /// it has to read against the ruler's ground *and* the work-area wash over
+  /// it, so it is pinned to the two values that do, not derived from one of
+  /// the things it must stand out from.
+  static Color defaultMarker(ThemeMode2 mode) => mode == ThemeMode2.dark
+      ? _rgb(0xc4, 0xc4, 0xc4)
+      : _rgb(0x56, 0x56, 0x56);
 
   /// Shift every channel by [by], clamped — the one place the theme nudges a
   /// colour, so "a shade darker" means the same thing wherever it is said.
@@ -334,6 +352,7 @@ class LumitTheme {
         layer: layer,
         timelineOutOfRange: timelineOutOfRange,
         selectionFill: selectionFill,
+        marker: marker,
       );
 
   /// The full composition a scheme + shape (+ accent override) resolves to —

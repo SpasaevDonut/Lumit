@@ -65,6 +65,7 @@ pub(crate) fn base_layer(
         LayerKind::Shape { .. } => 9,
     };
     Layer {
+        markers: Vec::new(),
         id: Uuid::now_v7(),
         name,
         kind,

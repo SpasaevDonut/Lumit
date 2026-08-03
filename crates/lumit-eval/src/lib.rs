@@ -919,6 +919,7 @@ mod tests {
 
     fn text_layer(text: &str, in_s: f64, out_s: f64, offset_s: f64) -> Layer {
         Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: "t".into(),
             kind: LayerKind::Text {

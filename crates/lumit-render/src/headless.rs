@@ -1784,6 +1784,7 @@ mod tests {
         }));
         let comp_id = Uuid::now_v7();
         let layer = lumit_core::model::Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: "Solid".into(),
             kind: LayerKind::Solid { def: solid_id },
@@ -2067,6 +2068,7 @@ mod tests {
             .find(|i| matches!(i, ProjectItem::Composition(_)))
         {
             c.layers.push(lumit_core::model::Layer {
+                markers: Vec::new(),
                 id: Uuid::now_v7(),
                 name: "gone.mp4".into(),
                 kind: LayerKind::Footage { item: item_id },
@@ -2654,6 +2656,7 @@ mod tests {
     /// own natural size, everything else the model's defaults.
     fn matrix_layer(name: &str, kind: LayerKind, w: u32, h: u32) -> lumit_core::model::Layer {
         lumit_core::model::Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: name.into(),
             kind,

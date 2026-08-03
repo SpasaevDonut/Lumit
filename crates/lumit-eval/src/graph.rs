@@ -232,6 +232,7 @@ mod tests {
 
     fn layer(kind: LayerKind, masks: Vec<Mask>) -> lumit_core::model::Layer {
         lumit_core::model::Layer {
+            markers: Vec::new(),
             id: Uuid::now_v7(),
             name: "l".into(),
             kind,

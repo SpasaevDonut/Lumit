@@ -32,6 +32,37 @@ pub struct BridgeMarker {
     pub label: String,
 }
 
+/// A core marker as the bridge carries it. One conversion each way, shared by
+/// the composition's list and by every layer's own (K-254) — two copies of this
+/// mapping is two chances for a marker to mean something different depending on
+/// which row it is drawn on.
+#[frb(ignore)]
+pub(crate) fn bridge_marker(m: &lumit_core::markers::Marker) -> BridgeMarker {
+    BridgeMarker {
+        id: m.id,
+        time: BridgeRational {
+            num: m.time.0.num(),
+            den: m.time.0.den(),
+        },
+        label: m.label.clone(),
+    }
+}
+
+#[frb(ignore)]
+pub(crate) fn core_marker(m: BridgeMarker) -> Result<lumit_core::markers::Marker, BridgeError> {
+    use lumit_core::time::{CompTime, Rational};
+    Ok(lumit_core::markers::Marker {
+        id: m.id,
+        time: CompTime(
+            Rational::new(m.time.num, m.time.den).map_err(|_| BridgeError::InvalidTime)?,
+        ),
+        duration: None,
+        label: m.label,
+        kind: lumit_core::markers::MarkerKind::default(),
+        extra: serde_json::Map::new(),
+    })
+}
+
 /// Every blend mode, in the order the Timeline's dropdown shows them. The index
 /// into this list is what `LayerReference::get_blend`/`set_blend` speak, so the
 /// two cannot disagree about what "3" means.
@@ -412,7 +443,7 @@ impl CompositionReference {
         let inner = comp.composition()?;
         let outer = self.composition()?;
 
-        let layer = crate::edits::base_layer(
+        let mut layer = crate::edits::base_layer(
             inner.name.clone(),
             lumit_core::model::LayerKind::Precomp { comp: inner.id },
             outer.duration.0,
@@ -423,6 +454,19 @@ impl CompositionReference {
                 outer.height,
             ),
         );
+        // The comp's own markers come with it as the layer's (K-254): a
+        // composition dropped into another is a piece of material, and its
+        // beats are part of what you are placing. Copied, not referenced —
+        // from here they are this layer's, and editing them never reaches back
+        // into the composition they came from. New ids for the same reason.
+        layer.markers = inner
+            .markers
+            .iter()
+            .map(|m| lumit_core::markers::Marker {
+                id: Uuid::now_v7(),
+                ..m.clone()
+            })
+            .collect();
         self.add_at_top(layer)
     }
 
@@ -588,7 +632,26 @@ impl CompositionReference {
             background: comp.background,
             work_area: None,
             layers: inner_layers,
-            markers: Vec::new(),
+            // The comp's markers go in with the layers (K-254). They are part
+            // of how the work is laid out, and a packed section that loses its
+            // cues has lost the map to itself. Shifted with everything else
+            // when `adjust_duration` moves time back to zero, and any that fall
+            // outside the new comp's span are left behind rather than parked
+            // where nothing can reach them.
+            markers: comp
+                .markers
+                .iter()
+                .filter_map(|m| {
+                    let time = shift_back(m.time).ok()?;
+                    (!time.0.is_negative() && time.0 <= duration.0).then(|| {
+                        lumit_core::markers::Marker {
+                            id: Uuid::now_v7(),
+                            time,
+                            ..m.clone()
+                        }
+                    })
+                })
+                .collect(),
             motion_blur: MotionBlur::default(),
             extra: serde_json::Map::new(),
         };
@@ -903,14 +966,7 @@ impl CompositionReference {
             .composition()?
             .markers
             .iter()
-            .map(|m| BridgeMarker {
-                id: m.id,
-                time: BridgeRational {
-                    num: m.time.0.num(),
-                    den: m.time.0.den(),
-                },
-                label: m.label.clone(),
-            })
+            .map(bridge_marker)
             .collect())
     }
 
@@ -918,24 +974,9 @@ impl CompositionReference {
     /// also how beat detection commits a regenerated set.
     #[frb(sync)]
     pub fn set_markers(&self, markers: Vec<BridgeMarker>) -> Result<(), BridgeError> {
-        use lumit_core::markers::Marker;
-        use lumit_core::time::{CompTime, Rational};
-
         let markers = markers
             .into_iter()
-            .map(|m| {
-                Ok(Marker {
-                    id: m.id,
-                    time: CompTime(
-                        Rational::new(m.time.num, m.time.den)
-                            .map_err(|_| BridgeError::InvalidTime)?,
-                    ),
-                    duration: None,
-                    label: m.label,
-                    kind: lumit_core::markers::MarkerKind::default(),
-                    extra: serde_json::Map::new(),
-                })
-            })
+            .map(core_marker)
             .collect::<Result<Vec<_>, BridgeError>>()?;
 
         self.commit(lumit_core::Op::SetCompMarkers {

@@ -218,7 +218,7 @@ void main() {
     /// never fire during it. The playhead moves here purely because the engine
     /// chose frames and each arriving frame said which one it was — which is the
     /// whole point of the move, and would fail if a clock crept back into Dart.
-    testWidgets('play advances the playhead, and stopping holds it',
+    testWidgets('play advances the playhead, and stopping returns it',
         (tester) async {
       final p = withLayer();
       await mount(tester, p);
@@ -236,11 +236,13 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('viewer-play')));
       await tester.pump();
       expect(p.uiState.playing.value, isFalse);
-      await settleFrb(tester, minRounds: 4, maxRounds: 4);
-      final stopped = p.uiState.playheadFrame.value;
-      await settleFrb(tester, minRounds: 8, maxRounds: 8);
-      expect(p.uiState.playheadFrame.value, stopped,
-          reason: 'stopping stops it where it is, in-flight frames included');
+      await settleFrb(tester, minRounds: 12, maxRounds: 12);
+      // K-254: the playhead goes back to where play was asked for. Playback is
+      // a preview of the moment being worked on, so stopping returns you to it
+      // rather than leaving you wherever the picture happened to stop. In-flight
+      // frames are included — a late arrival must not drag it off again.
+      expect(p.uiState.playheadFrame.value, 0,
+          reason: 'stopping puts the playhead back where play started');
 
       // The degradation badge belongs to playback alone: whatever tier the
       // controller walked to while playing (this transportless build walks
@@ -248,6 +250,29 @@ void main() {
       // The while-playing half is not asserted — it races a live controller.
       expect(find.byKey(const ValueKey('viewer-tier-badge')), findsNothing,
           reason: 'no degradation badge once playback has stopped');
+    }, skip: zeroCopyViewerUnavailable);
+
+    /// The other half of K-254: Settings ▸ Interface ▸ Editing puts the old
+    /// After Effects behaviour back, and then stopping leaves the playhead on
+    /// the frame that was on screen.
+    testWidgets('the playhead stays put when the setting asks it to',
+        (tester) async {
+      final p = withLayer();
+      p.uiState.workspace.interface.playheadStaysOnStop = true;
+      await mount(tester, p);
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
+      await settleFrb(tester,
+          minRounds: 6,
+          maxRounds: 120,
+          until: () => p.uiState.playheadFrame.value > 0);
+
+      await tester.tap(find.byKey(const ValueKey('viewer-play')));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 12, maxRounds: 12);
+      expect(p.uiState.playheadFrame.value, greaterThan(0),
+          reason: 'the setting keeps the playhead where the picture stopped');
     }, skip: zeroCopyViewerUnavailable);
 
     /// Running off the end is the engine's to notice: it knows the length and it

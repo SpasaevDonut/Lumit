@@ -30,8 +30,8 @@ import 'package:provider/provider.dart';
 import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
-import 'package:uuid/uuid.dart';
 
+import '../panels/timeline_extras_frb.dart';
 import '../state/dock.dart';
 import '../state/file_dialogs.dart';
 import '../state/keymap.dart';
@@ -740,17 +740,11 @@ void _splitAtPlayhead(LumitUiState ui) {
   } catch (_) {}
 }
 
-void _markerAtPlayhead(LumitUiState ui, CompositionReference comp) {
-  final frame = ui.playheadFrame.value;
-  comp.setMarkers(markers: [
-    ...comp.getMarkers(),
-    BridgeMarker(
-      id: UuidValue.fromString(const Uuid().v4()),
-      time: comp.timeOfFrame(frame: frame),
-      label: '',
-    ),
-  ]);
-}
+/// The menu's *Add marker* — the same call the keyboard makes, so the two
+/// cannot drift into different ideas of what dropping a marker means (the
+/// one-per-frame rule included).
+void _markerAtPlayhead(LumitUiState ui, CompositionReference comp) =>
+    addMarkerFrb(comp, frame: ui.playheadFrame.value);
 
 Future<void> _compSettings(BuildContext context, LumitState app) async {
   final comp = context.read<LumitUiState>().selectedComp;
