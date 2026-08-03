@@ -740,7 +740,19 @@ dragging one on top of another. Two flags on one moment are two things to click 
 place, and the second hides the first exactly. A flag can be **dragged** along the ruler —
 the document hears about the move once, on release, not per frame crossed — and
 **right-clicking** one offers *Edit marker…* and *Delete marker*. The separate ribbon, span
-markers, layer markers and double-click-to-create are still to come.
+markers and double-click-to-create are still to come.
+
+**Layer markers (K-254)** draw on the layer's own bar, in the same flags, and travel with
+it when it is moved. A layer's markers are **its own copy**: dropping a composition into
+another brings that comp's markers along as the layer's, and from then on the two lists are
+unrelated — deleting one on a layer never reaches into the composition it came from, or
+into anywhere else that composition is used. Right-clicking a flag on a bar offers *Edit
+marker…*, *Delete marker* and *Delete all markers*; the layer's own row menu carries
+*Delete all markers* too, and only when there are some. Pre-composing copies the comp's
+markers **into the new composition** (shifted with everything else when the dialogue's
+*Adjust duration* moves time back to zero, and any falling outside the new span are left
+behind) and leaves the Precomp layer with none — those cues are on the ruler above it
+already, and drawing them on the layer as well would say the same thing twice.
 
 ### 4.2 Layer outline columns
 

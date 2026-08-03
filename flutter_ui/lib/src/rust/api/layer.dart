@@ -18,7 +18,7 @@ import 'solid.dart';
 import 'state.dart';
 
 // These functions are ignored because they are not marked as `pub`: `clip_under`, `clips_and_index`, `commit_clips_with_offset`, `commit_clips`, `commit_masks`, `commit_paint`, `commit`, `comp_time`, `composition`, `core`, `item`, `map_end_value`, `project`, `rational_of`, `read_at`, `read_layer_info`, `read`, `read`, `read`, `reanchored_span`, `source_length`, `unretime_op`, `with_effects`, `write_at`, `write_item`, `write`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `comp_id`, `id`, `new`, `project_id`
 
 /// A footage layer's waveform peaks: the whole source bucketed to a fixed
@@ -194,6 +194,12 @@ class BridgeLayerInfo {
   /// layer's size, so the Viewer's wireframe reads it here.
   final List<BridgeShapeItem> shapeContents;
 
+  /// The layer's own markers (K-254), and the frame each falls on so the bar
+  /// needs no time↔frame trip to draw one. In the read model because the
+  /// Timeline draws them on every rebuild, which is the cost K-184 exists to
+  /// remove.
+  final List<BridgeLayerMarker> markers;
+
   const BridgeLayerInfo({
     required this.name,
     required this.kind,
@@ -214,6 +220,7 @@ class BridgeLayerInfo {
     required this.masks,
     required this.paint,
     required this.shapeContents,
+    required this.markers,
   });
 
   @override
@@ -236,7 +243,8 @@ class BridgeLayerInfo {
       retime.hashCode ^
       masks.hashCode ^
       paint.hashCode ^
-      shapeContents.hashCode;
+      shapeContents.hashCode ^
+      markers.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -261,7 +269,8 @@ class BridgeLayerInfo {
           retime == other.retime &&
           masks == other.masks &&
           paint == other.paint &&
-          shapeContents == other.shapeContents;
+          shapeContents == other.shapeContents &&
+          markers == other.markers;
 }
 
 /// What kind of source a layer has — what the Timeline draws its bar and its
@@ -285,6 +294,29 @@ enum BridgeLayerKind {
   /// is a Dart reserved word (K-206); `lumit-core` keeps `LayerKind::Null`.
   nullLayer,
   ;
+}
+
+/// One marker on a layer's bar: the marker itself plus where it lands at the
+/// comp's rate, worked out here so drawing costs nothing across the seam.
+class BridgeLayerMarker {
+  final BridgeMarker marker;
+  final PlatformInt64 frame;
+
+  const BridgeLayerMarker({
+    required this.marker,
+    required this.frame,
+  });
+
+  @override
+  int get hashCode => marker.hashCode ^ frame.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeLayerMarker &&
+          runtimeType == other.runtimeType &&
+          marker == other.marker &&
+          frame == other.frame;
 }
 
 /// Which switch an edit names. One enum rather than eight methods so the
@@ -1076,6 +1108,17 @@ class LayerReference {
         that: this,
       );
 
+  /// This layer's own markers (docs/03 §11), drawn on its bar rather than on
+  /// the comp's ruler.
+  ///
+  /// The layer's, not the source composition's: a comp dropped into another
+  /// brings a **copy** along, and from then on the two lists are unrelated
+  /// (K-254). Deleting one here never reaches into another composition.
+  List<BridgeMarker> getMarkers() =>
+      BridgeLib.instance.api.crateApiLayerLayerReferenceGetMarkers(
+        that: this,
+      );
+
   /// This layer's masks, bottom of the stack first (K-222).
   ///
   /// Empty on a layer with none, which is most layers — the Timeline asks
@@ -1334,6 +1377,12 @@ class LayerReference {
 
   void setLabel({required int label}) => BridgeLib.instance.api
       .crateApiLayerLayerReferenceSetLabel(that: this, label: label);
+
+  /// Replace this layer's whole marker list — one op, trivially invertible,
+  /// the same shape as the composition's.
+  void setMarkers({required List<BridgeMarker> markers}) =>
+      BridgeLib.instance.api
+          .crateApiLayerLayerReferenceSetMarkers(that: this, markers: markers);
 
   /// Replace one mask — its path, its name, its invert switch, its opacity.
   /// Named by id, so a stale reference is a calm error rather than an edit

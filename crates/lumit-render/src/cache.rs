@@ -234,6 +234,7 @@ mod tests {
             background: LinearColour::BLACK,
             work_area: None,
             layers: vec![Layer {
+                markers: Vec::new(),
                 id: Uuid::now_v7(),
                 name: "clip".into(),
                 kind: LayerKind::Footage { item },

@@ -205,6 +205,13 @@ pub enum Op {
         comp: Uuid,
         markers: Vec<crate::markers::Marker>,
     },
+    /// Replace a layer's own marker list (docs/03 §11) — coarse-grained and
+    /// trivially invertible, exactly like [`Op::SetCompMarkers`].
+    SetLayerMarkers {
+        comp: Uuid,
+        layer: Uuid,
+        markers: Vec<crate::markers::Marker>,
+    },
     SetLayerBlend {
         comp: Uuid,
         layer: Uuid,
@@ -770,6 +777,24 @@ pub fn apply(doc: &mut Document, op: &Op) -> Result<Op, OpError> {
             let previous = std::mem::replace(&mut c.markers, markers.clone());
             Ok(Op::SetCompMarkers {
                 comp: *comp,
+                markers: previous,
+            })
+        }
+        Op::SetLayerMarkers {
+            comp,
+            layer,
+            markers,
+        } => {
+            let c = doc.comp_mut(*comp).ok_or(OpError::UnknownComp)?;
+            let l = c
+                .layers
+                .iter_mut()
+                .find(|l| l.id == *layer)
+                .ok_or(OpError::UnknownLayer)?;
+            let previous = std::mem::replace(&mut l.markers, markers.clone());
+            Ok(Op::SetLayerMarkers {
+                comp: *comp,
+                layer: *layer,
                 markers: previous,
             })
         }

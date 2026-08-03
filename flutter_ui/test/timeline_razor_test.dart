@@ -68,6 +68,7 @@ void main() {
         masks: const [],
         paint: const [],
         shapeContents: const [],
+        markers: const [],
       ),
     );
   }

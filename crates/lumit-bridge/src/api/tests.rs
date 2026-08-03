@@ -3740,6 +3740,84 @@ fn clearing_beats_keeps_the_markers_a_person_made() {
     assert_eq!(comp.get_markers().expect("markers").len(), 1);
 }
 
+/// A composition dropped into another brings its markers with it as the
+/// layer's own — **copies**, so editing them never reaches back into the
+/// composition they came from, or into anywhere else it is used (K-254).
+#[test]
+fn dropping_a_comp_in_copies_its_markers_onto_the_layer() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let outer = CompositionReference::new(project.id, layer.comp_id());
+    let source = project
+        .new_composition("Beats".into(), None)
+        .expect("a comp to drop in");
+    let seeded = Uuid::now_v7();
+    source
+        .set_markers(vec![BridgeMarker {
+            id: seeded,
+            time: BridgeRational { num: 1, den: 2 },
+            label: "Drop".into(),
+        }])
+        .expect("marked");
+
+    let placed = outer.add_precomp_layer(&source).expect("placed");
+    let on_layer = placed.get_markers().expect("layer markers");
+    assert_eq!(on_layer.len(), 1, "the marker came along");
+    assert_eq!(on_layer[0].label, "Drop");
+    assert_ne!(on_layer[0].id, seeded, "a copy, with an id of its own");
+
+    // Independent from here: clearing the layer's leaves the comp's alone.
+    placed.set_markers(vec![]).expect("cleared");
+    assert!(placed.get_markers().expect("layer markers").is_empty());
+    assert_eq!(
+        source.get_markers().expect("comp markers").len(),
+        1,
+        "the composition it came from is untouched"
+    );
+}
+
+/// Pre-composing carries the comp's markers into the new comp and leaves the
+/// Precomp layer bare: the same cues are on the ruler above it, and drawing
+/// them again on the layer would say it twice (K-254).
+#[test]
+fn precompose_carries_markers_in_and_leaves_the_layer_bare() {
+    use crate::api::composition::BridgeMarker;
+    use crate::api::effect::BridgeRational;
+
+    let (project, layer) = project_with_layer();
+    let comp = CompositionReference::new(project.id, layer.comp_id());
+    comp.set_markers(vec![BridgeMarker {
+        id: Uuid::now_v7(),
+        time: BridgeRational { num: 1, den: 2 },
+        label: "Chorus".into(),
+    }])
+    .expect("marked");
+
+    let precomp = comp
+        .precompose(vec![layer.layer_id], "Packed".into(), false, false)
+        .expect("packed");
+    assert!(
+        precomp.get_markers().expect("layer markers").is_empty(),
+        "the Precomp layer draws none of its own"
+    );
+    assert_eq!(
+        comp.get_markers().expect("outer markers").len(),
+        1,
+        "the outer comp keeps its own"
+    );
+
+    let inner = match precomp.get_source_item().expect("source") {
+        Some(crate::api::project_item::ItemReference::Composition(c)) => c,
+        _ => panic!("a Precomp layer's source is a composition"),
+    };
+    let packed = inner.get_markers().expect("packed markers");
+    assert_eq!(packed.len(), 1, "and the packed comp got a copy");
+    assert_eq!(packed[0].label, "Chorus");
+    assert_eq!(packed[0].time.num * 2, packed[0].time.den, "still at 0.5 s");
+}
+
 /// A row's stopwatch keys every axis it covers, and that has to be ONE undo
 /// step — two ops for one click is exactly what the whole-value shape exists to
 /// avoid everywhere else.

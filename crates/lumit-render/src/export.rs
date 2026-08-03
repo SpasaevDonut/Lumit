@@ -710,6 +710,7 @@ mod tests {
             background: LinearColour::BLACK,
             work_area: None,
             layers: vec![lumit_core::model::Layer {
+                markers: Vec::new(),
                 id: Uuid::now_v7(),
                 name: "Solid".into(),
                 kind: LayerKind::Solid { def: solid_id },

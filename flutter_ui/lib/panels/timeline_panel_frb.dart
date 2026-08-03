@@ -4934,6 +4934,14 @@ class _OutlineRowState extends State<_OutlineRow> {
                   onPressed: () => close('delete'),
                   child: const Text('Delete')),
             ],
+            // Only when there is something to clear. A layer carries markers
+            // when a composition was dropped in with some (K-254); most layers
+            // have none and should not be offered a command that does nothing.
+            if (!locked && widget.entry.info.markers.isNotEmpty)
+              MenuRow(
+                  key: const ValueKey('tl-row-clear-markers'),
+                  onPressed: () => close('clear-markers'),
+                  child: const Text('Delete all markers')),
           ],
         ),
       ),
@@ -4947,6 +4955,8 @@ class _OutlineRowState extends State<_OutlineRow> {
         layer.reorder(newIndex: BigInt.from(index + 1));
       case 'delete':
         layer.delete();
+      case 'clear-markers':
+        layer.setMarkers(markers: const []);
       case 'to-sequence':
         layer.convertToSequenced();
       case 'from-sequence':
@@ -6313,9 +6323,105 @@ class _BarState extends State<_Bar> {
               ),
             ),
           ),
+          // The layer's own markers (K-254), over the bar so they take the
+          // pointer ahead of it — a flag is a much smaller target than a bar,
+          // and a right-click meant for one must not open the bar's menu.
+          // They travel with a move, because they are part of the layer.
+          for (final m in info.markers)
+            Positioned(
+              left: widget.axis.xOf(m.frame.toInt() + shift) -
+                  MarkerFlag.width / 2,
+              bottom: 0,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.click,
+                child: GestureDetector(
+                  key: ValueKey<String>('tl-layer-marker-${m.marker.id}'),
+                  behavior: HitTestBehavior.opaque,
+                  onSecondaryTapUp: (d) =>
+                      _markerMenu(context, m.marker, d.globalPosition),
+                  // A left click on a flag is a click on its layer, which is
+                  // what the bar under it would have done.
+                  onTap: widget.onSelect,
+                  child: MarkerFlag(
+                    label: m.marker.label,
+                    fill: t.marker,
+                    ink: t.surface0,
+                    text: t.caption.copyWith(fontWeight: FontWeight.w400),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );
+  }
+
+  /// The right-click menu on a marker sitting on a layer's bar.
+  ///
+  /// Deleting here touches **this layer's** list and nothing else. A layer's
+  /// markers are its own copy of whatever composition was dropped in, so a
+  /// delete cannot reach into that comp — or into the other places it is used
+  /// (K-254).
+  void _markerMenu(BuildContext context, BridgeMarker marker, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              MenuRow(
+                key: const ValueKey('tl-layer-marker-edit'),
+                onPressed: () {
+                  close(null);
+                  _editMarker(context, marker);
+                },
+                child: const Text('Edit marker…'),
+              ),
+              MenuRow(
+                key: const ValueKey('tl-layer-marker-delete'),
+                onPressed: () {
+                  close(null);
+                  _writeMarkers([
+                    for (final m in widget.entry.info.markers)
+                      if (m.marker.id != marker.id) m.marker,
+                  ]);
+                },
+                child: const Text('Delete marker'),
+              ),
+              MenuRow(
+                key: const ValueKey('tl-layer-marker-delete-all'),
+                onPressed: () {
+                  close(null);
+                  _writeMarkers(const []);
+                },
+                child: const Text('Delete all markers'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editMarker(BuildContext context, BridgeMarker marker) async {
+    final label =
+        await showMarkerLabelDialogFrb(context: context, initial: marker.label);
+    if (label == null || !mounted) return;
+    _writeMarkers([
+      for (final m in widget.entry.info.markers)
+        if (m.marker.id == marker.id)
+          BridgeMarker(id: m.marker.id, time: m.marker.time, label: label)
+        else
+          m.marker,
+    ]);
+  }
+
+  void _writeMarkers(List<BridgeMarker> markers) {
+    widget.entry.layer.setMarkers(markers: markers);
+    widget.onChanged();
   }
 
   /// One end's hover strip: the pointer becomes the horizontal resize arrow

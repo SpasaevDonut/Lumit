@@ -155,6 +155,7 @@ pub fn stress_document(p: &StressParams) -> Document {
                 footage_ids[layer_index % footage_ids.len()]
             };
             layers.push(Layer {
+                markers: Vec::new(),
                 id: uid(3, layer_index),
                 name: format!("layer {layer_index}"),
                 kind: LayerKind::Footage { item },

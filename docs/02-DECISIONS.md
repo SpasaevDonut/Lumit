@@ -5076,6 +5076,21 @@ Masks in the Timeline and that reflex is older, so the letter stays put and the 
 takes Shift. Twenty new action ids, described by prefix (`marker.add.N`, `marker.goto.N`)
 the way `workspace.switch.N` already is, and the shipped keymap stays conflict-free.
 
+**Markers travel with the material (2026-08-03).** A layer carries its own marker list
+(`Layer::markers`, docs/03 §11, drawn on its bar and moving with it), and two moments fill
+it. Dropping a composition into another **copies** that comp's markers onto the layer: a
+comp placed in a comp is a piece of material and its beats are part of what you are
+placing. Copies with fresh ids, not a live view of the source list — the alternative makes
+deleting one flag on one row change a different composition, and every other place that
+composition is used, which is spooky action at a distance for a right-click menu.
+**Pre-composing** copies the comp's markers into the new composition (shifted by the same
+amount `adjust_duration` shifts the layers, and dropped if they fall outside the new span
+rather than parked where nothing can reach them) and gives the Precomp layer **none**: the
+cues are on the ruler above it already, and drawing them on the layer too would say it
+twice. `BridgeLayerInfo` carries the list with each marker's comp frame precomputed —
+layer-local time plus the layer's start offset, exactly as a Sequence clip's is — so the
+bar draws them with no bridge call, and dragging the layer moves them.
+
 Two things this leaves: §10's *`8` during playback = beat tap* now wants a key of its own
 or a modal reading, since the bare digits are spoken for; and `set_markers` still flattens
 every marker to `MarkerKind::User`, so dragging a marker turns detected beats into ordinary

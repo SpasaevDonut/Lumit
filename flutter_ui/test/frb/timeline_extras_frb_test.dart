@@ -548,6 +548,83 @@ void main() {
           reason: 'a digit with no marker is nothing to jump to');
     });
 
+    // --- layer markers (K-254) -------------------------------------------
+
+    /// A composition dropped into another brings its markers along as the
+    /// layer's own. Copies, with ids of their own: from here the two lists are
+    /// unrelated, so editing the layer's never reaches into the comp it came
+    /// from — or into anywhere else that comp is used.
+    test('a comp dropped in brings its markers along as the layer\'s', () {
+      final p = freshProject();
+      final source = p.state.project!.newComposition(name: 'Beats');
+      addMarkerFrb(source, frame: 12, label: 'Drop');
+      final into = p.state.project!.newComposition(name: 'Scene');
+
+      final layer = into.addPrecompLayer(comp: source);
+      final onLayer = layer.getMarkers();
+      expect(onLayer, hasLength(1));
+      expect(onLayer.single.label, 'Drop');
+      expect(onLayer.single.id, isNot(source.getMarkers().single.id),
+          reason: 'a copy, not the same marker');
+
+      // And the copy is genuinely independent.
+      layer.setMarkers(markers: const []);
+      expect(layer.getMarkers(), isEmpty);
+      expect(source.getMarkers(), hasLength(1),
+          reason: 'clearing the layer left the composition alone');
+    });
+
+    /// Pre-composing carries the comp's markers into the new comp, and leaves
+    /// the Precomp layer without any: the same cues are on the ruler above, and
+    /// drawing them again on the layer would say it twice.
+    test('pre-composing carries markers in and leaves the layer bare', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      final solid = comp.addSolidLayer();
+      addMarkerFrb(comp, frame: 30, label: 'Chorus');
+
+      final precomp = comp.precompose(
+        layerIds: [solid.internallayerId],
+        name: 'Packed',
+        leaveAttributes: false,
+        adjustDuration: false,
+      );
+      expect(precomp.getMarkers(), isEmpty,
+          reason: 'the Precomp layer draws no markers of its own');
+      expect(comp.getMarkers(), hasLength(1),
+          reason: 'the outer comp keeps its own');
+
+      final inner = precomp.getSourceItem();
+      expect(inner, isA<ItemReference_Composition>());
+      final packed = (inner as ItemReference_Composition).field0;
+      expect(packed.getMarkers(), hasLength(1),
+          reason: 'and the packed comp got a copy');
+      expect(packed.getMarkers().single.label, 'Chorus');
+      expect(packed.frameAtTime(time: packed.getMarkers().single.time), 30);
+    });
+
+    testWidgets('a layer marker draws on the bar and deletes from its menu',
+        (tester) async {
+      final p = withComp();
+      final source = p.state.project!.newComposition(name: 'Beats');
+      addMarkerFrb(source, frame: 20, label: 'Drop');
+      final layer = p.comp.addPrecompLayer(comp: source);
+      await mount(tester, p);
+
+      final id = layer.getMarkers().single.id;
+      final flag = find.byKey(ValueKey<String>('tl-layer-marker-$id'));
+      expect(flag, findsOneWidget, reason: 'it draws on the layer\'s bar');
+
+      await tester.tap(flag, buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('tl-layer-marker-delete')));
+      await tester.pumpAndSettle();
+
+      expect(layer.getMarkers(), isEmpty);
+      expect(source.getMarkers(), hasLength(1),
+          reason: 'the composition it came from is untouched');
+    });
+
     // --- the sequence view (K-248) --------------------------------------
 
     /// A Sequence layer, ready to open. Added layers land at the top of the

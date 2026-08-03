@@ -5460,6 +5460,20 @@ Two markers can never sit on the same frame. Drop one where another already is �
 keyboard or by dragging — and the newcomer takes its place. Two flags on one moment would
 be two things to click and one place, and the second would hide the first exactly.
 
+**Markers on a layer.** A layer can carry markers of its own, drawn on its bar rather than
+on the ruler, and they slide along with the layer when you move it. There are two ways a
+layer gets them. Drop a composition into another composition and that comp's markers come
+along for the ride — a comp placed in a comp is a piece of material, and its beats are part
+of what you are placing. Or pre-compose a selection, in which case the *opposite* happens:
+the markers go into the new composition, and the Precomp layer is left bare, because those
+cues are already on the ruler right above it and showing them twice is just clutter.
+
+The important word is **copy**. A layer's markers are the layer's, not a live window onto
+the composition they came from. Delete one on a layer and it is gone from that layer only —
+the composition still has it, and so does every other place that composition is used. The
+alternative sounds tidier until you try it: a right-click on one row silently editing a
+different composition is the kind of surprise that makes people stop trusting a menu.
+
 **A note on cost, because it is the reason this feels smooth.** Two habits keep markers
 cheap. First, the list is *remembered*: asking the engine for a comp's markers is a trip
 across the Rust/Flutter boundary, and the ruler redraws sixty times a second while playback
