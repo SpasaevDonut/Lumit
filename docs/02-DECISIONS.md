@@ -3199,3 +3199,37 @@ applies to most of the geometry in an interface icon set. Not applied at even wi
 the stroke already covers whole pixels and the nudge is what would blur it. At fractional
 display scalings (150%) no offset makes a stroke whole; that is inherent and is stated in
 the note rather than papered over.
+
+**K-210 · DECIDED · A text layer's words can come from an expression, and one resolver
+serves both the picture and the cache.** From Airizz (2026-08-02), debugging expressions:
+"im really just trying to print values to the screen at render time". Every property on a
+layer could already be driven by an expression; the one thing that could not was the one
+that would have shown the answer. `TextDocument` gains an optional `expression`
+([03-DATA-MODEL.md](03-DATA-MODEL.md) §9.1): when set, the layer's line at layer time *t*
+is that expression evaluated at *t* and printed — the same language the numeric properties
+use, except the answer is shown rather than measured, so **any** result type is accepted
+(refusing one would only mean wrapping it in a conversion).
+
+**The typed `text` is kept, not overwritten**, and is what the layer says again once the
+expression is cleared. An empty or whitespace-only expression *is* "cleared", never "an
+expression that says nothing" — the alternative leaves a blank layer with no way back to
+its words. **A broken expression prints nothing rather than failing the frame**: these are
+typed against a live preview, where half a written expression is invalid for most of the
+time it takes to write it, and an empty line is what the editor already shows for empty
+text.
+
+**The rasteriser and the frame cache key read the line through one function**
+(`TextDocument::resolved_text`), which is the load-bearing part. Hashing the *stored* text
+for an expression-driven layer keys every frame identically, so the number on screen would
+freeze on whatever it read first — the feature shipping with the bug it exists to solve.
+Routing both through one resolver makes that disagreement unrepresentable rather than
+merely fixed, and gives the right cache behaviour for free at both ends: a frame-varying
+line keys per frame, a constant one keys once, with nothing to configure. The cost is that
+`feed_source` now takes the comp the layer sits in, since that is what an expression
+context is built from.
+
+Per-character animation of a driven line is **not** in scope and was not asked for; it
+belongs with the styled-runs model ([03-DATA-MODEL.md](03-DATA-MODEL.md) §9.1). This entry
+does not settle the expression engine itself — [impl/expressions.md](impl/expressions.md)
+still specifies QuickJS-ng while the shipping implementation is Rhai, which wants its own
+entry when that is resolved.

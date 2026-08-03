@@ -886,7 +886,7 @@ pub struct TextDocument {
     pub text: String,
     /// When set, the words come from this expression at each frame instead of
     /// from `text` — the same expression language the numeric properties use,
-    /// printed rather than measured (docs/03-DATA-MODEL.md §9.1).
+    /// printed rather than measured (K-210, docs/03-DATA-MODEL.md §9.1).
     ///
     /// `text` is left alone while an expression drives the layer, so switching
     /// the expression off restores the words that were typed there.

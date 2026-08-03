@@ -370,7 +370,7 @@ tracking, leading, point vs paragraph text, alignment, and per-character animato
 **future**; the document stays structured (never rasterised into the project) so runs and
 animators bolt on later.
 
-**The words can come from an expression.** `expression` is optional and absent from the file
+**The words can come from an expression (K-210).** `expression` is optional and absent from the file
 when unset. When it is set, the layer's line at layer time *t* is that expression evaluated at
 *t* and printed — the same language the numeric properties use (§6.4), except the answer is
 shown rather than measured, so any result type is accepted and an evaluation error prints
