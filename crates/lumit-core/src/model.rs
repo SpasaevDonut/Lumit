@@ -905,11 +905,11 @@ impl TextDocument {
     /// **Every reader of a text layer's content goes through here**, so the
     /// rasteriser and the cache key can never disagree about what the layer
     /// says — a disagreement that would serve a cached frame of the old words.
-    pub fn resolved_text(&self, lt: f64, context: &ExpressionContext) -> std::borrow::Cow<'_, str> {
+    pub fn resolved_text(&self, context: &ExpressionContext) -> std::borrow::Cow<'_, str> {
         match &self.expression {
             None => std::borrow::Cow::Borrowed(&self.text),
             Some(e) => {
-                std::borrow::Cow::Owned(crate::expression::evaluate_text(e, lt, Some(context)))
+                std::borrow::Cow::Owned(crate::expression::evaluate_text(e, Some(context)))
             }
         }
     }

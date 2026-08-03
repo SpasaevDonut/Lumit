@@ -92,7 +92,7 @@ class FunctionDef {
           : [],
       returnType: json['returnType'],
       docComments: (json['docComments'] as List<dynamic>? ?? []).map((i) => i.toString()).toList(),
-      signature: json['signature'],
+      signature: (json['signature'] as String).replaceAll(": Dynamic", ""), // dont show types for dynamic args
     );
   }
 }

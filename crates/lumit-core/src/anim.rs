@@ -309,7 +309,9 @@ impl Property {
         match &self.animation {
             Animation::Static(v) => *v,
             Animation::Keyframed(keys) => evaluate(keys, t).unwrap_or(0.0),
-            Animation::Expression(expression) => crate::expression::evaluate(expression, t, None),
+            Animation::Expression(expression) => {
+                crate::expression::evaluate(expression,  None)
+            }
         }
     }
 
@@ -317,7 +319,10 @@ impl Property {
         match &self.animation {
             Animation::Static(v) => *v,
             Animation::Keyframed(keys) => evaluate(keys, t).unwrap_or(0.0),
-            Animation::Expression(expression) => crate::expression::evaluate(expression, t, Some(context)),
+            Animation::Expression(expression) => {
+
+                crate::expression::evaluate(expression, Some(context))
+            }
         }
     }
 

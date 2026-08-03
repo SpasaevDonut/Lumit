@@ -269,7 +269,7 @@ fn feed_effect_stack(
                             h.update(&[1]);
                             h.update(src.id.as_bytes());
                             let slt = t - src.start_offset.0.to_f64();
-                            feed_source(h, doc, comp, src, slt, quality, stamper, visited)?;
+                            feed_source(h, doc, comp, src, slt, t, quality, stamper, visited)?;
                             let dtr = &src.transform;
                             for v in [
                                 dtr.position_x.value_at(slt),
@@ -388,12 +388,13 @@ fn feed_layer(
     visited: &mut Vec<Uuid>,
 ) -> Option<()> {
     h.update(b"layer/");
-    feed_source(h, doc, comp, layer, lt, quality, stamper, visited)?;
+    feed_source(h, doc, comp, layer, lt, t, quality, stamper, visited)?;
 
     let context = ExpressionContext {
         document: doc,
         comp: Some(comp.id),
         layer: Some(layer.id),
+        time: t,
     };
 
     // Evaluated transform at the layer's local time — never keyframe data.
@@ -535,7 +536,7 @@ fn feed_layer(
                     mr.source.key_byte(),
                 ]);
                 let mlt = t - src.start_offset.0.to_f64();
-                feed_source(h, doc, comp, src, mlt, quality, stamper, visited)?;
+                feed_source(h, doc, comp, src, mlt, t, quality, stamper, visited)?;
                 let mtr = &src.transform;
                 for v in [
                     mtr.position_x.value_at(mlt),
@@ -630,6 +631,7 @@ fn feed_source(
     owner: &Composition,
     layer: &lumit_core::model::Layer,
     lt: f64,
+    comp_time: f64,
     quality: Quality,
     stamper: &dyn SourceStamper,
     visited: &mut Vec<Uuid>,
@@ -700,8 +702,9 @@ fn feed_source(
                 document: doc,
                 comp: Some(owner.id),
                 layer: Some(layer.id),
+                time: comp_time,
             };
-            h.update(document.resolved_text(lt, &context).as_bytes());
+            h.update(document.resolved_text(&context).as_bytes());
             h.update(&[0]); // length delimiter: text then size never collide
             feed_f64(h, document.size);
             for c in document.fill.0 {

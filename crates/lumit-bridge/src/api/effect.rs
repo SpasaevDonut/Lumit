@@ -174,9 +174,6 @@ pub fn sample_scalar(scalar: BridgeScalar, time: BridgeRational) -> f64 {
         }
         BridgeScalar::Expression(expr) => lumit_core::expression::evaluate(
             &expr,
-            Rational::new(time.num, time.den)
-                .unwrap_or(Rational::ZERO)
-                .to_f64(),
             None,
         ),
     }
@@ -219,13 +216,13 @@ pub fn sample_scalar_with_context(
 
             lumit_core::expression::evaluate(
                 &expr,
-                Rational::new(time.num, time.den)
-                    .unwrap_or(Rational::ZERO)
-                    .to_f64(),
                 Some(&ExpressionContext {
                     document: &doc,
                     comp: Some(layer.comp_id),
                     layer: Some(layer.layer_id),
+                    time: Rational::new(time.num, time.den)
+                        .unwrap_or(Rational::ZERO)
+                        .to_f64(),
                 }),
             )
         }
@@ -265,6 +262,7 @@ pub fn sample_scalar_range_with_context(
                     document: &doc,
                     comp: Some(layer.comp_id),
                     layer: Some(layer.layer_id),
+                    time: 0.0 // this time will be overwritten internally
                 }),
                 start,
                 end,

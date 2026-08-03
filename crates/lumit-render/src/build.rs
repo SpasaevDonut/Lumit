@@ -309,10 +309,11 @@ pub fn build_comp_draws_at(
                     document: doc,
                     comp: Some(comp.id),
                     layer: Some(layer.id),
+                    time: t_comp,
                 };
-                let lt = t_comp - layer.start_offset.0.to_f64();
+
                 let r = lumit_text::rasterise_line(
-                    &document.resolved_text(lt, &context),
+                    &document.resolved_text(&context),
                     document.size as f32,
                     [fill[0], fill[1], fill[2]],
                 );
@@ -388,6 +389,7 @@ pub fn build_comp_draws_at(
                             document: doc,
                             layer: Some(src.id),
                             comp: Some(comp.id),
+                            time: t_comp,
                         };
 
                         let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
@@ -548,6 +550,7 @@ pub fn build_comp_draws_at(
                     document: doc,
                     layer: Some(layer.id),
                     comp: Some(comp.id),
+                    time: t_comp,
                 };
 
                 let fx = if layer.switches.fx {
@@ -703,6 +706,7 @@ pub fn build_comp_draws_at(
                     document: doc,
                     layer: Some(src.id),
                     comp: Some(comp.id),
+                    time: t_comp,
                 };
 
                 let markers = lumit_core::fx::MarkerContext::for_layer(comp, src);
@@ -775,6 +779,7 @@ pub fn build_comp_draws_at(
                     document: doc,
                     layer: Some(layer.id),
                     comp: Some(comp.id),
+                    time: t_comp,
                 };
 
                 lumit_core::fx::resolve_stack_temporal(

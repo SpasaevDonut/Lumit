@@ -817,20 +817,22 @@ class _EffectParamRowExpressionState extends State<EffectParamRowExpression> {
                 spacing: 8,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    data.name,
-                    style: t.mono.copyWith(color: t.accent),
-                  ),
-                  Text(
-                    data.signature.replaceFirst(data.name, ""),
-                    style: t.mono,
+                  Row(
+                    children: [
+                      Text(
+                        data.name,
+                        style: t.mono.copyWith(color: t.accent),
+                      ),
+                      Text(
+                        data.signature.replaceFirst(data.name, ""),
+                        style: t.mono,
+                      ),
+                    ],
                   ),
                   Column(
                       children: data.docComments
-                          .map((i) => Text(
-                                i.replaceFirst("///", ""),
-                                style: t.small
-                              ))
+                          .map((i) =>
+                              Text(i.replaceFirst("///", ""), style: t.small))
                           .toList()),
                 ],
               );
