@@ -170,6 +170,61 @@ Widget fxTwoColumnRow({
       ],
     );
 
+/// A parameter group's own twirl inside a section (P4, K-145): the sub-heading
+/// an effect tucks its advanced controls behind — Bokeh's Depth map, Shake's
+/// Per-axis wobble, Matte key's Screen matte.
+///
+/// **Why it is a row and not a nested section.** The panel is one list
+/// (docs/07 §6), and a group is a fold *within* a section, not a section of its
+/// own: it keeps the same hairline, the same name column and the same padding
+/// as the rows around it, and differs only by a twirl and a heavier label. A
+/// nested [FxSection] would bring its own heading bar and — in round mode — its
+/// own card, which would read as an effect inside an effect.
+///
+/// It is indented by the keyframe gutter so its twirl sits where the parameter
+/// stopwatches sit, which is what makes the fold read as belonging to the rows
+/// beneath it rather than to the effect heading above.
+Widget fxGroupHeaderRow(
+  BuildContext context, {
+  required String label,
+  required bool open,
+  required VoidCallback onToggle,
+  Key? key,
+}) {
+  final t = ThemeScope.of(context).theme;
+  return GestureDetector(
+    key: key,
+    behavior: HitTestBehavior.opaque,
+    onTap: onToggle,
+    child: Row(
+      children: [
+        SizedBox(
+          width: fxNameColumnWidth,
+          child: Row(
+            children: [
+              const SizedBox(width: 2),
+              lumitIcon(
+                open ? LumitIcon.twirlOpen : LumitIcon.twirlClosed,
+                size: iconSize,
+                color: open ? t.textPrimary : t.textMuted,
+              ),
+              const SizedBox(width: 2),
+              Expanded(
+                child: Text(
+                  label,
+                  style: t.bodyPrimary,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Expanded(child: SizedBox.shrink()),
+      ],
+    ),
+  );
+}
+
 /// A section heading's text action — Reset. Sits in the value column, so it
 /// reads as an action *on* the values rather than on the panel.
 Widget fxTextAction(

@@ -94,10 +94,11 @@ pub fn render_layer_input(
 /// (degrade, never fault). `luts` is the parallel LUT list (docs/08 §3.11): the
 /// k-th `Resolved::Lut` op binds `luts[k]` — a `None` slot (unset, missing, 1D
 /// or unreadable file) is a passthrough, exactly like a missing flow field.
-/// `layer_inputs` is the parallel depth-input list (docs/08 §3.22, docs/impl/
-/// layer-input.md): the k-th `Resolved::Dof` op binds `layer_inputs[k]` — the
-/// referenced layer rendered alone at comp size, or `None` (unset, missing or
-/// cyclic) for a passthrough, exactly like a missing LUT.
+/// `layer_inputs` is the parallel layer-input list (docs/08 §3.22 and §3.27,
+/// docs/impl/layer-input.md §2): **one slot per op that declares a Layer
+/// parameter** — `Resolved::Dof` and `Resolved::Bokeh` today — and the k-th such
+/// op binds the k-th slot. A `None` slot (unset, missing or cyclic) is not a
+/// fault; Dof passes through and Bokeh defocuses uniformly instead.
 #[allow(clippy::too_many_arguments)]
 pub fn run_ops(
     fx: &FxEngine,
@@ -114,11 +115,13 @@ pub fn run_ops(
     let mut tex = tex;
     // The k-th Resolved::Lut op consumes the k-th `luts` slot (the whole
     // threading contract — see resolve_stack's `lut` arm and CompLayerDraw's
-    // lut_files); a slot is present only when its `.cube` file loaded. The
-    // k-th Resolved::Dof op consumes the k-th `layer_inputs` slot the same way
-    // (its depth-layer render).
+    // lut_files); a slot is present only when its `.cube` file loaded. The k-th
+    // layer-input-consuming op — Dof or Bokeh — consumes the k-th
+    // `layer_inputs` slot the same way. Both share one counter because
+    // `build.rs`'s `layer_inputs_for` enumerates them with one predicate, in one
+    // order; two counters would let the two sides drift apart silently.
     let mut lut_i = 0usize;
-    let mut dof_i = 0usize;
+    let mut layer_input_i = 0usize;
     for op in ops {
         match op {
             Resolved::Blur {
@@ -738,8 +741,8 @@ pub fn run_ops(
                 // (the labelled no-op rule; never a fault). The depth is a
                 // whole texture, so it travels beside the op, exactly as the
                 // LUT cube does, since it is not Copy in `Resolved`.
-                let depth = layer_inputs.get(dof_i).and_then(|o| o.as_ref());
-                dof_i += 1;
+                let depth = layer_inputs.get(layer_input_i).and_then(|o| o.as_ref());
+                layer_input_i += 1;
                 if let Some(depth) = depth {
                     tex = fx.dof(
                         ctx,
@@ -756,6 +759,76 @@ pub fn run_ops(
                         *mix,
                     );
                 }
+            }
+            Resolved::Bokeh {
+                blur_radius,
+                blade_normals,
+                blade_count,
+                apothem2,
+                roundness,
+                concentration,
+                deform_scale,
+                threshold,
+                bokeh_power,
+                repeat_edge,
+                depth_bound,
+                depth_channel,
+                depth_invert,
+                depth_bands,
+                focal_distance,
+                use_focus_point,
+                focus_point,
+                focus_falloff,
+                composite_mode,
+                remove_edge_leak,
+                detect_edge_threshold,
+                display,
+                mix,
+            } => {
+                // The k-th layer-input-consuming op binds the k-th slot, and
+                // Bokeh takes one exactly as Lens blur does — same counter, same
+                // ordering, same 1:1 contract (docs/impl/layer-input.md §2).
+                // `build.rs`'s `layer_inputs_for` enumerates the two match names
+                // with the same predicate and in the same order, which is what
+                // keeps the two sides lined up.
+                let depth = layer_inputs.get(layer_input_i).and_then(|o| o.as_ref());
+                layer_input_i += 1;
+                // With nothing bound the kernel never samples the depth, but a
+                // bind group must still be complete, so the source stands in.
+                let depth_tex = depth.unwrap_or(&tex);
+                let out = fx.bokeh(
+                    ctx,
+                    &tex,
+                    w,
+                    h,
+                    depth_tex,
+                    &lumit_gpu::fx::BokehOp {
+                        blur_radius: *blur_radius,
+                        blade_normals: *blade_normals,
+                        blade_count: *blade_count,
+                        apothem2: *apothem2,
+                        roundness: *roundness,
+                        concentration: *concentration,
+                        deform_scale: *deform_scale,
+                        threshold: *threshold,
+                        bokeh_power: *bokeh_power,
+                        repeat_edge: *repeat_edge,
+                        depth_bound: *depth_bound && depth.is_some(),
+                        depth_channel: *depth_channel,
+                        depth_invert: *depth_invert,
+                        depth_bands: *depth_bands,
+                        focal_distance: *focal_distance,
+                        use_focus_point: *use_focus_point && depth.is_some(),
+                        focus_point: *focus_point,
+                        focus_falloff: *focus_falloff,
+                        composite_mode: *composite_mode,
+                        remove_edge_leak: *remove_edge_leak,
+                        detect_edge_threshold: *detect_edge_threshold,
+                        display: *display,
+                        mix: *mix,
+                    },
+                );
+                tex = out;
             }
         }
     }

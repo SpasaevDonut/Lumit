@@ -81,6 +81,22 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
         if (!_shut.remove(path)) _shut.add(path);
       });
 
+  /// Which parameter twirls the owner has opened or shut, by path.
+  ///
+  /// A map rather than the closed-set [_shut] because a group carries its own
+  /// default: most arrive collapsed (they hold the advanced controls), so
+  /// "absent" cannot mean open here the way it does for a section. Absent means
+  /// "whatever the schema said", and the entry appears the first time the owner
+  /// disagrees.
+  final Map<String, bool> _groupOpen = <String, bool>{};
+
+  bool _isGroupOpen(String path, bool collapsedByDefault) =>
+      _groupOpen[path] ?? !collapsedByDefault;
+
+  void _toggleGroup(String path, bool collapsedByDefault) => setState(() {
+        _groupOpen[path] = !_isGroupOpen(path, collapsedByDefault);
+      });
+
   @override
   Widget build(BuildContext context) {
     final ui = Provider.of<LumitUiState>(context);
@@ -244,6 +260,8 @@ class _EffectControlsPanelFrbState extends State<EffectControlsPanelFrb> {
                         comp: comp,
                         playheadFrame: playhead,
                         onSeek: (frame) => ui.playheadFrame.value = frame,
+                        isGroupOpen: _isGroupOpen,
+                        onToggleGroup: _toggleGroup,
                       ),
                 ],
               ),
@@ -388,6 +406,13 @@ class _EffectSection extends StatelessWidget {
   final void Function(UuidValue effect, String param, BridgeEffectValue value)
       onLive;
 
+  /// Whether a parameter group's twirl is open, and toggling it. Held by the
+  /// panel rather than here because this card is rebuilt from the read model on
+  /// every change, and a fold that reset itself each time would be unusable.
+  /// The schema's `collapsed` is the default until the owner touches it.
+  final bool Function(String path, bool collapsedByDefault) isGroupOpen;
+  final void Function(String path, bool collapsedByDefault) onToggleGroup;
+
   const _EffectSection({
     super.key,
     required this.info,
@@ -404,6 +429,8 @@ class _EffectSection extends StatelessWidget {
     required this.onStackChanged,
     required this.onWrite,
     required this.onLive,
+    required this.isGroupOpen,
+    required this.onToggleGroup,
   });
 
   /// Run [op] on a freshly read handle for this card's effect.
@@ -510,29 +537,81 @@ class _EffectSection extends StatelessWidget {
       ),
       // An effect with its own display draws that instead of a row per
       // parameter; nothing claims one yet.
-      rows: customEffectRows(info.name) ??
-          [
-            for (final param in cachedListParameters(info.name))
-              EffectParamRowFrb(
-                key: ValueKey<String>('fx-row-$id-${param.id}'),
-                effectId: id,
-                param: param,
-                value: stagedValue(id, param.id) ?? values[param.id],
-                comp: comp,
-                ownerLayerId: layer.internallayerId,
-                ownerLayers: allLayers,
-                playheadFrame: playheadFrame,
-                onSeek: onSeek,
-                onWrite: onWrite,
-                onLive: onLive,
-                twoColumn: true,
-                // The effect's other values, for a control whose behaviour
-                // depends on a sibling (the depth-of-field dropper reads the
-                // effect's own `depth` layer).
-                siblings: values,
-              ),
-          ],
+      rows: customEffectRows(info.name) ?? _paramRows(context, id, values),
     );
+  }
+
+  /// A row per declared parameter, with the schema's twirls folded in and the
+  /// rows another parameter has taken over drawn greyed.
+  ///
+  /// The groups are laid over the flat list rather than replacing it: a group
+  /// names a *contiguous run* of the schema's parameters (K-145), so walking
+  /// the parameters in order and asking "does a group start here?" keeps one
+  /// order — the schema's — as the only thing deciding what the panel looks
+  /// like.
+  List<Widget> _paramRows(
+    BuildContext context,
+    UuidValue id,
+    Map<String, BridgeEffectValue> values,
+  ) {
+    final layout = cachedListParamLayout(info.name);
+    // Greying is judged on what the panel is *showing*, staged drag included,
+    // so a checkbox mid-gesture greys its dependent row on the spot.
+    final shown = {
+      for (final param in cachedListParameters(info.name))
+        if ((stagedValue(id, param.id) ?? values[param.id]) case final v?)
+          param.id: v,
+    };
+    final disabled = disabledParams(info.name, shown);
+
+    // Where each group starts, and which parameters belong to one at all.
+    final startsGroup = <String, BridgeParamGroup>{};
+    final memberOf = <String, BridgeParamGroup>{};
+    for (final group in layout.groups) {
+      if (group.params.isEmpty) continue;
+      startsGroup[group.params.first] = group;
+      for (final member in group.params) {
+        memberOf[member] = group;
+      }
+    }
+
+    final rows = <Widget>[];
+    for (final param in cachedListParameters(info.name)) {
+      if (startsGroup[param.id] case final group?) {
+        final path = 'fx-group-$id-${group.label}';
+        rows.add(fxGroupHeaderRow(
+          context,
+          key: ValueKey<String>(path),
+          label: group.label,
+          open: isGroupOpen(path, group.collapsed),
+          onToggle: () => onToggleGroup(path, group.collapsed),
+        ));
+      }
+      if (memberOf[param.id] case final group?) {
+        final path = 'fx-group-$id-${group.label}';
+        if (!isGroupOpen(path, group.collapsed)) continue;
+      }
+      rows.add(EffectParamRowFrb(
+        key: ValueKey<String>('fx-row-$id-${param.id}'),
+        effectId: id,
+        param: param,
+        value: stagedValue(id, param.id) ?? values[param.id],
+        comp: comp,
+        ownerLayerId: layer.internallayerId,
+        ownerLayers: allLayers,
+        playheadFrame: playheadFrame,
+        onSeek: onSeek,
+        onWrite: onWrite,
+        onLive: onLive,
+        twoColumn: true,
+        enabled: !disabled.contains(param.id),
+        // The effect's other values, for a control whose behaviour depends on a
+        // sibling (the depth-of-field dropper reads the effect's own `depth`
+        // layer).
+        siblings: values,
+      ));
+    }
+    return rows;
   }
 
   /// A small text mark rather than an icon, matching v0's × for Remove — the

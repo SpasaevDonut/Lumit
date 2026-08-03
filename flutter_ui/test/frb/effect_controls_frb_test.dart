@@ -400,6 +400,174 @@ void main() {
           reason: 'the edit landed in the key under the playhead');
       expect(keys.last.value, 40, reason: 'the other key is untouched');
     });
+
+    // --- Bokeh's replicated panel ------------------------------------------
+    //
+    // The acceptance criterion for this effect is how the panel *operates*, so
+    // that is what these pin: the twirl, the greying, and the two controls the
+    // schema could not express before it.
+
+    testWidgets('the Depth map twirl starts shut and opens on its header',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'bokeh');
+      await mount(tester, p, transform: false);
+
+      final id = p.layer.getEffects().single.id();
+      // The look controls are out on the surface.
+      expect(find.byKey(ValueKey<String>('fx-row-$id-blur_radius')),
+          findsOneWidget);
+      expect(find.byKey(ValueKey<String>('fx-row-$id-exposure')), findsOneWidget);
+
+      // The depth plumbing is behind a twirl, and the twirl starts shut
+      // because the schema says `collapsed: true`.
+      final header = find.byKey(ValueKey<String>('fx-group-$id-Depth map'));
+      expect(header, findsOneWidget);
+      expect(find.byKey(ValueKey<String>('fx-row-$id-focal_distance')),
+          findsNothing,
+          reason: 'a collapsed group hides its members');
+
+      await tester.tap(header);
+      await tester.pump();
+      expect(find.byKey(ValueKey<String>('fx-row-$id-focal_distance')),
+          findsOneWidget);
+      expect(find.byKey(ValueKey<String>('fx-row-$id-detect_edge_threshold')),
+          findsOneWidget);
+
+      // And it shuts again, which is the half a fold usually gets wrong.
+      await tester.tap(header);
+      await tester.pump();
+      expect(find.byKey(ValueKey<String>('fx-row-$id-focal_distance')),
+          findsNothing);
+    });
+
+    testWidgets('Focal distance greys while Use focus point is ticked',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'bokeh');
+      await mount(tester, p, transform: false);
+
+      final id = p.layer.getEffects().single.id();
+      await tester.tap(find.byKey(ValueKey<String>('fx-group-$id-Depth map')));
+      await tester.pump();
+
+      /// Whether the row is drawn deaf to the pointer — the half of greying
+      /// that decides whether a drag can land.
+      bool inert(String param) => tester
+          .widgetList<IgnorePointer>(find.descendant(
+            of: find.byKey(ValueKey<String>('fx-row-$id-$param')),
+            matching: find.byType(IgnorePointer),
+          ))
+          .isNotEmpty;
+
+      // Use focus point is on by default, so the distance number decides
+      // nothing and must not invite a drag.
+      expect(inert('focal_distance'), isTrue);
+      expect(inert('use_focus_point'), isFalse,
+          reason: 'the switch that does the greying stays live');
+
+      // Untick it and the distance is what focus means again.
+      final switchFinder =
+          find.byKey(ValueKey<String>('fx-bool-$id-use_focus_point'));
+      await tester.ensureVisible(switchFinder);
+      await tester.pump();
+      await tester.tap(switchFinder);
+      await tester.pump();
+      expect(inert('focal_distance'), isFalse);
+    });
+
+    testWidgets('Custom layer channel greys until a blur shape is picked',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'bokeh');
+      await mount(tester, p, transform: false);
+
+      final id = p.layer.getEffects().single.id();
+      final row = find.byKey(ValueKey<String>('fx-row-$id-custom_channel'));
+      expect(row, findsOneWidget);
+      expect(
+        tester
+            .widgetList<IgnorePointer>(
+                find.descendant(of: row, matching: find.byType(IgnorePointer)))
+            .isNotEmpty,
+        isTrue,
+        reason: 'no custom shape is picked, so there is no channel to take',
+      );
+    });
+
+    testWidgets('the angle dial and the number edit the same rotation',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'bokeh');
+      await mount(tester, p, transform: false);
+
+      final id = p.layer.getEffects().single.id();
+      double rotation() =>
+          ((p.layer.getEffects().single.getValue(id: 'rotation')
+                      as BridgeEffectValue_Float)
+                  .field0 as BridgeScalar_Static)
+              .field0;
+
+      // The reference panel's factory default is a quarter turn.
+      expect(rotation(), 90.0);
+      // Both halves of the control are on the row.
+      expect(find.byKey(ValueKey<String>('fx-angle-$id-rotation')),
+          findsOneWidget);
+      expect(
+          find.byKey(ValueKey<String>('fx-dial-$id-rotation')), findsOneWidget);
+
+      // Typing into the number commits, so the dial beside it is showing the
+      // same value rather than a copy of it.
+      await tester.tap(find.byKey(ValueKey<String>('fx-angle-$id-rotation')));
+      await tester.pump();
+      await tester.enterText(find.byType(EditableText).first, '210');
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
+      expect(rotation(), 210.0);
+    });
+
+    testWidgets('the focus point arms a Viewer pick and takes the click',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'bokeh');
+      await mount(tester, p, transform: false);
+
+      final id = p.layer.getEffects().single.id();
+      await tester.tap(find.byKey(ValueKey<String>('fx-group-$id-Depth map')));
+      await tester.pump();
+
+      // Nothing is armed until the crosshair is pressed.
+      expect(p.uiState.viewerPick.value, isNull);
+      final crosshair = find.byKey(ValueKey<String>('fx-pick-$id-focus_point'));
+      await tester.ensureVisible(crosshair);
+      await tester.pump();
+      await tester.tap(crosshair);
+      await tester.pump();
+      final armed = p.uiState.viewerPick.value;
+      expect(armed, isNotNull);
+      expect(armed!.owner, '$id-focus_point',
+          reason: 'the armed pick names the row waiting on it');
+
+      // The Viewer answering it writes both axes as one edit and disarms.
+      p.uiState.completeViewerPick(1321.1, 898.3);
+      await tester.pump();
+      expect(p.uiState.viewerPick.value, isNull);
+      final point = p.layer.getEffects().single.getValue(id: 'focus_point')
+          as BridgeEffectValue_Point;
+      expect((point.field0.x as BridgeScalar_Static).field0, closeTo(1321.1, 1e-9));
+      expect((point.field0.y as BridgeScalar_Static).field0, closeTo(898.3, 1e-9));
+
+      // Arming and pressing the crosshair again is the way out without the
+      // keyboard.
+      await tester.ensureVisible(crosshair);
+      await tester.tap(crosshair);
+      await tester.pump();
+      expect(p.uiState.viewerPick.value, isNotNull);
+      await tester.tap(crosshair);
+      await tester.pump();
+      expect(p.uiState.viewerPick.value, isNull);
+    });
+
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
   }, skip: !engineAvailable);

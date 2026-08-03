@@ -260,6 +260,12 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgeEffectValue dco_decode_bridge_effect_value(dynamic raw);
 
   @protected
+  BridgeEnabledCond dco_decode_bridge_enabled_cond(dynamic raw);
+
+  @protected
+  BridgeEnabledWhen dco_decode_bridge_enabled_when(dynamic raw);
+
+  @protected
   BridgeExportPreset dco_decode_bridge_export_preset(dynamic raw);
 
   @protected
@@ -323,10 +329,16 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgePaintMode dco_decode_bridge_paint_mode(dynamic raw);
 
   @protected
+  BridgeParamGroup dco_decode_bridge_param_group(dynamic raw);
+
+  @protected
   BridgeParamInfo dco_decode_bridge_param_info(dynamic raw);
 
   @protected
   BridgeParamKind dco_decode_bridge_param_kind(dynamic raw);
+
+  @protected
+  BridgeParamLayout dco_decode_bridge_param_layout(dynamic raw);
 
   @protected
   BridgeParamValue dco_decode_bridge_param_value(dynamic raw);
@@ -469,6 +481,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       dynamic raw);
 
   @protected
+  List<BridgeEnabledWhen> dco_decode_list_bridge_enabled_when(dynamic raw);
+
+  @protected
   List<BridgeKeyBinding> dco_decode_list_bridge_key_binding(dynamic raw);
 
   @protected
@@ -488,6 +503,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeMask> dco_decode_list_bridge_mask(dynamic raw);
+
+  @protected
+  List<BridgeParamGroup> dco_decode_list_bridge_param_group(dynamic raw);
 
   @protected
   List<BridgeParamInfo> dco_decode_list_bridge_param_info(dynamic raw);
@@ -866,6 +884,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  BridgeEnabledCond sse_decode_bridge_enabled_cond(
+      SseDeserializer deserializer);
+
+  @protected
+  BridgeEnabledWhen sse_decode_bridge_enabled_when(
+      SseDeserializer deserializer);
+
+  @protected
   BridgeExportPreset sse_decode_bridge_export_preset(
       SseDeserializer deserializer);
 
@@ -936,10 +962,17 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   BridgePaintMode sse_decode_bridge_paint_mode(SseDeserializer deserializer);
 
   @protected
+  BridgeParamGroup sse_decode_bridge_param_group(SseDeserializer deserializer);
+
+  @protected
   BridgeParamInfo sse_decode_bridge_param_info(SseDeserializer deserializer);
 
   @protected
   BridgeParamKind sse_decode_bridge_param_kind(SseDeserializer deserializer);
+
+  @protected
+  BridgeParamLayout sse_decode_bridge_param_layout(
+      SseDeserializer deserializer);
 
   @protected
   BridgeParamValue sse_decode_bridge_param_value(SseDeserializer deserializer);
@@ -1097,6 +1130,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  List<BridgeEnabledWhen> sse_decode_list_bridge_enabled_when(
+      SseDeserializer deserializer);
+
+  @protected
   List<BridgeKeyBinding> sse_decode_list_bridge_key_binding(
       SseDeserializer deserializer);
 
@@ -1122,6 +1159,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   List<BridgeMask> sse_decode_list_bridge_mask(SseDeserializer deserializer);
+
+  @protected
+  List<BridgeParamGroup> sse_decode_list_bridge_param_group(
+      SseDeserializer deserializer);
 
   @protected
   List<BridgeParamInfo> sse_decode_list_bridge_param_info(
@@ -1533,6 +1574,14 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgeEffectValue self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_enabled_cond(
+      BridgeEnabledCond self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_enabled_when(
+      BridgeEnabledWhen self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_export_preset(
       BridgeExportPreset self, SseSerializer serializer);
 
@@ -1613,12 +1662,20 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       BridgePaintMode self, SseSerializer serializer);
 
   @protected
+  void sse_encode_bridge_param_group(
+      BridgeParamGroup self, SseSerializer serializer);
+
+  @protected
   void sse_encode_bridge_param_info(
       BridgeParamInfo self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_param_kind(
       BridgeParamKind self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_param_layout(
+      BridgeParamLayout self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_param_value(
@@ -1790,6 +1847,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       List<BridgeEffectInstanceInfo> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_enabled_when(
+      List<BridgeEnabledWhen> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_bridge_key_binding(
       List<BridgeKeyBinding> self, SseSerializer serializer);
 
@@ -1816,6 +1877,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_list_bridge_mask(
       List<BridgeMask> self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_list_bridge_param_group(
+      List<BridgeParamGroup> self, SseSerializer serializer);
 
   @protected
   void sse_encode_list_bridge_param_info(

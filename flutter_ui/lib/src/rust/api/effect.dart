@@ -11,7 +11,7 @@ import 'package:uuid/uuid.dart';
 part 'effect.freezed.dart';
 
 // These functions are ignored because they are not marked as `pub`: `animation_at`, `param`, `presets_in`, `read_at`, `read_at`, `read_at`, `read_instance_info`, `read`, `write_at`, `write_at`, `write`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `assert_fields_are_eq`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `eq`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 // These functions are ignored (category: IgnoreBecauseExplicitAttribute): `get_effects`, `new`
 
 /// Every built-in effect, in schema order — the Add-effect menu's source of
@@ -61,6 +61,14 @@ double sampleScalar(
 /// simply has no rows to draw.
 List<BridgeParamInfo> listParameters({required String effect}) =>
     BridgeLib.instance.api.crateApiEffectListParameters(effect: effect);
+
+/// The twirls and greying rules `effect` declares.
+///
+/// An unknown name is an empty layout rather than an error, for the same reason
+/// [`list_parameters`] answers an empty list: a project carrying an effect this
+/// build does not know still opens.
+BridgeParamLayout listParamLayout({required String effect}) =>
+    BridgeLib.instance.api.crateApiEffectListParamLayout(effect: effect);
 
 // Rust type: RustOpaqueMoi<flutter_rust_bridge::for_generated::RustAutoOpaqueInner<BridgeEffectInstance>>
 abstract class BridgeEffectInstance implements RustOpaqueInterface {
@@ -243,6 +251,58 @@ sealed class BridgeEffectValue with _$BridgeEffectValue {
   ]) = BridgeEffectValue_Layer;
 }
 
+@freezed
+sealed class BridgeEnabledCond with _$BridgeEnabledCond {
+  const BridgeEnabledCond._();
+
+  /// Editable while the named bool holds this value.
+  const factory BridgeEnabledCond.boolIs(
+    bool field0,
+  ) = BridgeEnabledCond_BoolIs;
+
+  /// Editable while the named choice is on this option index.
+  const factory BridgeEnabledCond.choiceIs(
+    int field0,
+  ) = BridgeEnabledCond_ChoiceIs;
+
+  /// Editable while the named choice is on anything but this index.
+  const factory BridgeEnabledCond.choiceIsNot(
+    int field0,
+  ) = BridgeEnabledCond_ChoiceIsNot;
+
+  /// Editable while the named layer reference actually names a layer.
+  const factory BridgeEnabledCond.layerSet() = BridgeEnabledCond_LayerSet;
+}
+
+/// One greying rule: `param`'s row is editable only while `on` satisfies
+/// `cond`. The panel evaluates it against values it already holds, so ticking
+/// a switch greys its dependent row without a round trip;
+/// `lumit_core::fx::param_enabled` is the same rule in Rust and the authority
+/// the tests pin.
+class BridgeEnabledWhen {
+  final String param;
+  final String on_;
+  final BridgeEnabledCond cond;
+
+  const BridgeEnabledWhen({
+    required this.param,
+    required this.on_,
+    required this.cond,
+  });
+
+  @override
+  int get hashCode => param.hashCode ^ on_.hashCode ^ cond.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeEnabledWhen &&
+          runtimeType == other.runtimeType &&
+          param == other.param &&
+          on_ == other.on_ &&
+          cond == other.cond;
+}
+
 /// A file parameter: the paths it references, and the index that selects which
 /// one is live. Two paths cannot be blended, so the index only ever steps
 /// (hold keyframes, K-111); the common case is one path and a static index.
@@ -301,6 +361,36 @@ class BridgeKeyframe {
           interpOut == other.interpOut;
 }
 
+/// A collapsible run of parameters (P4, K-145) — the twirl the Effect Controls
+/// draws so an effect can tuck advanced controls behind a header. `params` is a
+/// contiguous run of the schema's parameters and renders where its first member
+/// sits.
+class BridgeParamGroup {
+  final String label;
+  final List<String> params;
+
+  /// Whether the twirl starts closed.
+  final bool collapsed;
+
+  const BridgeParamGroup({
+    required this.label,
+    required this.params,
+    required this.collapsed,
+  });
+
+  @override
+  int get hashCode => label.hashCode ^ params.hashCode ^ collapsed.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeParamGroup &&
+          runtimeType == other.runtimeType &&
+          label == other.label &&
+          params == other.params &&
+          collapsed == other.collapsed;
+}
+
 /// One declared parameter of an effect, as the panel needs to *draw* it:
 /// what to call it, what kind of control it is, and the range or option list
 /// that control needs.
@@ -352,6 +442,26 @@ sealed class BridgeParamKind with _$BridgeParamKind {
     double? hardMin,
     double? hardMax,
   }) = BridgeParamKind_Float;
+
+  /// Degrees, drawn as a dial beneath the number (docs/07 §6). The value
+  /// crossing the bridge is a [`BridgeEffectValue::Float`] — an angle is a
+  /// number of degrees, and this kind only says which control to draw.
+  /// Unbounded, so the dial winds through full turns.
+  const factory BridgeParamKind.angle({
+    required double default_,
+
+    /// Snapping increment in degrees while a modifier is held.
+    required double dialStep,
+  }) = BridgeParamKind_Angle;
+
+  /// A 2D point in composition space, drawn as an x and a y field plus the
+  /// crosshair button that arms a click-in-Viewer pick (docs/07 §6). The
+  /// value is a [`BridgeEffectValue::Point`], which has crossed the bridge
+  /// since before any effect could declare one.
+  const factory BridgeParamKind.point({
+    required double defaultX,
+    required double defaultY,
+  }) = BridgeParamKind_Point;
   const factory BridgeParamKind.choice({
     required List<String> options,
     required int default_,
@@ -380,6 +490,34 @@ sealed class BridgeParamKind with _$BridgeParamKind {
     required String filterName,
   }) = BridgeParamKind_File;
   const factory BridgeParamKind.layer() = BridgeParamKind_Layer;
+}
+
+/// How an effect's rows are *arranged*, as against what they are: the twirls
+/// some of them hide behind, and the rows that grey out while another says so.
+///
+/// Separate from [`list_parameters`] because it is a different question with a
+/// different lifetime — the panel caches both per effect name and asks once —
+/// and because keeping it out of [`BridgeParamInfo`] leaves that struct one row
+/// of the panel, which is how it reads everywhere else.
+class BridgeParamLayout {
+  final List<BridgeParamGroup> groups;
+  final List<BridgeEnabledWhen> enabledWhen;
+
+  const BridgeParamLayout({
+    required this.groups,
+    required this.enabledWhen,
+  });
+
+  @override
+  int get hashCode => groups.hashCode ^ enabledWhen.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is BridgeParamLayout &&
+          runtimeType == other.runtimeType &&
+          groups == other.groups &&
+          enabledWhen == other.enabledWhen;
 }
 
 /// One parameter's current value, as [`BridgeEffectInstance::get_info`]

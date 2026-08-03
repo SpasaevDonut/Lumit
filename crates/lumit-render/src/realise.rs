@@ -14,7 +14,7 @@
 //! Because every caller drives this one walk, a comp looks the same in the
 //! viewport, in Flutter, and in the exported file (K-031).
 
-use crate::draw::{AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource};
+use crate::draw::{AccumulationBelow, CompLayerDraw, DrawSource, LayerInputDraw};
 use crate::fxops::LoadedLut;
 
 /// The GPU primitives that turn a comp draw list into a linear texture,
@@ -82,15 +82,15 @@ impl Realiser<'_> {
     }
 
     /// Render a layer's depth-of-field depth inputs (docs/impl/layer-input.md
-    /// §2): each `DofInputDraw` (the referenced layer's source pixels) is
+    /// §2): each `LayerInputDraw` (the referenced layer's source pixels) is
     /// uploaded, linearised and resampled into the effect's working raster
     /// `(w, h)` through the shared [`crate::fxops::render_layer_input`], so the
     /// parallel `layer_inputs` handed to `run_ops` is 1:1 with the stack's
     /// `Dof` ops and aligned with the layer texture the kernel blurs. Export
     /// renders these identically (K-031).
-    fn render_dof_inputs(
+    fn render_layer_inputs(
         &self,
-        inputs: &[Option<DofInputDraw>],
+        inputs: &[Option<LayerInputDraw>],
         w: u32,
         h: u32,
     ) -> Vec<Option<wgpu::Texture>> {
@@ -169,7 +169,7 @@ impl Realiser<'_> {
             // identical to export (K-031). The adjustment stack runs on the
             // comp-sized composite, so its depth inputs resample to comp size.
             let luts = self.load_luts(&l.lut_files);
-            let layer_inputs = self.render_dof_inputs(&l.dof_inputs, tw, th);
+            let layer_inputs = self.render_layer_inputs(&l.layer_inputs, tw, th);
             // Posterize Time everything-below (docs/08 §3.25): the input this
             // adjustment's own effects run on is the below-stack held at the
             // posterised time, not the plain below-composite. The held draws and
@@ -375,7 +375,7 @@ impl Realiser<'_> {
                 // The depth-of-field depth inputs, resampled to this layer's
                 // working raster (w, h), 1:1 with the stack's Resolved::Dof ops
                 // (§3.22); the same render export runs (K-031).
-                let layer_inputs = self.render_dof_inputs(&l.dof_inputs, w, h);
+                let layer_inputs = self.render_layer_inputs(&l.layer_inputs, w, h);
                 crate::fxops::run_ops(
                     self.fx,
                     &self.ctx,

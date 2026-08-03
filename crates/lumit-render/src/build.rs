@@ -20,7 +20,7 @@
 
 use crate::decode::CompLayerPixels;
 use crate::draw::{
-    AccumulationBelow, CompLayerDraw, DofInputDraw, DrawSource, MatteDraw, TemporalBelow,
+    AccumulationBelow, CompLayerDraw, DrawSource, LayerInputDraw, MatteDraw, TemporalBelow,
 };
 use crate::export::mask_rgba;
 use crate::realise::Realiser;
@@ -373,15 +373,21 @@ pub fn build_comp_draws_at(
     // planner (app_state::collect_comp_jobs) decodes layer-input references
     // exactly like matte sources, and export applies the same in-span-only
     // gate (K-031).
-    let dof_inputs_for =
-        |effects: &[lumit_core::model::EffectInstance]| -> Vec<Option<DofInputDraw>> {
+    let layer_inputs_for =
+        |effects: &[lumit_core::model::EffectInstance]| -> Vec<Option<LayerInputDraw>> {
             use lumit_core::model::EffectNamespace;
             effects
                 .iter()
+                // "One slot per effect op that declares a Layer parameter"
+                // (docs/impl/layer-input.md §2) — the contract has always been
+                // general; this is the list of built-ins that take one. Both
+                // name their depth reference `depth`, and both resolve to
+                // exactly one op, so the 1:1 ordering with `run_ops`'s counter
+                // holds across the two.
                 .filter(|e| {
                     e.enabled
                         && e.effect.namespace == EffectNamespace::Builtin
-                        && e.effect.match_name == "dof"
+                        && matches!(e.effect.match_name.as_str(), "dof" | "bokeh")
                 })
                 .map(|e| {
                     let id = e.layer_ref("depth")?;
@@ -401,7 +407,7 @@ pub fn build_comp_draws_at(
                         pixels_for(&bare)?
                     };
                     // Effects and masks (K-142): resolve the depth layer's own
-                    // stack at its layer time so render_dof_inputs runs it on the
+                    // stack at its layer time so render_layer_inputs runs it on the
                     // depth texture before resampling. Uses the depth layer's
                     // decode scale (its px@comp radii stay honest), the same
                     // resolve export uses (K-031). Empty otherwise.
@@ -424,7 +430,7 @@ pub fn build_comp_draws_at(
                     } else {
                         (Vec::new(), Vec::new())
                     };
-                    Some(DofInputDraw {
+                    Some(LayerInputDraw {
                         rgba,
                         tex_w,
                         tex_h,
@@ -662,7 +668,7 @@ pub fn build_comp_draws_at(
                     lut_files: lut_files(&layer.effects, lt),
                     // Depth inputs of the enabled built-in `dof` effects, 1:1
                     // with the stack's Resolved::Dof ops (docs/08 §3.22).
-                    dof_inputs: dof_inputs_for(&layer.effects),
+                    layer_inputs: layer_inputs_for(&layer.effects),
                     // An adjustment layer is a staging point, not a picture —
                     // motion blur has no image of its own to smear (docs/06 §4).
                     mb: Vec::new(),
@@ -854,7 +860,7 @@ pub fn build_comp_draws_at(
             // Depth inputs of the enabled built-in `dof` effects, 1:1 with the
             // stack's Resolved::Dof ops (docs/08 §3.22); built the same way
             // export does, so the two blur identically (K-031).
-            dof_inputs: dof_inputs_for(&layer.effects),
+            layer_inputs: layer_inputs_for(&layer.effects),
             // Per-layer motion blur (docs/06 §4, K-120): the layer's own
             // transform sampled across the open shutter, empty unless it blurs.
             // Built the same way export does, so the two smear identically.

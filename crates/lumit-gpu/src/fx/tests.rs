@@ -2700,7 +2700,6 @@ fn wgsl_lut_matches_the_cpu_oracle() {
         }
     }
 }
-
 /// The CPU oracle for [`FxEngine::dof`]: byte-for-byte the WGSL kernel's
 /// maths (the same CoC ramp with explicit min/max/mul, the same integer
 /// disc taps in the same row-major order, box weighted, edges clamped,
@@ -2906,5 +2905,315 @@ fn wgsl_dof_matches_the_cpu_oracle() {
         readback_linear_f32(&ctx, &out, w, h).unwrap(),
         img,
         "an in-band depth must be a bit-exact passthrough"
+    );
+}
+
+/// A Bokeh op at its neutral settings: the aperture polygon and the tonal
+/// gather, with every control this effect adds over Lens blur at the value
+/// where it does nothing. Cases below turn one dial at a time from here.
+fn plain_bokeh(radius: f32, sides: u32, mix: f32) -> BokehOp {
+    let (blade_normals, apothem2) = lumit_core::fx::aperture_blades(sides, 0.0);
+    BokehOp {
+        blur_radius: radius,
+        blade_normals,
+        blade_count: sides,
+        apothem2,
+        roundness: 0.0,
+        concentration: 0.0,
+        deform_scale: [1.0, 1.0],
+        threshold: 0.0,
+        bokeh_power: 1.0,
+        repeat_edge: true,
+        depth_bound: true,
+        depth_channel: 5, // (R+G+B)/3
+        depth_invert: false,
+        depth_bands: 64.0,
+        focal_distance: 0.5,
+        use_focus_point: false,
+        focus_point: [0.0, 0.0],
+        focus_falloff: 1.0,
+        composite_mode: 0,
+        remove_edge_leak: 0.0,
+        detect_edge_threshold: 0.1,
+        display: 0,
+        mix,
+    }
+}
+
+/// The same op as `lumit_core::fx::cpu::BokehParams`, so one value drives both
+/// paths (§1.6: the CPU is the oracle).
+fn bokeh_params(op: &BokehOp) -> lumit_core::fx::cpu::BokehParams {
+    lumit_core::fx::cpu::BokehParams {
+        blur_radius: op.blur_radius,
+        blade_normals: op.blade_normals,
+        blade_count: op.blade_count,
+        apothem2: op.apothem2,
+        roundness: op.roundness,
+        concentration: op.concentration,
+        deform_scale: op.deform_scale,
+        threshold: op.threshold,
+        bokeh_power: op.bokeh_power,
+        repeat_edge: op.repeat_edge,
+        depth_channel: op.depth_channel,
+        depth_invert: op.depth_invert,
+        depth_bands: op.depth_bands,
+        focal_distance: op.focal_distance,
+        use_focus_point: op.use_focus_point,
+        focus_point: op.focus_point,
+        focus_falloff: op.focus_falloff,
+        composite_mode: op.composite_mode,
+        remove_edge_leak: op.remove_edge_leak,
+        detect_edge_threshold: op.detect_edge_threshold,
+        display: op.display,
+        mix: op.mix,
+    }
+}
+
+/// Bokeh's §1.6 oracle: `fx_bokeh.wgsl` against `cpu::bokeh` over the corpus,
+/// one dial turned at a time.
+///
+/// Every control this effect adds over Lens blur appears here at a *non*-neutral
+/// value, because the neutral ones prove nothing about the maths — and the
+/// neutral ones appear in `a_neutral_bokeh_gathers_exactly_as_lens_blur_does`,
+/// which is where "adding a control changed nothing" is pinned.
+///
+/// The depth is uploaded and **read back** before the CPU sees it: the working
+/// texture format is fp16, so feeding the CPU the un-quantised f32 it was built
+/// from would compare two different depth maps and blame the kernel.
+#[test]
+fn wgsl_bokeh_matches_the_cpu_oracle() {
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping WGSL parity test");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    let (w, h) = (32u32, 24u32);
+    let img = corpus(w, h);
+    let src = upload_linear_f32(&ctx, &img, w, h);
+
+    // A depth pass with a horizontal ramp and a hard vertical step down the
+    // middle — the ramp sweeps the circle of confusion through its whole range,
+    // the step is the depth discontinuity Remove edge leak exists for. Written
+    // to all three colour channels plus a distinct alpha, so the channel picker
+    // has something different to find in each.
+    let mut depth_rgba = vec![0f32; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let ramp = x as f32 / (w - 1) as f32;
+            let step = if y < h / 2 { 0.2 } else { 0.9 };
+            depth_rgba[i] = ramp;
+            depth_rgba[i + 1] = step;
+            depth_rgba[i + 2] = 0.5 * (ramp + step);
+            depth_rgba[i + 3] = 1.0 - ramp;
+        }
+    }
+    let depth_t = upload_linear_f32(&ctx, &depth_rgba, w, h);
+    // What the kernel will actually sample, fp16 and all.
+    let depth_seen = readback_linear_f32(&ctx, &depth_t, w, h).unwrap();
+
+    let mut cases: Vec<(String, BokehOp)> = Vec::new();
+
+    // The aperture, including the two shapes Lens blur cannot make.
+    for (name, roundness) in [
+        ("polygon", 0.0f32),
+        ("bowed", 0.5),
+        ("circle", 1.0),
+        ("star", -1.0),
+        ("half star", -0.4),
+    ] {
+        for sides in [3u32, 5, 6, 8] {
+            let mut op = plain_bokeh(7.0, sides, 1.0);
+            op.roundness = roundness;
+            cases.push((format!("{name} n{sides}"), op));
+        }
+    }
+    // A rotated aperture: the normals are host-computed, so the kernel must
+    // reproduce a turned polygon with no trig of its own.
+    for deg in [12.0f32, 90.0, -37.5] {
+        let (normals, apothem2) = lumit_core::fx::aperture_blades(6, deg);
+        let mut op = plain_bokeh(7.0, 6, 1.0);
+        op.blade_normals = normals;
+        op.apothem2 = apothem2;
+        cases.push((format!("rotated {deg}"), op));
+    }
+
+    // Concentration and Deform: the weighted path and the squeezed aperture.
+    for c in [-1.0f32, -0.5, 0.5, 1.0] {
+        let mut op = plain_bokeh(7.0, 6, 1.0);
+        op.concentration = c;
+        cases.push((format!("concentration {c}"), op));
+    }
+    for d in [-0.8f32, -0.3, 0.3, 0.8] {
+        let squeeze = 1.0 / (1.0 - d.abs().min(0.95));
+        let mut op = plain_bokeh(7.0, 6, 1.0);
+        op.deform_scale = if d > 0.0 {
+            [1.0, squeeze]
+        } else {
+            [squeeze, 1.0]
+        };
+        cases.push((format!("deform {d}"), op));
+    }
+
+    // The tonal gather, at this effect's own default (Exposure 30 → power 32)
+    // among others: that default is exactly where a modest excess underflows
+    // f32, so the denormal floor is load-bearing here and not only at extremes.
+    for (threshold, power) in [
+        (0.0f32, 32.0f32),
+        (0.5, 32.0),
+        (0.5, 4.0),
+        (0.5, 0.25),
+        (2.0, 8.0),
+    ] {
+        let mut op = plain_bokeh(7.0, 6, 1.0);
+        op.threshold = threshold;
+        op.bokeh_power = power;
+        cases.push((format!("tonal t{threshold} p{power}"), op));
+    }
+
+    // The depth model: channel, invert, bands, profile, focus point.
+    for channel in 0u32..=8 {
+        let mut op = plain_bokeh(6.0, 6, 1.0);
+        op.depth_channel = channel;
+        cases.push((format!("channel {channel}"), op));
+    }
+    for bands in [1.0f32, 2.0, 6.0, 32.0] {
+        let mut op = plain_bokeh(6.0, 6, 1.0);
+        op.depth_bands = bands;
+        cases.push((format!("bands {bands}"), op));
+    }
+    for profile in [-1.0f32, -0.4, 0.4, 1.0] {
+        let mut op = plain_bokeh(6.0, 6, 1.0);
+        op.focus_falloff = (2.0f32 * profile).exp2();
+        cases.push((format!("profile {profile}"), op));
+    }
+    for (px, py) in [(0.0f32, 0.0f32), (16.0, 12.0), (31.0, 23.0), (-5.0, 99.0)] {
+        let mut op = plain_bokeh(6.0, 6, 1.0);
+        op.use_focus_point = true;
+        op.focus_point = [px, py];
+        cases.push((format!("focus point {px},{py}"), op));
+    }
+    {
+        let mut op = plain_bokeh(6.0, 6, 1.0);
+        op.depth_invert = true;
+        cases.push(("inverted depth".into(), op));
+    }
+
+    // The diagnostic views. Both are continuous in depth — the depth read is,
+    // and so is the ramp — so the same bound covers them and neither is
+    // excluded from the oracle.
+    for display in [1u32, 2] {
+        for (channel, invert) in [(5u32, false), (0, true), (4, false)] {
+            let mut op = plain_bokeh(6.0, 6, 1.0);
+            op.display = display;
+            op.depth_channel = channel;
+            op.depth_invert = invert;
+            cases.push((format!("display {display} ch{channel} inv{invert}"), op));
+        }
+        // A view ignores the gather and Mix entirely, so a Mix of 0 and a wild
+        // aperture must not change what it draws.
+        let mut op = plain_bokeh(9.0, 3, 0.0);
+        op.display = display;
+        op.roundness = -1.0;
+        op.concentration = 0.8;
+        cases.push((format!("display {display} ignores mix and aperture"), op));
+    }
+
+    // Edge leak suppression across the vertical step, and the edge policy.
+    for leak in [0.5f32, 1.0] {
+        for thresh in [0.05f32, 0.5] {
+            let mut op = plain_bokeh(6.0, 6, 1.0);
+            op.remove_edge_leak = leak;
+            op.detect_edge_threshold = thresh;
+            cases.push((format!("edge leak {leak}/{thresh}"), op));
+        }
+    }
+    {
+        let mut op = plain_bokeh(8.0, 6, 1.0);
+        op.repeat_edge = false;
+        cases.push(("transparent edges".into(), op));
+    }
+
+    // Composite modes and partial Mix.
+    for mode in 0u32..=4 {
+        let mut op = plain_bokeh(6.0, 6, 1.0);
+        op.composite_mode = mode;
+        op.threshold = 0.4;
+        op.bokeh_power = 8.0;
+        cases.push((format!("composite {mode}"), op));
+    }
+    cases.push(("partial mix".into(), plain_bokeh(7.0, 6, 0.5)));
+
+    // Everything at once, and the unbound case (the depth is bound here anyway,
+    // as the renderer does — it must make no difference).
+    {
+        let (normals, apothem2) = lumit_core::fx::aperture_blades(5, 33.0);
+        let mut op = plain_bokeh(9.0, 5, 0.8);
+        op.blade_normals = normals;
+        op.apothem2 = apothem2;
+        op.roundness = -0.6;
+        op.concentration = 0.7;
+        op.deform_scale = [1.0, 1.0 / (1.0 - 0.4)];
+        op.threshold = 0.3;
+        op.bokeh_power = 16.0;
+        op.depth_channel = 4;
+        op.depth_bands = 5.0;
+        op.focus_falloff = (2.0f32 * -0.5).exp2();
+        op.use_focus_point = true;
+        op.focus_point = [7.0, 9.0];
+        op.remove_edge_leak = 0.75;
+        op.composite_mode = 2;
+        cases.push(("everything at once".into(), op));
+    }
+    {
+        let mut op = plain_bokeh(6.0, 6, 1.0);
+        op.depth_bound = false;
+        op.concentration = 0.4;
+        op.threshold = 0.5;
+        op.bokeh_power = 8.0;
+        cases.push(("unbound uniform defocus".into(), op));
+    }
+
+    for (name, op) in &cases {
+        let mut cpu = img.clone();
+        let depth_arg = op.depth_bound.then_some(depth_seen.as_slice());
+        lumit_core::fx::cpu::bokeh(&mut cpu, depth_arg, w, h, &bokeh_params(op));
+        let out = fx.bokeh(&ctx, &src, w, h, &depth_t, op);
+        let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+        let worst = worst_f16_ulp(&cpu, &gpu);
+        eprintln!("bokeh {name}: worst {worst} ulp");
+        assert!(worst <= 2, "{name}: worst {worst} fp16 ULP");
+        // Determinism (§2.4): a second run is bit-identical to the first.
+        let out2 = fx.bokeh(&ctx, &src, w, h, &depth_t, op);
+        assert_eq!(
+            gpu,
+            readback_linear_f32(&ctx, &out2, w, h).unwrap(),
+            "{name}: GPU bokeh must be bit-stable"
+        );
+    }
+
+    // Mix 0 is the bit-exact input whatever else is asked for.
+    let mut loud = plain_bokeh(10.0, 6, 0.0);
+    loud.concentration = 0.9;
+    loud.bokeh_power = 32.0;
+    let out = fx.bokeh(&ctx, &src, w, h, &depth_t, &loud);
+    assert_eq!(
+        readback_linear_f32(&ctx, &out, w, h).unwrap(),
+        img,
+        "Mix 0 must be the bit-exact input"
+    );
+
+    // A zero radius collapses every aperture to the centre tap — a bit-exact
+    // passthrough at full Mix, and the proof the multiplicative inside test
+    // needs no guard at coc == 0 even with Roundness negative and Deform on.
+    let mut zero = plain_bokeh(0.0, 5, 1.0);
+    zero.roundness = -1.0;
+    zero.deform_scale = [1.0, 2.0];
+    zero.concentration = 0.8;
+    let out = fx.bokeh(&ctx, &src, w, h, &depth_t, &zero);
+    assert_eq!(
+        readback_linear_f32(&ctx, &out, w, h).unwrap(),
+        img,
+        "a zero radius must be a bit-exact passthrough"
     );
 }

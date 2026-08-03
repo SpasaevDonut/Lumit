@@ -22,6 +22,11 @@ mod temporal;
 pub use blur::*;
 pub use colour::*;
 pub use common::*;
+// `dof` exposes its `impl FxEngine` methods, which are reachable without a
+// re-export — but it also houses Bokeh's `BokehOp` parameter struct (the two
+// effects share a module because they share their maths), and a public type
+// does need naming.
+pub use dof::*;
 pub use split::*;
 pub use stylise::*;
 pub use temporal::*;
@@ -87,6 +92,12 @@ pub struct FxEngine {
     /// its three sampled inputs (source, unprocessed original, depth field)
     /// plus a storage output and a uniform fit the same shape.
     dof: wgpu::ComputePipeline,
+    /// Bokeh (docs/08 §3.27) — the advanced lens blur. Its own kernel rather
+    /// than a branch inside [`Self::dof`]: the two effects share their maths but
+    /// not their uniform, and a kernel that switched between two parameter sets
+    /// per tap would pay for both in the inner loop. Shares the same
+    /// [`Self::mb_layout`] shape (source, original, depth + storage + uniform).
+    bokeh: wgpu::ComputePipeline,
     layout: wgpu::BindGroupLayout,
     /// The adjustment blend's own layout: three sampled inputs (below,
     /// processed, coverage) where every effect kernel takes two.

@@ -41,7 +41,7 @@ flutter_rust_bridge::frb_generated_boilerplate!(
     default_rust_auto_opaque = RustAutoOpaqueMoi,
 );
 pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_VERSION: &str = "2.12.0";
-pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = 848570327;
+pub(crate) const FLUTTER_RUST_BRIDGE_CODEGEN_CONTENT_HASH: i32 = -725753278;
 
 // Section: executor
 
@@ -5749,6 +5749,37 @@ fn wire__crate__api__effect__list_effects_impl(
         },
     )
 }
+fn wire__crate__api__effect__list_param_layout_impl(
+    ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
+    rust_vec_len_: i32,
+    data_len_: i32,
+) -> flutter_rust_bridge::for_generated::WireSyncRust2DartSse {
+    FLUTTER_RUST_BRIDGE_HANDLER.wrap_sync::<flutter_rust_bridge::for_generated::SseCodec, _>(
+        flutter_rust_bridge::for_generated::TaskInfo {
+            debug_name: "list_param_layout",
+            port: None,
+            mode: flutter_rust_bridge::for_generated::FfiCallMode::Sync,
+        },
+        move || {
+            let message = unsafe {
+                flutter_rust_bridge::for_generated::Dart2RustMessageSse::from_wire(
+                    ptr_,
+                    rust_vec_len_,
+                    data_len_,
+                )
+            };
+            let mut deserializer =
+                flutter_rust_bridge::for_generated::SseDeserializer::new(message);
+            let api_effect = <String>::sse_decode(&mut deserializer);
+            deserializer.end();
+            transform_result_sse::<_, ()>((move || {
+                let output_ok =
+                    Result::<_, ()>::Ok(crate::api::effect::list_param_layout(api_effect))?;
+                Ok(output_ok)
+            })())
+        },
+    )
+}
 fn wire__crate__api__effect__list_parameters_impl(
     ptr_: flutter_rust_bridge::for_generated::PlatformGeneralizedUint8ListPtr,
     rust_vec_len_: i32,
@@ -7257,6 +7288,47 @@ impl SseDecode for crate::api::effect::BridgeEffectValue {
     }
 }
 
+impl SseDecode for crate::api::effect::BridgeEnabledCond {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut tag_ = <i32>::sse_decode(deserializer);
+        match tag_ {
+            0 => {
+                let mut var_field0 = <bool>::sse_decode(deserializer);
+                return crate::api::effect::BridgeEnabledCond::BoolIs(var_field0);
+            }
+            1 => {
+                let mut var_field0 = <u32>::sse_decode(deserializer);
+                return crate::api::effect::BridgeEnabledCond::ChoiceIs(var_field0);
+            }
+            2 => {
+                let mut var_field0 = <u32>::sse_decode(deserializer);
+                return crate::api::effect::BridgeEnabledCond::ChoiceIsNot(var_field0);
+            }
+            3 => {
+                return crate::api::effect::BridgeEnabledCond::LayerSet;
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseDecode for crate::api::effect::BridgeEnabledWhen {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_param = <String>::sse_decode(deserializer);
+        let mut var_on_ = <String>::sse_decode(deserializer);
+        let mut var_cond = <crate::api::effect::BridgeEnabledCond>::sse_decode(deserializer);
+        return crate::api::effect::BridgeEnabledWhen {
+            param: var_param,
+            on: var_on_,
+            cond: var_cond,
+        };
+    }
+}
+
 impl SseDecode for crate::api::export::BridgeExportPreset {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7652,6 +7724,20 @@ impl SseDecode for crate::api::layer::BridgePaintMode {
     }
 }
 
+impl SseDecode for crate::api::effect::BridgeParamGroup {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_label = <String>::sse_decode(deserializer);
+        let mut var_params = <Vec<String>>::sse_decode(deserializer);
+        let mut var_collapsed = <bool>::sse_decode(deserializer);
+        return crate::api::effect::BridgeParamGroup {
+            label: var_label,
+            params: var_params,
+            collapsed: var_collapsed,
+        };
+    }
+}
+
 impl SseDecode for crate::api::effect::BridgeParamInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -7686,6 +7772,22 @@ impl SseDecode for crate::api::effect::BridgeParamKind {
                 };
             }
             1 => {
+                let mut var_default_ = <f64>::sse_decode(deserializer);
+                let mut var_dialStep = <f64>::sse_decode(deserializer);
+                return crate::api::effect::BridgeParamKind::Angle {
+                    default: var_default_,
+                    dial_step: var_dialStep,
+                };
+            }
+            2 => {
+                let mut var_defaultX = <f64>::sse_decode(deserializer);
+                let mut var_defaultY = <f64>::sse_decode(deserializer);
+                return crate::api::effect::BridgeParamKind::Point {
+                    default_x: var_defaultX,
+                    default_y: var_defaultY,
+                };
+            }
+            3 => {
                 let mut var_options = <Vec<String>>::sse_decode(deserializer);
                 let mut var_default_ = <u32>::sse_decode(deserializer);
                 let mut var_dividersAfter = <Vec<u32>>::sse_decode(deserializer);
@@ -7695,13 +7797,13 @@ impl SseDecode for crate::api::effect::BridgeParamKind {
                     dividers_after: var_dividersAfter,
                 };
             }
-            2 => {
+            4 => {
                 let mut var_default_ = <bool>::sse_decode(deserializer);
                 return crate::api::effect::BridgeParamKind::Bool {
                     default: var_default_,
                 };
             }
-            3 => {
+            5 => {
                 let mut var_default_ = <Vec<f64>>::sse_decode(deserializer);
                 let mut var_min = <f64>::sse_decode(deserializer);
                 let mut var_max = <f64>::sse_decode(deserializer);
@@ -7711,10 +7813,10 @@ impl SseDecode for crate::api::effect::BridgeParamKind {
                     max: var_max,
                 };
             }
-            4 => {
+            6 => {
                 return crate::api::effect::BridgeParamKind::Seed;
             }
-            5 => {
+            7 => {
                 let mut var_filter = <Vec<String>>::sse_decode(deserializer);
                 let mut var_filterName = <String>::sse_decode(deserializer);
                 return crate::api::effect::BridgeParamKind::File {
@@ -7722,13 +7824,26 @@ impl SseDecode for crate::api::effect::BridgeParamKind {
                     filter_name: var_filterName,
                 };
             }
-            6 => {
+            8 => {
                 return crate::api::effect::BridgeParamKind::Layer;
             }
             _ => {
                 unimplemented!("");
             }
         }
+    }
+}
+
+impl SseDecode for crate::api::effect::BridgeParamLayout {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut var_groups = <Vec<crate::api::effect::BridgeParamGroup>>::sse_decode(deserializer);
+        let mut var_enabledWhen =
+            <Vec<crate::api::effect::BridgeEnabledWhen>>::sse_decode(deserializer);
+        return crate::api::effect::BridgeParamLayout {
+            groups: var_groups,
+            enabled_when: var_enabledWhen,
+        };
     }
 }
 
@@ -8407,6 +8522,20 @@ impl SseDecode for Vec<crate::api::effect::BridgeEffectInstanceInfo> {
     }
 }
 
+impl SseDecode for Vec<crate::api::effect::BridgeEnabledWhen> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::effect::BridgeEnabledWhen>::sse_decode(
+                deserializer,
+            ));
+        }
+        return ans_;
+    }
+}
+
 impl SseDecode for Vec<crate::api::keymap::BridgeKeyBinding> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
@@ -8498,6 +8627,20 @@ impl SseDecode for Vec<crate::api::layer::BridgeMask> {
         let mut ans_ = Vec::with_capacity(len_ as usize);
         for idx_ in 0..len_ {
             ans_.push(<crate::api::layer::BridgeMask>::sse_decode(deserializer));
+        }
+        return ans_;
+    }
+}
+
+impl SseDecode for Vec<crate::api::effect::BridgeParamGroup> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
+        let mut len_ = <i32>::sse_decode(deserializer);
+        let mut ans_ = Vec::with_capacity(len_ as usize);
+        for idx_ in 0..len_ {
+            ans_.push(<crate::api::effect::BridgeParamGroup>::sse_decode(
+                deserializer,
+            ));
         }
         return ans_;
     }
@@ -9102,7 +9245,7 @@ fn pde_ffi_dispatcher_primary_impl(
             rust_vec_len,
             data_len,
         ),
-        185 => wire__crate__api__project__project_reference_save_impl(
+        186 => wire__crate__api__project__project_reference_save_impl(
             port,
             ptr,
             rust_vec_len,
@@ -9277,40 +9420,41 @@ fn pde_ffi_dispatcher_sync_impl(
 167 => wire__crate__api__shell__list_autosaves_impl(ptr, rust_vec_len, data_len),
 168 => wire__crate__api__composition__list_blend_modes_impl(ptr, rust_vec_len, data_len),
 169 => wire__crate__api__effect__list_effects_impl(ptr, rust_vec_len, data_len),
-170 => wire__crate__api__effect__list_parameters_impl(ptr, rust_vec_len, data_len),
-171 => wire__crate__api__effect__list_presets_impl(ptr, rust_vec_len, data_len),
-172 => wire__crate__api__shell__playback_tier_impl(ptr, rust_vec_len, data_len),
-173 => wire__crate__api__effect__presets_dir_path_impl(ptr, rust_vec_len, data_len),
-174 => wire__crate__api__project__project_reference_autosave_impl(ptr, rust_vec_len, data_len),
-175 => wire__crate__api__project__project_reference_cache_location_impl(ptr, rust_vec_len, data_len),
-176 => wire__crate__api__project__project_reference_get_items_impl(ptr, rust_vec_len, data_len),
-177 => wire__crate__api__project__project_reference_history_impl(ptr, rust_vec_len, data_len),
-178 => wire__crate__api__project__project_reference_import_footage_impl(ptr, rust_vec_len, data_len),
-179 => wire__crate__api__project__project_reference_is_dirty_impl(ptr, rust_vec_len, data_len),
-180 => wire__crate__api__project__project_reference_new_composition_impl(ptr, rust_vec_len, data_len),
-181 => wire__crate__api__project__project_reference_next_comp_name_impl(ptr, rust_vec_len, data_len),
-182 => wire__crate__api__project__project_reference_path_impl(ptr, rust_vec_len, data_len),
-183 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
-184 => wire__crate__api__project__project_reference_restore_journal_impl(ptr, rust_vec_len, data_len),
-186 => wire__crate__api__project__project_reference_set_cache_location_impl(ptr, rust_vec_len, data_len),
-187 => wire__crate__api__project__project_reference_set_ui_state_impl(ptr, rust_vec_len, data_len),
-188 => wire__crate__api__project__project_reference_start_worker_impl(ptr, rust_vec_len, data_len),
-189 => wire__crate__api__project__project_reference_ui_state_impl(ptr, rust_vec_len, data_len),
-190 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
-191 => wire__crate__api__shell__reset_realtime_impl(ptr, rust_vec_len, data_len),
-192 => wire__crate__api__system__restore_frozen_cursor_impl(ptr, rust_vec_len, data_len),
-193 => wire__crate__api__effect__sample_scalar_impl(ptr, rust_vec_len, data_len),
-194 => wire__crate__api__cache__set_cache_budget_impl(ptr, rust_vec_len, data_len),
-195 => wire__crate__api__cache__set_disk_cache_budget_impl(ptr, rust_vec_len, data_len),
-196 => wire__crate__api__cache__set_disk_cache_location_impl(ptr, rust_vec_len, data_len),
-197 => wire__crate__api__cache__set_vram_cache_budget_impl(ptr, rust_vec_len, data_len),
-198 => wire__crate__api__solid__solid_reference_get_definition_impl(ptr, rust_vec_len, data_len),
-199 => wire__crate__api__solid__solid_reference_set_definition_impl(ptr, rust_vec_len, data_len),
-200 => wire__crate__api__system__system_memory_bytes_impl(ptr, rust_vec_len, data_len),
-201 => wire__crate__api__system__thaw_cursor_impl(ptr, rust_vec_len, data_len),
-202 => wire__crate__api__system__video_memory_bytes_impl(ptr, rust_vec_len, data_len),
-203 => wire__crate__api__cache__viewer_transport_impl(ptr, rust_vec_len, data_len),
-204 => wire__crate__api__cache__vram_cache_stats_impl(ptr, rust_vec_len, data_len),
+170 => wire__crate__api__effect__list_param_layout_impl(ptr, rust_vec_len, data_len),
+171 => wire__crate__api__effect__list_parameters_impl(ptr, rust_vec_len, data_len),
+172 => wire__crate__api__effect__list_presets_impl(ptr, rust_vec_len, data_len),
+173 => wire__crate__api__shell__playback_tier_impl(ptr, rust_vec_len, data_len),
+174 => wire__crate__api__effect__presets_dir_path_impl(ptr, rust_vec_len, data_len),
+175 => wire__crate__api__project__project_reference_autosave_impl(ptr, rust_vec_len, data_len),
+176 => wire__crate__api__project__project_reference_cache_location_impl(ptr, rust_vec_len, data_len),
+177 => wire__crate__api__project__project_reference_get_items_impl(ptr, rust_vec_len, data_len),
+178 => wire__crate__api__project__project_reference_history_impl(ptr, rust_vec_len, data_len),
+179 => wire__crate__api__project__project_reference_import_footage_impl(ptr, rust_vec_len, data_len),
+180 => wire__crate__api__project__project_reference_is_dirty_impl(ptr, rust_vec_len, data_len),
+181 => wire__crate__api__project__project_reference_new_composition_impl(ptr, rust_vec_len, data_len),
+182 => wire__crate__api__project__project_reference_next_comp_name_impl(ptr, rust_vec_len, data_len),
+183 => wire__crate__api__project__project_reference_path_impl(ptr, rust_vec_len, data_len),
+184 => wire__crate__api__project__project_reference_redo_impl(ptr, rust_vec_len, data_len),
+185 => wire__crate__api__project__project_reference_restore_journal_impl(ptr, rust_vec_len, data_len),
+187 => wire__crate__api__project__project_reference_set_cache_location_impl(ptr, rust_vec_len, data_len),
+188 => wire__crate__api__project__project_reference_set_ui_state_impl(ptr, rust_vec_len, data_len),
+189 => wire__crate__api__project__project_reference_start_worker_impl(ptr, rust_vec_len, data_len),
+190 => wire__crate__api__project__project_reference_ui_state_impl(ptr, rust_vec_len, data_len),
+191 => wire__crate__api__project__project_reference_undo_impl(ptr, rust_vec_len, data_len),
+192 => wire__crate__api__shell__reset_realtime_impl(ptr, rust_vec_len, data_len),
+193 => wire__crate__api__system__restore_frozen_cursor_impl(ptr, rust_vec_len, data_len),
+194 => wire__crate__api__effect__sample_scalar_impl(ptr, rust_vec_len, data_len),
+195 => wire__crate__api__cache__set_cache_budget_impl(ptr, rust_vec_len, data_len),
+196 => wire__crate__api__cache__set_disk_cache_budget_impl(ptr, rust_vec_len, data_len),
+197 => wire__crate__api__cache__set_disk_cache_location_impl(ptr, rust_vec_len, data_len),
+198 => wire__crate__api__cache__set_vram_cache_budget_impl(ptr, rust_vec_len, data_len),
+199 => wire__crate__api__solid__solid_reference_get_definition_impl(ptr, rust_vec_len, data_len),
+200 => wire__crate__api__solid__solid_reference_set_definition_impl(ptr, rust_vec_len, data_len),
+201 => wire__crate__api__system__system_memory_bytes_impl(ptr, rust_vec_len, data_len),
+202 => wire__crate__api__system__thaw_cursor_impl(ptr, rust_vec_len, data_len),
+203 => wire__crate__api__system__video_memory_bytes_impl(ptr, rust_vec_len, data_len),
+204 => wire__crate__api__cache__viewer_transport_impl(ptr, rust_vec_len, data_len),
+205 => wire__crate__api__cache__vram_cache_stats_impl(ptr, rust_vec_len, data_len),
                         _ => unreachable!(),
                     }
 }
@@ -9749,6 +9893,59 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::effect::BridgeEffectValue>
     for crate::api::effect::BridgeEffectValue
 {
     fn into_into_dart(self) -> crate::api::effect::BridgeEffectValue {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeEnabledCond {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        match self {
+            crate::api::effect::BridgeEnabledCond::BoolIs(field0) => {
+                [0.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::effect::BridgeEnabledCond::ChoiceIs(field0) => {
+                [1.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::effect::BridgeEnabledCond::ChoiceIsNot(field0) => {
+                [2.into_dart(), field0.into_into_dart().into_dart()].into_dart()
+            }
+            crate::api::effect::BridgeEnabledCond::LayerSet => [3.into_dart()].into_dart(),
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::effect::BridgeEnabledCond
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::effect::BridgeEnabledCond>
+    for crate::api::effect::BridgeEnabledCond
+{
+    fn into_into_dart(self) -> crate::api::effect::BridgeEnabledCond {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeEnabledWhen {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.param.into_into_dart().into_dart(),
+            self.on.into_into_dart().into_dart(),
+            self.cond.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::effect::BridgeEnabledWhen
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::effect::BridgeEnabledWhen>
+    for crate::api::effect::BridgeEnabledWhen
+{
+    fn into_into_dart(self) -> crate::api::effect::BridgeEnabledWhen {
         self
     }
 }
@@ -10279,6 +10476,28 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::layer::BridgePaintMode>
     }
 }
 // Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeParamGroup {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.label.into_into_dart().into_dart(),
+            self.params.into_into_dart().into_dart(),
+            self.collapsed.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::effect::BridgeParamGroup
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::effect::BridgeParamGroup>
+    for crate::api::effect::BridgeParamGroup
+{
+    fn into_into_dart(self) -> crate::api::effect::BridgeParamGroup {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
 impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeParamInfo {
     fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
         [
@@ -10319,38 +10538,53 @@ impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeParamKind {
                 hard_max.into_into_dart().into_dart(),
             ]
             .into_dart(),
+            crate::api::effect::BridgeParamKind::Angle { default, dial_step } => [
+                1.into_dart(),
+                default.into_into_dart().into_dart(),
+                dial_step.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
+            crate::api::effect::BridgeParamKind::Point {
+                default_x,
+                default_y,
+            } => [
+                2.into_dart(),
+                default_x.into_into_dart().into_dart(),
+                default_y.into_into_dart().into_dart(),
+            ]
+            .into_dart(),
             crate::api::effect::BridgeParamKind::Choice {
                 options,
                 default,
                 dividers_after,
             } => [
-                1.into_dart(),
+                3.into_dart(),
                 options.into_into_dart().into_dart(),
                 default.into_into_dart().into_dart(),
                 dividers_after.into_into_dart().into_dart(),
             ]
             .into_dart(),
             crate::api::effect::BridgeParamKind::Bool { default } => {
-                [2.into_dart(), default.into_into_dart().into_dart()].into_dart()
+                [4.into_dart(), default.into_into_dart().into_dart()].into_dart()
             }
             crate::api::effect::BridgeParamKind::Colour { default, min, max } => [
-                3.into_dart(),
+                5.into_dart(),
                 default.into_into_dart().into_dart(),
                 min.into_into_dart().into_dart(),
                 max.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::api::effect::BridgeParamKind::Seed => [4.into_dart()].into_dart(),
+            crate::api::effect::BridgeParamKind::Seed => [6.into_dart()].into_dart(),
             crate::api::effect::BridgeParamKind::File {
                 filter,
                 filter_name,
             } => [
-                5.into_dart(),
+                7.into_dart(),
                 filter.into_into_dart().into_dart(),
                 filter_name.into_into_dart().into_dart(),
             ]
             .into_dart(),
-            crate::api::effect::BridgeParamKind::Layer => [6.into_dart()].into_dart(),
+            crate::api::effect::BridgeParamKind::Layer => [8.into_dart()].into_dart(),
             _ => {
                 unimplemented!("");
             }
@@ -10365,6 +10599,27 @@ impl flutter_rust_bridge::IntoIntoDart<crate::api::effect::BridgeParamKind>
     for crate::api::effect::BridgeParamKind
 {
     fn into_into_dart(self) -> crate::api::effect::BridgeParamKind {
+        self
+    }
+}
+// Codec=Dco (DartCObject based), see doc to use other codecs
+impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeParamLayout {
+    fn into_dart(self) -> flutter_rust_bridge::for_generated::DartAbi {
+        [
+            self.groups.into_into_dart().into_dart(),
+            self.enabled_when.into_into_dart().into_dart(),
+        ]
+        .into_dart()
+    }
+}
+impl flutter_rust_bridge::for_generated::IntoDartExceptPrimitive
+    for crate::api::effect::BridgeParamLayout
+{
+}
+impl flutter_rust_bridge::IntoIntoDart<crate::api::effect::BridgeParamLayout>
+    for crate::api::effect::BridgeParamLayout
+{
+    fn into_into_dart(self) -> crate::api::effect::BridgeParamLayout {
         self
     }
 }
@@ -11587,6 +11842,41 @@ impl SseEncode for crate::api::effect::BridgeEffectValue {
     }
 }
 
+impl SseEncode for crate::api::effect::BridgeEnabledCond {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        match self {
+            crate::api::effect::BridgeEnabledCond::BoolIs(field0) => {
+                <i32>::sse_encode(0, serializer);
+                <bool>::sse_encode(field0, serializer);
+            }
+            crate::api::effect::BridgeEnabledCond::ChoiceIs(field0) => {
+                <i32>::sse_encode(1, serializer);
+                <u32>::sse_encode(field0, serializer);
+            }
+            crate::api::effect::BridgeEnabledCond::ChoiceIsNot(field0) => {
+                <i32>::sse_encode(2, serializer);
+                <u32>::sse_encode(field0, serializer);
+            }
+            crate::api::effect::BridgeEnabledCond::LayerSet => {
+                <i32>::sse_encode(3, serializer);
+            }
+            _ => {
+                unimplemented!("");
+            }
+        }
+    }
+}
+
+impl SseEncode for crate::api::effect::BridgeEnabledWhen {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.param, serializer);
+        <String>::sse_encode(self.on, serializer);
+        <crate::api::effect::BridgeEnabledCond>::sse_encode(self.cond, serializer);
+    }
+}
+
 impl SseEncode for crate::api::export::BridgeExportPreset {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -11889,6 +12179,15 @@ impl SseEncode for crate::api::layer::BridgePaintMode {
     }
 }
 
+impl SseEncode for crate::api::effect::BridgeParamGroup {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <String>::sse_encode(self.label, serializer);
+        <Vec<String>>::sse_encode(self.params, serializer);
+        <bool>::sse_encode(self.collapsed, serializer);
+    }
+}
+
 impl SseEncode for crate::api::effect::BridgeParamInfo {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -11916,44 +12215,65 @@ impl SseEncode for crate::api::effect::BridgeParamKind {
                 <Option<f64>>::sse_encode(hard_min, serializer);
                 <Option<f64>>::sse_encode(hard_max, serializer);
             }
+            crate::api::effect::BridgeParamKind::Angle { default, dial_step } => {
+                <i32>::sse_encode(1, serializer);
+                <f64>::sse_encode(default, serializer);
+                <f64>::sse_encode(dial_step, serializer);
+            }
+            crate::api::effect::BridgeParamKind::Point {
+                default_x,
+                default_y,
+            } => {
+                <i32>::sse_encode(2, serializer);
+                <f64>::sse_encode(default_x, serializer);
+                <f64>::sse_encode(default_y, serializer);
+            }
             crate::api::effect::BridgeParamKind::Choice {
                 options,
                 default,
                 dividers_after,
             } => {
-                <i32>::sse_encode(1, serializer);
+                <i32>::sse_encode(3, serializer);
                 <Vec<String>>::sse_encode(options, serializer);
                 <u32>::sse_encode(default, serializer);
                 <Vec<u32>>::sse_encode(dividers_after, serializer);
             }
             crate::api::effect::BridgeParamKind::Bool { default } => {
-                <i32>::sse_encode(2, serializer);
+                <i32>::sse_encode(4, serializer);
                 <bool>::sse_encode(default, serializer);
             }
             crate::api::effect::BridgeParamKind::Colour { default, min, max } => {
-                <i32>::sse_encode(3, serializer);
+                <i32>::sse_encode(5, serializer);
                 <Vec<f64>>::sse_encode(default, serializer);
                 <f64>::sse_encode(min, serializer);
                 <f64>::sse_encode(max, serializer);
             }
             crate::api::effect::BridgeParamKind::Seed => {
-                <i32>::sse_encode(4, serializer);
+                <i32>::sse_encode(6, serializer);
             }
             crate::api::effect::BridgeParamKind::File {
                 filter,
                 filter_name,
             } => {
-                <i32>::sse_encode(5, serializer);
+                <i32>::sse_encode(7, serializer);
                 <Vec<String>>::sse_encode(filter, serializer);
                 <String>::sse_encode(filter_name, serializer);
             }
             crate::api::effect::BridgeParamKind::Layer => {
-                <i32>::sse_encode(6, serializer);
+                <i32>::sse_encode(8, serializer);
             }
             _ => {
                 unimplemented!("");
             }
         }
+    }
+}
+
+impl SseEncode for crate::api::effect::BridgeParamLayout {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <Vec<crate::api::effect::BridgeParamGroup>>::sse_encode(self.groups, serializer);
+        <Vec<crate::api::effect::BridgeEnabledWhen>>::sse_encode(self.enabled_when, serializer);
     }
 }
 
@@ -12474,6 +12794,16 @@ impl SseEncode for Vec<crate::api::effect::BridgeEffectInstanceInfo> {
     }
 }
 
+impl SseEncode for Vec<crate::api::effect::BridgeEnabledWhen> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::effect::BridgeEnabledWhen>::sse_encode(item, serializer);
+        }
+    }
+}
+
 impl SseEncode for Vec<crate::api::keymap::BridgeKeyBinding> {
     // Codec=Sse (Serialization based), see doc to use other codecs
     fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
@@ -12540,6 +12870,16 @@ impl SseEncode for Vec<crate::api::layer::BridgeMask> {
         <i32>::sse_encode(self.len() as _, serializer);
         for item in self {
             <crate::api::layer::BridgeMask>::sse_encode(item, serializer);
+        }
+    }
+}
+
+impl SseEncode for Vec<crate::api::effect::BridgeParamGroup> {
+    // Codec=Sse (Serialization based), see doc to use other codecs
+    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
+        <i32>::sse_encode(self.len() as _, serializer);
+        for item in self {
+            <crate::api::effect::BridgeParamGroup>::sse_encode(item, serializer);
         }
     }
 }

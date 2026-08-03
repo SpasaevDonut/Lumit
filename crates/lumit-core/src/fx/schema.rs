@@ -52,6 +52,38 @@ pub enum ParamKind {
         /// at zero below and runs unbounded above).
         hard: (Option<f64>, Option<f64>),
     },
+    /// An angle in degrees — the parameter type docs/08 §1.1 has listed since
+    /// the beginning and docs/07-UI-SPEC.md §6 names among the widgets, drawn
+    /// as a **dial** beneath its number rather than a slider.
+    ///
+    /// The stored value is an ordinary [`EffectValue::Float`](crate::model::
+    /// EffectValue::Float), so keyframes, expressions and the resolve step see
+    /// no new shape: an angle *is* a number of degrees, and the only thing this
+    /// kind changes is the control drawn for it. Deliberately unbounded — an
+    /// angle animates through full turns rather than stopping at 360, which is
+    /// why the existing degree parameters (Shake's rotation, the aperture's
+    /// blade rotation) declare `hard: (None, None)`. `dial_step` is the
+    /// snapping increment while a modifier is held, in degrees.
+    Angle {
+        default: f64,
+        dial_step: f64,
+    },
+    /// A 2D point in composition space — docs/08 §1.1's "2D point (comp
+    /// space)", drawn as an x and a y field plus the **crosshair** button
+    /// docs/07-UI-SPEC.md §6 describes: arm it, click in the Viewer, and the
+    /// point lands where you clicked.
+    ///
+    /// The value side of this has been built all along —
+    /// [`EffectValue::Point`](crate::model::EffectValue::Point) carries two
+    /// independently animating [`Property`](crate::model::Property)s, the
+    /// bridge reads and writes it, expressions address it — and only the
+    /// *schema* kind was missing, so no effect could declare one. Radial
+    /// blur's Centre is split into `centre_x`/`centre_y` Floats for exactly
+    /// that reason; it is a candidate to fold back into one point later, but
+    /// that is a saved-project change and not this parameter's business.
+    Point {
+        default: (f64, f64),
+    },
     Choice {
         options: &'static [&'static str],
         default: u32,
@@ -160,6 +192,55 @@ pub struct ParamGroup {
     pub collapsed: bool,
 }
 
+/// One parameter's availability depending on another's value: the greyed-out
+/// row every host draws when a control has been taken over by a switch beside
+/// it.
+///
+/// **In plain terms.** Some controls stop meaning anything once another control
+/// is set a certain way. Tick "Use focus point" and the focus *distance* number
+/// is no longer what decides focus — the point is — so leaving the number live
+/// would invite you to drag something that does nothing. Every editor's answer
+/// is the same: draw the row greyed and refuse the edit, so the panel tells you
+/// which of the two is in charge.
+///
+/// It is declared on the [`EffectSchema`], not inside [`ParamSchema`], for the
+/// same reason [`ParamGroup`] is: it names parameters rather than living in
+/// one, and putting it here leaves the 130-odd existing parameter literals
+/// untouched. The rule is a *UI affordance and a piece of documentation* — the
+/// resolve step implements the real branch itself and never consults this, so a
+/// schema that forgets a rule renders correctly and merely draws a live control
+/// that does nothing.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EnabledWhen {
+    /// The parameter whose row this governs — the one that greys out.
+    pub param: &'static str,
+    /// The parameter whose value decides it.
+    pub on: &'static str,
+    /// What `on` must hold for `param` to be editable.
+    pub cond: EnabledCond,
+}
+
+/// The condition half of an [`EnabledWhen`].
+///
+/// Deliberately a small closed set rather than an expression language: these
+/// are panel affordances, and every case the built-ins have wanted so far is
+/// "a switch is on", "a dropdown is on some entry", or "a layer has been
+/// picked". Add a variant when an effect genuinely needs one, and give it a
+/// test — do not grow this into a scripting surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnabledCond {
+    /// Editable while the named [`ParamKind::Bool`] holds this value.
+    BoolIs(bool),
+    /// Editable while the named [`ParamKind::Choice`] is on this option index.
+    ChoiceIs(u32),
+    /// Editable while the named [`ParamKind::Choice`] is on anything *but*
+    /// this option index — the "…unless it is set to None" shape.
+    ChoiceIsNot(u32),
+    /// Editable while the named [`ParamKind::Layer`] actually names a layer.
+    /// An unset or dangling reference greys the dependent row.
+    LayerSet,
+}
+
 /// The Add-effect menu's grouping (K-090): every schema declares one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FxCategory {
@@ -209,4 +290,7 @@ pub struct EffectSchema {
     /// of `params` the Effect Controls tucks behind a twirl. Empty for the
     /// effects that declare none.
     pub groups: &'static [ParamGroup],
+    /// Rows that grey out while another parameter says so. Empty for the
+    /// effects whose controls are all independent, which is most of them.
+    pub enabled_when: &'static [EnabledWhen],
 }

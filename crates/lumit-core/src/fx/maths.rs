@@ -318,6 +318,47 @@ pub fn rgb_split_offset(amount_px: f32, angle_deg: f32) -> (f32, f32) {
     (amount_px * rad.cos(), amount_px * rad.sin())
 }
 
+/// The most aperture blades Bokeh's polygon test carries (docs/08 §3.27).
+/// Bounds the per-tap loop and the kernel uniform's normal array; the schema's
+/// Blades choice tops out at Octagon. `lumit_gpu::fx::MAX_BLADES` mirrors it,
+/// pinned by a test there (lumit-core is only a dev-dependency of that crate).
+pub const MAX_BLADES: usize = 8;
+
+/// Bokeh's aperture geometry (docs/08 §3.27): the outward unit
+/// edge normals of a regular `blade_count`-gon turned by `rotation_deg`, and
+/// `cos²(π/N)` — the squared ratio of the polygon's apothem to its
+/// circumradius, which the inside test scales by.
+///
+/// Blade `k`'s normal points at `rotation + (k + ½)·(2π/N)`; the half-step puts
+/// a normal through the middle of each edge rather than through a vertex, so
+/// the polygon is the one inscribed in the circle of the circle-of-confusion
+/// radius. That inscription is load-bearing: the kernel scans a `ceil(coc)` box
+/// for taps, which only bounds the aperture if the aperture fits inside that
+/// circle.
+///
+/// `blade_count == 0` is Circle — no normals, and `apothem2 = 1.0`, which makes
+/// the inside test reduce to the plain `r² ≤ coc²`.
+///
+/// **Shared, like [`rgb_split_offset`] and [`shake_affine`], because the trig
+/// must happen exactly once.** WGSL's `cos`/`sin` are not correctly rounded and
+/// carry no guarantee of agreeing with Rust's, so the kernel never computes its
+/// own; the CPU oracle and the GPU op both consume what this returns.
+pub fn aperture_blades(blade_count: u32, rotation_deg: f32) -> ([[f32; 2]; MAX_BLADES], f32) {
+    let mut normals = [[0.0f32; 2]; MAX_BLADES];
+    if blade_count == 0 {
+        return (normals, 1.0);
+    }
+    let n = blade_count as f32;
+    let step = std::f32::consts::TAU / n;
+    let base = rotation_deg.to_radians();
+    for (k, slot) in normals.iter_mut().take(blade_count as usize).enumerate() {
+        let a = base + (k as f32 + 0.5) * step;
+        *slot = [a.cos(), a.sin()];
+    }
+    let c = (std::f32::consts::PI / n).cos();
+    (normals, c * c)
+}
+
 /// The wavelength → linear-sRGB basis behind the RGB split's Wavelength
 /// mode (docs/08 §3.6, K-090): nine taps across the visible spectrum. Tap
 /// `i` sits at spectral fraction `t = i/4 − 1`, sampling `position +

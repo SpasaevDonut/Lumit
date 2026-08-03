@@ -56,7 +56,7 @@ pub struct MatteDraw {
 /// effect stack is not applied), exactly as a matte source is — so a depth
 /// reference can never recurse into another effect, and the preview and export
 /// threads produce the same depth pass (K-031).
-pub struct DofInputDraw {
+pub struct LayerInputDraw {
     pub rgba: Vec<u8>,
     pub tex_w: u32,
     pub tex_h: u32,
@@ -177,7 +177,7 @@ pub struct CompLayerDraw {
     /// comp size and passes the parallel `layer_inputs` to `run_ops`. Each
     /// carries the referenced layer's source pixels; the GPU render happens in
     /// `realise_segment`.
-    pub dof_inputs: Vec<Option<DofInputDraw>>,
+    pub layer_inputs: Vec<Option<LayerInputDraw>>,
     /// Per-layer motion-blur sub-frame placements (docs/06 §4, K-120): the
     /// layer's own transform re-evaluated across the open shutter. Empty unless
     /// the comp master and the layer switch are both on (and samples ≥ 2), in
