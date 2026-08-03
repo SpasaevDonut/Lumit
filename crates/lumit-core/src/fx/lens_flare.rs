@@ -130,8 +130,17 @@ pub const STARBURST_SAMPLES: u32 = 100;
 /// set by eye against the reference renders, not derived).
 pub const GHOST_ENERGY_SCALE: f32 = 1.0;
 /// Floor on a landed quad's area as a fraction of its launch area — stops
-/// caustic-focused cells burning to infinity (the impl note §7 trap).
-pub const MIN_AREA_FRAC: f32 = 0.01;
+/// caustic-focused cells burning to infinity (the impl note §7 trap). K-261:
+/// 1e-4, not realflare's 0.01 — the caustic dynamic range IS the reference
+/// look; the screen-space quad inflation below is what keeps it drawable.
+pub const MIN_AREA_FRAC: f32 = 1e-4;
+/// Minimum screen area a drawn quad may have, px² (K-261). A caustic-folded
+/// quad shrinks below a pixel, and a rasteriser drops triangles that cover
+/// no pixel centre — deleting exactly the flux that makes a flare's bright
+/// rims and fold lines. Quads below this inflate about their centroid to
+/// this area with their colour scaled by (true / inflated) area, so the
+/// deposited flux is conserved and every quad reliably covers samples.
+pub const MIN_QUAD_PX: f32 = 4.0;
 
 /// Most flare sources a frame renders (Matte mode's top-K cap; Manual is one).
 pub const MAX_LIGHTS: usize = 8;
@@ -1428,7 +1437,8 @@ pub fn cpu_flare(
                                 rrel: r.rrel,
                             }
                         };
-                        let v = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
+                        let mut v = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
+                        inflate_quad(&mut v);
                         for tri in [[0usize, 1, 2], [0, 2, 3]] {
                             raster_triangle(
                                 &mut out,
@@ -1444,6 +1454,37 @@ pub fn cpu_flare(
         }
     }
     out
+}
+
+/// Flux-conserving screen-space floor on a quad's size (K-261, mirrored by
+/// the WGSL `inflate_quad`): a quad smaller than [`MIN_QUAD_PX`] on screen
+/// inflates about its centroid to that area, its colour scaled by the true ÷
+/// inflated area ratio — so a caustic fold's flux lands instead of being
+/// dropped as a sub-pixel triangle.
+fn inflate_quad(v: &mut [FlareVertex; 4]) {
+    let e = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| {
+        (a[0] - b[0]) * (c[1] - a[1]) - (a[1] - b[1]) * (c[0] - a[0])
+    };
+    let a0 = e(v[0].pos, v[1].pos, v[2].pos);
+    let a1 = e(v[0].pos, v[2].pos, v[3].pos);
+    let area_px = ((a0 + a1) / 2.0).abs();
+    if area_px >= MIN_QUAD_PX {
+        return;
+    }
+    // The epsilon keeps a fully-degenerate (point) quad finite: its scale
+    // tends to 0, so it fades out rather than spiking.
+    let eps = MIN_QUAD_PX * 1e-4;
+    let s = (MIN_QUAD_PX / area_px.max(eps)).sqrt();
+    let cx = (v[0].pos[0] + v[1].pos[0] + v[2].pos[0] + v[3].pos[0]) / 4.0;
+    let cy = (v[0].pos[1] + v[1].pos[1] + v[2].pos[1] + v[3].pos[1]) / 4.0;
+    let scale = area_px.max(eps) / MIN_QUAD_PX;
+    for c in v.iter_mut() {
+        c.pos[0] = cx + (c.pos[0] - cx) * s;
+        c.pos[1] = cy + (c.pos[1] - cy) * s;
+        for ch in 0..3 {
+            c.rgb[ch] *= scale;
+        }
+    }
 }
 
 /// Scanline-rasterise one triangle with barycentric attribute interpolation

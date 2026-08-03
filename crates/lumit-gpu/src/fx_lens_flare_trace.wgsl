@@ -398,7 +398,7 @@ fn quad_energy(@builtin(global_invocation_id) gid: vec3<u32>) {
         let p01 = vec2<f32>(r01.pos_x, r01.pos_y);
         let cell_mm = tp.launch_mm / (f32(max(tp.grid, 2u)) - 1.0);
         let area_launch = cell_mm * cell_mm;
-        let min_area = 0.01 * area_launch; // MIN_AREA_FRAC (impl note §7)
+        let min_area = 1e-4 * area_launch; // MIN_AREA_FRAC (impl note §7, K-261)
         let a0 = edge_mm(p00, p10, p11);
         let a1 = edge_mm(p00, p11, p01);
         let area = max(abs((a0 + a1) / 2.0), min_area);
@@ -484,10 +484,44 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     // Corners (x, y), (x+1, y), (x+1, y+1), (x, y+1); triangles (0,1,2) and
     // (0,2,3) — the split the CPU reference mirrors exactly.
-    let c0 = build_corner(combo, slot, tint, qx, qy);
-    let c1 = build_corner(combo, slot, tint, qx + 1u, qy);
-    let c2 = build_corner(combo, slot, tint, qx + 1u, qy + 1u);
-    let c3 = build_corner(combo, slot, tint, qx, qy + 1u);
+    var c0 = build_corner(combo, slot, tint, qx, qy);
+    var c1 = build_corner(combo, slot, tint, qx + 1u, qy);
+    var c2 = build_corner(combo, slot, tint, qx + 1u, qy + 1u);
+    var c3 = build_corner(combo, slot, tint, qx, qy + 1u);
+    // Flux-conserving sub-pixel inflation (K-261, the CPU `inflate_quad`
+    // twin): a caustic-folded quad below MIN_QUAD_PX px² would be dropped by
+    // the hardware raster as a zero-coverage triangle; inflate it about its
+    // centroid to that floor and scale its colour by true ÷ inflated area.
+    let min_quad_px = 4.0;
+    let p0 = vec2<f32>((c0.ndc_x + 1.0) / 2.0 * tp.raster_w, (1.0 - c0.ndc_y) / 2.0 * tp.raster_h);
+    let p1 = vec2<f32>((c1.ndc_x + 1.0) / 2.0 * tp.raster_w, (1.0 - c1.ndc_y) / 2.0 * tp.raster_h);
+    let p2 = vec2<f32>((c2.ndc_x + 1.0) / 2.0 * tp.raster_w, (1.0 - c2.ndc_y) / 2.0 * tp.raster_h);
+    let p3 = vec2<f32>((c3.ndc_x + 1.0) / 2.0 * tp.raster_w, (1.0 - c3.ndc_y) / 2.0 * tp.raster_h);
+    let a0 = edge_mm(p0, p1, p2);
+    let a1 = edge_mm(p0, p2, p3);
+    let area_px = abs((a0 + a1) / 2.0);
+    if (area_px < min_quad_px) {
+        let eps = min_quad_px * 1e-4;
+        let s = sqrt(min_quad_px / max(area_px, eps));
+        let scale = max(area_px, eps) / min_quad_px;
+        let centre = (p0 + p1 + p2 + p3) / 4.0;
+        let q0 = centre + (p0 - centre) * s;
+        let q1 = centre + (p1 - centre) * s;
+        let q2 = centre + (p2 - centre) * s;
+        let q3 = centre + (p3 - centre) * s;
+        c0.ndc_x = q0.x / tp.raster_w * 2.0 - 1.0;
+        c0.ndc_y = 1.0 - q0.y / tp.raster_h * 2.0;
+        c1.ndc_x = q1.x / tp.raster_w * 2.0 - 1.0;
+        c1.ndc_y = 1.0 - q1.y / tp.raster_h * 2.0;
+        c2.ndc_x = q2.x / tp.raster_w * 2.0 - 1.0;
+        c2.ndc_y = 1.0 - q2.y / tp.raster_h * 2.0;
+        c3.ndc_x = q3.x / tp.raster_w * 2.0 - 1.0;
+        c3.ndc_y = 1.0 - q3.y / tp.raster_h * 2.0;
+        c0.r = c0.r * scale; c0.g = c0.g * scale; c0.b = c0.b * scale;
+        c1.r = c1.r * scale; c1.g = c1.g * scale; c1.b = c1.b * scale;
+        c2.r = c2.r * scale; c2.g = c2.g * scale; c2.b = c2.b * scale;
+        c3.r = c3.r * scale; c3.g = c3.g * scale; c3.b = c3.b * scale;
+    }
     verts[out_base] = c0;
     verts[out_base + 1u] = c1;
     verts[out_base + 2u] = c2;
