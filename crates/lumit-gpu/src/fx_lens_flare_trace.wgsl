@@ -95,6 +95,11 @@ struct TraceParams {
     raster_w: f32,
     raster_h: f32,
     light_count: u32,
+    // Focus (K-260): the sensor plane's shift from calibrated infinity, mm.
+    sensor_shift_mm: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 };
 
 @group(0) @binding(0) var<storage, read> surfaces: array<Surface>;
@@ -260,7 +265,11 @@ fn trace_one(combo: Combo, cell: vec2<u32>, dir: vec3<f32>) -> Ray {
         if (iters > max_iters) {
             return dead;
         }
-        let s = surfaces[lens_id];
+        var s = surfaces[lens_id];
+        // Focus (K-260): the sensor plane rides the shift; the glass stays.
+        if (s.is_sensor > 0.5) {
+            s.center_z_mm = s.center_z_mm + tp.sensor_shift_mm;
+        }
         let hit = intersect(pos, rdir, s);
         if (!hit.hit) {
             return dead;

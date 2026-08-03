@@ -2917,10 +2917,12 @@ fn wgsl_dof_matches_the_cpu_oracle() {
 /// The documented drop-on defaults (docs/08 §3.27) as a resolved bundle.
 fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
     lumit_core::fx::lens_flare::LensFlareParams {
-        light: [0.33, 0.30],
+        // Raster pixels of a 192×108 probe framing (K-260).
+        light: [63.4, 32.4],
         intensity: 1.0,
         lens: 2,
         fstop: 2.8,
+        focus_m: 100.0,
         blades: 8,
         aperture_rotation_deg: 0.0,
         roundness: 0.15,
@@ -2950,18 +2952,18 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
 fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> LensFlareOp {
     use lumit_core::fx::lens_flare as lf;
     let (grid, lambda_count, flare_div) = lf::quality_ladder(p.quality);
-    let _ = h;
     let energy = lf::GHOST_ENERGY_SCALE * p.ghost_intensity;
     let lambdas = lf::lambda_weights(lambda_count, p.dispersion)
         .into_iter()
         .map(|(nm, rgb)| (nm, [rgb[0] * energy, rgb[1] * energy, rgb[2] * energy]))
         .collect();
     LensFlareOp {
-        light_frac: p.light,
+        light_frac: [p.light[0] / w.max(1) as f32, p.light[1] / h as f32],
         intensity: p.intensity,
         lambdas,
         max_ghosts: p.max_ghosts,
         coating: p.coating,
+        focus_m: p.focus_m,
         disc_scale: lf::ghost_disc_scale(p.fstop),
         grid,
         flare_div,
@@ -3026,15 +3028,15 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
     use lumit_core::fx::lens_flare as lf;
     let (w, h) = (192u32, 108u32);
     for lens in [0u32, 2] {
-        for light in [[0.33f32, 0.30f32], [0.85, 0.75]] {
+        for light_frac in [[0.33f32, 0.30f32], [0.85, 0.75]] {
             let p = lf::LensFlareParams {
                 lens,
-                light,
+                light: [light_frac[0] * w as f32, light_frac[1] * h as f32],
                 ..flare_params()
             };
             let baked = lf::bake(&p);
             let op = flare_op(&p, w, h);
-            let dir = lf::light_direction(p.light, h as f32 / w as f32, baked.focal_mm);
+            let dir = lf::light_direction(light_frac, h as f32 / w as f32, baked.focal_mm);
             let combo_limit = 12u32;
             let gpu =
                 fx.lens_flare_trace_debug(&ctx, &op, &|| flare_bake_data(&p), combo_limit, w, h);
@@ -3072,7 +3074,16 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
                 for ry in 0..grid {
                     for rx in 0..grid {
                         let g = gpu[ci * ray_count + (ry * grid + rx) as usize];
-                        let c = lf::trace_ray(&baked, ghost, nm, [rx, ry], grid, p.coating, dir);
+                        let c = lf::trace_ray(
+                            &baked,
+                            ghost,
+                            nm,
+                            [rx, ry],
+                            grid,
+                            p.coating,
+                            dir,
+                            lf::focus_shift_mm(p.focus_m, baked.focal_mm),
+                        );
                         total += 1;
                         let cpu_live = c.reflectance.is_finite();
                         let gpu_live = g[5] >= 0.0;
@@ -3107,7 +3118,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
                 }
             }
             eprintln!(
-                "lens {lens} light {light:?}: pos {worst_pos} uv {worst_uv} rrel {worst_rrel} refl-rel {worst_refl_rel}"
+                "lens {lens} light {light_frac:?}: pos {worst_pos} uv {worst_uv} rrel {worst_rrel} refl-rel {worst_refl_rel}"
             );
             // The documented §8.5 bounds (docs/impl/lens-flare.md): the MEAN
             // position error is what a porting bug would blow up by orders
@@ -3176,7 +3187,7 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
     // CPU reference: flare at the Draft half-size buffer, then the combine.
     let (_, _, div) = lf::quality_ladder(p.quality);
     let (fw, fh) = ((w / div).max(1), (h / div).max(1));
-    let lights = lf::manual_light(&p);
+    let lights = lf::manual_light(&p, w, h);
     let flare = lf::cpu_flare(&p, &baked, fw, fh, &lights);
     let mut cpu = img.clone();
     lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh, &lights);

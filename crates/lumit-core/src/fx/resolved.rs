@@ -1113,8 +1113,10 @@ fn resolve_one(
             // the Matte source's rendered layer (the DoF layer-input shape).
             // Light position is a raster fraction; % keeps it
             // resolution-independent (§2.3).
-            let lx = (e.float_at("light_x", lt).unwrap_or(33.0) / 100.0) as f32;
-            let ly = (e.float_at("light_y", lt).unwrap_or(30.0) / 100.0) as f32;
+            // px@comp -> raster pixels through the §2.3 preview factor, the
+            // Transform-anchor convention (K-260: point params are pixels).
+            let lx = e.float_at("light_x", lt).unwrap_or(640.0) as f32 * px_scale;
+            let ly = e.float_at("light_y", lt).unwrap_or(360.0) as f32 * px_scale;
             let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
             let lens = match e.param("lens_model") {
                 Some(EffectValue::Choice(c)) => *c,
@@ -1126,6 +1128,7 @@ fn resolve_one(
                 _ => 0,
             };
             let fstop = (e.float_at("fstop", lt).unwrap_or(2.8) as f32).clamp(0.7, 32.0);
+            let focus_m = (e.float_at("focus", lt).unwrap_or(100.0) as f32).max(0.2);
             let quality = match e.param("quality") {
                 Some(EffectValue::Choice(c)) => (*c).min(3),
                 _ => 1,
@@ -1175,6 +1178,7 @@ fn resolve_one(
                     intensity,
                     lens,
                     fstop,
+                    focus_m,
                     blades: blades as u32,
                     aperture_rotation_deg: aperture_rotation,
                     roundness,

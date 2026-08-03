@@ -548,7 +548,15 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   light layers — a **Use source colour** switch decides whether each detected light
   keeps its own colour (a warm practical flaring warm, a cool one cool) or flares white
   through the tint alone, which is what you want when the matte is only there to say
-  *where* the lights are.
+  *where* the lights are. A calibration pass (K-260, on advice from the author of a
+  reference flare renderer) made the optics honest: instead of trusting the patent
+  paperwork about where the sensor sits, the bake now shoots one thin test ray through
+  the lens and puts the sensor exactly where that ray comes to a point — the lens's own
+  measured focus. That mattered because patent tables lie a little (the bundled "Zeiss
+  50mm" actually measures 64.8 mm). It also added a **Focus (m)** dial: refocusing a
+  real lens slides the sensor a fraction of a millimetre, and that tiny slide visibly
+  rearranges the whole ghost train — the same lens at 1 m and at infinity throws
+  completely different flares, and now Lumit's does too.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

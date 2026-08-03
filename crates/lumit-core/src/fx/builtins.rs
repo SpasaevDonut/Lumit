@@ -2551,6 +2551,7 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamGroup {
                 label: "Lens options",
                 params: &[
+                    "focus",
                     "anamorphic",
                     "blades",
                     "aperture_rotation",
@@ -2607,13 +2608,15 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "light_x",
                 label: "Light x",
-                // % of the frame width; open both sides (an off-frame light
-                // keeps flaring, as real ones do). Default upper-left third
-                // so a fresh instance reads well (§1.2). Pairs with light_y
-                // into one point row (the _x/_y convention, docs/07 §6.1).
+                // px@comp (K-260: point parameters are PIXELS, the
+                // Transform-anchor convention — never % of frame). Open both
+                // sides: an off-frame light keeps flaring. The schema default
+                // is nominal 1080p; `instantiate_for_raster` centres a fresh
+                // instance on the actual comp's upper-left third (§1.2).
+                // Pairs with light_y into one point row (docs/07 §6.1).
                 kind: ParamKind::Float {
-                    default: 33.0,
-                    slider: (-50.0, 150.0),
+                    default: 640.0,
+                    slider: (0.0, 3840.0),
                     hard: (None, None),
                 },
             },
@@ -2621,8 +2624,8 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "light_y",
                 label: "Light y",
                 kind: ParamKind::Float {
-                    default: 30.0,
-                    slider: (-50.0, 150.0),
+                    default: 360.0,
+                    slider: (0.0, 2160.0),
                     hard: (None, None),
                 },
             },
@@ -2679,6 +2682,19 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             // --- Lens options group ---
+            ParamSchema {
+                id: "focus",
+                label: "Focus (m)",
+                // Focus distance in metres (K-260): shifts the sensor from
+                // its calibrated infinity position by the thin-lens image
+                // shift, changing the whole flare's shape — real flares
+                // breathe with focus. Large values are infinity.
+                kind: ParamKind::Float {
+                    default: 100.0,
+                    slider: (0.5, 100.0),
+                    hard: (Some(0.2), None),
+                },
+            },
             ParamSchema {
                 id: "anamorphic",
                 label: "Anamorphic squeeze",
@@ -2906,6 +2922,18 @@ pub fn instantiate_for_raster(match_name: &str, w: f64, h: f64) -> Option<Effect
             let v = match p.id.as_str() {
                 "anchor_x" | "position_x" => w * 0.5,
                 "anchor_y" | "position_y" => h * 0.5,
+                _ => continue,
+            };
+            p.value = EffectValue::Float(Property::fixed(v));
+        }
+    }
+    // The flare's light is px@comp (K-260), so its tasteful default — the
+    // upper-left third (§1.2) — needs the actual raster.
+    if match_name == "lens_flare" {
+        for p in &mut inst.params {
+            let v = match p.id.as_str() {
+                "light_x" => w * 0.33,
+                "light_y" => h * 0.30,
                 _ => continue,
             };
             p.value = EffectValue::Float(Property::fixed(v));

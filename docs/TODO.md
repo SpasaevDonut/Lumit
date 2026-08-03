@@ -301,7 +301,9 @@ parameter; the **lens designer** (a window building a custom prescription elemen
 element with a live lens diagram — the intended custom-lens path, ahead of flat file
 loading); an **Occlusion layer** reference fading the flare when the light is covered;
 per-wavelength sub-interpolation. The panel side owes the pair row's dropper to
-**Transform's px@comp pairs** (needs the comp size threaded to the pick) and one-op
+**Transform's px@comp pairs** (the pixel-writing pick exists since K-260 — the flare's
+Light uses it; Transform's rows just aren't wired to it), **Radial blur's centre
+migration** from the grandfathered % of frame to px@comp (K-260 convention), and one-op
 writes for a paired keyframe toggle (two ops today).
 
 **Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and

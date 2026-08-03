@@ -595,7 +595,7 @@ class _EffectSection extends StatelessWidget {
             onWrite: onWrite,
             onLive: onLive,
             twoColumn: true,
-            pickable: pickablePointParams.contains(param.id),
+            pickPixels: pickablePointParams[param.id],
           ));
           i += 2;
         } else {

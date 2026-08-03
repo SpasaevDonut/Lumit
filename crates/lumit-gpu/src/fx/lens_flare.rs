@@ -29,7 +29,8 @@ use super::{work_texture, FxEngine};
 /// from `lumit_core::fx::lens_flare` so the formulas live in one place.
 #[derive(Debug, Clone)]
 pub struct LensFlareOp {
-    /// Manual light position as a fraction of the raster (x right, y down).
+    /// Manual light position as a fraction of the raster (x right, y down)
+    /// — the caller divides its raster-pixel parameter by the raster (K-260).
     pub light_frac: [f32; 2],
     /// Master gain; 0 short-circuits to the identity.
     pub intensity: f32,
@@ -40,6 +41,9 @@ pub struct LensFlareOp {
     pub max_ghosts: u32,
     /// 0..1 coating blend.
     pub coating: f32,
+    /// Focus distance, metres (K-260); the sensor shift derives from it and
+    /// the bake's measured focal length inside the apply.
+    pub focus_m: f32,
     /// Ghost-disc UV scale (lumit_core `ghost_disc_scale`).
     pub disc_scale: f32,
     /// Ray-grid side for this quality.
@@ -164,6 +168,10 @@ struct TraceParams {
     raster_w: f32,
     raster_h: f32,
     light_count: u32,
+    sensor_shift_mm: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
 }
 
 #[repr(C)]
@@ -824,6 +832,20 @@ impl FxEngine {
                                 raster_w: fw as f32,
                                 raster_h: fh as f32,
                                 light_count,
+                                // Focus (K-260): thin-lens shift from the
+                                // bake's measured focal length — the same
+                                // f²/(1000·d − f) the CPU reference uses.
+                                sensor_shift_mm: {
+                                    let f = baked.focal_mm;
+                                    if op.focus_m <= 0.0 {
+                                        0.0
+                                    } else {
+                                        (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
+                                    }
+                                },
+                                _pad0: 0.0,
+                                _pad1: 0.0,
+                                _pad2: 0.0,
                             }),
                             usage: wgpu::BufferUsages::UNIFORM,
                         });
@@ -1086,6 +1108,17 @@ impl FxEngine {
                     raster_w: w as f32,
                     raster_h: h as f32,
                     light_count: 1,
+                    sensor_shift_mm: {
+                        let f = baked.focal_mm;
+                        if op.focus_m <= 0.0 {
+                            0.0
+                        } else {
+                            (f * f / (1000.0 * op.focus_m - f).max(f)).clamp(0.0, f)
+                        }
+                    },
+                    _pad0: 0.0,
+                    _pad1: 0.0,
+                    _pad2: 0.0,
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,
             });

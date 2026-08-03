@@ -629,10 +629,12 @@ class EffectPointRowFrb extends StatelessWidget {
       onLive;
   final bool twoColumn;
 
-  /// Whether the pair is a %-of-frame position the dropper may write
-  /// (fraction × 100). Only such pairs offer the pick — a px@comp pair like
-  /// Transform's anchor would need the comp size the sample does not carry.
-  final bool pickable;
+  /// Whether the pair may take the position dropper, and in what unit it
+  /// writes: null = no dropper; false = % of frame (fraction × 100, the
+  /// legacy Radial blur centre); true = comp PIXELS (fraction × comp size,
+  /// read from the comp at CLICK time — never in a rebuild, K-184 — which is
+  /// the K-260 convention every new point pair uses).
+  final bool? pickPixels;
 
   const EffectPointRowFrb({
     super.key,
@@ -647,7 +649,7 @@ class EffectPointRowFrb extends StatelessWidget {
     required this.onWrite,
     required this.onLive,
     this.twoColumn = false,
-    this.pickable = false,
+    this.pickPixels,
   });
 
   BridgeScalar? _scalar(BridgeEffectValue? v) => switch (v) {
@@ -746,7 +748,7 @@ class EffectPointRowFrb extends StatelessWidget {
         field(xParam, sx),
         const SizedBox(width: 4),
         field(yParam, sy),
-        if (pickable) ...[
+        if (pickPixels != null) ...[
           const SizedBox(width: 4),
           _DropperButton(
             id: 'fx-$id-${xParam.id}',
@@ -756,17 +758,24 @@ class EffectPointRowFrb extends StatelessWidget {
               reads: DropperReads.position,
               label: stem,
               onPick: (sample) {
-                // %-of-frame semantics: the pick's fraction × 100.
-                onWrite(
-                    id,
-                    xParam.id,
-                    BridgeEffectValue.float(
-                        BridgeScalar.static_(sample.xFrac * 100)));
-                onWrite(
-                    id,
-                    yParam.id,
-                    BridgeEffectValue.float(
-                        BridgeScalar.static_(sample.yFrac * 100)));
+                // Pixel pairs write fraction × comp size (K-260); the legacy
+                // %-pairs write fraction × 100. The size is read here, at
+                // click time — a pick is an edit, not a rebuild (K-184).
+                double x = sample.xFrac * 100;
+                double y = sample.yFrac * 100;
+                if (pickPixels == true) {
+                  try {
+                    final size = comp.getSize();
+                    x = sample.xFrac * size.width;
+                    y = sample.yFrac * size.height;
+                  } catch (_) {
+                    return; // the comp has gone; drop the pick
+                  }
+                }
+                onWrite(id, xParam.id,
+                    BridgeEffectValue.float(BridgeScalar.static_(x)));
+                onWrite(id, yParam.id,
+                    BridgeEffectValue.float(BridgeScalar.static_(y)));
               },
             )),
           ),
@@ -800,11 +809,13 @@ class EffectPointRowFrb extends StatelessWidget {
   }
 }
 
-/// The ids of `_x` parameters whose pair may take the position dropper: the
-/// %-of-frame pairs. A px@comp pair (Transform's anchor) is deliberately
-/// absent — its numbers are pixels, which the pick's fraction cannot honestly
-/// produce without the comp size.
-const Set<String> pickablePointParams = {'light_x', 'centre_x'};
+/// The `_x` parameters whose pair takes the position dropper, mapped to the
+/// unit it writes: true = comp pixels (the K-260 convention), false = % of
+/// frame (the legacy Radial blur centre, until it migrates).
+const Map<String, bool> pickablePointParams = {
+  'light_x': true,
+  'centre_x': false,
+};
 
 /// The effect schema, fetched once per session and then answered from here.
 ///

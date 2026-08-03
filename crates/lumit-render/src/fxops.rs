@@ -782,11 +782,14 @@ pub fn run_ops(
                     .map(|(nm, rgb)| (nm, [rgb[0] * energy, rgb[1] * energy, rgb[2] * energy]))
                     .collect();
                 let op = lumit_gpu::fx::LensFlareOp {
-                    light_frac: p.light,
+                    // Raster pixels → fraction here, where the raster is
+                    // known (K-260: the parameter is px@comp).
+                    light_frac: [p.light[0] / w.max(1) as f32, p.light[1] / h.max(1) as f32],
                     intensity: p.intensity,
                     lambdas,
                     max_ghosts: p.max_ghosts,
                     coating: p.coating,
+                    focus_m: p.focus_m,
                     disc_scale: lf::ghost_disc_scale(p.fstop),
                     grid,
                     flare_div,

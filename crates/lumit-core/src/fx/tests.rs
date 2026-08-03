@@ -4833,7 +4833,7 @@ fn lens_flare_trace_lands_live_rays_with_sane_uvs() {
     for &ghost in baked.ghosts.iter().take(10) {
         for cy in 0..grid {
             for cx in 0..grid {
-                let r = trace_ray(&baked, ghost, 560.0, [cx, cy], grid, 0.75, dir);
+                let r = trace_ray(&baked, ghost, 560.0, [cx, cy], grid, 0.75, dir, 0.0);
                 if r.reflectance.is_finite() {
                     live += 1;
                     assert!(r.pos_mm[0].is_finite() && r.pos_mm[1].is_finite());
@@ -4868,7 +4868,7 @@ fn lens_flare_neutral_points_and_default_resolve() {
         intensity: 0.0,
         ..p
     };
-    let lights = manual_light(&pi0);
+    let lights = manual_light(&pi0, w, h);
     cpu_combine(
         &mut zero_intensity,
         w,
@@ -4903,8 +4903,9 @@ fn lens_flare_neutral_points_and_default_resolve() {
     );
     match ops.as_slice() {
         [Resolved::LensFlare(rp)] => {
-            assert!((rp.light[0] - 0.33).abs() < 1e-6);
-            assert!((rp.light[1] - 0.30).abs() < 1e-6);
+            // px@comp defaults at the schema's nominal 1080p (K-260).
+            assert!((rp.light[0] - 640.0).abs() < 1e-3);
+            assert!((rp.light[1] - 360.0).abs() < 1e-3);
             assert_eq!(rp.intensity, 1.0);
             assert_eq!(rp.lens, 2, "default lens is the cine prime");
             assert_eq!(rp.blades, 8);
@@ -4929,17 +4930,17 @@ fn lens_flare_cpu_reference_renders_energy_and_reacts_to_the_light() {
     };
     let baked = bake(&p);
     let (w, h) = (96u32, 54u32);
-    let a = cpu_flare(&p, &baked, w, h, &manual_light(&p));
+    let a = cpu_flare(&p, &baked, w, h, &manual_light(&p, w, h));
     let energy_a: f32 = a.iter().sum();
     assert!(energy_a > 0.0, "the default flare renders no energy");
     assert!(a.iter().all(|v| v.is_finite()));
 
     // Moving the light moves the picture.
     let p2 = LensFlareParams {
-        light: [0.7, 0.6],
+        light: [67.0, 32.0],
         ..p
     };
-    let b = cpu_flare(&p2, &baked, w, h, &manual_light(&p2));
+    let b = cpu_flare(&p2, &baked, w, h, &manual_light(&p2, w, h));
     assert_ne!(a, b, "the flare must follow the light");
 }
 
@@ -4987,7 +4988,7 @@ fn lens_flare_black_background_sets_alpha_only_while_live() {
         .map(|i| (i % 13) as f32 / 24.0)
         .collect();
     let flare = vec![0.25f32; (w * h * 3) as usize];
-    let lights = manual_light(&p);
+    let lights = manual_light(&p, w, h);
 
     let mut black = src.clone();
     cpu_combine(&mut black, w, h, &p, &baked, &flare, w, h, &lights);
@@ -5019,12 +5020,12 @@ fn lens_flare_light_tint_and_source_colour_toggle() {
     use crate::fx::lens_flare::*;
     // Manual: the light IS the tint (white by default).
     let p = default_flare_params();
-    assert_eq!(manual_light(&p)[0].rgb, [1.0, 1.0, 1.0]);
+    assert_eq!(manual_light(&p, 96, 54)[0].rgb, [1.0, 1.0, 1.0]);
     let warm = LensFlareParams {
         light_tint: [1.0, 0.5, 0.25],
         ..p
     };
-    assert_eq!(manual_light(&warm)[0].rgb, [1.0, 0.5, 0.25]);
+    assert_eq!(manual_light(&warm, 96, 54)[0].rgb, [1.0, 0.5, 0.25]);
 
     // Matte: one blue-green source, gate fully open.
     let (w, h) = (64u32, 64u32);
@@ -5069,13 +5070,56 @@ fn lens_flare_light_tint_and_source_colour_toggle() {
     );
 }
 
+// Sensor calibration (K-260, the reference author's diagnosis): every
+// bundled lens's main path must converge to a focus the bake can place the
+// sensor at, with a sane measured focal length — and the reconstructed
+// classic designs are calibrated to measure their design labels.
+#[test]
+fn lens_flare_every_lens_focuses_and_the_classics_measure_their_labels() {
+    use crate::fx::lens_data::LENS_MODELS;
+    use crate::fx::lens_flare::{focus_shift_mm, paraxial_focus};
+    for (i, m) in LENS_MODELS.iter().enumerate() {
+        let front_h = m.surfaces[0].height_mm;
+        let Some((z, efl)) = paraxial_focus(m, front_h * 0.05) else {
+            panic!("{}: paraxial ray died", m.label);
+        };
+        assert!(z < 0.0, "{}: focus must converge behind the glass", m.label);
+        assert!(
+            (5.0..500.0).contains(&efl),
+            "{}: measured EFL {efl} is not a photographic lens",
+            m.label
+        );
+        // The four reconstructed classics (indices 6+) were rescaled so the
+        // glass measures the design label; hold them to it.
+        if i >= 6 {
+            let err = ((efl - m.focal_length_mm) / m.focal_length_mm).abs();
+            assert!(
+                err < 0.02,
+                "{}: EFL {efl} vs label {}",
+                m.label,
+                m.focal_length_mm
+            );
+        }
+    }
+    // The thin-lens focus shift: zero at infinity, growing as focus nears,
+    // never past one focal length.
+    assert_eq!(focus_shift_mm(0.0, 50.0), 0.0);
+    assert!(focus_shift_mm(100.0, 50.0) < 0.03);
+    let near = focus_shift_mm(1.0, 50.0);
+    assert!((near - 2500.0 / 950.0).abs() < 1e-3, "1 m shift {near}");
+    assert!(focus_shift_mm(0.2, 50.0) <= 50.0);
+}
+
 /// The documented drop-on defaults, shared by the lens flare tests.
 fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
     crate::fx::lens_flare::LensFlareParams {
-        light: [0.33, 0.30],
+        // Raster pixels (K-260): tests divide by their own raster via
+        // manual_light, so any sane point works; this is 0.33/0.30 of 96×54.
+        light: [31.7, 16.2],
         intensity: 1.0,
         lens: 2,
         fstop: 2.8,
+        focus_m: 100.0,
         blades: 8,
         aperture_rotation_deg: 0.0,
         roundness: 0.15,

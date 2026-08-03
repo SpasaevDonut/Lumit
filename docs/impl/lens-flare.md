@@ -46,12 +46,21 @@ pub struct LensModel {
 
 Prescriptions are **static data in `lumit-core`** (`fx/lens_data.rs`) — no files, no IO,
 deterministic. They come from published patents (a patent's optical table is public
-information; realflare bundles the same ones). v1 ships four, chosen for distinct
-characters: a simple 6-element double-Gauss prime (clean, few ghosts), a fast 14-element
-cine prime (rich ghost train — the Zeiss MP 50/T1.3 table from US patent 7446944 B2), a
-telephoto (long, stretched ghosts), and a wide zoom section. The sensor is appended at
-trace time as a final flat "surface" whose height is half the sensor diagonal, exactly as
-realflare's `lens.elements()` does.
+information; realflare bundles the same ones) plus four reconstructed classic designs
+(Cooke triplet, Tessar, Petzval, Double Gauss), ten lenses total.
+
+**The sensor is calibrated, not copied (K-260).** The sensor is appended as a final flat
+"surface" whose height is half the sensor diagonal — but its position comes from the
+prescription itself, not the patent's trailing gap: the bake traces one paraxial marginal
+ray (parallel to the axis at 5% of the front height) through the main path and places the
+sensor where it crosses the axis — the lens's *measured* infinity focus
+(`paraxial_focus`). The same trace yields the measured EFL, which replaces the label
+focal length everywhere downstream (light direction, focus shift). This was the reference
+author's first correction, and measuring proved him right twice over: patent trailing
+gaps were off by up to 10 mm, and the Zeiss "50mm" table actually measures 64.8 mm —
+patent tables are not always normalised to the label. The four classic reconstructions
+are rescaled by their measured factor so they land within 0.03% of their labels
+(regression-tested; a real-patent table is left as published and only *measured*).
 
 **Dispersion — deviation D1.** Realflare ships a glass catalogue and nearest-matches each
 element's (n, V) to a real Sellmeier table. We compute the index directly from the
@@ -93,12 +102,6 @@ the Petzval carried bright probe cells that never reached the frame and rendered
 Relative brightness *between* a lens's own ghosts stays physical; only the overall
 exposure is normalised.
 
-The **launch square** rides the iris, not the front element: `2.6 × iris half-height`,
-clamped to `1.6 × front half-height` — the iris is what gates the bundle, so this keeps
-the grid dense where rays can pass whatever the front element's size (one bundled
-prescription's front housing is listed at 450 mm, which a front-based rule turned into a
-launch square that landed 5 rays in 3072).
-
 ## 3. The per-frame trace
 
 Direct port of realflare's `raytracing.cl`, in WGSL and (as the oracle) Rust. Per
@@ -110,8 +113,16 @@ clip instead of the housing's feathered vignette); cells whose rays miss are cul
 overshoot costs only rays, never artefacts.
 
 Light direction from the parameter position: `dir = normalize(px_frac·s, py_frac·ratio·s,
-focal_length)` with `s` = half the sensor width, matching realflare's `update_direction` —
-so a light at the frame corner enters at the true corner field angle.
+focal_mm)` with `s` = half the sensor width and `focal_mm` the **measured** EFL (§1),
+matching realflare's `update_direction` — so a light at the frame corner enters at the
+true corner field angle.
+
+**Focus distance (K-260).** The Focus (m) parameter shifts the sensor plane by the
+thin-lens focusing extension `Δ = f² / (1000·d − f)` mm (f = measured EFL, d = focus in
+metres), clamped to `[0, f]`. The shift is applied at trace time to the sensor surface
+only — it is a frame-time value outside the bake key, so pulling focus never rebakes, and
+it visibly rearranges the whole ghost train (every ghost's caustic lands differently on a
+defocused sensor), the reference author's "same lens, completely different flare" point.
 
 Per surface, in order (walking forward, then backward after the first bounce, then forward
 again after the second — realflare's `delta` walk):
@@ -206,14 +217,21 @@ because the function is pure). Animating the *light position or intensities* nev
 rebakes; animating *blades* does (documented: the aperture group is cheap to animate at
 256², but it is a per-keyframe rebake).
 
-- **Aperture image** (256² f32): the blade polygon as `sdf = max_i(dot(axis_i, p))` over
-  `blades` axes, a sine bulge `+ roundness · sin(blade_gradient · π)`, and
+- **Aperture image** (256² f32): the blade polygon as `poly = max_i(dot(axis_i, p))`
+  over `blades` axes, an SDF lerp toward the circle
+  `sdf = poly + (|p| − poly) · roundness` (K-260 — see §7's trap), and
   `1 − smoothstep(1 − softness, 1 + softness, sdf)`. Realflare's `aperture_shape` kernel,
-  on the CPU.
+  on the CPU. **Wide-open rounding (K-260)**: near the lens's native stop a real iris
+  retracts behind the housing's circular bore, so the effective roundness is
+  `max(user, wide_open)` with `wide_open = 1 − clamp(fstop/native − 1, 0, 2)/2` — wide
+  open the ghosts are round whatever the blade count, stopped down the polygon shows.
 - **Ghost disc** (512² f32): the fractional Fourier transform of the aperture at order
   `α = 0.15 · (λ_mid/400) · (fstop/18)` — [Ritschel 2009] §3.3's "ringing pattern", the
-  softly diffraction-ringed disc a defocused iris projects. FRFT per Ozaktas: normalise α
-  into [0.5, 1.5) with whole FFT/flip steps, then the chirp-multiply / FFT / chirp
+  softly diffraction-ringed disc a defocused iris projects. The aperture is embedded
+  centred in a 2× zero-padded field before the transform and centre-cropped after
+  (K-260, the reference author's advice): the FRFT is circular, so an unpadded aperture
+  wraps its own ringing back across the disc as banded arcs. FRFT per Ozaktas: normalise
+  α into [0.5, 1.5) with whole FFT/flip steps, then the chirp-multiply / FFT / chirp
   decomposition (realflare's `frft.py`, ported). Needs one in-house complex radix-2 FFT
   (`fx/fft.rs`): power-of-two sizes only, iterative Cooley–Tukey, ~80 lines, tested
   against DFT identities — no dependency for a bake that runs on parameter change.
@@ -277,11 +295,10 @@ fits a compositor.
 - **fp16 accumulation is fine, fp16 trace is not.** The flare buffer is rgba16float
   (peaks ~10³, well under 65504) but every trace quantity is f32 — a 14-surface refract
   chain in half precision visibly warps ghosts.
-- **The aperture roundness bulge must peak at the CORNERS.** The blade-polygon SDF is a
-  max-of-dots; roundness adds a per-blade sine bulge, and realflare's `+ 0.5` phase lands
-  that bulge mid-edge — which *pinches the iris into a star* instead of rounding it
-  (realflare defaults roundness to 0 and never sees it; found by bake dump). Drop the
-  phase offset so the bulge pulls the corners in.
+- **Roundness must be an SDF lerp to the circle, not an additive bulge.** Realflare's
+  sine-bulge roundness only behaves for small values; pushed toward 1 (which the K-260
+  wide-open blend does at the native stop) it pinches the iris into a flower. Blend the
+  blade-polygon SDF toward `length(p)` instead — at 1 the iris is exactly circular.
 - **The FRFT branches on α.** Ozaktas normalisation changes the transform applied for
   small α (extra inverse FFT); the ghost-disc α at ordinary f-stops sits near 0.1–0.5, so
   the branch *is* exercised — test both sides.

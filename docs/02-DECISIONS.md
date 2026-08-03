@@ -5217,3 +5217,27 @@ WGSL detection. The toggle is shown for **Matte and Lights alike**, which the K-
 of them (`Option<(&str, &[u32])>`, `visible_when_values` across the bridge). Version
 bumped 2 → 3; pre-release, and loaded stacks backfill the new parameters at their
 defaults through K-258's migration anyway.
+**K-260 · DECIDED · The flare's optics are calibrated against the lens itself, focus
+distance is a parameter, and point parameters are authored in comp pixels.** An accuracy
+pass taken directly from the reference renderer's author. **(1) Calibrated sensor**: the
+sensor plane sits at the prescription's *measured* infinity focus — the bake traces one
+paraxial marginal ray through the main path and places the sensor at its axis crossing —
+not at the patent table's trailing gap (off by up to 10 mm on bundled lenses). The same
+trace measures the true EFL, which replaces the label focal length in the light direction
+and focus maths; measuring vindicated his warning that patent tables are not normalised
+to the label (the Zeiss "50mm" measures 64.8 mm). The four classic reconstructions are
+rescaled to land within 0.03% of their labels; real patent tables stay as published.
+**(2) Focus (m)**: the thin-lens focusing extension `f²/(1000·d − f)` mm shifts the
+sensor at trace time — frame-time, outside the bake key, so pulling focus never rebakes —
+and rearranges the whole ghost train, the "same lens, different focus, completely
+different flare" behaviour. **(3) Padded FRFT**: the aperture embeds centred in a 2×
+zero field before the ghost-disc transform (centre-cropped after); unpadded, the circular
+transform wrapped its own ringing into banded arcs across every ghost. **(4) Wide-open
+iris**: effective roundness is `max(user, 1 − clamp(fstop/native − 1, 0, 2)/2)` — at the
+native stop the iris retracts behind the circular bore and ghosts go round regardless of
+blade count. Roundness itself became an SDF lerp toward the true circle; the additive
+sine bulge it replaces pinched into a flower near 1 (caught against the reference's round
+wide-open ghosts). **(5) Point parameters are comp pixels** — standing convention: any
+x/y point parameter (the flare's Light, and every future one) is authored in px@comp,
+never % of frame; the Viewer dropper converts its fraction through the comp size at click
+time. Radial blur's legacy % centre is grandfathered until migrated.

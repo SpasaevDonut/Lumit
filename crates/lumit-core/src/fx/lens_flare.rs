@@ -21,9 +21,10 @@ use super::lens_data::{LensModel, LENS_MODELS};
 /// (0..1 inside frame; off-frame values are legal and meaningful).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LensFlareParams {
-    /// Light position as a fraction of the raster (x right, y down);
-    /// 0.5, 0.5 is frame centre. May leave [0, 1] — an off-frame light
-    /// keeps flaring.
+    /// Light position in RASTER PIXELS (px@comp converted through the §2.3
+    /// preview factor at resolve, the Transform-anchor convention — K-260;
+    /// point parameters are pixels, never % of frame). May leave the frame —
+    /// an off-frame light keeps flaring.
     pub light: [f32; 2],
     /// Master gain on everything the effect adds; 0 is the neutral point
     /// (bit-exact passthrough, pinned by test).
@@ -33,6 +34,12 @@ pub struct LensFlareParams {
     /// The working f-stop: scales the ghost discs (wider = bigger) and the
     /// ghost disc's diffraction ringing.
     pub fstop: f32,
+    /// Focus distance, metres (K-260): shifts the sensor from its calibrated
+    /// infinity position by the thin-lens image shift `f²/(1000·d − f)` mm.
+    /// Real flares change shape dramatically with focus — the reference
+    /// renderer's images at two focus distances barely resemble each other.
+    /// Frame-time (animatable, no rebake); large values are infinity.
+    pub focus_m: f32,
     /// Iris blade count, 3..=16 (host-rounded).
     pub blades: u32,
     /// Iris rotation, degrees.
@@ -145,13 +152,26 @@ pub struct FlareLight {
     pub rgb: [f32; 3],
 }
 
-/// Manual mode's light list: one source at the parameter position, carrying
-/// the Light tint (white by default, so this is the plain white light).
-pub fn manual_light(p: &LensFlareParams) -> Vec<FlareLight> {
+/// Manual mode's light list: one source at the parameter position (raster
+/// pixels over the raster `w × h` — the fraction the trace consumes),
+/// carrying the Light tint (white by default).
+pub fn manual_light(p: &LensFlareParams, w: u32, h: u32) -> Vec<FlareLight> {
     vec![FlareLight {
-        pos: p.light,
+        pos: [p.light[0] / w.max(1) as f32, p.light[1] / h.max(1) as f32],
         rgb: p.light_tint,
     }]
+}
+
+/// The sensor shift for a focus distance (K-260): the thin-lens image shift
+/// from the calibrated infinity position, `f²/(1000·d − f)` mm, clamped so a
+/// degenerate distance cannot fling the sensor. Shared by the CPU reference
+/// and the GPU uniform fill.
+pub fn focus_shift_mm(focus_m: f32, efl_mm: f32) -> f32 {
+    if focus_m <= 0.0 {
+        return 0.0;
+    }
+    let denom = (1000.0 * focus_m - efl_mm).max(efl_mm);
+    (efl_mm * efl_mm / denom).clamp(0.0, efl_mm)
 }
 
 /// The soft threshold gate: 0 at `threshold - softness`, 1 at `threshold +
@@ -502,6 +522,7 @@ pub fn light_direction(light: [f32; 2], aspect_h_over_w: f32, focal_mm: f32) -> 
 /// the ray's (x, y) on a `grid`-sided launch square of `launch_mm`;
 /// `ghost` the two bounce surface indices; `coating_mix` the 0..1 Coating
 /// blend; `dir` the (unit) light direction.
+#[allow(clippy::too_many_arguments)]
 pub fn trace_ray(
     baked: &FlareBaked,
     ghost: [u32; 2],
@@ -510,6 +531,7 @@ pub fn trace_ray(
     grid: u32,
     coating_mix: f32,
     dir: [f32; 3],
+    sensor_shift_mm: f32,
 ) -> TracedRay {
     let dead = TracedRay {
         pos_mm: [0.0; 2],
@@ -555,7 +577,12 @@ pub fn trace_ray(
         if iters > max_iters {
             return dead;
         }
-        let s = surfaces[lens_id as usize];
+        let mut s = surfaces[lens_id as usize];
+        // Focus (K-260): the sensor plane rides the focus shift; the glass
+        // stays put.
+        if s.is_sensor > 0.5 {
+            s.center_z_mm += sensor_shift_mm;
+        }
         let hit = intersect(pos, rdir, &s);
         if !hit.hit {
             return dead;
@@ -693,9 +720,69 @@ fn coating_cycle(preset: u32) -> &'static [f32] {
     COATING_CYCLES[(preset as usize).min(COATING_CYCLES.len() - 1)]
 }
 
+/// Trace one meridional ray, parallel to the axis at height `h_mm`, through
+/// the model's refracting surfaces (the iris passes light straight through),
+/// and return `(z_cross, efl)`: the z where it crosses the axis — the
+/// **infinity-focus sensor position** — and the effective focal length
+/// `h / |exit slope|`. This is the calibration K-260 adds on the reference
+/// author's diagnosis ("sensor position may be wrong"): the patent's
+/// trailing gap is NOT trusted to be the back focus any more; the main
+/// imaging path's own focus is. None when the ray dies (a broken table).
+pub fn paraxial_focus(model: &LensModel, h_mm: f32) -> Option<(f32, f32)> {
+    // A temporary surface walk in the meridional plane: track (y, z) and a
+    // unit-free slope, using the full sphere intersection (not the paraxial
+    // approximation) at a small height, at the d-line.
+    let mut pos = [0.0_f32, h_mm, 40.0];
+    let mut dir = [0.0_f32, 0.0, -1.0];
+    let mut offset = 0.0_f32;
+    for (i, surf) in model.surfaces.iter().enumerate() {
+        let (a, b) = cauchy_from_abbe(surf.ior_d, surf.abbe_v);
+        let fs = FlareSurface {
+            radius_mm: surf.radius_mm,
+            center_z_mm: offset + surf.radius_mm,
+            height_mm: surf.height_mm.max(1e-3),
+            cauchy_a: a,
+            cauchy_b: b,
+            coating_nm: 0.0,
+            is_iris: 0.0,
+            is_sensor: 0.0,
+        };
+        offset += surf.thickness_mm;
+        let hit = intersect(pos, dir, &fs);
+        if !hit.hit {
+            return None;
+        }
+        pos = hit.pos;
+        if i == model.aperture_index {
+            continue;
+        }
+        // The medium the ray is leaving: the previous surface's glass (or
+        // air outside the system) — the same rule the ghost walk uses.
+        let n1 = if i == 0 {
+            1.0
+        } else {
+            let ps = &model.surfaces[i - 1];
+            let (pa, pb) = cauchy_from_abbe(ps.ior_d, ps.abbe_v);
+            cauchy_ior(pa, pb, 587.56)
+        };
+        let n2 = cauchy_ior(a, b, 587.56);
+        dir = refract3(dir, hit.normal, n1 / n2);
+        if dir[2] == 0.0 {
+            return None;
+        }
+    }
+    // y(z) = y + slope·(z − pos.z) reaches 0 at z = pos.z − y/slope; the
+    // effective focal length is h over the exit slope's magnitude.
+    let slope = dir[1] / dir[2];
+    if slope.abs() < 1e-9 {
+        return None;
+    }
+    Some((pos[2] - pos[1] / slope, (h_mm / slope).abs()))
+}
+
 /// Build the flat surface table for a model: running z offsets, Cauchy
 /// pairs, coating wavelengths, and the appended sensor row.
-fn build_surfaces(model: &LensModel, coating_preset: u32) -> Vec<FlareSurface> {
+fn build_surfaces(model: &LensModel, coating_preset: u32) -> (Vec<FlareSurface>, f32) {
     let cycle = coating_cycle(coating_preset);
     let mut out = Vec::with_capacity(model.surfaces.len() + 1);
     let mut offset = 0.0_f32;
@@ -714,11 +801,22 @@ fn build_surfaces(model: &LensModel, coating_preset: u32) -> Vec<FlareSurface> {
         });
         offset += s.thickness_mm;
     }
-    // The sensor: a flat, housing-wide plane at the running offset.
+    // The sensor sits at the main path's own infinity focus (K-260, the
+    // reference author's diagnosis: "sensor position may be wrong" — the
+    // patent's trailing gap is a starting point, not the truth). A near-
+    // paraxial marginal ray finds it; a broken table falls back to the
+    // running offset. The measured EFL rides along — it is what the light
+    // direction and the focus shift use, keeping field angles consistent
+    // with the glass rather than the label.
+    let front_h = model.surfaces.first().map(|s| s.height_mm).unwrap_or(20.0);
+    let (sensor_z, efl) = match paraxial_focus(model, front_h * 0.05) {
+        Some((z, efl)) if z < 0.0 && efl.is_finite() => (-z, efl),
+        _ => (offset, model.focal_length_mm),
+    };
     let sensor_half_norm = (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt() / 2.0;
     out.push(FlareSurface {
         radius_mm: 0.0,
-        center_z_mm: offset,
+        center_z_mm: sensor_z,
         height_mm: sensor_half_norm,
         cauchy_a: 1.0,
         cauchy_b: 0.0,
@@ -726,7 +824,7 @@ fn build_surfaces(model: &LensModel, coating_preset: u32) -> Vec<FlareSurface> {
         is_iris: 0.0,
         is_sensor: 1.0,
     });
-    out
+    (out, efl)
 }
 
 /// Every legal two-bounce ghost pair for a model: `b2 < b1`, both strictly
@@ -755,6 +853,13 @@ pub fn bake_aperture(p: &LensFlareParams, res: u32) -> Vec<f32> {
     let blades = p.blades.clamp(3, 16) as i32;
     let rot = p.aperture_rotation_deg.to_radians();
     let softness = (p.aperture_softness / 10.0).max(1e-4);
+    // Wide open, a real iris retracts behind the circular housing: no blade
+    // corners exist at the lens's native stop (K-260). Blend the polygon
+    // toward a circle as the working f-stop approaches native; two stops
+    // down the blades are fully theirs again.
+    let native = lens_of(p).native_fstop.max(0.7);
+    let wide_open = (1.0 - (p.fstop / native - 1.0).clamp(0.0, 2.0) / 2.0).clamp(0.0, 1.0);
+    let roundness = p.roundness.max(wide_open);
     // The iris fills 0.75 of the texture's half-extent (realflare's default
     // shape size), leaving rim room for the FRFT ringing.
     let size = 0.75_f32;
@@ -766,19 +871,18 @@ pub fn bake_aperture(p: &LensFlareParams, res: u32) -> Vec<f32> {
             // Rotate (realflare's `rot`: x·c + y·s, y·c − x·s).
             let (s, c) = (rot.sin(), rot.cos());
             let (px, py) = (px * c + py * s, py * c - px * s);
-            let mut sdf = 0.0_f32;
+            let mut poly = 0.0_f32;
             for i in 0..blades {
                 let ang = (i as f32 / blades as f32 + 0.25) * std::f32::consts::TAU;
-                sdf = sdf.max(ang.cos() * px + ang.sin() * py);
+                poly = poly.max(ang.cos() * px + ang.sin() * py);
             }
-            // Roundness pulls the polygon's CORNERS in toward a circle: the
-            // sine bulge must peak at the corners (between blade axes), so
-            // the phase drops realflare's +0.5 — with it, the bulge lands
-            // mid-edge and pinches the iris into a star (verified by bake
-            // dump; realflare defaults roundness to 0 and never sees it).
-            let circular = (-px).atan2(-py) / std::f32::consts::TAU + 0.5;
-            let blade_grad = (circular * blades as f32).rem_euclid(1.0);
-            sdf += (blade_grad * std::f32::consts::PI).sin() * p.roundness;
+            // Roundness is an SDF lerp toward the true circle (K-260): at 1
+            // the iris IS circular — which the wide-open blend above relies
+            // on. The earlier additive sine bulge only worked for small
+            // values; near 1 it pinched the iris into a flower (caught
+            // against the reference renderer's round wide-open ghosts).
+            let circle = (px * px + py * py).sqrt();
+            let sdf = poly + (circle - poly) * roundness;
             let t = ((sdf - (1.0 - softness)) / (2.0 * softness)).clamp(0.0, 1.0);
             img[y * n + x] = 1.0 - t * t * (3.0 - 2.0 * t);
         }
@@ -792,11 +896,28 @@ pub fn bake_aperture(p: &LensFlareParams, res: u32) -> Vec<f32> {
 pub fn bake_ghost_disc(aperture: &[f32], res: u32, fstop: f32) -> Vec<f32> {
     let n = res as usize;
     let alpha = 0.15 * (cie::LAMBDA_MID as f64 / 400.0) * (fstop.max(0.1) as f64 / 18.0);
-    let mut cx: Vec<Cx> = aperture.iter().map(|&v| Cx::new(v as f64, 0.0)).collect();
-    fftshift2(&mut cx, n, n);
-    frft2(&mut cx, n, n, alpha);
-    fftshift2(&mut cx, n, n);
-    let mut disc: Vec<f32> = cx.iter().map(|z| z.norm_sq().sqrt() as f32).collect();
+    // Pad to a 2× field before the transform (K-260, the reference author's
+    // fix): the FRFT's chirp convolution is circular, so ringing that runs
+    // past the texture edge wraps back across the disc without head-room.
+    // The aperture sits centred in a zero field twice the side; the ringing
+    // decays into the padding, and the centre crops back out.
+    let m = n * 2;
+    let off = n / 2;
+    let mut cx = vec![Cx::ZERO; m * m];
+    for y in 0..n {
+        for x in 0..n {
+            cx[(y + off) * m + (x + off)] = Cx::new(aperture[y * n + x] as f64, 0.0);
+        }
+    }
+    fftshift2(&mut cx, m, m);
+    frft2(&mut cx, m, m, alpha);
+    fftshift2(&mut cx, m, m);
+    let mut disc = vec![0.0_f32; n * n];
+    for y in 0..n {
+        for x in 0..n {
+            disc[y * n + x] = cx[(y + off) * m + (x + off)].norm_sq().sqrt() as f32;
+        }
+    }
     let peak = disc.iter().fold(0.0_f32, |m, &v| m.max(v)).max(1e-9);
     for v in disc.iter_mut() {
         *v /= peak;
@@ -908,7 +1029,7 @@ const TARGET_PROBE_MEAN: f32 = 0.010;
 /// brightness *between* a lens's own ghosts stays physical.
 pub fn bake(p: &LensFlareParams) -> FlareBaked {
     let model = lens_of(p);
-    let surfaces = build_surfaces(model, p.coating_preset);
+    let (surfaces, efl) = build_surfaces(model, p.coating_preset);
     // The launch square covers the WHOLE front element with margin: side =
     // 2.3 × its half-height (the clear diameter is 2×, plus 15% so edge rays
     // exist to vignette). An undersized square is visible in the picture — a
@@ -922,7 +1043,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         aperture_index: model.aperture_index as u32,
         ghosts: Vec::new(),
         launch_mm,
-        focal_mm: model.focal_length_mm,
+        focal_mm: efl,
         energy_gain: 1.0,
         disc: Vec::new(),
         starburst: Vec::new(),
@@ -953,6 +1074,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
                         PROBE,
                         0.0,
                         dir,
+                        0.0,
                     );
                 }
             }
@@ -1025,10 +1147,12 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
     // the mean to the target. Deterministic, and a few milliseconds.
     baked.energy_gain = 1.0;
     let probe_frame = LensFlareParams {
-        light: [0.33, 0.30],
+        // Raster pixels of the 96×54 thumbnail (the 0.33/0.30 framing).
+        light: [31.7, 16.2],
         intensity: 1.0,
         lens: p.lens,
         fstop: p.fstop,
+        focus_m: 100.0,
         blades: p.blades,
         aperture_rotation_deg: p.aperture_rotation_deg,
         roundness: p.roundness,
@@ -1051,7 +1175,13 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         mix: 1.0,
     };
     let (pw, ph) = (96u32, 54u32);
-    let thumb = cpu_flare(&probe_frame, &baked, pw, ph, &manual_light(&probe_frame));
+    let thumb = cpu_flare(
+        &probe_frame,
+        &baked,
+        pw,
+        ph,
+        &manual_light(&probe_frame, pw, ph),
+    );
     let mean: f32 = thumb.iter().sum::<f32>() / thumb.len().max(1) as f32;
     baked.energy_gain = if mean > 1e-9 {
         (TARGET_PROBE_MEAN / mean).clamp(0.02, 400.0)
@@ -1159,6 +1289,7 @@ pub fn cpu_flare(
     }
     let weights = lambda_weights(lambda_count, p.dispersion);
     let aspect = h as f32 / w.max(1) as f32;
+    let sensor_shift = focus_shift_mm(p.focus_m, baked.focal_mm);
     let st = screen_transform(w);
     let disc_scale = ghost_disc_scale(p.fstop);
     let g = grid as usize;
@@ -1218,6 +1349,7 @@ pub fn cpu_flare(
                             grid,
                             p.coating,
                             dir,
+                            sensor_shift,
                         );
                     }
                 }
