@@ -4996,3 +4996,16 @@ The app now honours a `.lum` on its command line (`projectPathFromArgs`, regress
 so the Windows association genuinely opens the document, not just the application. Still
 open, in TODO: a CI release pipeline that builds all three, signing/notarisation, and
 double-click opening on macOS.
+
+**K-253 · PROPOSED · The Linux release also ships a Flatpak, repacked from the CI bundle.**
+The "grow later" from K-252 (2026-08-03). Unlike the buried egui-era manifest (K-182),
+which compiled the whole workspace inside the sandbox from a generated `cargo-sources.json`,
+the new `packaging/flatpak/` manifest builds nothing: the release job already produces a
+staged bundle with the FFmpeg 7.1 libraries inside it, so the Flatpak is that bundle plus
+the desktop entry, mime XML and icon renamed to the app id (Flatpak only exports
+app-id-named files to the host — which is also why the `.lum`/`.lumfx` document icons stay
+a native-install feature). Runtime is `org.gnome.Platform//49`, not freedesktop: the
+Flutter Linux embedder needs GTK 3, which only the GNOME runtime ships. Sandbox holes
+(`--filesystem=host`, dri, pulseaudio) carry over from the old manifest's reasoning
+verbatim. Published as a single-file `.flatpak` on the GitHub Release; Flathub submission,
+if ever, is a separate decision.

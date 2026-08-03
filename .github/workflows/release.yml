@@ -135,10 +135,34 @@ jobs:
             "the files in share/ yourself (icons go to hicolor scalable)." \
             > "$stage/INSTALL.txt"
           tar czf "$stage.tar.gz" "$stage"
+      - name: Build the Flatpak
+        # Repacks the staged bundle (FFmpeg libs included) via the manifest in
+        # packaging/flatpak/ into a single-file .flatpak anyone can install
+        # with `flatpak install lumit-*.flatpak`. continue-on-error: this job
+        # gates the whole release (publish needs it), and a Flatpak hiccup
+        # should cost the release the .flatpak, not the tar.gz and setup.exe.
+        continue-on-error: true
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          version="${version:-0.0.0}"
+          stage="lumit-$version-linux-x64"
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub \
+            org.gnome.Platform//49 org.gnome.Sdk//49
+          cp -r "$stage" packaging/flatpak/bundle
+          sed -i "s|version=\"[0-9.]*\" date=\"[0-9-]*\"|version=\"$version\" date=\"$(date -u +%F)\"|" \
+            packaging/flatpak/io.github.luminalmvm.Lumit.metainfo.xml
+          flatpak-builder --user --force-clean --repo=flatpak-repo \
+            flatpak-build packaging/flatpak/io.github.luminalmvm.Lumit.yml
+          flatpak build-bundle flatpak-repo \
+            "lumit-$version-linux-x64.flatpak" io.github.luminalmvm.Lumit
       - uses: actions/upload-artifact@v4
         with:
           name: linux-bundle
-          path: lumit-*-linux-x64.tar.gz
+          path: |
+            lumit-*-linux-x64.tar.gz
+            lumit-*-linux-x64.flatpak
           if-no-files-found: error
 
   macos-dmg:
