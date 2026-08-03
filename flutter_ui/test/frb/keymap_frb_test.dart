@@ -212,15 +212,24 @@ void main() {
       // The Timeline's zoom-in takes Undo's app-wide chord: both are live in
       // the Timeline at once, so it is a clash rather than a replacement.
       //
-      // Made before the page opens, and *not* awaited: a bridge Future only
+      // Made before the page opens, because the banner is built from the
+      // keymap the page finds. It is *not* awaited — a bridge Future only
       // completes on a real event-loop turn, and there is no tester to turn
-      // one until a widget is pumped. The engine applies the change on the
-      // call itself, which is all this needs.
+      // one until a widget is pumped — but nor is it done when it returns:
+      // the call lands on the engine's worker thread, and a machine quick
+      // enough to make that look instant is not a machine to design a test
+      // around (the Linux runner lost this race). So the clash is waited for
+      // at its source, which needs a tree to pump: hence the placeholder.
       unawaited(keymapRebind(
         context: BridgeKeyContext.timeline,
         action: 'timeline.zoom.in',
         chord: 'Mod+Z',
       ));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await settleFrb(tester, until: () => keymapConflicts().isNotEmpty);
+      expect(keymapConflicts(), isNotEmpty,
+          reason: 'the engine has the clash before the page is built');
+
       await openKeymapPage(tester);
 
       expect(find.byKey(const ValueKey('keymap-conflicts')), findsOneWidget);
