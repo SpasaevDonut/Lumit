@@ -1060,7 +1060,10 @@ class _TimelineRulerState extends State<TimelineRuler> {
                 // where, and a shape hung off to one side reads as marking the
                 // frame next door.
                 left: axis.xOf(_markerFrame(marker)) - MarkerFlag.width / 2,
-                bottom: 2,
+                // On the floor of the ruler, where the work-area band ends —
+                // markers and the band share the lower row, and a flag lifted
+                // off the edge read as floating over the lanes below.
+                bottom: 0,
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
                   child: GestureDetector(
@@ -1144,31 +1147,38 @@ class MarkerFlag extends StatelessWidget {
     final flag = SizedBox(
       width: width,
       height: height,
-      child: CustomPaint(painter: _MarkerFlagPainter(fill: fill)),
+      child: CustomPaint(painter: _MarkerFlagPainter(fill: fill, edge: ink)),
     );
     if (label.isEmpty) return flag;
     return LumitTooltip(
       message: label,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.end,
+      child: Stack(
+        alignment: Alignment.bottomLeft,
         children: [
-          flag,
-          // Flush against the flag, and only as tall as the flag's square
-          // part, so the pair reads as one object rather than a flag with a
-          // caption floating near it.
-          Container(
-            height: height * (1 - _pointDepth) + 2,
-            padding: const EdgeInsets.symmetric(horizontal: 3),
-            alignment: Alignment.center,
-            color: fill,
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: text.copyWith(color: ink, height: 1),
+          // The label flies from the point, not from the flag's right edge —
+          // the pole is the marker's centre line and the cloth hangs off it,
+          // which is what makes a long comment read as belonging to *this*
+          // moment rather than as a bar starting somewhere to its right.
+          Padding(
+            padding: const EdgeInsets.only(left: width / 2),
+            child: Container(
+              height: height,
+              padding: const EdgeInsets.only(left: width / 2 + 2, right: 3),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: fill,
+                border: Border.all(color: ink, width: 1),
+              ),
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: text.copyWith(color: ink, height: 1),
+              ),
             ),
           ),
+          // Over the cloth, so the point stays the shape you aim at.
+          flag,
         ],
       ),
     );
@@ -1177,27 +1187,42 @@ class MarkerFlag extends StatelessWidget {
 
 class _MarkerFlagPainter extends CustomPainter {
   final Color fill;
-  const _MarkerFlagPainter({required this.fill});
+
+  /// The hairline round the shape. Without it a pale flag sitting on the pale
+  /// work-area band lost its silhouette, and the point — the part that says
+  /// which frame — was the first thing to go.
+  final Color edge;
+  const _MarkerFlagPainter({required this.fill, required this.edge});
 
   @override
   void paint(Canvas canvas, Size size) {
     // A point at the top opening out to shoulders, then square to the bottom:
     // the shape hangs *from* the frame it marks.
     final shoulder = size.height * MarkerFlag._pointDepth;
-    canvas.drawPath(
-      Path()
-        ..moveTo(size.width / 2, 0)
-        ..lineTo(size.width, shoulder)
-        ..lineTo(size.width, size.height)
-        ..lineTo(0, size.height)
-        ..lineTo(0, shoulder)
-        ..close(),
-      Paint()..color = fill,
-    );
+    // Inset by half the stroke, so the outline lands inside the box rather
+    // than straddling its edge and going soft on a fractional pixel ratio.
+    const half = 0.5;
+    final path = Path()
+      ..moveTo(size.width / 2, half)
+      ..lineTo(size.width - half, shoulder)
+      ..lineTo(size.width - half, size.height - half)
+      ..lineTo(half, size.height - half)
+      ..lineTo(half, shoulder)
+      ..close();
+    canvas
+      ..drawPath(path, Paint()..color = fill)
+      ..drawPath(
+        path,
+        Paint()
+          ..color = edge
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1,
+      );
   }
 
   @override
-  bool shouldRepaint(_MarkerFlagPainter old) => old.fill != fill;
+  bool shouldRepaint(_MarkerFlagPainter old) =>
+      old.fill != fill || old.edge != edge;
 }
 
 /// Ask for what a marker says. Returns the new label, or null when the user

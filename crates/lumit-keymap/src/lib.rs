@@ -652,12 +652,12 @@ pub fn default_keymap() -> Keymap {
             bindings.push(b);
         }
     }
-    // Numbered markers (K-254): `Ctrl+N` drops marker *N* at the playhead and
-    // the bare digit jumps back to it. The pairing is the point — the key that
-    // sets a cue is the key that returns to it, with the modifier as the only
-    // difference — and it is what every NLE with numbered markers does.
+    // Numbered markers (K-254): `Shift+N` drops marker *N* at the playhead and
+    // the bare digit jumps back to it — After Effects' own pairing. The pairing
+    // is the point: the key that sets a cue is the key that returns to it, with
+    // the modifier as the only difference.
     for d in 0..=9u8 {
-        if let Some(b) = row(Global, &format!("Mod+{d}"), &format!("marker.add.{d}")) {
+        if let Some(b) = row(Global, &format!("Shift+{d}"), &format!("marker.add.{d}")) {
             bindings.push(b);
         }
         if let Some(b) = row(Global, &format!("{d}"), &format!("marker.goto.{d}")) {
@@ -839,7 +839,7 @@ mod tests {
         }
     }
 
-    /// The numbered markers (K-254). `Ctrl+N` sets and the bare `N` returns, for
+    /// The numbered markers (K-254). `Shift+N` sets and the bare `N` returns, for
     /// all ten digits including zero — and `M` must still reveal Masks in the
     /// Timeline, which is the whole reason the marker key is `Shift+M`.
     #[test]
@@ -847,9 +847,9 @@ mod tests {
         let km = default_keymap();
         for d in 0..=9u8 {
             assert_eq!(
-                km.lookup(KeyContext::Global, &chord(&format!("Mod+{d}"))),
+                km.lookup(KeyContext::Global, &chord(&format!("Shift+{d}"))),
                 Some(&ActionId(format!("marker.add.{d}"))),
-                "Ctrl+{d} should set marker {d}"
+                "Shift+{d} should set marker {d}"
             );
             assert_eq!(
                 km.lookup(KeyContext::Global, &chord(&format!("{d}"))),

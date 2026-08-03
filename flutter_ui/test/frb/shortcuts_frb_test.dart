@@ -357,16 +357,16 @@ void main() {
     /// Numbered markers (K-254). The pairing is the whole feature: the chord
     /// that marks a moment is the key that goes back to it, so both halves are
     /// asserted together — a set that does not return is not the feature.
-    testWidgets('Ctrl+1 sets marker 1 and the bare 1 returns to it',
+    testWidgets('Shift+1 sets marker 1 and the bare 1 returns to it',
         (tester) async {
       final p = await mount(tester);
       final comp = p.uiState.selectedComp!;
 
       p.uiState.playheadFrame.value = 24;
       await tester.pump();
-      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
       await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
-      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
       await tester.pump();
 
       final marker = comp.getMarkers().single;

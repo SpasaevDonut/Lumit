@@ -5040,9 +5040,12 @@ for them; what was missing was the ruler. Comp markers are now small flags with 
 point is what carries the meaning, *this* frame and not the one next door, so a shape hung
 off to one side was marking the wrong thing. They hang into the ruler's lower row beside
 the work-area band, drawn last so a flag wins the pointer over a work-area handle it sits
-on. What a marker says rides in a box of the same colour flush against the flag rather than
-as loose text over the ticks, where it crossed the ruler and the work-area wash and read as
-neither. Colour is a `marker` token of its own — a plain grey, light on dark and dark on
+on. What a marker says rides in a box of the same colour flying from the flag's **centre
+point** — the pole is the marker's centre line and the cloth hangs off it — rather than as
+loose text over the ticks, where it crossed the ruler and the work-area wash and read as
+neither. Both carry a hairline outline in the darkest surface and sit on the floor of the
+ruler: a pale flag on the pale work-area band lost its silhouette, and the point was the
+first part to go. Colour is a `marker` token of its own — a plain grey, light on dark and dark on
 light, editable like any other role — because a marker says *here*, not *good* or
 *careful*, and the accent is already spent on the work area.
 
@@ -5063,8 +5066,9 @@ an edit can change. `bridge_call_budget_test` pins both: nothing per rebuild, ex
 
 **Right-click** offers *Edit marker…* and *Delete marker*.
 
-The keyboard is the numbered pair every NLE has: **`Ctrl+0…9`** sets marker *N* at the
-playhead and the **bare digit** returns to it. Setting a numbered marker that already
+The keyboard is the numbered pair every NLE has: **`Shift+0…9`** sets marker *N* at the
+playhead and the **bare digit** returns to it — `Shift`+digit rather than `Ctrl`+digit,
+which is the chord After Effects itself uses. Setting a numbered marker that already
 exists *moves* it rather than adding a second — a digit has to name one place. A digit
 with no marker behind it is left unhandled, not swallowed. The plain marker key is
 **`Shift+M`** alongside AE's numpad `*`: Premiere and Vegas both use `M`, but `M` reveals

@@ -221,6 +221,28 @@ void main() {
         lessThan(40),
         reason: 'dragging a marker re-read far too much:\n${counter.ranking()}',
       );
+
+      // Adding one. Most of what this costs is the ordinary fan-out of *any*
+      // document change — every panel re-reads what it draws — so the budget
+      // that matters is the marker's own share of it, which is the read, the
+      // write, and one time conversion per existing marker.
+      counter
+        ..reset()
+        ..counting = true;
+      addMarkerFrb(comp, frame: 90, label: '2');
+      p.state.notifyDocumentChanged();
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4, maxRounds: 8);
+      counter.counting = false;
+      // ignore: avoid_print
+      print('MARKER ADD COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        (counter.calls['composition_reference_get_markers'] ?? 0) +
+            (counter.calls['composition_reference_set_markers'] ?? 0),
+        lessThan(4),
+        reason: 'adding a marker read or wrote the list more than once:\n'
+            '${counter.ranking()}',
+      );
     });
 
     /// Hovering the Project panel used to re-fetch names (and once, the

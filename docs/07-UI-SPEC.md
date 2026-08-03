@@ -730,8 +730,9 @@ rows' height to a taller, labelled time ruler — a bigger playhead grab — wit
 bar tucked under it. Markers draw on the ruler itself rather than in a ribbon of their
 own (K-254): a small flag with its **point at the top**, centred on the frame it marks so
 the point sits on the playhead, hanging into the ruler's lower row beside the work-area
-band. What a marker says rides in a box of the same colour flush against the flag's right,
-not as loose text over the ticks. Styling — a grey `marker` token, editable like any other
+band. What a marker says rides in a box of the same colour flying from the flag's **centre
+point**, like a flag from a pole, not as loose text over the ticks; both carry a hairline
+outline, and both sit on the floor of the ruler. Styling — a grey `marker` token, editable like any other
 — is in [15-DESIGN.md](15-DESIGN.md) §6.4.
 
 **One marker per frame**: adding one where a marker already sits replaces it, and so does
@@ -1688,7 +1689,7 @@ them away the day dispatch started going through the keymap.
 | Global | `Ctrl+,` / `Ctrl+.` | Previous / next edit point or layer boundary |
 | Global | `B` / `N` | Set work area start / end at playhead |
 | Global | `*` (numpad or `Shift+8`) / `Shift+M` | Add marker at playhead. `M` keeps Reveal Masks, so the letter form takes Shift (K-254) |
-| Global | `Ctrl+0…9` | Set numbered marker at playhead — pressing it again *moves* that marker, and it replaces whatever is on that frame (K-254) |
+| Global | `Shift+0…9` | Set numbered marker at playhead — pressing it again *moves* that marker, and it replaces whatever is on that frame (K-254) |
 | Global | `0…9` | Go to that numbered marker; nothing happens until one has been set (K-254) |
 | Global | `Delete` / `Backspace` | Delete the selection — keyframes when any are selected, else the layer (TF-6) |
 | Global | `Ctrl+Shift+P` | Command palette |

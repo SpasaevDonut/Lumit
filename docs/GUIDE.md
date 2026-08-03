@@ -5451,8 +5451,10 @@ drag one along, right-click it to change what it says, or delete it.
 The flag points *upwards*, and the point is centred on the frame it marks, so it lands on
 the playhead. That is the whole of the design: the point is the bit that means "this
 frame", and a shape sitting to one side of it would be pointing at the frame next door.
-Whatever the marker says rides in a small box stuck to the flag's right — as loose text it
-crossed the ruler's ticks and the work-area band and read as belonging to neither.
+Whatever the marker says flies from the flag's centre point, like a flag from a pole — as
+loose text it crossed the ruler's ticks and the work-area band and read as belonging to
+neither. Both the flag and the box are outlined in the darkest surface, because a pale grey
+shape on the pale work-area band otherwise loses its edges.
 
 Two markers can never sit on the same frame. Drop one where another already is — with the
 keyboard or by dragging — and the newcomer takes its place. Two flags on one moment would
@@ -5469,8 +5471,8 @@ but it felt like dragging something heavy. A work-area edge can afford that, bec
 Viewer's preview range genuinely changes as the edge moves; a marker has nothing to show
 until it lands.
 
-The keyboard is where they earn their keep. **Ctrl and a digit** puts a marker with that
-number at the playhead; **the digit on its own** jumps back to it. Press `Ctrl+1` again
+The keyboard is where they earn their keep. **Shift and a digit** puts a marker with that
+number at the playhead; **the digit on its own** jumps back to it. Press `Shift+1` again
 somewhere else and marker 1 *moves* — a number names one place, so there is never a second
 marker 1 for the plain `1` to have to choose between. `Shift+M` drops an unnumbered one.
 (Why not plain `M`, which is what Premiere and Vegas use? Because `M` reveals a layer's

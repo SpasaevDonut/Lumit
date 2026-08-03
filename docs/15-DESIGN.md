@@ -422,9 +422,11 @@ failure.
   *careful*, and the ruler already spends the accent on the work area. The flag is an 11×12
   shape with its **point at the top**, centred on the frame it marks so the point sits on the
   playhead, hanging into the ruler's lower row. What it says rides in a box of the same
-  colour flush against its right, `caption` weight 400 in `surface_0`, rather than as loose
-  text over the ticks. **One marker per frame** — a second dropped on an occupied frame
-  replaces the first, since two flags on one moment are two things to click and one place.
+  colour flying from the flag's **centre point**, `caption` weight 400 in `surface_0`,
+  rather than as loose text over the ticks. Flag and box both carry a 1px `surface_0`
+  outline and sit flush with the floor of the ruler. **One marker per frame** — a second
+  dropped on an occupied frame replaces the first, since two flags on one moment are two
+  things to click and one place.
 - **Beat markers**: `marker.beat` = `#aef3e7` (mint) 1px ticks in the ruler with a small
   triangular head — still to come, and it needs a token of its own beside `marker`. Span
   markers draw a hairline-bounded band.
