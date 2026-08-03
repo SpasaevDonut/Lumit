@@ -1271,13 +1271,24 @@ class _Picture extends StatelessWidget {
         final picture = textureId != null
             ? Texture(textureId: textureId)
             : const SizedBox.expand();
-        final filter = channelFilterFor(channel);
-        return filter == null
-            ? picture
-            : ColorFiltered(colorFilter: filter, child: picture);
+        return pictureChannelFilter(channel, picture);
       },
     );
   }
+}
+
+/// [picture] shown in [channel] — clipped, which is the whole point.
+///
+/// The channel matrices below force alpha opaque, so they turn transparent
+/// black into solid black. A filter that changes transparent pixels cannot be
+/// confined to where its child painted — the rasteriser has to run it over
+/// every pixel the current clip allows. Without a clip of its own that is the
+/// whole window, which is why picking Red painted the toolbar and the side
+/// panel flat black along with the Viewer's surround.
+Widget pictureChannelFilter(ViewerChannel channel, Widget picture) {
+  final filter = channelFilterFor(channel);
+  if (filter == null) return picture;
+  return ClipRect(child: ColorFiltered(colorFilter: filter, child: picture));
 }
 
 /// The matrix that isolates one channel, or null for the full picture.
