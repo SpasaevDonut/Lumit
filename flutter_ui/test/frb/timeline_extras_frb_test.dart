@@ -391,6 +391,112 @@ void main() {
       await tester.pumpAndSettle();
     });
 
+    /// Scrubbing during playback used to be unwinnable: the engine handed back
+    /// a frame every tick and each one put the playhead straight back where the
+    /// transport wanted it. Taking hold of the playhead takes it off the
+    /// transport (K-254), and it stays where the drag left it — the
+    /// return-to-start of a normal stop would undo the very gesture.
+    testWidgets('dragging the ruler during playback stops it and holds',
+        (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      await mount(tester, p);
+
+      p.uiState.play();
+      await tester.pump();
+      expect(p.uiState.playing.value, isTrue);
+
+      await tester.drag(
+          find.byKey(const ValueKey('tl-ruler')), const Offset(120, 0));
+      await tester.pumpAndSettle();
+
+      expect(p.uiState.playing.value, isFalse,
+          reason: 'taking hold of the playhead stops the transport');
+      expect(p.uiState.playheadFrame.value, greaterThan(0),
+          reason: 'and it stays where the drag left it, not back at the start');
+    });
+
+    /// Markers on the ruler are direct manipulation now (K-254): a flag can be
+    /// dragged to another moment, and its text changed from its own menu. The
+    /// dialogue in the ⋯ menu is still there for adding one by hand.
+    testWidgets('a marker flag drags along the ruler', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      final id = p.comp.getMarkers().single.id;
+      final flag = find.byKey(ValueKey<String>('tl-marker-$id'));
+      expect(flag, findsOneWidget, reason: 'the marker draws on the ruler');
+
+      await tester.drag(flag, const Offset(80, 0));
+      await tester.pumpAndSettle();
+
+      final moved = p.comp.getMarkers().single;
+      expect(p.comp.frameAtTime(time: moved.time), greaterThan(10),
+          reason: 'the drag moved the marker later in the comp');
+      expect(moved.label, 'Chorus', reason: 'and left what it says alone');
+      expect(moved.id, id, reason: 'it is the same marker, not a new one');
+    });
+
+    testWidgets('right-clicking a marker edits what it says', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      final id = p.comp.getMarkers().single.id;
+      await tester.tap(find.byKey(ValueKey<String>('tl-marker-$id')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('marker-menu-edit')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+          find.byKey(const ValueKey('marker-edit-label')), 'Drop');
+      await tester.tap(find.byKey(const ValueKey('marker-edit-ok')));
+      await tester.pumpAndSettle();
+
+      final edited = p.comp.getMarkers().single;
+      expect(edited.label, 'Drop');
+      expect(p.comp.frameAtTime(time: edited.time), 10,
+          reason: 'renaming did not move it');
+    });
+
+    testWidgets('a marker can be deleted from its own menu', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 10, label: 'Chorus');
+      await mount(tester, p);
+
+      await tester.tap(
+          find.byKey(ValueKey<String>('tl-marker-${p.comp.getMarkers().single.id}')),
+          buttons: kSecondaryButton);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('marker-menu-delete')));
+      await tester.pumpAndSettle();
+
+      expect(p.comp.getMarkers(), isEmpty);
+    });
+
+    /// A numbered marker names one place, so setting it again moves it rather
+    /// than leaving two for the bare digit to choose between. Unlabelled cues
+    /// are dropped as freely as you like.
+    test('a numbered marker is replaced, an unlabelled one is not', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 10, label: '1');
+      addMarkerFrb(comp, frame: 40, label: '1');
+      expect(comp.getMarkers(), hasLength(1));
+      expect(markerFrameFrb(comp, '1'), 40);
+
+      addMarkerFrb(comp, frame: 5);
+      addMarkerFrb(comp, frame: 7);
+      expect(comp.getMarkers(), hasLength(3));
+      expect(markerFrameFrb(comp, '2'), isNull,
+          reason: 'a digit with no marker is nothing to jump to');
+    });
+
     // --- the sequence view (K-248) --------------------------------------
 
     /// A Sequence layer, ready to open. Added layers land at the top of the

@@ -260,6 +260,14 @@ colour individually; only the two Timeline tokens default from the mode.
     shared engine (audio device, render worker) across test *files*. Give those
     files a serial marker or make the engine per-file - the serial run is a
     mitigation, not the fix, and it costs wall-clock.
+- **`set_markers` flattens every marker to `MarkerKind::User`** - so dragging or
+    renaming one on the ruler turns detected beats into ordinary cues and *Clear
+    beat markers* stops finding them (`crates/lumit-bridge/src/api/composition.rs`).
+    Carry the kind across the bridge (`BridgeMarker`) and map it back. Pre-dates
+    K-254's ruler markers, which made it far easier to hit.
+- **Beat tap has no key left** - [07-UI-SPEC.md](07-UI-SPEC.md) §10 wants `8`
+    during playback to tap a beat, and K-254 gave the bare digits to the numbered
+    markers. Needs its own chord or a modal reading.
 - **The magnet snaps keyframes to frames and nothing else**
     ([07-UI-SPEC.md](07-UI-SPEC.md) §4.5 wants edit points, in/out points,
     markers, beat markers, the playhead and work-area edges, plus `Ctrl`-hold to

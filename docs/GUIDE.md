@@ -5413,6 +5413,48 @@ through a side door that skips all three (`set_ui_state`), and the frontend call
 it in the one instant it is genuinely wanted — immediately before a save, when the
 arrangement it describes is the one on the screen.
 
+### The playhead, playback, and where you end up (K-254)
+
+Three small things that all turn out to be the same thing.
+
+**The playhead is not always yours.** Normally the playhead is a number the interface
+owns: you move it, and the engine is told to draw that frame. During playback it is the
+other way round. The engine picks which frame to render — it is the one watching the clock
+and the cache — and each finished frame arrives saying *this is the frame you are looking
+at*, at which point the playhead is moved to match. That is deliberate: the number under
+the timecode is the frame genuinely on screen, not the frame something hoped to show.
+
+The catch is that it made scrubbing during playback impossible. You would drag the ruler,
+the playhead would move, and about a sixtieth of a second later the next frame would
+arrive and put it straight back. Not a bug in the drag — the drag worked perfectly, sixty
+times a second, and lost every time. So taking hold of the playhead now **stops playback
+first**. Every place that moves the playhead by pointer goes through one function
+(`scrubTo`) that does exactly that, rather than each of them remembering to.
+
+**Stopping puts you back where you started.** Press play, watch ten seconds go by, press
+stop — and the playhead returns to the frame you were on when you pressed play. This is
+what playback is *for*: you are looking at one moment, you want to see it move, and then
+you want to be back at that moment to change something. The alternative — being left
+wherever the picture happened to stop — means hunting for your place after every press of
+the space bar. It works the same way when the composition simply runs out, because "where
+am I now" should not depend on why it stopped. The one exception is the scrub above: that
+gesture stops playback *in order to* go somewhere else, so putting the playhead back would
+undo the very thing you did. If you preferred the old way, Settings ▸ Interface ▸ Editing
+has a tick box.
+
+**Markers are labelled flags on the ruler.** A marker is just a moment with a name on it —
+the drop of a track, the frame a door closes, wherever you want to be able to get back to.
+Lumit has had them in the document for a long time; what it did not have was a way to
+touch them. Now they draw as small bookmark-shaped flags in the lower row of the time
+ruler, and you can drag one along, right-click it to change what it says, or delete it.
+
+The keyboard is where they earn their keep. **Ctrl and a digit** puts a marker with that
+number at the playhead; **the digit on its own** jumps back to it. Press `Ctrl+1` again
+somewhere else and marker 1 *moves* — a number names one place, so there is never a second
+marker 1 for the plain `1` to have to choose between. `Shift+M` drops an unnumbered one.
+(Why not plain `M`, which is what Premiere and Vegas use? Because `M` reveals a layer's
+masks in the Timeline, and that is a much older reflex to break.)
+
 ## 10. The app icon and the brand files
 
 The icon you see in the taskbar is not one picture — it is a small bag of

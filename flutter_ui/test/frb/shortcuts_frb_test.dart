@@ -353,5 +353,61 @@ void main() {
           reason: 'setting the end leaves the start alone');
       expect(comp.frameAtTime(time: work.outPoint), 30);
     });
+
+    /// Numbered markers (K-254). The pairing is the whole feature: the chord
+    /// that marks a moment is the key that goes back to it, so both halves are
+    /// asserted together — a set that does not return is not the feature.
+    testWidgets('Ctrl+1 sets marker 1 and the bare 1 returns to it',
+        (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+
+      p.uiState.playheadFrame.value = 24;
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pump();
+
+      final marker = comp.getMarkers().single;
+      expect(marker.label, '1', reason: 'the digit is what the marker says');
+      expect(comp.frameAtTime(time: marker.time), 24);
+
+      p.uiState.playheadFrame.value = 0;
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit1);
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 24,
+          reason: 'the bare digit went back to the marker');
+    });
+
+    /// A digit with no marker behind it is a key without a meaning yet, not an
+    /// error — and it must not move the playhead anywhere.
+    testWidgets('a digit with no marker does nothing', (tester) async {
+      final p = await mount(tester);
+      p.uiState.playheadFrame.value = 15;
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.digit7);
+      await tester.pump();
+      expect(p.uiState.playheadFrame.value, 15);
+    });
+
+    /// `M` still reveals Masks in the Timeline, which is why the plain marker
+    /// key is `Shift+M` (K-254).
+    testWidgets('Shift+M drops a marker at the playhead', (tester) async {
+      final p = await mount(tester);
+      final comp = p.uiState.selectedComp!;
+
+      p.uiState.playheadFrame.value = 9;
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyM);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.shiftLeft);
+      await tester.pump();
+
+      expect(comp.getMarkers(), hasLength(1));
+      expect(comp.getMarkers().single.label, isEmpty);
+      expect(comp.frameAtTime(time: comp.getMarkers().single.time), 9);
+    });
   }, skip: !engineAvailable);
 }

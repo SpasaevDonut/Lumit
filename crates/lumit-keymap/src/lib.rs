@@ -51,6 +51,15 @@ impl ActionId {
         if let Some(n) = self.0.strip_prefix("workspace.switch.") {
             return format!("Switch to workspace {n}");
         }
+        // The numbered markers (K-254). Twenty actions, so they are described by
+        // their shape rather than listed one by one below — a table of twenty
+        // near-identical rows is exactly what this prefix form is for.
+        if let Some(n) = self.0.strip_prefix("marker.add.") {
+            return format!("Add marker {n} at the playhead");
+        }
+        if let Some(n) = self.0.strip_prefix("marker.goto.") {
+            return format!("Go to marker {n}");
+        }
         let known = match self.0.as_str() {
             // Transport and navigation.
             "playback.toggle" => "Play or pause",
@@ -531,6 +540,12 @@ pub fn default_keymap() -> Keymap {
         row(Global, "B", "workarea.set.start"),
         row(Global, "N", "workarea.set.end"),
         row(Global, "*", "marker.add"),
+        // `Shift+M` is the second way in (K-254). Premiere and Vegas both drop a
+        // marker on `M`, which is the habit the owner arrives with — but `M`
+        // reveals Masks in the Timeline and that is After Effects' oldest
+        // reflex, so the letter stays where it is and the marker takes Shift.
+        // Two chords for one action is not a clash; `*` still works.
+        row(Global, "Shift+M", "marker.add"),
         // Delete-removes-the-selection was missing from the §15 table
         // entirely (TF-6, first outside tester): keyframes when any are
         // selected, else the selected layer. Backspace is its usual sibling.
@@ -634,6 +649,18 @@ pub fn default_keymap() -> Keymap {
             &format!("Alt+Shift+{d}"),
             &format!("workspace.switch.{d}"),
         ) {
+            bindings.push(b);
+        }
+    }
+    // Numbered markers (K-254): `Ctrl+N` drops marker *N* at the playhead and
+    // the bare digit jumps back to it. The pairing is the point — the key that
+    // sets a cue is the key that returns to it, with the modifier as the only
+    // difference — and it is what every NLE with numbered markers does.
+    for d in 0..=9u8 {
+        if let Some(b) = row(Global, &format!("Mod+{d}"), &format!("marker.add.{d}")) {
+            bindings.push(b);
+        }
+        if let Some(b) = row(Global, &format!("{d}"), &format!("marker.goto.{d}")) {
             bindings.push(b);
         }
     }
@@ -810,6 +837,34 @@ mod tests {
                 .iter()
                 .any(|b| b.context == KeyContext::Global));
         }
+    }
+
+    /// The numbered markers (K-254). `Ctrl+N` sets and the bare `N` returns, for
+    /// all ten digits including zero — and `M` must still reveal Masks in the
+    /// Timeline, which is the whole reason the marker key is `Shift+M`.
+    #[test]
+    fn numbered_markers_bind_set_and_return_for_every_digit() {
+        let km = default_keymap();
+        for d in 0..=9u8 {
+            assert_eq!(
+                km.lookup(KeyContext::Global, &chord(&format!("Mod+{d}"))),
+                Some(&ActionId(format!("marker.add.{d}"))),
+                "Ctrl+{d} should set marker {d}"
+            );
+            assert_eq!(
+                km.lookup(KeyContext::Global, &chord(&format!("{d}"))),
+                Some(&ActionId(format!("marker.goto.{d}"))),
+                "{d} should return to marker {d}"
+            );
+        }
+        assert_eq!(
+            km.lookup(KeyContext::Global, &chord("Shift+M")),
+            Some(&"marker.add".into())
+        );
+        assert_eq!(
+            km.lookup(KeyContext::Timeline, &chord("M")),
+            Some(&"reveal.masks".into())
+        );
     }
 
     #[test]

@@ -5009,3 +5009,52 @@ Flutter Linux embedder needs GTK 3, which only the GNOME runtime ships. Sandbox 
 (`--filesystem=host`, dri, pulseaudio) carry over from the old manifest's reasoning
 verbatim. Published as a single-file `.flatpak` on the GitHub Release; Flathub submission,
 if ever, is a separate decision.
+
+**K-254 · PROPOSED · The playhead returns when playback stops, a scrub takes it off the
+transport, and markers are flags you can drag, name and jump to by number.**
+Three things the owner asked for on 2026-08-03, all about the playhead.
+
+*Scrubbing during playback.* The engine chooses frames and hands each one back, and
+`_arrived` moves the playhead to follow the picture (K-181). A drag on the ruler was
+therefore unwinnable — every tick put the playhead back where the transport wanted it.
+Taking hold of the playhead now **takes it off the transport**: every ruler and lane seek
+goes through one new `LumitUiState.scrubTo`, which stops playback first. One funnel rather
+than a guard per call site, because the three `onSeek` closures were three copies of
+`playheadFrame.value = …` and a fourth would have been written without the guard.
+
+*Returning on stop.* Stopping now puts the playhead back where `play` was asked for —
+including when the composition simply runs out, since where you are when the transport
+stops should not depend on why it stopped. This realises §9's long-standing
+"stop-to-start toggle behaviour as a setting" line. The default is the returning one:
+playback is a preview of the moment being worked on. Settings ▸ Interface ▸ Editing ▸
+*Playhead stays where playback stopped* restores the older After Effects behaviour, and
+unlike the K-246 pair it does **not** defer to a settings file's silence — an install
+written before the field adopts the new default rather than being pinned to the old
+behaviour by omission. The first-run screen does not touch it: both answers want the
+returning playhead (real Vegas returns its cursor too), so there is nothing for the
+question to decide, and K-246's pair stays a pair.
+
+*Markers.* The engine has had markers since docs/03 §11 and the ⋯ menu has had a dialogue
+for them; what was missing was the ruler. Comp markers are now After Effects' bookmark
+flags — a square with its bottom corners cut to a point, its **left edge** on the moment
+it marks — drawn in the ruler's lower row beside the work-area band, and drawn last so a
+flag wins the pointer over a work-area handle it sits on. They **drag** along the ruler
+(committed per frame crossed, like the work-area edges, and holding the grab offset so the
+flag does not flinch to the pointer), and **right-click** offers *Edit marker…* and
+*Delete marker*.
+
+The keyboard is the numbered pair every NLE has: **`Ctrl+0…9`** sets marker *N* at the
+playhead and the **bare digit** returns to it. Setting a numbered marker that already
+exists *moves* it rather than adding a second — a digit has to name one place. A digit
+with no marker behind it is left unhandled, not swallowed. The plain marker key is
+**`Shift+M`** alongside AE's numpad `*`: Premiere and Vegas both use `M`, but `M` reveals
+Masks in the Timeline and that reflex is older, so the letter stays put and the marker
+takes Shift. Twenty new action ids, described by prefix (`marker.add.N`, `marker.goto.N`)
+the way `workspace.switch.N` already is, and the shipped keymap stays conflict-free.
+
+Two things this leaves: §10's *`8` during playback = beat tap* now wants a key of its own
+or a modal reading, since the bare digits are spoken for; and `set_markers` still flattens
+every marker to `MarkerKind::User`, so dragging a marker turns detected beats into ordinary
+cues and *Clear beat markers* stops finding them. That was already true of the dialogue's
+remove button and is not made worse here, but it is now much easier to hit — it wants a
+kind carried across the bridge.

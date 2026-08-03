@@ -785,6 +785,11 @@ class TimelineRuler extends StatefulWidget {
   /// is a per-rebuild cost on a panel that rebuilds a lot (docs/13).
   final ({int start, int end, bool whole}) work;
 
+  /// A marker was moved, renamed or removed on the ruler (K-254) — the ruler
+  /// has already written it to the document, and this is the panel being told
+  /// so the rest of it redraws. Null in a ruler with no markers to edit.
+  final VoidCallback? onMarkersChanged;
+
   const TimelineRuler({
     super.key,
     required this.comp,
@@ -794,6 +799,7 @@ class TimelineRuler extends StatefulWidget {
     required this.onSeek,
     required this.work,
     this.onWorkArea,
+    this.onMarkersChanged,
   });
 
   @override
@@ -810,6 +816,100 @@ class _TimelineRulerState extends State<TimelineRuler> {
   /// edge is drawn while the button is down.
   int? _dragFrame;
   bool _dragIsStart = false;
+
+  /// The marker being dragged, and the frame it has reached — the same
+  /// arrangement as the work area's above, for the same reason: a flag that
+  /// waits for the document to come back round visibly trails the pointer.
+  UuidValue? _dragMarker;
+  int? _dragMarkerFrame;
+
+  /// How far into the flag the drag took hold. Without it the flag's left edge
+  /// jumped to the pointer the moment the drag started, which reads as the
+  /// marker flinching away from the grab.
+  double _dragMarkerGrab = 0;
+
+  /// Where a marker draws right now: the document's frame, or the dragged one.
+  int _markerFrame(BridgeMarker marker) =>
+      marker.id == _dragMarker && _dragMarkerFrame != null
+          ? _dragMarkerFrame!
+          : frameAtTime(widget.comp, marker.time);
+
+  /// Write a whole marker list and tell the panel. Every marker edit on the
+  /// ruler goes through here, so there is one place that knows a marker change
+  /// is a document change.
+  void _writeMarkers(List<BridgeMarker> markers) {
+    widget.comp.setMarkers(markers: markers);
+    widget.onMarkersChanged?.call();
+    if (mounted) setState(() {});
+  }
+
+  /// Drag a marker to `frame`, committing only when the drag actually crosses
+  /// one — a pointer emits many moves per frame of travel and each commit is a
+  /// document write.
+  void _dragMarkerTo(BridgeMarker marker, int frame) {
+    final comp = widget.comp;
+    final last = comp.durationFrames() - 1;
+    final to = frame.clamp(0, last < 0 ? 0 : last);
+    if (to == _dragMarkerFrame) return;
+    setState(() => _dragMarkerFrame = to);
+    _writeMarkers([
+      for (final m in comp.getMarkers())
+        if (m.id == marker.id)
+          BridgeMarker(id: m.id, time: timeOfFrame(comp, to), label: m.label)
+        else
+          m,
+    ]);
+  }
+
+  /// The right-click menu on a flag: change what it says, or take it away.
+  void _markerMenu(BuildContext context, BridgeMarker marker, Offset at) {
+    showLumitPopup<void>(
+      context: context,
+      position: at,
+      builder: (close) => FloatSurface(
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              MenuRow(
+                key: const ValueKey('marker-menu-edit'),
+                onPressed: () {
+                  close(null);
+                  _editMarker(context, marker);
+                },
+                child: const Text('Edit marker…'),
+              ),
+              MenuRow(
+                key: const ValueKey('marker-menu-delete'),
+                onPressed: () {
+                  close(null);
+                  _writeMarkers([
+                    for (final m in widget.comp.getMarkers())
+                      if (m.id != marker.id) m,
+                  ]);
+                },
+                child: const Text('Delete marker'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _editMarker(BuildContext context, BridgeMarker marker) async {
+    final label =
+        await showMarkerLabelDialogFrb(context: context, initial: marker.label);
+    if (label == null || !mounted) return;
+    _writeMarkers([
+      for (final m in widget.comp.getMarkers())
+        if (m.id == marker.id)
+          BridgeMarker(id: m.id, time: m.time, label: label)
+        else
+          m,
+    ]);
+  }
 
   /// The work area as it should draw right now: the panel's, with the edge
   /// being dragged moved to where the pointer is. Each edge stops one frame
@@ -943,20 +1043,48 @@ class _TimelineRulerState extends State<TimelineRuler> {
                     ),
                   ),
                 ),
+            // Comp markers (docs/07 §4.1): After Effects' bookmark flags, in
+            // the ruler's lower row where the work-area band lives. The clock
+            // above stays legible, and a flag never sits on a tick.
+            //
+            // Last in the stack so they take the pointer ahead of the
+            // work-area handles: a flag is the smaller target of the two and
+            // has to win where they overlap, or a marker parked on a work-area
+            // edge could not be picked up at all.
             for (final marker in markers)
               Positioned(
-                left: axis.xOf(frameAtTime(comp, marker.time)) - 3,
-                top: 4,
-                child: IgnorePointer(
-                  child: LumitTooltip(
-                    message: marker.label,
-                    child: Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(
-                        color: t.warning,
-                        borderRadius: BorderRadius.circular(1),
-                      ),
+                left: axis.xOf(_markerFrame(marker)),
+                bottom: 2,
+                child: MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: GestureDetector(
+                    key: ValueKey<String>('tl-marker-${marker.id}'),
+                    behavior: HitTestBehavior.opaque,
+                    onSecondaryTapUp: (d) =>
+                        _markerMenu(context, marker, d.globalPosition),
+                    onHorizontalDragStart: (d) => setState(() {
+                      _dragMarker = marker.id;
+                      _dragMarkerFrame = null;
+                      _dragMarkerGrab = d.localPosition.dx;
+                    }),
+                    onHorizontalDragUpdate: (d) => _dragMarkerTo(
+                        marker,
+                        axis.frameAt(d.globalPosition.dx -
+                            _originX(context) -
+                            _dragMarkerGrab)),
+                    onHorizontalDragEnd: (_) => setState(() {
+                      _dragMarker = null;
+                      _dragMarkerFrame = null;
+                    }),
+                    onHorizontalDragCancel: () => setState(() {
+                      _dragMarker = null;
+                      _dragMarkerFrame = null;
+                    }),
+                    child: MarkerFlag(
+                      label: marker.label,
+                      fill: t.warning,
+                      ink: t.surface0,
+                      text: t.small,
                     ),
                   ),
                 ),
@@ -971,6 +1099,211 @@ class _TimelineRulerState extends State<TimelineRuler> {
 /// How wide a work-area edge is to grab. Wider than the 2 px it draws, so the
 /// handle is catchable without the mark being heavy.
 const double _workHandleWidth = 10;
+
+/// A comp marker on the time ruler: After Effects' bookmark flag — a small
+/// square with its bottom corners cut away to a point, its **left edge** on the
+/// moment it marks (docs/07 §4.1, K-254).
+///
+/// A short label (the numbered markers, `1`–`0`) is drawn inside the flag, the
+/// way every editor shows a numbered cue. Anything longer sits beside it:
+/// a flag stretched to fit a sentence stops reading as a point in time.
+class MarkerFlag extends StatelessWidget {
+  final String label;
+  final Color fill;
+
+  /// What is drawn *on* the flag — the darkest surface, so a number reads as
+  /// cut out of the flag rather than printed over it. The same trick the
+  /// playhead's notch uses.
+  final Color ink;
+  final TextStyle text;
+
+  static const double width = 11;
+  static const double height = 12;
+
+  const MarkerFlag({
+    super.key,
+    required this.label,
+    required this.fill,
+    required this.ink,
+    required this.text,
+  });
+
+  bool get _inside => label.isNotEmpty && label.length <= 2;
+
+  @override
+  Widget build(BuildContext context) {
+    final flag = SizedBox(
+      width: width,
+      height: height,
+      child: CustomPaint(
+        painter: _MarkerFlagPainter(fill: fill),
+        child: _inside
+            ? Center(
+                child: Text(
+                  label,
+                  style: text.copyWith(color: ink, fontSize: 8, height: 1),
+                ),
+              )
+            : null,
+      ),
+    );
+    if (label.isEmpty || _inside) {
+      return label.isEmpty ? flag : LumitTooltip(message: label, child: flag);
+    }
+    return LumitTooltip(
+      message: label,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          flag,
+          const SizedBox(width: 3),
+          Text(label, style: text.copyWith(color: fill)),
+        ],
+      ),
+    );
+  }
+}
+
+class _MarkerFlagPainter extends CustomPainter {
+  final Color fill;
+  const _MarkerFlagPainter({required this.fill});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Square down to the shoulders, then in to a point — the bookmark notch
+    // inverted, which is the shape every editor has settled on for a cue.
+    final shoulder = size.height * 0.6;
+    canvas.drawPath(
+      Path()
+        ..moveTo(0, 0)
+        ..lineTo(size.width, 0)
+        ..lineTo(size.width, shoulder)
+        ..lineTo(size.width / 2, size.height)
+        ..lineTo(0, shoulder)
+        ..close(),
+      Paint()..color = fill,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_MarkerFlagPainter old) => old.fill != fill;
+}
+
+/// Ask for what a marker says. Returns the new label, or null when the user
+/// cancelled — an empty string is a real answer, being a marker with nothing
+/// written on it.
+Future<String?> showMarkerLabelDialogFrb({
+  required BuildContext context,
+  required String initial,
+}) =>
+    showLumitModal<String>(
+      context: context,
+      initialSize: const Size(320, 150),
+      minSize: const Size(260, 140),
+      builder: (close) => _MarkerLabelDialog(initial: initial, onDone: close),
+    );
+
+class _MarkerLabelDialog extends StatefulWidget {
+  final String initial;
+  final ValueChanged<String?> onDone;
+  const _MarkerLabelDialog({required this.initial, required this.onDone});
+
+  @override
+  State<_MarkerLabelDialog> createState() => _MarkerLabelDialogState();
+}
+
+class _MarkerLabelDialogState extends State<_MarkerLabelDialog> {
+  late final TextEditingController _label =
+      TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _label.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    return FloatSurface(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 10, 10, 6),
+            child: Text('Marker', style: t.bodyPrimary),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: HouseTextField(
+              key: const ValueKey('marker-edit-label'),
+              controller: _label,
+              autofocus: true,
+              hint: 'What this marker says',
+              onSubmitted: widget.onDone,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                HouseButton(
+                  key: const ValueKey('marker-edit-cancel'),
+                  small: true,
+                  frameless: true,
+                  onPressed: () => widget.onDone(null),
+                  child: Text('Cancel', style: t.small),
+                ),
+                const SizedBox(width: 6),
+                HouseButton(
+                  key: const ValueKey('marker-edit-ok'),
+                  small: true,
+                  onPressed: () => widget.onDone(_label.text),
+                  child: Text('Done', style: t.small),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Put a marker labelled [label] at [frame], replacing any marker already
+/// carrying that label (K-254).
+///
+/// Replacing rather than adding is what makes the numbered markers work: `1`
+/// has to name one place, so `Ctrl+1` pressed again *moves* marker 1 instead of
+/// leaving two for the bare `1` to choose between. An empty label replaces
+/// nothing — unlabelled cues are dropped as freely as you like.
+void addMarkerFrb(
+  CompositionReference comp, {
+  required int frame,
+  String label = '',
+}) {
+  comp.setMarkers(markers: [
+    for (final m in comp.getMarkers())
+      if (label.isEmpty || m.label != label) m,
+    BridgeMarker(
+      id: UuidValue.fromString(const Uuid().v4()),
+      time: timeOfFrame(comp, frame),
+      label: label,
+    ),
+  ]);
+}
+
+/// The frame of the marker labelled [label], or null when there is none — what
+/// the bare digit keys jump to, and what makes them a quiet no-op until the
+/// matching `Ctrl`+digit has been pressed.
+int? markerFrameFrb(CompositionReference comp, String label) {
+  for (final m in comp.getMarkers()) {
+    if (m.label == label) return frameAtTime(comp, m.time);
+  }
+  return null;
+}
 
 /// The playhead: a hairline down the whole area with a head at the top.
 ///

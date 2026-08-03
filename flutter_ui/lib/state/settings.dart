@@ -140,12 +140,23 @@ class InterfaceSettings {
   /// Still images never do: there is nothing to cut in a single frame.
   bool videoAsSequenceLayer;
 
+  /// Whether stopping playback leaves the playhead on the frame that was on
+  /// screen, rather than putting it back where play started (K-254).
+  ///
+  /// Off by default: playback is a preview of the moment you are working on,
+  /// and coming back to a different frame than you left means finding your
+  /// place again after every space bar. On is the After Effects behaviour, and
+  /// what Lumit did before this existed — hence the phrasing as a deviation
+  /// from the default rather than a choice between two equals.
+  bool playheadStaysOnStop;
+
   InterfaceSettings({
     this.uiScale = 1.0,
     this.showTooltips = true,
     this.transformInEffectControls = false,
     this.retimeOpensToSpeed = false,
     this.videoAsSequenceLayer = false,
+    this.playheadStaysOnStop = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -154,6 +165,7 @@ class InterfaceSettings {
         'transform_in_effect_controls': transformInEffectControls,
         'retime_opens_to_speed': retimeOpensToSpeed,
         'video_as_sequence_layer': videoAsSequenceLayer,
+        'playhead_stays_on_stop': playheadStaysOnStop,
       };
   factory InterfaceSettings.fromJson(Map<String, dynamic> j) =>
       InterfaceSettings(
@@ -166,5 +178,10 @@ class InterfaceSettings {
         // must not silently change how the editor works.
         retimeOpensToSpeed: j['retime_opens_to_speed'] as bool? ?? false,
         videoAsSequenceLayer: j['video_as_sequence_layer'] as bool? ?? false,
+        // Absent means off here too, but for the opposite reason: the returning
+        // playhead is the *new* default (K-254), so a settings file written
+        // before this field existed adopts it rather than being pinned to the
+        // old behaviour by its own silence.
+        playheadStaysOnStop: j['playhead_stays_on_stop'] as bool? ?? false,
       );
 }

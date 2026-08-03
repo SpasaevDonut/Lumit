@@ -1687,9 +1687,7 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                     onToggle: _toggle,
                                                     playheadFrame:
                                                         ui.playheadFrame.value,
-                                                    onSeek: (f) => ui
-                                                        .playheadFrame
-                                                        .value = f,
+                                                    onSeek: ui.scrubTo,
                                                     onSelect: (l) =>
                                                         _selectLayer(ui, l,
                                                             among: layers),
@@ -1809,15 +1807,16 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                                 span: span);
                                                             setState(() {});
                                                           },
-                                                          onSeek: (f) => ui
-                                                                  .playheadFrame
-                                                                  .value =
-                                                              f.clamp(
+                                                          onMarkersChanged:
+                                                              () => setState(
+                                                                  () {}),
+                                                          onSeek: (f) =>
+                                                              ui.scrubTo(f.clamp(
                                                                   0,
                                                                   frames == 0
                                                                       ? 0
                                                                       : frames -
-                                                                          1),
+                                                                          1)),
                                                         ),
                                                         TimelineCacheBar(
                                                           comp: comp,
@@ -2073,12 +2072,11 @@ class _TimelinePanelFrbState extends State<TimelinePanelFrb> {
                                                   onWheel: (e, x) => _wheel(
                                                       e, x, axis.perFrame),
                                                   onSeek: (f) =>
-                                                      ui.playheadFrame.value =
-                                                          f.clamp(
-                                                              0,
-                                                              frames == 0
-                                                                  ? 0
-                                                                  : frames - 1),
+                                                      ui.scrubTo(f.clamp(
+                                                          0,
+                                                          frames == 0
+                                                              ? 0
+                                                              : frames - 1)),
                                                   onSelect: (l) =>
                                                       _selectLayer(ui, l,
                                                           among: layers),
@@ -5188,6 +5186,7 @@ class _LayerArea extends StatelessWidget {
                 comp.setWorkArea(span: span);
                 onChanged();
               },
+              onMarkersChanged: onChanged,
             ),
             // Directly under the ruler and above the lanes, which is where the
             // interface spec puts it (docs/07 §3.2).
