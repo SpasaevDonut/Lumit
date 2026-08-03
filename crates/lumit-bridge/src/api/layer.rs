@@ -457,9 +457,9 @@ pub struct BridgeLayerInfo {
     pub shape_contents: Vec<BridgeShapeItem>,
     /// The layer's own markers (K-254), and the comp frame each falls on — the
     /// marker's layer-local time carried out by the layer's start offset — so
-    /// the bar needs no time↔frame trip to draw one. In the read model because the
-    /// Timeline draws them on every rebuild, which is the cost K-184 exists to
-    /// remove.
+    /// the bar needs no time↔frame trip to draw one. In the read model because
+    /// the Timeline draws them on every rebuild, which is the cost K-184 exists
+    /// to remove.
     pub markers: Vec<BridgeLayerMarker>,
 }
 

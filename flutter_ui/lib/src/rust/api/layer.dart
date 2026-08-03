@@ -194,10 +194,11 @@ class BridgeLayerInfo {
   /// layer's size, so the Viewer's wireframe reads it here.
   final List<BridgeShapeItem> shapeContents;
 
-  /// The layer's own markers (K-254), and the frame each falls on so the bar
-  /// needs no time↔frame trip to draw one. In the read model because the
-  /// Timeline draws them on every rebuild, which is the cost K-184 exists to
-  /// remove.
+  /// The layer's own markers (K-254), and the comp frame each falls on — the
+  /// marker's layer-local time carried out by the layer's start offset — so
+  /// the bar needs no time↔frame trip to draw one. In the read model because
+  /// the Timeline draws them on every rebuild, which is the cost K-184 exists
+  /// to remove.
   final List<BridgeLayerMarker> markers;
 
   const BridgeLayerInfo({
