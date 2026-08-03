@@ -245,10 +245,11 @@ on a light scheme means going *darker* while the surfaces go lighter).
 (`flutter_ui/lib/theme/theme.dart`) carries the structural roles — the surfaces, text, hairlines,
 `accent`/`accent_hover`, `success`/`warning`/`error`, the `curve[4]` ramp, `layer`
 (`LayerColours`, §6.1) — plus two the code has split out that this listing does not yet name:
-`scope` (`ScopeColours`, the four scope-chrome accents) and `cache_disk` (the disk tier of the
-cache bar, §6.3). Not yet split into their own tokens, and derived ad-hoc from existing roles in
+`scope` (`ScopeColours`, the four scope-chrome accents), `cache_disk` (the disk tier of the
+cache bar, §6.3) and `marker` (comp markers on the time ruler, §6.4 — the first of the
+`marker` grouping to be split out, K-254; the beat variant still waits). Not yet split into their own tokens, and derived ad-hoc from existing roles in
 v1: `disabled` and `fill_tonal` (the `cloud`/`oat` mappings below are reserved, not present);
-the `keyframe`, `marker`, `overrun_hatch`, `waveform` and `selection` groupings (widgets reach
+the `keyframe`, `overrun_hatch`, `waveform` and `selection` groupings (widgets reach
 for `text_secondary`, `accent`, `warning`, etc. directly); and `shadow_float`. Splitting each
 into a named token — so no widget derives a semantic colour itself — is the standing direction,
 done as each area is next touched; the no-hex rule already holds regardless.
@@ -415,9 +416,18 @@ failure.
   marks the exact exhaustion point, and hovering the span says what it means ("Source ends
   here — holding the last frame"). Warning, not error: the render is well-defined
   (boundary-frame hold), the editor just needs to see it.
+- **Comp markers (shipped, K-254)**: a `marker` token of its own — a plain grey, `#c4c4c4`
+  on a dark scheme and `#565656` on a light one, editable in the theme editor like any other
+  role. Grey rather than a role colour on purpose: a marker says *here*, not *good* or
+  *careful*, and the ruler already spends the accent on the work area. The flag is an 11×12
+  shape with its **point at the top**, centred on the frame it marks so the point sits on the
+  playhead, hanging into the ruler's lower row. What it says rides in a box of the same
+  colour flush against its right, `caption` weight 400 in `surface_0`, rather than as loose
+  text over the ticks. **One marker per frame** — a second dropped on an occupied frame
+  replaces the first, since two flags on one moment are two things to click and one place.
 - **Beat markers**: `marker.beat` = `#aef3e7` (mint) 1px ticks in the ruler with a small
-  triangular head. Manual markers: `marker.manual` = `text_secondary`; span markers draw a
-  hairline-bounded band. Marker labels: mono 11px.
+  triangular head — still to come, and it needs a token of its own beside `marker`. Span
+  markers draw a hairline-bounded band.
 - **Clip waveforms**: `waveform.rest` = `#5d8a96` (muted steel-cyan) filled envelope at 80%
   opacity on `surface_2`; on selected clips the envelope brightens to `text_secondary`.
   Waveforms never render in `accent` — they are content, not state.

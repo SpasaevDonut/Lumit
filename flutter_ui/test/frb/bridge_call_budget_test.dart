@@ -21,11 +21,13 @@ import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
 import 'package:lumit_flutter/panels/project_panel_frb.dart';
+import 'package:lumit_flutter/panels/timeline_extras_frb.dart';
 import 'package:lumit_flutter/panels/timeline_panel_frb.dart';
 import 'package:lumit_flutter/panels/viewer_panel_frb.dart';
 import 'package:lumit_flutter/src/rust/api/effect.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/frb_generated.dart';
+import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
 import 'frb_test_support.dart';
@@ -148,6 +150,76 @@ void main() {
         lessThan(12),
         reason: 'one click re-read far too much across the bridge:\n'
             '${counter.ranking()}',
+      );
+    });
+
+    /// **Markers used to cost a bridge call per rebuild and one per frame of
+    /// drag.** `get_markers` walked the whole list across the seam on every
+    /// ruler build — sixty times a second while playback runs — and a drag
+    /// committed a document write for every frame it crossed, which is what
+    /// made dragging a flag feel heavy. The list is remembered in Dart until
+    /// the document changes, and a drag writes once, on release.
+    testWidgets('markers cost nothing per rebuild and one write per drag',
+        (tester) async {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      comp.addSolidLayer();
+      p.uiState.setSelectedComp(comp);
+      addMarkerFrb(comp, frame: 40, label: 'Chorus');
+
+      tester.view.physicalSize = const Size(1280, 600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(hostPanel(
+        state: p.state,
+        uiState: p.uiState,
+        size: const Size(1280, 600),
+        child: const TimelinePanelFrb(),
+      ));
+      await settleFrb(tester, minRounds: 8);
+
+      // Ten rebuilds of the ruler, driven the way playback drives it.
+      counter
+        ..reset()
+        ..counting = true;
+      for (var i = 1; i <= 10; i++) {
+        p.uiState.playheadFrame.value = i;
+        await tester.pump();
+        tester.element(find.byType(TimelineRuler)).markNeedsBuild();
+        await tester.pump();
+      }
+      counter.counting = false;
+      // ignore: avoid_print
+      print('MARKER REBUILD COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.total,
+        lessThan(4),
+        reason: 'the ruler re-read the marker list on every rebuild:\n'
+            '${counter.ranking()}',
+      );
+
+      // And the drag: one write, not one per frame crossed.
+      final flag = find
+          .byKey(ValueKey<String>('tl-marker-${markersOf(comp).single.id}'));
+      counter
+        ..reset()
+        ..counting = true;
+      await tester.drag(flag, const Offset(120, 0));
+      await tester.pump();
+      await settleFrb(tester, minRounds: 4, maxRounds: 8);
+      counter.counting = false;
+      // ignore: avoid_print
+      print('MARKER DRAG COST ${counter.total} calls\n${counter.ranking()}');
+      expect(
+        counter.calls['composition_reference_set_markers'] ?? 0,
+        1,
+        reason: 'a drag must write the document once, on release:\n'
+            '${counter.ranking()}',
+      );
+      expect(
+        counter.total,
+        lessThan(40),
+        reason: 'dragging a marker re-read far too much:\n${counter.ranking()}',
       );
     });
 

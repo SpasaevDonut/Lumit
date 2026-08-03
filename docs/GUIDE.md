@@ -5445,8 +5445,29 @@ has a tick box.
 **Markers are labelled flags on the ruler.** A marker is just a moment with a name on it —
 the drop of a track, the frame a door closes, wherever you want to be able to get back to.
 Lumit has had them in the document for a long time; what it did not have was a way to
-touch them. Now they draw as small bookmark-shaped flags in the lower row of the time
-ruler, and you can drag one along, right-click it to change what it says, or delete it.
+touch them. Now they draw as small flags in the lower row of the time ruler, and you can
+drag one along, right-click it to change what it says, or delete it.
+
+The flag points *upwards*, and the point is centred on the frame it marks, so it lands on
+the playhead. That is the whole of the design: the point is the bit that means "this
+frame", and a shape sitting to one side of it would be pointing at the frame next door.
+Whatever the marker says rides in a small box stuck to the flag's right — as loose text it
+crossed the ruler's ticks and the work-area band and read as belonging to neither.
+
+Two markers can never sit on the same frame. Drop one where another already is — with the
+keyboard or by dragging — and the newcomer takes its place. Two flags on one moment would
+be two things to click and one place, and the second would hide the first exactly.
+
+**A note on cost, because it is the reason this feels smooth.** Two habits keep markers
+cheap. First, the list is *remembered*: asking the engine for a comp's markers is a trip
+across the Rust/Flutter boundary, and the ruler redraws sixty times a second while playback
+runs — so the answer is kept on the Flutter side and thrown away only when the document
+actually changes. Second, dragging a flag writes nothing until you let go. The earlier
+version saved the new position every time the flag crossed a frame, which meant a document
+write, a memory flush and a panel redraw for every few pixels of travel — the drag worked,
+but it felt like dragging something heavy. A work-area edge can afford that, because the
+Viewer's preview range genuinely changes as the edge moves; a marker has nothing to show
+until it lands.
 
 The keyboard is where they earn their keep. **Ctrl and a digit** puts a marker with that
 number at the playhead; **the digit on its own** jumps back to it. Press `Ctrl+1` again

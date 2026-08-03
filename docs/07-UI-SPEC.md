@@ -728,11 +728,18 @@ Lane and Graph view buttons, and a ⋯ menu with the layer / razor / work-area /
 beat commands) and the **column-group header** (§4.2). The lane side gives those two
 rows' height to a taller, labelled time ruler — a bigger playhead grab — with the cache
 bar tucked under it. Markers draw on the ruler itself rather than in a ribbon of their
-own — as After Effects' bookmark flags, in the ruler's lower row beside the work-area
-band, with a one- or two-character label inside the flag and a longer one beside it. They
-can be **dragged** along the ruler, and **right-clicking** one offers *Edit marker…* and
-*Delete marker* (K-254). The separate ribbon, span markers and double-click-to-create are
-still to come.
+own (K-254): a small flag with its **point at the top**, centred on the frame it marks so
+the point sits on the playhead, hanging into the ruler's lower row beside the work-area
+band. What a marker says rides in a box of the same colour flush against the flag's right,
+not as loose text over the ticks. Styling — a grey `marker` token, editable like any other
+— is in [15-DESIGN.md](15-DESIGN.md) §6.4.
+
+**One marker per frame**: adding one where a marker already sits replaces it, and so does
+dragging one on top of another. Two flags on one moment are two things to click and one
+place, and the second hides the first exactly. A flag can be **dragged** along the ruler —
+the document hears about the move once, on release, not per frame crossed — and
+**right-clicking** one offers *Edit marker…* and *Delete marker*. The separate ribbon, span
+markers, layer markers and double-click-to-create are still to come.
 
 ### 4.2 Layer outline columns
 
@@ -1681,7 +1688,7 @@ them away the day dispatch started going through the keymap.
 | Global | `Ctrl+,` / `Ctrl+.` | Previous / next edit point or layer boundary |
 | Global | `B` / `N` | Set work area start / end at playhead |
 | Global | `*` (numpad or `Shift+8`) / `Shift+M` | Add marker at playhead. `M` keeps Reveal Masks, so the letter form takes Shift (K-254) |
-| Global | `Ctrl+0…9` | Set numbered marker at playhead — pressing it again *moves* that marker (K-254) |
+| Global | `Ctrl+0…9` | Set numbered marker at playhead — pressing it again *moves* that marker, and it replaces whatever is on that frame (K-254) |
 | Global | `0…9` | Go to that numbered marker; nothing happens until one has been set (K-254) |
 | Global | `Delete` / `Backspace` | Delete the selection — keyframes when any are selected, else the layer (TF-6) |
 | Global | `Ctrl+Shift+P` | Command palette |

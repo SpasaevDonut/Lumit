@@ -5035,13 +5035,33 @@ returning playhead (real Vegas returns its cursor too), so there is nothing for 
 question to decide, and K-246's pair stays a pair.
 
 *Markers.* The engine has had markers since docs/03 §11 and the ⋯ menu has had a dialogue
-for them; what was missing was the ruler. Comp markers are now After Effects' bookmark
-flags — a square with its bottom corners cut to a point, its **left edge** on the moment
-it marks — drawn in the ruler's lower row beside the work-area band, and drawn last so a
-flag wins the pointer over a work-area handle it sits on. They **drag** along the ruler
-(committed per frame crossed, like the work-area edges, and holding the grab offset so the
-flag does not flinch to the pointer), and **right-click** offers *Edit marker…* and
-*Delete marker*.
+for them; what was missing was the ruler. Comp markers are now small flags with the
+**point at the top**, **centred on the frame** so the point sits on the playhead — the
+point is what carries the meaning, *this* frame and not the one next door, so a shape hung
+off to one side was marking the wrong thing. They hang into the ruler's lower row beside
+the work-area band, drawn last so a flag wins the pointer over a work-area handle it sits
+on. What a marker says rides in a box of the same colour flush against the flag rather than
+as loose text over the ticks, where it crossed the ruler and the work-area wash and read as
+neither. Colour is a `marker` token of its own — a plain grey, light on dark and dark on
+light, editable like any other role — because a marker says *here*, not *good* or
+*careful*, and the accent is already spent on the work area.
+
+**Markers do not stack.** Adding one where a marker already sits replaces it, and so does
+dragging one on top of another; both go through one `markersWithFrb`, so the shortcut and
+the drag cannot drift into different ideas of what placing a marker means. Two flags on one
+frame are two things to click and one place, and the second hides the first exactly.
+
+A drag **writes once, on release**. Committing per frame crossed — what the work-area edges
+do — cost a document write, a cache flush and a panel rebuild for every frame of travel,
+which is what made the drag feel heavy; the work-area edge can afford it because the
+Viewer's preview range changes as it moves, and a marker has nothing to show until it
+lands. In the same vein the marker list is now remembered in Dart (`markersOf`, beside the
+frame/time memo, cleared by the same committed-change hook) rather than fetched across the
+bridge on every ruler rebuild — sixty times a second while playback runs, for a list only
+an edit can change. `bridge_call_budget_test` pins both: nothing per rebuild, exactly one
+`set_markers` per drag.
+
+**Right-click** offers *Edit marker…* and *Delete marker*.
 
 The keyboard is the numbered pair every NLE has: **`Ctrl+0…9`** sets marker *N* at the
 playhead and the **bare digit** returns to it. Setting a numbered marker that already

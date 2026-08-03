@@ -480,7 +480,7 @@ class _MarkerEditorState extends State<_MarkerEditor> {
   @override
   Widget build(BuildContext context) {
     final t = ThemeScope.of(context).theme;
-    final markers = widget.comp.getMarkers();
+    final markers = markersOf(widget.comp);
 
     return FloatSurface(
       width: 340,
@@ -516,12 +516,10 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                     small: true,
                     frameless: true,
                     onPressed: () {
-                      widget.comp.setMarkers(
-                        markers: [
-                          for (final m in markers)
-                            if (m.id != marker.id) m,
-                        ],
-                      );
+                      writeMarkers(widget.comp, [
+                        for (final m in markers)
+                          if (m.id != marker.id) m,
+                      ]);
                       setState(() {});
                     },
                     child:
@@ -552,17 +550,8 @@ class _MarkerEditorState extends State<_MarkerEditor> {
                   key: const ValueKey('marker-add'),
                   small: true,
                   onPressed: () {
-                    widget.comp.setMarkers(
-                      markers: [
-                        ...markers,
-                        BridgeMarker(
-                          id: UuidValue.fromString(const Uuid().v4()),
-                          time: widget.comp
-                              .timeOfFrame(frame: widget.playheadFrame),
-                          label: _label.text,
-                        ),
-                      ],
-                    );
+                    addMarkerFrb(widget.comp,
+                        frame: widget.playheadFrame, label: _label.text);
                     _label.clear();
                     setState(() {});
                   },
@@ -834,31 +823,44 @@ class _TimelineRulerState extends State<TimelineRuler> {
           ? _dragMarkerFrame!
           : frameAtTime(widget.comp, marker.time);
 
+  /// The last frame of the comp, read once when a drag starts. Asking per
+  /// pointer move was a bridge call per pixel of travel.
+  int _dragMarkerLast = 0;
+
   /// Write a whole marker list and tell the panel. Every marker edit on the
   /// ruler goes through here, so there is one place that knows a marker change
   /// is a document change.
   void _writeMarkers(List<BridgeMarker> markers) {
-    widget.comp.setMarkers(markers: markers);
+    writeMarkers(widget.comp, markers);
     widget.onMarkersChanged?.call();
     if (mounted) setState(() {});
   }
 
-  /// Drag a marker to `frame`, committing only when the drag actually crosses
-  /// one — a pointer emits many moves per frame of travel and each commit is a
-  /// document write.
-  void _dragMarkerTo(BridgeMarker marker, int frame) {
-    final comp = widget.comp;
-    final last = comp.durationFrames() - 1;
-    final to = frame.clamp(0, last < 0 ? 0 : last);
+  /// Follow the pointer. **Nothing is written while the button is down**: the
+  /// flag draws from [_dragMarkerFrame] and the document hears about the move
+  /// once, on release. Committing per frame crossed — the way the work-area
+  /// edges do — cost a document write, a cache flush and a panel rebuild for
+  /// every frame of travel, which is what made the drag feel heavy. A
+  /// work-area edge can afford it because the Viewer preview range changes as
+  /// it moves; a marker has nothing to show until it lands.
+  void _dragMarkerTo(int frame) {
+    final to = frame.clamp(0, _dragMarkerLast < 0 ? 0 : _dragMarkerLast);
     if (to == _dragMarkerFrame) return;
     setState(() => _dragMarkerFrame = to);
-    _writeMarkers([
-      for (final m in comp.getMarkers())
-        if (m.id == marker.id)
-          BridgeMarker(id: m.id, time: timeOfFrame(comp, to), label: m.label)
-        else
-          m,
-    ]);
+  }
+
+  /// The drag ended: write where the flag has been sitting, once.
+  void _dropMarker(BridgeMarker marker) {
+    final to = _dragMarkerFrame;
+    setState(() {
+      _dragMarker = null;
+      _dragMarkerFrame = null;
+    });
+    if (to == null) return;
+    // The same placement rule adding a marker follows, so a flag dropped onto
+    // another behaves exactly as `Ctrl`+digit aimed at an occupied frame does.
+    _writeMarkers(markersWithFrb(widget.comp,
+        frame: to, label: marker.label, id: marker.id));
   }
 
   /// The right-click menu on a flag: change what it says, or take it away.
@@ -885,7 +887,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
                 onPressed: () {
                   close(null);
                   _writeMarkers([
-                    for (final m in widget.comp.getMarkers())
+                    for (final m in markersOf(widget.comp))
                       if (m.id != marker.id) m,
                   ]);
                 },
@@ -903,7 +905,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
         await showMarkerLabelDialogFrb(context: context, initial: marker.label);
     if (label == null || !mounted) return;
     _writeMarkers([
-      for (final m in widget.comp.getMarkers())
+      for (final m in markersOf(widget.comp))
         if (m.id == marker.id)
           BridgeMarker(id: m.id, time: m.time, label: label)
         else
@@ -933,7 +935,7 @@ class _TimelineRulerState extends State<TimelineRuler> {
     final comp = widget.comp;
     final axis = widget.axis;
     final work = _work;
-    final markers = comp.getMarkers();
+    final markers = markersOf(comp);
 
     return GestureDetector(
       key: const ValueKey('tl-ruler'),
@@ -1053,7 +1055,11 @@ class _TimelineRulerState extends State<TimelineRuler> {
             // edge could not be picked up at all.
             for (final marker in markers)
               Positioned(
-                left: axis.xOf(_markerFrame(marker)),
+                // Centred on the frame, so the flag's point sits *on* the
+                // playhead rather than beside it — the point is what says
+                // where, and a shape hung off to one side reads as marking the
+                // frame next door.
+                left: axis.xOf(_markerFrame(marker)) - MarkerFlag.width / 2,
                 bottom: 2,
                 child: MouseRegion(
                   cursor: SystemMouseCursors.click,
@@ -1065,26 +1071,26 @@ class _TimelineRulerState extends State<TimelineRuler> {
                     onHorizontalDragStart: (d) => setState(() {
                       _dragMarker = marker.id;
                       _dragMarkerFrame = null;
-                      _dragMarkerGrab = d.localPosition.dx;
+                      // Measured from the point, not the flag's left edge,
+                      // because the point is what the frame means.
+                      _dragMarkerGrab =
+                          d.localPosition.dx - MarkerFlag.width / 2;
+                      _dragMarkerLast = comp.durationFrames() - 1;
                     }),
-                    onHorizontalDragUpdate: (d) => _dragMarkerTo(
-                        marker,
-                        axis.frameAt(d.globalPosition.dx -
+                    onHorizontalDragUpdate: (d) => _dragMarkerTo(axis.frameAt(
+                        d.globalPosition.dx -
                             _originX(context) -
                             _dragMarkerGrab)),
-                    onHorizontalDragEnd: (_) => setState(() {
-                      _dragMarker = null;
-                      _dragMarkerFrame = null;
-                    }),
+                    onHorizontalDragEnd: (_) => _dropMarker(marker),
                     onHorizontalDragCancel: () => setState(() {
                       _dragMarker = null;
                       _dragMarkerFrame = null;
                     }),
                     child: MarkerFlag(
                       label: marker.label,
-                      fill: t.warning,
+                      fill: t.marker,
                       ink: t.surface0,
-                      text: t.small,
+                      text: t.caption.copyWith(fontWeight: FontWeight.w400),
                     ),
                   ),
                 ),
@@ -1100,25 +1106,30 @@ class _TimelineRulerState extends State<TimelineRuler> {
 /// handle is catchable without the mark being heavy.
 const double _workHandleWidth = 10;
 
-/// A comp marker on the time ruler: After Effects' bookmark flag — a small
-/// square with its bottom corners cut away to a point, its **left edge** on the
-/// moment it marks (docs/07 §4.1, K-254).
+/// A comp marker on the time ruler: a small flag with its **point at the top**,
+/// centred on the moment it marks, and what it says in a box hung off its right
+/// (docs/07 §4.1, K-254).
 ///
-/// A short label (the numbered markers, `1`–`0`) is drawn inside the flag, the
-/// way every editor shows a numbered cue. Anything longer sits beside it:
-/// a flag stretched to fit a sentence stops reading as a point in time.
+/// The point is the whole of the design. It is what carries the meaning — this
+/// frame, not the one next door — so it sits on the playhead and the body of
+/// the flag hangs below it, out of the way of the ticks. The label rides in a
+/// box of the same colour rather than as loose text over the ruler, where it
+/// crossed the ticks and the work-area band and read as neither.
 class MarkerFlag extends StatelessWidget {
   final String label;
   final Color fill;
 
-  /// What is drawn *on* the flag — the darkest surface, so a number reads as
-  /// cut out of the flag rather than printed over it. The same trick the
-  /// playhead's notch uses.
+  /// What is drawn *on* the flag and in its label box — the darkest surface, so
+  /// the writing reads as cut out of the marker rather than printed over it.
+  /// The same trick the playhead's notch uses.
   final Color ink;
   final TextStyle text;
 
   static const double width = 11;
   static const double height = 12;
+
+  /// How far down the point reaches before the flag squares off.
+  static const double _pointDepth = 0.42;
 
   const MarkerFlag({
     super.key,
@@ -1128,36 +1139,36 @@ class MarkerFlag extends StatelessWidget {
     required this.text,
   });
 
-  bool get _inside => label.isNotEmpty && label.length <= 2;
-
   @override
   Widget build(BuildContext context) {
     final flag = SizedBox(
       width: width,
       height: height,
-      child: CustomPaint(
-        painter: _MarkerFlagPainter(fill: fill),
-        child: _inside
-            ? Center(
-                child: Text(
-                  label,
-                  style: text.copyWith(color: ink, fontSize: 8, height: 1),
-                ),
-              )
-            : null,
-      ),
+      child: CustomPaint(painter: _MarkerFlagPainter(fill: fill)),
     );
-    if (label.isEmpty || _inside) {
-      return label.isEmpty ? flag : LumitTooltip(message: label, child: flag);
-    }
+    if (label.isEmpty) return flag;
     return LumitTooltip(
       message: label,
       child: Row(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           flag,
-          const SizedBox(width: 3),
-          Text(label, style: text.copyWith(color: fill)),
+          // Flush against the flag, and only as tall as the flag's square
+          // part, so the pair reads as one object rather than a flag with a
+          // caption floating near it.
+          Container(
+            height: height * (1 - _pointDepth) + 2,
+            padding: const EdgeInsets.symmetric(horizontal: 3),
+            alignment: Alignment.center,
+            color: fill,
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.copyWith(color: ink, height: 1),
+            ),
+          ),
         ],
       ),
     );
@@ -1170,15 +1181,15 @@ class _MarkerFlagPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Square down to the shoulders, then in to a point — the bookmark notch
-    // inverted, which is the shape every editor has settled on for a cue.
-    final shoulder = size.height * 0.6;
+    // A point at the top opening out to shoulders, then square to the bottom:
+    // the shape hangs *from* the frame it marks.
+    final shoulder = size.height * MarkerFlag._pointDepth;
     canvas.drawPath(
       Path()
-        ..moveTo(0, 0)
-        ..lineTo(size.width, 0)
+        ..moveTo(size.width / 2, 0)
         ..lineTo(size.width, shoulder)
-        ..lineTo(size.width / 2, size.height)
+        ..lineTo(size.width, size.height)
+        ..lineTo(0, size.height)
         ..lineTo(0, shoulder)
         ..close(),
       Paint()..color = fill,
@@ -1272,34 +1283,62 @@ class _MarkerLabelDialogState extends State<_MarkerLabelDialog> {
   }
 }
 
-/// Put a marker labelled [label] at [frame], replacing any marker already
-/// carrying that label (K-254).
+/// Put a marker labelled [label] at [frame], replacing anything already on that
+/// frame and any marker already carrying that label (K-254).
 ///
-/// Replacing rather than adding is what makes the numbered markers work: `1`
-/// has to name one place, so `Ctrl+1` pressed again *moves* marker 1 instead of
-/// leaving two for the bare `1` to choose between. An empty label replaces
-/// nothing — unlabelled cues are dropped as freely as you like.
+/// Two replacement rules, each for its own reason. **One per frame**, because
+/// markers do not stack: two flags on the same moment are two things to click
+/// and one place, and the second would hide the first exactly. **One per
+/// number**, because `1` has to name one place — `Ctrl+1` pressed again *moves*
+/// marker 1 rather than leaving two for the bare `1` to choose between. An
+/// empty label never replaces by label; unlabelled cues are told apart by where
+/// they are, which the frame rule already keeps distinct.
 void addMarkerFrb(
   CompositionReference comp, {
   required int frame,
   String label = '',
-}) {
-  comp.setMarkers(markers: [
-    for (final m in comp.getMarkers())
-      if (label.isEmpty || m.label != label) m,
-    BridgeMarker(
-      id: UuidValue.fromString(const Uuid().v4()),
-      time: timeOfFrame(comp, frame),
-      label: label,
-    ),
-  ]);
-}
+}) =>
+    writeMarkers(comp, markersWithFrb(comp, frame: frame, label: label));
+
+/// [comp]'s marker list with one marker placed at [frame] — the shared
+/// placement rule, used both when a marker is added and when one is dragged
+/// onto a new moment (K-254).
+///
+/// Two things give way to the newcomer. **Whatever is already on that frame**,
+/// because markers do not stack: two flags on one moment are two things to
+/// click and one place, and the second hides the first exactly. **Whatever
+/// else carries the same label**, when the label is not empty, because `1` has
+/// to name one place — `Ctrl+1` pressed again *moves* marker 1 rather than
+/// leaving two for the bare `1` to choose between. Unlabelled cues are told
+/// apart by where they are, which the frame rule already keeps distinct.
+///
+/// [id] is the marker being *moved*, if this is a move; it keeps its identity
+/// rather than being deleted and made again, so undo and selection see one
+/// marker that travelled.
+List<BridgeMarker> markersWithFrb(
+  CompositionReference comp, {
+  required int frame,
+  required String label,
+  UuidValue? id,
+}) =>
+    [
+      for (final m in markersOf(comp))
+        if (m.id != id &&
+            frameAtTime(comp, m.time) != frame &&
+            (label.isEmpty || m.label != label))
+          m,
+      BridgeMarker(
+        id: id ?? UuidValue.fromString(const Uuid().v4()),
+        time: timeOfFrame(comp, frame),
+        label: label,
+      ),
+    ];
 
 /// The frame of the marker labelled [label], or null when there is none — what
 /// the bare digit keys jump to, and what makes them a quiet no-op until the
 /// matching `Ctrl`+digit has been pressed.
 int? markerFrameFrb(CompositionReference comp, String label) {
-  for (final m in comp.getMarkers()) {
+  for (final m in markersOf(comp)) {
     if (m.label == label) return frameAtTime(comp, m.time);
   }
   return null;

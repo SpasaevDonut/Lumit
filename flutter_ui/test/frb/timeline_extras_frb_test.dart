@@ -16,6 +16,7 @@ import 'package:lumit_flutter/src/rust/api/composition.dart';
 import 'package:lumit_flutter/src/rust/api/layer.dart';
 import 'package:lumit_flutter/src/rust/api/project_item.dart';
 
+import 'package:lumit_flutter/state/comp_time.dart';
 import 'package:lumit_flutter/state/tools.dart';
 
 import 'frb_test_support.dart';
@@ -477,6 +478,56 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(p.comp.getMarkers(), isEmpty);
+    });
+
+    /// Markers do not stack. Two flags on one frame are two things to click and
+    /// one place, and the second hides the first exactly — so the newcomer wins,
+    /// whether it arrives by shortcut or by being dragged on top.
+    test('a marker added to an occupied frame replaces what is there', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 20, label: 'Chorus');
+      addMarkerFrb(comp, frame: 20, label: 'Drop');
+      expect(comp.getMarkers(), hasLength(1));
+      expect(comp.getMarkers().single.label, 'Drop');
+    });
+
+    /// The drop half of the same rule: a flag dragged onto another takes its
+    /// place, and keeps its own identity rather than being deleted and remade.
+    test('a marker dragged onto another replaces it', () {
+      final p = freshProject();
+      final comp = p.state.project!.newComposition(name: 'Scene');
+      addMarkerFrb(comp, frame: 10, label: 'Chorus');
+      addMarkerFrb(comp, frame: 60, label: 'Drop');
+      final drop = markersOf(comp).firstWhere((m) => m.label == 'Drop');
+
+      writeMarkers(
+          comp,
+          markersWithFrb(comp,
+              frame: 10, label: drop.label, id: drop.id));
+
+      final left = comp.getMarkers();
+      expect(left, hasLength(1), reason: 'the two did not stack');
+      expect(left.single.label, 'Drop', reason: 'the dragged one won');
+      expect(left.single.id, drop.id, reason: 'and it is the same marker');
+      expect(comp.frameAtTime(time: left.single.time), 10);
+    });
+
+    /// The flag's **point** is what says which frame, so it sits on the
+    /// playhead rather than beside it — the whole reason the flag is centred on
+    /// its frame instead of hung off to the right of it.
+    testWidgets('a marker flag points at the frame it marks', (tester) async {
+      final p = withComp();
+      p.comp.addAdjustmentLayer();
+      addMarkerFrb(p.comp, frame: 40, label: 'Chorus');
+      p.uiState.playheadFrame.value = 40;
+      await mount(tester, p);
+
+      final flag = tester.getTopLeft(find.byKey(
+          ValueKey<String>('tl-marker-${markersOf(p.comp).single.id}')));
+      final playhead = tester.getCenter(find.byType(PlayheadMarker).first);
+      expect(flag.dx + MarkerFlag.width / 2, closeTo(playhead.dx, 1.5),
+          reason: 'the point and the playhead are on the same frame');
     });
 
     /// A numbered marker names one place, so setting it again moves it rather
