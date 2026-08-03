@@ -2935,6 +2935,8 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         source: 0,
         threshold: 1.0,
         threshold_softness: 0.25,
+        light_tint: [1.0, 1.0, 1.0],
+        use_source_colour: true,
         anamorphic: 1.0,
         quality: 0,
         background: 0,
@@ -2970,6 +2972,8 @@ fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> 
         source: p.source,
         threshold: p.threshold,
         threshold_softness: p.threshold_softness,
+        light_tint: p.light_tint,
+        use_source_colour: p.use_source_colour,
         background: p.background,
         mix: p.mix,
         bake_key: lf::bake_key(p),
@@ -3281,7 +3285,15 @@ fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
     let op = flare_op(&p, w, h);
 
     // CPU: detect on the quantised matte, then render per light.
-    let lights = lf::detect_lights(&matte, w, h, p.threshold, p.threshold_softness);
+    let lights = lf::detect_lights(
+        &matte,
+        w,
+        h,
+        p.threshold,
+        p.threshold_softness,
+        p.use_source_colour,
+        p.light_tint,
+    );
     assert_eq!(lights.len(), 2, "both sources must be found: {lights:?}");
     let (_, _, div) = lf::quality_ladder(p.quality);
     let (fw, fh) = ((w / div).max(1), (h / div).max(1));
@@ -3322,4 +3334,51 @@ fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
     let nout = fx.lens_flare(&ctx, &tex, w, h, &op, None, &|| flare_bake_data(&p));
     let ngpu = readback_linear_f32(&ctx, &nout, w, h).unwrap();
     assert_eq!(ngpu, img, "matte mode without a matte must pass through");
+
+    // Source colour OFF with a warm Light tint (K-259): the GPU detection
+    // must build the same lights the CPU does, and the frame must still
+    // agree — this is the path where the matte says only *where*.
+    let tinted = lf::LensFlareParams {
+        use_source_colour: false,
+        light_tint: [1.0, 0.6, 0.3],
+        ..p
+    };
+    let t_lights = lf::detect_lights(
+        &matte,
+        w,
+        h,
+        tinted.threshold,
+        tinted.threshold_softness,
+        tinted.use_source_colour,
+        tinted.light_tint,
+    );
+    assert_eq!(t_lights.len(), 2);
+    for l in &t_lights {
+        assert!(
+            l.rgb[0] > l.rgb[2],
+            "the warm tint must dominate the source colour: {l:?}"
+        );
+    }
+    let t_flare = lf::cpu_flare(&tinted, &baked, fw, fh, &t_lights);
+    let mut t_cpu = img.clone();
+    lf::cpu_combine(
+        &mut t_cpu, w, h, &tinted, &baked, &t_flare, fw, fh, &t_lights,
+    );
+    let t_out = fx.lens_flare(
+        &ctx,
+        &tex,
+        w,
+        h,
+        &flare_op(&tinted, w, h),
+        Some(&matte_tex),
+        &|| flare_bake_data(&tinted),
+    );
+    let t_gpu = readback_linear_f32(&ctx, &t_out, w, h).unwrap();
+    let t_mean: f32 = t_cpu
+        .iter()
+        .zip(&t_gpu)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / t_cpu.len() as f32;
+    assert!(t_mean < 2e-3, "tinted matte mean |Δ| {t_mean}");
 }

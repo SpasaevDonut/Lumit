@@ -797,6 +797,8 @@ pub fn run_ops(
                     source: p.source,
                     threshold: p.threshold,
                     threshold_softness: p.threshold_softness,
+                    light_tint: p.light_tint,
+                    use_source_colour: p.use_source_colour,
                     background: p.background,
                     mix: p.mix,
                     bake_key: lf::bake_key(p),

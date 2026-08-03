@@ -446,6 +446,23 @@ void main() {
       expect(find.text('Matte layer'), findsOneWidget);
       expect(find.text('Threshold'), findsOneWidget);
       expect(find.text('Threshold softness'), findsOneWidget);
+
+      // Light tint is a source-mode-independent row (K-259); Use source
+      // colour appears with Matte and would with Lights.
+      expect(find.text('Light tint'), findsOneWidget);
+      expect(find.text('Use source colour'), findsOneWidget);
+
+      // Back to Manual: the tint stays, the source-colour toggle and the
+      // matte rows go.
+      final again = p.layer.getEffects();
+      again.single
+          .setValue(id: 'source_type', value: const BridgeEffectValue.choice(0));
+      p.layer.setEffects(effects: again);
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(find.text('Light tint'), findsOneWidget);
+      expect(find.text('Use source colour'), findsNothing);
+      expect(find.text('Matte layer'), findsNothing);
     });
 
     // Without the built library there is nothing to test against; the harness

@@ -63,6 +63,10 @@ pub struct LensFlareOp {
     pub threshold: f32,
     /// See `threshold`.
     pub threshold_softness: f32,
+    /// Scene-linear RGB multiplying every light's colour (K-259).
+    pub light_tint: [f32; 3],
+    /// Matte/Lights: whether a detected source's own colour tints its flare.
+    pub use_source_colour: bool,
     /// 1 = Black background: the output is made opaque (K-258).
     pub background: u32,
     /// 0..1.
@@ -171,7 +175,9 @@ struct DetectParams {
     tiles_y: u32,
     threshold: f32,
     softness: f32,
+    use_source_colour: u32,
     _pad0: f32,
+    tint: [f32; 3],
     _pad1: f32,
 }
 
@@ -589,9 +595,9 @@ impl FxEngine {
                 row: [
                     op.light_frac[0],
                     op.light_frac[1],
-                    1.0,
-                    1.0,
-                    1.0,
+                    op.light_tint[0],
+                    op.light_tint[1],
+                    op.light_tint[2],
                     0.0,
                     0.0,
                     0.0,
@@ -641,7 +647,9 @@ impl FxEngine {
                             tiles_y,
                             threshold: op.threshold,
                             softness: op.threshold_softness,
+                            use_source_colour: u32::from(op.use_source_colour),
                             _pad0: 0.0,
+                            tint: op.light_tint,
                             _pad1: 0.0,
                         }),
                         usage: wgpu::BufferUsages::UNIFORM,
@@ -1027,9 +1035,9 @@ impl FxEngine {
             row: [
                 op.light_frac[0],
                 op.light_frac[1],
-                1.0,
-                1.0,
-                1.0,
+                op.light_tint[0],
+                op.light_tint[1],
+                op.light_tint[2],
                 0.0,
                 0.0,
                 0.0,

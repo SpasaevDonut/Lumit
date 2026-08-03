@@ -172,10 +172,11 @@ pub struct ParamGroup {
     /// Whether the twirl starts closed (the advanced-by-default case).
     pub collapsed: bool,
     /// When set, the whole group is shown only while the named sibling
-    /// Choice parameter holds the given index — how an effect's panel offers
-    /// different controls per mode (the Lens flare's Source type). None is
-    /// always visible.
-    pub visible_when: Option<(&'static str, u32)>,
+    /// Choice parameter holds one of the given indices — how an effect's
+    /// panel offers different controls per mode (the Lens flare's Source
+    /// type: its matte rows answer to Matte alone, its source-colour toggle
+    /// to Matte *and* Lights). None, or an empty set, is always visible.
+    pub visible_when: Option<(&'static str, &'static [u32])>,
 }
 
 /// The Add-effect menu's grouping (K-090): every schema declares one.

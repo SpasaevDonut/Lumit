@@ -539,10 +539,12 @@ class _EffectSection extends StatelessWidget {
     }
     bool groupVisible(BridgeParamGroup g) {
       final param = g.visibleWhenParam;
-      final want = g.visibleWhenValue;
-      if (param == null || want == null) return true;
+      final want = g.visibleWhenValues;
+      if (param == null || want.isEmpty) return true;
       return switch (values[param]) {
-        BridgeEffectValue_Choice(:final field0) => field0 == want,
+        // A group may answer to SEVERAL modes (K-259: the flare's
+        // source-colour toggle belongs to Matte and Lights alike).
+        BridgeEffectValue_Choice(:final field0) => want.contains(field0),
         _ => false,
       };
     }

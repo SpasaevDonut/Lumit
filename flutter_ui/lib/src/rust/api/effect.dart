@@ -311,9 +311,9 @@ class BridgeKeyframe {
 /// One collapsible parameter group of an effect (docs/08 §1.2, K-145/K-257):
 /// the panel tucks the named member rows behind a twirl. An empty `label`
 /// renders headerless (the rows appear in place, no twirl) — the shape a
-/// conditional run of parameters takes. `visible_when_*` (both set together)
-/// show the group only while the named sibling Choice parameter holds the
-/// given index.
+/// conditional run of parameters takes. `visible_when_param` with a
+/// non-empty `visible_when_values` shows the group only while that sibling
+/// Choice parameter holds one of those indices.
 class BridgeParamGroup {
   final String label;
 
@@ -326,15 +326,15 @@ class BridgeParamGroup {
   /// See the struct docs.
   final String? visibleWhenParam;
 
-  /// See the struct docs.
-  final int? visibleWhenValue;
+  /// See the struct docs. Empty when the group is unconditional.
+  final Uint32List visibleWhenValues;
 
   const BridgeParamGroup({
     required this.label,
     required this.params,
     required this.collapsed,
     this.visibleWhenParam,
-    this.visibleWhenValue,
+    required this.visibleWhenValues,
   });
 
   @override
@@ -343,7 +343,7 @@ class BridgeParamGroup {
       params.hashCode ^
       collapsed.hashCode ^
       visibleWhenParam.hashCode ^
-      visibleWhenValue.hashCode;
+      visibleWhenValues.hashCode;
 
   @override
   bool operator ==(Object other) =>
@@ -354,7 +354,7 @@ class BridgeParamGroup {
           params == other.params &&
           collapsed == other.collapsed &&
           visibleWhenParam == other.visibleWhenParam &&
-          visibleWhenValue == other.visibleWhenValue;
+          visibleWhenValues == other.visibleWhenValues;
 }
 
 /// One declared parameter of an effect, as the panel needs to *draw* it:

@@ -543,7 +543,12 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   and gives each its own full flare tinted by the source's colour, and Lights waits,
   ready, for light layers. It also taught the effect system whole-number parameters
   (Blades really is 8, not 8.00) and conditional rows that appear only for the mode
-  that uses them.
+  that uses them. A **Light tint** colour (with the usual swatch and eyedropper) then
+  colours the flare in any mode, and beside it — when the source is a matte or, later,
+  light layers — a **Use source colour** switch decides whether each detected light
+  keeps its own colour (a warm practical flaring warm, a cool one cool) or flares white
+  through the tint alone, which is what you want when the matte is only there to say
+  *where* the lights are.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

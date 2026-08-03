@@ -70,6 +70,15 @@ pub struct LensFlareParams {
     pub threshold: f32,
     /// Matte mode: half-width of the soft gate around the threshold.
     pub threshold_softness: f32,
+    /// Scene-linear RGB multiplying every light's colour, in every source
+    /// mode (K-259): in Manual it *is* the flare's colour (the light is
+    /// otherwise white); in Matte it tints what the sources contribute.
+    pub light_tint: [f32; 3],
+    /// Matte/Lights: whether a detected source's own colour tints its flare.
+    /// Off, every source flares white through [`Self::light_tint`] alone —
+    /// what a matte used purely as a position mask wants. Ignored in Manual
+    /// (there is no source colour to take).
+    pub use_source_colour: bool,
     /// Horizontal stretch of the whole flare about the frame centre
     /// (1 = spherical, 1.33/2 = anamorphic looks).
     pub anamorphic: f32,
@@ -136,11 +145,12 @@ pub struct FlareLight {
     pub rgb: [f32; 3],
 }
 
-/// Manual mode's light list: one white source at the parameter position.
+/// Manual mode's light list: one source at the parameter position, carrying
+/// the Light tint (white by default, so this is the plain white light).
 pub fn manual_light(p: &LensFlareParams) -> Vec<FlareLight> {
     vec![FlareLight {
         pos: p.light,
-        rgb: [1.0, 1.0, 1.0],
+        rgb: p.light_tint,
     }]
 }
 
@@ -162,12 +172,18 @@ pub fn threshold_gate(luma: f32, threshold: f32, softness: f32) -> f32 {
 /// (ties to the lower cell index) with [`SUPPRESS_TILES`] Chebyshev
 /// suppression, gating each through [`threshold_gate`]. Deterministic by
 /// construction — no float reduction order depends on threading.
+///
+/// Each light's colour is `(use_source ? source rgb : white) × gate × tint`
+/// (K-259), so the same function serves both "the practical's own colour
+/// flares" and "this matte only says *where*".
 pub fn detect_lights(
     matte: &[f32],
     w: u32,
     h: u32,
     threshold: f32,
     softness: f32,
+    use_source_colour: bool,
+    tint: [f32; 3],
 ) -> Vec<FlareLight> {
     if w == 0 || h == 0 || matte.len() < (w * h * 4) as usize {
         return Vec::new();
@@ -208,12 +224,21 @@ pub fn detect_lights(
         }
         let (px, py) = (idx % w, idx / w);
         let i = (idx * 4) as usize;
+        let src = if use_source_colour {
+            [
+                matte[i].max(0.0),
+                matte[i + 1].max(0.0),
+                matte[i + 2].max(0.0),
+            ]
+        } else {
+            [1.0, 1.0, 1.0]
+        };
         out.push(FlareLight {
             pos: [(px as f32 + 0.5) / w as f32, (py as f32 + 0.5) / h as f32],
             rgb: [
-                matte[i].max(0.0) * weight,
-                matte[i + 1].max(0.0) * weight,
-                matte[i + 2].max(0.0) * weight,
+                src[0] * weight * tint[0],
+                src[1] * weight * tint[1],
+                src[2] * weight * tint[2],
             ],
         });
         let (bx, by) = ((b % tx) as i64, (b / tx) as i64);
@@ -1018,6 +1043,8 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         source: 0,
         threshold: 1.0,
         threshold_softness: 0.25,
+        light_tint: [1.0, 1.0, 1.0],
+        use_source_colour: true,
         anamorphic: 1.0,
         quality: 0,
         background: 0,

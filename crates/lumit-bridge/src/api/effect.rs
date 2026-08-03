@@ -326,9 +326,9 @@ pub fn list_parameters(effect: String) -> Vec<BridgeParamInfo> {
 /// One collapsible parameter group of an effect (docs/08 §1.2, K-145/K-257):
 /// the panel tucks the named member rows behind a twirl. An empty `label`
 /// renders headerless (the rows appear in place, no twirl) — the shape a
-/// conditional run of parameters takes. `visible_when_*` (both set together)
-/// show the group only while the named sibling Choice parameter holds the
-/// given index.
+/// conditional run of parameters takes. `visible_when_param` with a
+/// non-empty `visible_when_values` shows the group only while that sibling
+/// Choice parameter holds one of those indices.
 #[frb(non_opaque)]
 #[derive(Debug, Clone, PartialEq)]
 pub struct BridgeParamGroup {
@@ -339,8 +339,8 @@ pub struct BridgeParamGroup {
     pub collapsed: bool,
     /// See the struct docs.
     pub visible_when_param: Option<String>,
-    /// See the struct docs.
-    pub visible_when_value: Option<u32>,
+    /// See the struct docs. Empty when the group is unconditional.
+    pub visible_when_values: Vec<u32>,
 }
 
 /// Every parameter group `effect` declares, in schema order (empty for an
@@ -363,7 +363,10 @@ pub fn list_parameter_groups(effect: String) -> Vec<BridgeParamGroup> {
             params: g.params.iter().map(|p| (*p).to_owned()).collect(),
             collapsed: g.collapsed,
             visible_when_param: g.visible_when.map(|(id, _)| id.to_owned()),
-            visible_when_value: g.visible_when.map(|(_, v)| v),
+            visible_when_values: g
+                .visible_when
+                .map(|(_, vs)| vs.to_vec())
+                .unwrap_or_default(),
         })
         .collect()
 }

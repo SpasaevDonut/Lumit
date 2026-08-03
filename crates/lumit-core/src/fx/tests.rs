@@ -5011,6 +5011,64 @@ fn lens_flare_black_background_sets_alpha_only_while_live() {
     assert_eq!(neutral, src);
 }
 
+// Light tint and Use source colour (K-259): the tint multiplies every mode's
+// light, and the toggle chooses whether a detected source's own colour rides
+// with it. Manual carries the tint as its whole colour.
+#[test]
+fn lens_flare_light_tint_and_source_colour_toggle() {
+    use crate::fx::lens_flare::*;
+    // Manual: the light IS the tint (white by default).
+    let p = default_flare_params();
+    assert_eq!(manual_light(&p)[0].rgb, [1.0, 1.0, 1.0]);
+    let warm = LensFlareParams {
+        light_tint: [1.0, 0.5, 0.25],
+        ..p
+    };
+    assert_eq!(manual_light(&warm)[0].rgb, [1.0, 0.5, 0.25]);
+
+    // Matte: one blue-green source, gate fully open.
+    let (w, h) = (64u32, 64u32);
+    let mut matte = vec![0.0f32; (w * h * 4) as usize];
+    let i = ((20 * w + 20) * 4) as usize;
+    matte[i] = 0.5;
+    matte[i + 1] = 2.0;
+    matte[i + 2] = 4.0;
+    matte[i + 3] = 1.0;
+
+    // Source colour ON, tint white: the light is the source colour.
+    let on = detect_lights(&matte, w, h, 0.5, 0.0, true, [1.0; 3]);
+    assert_eq!(on.len(), 1);
+    assert_eq!(on[0].rgb, [0.5, 2.0, 4.0]);
+
+    // Source colour OFF: white through the tint alone — the "this matte only
+    // says where" case.
+    let off = detect_lights(&matte, w, h, 0.5, 0.0, false, [1.0; 3]);
+    assert_eq!(off[0].rgb, [1.0, 1.0, 1.0]);
+    let off_tinted = detect_lights(&matte, w, h, 0.5, 0.0, false, [1.0, 0.5, 0.25]);
+    assert_eq!(off_tinted[0].rgb, [1.0, 0.5, 0.25]);
+    // …and its position is unchanged by either (only the colour differs).
+    assert_eq!(off[0].pos, on[0].pos);
+
+    // Source colour ON with a tint: the two multiply.
+    let both = detect_lights(&matte, w, h, 0.5, 0.0, true, [1.0, 0.5, 0.25]);
+    assert_eq!(both[0].rgb, [0.5, 1.0, 1.0]);
+
+    // A black tint kills the flare without touching detection.
+    let dark = detect_lights(&matte, w, h, 0.5, 0.0, true, [0.0; 3]);
+    assert_eq!(dark[0].rgb, [0.0, 0.0, 0.0]);
+
+    // The tint is NOT a bake input: changing it must not re-key the bake
+    // (animating it would otherwise rebake every frame).
+    assert_eq!(bake_key(&p), bake_key(&warm));
+    assert_eq!(
+        bake_key(&p),
+        bake_key(&LensFlareParams {
+            use_source_colour: false,
+            ..p
+        })
+    );
+}
+
 /// The documented drop-on defaults, shared by the lens flare tests.
 fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
     crate::fx::lens_flare::LensFlareParams {
@@ -5032,6 +5090,8 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         source: 0,
         threshold: 1.0,
         threshold_softness: 0.25,
+        light_tint: [1.0, 1.0, 1.0],
+        use_source_colour: true,
         anamorphic: 1.0,
         quality: 1,
         background: 0,
@@ -5061,7 +5121,7 @@ fn lens_flare_detects_matte_sources_deterministically() {
     put(28, 24, [3.0, 3.0, 3.0]);
     put(100, 70, [1.5, 1.0, 0.5]);
 
-    let lights = detect_lights(&matte, w, h, 1.0, 0.0);
+    let lights = detect_lights(&matte, w, h, 1.0, 0.0, true, [1.0; 3]);
     assert_eq!(
         lights.len(),
         2,
@@ -5077,13 +5137,16 @@ fn lens_flare_detects_matte_sources_deterministically() {
 
     // The soft gate scales (luma 4 in a [3, 7] gate lands at ~0.16), and a
     // threshold above every source finds none.
-    let gated = detect_lights(&matte, w, h, 5.0, 2.0);
+    let gated = detect_lights(&matte, w, h, 5.0, 2.0, true, [1.0; 3]);
     assert!(!gated.is_empty());
     assert!(gated[0].rgb[0] < 4.0, "the gate must attenuate: {gated:?}");
-    assert!(detect_lights(&matte, w, h, 10.0, 0.0,).is_empty());
+    assert!(detect_lights(&matte, w, h, 10.0, 0.0, true, [1.0; 3]).is_empty());
 
     // Determinism: two runs agree bit-for-bit.
-    assert_eq!(lights, detect_lights(&matte, w, h, 1.0, 0.0,));
+    assert_eq!(
+        lights,
+        detect_lights(&matte, w, h, 1.0, 0.0, true, [1.0; 3])
+    );
 
     // The gate itself: hard step at softness 0, smooth half-way at the
     // threshold otherwise.

@@ -2573,18 +2573,27 @@ pub const BUILTINS: &[EffectSchema] = &[
                 collapsed: true,
                 visible_when: None,
             },
+            // The source-colour toggle: headerless, and shown for BOTH the
+            // source modes that HAVE a source colour to take (Matte, and
+            // Lights when it lands) — K-259.
+            ParamGroup {
+                label: "",
+                params: &["use_source_colour"],
+                collapsed: false,
+                visible_when: Some(("source_type", &[1, 2])),
+            },
             // The matte rows: headerless (empty label renders them in place,
             // no twirl), shown only while Source type is Matte.
             ParamGroup {
                 label: "",
                 params: &["matte", "threshold", "threshold_softness"],
                 collapsed: false,
-                visible_when: Some(("source_type", 1)),
+                visible_when: Some(("source_type", &[1])),
             },
         ],
         match_name: "lens_flare",
         label: "Lens flare",
-        version: 2,
+        version: 3,
         category: FxCategory::Stylise,
         traits: EffectTraits {
             cost: CostClass::Heavy,
@@ -2789,6 +2798,27 @@ pub const BUILTINS: &[EffectSchema] = &[
                     default: 0,
                     dividers_after: &[],
                 },
+            },
+            ParamSchema {
+                id: "light_tint",
+                label: "Light tint",
+                // Multiplies every light's colour, in every source mode
+                // (K-259): in Manual it IS the flare's colour; in Matte it
+                // tints whatever the sources contribute. Scene-linear, and
+                // open above 1 so an HDR tint can push a flare hotter.
+                kind: ParamKind::Colour {
+                    default: [1.0, 1.0, 1.0, 1.0],
+                    range: (0.0, 4.0),
+                },
+            },
+            ParamSchema {
+                id: "use_source_colour",
+                label: "Use source colour",
+                // On: a detected source's own colour tints its flare (a warm
+                // practical flares warm). Off: every source flares white
+                // through Light tint alone, which is what a matte used purely
+                // as a *position* mask wants (K-259).
+                kind: ParamKind::Bool { default: true },
             },
             ParamSchema {
                 id: "matte",

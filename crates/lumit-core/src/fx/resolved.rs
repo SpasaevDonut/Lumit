@@ -1143,6 +1143,15 @@ fn resolve_one(
             let threshold = (e.float_at("threshold", lt).unwrap_or(1.0) as f32).max(0.0);
             let threshold_softness =
                 (e.float_at("threshold_softness", lt).unwrap_or(0.25) as f32).max(0.0);
+            // Light tint (K-259): scene-linear RGB, clamped at zero below and
+            // open above (an HDR tint pushes the flare hotter). Alpha unused.
+            let tint = e.colour_at("light_tint", lt).unwrap_or([1.0; 4]);
+            let light_tint = [
+                (tint[0] as f32).max(0.0),
+                (tint[1] as f32).max(0.0),
+                (tint[2] as f32).max(0.0),
+            ];
+            let use_source_colour = e.bool_of("use_source_colour").unwrap_or(true);
             let anamorphic = (e.float_at("anamorphic", lt).unwrap_or(1.0) as f32).clamp(0.5, 3.0);
             // Int-kind params arrive as Float values; the resolve rounds.
             let blades = (e.float_at("blades", lt).unwrap_or(8.0).round() as i64).clamp(3, 16);
@@ -1180,6 +1189,8 @@ fn resolve_one(
                     source,
                     threshold,
                     threshold_softness,
+                    light_tint,
+                    use_source_colour,
                     anamorphic,
                     quality,
                     background,

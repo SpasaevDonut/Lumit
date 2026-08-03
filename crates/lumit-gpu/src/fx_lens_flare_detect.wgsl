@@ -36,7 +36,14 @@ struct DetectParams {
     tiles_y: u32,
     threshold: f32,
     softness: f32,
+    // 1 = a detected source's own colour tints its flare; 0 = white through
+    // the tint alone (K-259).
+    use_source_colour: u32,
     _pad0: f32,
+    // Scene-linear Light tint, multiplied into every detected light.
+    tint_r: f32,
+    tint_g: f32,
+    tint_b: f32,
     _pad1: f32,
 };
 
@@ -173,11 +180,15 @@ fn detect_pick(@builtin(global_invocation_id) gid: vec3<u32>) {
                 let px = idx % dp.w;
                 let py = idx / dp.w;
                 let c = textureLoad(matte_tex, vec2<i32>(i32(px), i32(py)), 0);
+                var src = vec3<f32>(1.0, 1.0, 1.0);
+                if (dp.use_source_colour == 1u) {
+                    src = max(c.rgb, vec3<f32>(0.0));
+                }
                 out.pos_x = (f32(px) + 0.5) / f32(dp.w);
                 out.pos_y = (f32(py) + 0.5) / f32(dp.h);
-                out.r = max(c.r, 0.0) * weight;
-                out.g = max(c.g, 0.0) * weight;
-                out.b = max(c.b, 0.0) * weight;
+                out.r = src.r * weight * dp.tint_r;
+                out.g = src.g * weight * dp.tint_g;
+                out.b = src.b * weight * dp.tint_b;
                 picked_x[picked_count] = i32(best_tile % dp.tiles_x);
                 picked_y[picked_count] = i32(best_tile / dp.tiles_x);
                 picked_count = picked_count + 1u;

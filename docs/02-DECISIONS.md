@@ -5200,3 +5200,20 @@ classic public-domain designs join the library** (Cooke triplet 50/3.5, Tessar 5
 Petzval 85/2.2, Double Gauss 58/2 — the design names, era-authentic) for ten lenses
 total, and three coating presets join (Amber single coat, Two-tone vintage, Broad
 multicoat) for seven.
+
+**K-259 · DECIDED · The flare's light carries a tint, and a source may keep its own
+colour or not.** Two controls the owner asked for, plus the schema generalisation they
+needed. **Light tint** (a Colour parameter — so it gets the inspector's picker *and* its
+eyedropper for free) multiplies every light's colour in **every** source mode: in Manual
+it simply *is* the flare's colour, in Matte it tints what the detected sources
+contribute. It is a frame-time value, deliberately outside the bake key, so animating it
+never rebakes. **Use source colour** (Bool, default on) chooses whether a detected
+source's own colour rides with it: on, a warm practical flares warm and a cool one cool;
+off, every source flares white through the tint alone — which is what a matte used purely
+as a *position* mask wants. Both paths compute the light as `(use_source ? source rgb :
+white) × gate × tint` in one shared expression, mirrored by the CPU reference and the
+WGSL detection. The toggle is shown for **Matte and Lights alike**, which the K-257
+`visible_when` could not express — it named one Choice value — so it now names a **set**
+of them (`Option<(&str, &[u32])>`, `visible_when_values` across the bridge). Version
+bumped 2 → 3; pre-release, and loaded stacks backfill the new parameters at their
+defaults through K-258's migration anyway.

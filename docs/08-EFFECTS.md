@@ -1447,7 +1447,7 @@ three folds and the tail:
 |---|---|
 | *Lens options* (twirl) | Anamorphic squeeze (0.5–3), Blades (int 3–16), Rotation, Coating (0 uncoated → 1 fully coated), Roundness, Softness |
 | *Flare options* (twirl) | Ghost intensity (0–4), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
-| *Source* | Source type (Manual light / Matte / Lights), then — Matte only, shown conditionally — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
+| *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
 
 and **Quality** (Draft / Normal / High / Ultra), **Background** (Transparent /
 Black, K-258 — Black makes the output opaque, the flare-element-over-black
@@ -1466,6 +1466,15 @@ exactly as a DoF depth pass does (its own masks and effects apply, K-142
 default) and is expected to be hidden. **Lights** is prepared for light
 layers: the option exists and resolves as Manual until they land, so projects
 built against it survive the wiring.
+
+**Colouring the flare (K-259).** Every light's colour is `(use source ? the
+source's own rgb : white) × gate × Light tint`. **Light tint** applies in all
+three modes — in Manual it is simply the flare's colour, since the light is
+otherwise white — and is a frame-time value outside the bake key, so animating
+it costs no rebake. **Use source colour** (Matte and Lights, default on) is
+what decides whether a warm practical flares warm and a cool one cool; turned
+off, every detected source flares white through the tint alone, which is what a
+matte used purely as a *position* mask wants.
 
 **Reducing it.** The "it's doing too much" dials, in order: Intensity (everything),
 Ghost intensity / Starburst intensity (each half separately), Max ghosts (thins the

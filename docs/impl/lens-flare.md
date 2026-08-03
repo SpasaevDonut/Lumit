@@ -243,11 +243,12 @@ sources itself from a referenced layer's picture. A compute reduction tiles the 
 into a 32 px grid (max Rec. 709 luma + argmax per tile; ties to the lowest linear index;
 fixed-order partial merges, so it is deterministic), then a single-thread pass picks the
 top-8 tiles by luma with a 2-tile Chebyshev non-max suppression, each gated by the soft
-Threshold and written as a light: position at the source pixel, colour = the pixel's RGB
-× the gate. Every downstream stage runs per light on the dispatch z axis — the trace
+Threshold and written as a light: position at the source pixel, colour = `(use source ?
+the pixel's RGB : white) × the gate × the Light tint` (K-259 — one expression shared by
+the CPU reference and the WGSL detection, so the oracle covers both settings). Every downstream stage runs per light on the dispatch z axis — the trace
 computes each light's direction in-shader, the vertex build tints by the light, and the
 combine stamps one starburst per live light. Manual mode is the same pipeline with one
-CPU-written white light. The CPU twin is `lens_flare::detect_lights`, held to the GPU by
+CPU-written light carrying the tint (white by default). The CPU twin is `lens_flare::detect_lights`, held to the GPU by
 the matte-mode frame oracle. The original design sketch (kept for the record): top-K
 tie-breaking, and the trace runs per detected light with that sample's colour × energy as
 its tint — all on-GPU, no readback, K ≤ 16. The CPU reference runs the identical

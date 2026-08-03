@@ -7767,13 +7767,13 @@ impl SseDecode for crate::api::effect::BridgeParamGroup {
         let mut var_params = <Vec<String>>::sse_decode(deserializer);
         let mut var_collapsed = <bool>::sse_decode(deserializer);
         let mut var_visibleWhenParam = <Option<String>>::sse_decode(deserializer);
-        let mut var_visibleWhenValue = <Option<u32>>::sse_decode(deserializer);
+        let mut var_visibleWhenValues = <Vec<u32>>::sse_decode(deserializer);
         return crate::api::effect::BridgeParamGroup {
             label: var_label,
             params: var_params,
             collapsed: var_collapsed,
             visible_when_param: var_visibleWhenParam,
-            visible_when_value: var_visibleWhenValue,
+            visible_when_values: var_visibleWhenValues,
         };
     }
 }
@@ -9109,17 +9109,6 @@ impl SseDecode for Option<crate::api::project::ProjectReference> {
             return Some(<crate::api::project::ProjectReference>::sse_decode(
                 deserializer,
             ));
-        } else {
-            return None;
-        }
-    }
-}
-
-impl SseDecode for Option<u32> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_decode(deserializer: &mut flutter_rust_bridge::for_generated::SseDeserializer) -> Self {
-        if (<bool>::sse_decode(deserializer)) {
-            return Some(<u32>::sse_decode(deserializer));
         } else {
             return None;
         }
@@ -10501,7 +10490,7 @@ impl flutter_rust_bridge::IntoDart for crate::api::effect::BridgeParamGroup {
             self.params.into_into_dart().into_dart(),
             self.collapsed.into_into_dart().into_dart(),
             self.visible_when_param.into_into_dart().into_dart(),
-            self.visible_when_value.into_into_dart().into_dart(),
+            self.visible_when_values.into_into_dart().into_dart(),
         ]
         .into_dart()
     }
@@ -12159,7 +12148,7 @@ impl SseEncode for crate::api::effect::BridgeParamGroup {
         <Vec<String>>::sse_encode(self.params, serializer);
         <bool>::sse_encode(self.collapsed, serializer);
         <Option<String>>::sse_encode(self.visible_when_param, serializer);
-        <Option<u32>>::sse_encode(self.visible_when_value, serializer);
+        <Vec<u32>>::sse_encode(self.visible_when_values, serializer);
     }
 }
 
@@ -13211,16 +13200,6 @@ impl SseEncode for Option<crate::api::project::ProjectReference> {
         <bool>::sse_encode(self.is_some(), serializer);
         if let Some(value) = self {
             <crate::api::project::ProjectReference>::sse_encode(value, serializer);
-        }
-    }
-}
-
-impl SseEncode for Option<u32> {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    fn sse_encode(self, serializer: &mut flutter_rust_bridge::for_generated::SseSerializer) {
-        <bool>::sse_encode(self.is_some(), serializer);
-        if let Some(value) = self {
-            <u32>::sse_encode(value, serializer);
         }
     }
 }

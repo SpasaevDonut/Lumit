@@ -6739,12 +6739,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  int dco_decode_box_autoadd_u_32(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw as int;
-  }
-
-  @protected
   BridgeAudioClock dco_decode_bridge_audio_clock(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -7296,7 +7290,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       params: dco_decode_list_String(arr[1]),
       collapsed: dco_decode_bool(arr[2]),
       visibleWhenParam: dco_decode_opt_String(arr[3]),
-      visibleWhenValue: dco_decode_opt_box_autoadd_u_32(arr[4]),
+      visibleWhenValues: dco_decode_list_prim_u_32_strict(arr[4]),
     );
   }
 
@@ -8180,12 +8174,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  int? dco_decode_opt_box_autoadd_u_32(dynamic raw) {
-    // Codec=Dco (DartCObject based), see doc to use other codecs
-    return raw == null ? null : dco_decode_box_autoadd_u_32(raw);
-  }
-
-  @protected
   ProjectReference dco_decode_project_reference(dynamic raw) {
     // Codec=Dco (DartCObject based), see doc to use other codecs
     final arr = raw as List<dynamic>;
@@ -8628,12 +8616,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
       SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     return (sse_decode_solid_reference(deserializer));
-  }
-
-  @protected
-  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    return (sse_decode_u_32(deserializer));
   }
 
   @protected
@@ -9179,13 +9161,13 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     var var_params = sse_decode_list_String(deserializer);
     var var_collapsed = sse_decode_bool(deserializer);
     var var_visibleWhenParam = sse_decode_opt_String(deserializer);
-    var var_visibleWhenValue = sse_decode_opt_box_autoadd_u_32(deserializer);
+    var var_visibleWhenValues = sse_decode_list_prim_u_32_strict(deserializer);
     return BridgeParamGroup(
         label: var_label,
         params: var_params,
         collapsed: var_collapsed,
         visibleWhenParam: var_visibleWhenParam,
-        visibleWhenValue: var_visibleWhenValue);
+        visibleWhenValues: var_visibleWhenValues);
   }
 
   @protected
@@ -10342,17 +10324,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    if (sse_decode_bool(deserializer)) {
-      return (sse_decode_box_autoadd_u_32(deserializer));
-    } else {
-      return null;
-    }
-  }
-
-  @protected
   ProjectReference sse_decode_project_reference(SseDeserializer deserializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
     var var_internalid = sse_decode_Uuid(deserializer);
@@ -10809,12 +10780,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
   }
 
   @protected
-  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-    sse_encode_u_32(self, serializer);
-  }
-
-  @protected
   void sse_encode_bridge_audio_clock(
       BridgeAudioClock self, SseSerializer serializer) {
     // Codec=Sse (Serialization based), see doc to use other codecs
@@ -11234,7 +11199,7 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_list_String(self.params, serializer);
     sse_encode_bool(self.collapsed, serializer);
     sse_encode_opt_String(self.visibleWhenParam, serializer);
-    sse_encode_opt_box_autoadd_u_32(self.visibleWhenValue, serializer);
+    sse_encode_list_prim_u_32_strict(self.visibleWhenValues, serializer);
   }
 
   @protected
@@ -12183,16 +12148,6 @@ class BridgeLibApiImpl extends BridgeLibApiImplPlatform
     sse_encode_bool(self != null, serializer);
     if (self != null) {
       sse_encode_box_autoadd_project_reference(self, serializer);
-    }
-  }
-
-  @protected
-  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer) {
-    // Codec=Sse (Serialization based), see doc to use other codecs
-
-    sse_encode_bool(self != null, serializer);
-    if (self != null) {
-      sse_encode_box_autoadd_u_32(self, serializer);
     }
   }
 
