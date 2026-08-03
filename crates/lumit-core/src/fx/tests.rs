@@ -4868,17 +4868,28 @@ fn lens_flare_neutral_points_and_default_resolve() {
         intensity: 0.0,
         ..p
     };
-    cpu_combine(&mut zero_intensity, w, h, &pi0, &baked, &flare, w, h);
+    let lights = manual_light(&pi0);
+    cpu_combine(
+        &mut zero_intensity,
+        w,
+        h,
+        &pi0,
+        &baked,
+        &flare,
+        w,
+        h,
+        &lights,
+    );
     assert_eq!(zero_intensity, src, "Intensity 0 must be bit-exact");
 
     let mut zero_mix = src.clone();
     let pm0 = LensFlareParams { mix: 0.0, ..p };
-    cpu_combine(&mut zero_mix, w, h, &pm0, &baked, &flare, w, h);
+    cpu_combine(&mut zero_mix, w, h, &pm0, &baked, &flare, w, h, &lights);
     assert_eq!(zero_mix, src, "Mix 0 must be bit-exact");
 
     // A live combine changes pixels (the effect is not a silent no-op).
     let mut live = src.clone();
-    cpu_combine(&mut live, w, h, &p, &baked, &flare, w, h);
+    cpu_combine(&mut live, w, h, &p, &baked, &flare, w, h, &lights);
     assert_ne!(live, src);
 
     // Fresh instance -> resolve carries the documented defaults.
@@ -4918,7 +4929,7 @@ fn lens_flare_cpu_reference_renders_energy_and_reacts_to_the_light() {
     };
     let baked = bake(&p);
     let (w, h) = (96u32, 54u32);
-    let a = cpu_flare(&p, &baked, w, h);
+    let a = cpu_flare(&p, &baked, w, h, &manual_light(&p));
     let energy_a: f32 = a.iter().sum();
     assert!(energy_a > 0.0, "the default flare renders no energy");
     assert!(a.iter().all(|v| v.is_finite()));
@@ -4928,7 +4939,7 @@ fn lens_flare_cpu_reference_renders_energy_and_reacts_to_the_light() {
         light: [0.7, 0.6],
         ..p
     };
-    let b = cpu_flare(&p2, &baked, w, h);
+    let b = cpu_flare(&p2, &baked, w, h, &manual_light(&p2));
     assert_ne!(a, b, "the flare must follow the light");
 }
 
@@ -4948,11 +4959,66 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         dispersion: 1.0,
         coating: 0.75,
         starburst_intensity: 1.0,
-        starburst_scale: 1.0,
-        starburst_rotation_deg: 0.0,
-        starburst_softness: 0.1,
+        scale: 1.0,
+        coating_preset: 0,
+        source: 0,
+        threshold: 1.0,
+        threshold_softness: 0.25,
         anamorphic: 1.0,
         quality: 1,
         mix: 1.0,
     }
+}
+
+// Matte-mode source detection (impl note §6, K-257): the CPU reference finds
+// the brightest sources deterministically — brightest first, gated by the
+// soft threshold, adjacent maxima suppressed — and the light carries the
+// source pixel's colour times its gate weight.
+#[test]
+fn lens_flare_detects_matte_sources_deterministically() {
+    use crate::fx::lens_flare::*;
+    let (w, h) = (128u32, 96u32);
+    let mut matte = vec![0.0f32; (w * h * 4) as usize];
+    let mut put = |x: u32, y: u32, rgb: [f32; 3]| {
+        let i = ((y * w + x) * 4) as usize;
+        matte[i] = rgb[0];
+        matte[i + 1] = rgb[1];
+        matte[i + 2] = rgb[2];
+        matte[i + 3] = 1.0;
+    };
+    // A bright white source, a dimmer warm one far away, and a neighbour 8 px
+    // from the bright one that suppression must fold into it.
+    put(20, 24, [4.0, 4.0, 4.0]);
+    put(28, 24, [3.0, 3.0, 3.0]);
+    put(100, 70, [1.5, 1.0, 0.5]);
+
+    let lights = detect_lights(&matte, w, h, 1.0, 0.0);
+    assert_eq!(
+        lights.len(),
+        2,
+        "the neighbour must be suppressed: {lights:?}"
+    );
+    // Brightest first, at the pixel centre.
+    assert!((lights[0].pos[0] - 20.5 / 128.0).abs() < 1e-6);
+    assert!((lights[0].pos[1] - 24.5 / 96.0).abs() < 1e-6);
+    assert_eq!(lights[0].rgb, [4.0, 4.0, 4.0]);
+    // The warm source keeps its colour.
+    assert!((lights[1].pos[0] - 100.5 / 128.0).abs() < 1e-6);
+    assert_eq!(lights[1].rgb, [1.5, 1.0, 0.5]);
+
+    // The soft gate scales (luma 4 in a [3, 7] gate lands at ~0.16), and a
+    // threshold above every source finds none.
+    let gated = detect_lights(&matte, w, h, 5.0, 2.0);
+    assert!(!gated.is_empty());
+    assert!(gated[0].rgb[0] < 4.0, "the gate must attenuate: {gated:?}");
+    assert!(detect_lights(&matte, w, h, 10.0, 0.0,).is_empty());
+
+    // Determinism: two runs agree bit-for-bit.
+    assert_eq!(lights, detect_lights(&matte, w, h, 1.0, 0.0,));
+
+    // The gate itself: hard step at softness 0, smooth half-way at the
+    // threshold otherwise.
+    assert_eq!(threshold_gate(0.99, 1.0, 0.0), 0.0);
+    assert_eq!(threshold_gate(1.0, 1.0, 0.0), 1.0);
+    assert!((threshold_gate(1.0, 1.0, 0.5) - 0.5).abs() < 1e-6);
 }

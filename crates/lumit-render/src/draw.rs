@@ -178,6 +178,11 @@ pub struct CompLayerDraw {
     /// carries the referenced layer's source pixels; the GPU render happens in
     /// `realise_segment`.
     pub dof_inputs: Vec<Option<DofInputDraw>>,
+    /// The Lens flare Matte sources (docs/08 §3.27, K-257), 1:1 with the
+    /// stack's `Resolved::LensFlare` ops: the referenced layer's pixels in
+    /// the same shape the DoF depth inputs take (None = unset/dangling/not
+    /// in Matte mode — the effect then detects nothing, never faults).
+    pub flare_mattes: Vec<Option<DofInputDraw>>,
     /// Per-layer motion-blur sub-frame placements (docs/06 §4, K-120): the
     /// layer's own transform re-evaluated across the open shutter. Empty unless
     /// the comp master and the layer switch are both on (and samples ≥ 2), in

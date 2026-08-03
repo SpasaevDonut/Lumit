@@ -4,23 +4,30 @@
 
 // The combine stage.
 
+struct Light {
+    pos_x: f32,
+    pos_y: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+};
+
 struct CombineParams {
     w: f32,
     h: f32,
     fw: f32,
     fh: f32,
-    light_px_x: f32,
-    light_px_y: f32,
     intensity: f32,
     sb_intensity: f32,
     sb_half: f32,
-    sb_cos: f32,
-    sb_sin: f32,
     squeeze: f32,
+    fscale: f32,
     mix_amt: f32,
+    light_count: u32,
     _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
 
 @group(0) @binding(0) var src_tex: texture_2d<f32>;
@@ -28,6 +35,7 @@ struct CombineParams {
 @group(0) @binding(2) var sb_tex: texture_2d<f32>;
 @group(0) @binding(3) var dst_tex: texture_storage_2d<rgba16float, write>;
 @group(0) @binding(4) var<uniform> cp: CombineParams;
+@group(0) @binding(5) var<storage, read> lights: array<Light>;
 
 // Clamp-addressed bilinear tap of an rgba texture's rgb.
 fn tap_rgb(tex: texture_2d<f32>, fx_in: f32, fy_in: f32, dims: vec2<i32>) -> vec3<f32> {
@@ -58,10 +66,12 @@ fn combine(@builtin(global_invocation_id) gid: vec3<u32>) {
         textureStore(dst_tex, xy, o);
         return;
     }
-    // Anamorphic squeeze about the frame centre (x only).
+    // Whole-flare Scale plus the anamorphic squeeze (x only), both about
+    // the frame centre (== lens_flare::cpu_combine).
     let cx = cp.w / 2.0;
-    let sx = cx + (f32(xy.x) + 0.5 - cx) / cp.squeeze;
-    let sy = f32(xy.y) + 0.5;
+    let cyc = cp.h / 2.0;
+    let sx = cx + (f32(xy.x) + 0.5 - cx) / (cp.squeeze * cp.fscale);
+    let sy = cyc + (f32(xy.y) + 0.5 - cyc) / cp.fscale;
     // Flare buffer tap (resolution-relative: Draft renders it half-size).
     let fdims = vec2<i32>(textureDimensions(flare_tex));
     let f = tap_rgb(
@@ -70,19 +80,27 @@ fn combine(@builtin(global_invocation_id) gid: vec3<u32>) {
         sy / cp.h * cp.fh - 0.5,
         fdims,
     );
-    // Starburst sprite: inverse placement affine.
+    // One starburst sprite per live light: anchored on its light, sized by
+    // Scale, stretched by the squeeze, tinted by the light.
     var sb = vec3<f32>(0.0);
     if (cp.sb_intensity > 0.0 && cp.sb_half > 0.0) {
-        let rel_x = (sx - (cx + (cp.light_px_x - cx) / cp.squeeze)) * cp.squeeze;
-        let rel_y = sy - cp.light_px_y;
-        let rx = rel_x * cp.sb_cos + rel_y * cp.sb_sin;
-        let ry = rel_y * cp.sb_cos - rel_x * cp.sb_sin;
-        let u = rx / cp.sb_half * 0.5 + 0.5;
-        let v = ry / cp.sb_half * 0.5 + 0.5;
-        if (u >= 0.0 && u <= 1.0 && v >= 0.0 && v <= 1.0) {
-            let sdims = vec2<i32>(textureDimensions(sb_tex));
-            sb = tap_rgb(sb_tex, u * f32(sdims.x - 1), v * f32(sdims.y - 1), sdims)
-                * cp.sb_intensity;
+        let sdims = vec2<i32>(textureDimensions(sb_tex));
+        for (var li = 0u; li < cp.light_count; li = li + 1u) {
+            let light = lights[li];
+            if (light.r <= 0.0 && light.g <= 0.0 && light.b <= 0.0) {
+                continue;
+            }
+            let rel_x = f32(xy.x) + 0.5 - light.pos_x * cp.w;
+            let rel_y = f32(xy.y) + 0.5 - light.pos_y * cp.h;
+            let u = rel_x / (cp.sb_half * cp.squeeze) * 0.5 + 0.5;
+            let v = rel_y / cp.sb_half * 0.5 + 0.5;
+            if (u < 0.0 || u > 1.0 || v < 0.0 || v > 1.0) {
+                continue;
+            }
+            sb = sb
+                + tap_rgb(sb_tex, u * f32(sdims.x - 1), v * f32(sdims.y - 1), sdims)
+                    * cp.sb_intensity
+                    * vec3<f32>(light.r, light.g, light.b);
         }
     }
     let add = (f + sb) * cp.intensity;

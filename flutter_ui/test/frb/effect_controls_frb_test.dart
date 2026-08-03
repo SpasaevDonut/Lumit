@@ -400,6 +400,54 @@ void main() {
           reason: 'the edit landed in the key under the playhead');
       expect(keys.last.value, 40, reason: 'the other key is untouched');
     });
+    testWidgets(
+        'the lens flare panel folds: point pair, groups, conditional matte rows',
+        (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'lens_flare');
+      p.uiState.model.refresh();
+      await mount(tester, p, transform: false);
+
+      // The light x/y pair is ONE row (docs/07 SS6.1) with a shared stem
+      // label, not two rows.
+      expect(
+        find.byWidgetPredicate((w) {
+          final key = w.key;
+          return key is ValueKey<String> &&
+              key.value.startsWith('fx-row-') &&
+              key.value.endsWith('-light_x-pair');
+        }),
+        findsOneWidget,
+      );
+      expect(find.text('Light'), findsOneWidget);
+      expect(find.text('Light y'), findsNothing);
+
+      // The collapsed groups show their headers, not their members.
+      expect(find.text('Lens options'), findsOneWidget);
+      expect(find.text('Flare options'), findsOneWidget);
+      expect(find.text('Blades'), findsNothing);
+
+      // Twirling Lens options open reveals the Int-kind Blades row.
+      await tester.tap(find.text('Lens options'));
+      await tester.pump();
+      expect(find.text('Blades'), findsOneWidget);
+
+      // The matte rows are hidden while Source is Manual...
+      expect(find.text('Matte layer'), findsNothing);
+      expect(find.text('Threshold'), findsNothing);
+
+      // ...and appear when Source type switches to Matte.
+      final effects = p.layer.getEffects();
+      final fx = effects.single;
+      fx.setValue(id: 'source_type', value: const BridgeEffectValue.choice(1));
+      p.layer.setEffects(effects: effects);
+      p.uiState.model.refresh();
+      await tester.pump();
+      expect(find.text('Matte layer'), findsOneWidget);
+      expect(find.text('Threshold'), findsOneWidget);
+      expect(find.text('Threshold softness'), findsOneWidget);
+    });
+
     // Without the built library there is nothing to test against; the harness
     // throws with the command to run.
   }, skip: !engineAvailable);

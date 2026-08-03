@@ -534,7 +534,16 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   lives in the decision log: the trace has an exact CPU twin the tests hold to, but the
   final drawn frame is checked against a *close* reference rather than bit-for-bit,
   because two rasterisers never fill triangle edges identically — the full story is in
-  docs/impl/lens-flare.md.
+  docs/impl/lens-flare.md. A second pass (K-257) reshaped the panel to the owner's
+  design — the light is one x/y row with a pick-on-the-picture dropper, the detail
+  dials fold behind Lens options / Flare options twirls (the first effect panel whose
+  schema groups actually render as twirls, a mechanism every effect now shares), and a
+  **Source** choice appeared: Manual light is the classic tracked point, **Matte** finds
+  up to eight of the brightest points in another layer's picture on the graphics card
+  and gives each its own full flare tinted by the source's colour, and Lights waits,
+  ready, for light layers. It also taught the effect system whole-number parameters
+  (Blades really is 8, not 8.00) and conditional rows that appear only for the mode
+  that uses them.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

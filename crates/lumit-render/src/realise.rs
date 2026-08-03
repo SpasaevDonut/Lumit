@@ -122,6 +122,7 @@ impl Realiser<'_> {
                         None,
                         &luts,
                         &[],
+                        &[],
                     )
                 };
                 Some(crate::fxops::render_layer_input(
@@ -170,6 +171,7 @@ impl Realiser<'_> {
             // comp-sized composite, so its depth inputs resample to comp size.
             let luts = self.load_luts(&l.lut_files);
             let layer_inputs = self.render_dof_inputs(&l.dof_inputs, tw, th);
+            let flare_mattes = self.render_dof_inputs(&l.flare_mattes, tw, th);
             // Posterize Time everything-below (docs/08 §3.25): the input this
             // adjustment's own effects run on is the below-stack held at the
             // posterised time, not the plain below-composite. The held draws and
@@ -201,6 +203,7 @@ impl Realiser<'_> {
                 None,
                 &luts,
                 &layer_inputs,
+                &flare_mattes,
             );
             let coverage = self.coverage_texture(camera, width, height, l);
             acc = Some(self.fx.adjust_blend(
@@ -376,6 +379,7 @@ impl Realiser<'_> {
                 // working raster (w, h), 1:1 with the stack's Resolved::Dof ops
                 // (§3.22); the same render export runs (K-031).
                 let layer_inputs = self.render_dof_inputs(&l.dof_inputs, w, h);
+                let flare_mattes = self.render_dof_inputs(&l.flare_mattes, w, h);
                 crate::fxops::run_ops(
                     self.fx,
                     &self.ctx,
@@ -387,6 +391,7 @@ impl Realiser<'_> {
                     flow.as_ref(),
                     &luts,
                     &layer_inputs,
+                    &flare_mattes,
                 )
             };
             linear_textures.push(tex);
@@ -458,6 +463,7 @@ impl Realiser<'_> {
                             &[],
                             None,
                             &luts,
+                            &[],
                             &[],
                         )
                     };

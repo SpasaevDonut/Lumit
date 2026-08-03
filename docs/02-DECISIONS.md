@@ -5145,3 +5145,33 @@ precedent: a software rasterisation of a heavy flare is not a usable fallback ru
 **(3) Full-image convolution is a non-goal**: flaring every pixel of an HDR frame (the
 offline batch-tool technique) costs seconds per frame and cannot preview; the recorded
 path for image-driven flares is the top-K highlight detection spec'd in the impl note §6.
+
+
+**K-257 · DECIDED · The Lens flare panel is reshaped by owner design, and its sources
+become modes.** The first owner pass over K-256's effect. **(1) The panel**: the light
+becomes one x/y point row with a pick-on-Viewer dropper — the docs/07 §6.1 pair, built
+generically: any adjacent `_x`/`_y` Float pair folds into one row, and a declared
+%-of-frame allowlist (the flare's light, Radial blur's centre) gets the position dropper.
+Parameter groups finally CROSS the bridge (`list_parameter_groups`) and render as
+sub-twirls in the Effect controls card — the schema's K-145 groups had never reached
+Flutter — with an added `visible_when` (a group shown only while a named sibling Choice
+holds a value) and an empty-label headerless form, which is how per-mode controls appear.
+**(2) An Int parameter kind**: Blades and Max ghosts are whole numbers; the value stays a
+Float scalar (animation and serialisation unchanged) and only the schema kind, bridge and
+row change — replacing the "rounded float row" convention. **(3) Scale scales the whole
+flare** about the optical centre, not just the starburst; the starburst's own rotation
+and softness parameters are deleted (pre-release, no migration; the stochastic bake
+jitter speckled and the spectral integration is the honest smear). **(4) Coating type**
+presets pick the per-surface coating-tuning pattern (modern multicoat / vintage single
+coat / warm / cool) — the λc cycle is a bake input. **(5) The wavelength ladder rises to
+3/5/7/9** per quality: the owner read the 3-band fringe as an RGB split, correctly — bands
+are integrals, and five is where dispersion reads smooth. **(6) Source modes**: Manual
+light (the tracked point), **Matte** (shipped — impl note §6: deterministic on-GPU top-8
+bright-source detection over a referenced layer, threaded exactly as the DoF depth pass,
+each source spawning a full flare tinted by its pixel through a soft threshold gate), and
+**Lights** (prepared: the Choice exists and resolves as Manual until light layers land as
+flare sources). **(7) The lens library doubles** to six real prescriptions and drops the
+codenames for the lenses' actual names. The **lens designer** — a window where the user
+builds a prescription element by element with a live diagram, as the reference apps do —
+is recorded as the intended custom-lens path (TODO, Later), ahead of flat custom-file
+loading.

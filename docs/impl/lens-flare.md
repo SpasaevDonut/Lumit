@@ -142,8 +142,9 @@ again after the second — realflare's `delta` walk):
   index — the variety is what matters visually, and a per-element editor is UI the effect
   does not need. (Custom prescriptions later can carry their own list.)
 
-**Wavelengths.** `quality` picks the count (3 / 3 / 5 / 7 for Draft / Normal / High /
-Ultra); λ_k = centred steps over [390, 730] nm, exactly realflare's `wavelength_array`.
+**Wavelengths.** `quality` picks the count (3 / 5 / 7 / 9 for Draft / Normal / High /
+Ultra — raised from 3/3/5/7 in the K-257 pass: three bands read as a stacked
+RGB split at ghost rims, five and up as smooth dispersion); λ_k = centred steps over [390, 730] nm, exactly realflare's `wavelength_array`.
 Each traced λ's RGB weight is its **band's integral** of the CIE colour-matching
 functions (sampled at 2 nm), not a point sample — deviation D5 from realflare's per-λ
 point sampling: with only 3 traced wavelengths, point-sampling red at 673 nm weighs it at
@@ -218,8 +219,9 @@ rebakes; animating *blades* does (documented: the aperture group is cheap to ani
   streaks, so after normalisation the spikes vanish; amplitude keeps them at a displayable
   ~1e-2 of the core, which is how reference starbursts read — the core clips to white
   either way) — then per output pixel integrate ~100 spectral samples — each sample reads the pattern at the pixel scaled by `λ/λ_mid` (diffraction
-  grows with wavelength → rainbow rim), jittered by Softness (radius `∝ √hash`) and
-  smeared by Rotation weighting, accumulated with the CIE XYZ weight of its λ, then
+  grows with wavelength → rainbow rim), accumulated with the CIE XYZ weight of its λ (the stochastic Softness
+  jitter and Rotation smear were removed with their parameters, K-257 — the
+  spectral integration is the smear), then
   XYZ→working-RGB. The jitter hash is the fixed `fract(sin(dot))` lattice realflare uses —
   deterministic, no seed parameter, identical on every machine.
 - **CIE tables** (`fx/cie.rs`): the 1931 2° observer at 5 nm over [390, 730], and the
@@ -230,11 +232,19 @@ rebakes; animating *blades* does (documented: the aperture group is cheap to ani
 The GPU consumes the baked buffers as uploaded textures; the CPU reference reads them
 directly. One bake, two consumers — the textures cannot disagree.
 
-## 6. Layer highlights mode (spec'd, not shipped)
+## 6. Matte source mode (shipped, K-257)
 
-The follow-up that makes the flare source itself from the picture: a compute reduction
-tiles the input into a coarse grid (max luminance + argmax per tile, deterministic scan
-order), a single-workgroup pass picks the top-K tiles above Threshold with index-order
+Shipped in the K-257 pass as the **Matte** source mode (docs/08 §3.27): the flare
+sources itself from a referenced layer's picture. A compute reduction tiles the matte
+into a 32 px grid (max Rec. 709 luma + argmax per tile; ties to the lowest linear index;
+fixed-order partial merges, so it is deterministic), then a single-thread pass picks the
+top-8 tiles by luma with a 2-tile Chebyshev non-max suppression, each gated by the soft
+Threshold and written as a light: position at the source pixel, colour = the pixel's RGB
+× the gate. Every downstream stage runs per light on the dispatch z axis — the trace
+computes each light's direction in-shader, the vertex build tints by the light, and the
+combine stamps one starburst per live light. Manual mode is the same pipeline with one
+CPU-written white light. The CPU twin is `lens_flare::detect_lights`, held to the GPU by
+the matte-mode frame oracle. The original design sketch (kept for the record): top-K
 tie-breaking, and the trace runs per detected light with that sample's colour × energy as
 its tint — all on-GPU, no readback, K ≤ 16. The CPU reference runs the identical
 reduction. Everything downstream (trace → raster → combine) is unchanged, which is why

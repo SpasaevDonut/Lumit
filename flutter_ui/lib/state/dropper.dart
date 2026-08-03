@@ -108,6 +108,11 @@ class DropperSample {
   /// the picture was read at full resolution.
   final int x, y;
 
+  /// The same position as a fraction of the picture (pixel centre over the
+  /// reply's own raster) — resolution-independent, which is what a position
+  /// pick writes into an x/y parameter pair (docs/07 §6.1).
+  final double xFrac, yFrac;
+
   /// How many pixels a side were averaged.
   final int region;
 
@@ -118,6 +123,8 @@ class DropperSample {
     required this.depth,
     required this.x,
     required this.y,
+    this.xFrac = 0,
+    this.yFrac = 0,
     required this.region,
   });
 }
@@ -241,8 +248,11 @@ DropperSample sampleFromWindow(
       count++;
     }
   }
+  final xFrac = (x + 0.5) / math.max(window.width, 1);
+  final yFrac = (y + 0.5) / math.max(window.height, 1);
   if (count == 0) {
-    return DropperSample(r: 0, g: 0, b: 0, depth: 0, x: x, y: y, region: n);
+    return DropperSample(
+        r: 0, g: 0, b: 0, depth: 0, x: x, y: y, xFrac: xFrac, yFrac: yFrac, region: n);
   }
   final r = sr / count, g = sg / count, b = sb / count;
   return DropperSample(
@@ -254,6 +264,8 @@ DropperSample sampleFromWindow(
     depth: (0.2126 * r + 0.7152 * g + 0.0722 * b).clamp(0.0, 1.0),
     x: x,
     y: y,
+    xFrac: xFrac,
+    yFrac: yFrac,
     region: n,
   );
 }

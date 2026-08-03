@@ -98,6 +98,11 @@ pub fn render_layer_input(
 /// layer-input.md): the k-th `Resolved::Dof` op binds `layer_inputs[k]` — the
 /// referenced layer rendered alone at comp size, or `None` (unset, missing or
 /// cyclic) for a passthrough, exactly like a missing LUT.
+/// `flare_mattes` is the parallel Lens flare Matte-source list (docs/08
+/// §3.27, K-257): the k-th `Resolved::LensFlare` op binds `flare_mattes[k]`
+/// — the referenced matte layer rendered alone at this raster, or `None`
+/// (unset, dangling, or not in Matte mode) which detects no sources, the
+/// LUT/DoF passthrough convention.
 #[allow(clippy::too_many_arguments)]
 pub fn run_ops(
     fx: &FxEngine,
@@ -110,6 +115,7 @@ pub fn run_ops(
     flow_field: Option<&Tex>,
     luts: &[Option<LoadedLut>],
     layer_inputs: &[Option<Tex>],
+    flare_mattes: &[Option<Tex>],
 ) -> Tex {
     let mut tex = tex;
     // The k-th Resolved::Lut op consumes the k-th `luts` slot (the whole
@@ -119,6 +125,7 @@ pub fn run_ops(
     // (its depth-layer render).
     let mut lut_i = 0usize;
     let mut dof_i = 0usize;
+    let mut flare_i = 0usize;
     for op in ops {
         match op {
             Resolved::Blur {
@@ -758,24 +765,23 @@ pub fn run_ops(
                 }
             }
             Resolved::LensFlare(p) => {
-                // Lens flare (docs/08 §3.27, K-256). Every frame-time number
-                // the GPU needs is derived here through the one lumit-core
-                // module that owns the formulas (K-031: the CPU reference and
-                // the kernels read identical values); the heavy bake is a lazy
-                // closure the GPU side calls only when its parameter-hash
-                // cache misses.
+                // Lens flare (docs/08 §3.27, K-256/K-257). Every frame-time
+                // number the GPU needs is derived here through the one
+                // lumit-core module that owns the formulas (K-031: the CPU
+                // reference and the kernels read identical values); the heavy
+                // bake is a lazy closure the GPU side calls only when its
+                // parameter-hash cache misses. The k-th LensFlare op binds
+                // the k-th `flare_mattes` slot (its Matte source).
                 use lumit_core::fx::lens_flare as lf;
+                let matte = flare_mattes.get(flare_i).and_then(|o| o.as_ref());
+                flare_i += 1;
                 let (grid, lambda_count, flare_div) = lf::quality_ladder(p.quality);
-                let aspect = h as f32 / w.max(1) as f32;
-                let model = lf::lens_of(p);
-                let dir = lf::light_direction(p.light, aspect, model.focal_length_mm);
                 let energy = lf::GHOST_ENERGY_SCALE * p.ghost_intensity;
                 let lambdas = lf::lambda_weights(lambda_count, p.dispersion)
                     .into_iter()
                     .map(|(nm, rgb)| (nm, [rgb[0] * energy, rgb[1] * energy, rgb[2] * energy]))
                     .collect();
                 let op = lumit_gpu::fx::LensFlareOp {
-                    dir,
                     light_frac: p.light,
                     intensity: p.intensity,
                     lambdas,
@@ -786,14 +792,16 @@ pub fn run_ops(
                     flare_div,
                     screen_transform: lf::screen_transform(w),
                     starburst_intensity: p.starburst_intensity,
-                    starburst_scale: p.starburst_scale,
-                    starburst_rotation_deg: p.starburst_rotation_deg,
+                    scale: p.scale,
                     anamorphic: p.anamorphic,
+                    source: p.source,
+                    threshold: p.threshold,
+                    threshold_softness: p.threshold_softness,
                     mix: p.mix,
                     bake_key: lf::bake_key(p),
                 };
                 let params = *p;
-                tex = fx.lens_flare(ctx, &tex, w, h, &op, &move || {
+                tex = fx.lens_flare(ctx, &tex, w, h, &op, matte, &move || {
                     let b = lf::bake(&params);
                     lumit_gpu::fx::FlareBakeData {
                         surfaces: b
@@ -814,6 +822,7 @@ pub fn run_ops(
                             .collect(),
                         ghosts: b.ghosts.clone(),
                         launch_mm: b.launch_mm,
+                        focal_mm: b.focal_mm,
                         energy_gain: b.energy_gain,
                         disc: b.disc,
                         disc_res: lf::DISC_RES,

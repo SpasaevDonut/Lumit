@@ -23,11 +23,13 @@ const SHAKE_GROUPS: &[ParamGroup] = &[
         label: "Per-axis wobble",
         params: &["x_amp", "x_freq", "y_amp", "y_freq", "z_amp", "z_freq"],
         collapsed: true,
+        visible_when: None,
     },
     ParamGroup {
         label: "Motion blur",
         params: &["motion_blur", "mb_amount"],
         collapsed: true,
+        visible_when: None,
     },
 ];
 
@@ -2309,6 +2311,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 "replace_colour",
             ],
             collapsed: true,
+            visible_when: None,
         }],
         match_name: "matte_key",
         label: "Matte key",
@@ -2531,47 +2534,57 @@ pub const BUILTINS: &[EffectSchema] = &[
             MIX_PARAM,
         ],
     },
-    // Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256): ghosts
-    // ray-traced through a real lens prescription, the starburst from the
-    // aperture's Fourier diffraction — the one effect that owns a render
-    // pass. Heavy cost; full-frame ROI (the flare reaches everywhere);
-    // premultiplied (an additive light overlay, the Glow shape); not seeded
-    // (a pure function of parameters — even the starburst jitter is a fixed
-    // hash baked into the sprite). Intensity 0 and Mix 0 are bit-exact
-    // passthroughs (pinned by test). GPU-only per K-256: the CPU degradation
-    // rung renders it as a labelled no-op (the K-114 LUT precedent), and the
-    // §1.6 oracle is staged (trace at ULP, frame at a perceptual bound).
+    // Lens flare (docs/08 §3.27, docs/impl/lens-flare.md, K-256; panel
+    // reshape and source modes K-257): ghosts ray-traced through a real lens
+    // prescription, the starburst from the aperture's Fourier diffraction —
+    // the one effect that owns a render pass. Heavy cost; full-frame ROI;
+    // premultiplied (an additive light overlay, the Glow shape); not seeded.
+    // Intensity 0 and Mix 0 are bit-exact passthroughs (pinned by test).
+    // GPU-only per K-256: the CPU degradation rung renders it as a labelled
+    // no-op, and the §1.6 oracle is staged (trace at mean/quantile bounds,
+    // frame at a perceptual bound). Parameter order is the owner's panel
+    // design: the light point pair, the three headline dials, the coating
+    // character above the lens it colours, then the collapsed detail groups,
+    // the Source mode with its conditional matte rows, and Quality last.
     EffectSchema {
         groups: &[
             ParamGroup {
-                label: "Aperture",
+                label: "Lens options",
                 params: &[
+                    "anamorphic",
                     "blades",
                     "aperture_rotation",
+                    "coating",
                     "roundness",
                     "aperture_softness",
                 ],
                 collapsed: true,
+                visible_when: None,
             },
             ParamGroup {
-                label: "Ghosts",
-                params: &["ghost_intensity", "max_ghosts", "dispersion", "coating"],
-                collapsed: true,
-            },
-            ParamGroup {
-                label: "Starburst",
+                label: "Flare options",
                 params: &[
+                    "ghost_intensity",
+                    "max_ghosts",
+                    "dispersion",
                     "starburst_intensity",
-                    "starburst_scale",
-                    "starburst_rotation",
-                    "starburst_softness",
+                    "scale",
                 ],
                 collapsed: true,
+                visible_when: None,
+            },
+            // The matte rows: headerless (empty label renders them in place,
+            // no twirl), shown only while Source type is Matte.
+            ParamGroup {
+                label: "",
+                params: &["matte", "threshold", "threshold_softness"],
+                collapsed: false,
+                visible_when: Some(("source_type", 1)),
             },
         ],
         match_name: "lens_flare",
         label: "Lens flare",
-        version: 1,
+        version: 2,
         category: FxCategory::Stylise,
         traits: EffectTraits {
             cost: CostClass::Heavy,
@@ -2587,7 +2600,8 @@ pub const BUILTINS: &[EffectSchema] = &[
                 label: "Light x",
                 // % of the frame width; open both sides (an off-frame light
                 // keeps flaring, as real ones do). Default upper-left third
-                // so a fresh instance reads well (§1.2).
+                // so a fresh instance reads well (§1.2). Pairs with light_y
+                // into one point row (the _x/_y convention, docs/07 §6.1).
                 kind: ParamKind::Float {
                     default: 33.0,
                     slider: (-50.0, 150.0),
@@ -2615,17 +2629,6 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "lens_model",
-                label: "Lens",
-                // The bundled prescription library (lens_data::LENS_MODELS,
-                // same order). Indices are stable: new models append.
-                kind: ParamKind::Choice {
-                    options: crate::fx::lens_data::LENS_OPTIONS,
-                    default: 2,
-                    dividers_after: &[],
-                },
-            },
-            ParamSchema {
                 id: "fstop",
                 label: "F-stop",
                 // Wider (smaller number) grows the ghost discs and softens
@@ -2637,37 +2640,51 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "quality",
-                label: "Quality",
-                // The ray-grid density and traced wavelength count; Draft
-                // renders the flare buffer at half resolution.
+                id: "coating_preset",
+                label: "Coating type",
+                // The lambda-c assignment pattern (docs/08 §3.27): the ghost
+                // train's colour character. Sits above the lens it colours.
                 kind: ParamKind::Choice {
-                    options: &["Draft", "Normal", "High", "Ultra"],
-                    default: 1,
+                    options: &[
+                        "Modern multicoat",
+                        "Vintage single coat",
+                        "Warm bias",
+                        "Cool bias",
+                    ],
+                    default: 0,
                     dividers_after: &[],
                 },
             },
             ParamSchema {
+                id: "lens_model",
+                label: "Lens",
+                // The bundled prescription library (lens_data::LENS_MODELS,
+                // same order). Indices are stable: new models append.
+                kind: ParamKind::Choice {
+                    options: crate::fx::lens_data::LENS_OPTIONS,
+                    default: 2,
+                    dividers_after: &[],
+                },
+            },
+            // --- Lens options group ---
+            ParamSchema {
                 id: "anamorphic",
                 label: "Anamorphic squeeze",
-                // Horizontal stretch of the whole flare about the frame
-                // centre — the honest cheap form of the anamorphic look.
                 kind: ParamKind::Float {
                     default: 1.0,
                     slider: (1.0, 2.0),
                     hard: (Some(0.5), Some(3.0)),
                 },
             },
-            // --- Aperture group ---
             ParamSchema {
                 id: "blades",
                 label: "Blades",
-                // Iris blade count (host-rounded, the Flash Nth-beat shape);
-                // sets the starburst's spike count and the ghost disc shape.
-                kind: ParamKind::Float {
-                    default: 8.0,
-                    slider: (3.0, 16.0),
-                    hard: (Some(3.0), Some(16.0)),
+                // Iris blade count: the starburst's spike count and the
+                // ghost disc shape.
+                kind: ParamKind::Int {
+                    default: 8,
+                    slider: (3, 16),
+                    hard: (Some(3), Some(16)),
                 },
             },
             ParamSchema {
@@ -2680,9 +2697,19 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
+                id: "coating",
+                label: "Coating",
+                // 0 = uncoated (bright neutral ghosts), 1 = full quarter-wave
+                // coating interference (dim, colour-cast ghosts).
+                kind: ParamKind::Float {
+                    default: 0.75,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), Some(1.0)),
+                },
+            },
+            ParamSchema {
                 id: "roundness",
                 label: "Roundness",
-                // 0 = straight blades, 1 = near-circular iris.
                 kind: ParamKind::Float {
                     default: 0.15,
                     slider: (0.0, 1.0),
@@ -2699,7 +2726,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                     hard: (Some(0.0), Some(1.0)),
                 },
             },
-            // --- Ghosts group ---
+            // --- Flare options group ---
             ParamSchema {
                 id: "ghost_intensity",
                 label: "Ghost intensity",
@@ -2712,36 +2739,22 @@ pub const BUILTINS: &[EffectSchema] = &[
             ParamSchema {
                 id: "max_ghosts",
                 label: "Max ghosts",
-                // The brightest-ranked ghosts survive the cap (host-rounded).
-                kind: ParamKind::Float {
-                    default: 60.0,
-                    slider: (0.0, 150.0),
-                    hard: (Some(0.0), Some(200.0)),
+                // The brightest-ranked ghosts survive the cap.
+                kind: ParamKind::Int {
+                    default: 60,
+                    slider: (0, 150),
+                    hard: (Some(0), Some(200)),
                 },
             },
             ParamSchema {
                 id: "dispersion",
                 label: "Dispersion",
-                // Scales each traced wavelength's offset from the spectrum
-                // midpoint: 0 = no fringing, 1 = physical, 2 = doubled.
                 kind: ParamKind::Float {
                     default: 1.0,
                     slider: (0.0, 2.0),
                     hard: (Some(0.0), None),
                 },
             },
-            ParamSchema {
-                id: "coating",
-                label: "Coating",
-                // 0 = uncoated (bright neutral ghosts), 1 = full quarter-wave
-                // coating interference (dim, colour-cast ghosts).
-                kind: ParamKind::Float {
-                    default: 0.75,
-                    slider: (0.0, 1.0),
-                    hard: (Some(0.0), Some(1.0)),
-                },
-            },
-            // --- Starburst group ---
             ParamSchema {
                 id: "starburst_intensity",
                 label: "Starburst intensity",
@@ -2752,34 +2765,66 @@ pub const BUILTINS: &[EffectSchema] = &[
                 },
             },
             ParamSchema {
-                id: "starburst_scale",
+                id: "scale",
                 label: "Scale",
-                // 1 spans roughly the frame's short side.
+                // Scales the WHOLE flare about the optical centre — ghost
+                // train and starburst together (owner pass 2).
                 kind: ParamKind::Float {
                     default: 1.0,
                     slider: (0.1, 4.0),
+                    hard: (Some(0.05), Some(20.0)),
+                },
+            },
+            // --- Source ---
+            ParamSchema {
+                id: "source_type",
+                label: "Source",
+                // Where the light comes from. Lights is prepared for light
+                // layers (K-257): it resolves as Manual until they land.
+                kind: ParamKind::Choice {
+                    options: &["Manual light", "Matte", "Lights"],
+                    default: 0,
+                    dividers_after: &[],
+                },
+            },
+            ParamSchema {
+                id: "matte",
+                label: "Matte layer",
+                // The layer whose brightest sources spawn the flares
+                // (impl note §6); unset is a labelled no-flare, never a
+                // fault — the File/Layer no-op convention (§1.2).
+                kind: ParamKind::Layer {},
+            },
+            ParamSchema {
+                id: "threshold",
+                label: "Threshold",
+                // Linear luma at/above which a detected source flares fully.
+                // Slider normalised 0–1 (typing goes above; open ceiling).
+                kind: ParamKind::Float {
+                    default: 1.0,
+                    slider: (0.0, 1.0),
                     hard: (Some(0.0), None),
                 },
             },
             ParamSchema {
-                id: "starburst_rotation",
-                label: "Rotation",
+                id: "threshold_softness",
+                label: "Threshold softness",
+                // Half-width of the soft gate around the threshold.
                 kind: ParamKind::Float {
-                    default: 0.0,
-                    slider: (-180.0, 180.0),
-                    hard: (None, None),
+                    default: 0.25,
+                    slider: (0.0, 1.0),
+                    hard: (Some(0.0), None),
                 },
             },
             ParamSchema {
-                id: "starburst_softness",
-                label: "Softness",
-                // The baked blur jitter radius. Default 0: the smear the
-                // spectral integration already gives is clean; the jitter is
-                // stochastic and speckles, so it is strictly opt-in.
-                kind: ParamKind::Float {
-                    default: 0.0,
-                    slider: (0.0, 1.0),
-                    hard: (Some(0.0), Some(1.0)),
+                id: "quality",
+                label: "Quality",
+                // The ray-grid density and traced wavelength count; Draft
+                // renders the flare buffer at half resolution.
+                kind: ParamKind::Choice {
+                    options: &["Draft", "Normal", "High", "Ultra"],
+                    default: 1,
+                    dividers_after: &[],
                 },
             },
             MIX_PARAM,
@@ -2843,6 +2888,11 @@ pub fn instantiate(match_name: &str) -> Option<EffectInstance> {
                 value: match p.kind {
                     ParamKind::Float { default, .. } => {
                         EffectValue::Float(Property::fixed(default))
+                    }
+                    // Int is a display/rounding kind; the value is a Float
+                    // like any other scalar (see the schema's Int docs).
+                    ParamKind::Int { default, .. } => {
+                        EffectValue::Float(Property::fixed(default as f64))
                     }
                     ParamKind::Choice { default, .. } => EffectValue::Choice(default),
                     ParamKind::Bool { default } => EffectValue::Bool(default),

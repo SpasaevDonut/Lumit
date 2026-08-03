@@ -52,6 +52,17 @@ pub enum ParamKind {
         /// at zero below and runs unbounded above).
         hard: (Option<f64>, Option<f64>),
     },
+    /// A whole-number parameter (a blade count, a ghost cap). The VALUE side
+    /// is still an `EffectValue::Float` — it animates and serialises exactly
+    /// like a Float — the kind only tells the UI to step and display it as an
+    /// integer and the resolve step to round it, replacing the old "rounded
+    /// float row" convention (docs/08 §1.2).
+    Int {
+        default: i64,
+        slider: (i64, i64),
+        /// Hard bounds; either side may be None, matching Float.
+        hard: (Option<i64>, Option<i64>),
+    },
     Choice {
         options: &'static [&'static str],
         default: u32,
@@ -152,12 +163,19 @@ impl EdgesMode {
 /// place, where the group's first member sits).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParamGroup {
-    /// Sentence-case disclosure header.
+    /// Sentence-case disclosure header. An EMPTY label renders headerless:
+    /// the member rows appear in place with no twirl — the shape a
+    /// conditional run of parameters wants (the Lens flare's matte rows).
     pub label: &'static str,
     /// The member parameter ids, naming params in the same schema.
     pub params: &'static [&'static str],
     /// Whether the twirl starts closed (the advanced-by-default case).
     pub collapsed: bool,
+    /// When set, the whole group is shown only while the named sibling
+    /// Choice parameter holds the given index — how an effect's panel offers
+    /// different controls per mode (the Lens flare's Source type). None is
+    /// always visible.
+    pub visible_when: Option<(&'static str, u32)>,
 }
 
 /// The Add-effect menu's grouping (K-090): every schema declares one.

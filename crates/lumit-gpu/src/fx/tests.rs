@@ -2930,9 +2930,11 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         dispersion: 1.0,
         coating: 0.75,
         starburst_intensity: 1.0,
-        starburst_scale: 1.0,
-        starburst_rotation_deg: 0.0,
-        starburst_softness: 0.1,
+        scale: 1.0,
+        coating_preset: 0,
+        source: 0,
+        threshold: 1.0,
+        threshold_softness: 0.25,
         anamorphic: 1.0,
         quality: 0,
         mix: 1.0,
@@ -2945,16 +2947,13 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
 fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> LensFlareOp {
     use lumit_core::fx::lens_flare as lf;
     let (grid, lambda_count, flare_div) = lf::quality_ladder(p.quality);
-    let aspect = h as f32 / w.max(1) as f32;
-    let model = lf::lens_of(p);
-    let dir = lf::light_direction(p.light, aspect, model.focal_length_mm);
+    let _ = h;
     let energy = lf::GHOST_ENERGY_SCALE * p.ghost_intensity;
     let lambdas = lf::lambda_weights(lambda_count, p.dispersion)
         .into_iter()
         .map(|(nm, rgb)| (nm, [rgb[0] * energy, rgb[1] * energy, rgb[2] * energy]))
         .collect();
     LensFlareOp {
-        dir,
         light_frac: p.light,
         intensity: p.intensity,
         lambdas,
@@ -2965,9 +2964,11 @@ fn flare_op(p: &lumit_core::fx::lens_flare::LensFlareParams, w: u32, h: u32) -> 
         flare_div,
         screen_transform: lf::screen_transform(w),
         starburst_intensity: p.starburst_intensity,
-        starburst_scale: p.starburst_scale,
-        starburst_rotation_deg: p.starburst_rotation_deg,
+        scale: p.scale,
         anamorphic: p.anamorphic,
+        source: p.source,
+        threshold: p.threshold,
+        threshold_softness: p.threshold_softness,
         mix: p.mix,
         bake_key: lf::bake_key(p),
     }
@@ -2995,6 +2996,7 @@ fn flare_bake_data(p: &lumit_core::fx::lens_flare::LensFlareParams) -> FlareBake
             .collect(),
         ghosts: b.ghosts.clone(),
         launch_mm: b.launch_mm,
+        focal_mm: b.focal_mm,
         energy_gain: b.energy_gain,
         disc: b.disc,
         disc_res: lf::DISC_RES,
@@ -3026,8 +3028,10 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
             };
             let baked = lf::bake(&p);
             let op = flare_op(&p, w, h);
+            let dir = lf::light_direction(p.light, h as f32 / w as f32, baked.focal_mm);
             let combo_limit = 12u32;
-            let gpu = fx.lens_flare_trace_debug(&ctx, &op, &|| flare_bake_data(&p), combo_limit);
+            let gpu =
+                fx.lens_flare_trace_debug(&ctx, &op, &|| flare_bake_data(&p), combo_limit, w, h);
             assert!(!gpu.is_empty(), "trace debug returned nothing");
 
             // Rebuild the same combo order the GPU used: ghost-major over
@@ -3061,7 +3065,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
                 for ry in 0..grid {
                     for rx in 0..grid {
                         let g = gpu[ci * ray_count + (ry * grid + rx) as usize];
-                        let c = lf::trace_ray(&baked, ghost, nm, [rx, ry], grid, p.coating, op.dir);
+                        let c = lf::trace_ray(&baked, ghost, nm, [rx, ry], grid, p.coating, dir);
                         total += 1;
                         let cpu_live = c.reflectance.is_finite();
                         let gpu_live = g[5] >= 0.0;
@@ -3158,13 +3162,14 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
     // CPU reference: flare at the Draft half-size buffer, then the combine.
     let (_, _, div) = lf::quality_ladder(p.quality);
     let (fw, fh) = ((w / div).max(1), (h / div).max(1));
-    let flare = lf::cpu_flare(&p, &baked, fw, fh);
+    let lights = lf::manual_light(&p);
+    let flare = lf::cpu_flare(&p, &baked, fw, fh, &lights);
     let mut cpu = img.clone();
-    lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh);
+    lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh, &lights);
 
     // GPU.
     let tex = upload_linear_f32(&ctx, &img, w, h);
-    let out = fx.lens_flare(&ctx, &tex, w, h, &op, &|| flare_bake_data(&p));
+    let out = fx.lens_flare(&ctx, &tex, w, h, &op, None, &|| flare_bake_data(&p));
     let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
 
     // The flare must be visible — otherwise the perceptual bound below
@@ -3199,7 +3204,7 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
     );
 
     // Determinism (§2.4): a second run is bit-identical.
-    let out2 = fx.lens_flare(&ctx, &tex, w, h, &op, &|| flare_bake_data(&p));
+    let out2 = fx.lens_flare(&ctx, &tex, w, h, &op, None, &|| flare_bake_data(&p));
     let gpu2 = readback_linear_f32(&ctx, &out2, w, h).unwrap();
     assert_eq!(gpu, gpu2, "GPU lens flare must be bit-stable");
 
@@ -3213,8 +3218,98 @@ fn wgsl_lens_flare_matches_the_cpu_frame_reference_and_neutrals() {
         lf::LensFlareParams { mix: 0.0, ..p },
     ] {
         let nop = flare_op(&neutral, w, h);
-        let nout = fx.lens_flare(&ctx, &tex, w, h, &nop, &|| flare_bake_data(&neutral));
+        let nout = fx.lens_flare(&ctx, &tex, w, h, &nop, None, &|| flare_bake_data(&neutral));
         let ngpu = readback_linear_f32(&ctx, &nout, w, h).unwrap();
         assert_eq!(ngpu, img, "neutral point must be bit-exact");
     }
+}
+
+/// Matte mode (docs/08 §3.27, K-257): the GPU detection + per-light flare
+/// agrees with the CPU reference (detect_lights → cpu_flare → cpu_combine)
+/// at the frame bound, the detected flares actually render, and the shared
+/// constants the two crates must agree on are pinned.
+#[test]
+fn wgsl_lens_flare_matte_mode_matches_the_cpu_reference() {
+    assert_eq!(MAX_LIGHTS as usize, lumit_core::fx::lens_flare::MAX_LIGHTS);
+
+    let Ok(ctx) = GpuContext::headless() else {
+        eprintln!("no GPU adapter; skipping WGSL parity test");
+        return;
+    };
+    let fx = FxEngine::new(&ctx);
+    use lumit_core::fx::lens_flare as lf;
+    let (w, h) = (128u32, 72u32);
+    // A dark scene as the layer input, fp16-quantised AFTER the scale so the
+    // bit-exact passthrough assert below sees exactly what the GPU uploads.
+    let img: Vec<f32> = corpus(w, h)
+        .iter()
+        .map(|v| f16_to_f32(f16_bits(v * 0.05)))
+        .collect();
+    // The matte: two bright sources on black, fp16-quantised exactly as the
+    // GPU texture upload rounds it.
+    let mut matte = vec![0.0f32; (w * h * 4) as usize];
+    for (x, y, rgb) in [
+        (30u32, 20u32, [5.0f32, 4.0, 3.0]),
+        (100, 50, [2.0, 2.5, 3.0]),
+    ] {
+        let i = ((y * w + x) * 4) as usize;
+        matte[i] = rgb[0];
+        matte[i + 1] = rgb[1];
+        matte[i + 2] = rgb[2];
+        matte[i + 3] = 1.0;
+    }
+    let matte: Vec<f32> = matte.iter().map(|v| f16_to_f32(f16_bits(*v))).collect();
+
+    let p = lf::LensFlareParams {
+        source: 1,
+        threshold: 1.0,
+        threshold_softness: 0.25,
+        max_ghosts: 6,
+        ..flare_params()
+    };
+    let baked = lf::bake(&p);
+    let op = flare_op(&p, w, h);
+
+    // CPU: detect on the quantised matte, then render per light.
+    let lights = lf::detect_lights(&matte, w, h, p.threshold, p.threshold_softness);
+    assert_eq!(lights.len(), 2, "both sources must be found: {lights:?}");
+    let (_, _, div) = lf::quality_ladder(p.quality);
+    let (fw, fh) = ((w / div).max(1), (h / div).max(1));
+    let flare = lf::cpu_flare(&p, &baked, fw, fh, &lights);
+    let mut cpu = img.clone();
+    lf::cpu_combine(&mut cpu, w, h, &p, &baked, &flare, fw, fh, &lights);
+
+    // GPU.
+    let tex = upload_linear_f32(&ctx, &img, w, h);
+    let matte_tex = upload_linear_f32(&ctx, &matte, w, h);
+    let out = fx.lens_flare(&ctx, &tex, w, h, &op, Some(&matte_tex), &|| {
+        flare_bake_data(&p)
+    });
+    let gpu = readback_linear_f32(&ctx, &out, w, h).unwrap();
+
+    // The detected flares must be visible…
+    let added: f32 = gpu
+        .iter()
+        .zip(&img)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / (w * h) as f32;
+    assert!(added > 1e-4, "matte mode added no visible energy: {added}");
+    // …and match the CPU reference at the frame bound.
+    let mean: f32 = cpu
+        .iter()
+        .zip(&gpu)
+        .map(|(a, b)| (a - b).abs())
+        .sum::<f32>()
+        / cpu.len() as f32;
+    assert!(mean < 2e-3, "mean |Δ| {mean}");
+    let e_cpu: f32 = cpu.iter().sum();
+    let e_gpu: f32 = gpu.iter().sum();
+    let ratio = e_gpu / e_cpu.max(1e-9);
+    assert!((0.99..=1.01).contains(&ratio), "energy ratio {ratio}");
+
+    // An unset matte in Matte mode is the labelled no-op: bit-exact input.
+    let nout = fx.lens_flare(&ctx, &tex, w, h, &op, None, &|| flare_bake_data(&p));
+    let ngpu = readback_linear_f32(&ctx, &nout, w, h).unwrap();
+    assert_eq!(ngpu, img, "matte mode without a matte must pass through");
 }

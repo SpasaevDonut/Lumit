@@ -14,7 +14,6 @@
 use super::cie;
 use super::fft::{fft2_inplace, fftshift2, frft2, Cx};
 use super::lens_data::{LensModel, LENS_MODELS};
-use super::maths::splitmix32;
 
 /// The resolved Lens flare parameter bundle (docs/08 §3.27): plain numbers
 /// both the CPU reference and the GPU pipeline consume, so preview and
@@ -55,12 +54,22 @@ pub struct LensFlareParams {
     pub coating: f32,
     /// Gain on the starburst alone.
     pub starburst_intensity: f32,
-    /// Starburst sprite scale; 1 spans roughly the frame's short side.
-    pub starburst_scale: f32,
-    /// Starburst sprite rotation, degrees.
-    pub starburst_rotation_deg: f32,
-    /// 0..1: the baked chromatic blur jitter radius of the starburst.
-    pub starburst_softness: f32,
+    /// Scale of the WHOLE flare about the optical centre (ghost train and
+    /// starburst together); 1 is natural size.
+    pub scale: f32,
+    /// Coating character preset (docs/08 §3.27): the lambda-c assignment
+    /// pattern. 0 Modern multicoat, 1 Vintage single coat, 2 Warm bias,
+    /// 3 Cool bias. A bake input.
+    pub coating_preset: u32,
+    /// Where the light comes from: 0 Manual (the light point above),
+    /// 1 Matte (bright sources detected in a referenced layer), 2 Lights
+    /// (prepared for light layers; resolves as Manual until they land).
+    pub source: u32,
+    /// Matte mode: linear luma at/above which a detected source flares fully
+    /// (open above; a soft gate, see `threshold_softness`).
+    pub threshold: f32,
+    /// Matte mode: half-width of the soft gate around the threshold.
+    pub threshold_softness: f32,
     /// Horizontal stretch of the whole flare about the frame centre
     /// (1 = spherical, 1.33/2 = anamorphic looks).
     pub anamorphic: f32,
@@ -76,9 +85,9 @@ pub struct LensFlareParams {
 pub fn quality_ladder(quality: u32) -> (u32, u32, u32) {
     match quality {
         0 => (16, 3, 2),
-        2 => (64, 5, 1),
-        3 => (96, 7, 1),
-        _ => (32, 3, 1),
+        2 => (64, 7, 1),
+        3 => (96, 9, 1),
+        _ => (32, 5, 1),
     }
 }
 
@@ -101,6 +110,117 @@ pub const GHOST_ENERGY_SCALE: f32 = 1.0;
 /// Floor on a landed quad's area as a fraction of its launch area — stops
 /// caustic-focused cells burning to infinity (the impl note §7 trap).
 pub const MIN_AREA_FRAC: f32 = 0.01;
+
+/// Most flare sources a frame renders (Matte mode's top-K cap; Manual is one).
+pub const MAX_LIGHTS: usize = 8;
+/// Detection tile side, raster pixels (impl note §6).
+pub const DETECT_TILE: u32 = 32;
+/// Non-max suppression radius, in tiles (Chebyshev): one highlight must not
+/// spend the whole light budget on its own neighbouring tiles.
+pub const SUPPRESS_TILES: i64 = 2;
+
+/// One flare source: where it sits (raster fraction) and its colour already
+/// multiplied by its gate weight. Manual mode is one white light at the
+/// parameter position; Matte mode is the detected top-K.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlareLight {
+    /// Position as a fraction of the raster (x right, y down).
+    pub pos: [f32; 2],
+    /// Source colour times gate weight; all-zero entries are dead slots.
+    pub rgb: [f32; 3],
+}
+
+/// Manual mode's light list: one white source at the parameter position.
+pub fn manual_light(p: &LensFlareParams) -> Vec<FlareLight> {
+    vec![FlareLight {
+        pos: p.light,
+        rgb: [1.0, 1.0, 1.0],
+    }]
+}
+
+/// The soft threshold gate: 0 at `threshold - softness`, 1 at `threshold +
+/// softness` (smoothstep-shaped); softness 0 is the hard step. Shared by the
+/// CPU reference and mirrored op-for-op in the WGSL detection.
+pub fn threshold_gate(luma: f32, threshold: f32, softness: f32) -> f32 {
+    if softness <= 0.0 {
+        return if luma >= threshold { 1.0 } else { 0.0 };
+    }
+    let t = ((luma - (threshold - softness)) / (2.0 * softness)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Matte-mode source detection (impl note §6), the CPU twin of the WGSL
+/// kernels: tile the matte into [`DETECT_TILE`]-sided cells, keep each cell's
+/// brightest pixel (Rec. 709 luma of the premultiplied buffer; ties break to
+/// the lowest linear index), then pick the top [`MAX_LIGHTS`] cells by luma
+/// (ties to the lower cell index) with [`SUPPRESS_TILES`] Chebyshev
+/// suppression, gating each through [`threshold_gate`]. Deterministic by
+/// construction — no float reduction order depends on threading.
+pub fn detect_lights(
+    matte: &[f32],
+    w: u32,
+    h: u32,
+    threshold: f32,
+    softness: f32,
+) -> Vec<FlareLight> {
+    if w == 0 || h == 0 || matte.len() < (w * h * 4) as usize {
+        return Vec::new();
+    }
+    let tx = w.div_ceil(DETECT_TILE) as usize;
+    let ty = h.div_ceil(DETECT_TILE) as usize;
+    // Per-tile brightest pixel: (luma, linear index).
+    let mut tiles: Vec<(f32, u32)> = vec![(-1.0, 0); tx * ty];
+    for y in 0..h {
+        for x in 0..w {
+            let i = ((y * w + x) * 4) as usize;
+            let luma = 0.2126 * matte[i] + 0.7152 * matte[i + 1] + 0.0722 * matte[i + 2];
+            let t = (y / DETECT_TILE) as usize * tx + (x / DETECT_TILE) as usize;
+            if luma > tiles[t].0 {
+                tiles[t] = (luma, y * w + x);
+            }
+        }
+    }
+    let mut suppressed = vec![false; tx * ty];
+    let mut out = Vec::new();
+    for _ in 0..MAX_LIGHTS {
+        let mut best: Option<usize> = None;
+        for (t, &(luma, _)) in tiles.iter().enumerate() {
+            if suppressed[t] || luma <= 0.0 {
+                continue;
+            }
+            match best {
+                Some(b) if tiles[b].0 >= luma => {}
+                _ => best = Some(t),
+            }
+        }
+        let Some(b) = best else { break };
+        let (luma, idx) = tiles[b];
+        let weight = threshold_gate(luma, threshold, softness);
+        if weight <= 0.0 {
+            // Cells are visited brightest-first, so nothing dimmer passes.
+            break;
+        }
+        let (px, py) = (idx % w, idx / w);
+        let i = (idx * 4) as usize;
+        out.push(FlareLight {
+            pos: [(px as f32 + 0.5) / w as f32, (py as f32 + 0.5) / h as f32],
+            rgb: [
+                matte[i].max(0.0) * weight,
+                matte[i + 1].max(0.0) * weight,
+                matte[i + 2].max(0.0) * weight,
+            ],
+        });
+        let (bx, by) = ((b % tx) as i64, (b / tx) as i64);
+        for sy in (by - SUPPRESS_TILES)..=(by + SUPPRESS_TILES) {
+            for sx in (bx - SUPPRESS_TILES)..=(bx + SUPPRESS_TILES) {
+                if sx >= 0 && sy >= 0 && (sx as usize) < tx && (sy as usize) < ty {
+                    suppressed[sy as usize * tx + sx as usize] = true;
+                }
+            }
+        }
+    }
+    out
+}
 
 /// One optical surface, flattened for the trace: the Cauchy pair replaces
 /// (n_d, V) so no per-ray fitting happens, and the iris flag/coating ride
@@ -503,7 +623,7 @@ pub fn bake_key(p: &LensFlareParams) -> u64 {
     fold(p.aperture_rotation_deg.to_bits());
     fold(p.roundness.to_bits());
     fold(p.aperture_softness.to_bits());
-    fold(p.starburst_softness.to_bits());
+    fold(p.coating_preset);
     h
 }
 
@@ -514,12 +634,30 @@ pub fn lens_of(p: &LensFlareParams) -> &'static LensModel {
 }
 
 /// Deterministic per-surface coating tuning wavelengths (impl note §1
-/// deviation D2): cycled by surface index for variety.
-const COATING_CYCLE_NM: [f32; 5] = [480.0, 510.0, 540.0, 570.0, 600.0];
+/// deviation D2), one cycle per Coating preset (docs/08 §3.27): the pattern
+/// sets the ghost train's colour character. Cycled by surface index.
+const COATING_CYCLES: [&[f32]; 4] = [
+    // Modern multicoat: staggered across the band — varied casts.
+    &[440.0, 480.0, 520.0, 560.0, 600.0],
+    // Vintage single coat: one tuning everywhere — the uniform amber/magenta
+    // cast of an early coated lens.
+    &[550.0],
+    // Warm bias: tuned short, so the reflections it fails to kill are long —
+    // amber ghosts.
+    &[430.0, 455.0, 480.0],
+    // Cool bias: tuned long — blue ghosts.
+    &[580.0, 610.0, 640.0],
+];
+
+/// The cycle for a stored preset index (unknown values read as Modern).
+fn coating_cycle(preset: u32) -> &'static [f32] {
+    COATING_CYCLES[(preset as usize).min(COATING_CYCLES.len() - 1)]
+}
 
 /// Build the flat surface table for a model: running z offsets, Cauchy
 /// pairs, coating wavelengths, and the appended sensor row.
-fn build_surfaces(model: &LensModel) -> Vec<FlareSurface> {
+fn build_surfaces(model: &LensModel, coating_preset: u32) -> Vec<FlareSurface> {
+    let cycle = coating_cycle(coating_preset);
     let mut out = Vec::with_capacity(model.surfaces.len() + 1);
     let mut offset = 0.0_f32;
     for (i, s) in model.surfaces.iter().enumerate() {
@@ -531,11 +669,7 @@ fn build_surfaces(model: &LensModel) -> Vec<FlareSurface> {
             height_mm: s.height_mm.max(1e-3),
             cauchy_a: a,
             cauchy_b: b,
-            coating_nm: if is_iris {
-                0.0
-            } else {
-                COATING_CYCLE_NM[i % COATING_CYCLE_NM.len()]
-            },
+            coating_nm: if is_iris { 0.0 } else { cycle[i % cycle.len()] },
             is_iris: if is_iris { 1.0 } else { 0.0 },
             is_sensor: 0.0,
         });
@@ -631,13 +765,13 @@ pub fn bake_ghost_disc(aperture: &[f32], res: u32, fstop: f32) -> Vec<f32> {
     disc
 }
 
-/// The starburst sprite: FFT power spectrum of the aperture under the
-/// Fresnel propagation term, integrated over the visible spectrum with the
-/// chromatic scale `λ_mid/λ` and a softness-driven blur jitter, CIE-weighted
-/// into linear working RGB ([Ritschel 2009] §4–5; realflare's starburst
-/// kernel with the smear rotation deferred). Energy-normalised so blade and
-/// softness edits keep overall brightness.
-pub fn bake_starburst(aperture: &[f32], res: u32, softness: f32) -> Vec<f32> {
+/// The starburst sprite: the aperture's Fourier amplitude under the Fresnel
+/// propagation term, integrated over the visible spectrum with the chromatic
+/// scale `λ_mid/λ`, CIE-weighted into linear working RGB ([Ritschel 2009]
+/// §4–5). The spectral integration is the only smear — the old stochastic
+/// blur jitter speckled and was removed with its parameter (owner pass 2).
+/// Peak-normalised so blade edits keep overall brightness.
+pub fn bake_starburst(aperture: &[f32], res: u32) -> Vec<f32> {
     let n = res as usize;
     // Pattern: |fftshift(fft(A · e^{iπ/(λd)(x²+y²)}))|², λ_mid, d = 1 m.
     let lambda_mm = cie::LAMBDA_MID as f64 * 1e-6;
@@ -679,12 +813,6 @@ pub fn bake_starburst(aperture: &[f32], res: u32, softness: f32) -> Vec<f32> {
         let b = pattern[y1 * n + x0] * (1.0 - tx) + pattern[y1 * n + x1] * tx;
         a * (1.0 - ty) + b * ty
     };
-    // Deterministic per-(pixel, sample) jitter from the shared splitmix32
-    // lattice — no libm noise, so the bake is byte-stable across platforms.
-    let jitter = |x: u32, y: u32, k: u32, lane: u32| -> f32 {
-        let h = splitmix32(x ^ y.rotate_left(16) ^ (k << 8) ^ (lane << 4));
-        (h >> 8) as f32 / ((1u32 << 24) as f32)
-    };
     for y in 0..n {
         for x in 0..n {
             let ndc_x = 2.0 * (x as f32 / (n - 1) as f32) - 1.0;
@@ -693,16 +821,11 @@ pub fn bake_starburst(aperture: &[f32], res: u32, softness: f32) -> Vec<f32> {
             for k in 0..samples {
                 let step = k as f32 / samples as f32;
                 let lambda = cie::LAMBDA_MIN + step * range;
-                // Blur jitter (Softness): radius ∝ √u keeps density uniform.
-                let radius = softness * jitter(x as u32, y as u32, k, 0).sqrt();
-                let ang = jitter(x as u32, y as u32, k, 1) * std::f32::consts::TAU;
-                let mut px = ndc_x + ang.cos() * radius;
-                let mut py = ndc_y + ang.sin() * radius;
                 // Chromatic scale: diffraction grows with wavelength, so the
                 // sample position shrinks by λ_mid/λ (realflare's `scale`).
                 let s = lambda / cie::LAMBDA_MID;
-                px /= s;
-                py /= s;
+                let px = ndc_x / s;
+                let py = ndc_y / s;
                 let val = bilinear(px * 0.5 + 0.5, py * 0.5 + 0.5);
                 let w = cie::xyz_at(lambda);
                 xyz[0] += w[0] * val;
@@ -743,7 +866,7 @@ const TARGET_PROBE_E: f32 = 5.0;
 /// brightness *between* a lens's own ghosts stays physical.
 pub fn bake(p: &LensFlareParams) -> FlareBaked {
     let model = lens_of(p);
-    let surfaces = build_surfaces(model);
+    let surfaces = build_surfaces(model, p.coating_preset);
     // The launch square rides the iris rather than the front element (2.6×
     // the iris half-height, clamped to 1.6× the front housing): the iris is
     // what ultimately gates the bundle, so this keeps the grid dense where
@@ -850,7 +973,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
     } else {
         bake_aperture(p, STARBURST_RES)
     };
-    baked.starburst = bake_starburst(&sb_aperture, STARBURST_RES, p.starburst_softness);
+    baked.starburst = bake_starburst(&sb_aperture, STARBURST_RES);
     baked
 }
 
@@ -934,9 +1057,16 @@ struct FlareVertex {
 
 /// Render the ghost train alone into an RGB flare buffer (`w × h × 3`),
 /// mirroring the GPU's trace → quad energy → corner average → two-triangle
-/// raster chain. Used by tests and small enough to read as the spec of the
-/// GPU path.
-pub fn cpu_flare(p: &LensFlareParams, baked: &FlareBaked, w: u32, h: u32) -> Vec<f32> {
+/// raster chain, once per live light in `lights` (Manual mode passes
+/// [`manual_light`]; Matte mode the [`detect_lights`] top-K). Used by tests
+/// and small enough to read as the spec of the GPU path.
+pub fn cpu_flare(
+    p: &LensFlareParams,
+    baked: &FlareBaked,
+    w: u32,
+    h: u32,
+    lights: &[FlareLight],
+) -> Vec<f32> {
     let mut out = vec![0.0_f32; (w * h * 3) as usize];
     let (grid, lambda_count, _) = quality_ladder(p.quality);
     let ghost_count = (p.max_ghosts as usize).min(baked.ghosts.len());
@@ -945,7 +1075,6 @@ pub fn cpu_flare(p: &LensFlareParams, baked: &FlareBaked, w: u32, h: u32) -> Vec
     }
     let weights = lambda_weights(lambda_count, p.dispersion);
     let aspect = h as f32 / w.max(1) as f32;
-    let dir = light_direction(p.light, aspect, baked.focal_mm);
     let st = screen_transform(w);
     let disc_scale = ghost_disc_scale(p.fstop);
     let g = grid as usize;
@@ -986,103 +1115,113 @@ pub fn cpu_flare(p: &LensFlareParams, baked: &FlareBaked, w: u32, h: u32) -> Vec
     ];
     let mut cell_e = vec![0.0_f32; (g - 1) * (g - 1)];
 
-    for gi in 0..ghost_count {
-        let ghost = baked.ghosts[gi];
-        for &(traced_nm, rgb_w) in &weights {
-            // Trace the grid.
-            for cy in 0..g {
-                for cx in 0..g {
-                    rays[cy * g + cx] = trace_ray(
-                        baked,
-                        ghost,
-                        traced_nm,
-                        [cx as u32, cy as u32],
-                        grid,
-                        p.coating,
-                        dir,
-                    );
-                }
-            }
-            // Per-cell energy: launch area / landed area, dead-corner cells
-            // culled (energy 0).
-            for cy in 0..g - 1 {
-                for cx in 0..g - 1 {
-                    let r00 = rays[cy * g + cx];
-                    let r10 = rays[cy * g + cx + 1];
-                    let r11 = rays[(cy + 1) * g + cx + 1];
-                    let r01 = rays[(cy + 1) * g + cx];
-                    let live = r00.reflectance.is_finite()
-                        && r10.reflectance.is_finite()
-                        && r11.reflectance.is_finite()
-                        && r01.reflectance.is_finite();
-                    cell_e[cy * (g - 1) + cx] = if live {
-                        let e = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| {
-                            (a[0] - b[0]) * (c[1] - a[1]) - (a[1] - b[1]) * (c[0] - a[0])
-                        };
-                        let a0 = e(r00.pos_mm, r10.pos_mm, r11.pos_mm);
-                        let a1 = e(r00.pos_mm, r11.pos_mm, r01.pos_mm);
-                        let area = ((a0 + a1) / 2.0).abs().max(min_area);
-                        area_launch / area
-                    } else {
-                        0.0
-                    };
-                }
-            }
-            // Rasterise each live cell as two triangles with corner-averaged
-            // energies (the GPU's exact split: (0,1,2), (0,2,3) of the
-            // corners (x,y), (x+1,y), (x+1,y+1), (x,y+1)).
-            for cy in 0..g - 1 {
-                for cx in 0..g - 1 {
-                    if cell_e[cy * (g - 1) + cx] <= 0.0 {
-                        continue;
+    for light in lights {
+        if light.rgb[0] <= 0.0 && light.rgb[1] <= 0.0 && light.rgb[2] <= 0.0 {
+            continue;
+        }
+        let dir = light_direction(light.pos, aspect, baked.focal_mm);
+        for gi in 0..ghost_count {
+            let ghost = baked.ghosts[gi];
+            for &(traced_nm, rgb_w) in &weights {
+                // Trace the grid.
+                for cy in 0..g {
+                    for cx in 0..g {
+                        rays[cy * g + cx] = trace_ray(
+                            baked,
+                            ghost,
+                            traced_nm,
+                            [cx as u32, cy as u32],
+                            grid,
+                            p.coating,
+                            dir,
+                        );
                     }
-                    let corner = |ox: usize, oy: usize| -> FlareVertex {
-                        let r = rays[(cy + oy) * g + cx + ox];
-                        // Average the energies of the live cells sharing
-                        // this corner.
-                        let (vx, vy) = (cx + ox, cy + oy);
-                        let mut sum = 0.0_f32;
-                        let mut count = 0u32;
-                        for (nx, ny) in [
-                            (vx.wrapping_sub(1), vy.wrapping_sub(1)),
-                            (vx, vy.wrapping_sub(1)),
-                            (vx.wrapping_sub(1), vy),
-                            (vx, vy),
-                        ] {
-                            if nx < g - 1 && ny < g - 1 {
-                                let e = cell_e[ny * (g - 1) + nx];
-                                if e > 0.0 {
-                                    sum += e;
-                                    count += 1;
-                                }
-                            }
-                        }
-                        let e_avg = if count > 0 { sum / count as f32 } else { 0.0 };
-                        let refl = if r.reflectance.is_finite() {
-                            r.reflectance
+                }
+                // Per-cell energy: launch area / landed area, dead-corner cells
+                // culled (energy 0).
+                for cy in 0..g - 1 {
+                    for cx in 0..g - 1 {
+                        let r00 = rays[cy * g + cx];
+                        let r10 = rays[cy * g + cx + 1];
+                        let r11 = rays[(cy + 1) * g + cx + 1];
+                        let r01 = rays[(cy + 1) * g + cx];
+                        let live = r00.reflectance.is_finite()
+                            && r10.reflectance.is_finite()
+                            && r11.reflectance.is_finite()
+                            && r01.reflectance.is_finite();
+                        cell_e[cy * (g - 1) + cx] = if live {
+                            let e = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| {
+                                (a[0] - b[0]) * (c[1] - a[1]) - (a[1] - b[1]) * (c[0] - a[0])
+                            };
+                            let a0 = e(r00.pos_mm, r10.pos_mm, r11.pos_mm);
+                            let a1 = e(r00.pos_mm, r11.pos_mm, r01.pos_mm);
+                            let area = ((a0 + a1) / 2.0).abs().max(min_area);
+                            area_launch / area
                         } else {
                             0.0
                         };
-                        let gain = e_avg * refl * energy;
-                        FlareVertex {
-                            pos: [
-                                r.pos_mm[0] * st + w as f32 / 2.0,
-                                h as f32 / 2.0 - r.pos_mm[1] * st,
-                            ],
-                            uv: r.uv,
-                            rgb: [rgb_w[0] * gain, rgb_w[1] * gain, rgb_w[2] * gain],
-                            rrel: r.rrel,
+                    }
+                }
+                // Rasterise each live cell as two triangles with corner-averaged
+                // energies (the GPU's exact split: (0,1,2), (0,2,3) of the
+                // corners (x,y), (x+1,y), (x+1,y+1), (x,y+1)).
+                for cy in 0..g - 1 {
+                    for cx in 0..g - 1 {
+                        if cell_e[cy * (g - 1) + cx] <= 0.0 {
+                            continue;
                         }
-                    };
-                    let v = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
-                    for tri in [[0usize, 1, 2], [0, 2, 3]] {
-                        raster_triangle(
-                            &mut out,
-                            w,
-                            h,
-                            [v[tri[0]], v[tri[1]], v[tri[2]]],
-                            &disc_sample,
-                        );
+                        let corner = |ox: usize, oy: usize| -> FlareVertex {
+                            let r = rays[(cy + oy) * g + cx + ox];
+                            // Average the energies of the live cells sharing
+                            // this corner.
+                            let (vx, vy) = (cx + ox, cy + oy);
+                            let mut sum = 0.0_f32;
+                            let mut count = 0u32;
+                            for (nx, ny) in [
+                                (vx.wrapping_sub(1), vy.wrapping_sub(1)),
+                                (vx, vy.wrapping_sub(1)),
+                                (vx.wrapping_sub(1), vy),
+                                (vx, vy),
+                            ] {
+                                if nx < g - 1 && ny < g - 1 {
+                                    let e = cell_e[ny * (g - 1) + nx];
+                                    if e > 0.0 {
+                                        sum += e;
+                                        count += 1;
+                                    }
+                                }
+                            }
+                            let e_avg = if count > 0 { sum / count as f32 } else { 0.0 };
+                            let refl = if r.reflectance.is_finite() {
+                                r.reflectance
+                            } else {
+                                0.0
+                            };
+                            let gain = e_avg * refl * energy;
+                            FlareVertex {
+                                pos: [
+                                    r.pos_mm[0] * st + w as f32 / 2.0,
+                                    h as f32 / 2.0 - r.pos_mm[1] * st,
+                                ],
+                                uv: r.uv,
+                                rgb: [
+                                    rgb_w[0] * gain * light.rgb[0],
+                                    rgb_w[1] * gain * light.rgb[1],
+                                    rgb_w[2] * gain * light.rgb[2],
+                                ],
+                                rrel: r.rrel,
+                            }
+                        };
+                        let v = [corner(0, 0), corner(1, 0), corner(1, 1), corner(0, 1)];
+                        for tri in [[0usize, 1, 2], [0, 2, 3]] {
+                            raster_triangle(
+                                &mut out,
+                                w,
+                                h,
+                                [v[tri[0]], v[tri[1]], v[tri[2]]],
+                                &disc_sample,
+                            );
+                        }
                     }
                 }
             }
@@ -1151,11 +1290,13 @@ fn raster_triangle(
 }
 
 /// The combine stage, mirrored by the WGSL combine kernel: `out = orig +
-/// intensity · (flare(squeezed) + starburst(placed))`, alpha saturating
-/// toward 1, Mix lerping against the untouched input. `flare` is the ghost
-/// buffer at `fw × fh` (Draft renders it at half size; sampling is
-/// resolution-relative so both agree). Operates on the premultiplied
-/// working buffer in place.
+/// intensity · (flare(scaled · squeezed) + starbursts)`, alpha saturating
+/// toward 1, Mix lerping against the untouched input. The Scale parameter
+/// scales the WHOLE flare about the optical centre — the ghost buffer is
+/// sampled through it, and each light's starburst sprite grows by it while
+/// staying anchored on its light. `flare` is the ghost buffer at `fw × fh`
+/// (Draft renders it at half size; sampling is resolution-relative so both
+/// agree). Operates on the premultiplied working buffer in place.
 #[allow(clippy::too_many_arguments)]
 pub fn cpu_combine(
     rgba: &mut [f32],
@@ -1166,16 +1307,15 @@ pub fn cpu_combine(
     flare: &[f32],
     fw: u32,
     fh: u32,
+    lights: &[FlareLight],
 ) {
     if p.intensity <= 0.0 || p.mix <= 0.0 {
         return;
     }
     let squeeze = p.anamorphic.clamp(0.25, 4.0);
+    let fscale = p.scale.clamp(0.05, 20.0);
     let sb_res = STARBURST_RES as usize;
-    let sb_half = 0.6 * p.starburst_scale.max(0.0) * w.min(h) as f32;
-    let sb_rot = p.starburst_rotation_deg.to_radians();
-    let (sb_sin, sb_cos) = (sb_rot.sin(), sb_rot.cos());
-    let light_px = [p.light[0] * w as f32, p.light[1] * h as f32];
+    let sb_half = 0.6 * fscale * w.min(h) as f32;
     let sample_flare = |x: f32, y: f32| -> [f32; 3] {
         // Resolution-relative bilinear tap of the flare buffer.
         let u = (x / w as f32) * fw as f32 - 0.5;
@@ -1202,21 +1342,29 @@ pub fn cpu_combine(
     };
     for y in 0..h {
         for x in 0..w {
-            // Anamorphic squeeze about the frame centre (x only).
+            // Whole-flare scale plus the anamorphic squeeze (x only), both
+            // about the frame centre.
             let cx = w as f32 / 2.0;
-            let sx = cx + (x as f32 + 0.5 - cx) / squeeze;
-            let f = sample_flare(sx, y as f32 + 0.5);
-            // Starburst sprite: inverse placement affine (squeeze, then
-            // un-rotate about the light).
+            let cyc = h as f32 / 2.0;
+            let sx = cx + (x as f32 + 0.5 - cx) / (squeeze * fscale);
+            let sy = cyc + (y as f32 + 0.5 - cyc) / fscale;
+            let f = sample_flare(sx, sy);
+            // One starburst sprite per live light, anchored on the light,
+            // sized by Scale, stretched by the squeeze, tinted by the light.
             let mut sb = [0.0_f32; 3];
             if p.starburst_intensity > 0.0 && sb_half > 0.0 {
-                let rel_x = (sx - (cx + (light_px[0] - cx) / squeeze)) * squeeze;
-                let rel_y = y as f32 + 0.5 - light_px[1];
-                let rx = rel_x * sb_cos + rel_y * sb_sin;
-                let ry = rel_y * sb_cos - rel_x * sb_sin;
-                let u = rx / sb_half * 0.5 + 0.5;
-                let v = ry / sb_half * 0.5 + 0.5;
-                if (0.0..=1.0).contains(&u) && (0.0..=1.0).contains(&v) {
+                for light in lights {
+                    if light.rgb[0] <= 0.0 && light.rgb[1] <= 0.0 && light.rgb[2] <= 0.0 {
+                        continue;
+                    }
+                    let light_px = [light.pos[0] * w as f32, light.pos[1] * h as f32];
+                    let rel_x = x as f32 + 0.5 - light_px[0];
+                    let rel_y = y as f32 + 0.5 - light_px[1];
+                    let u = rel_x / (sb_half * squeeze) * 0.5 + 0.5;
+                    let v = rel_y / sb_half * 0.5 + 0.5;
+                    if !(0.0..=1.0).contains(&u) || !(0.0..=1.0).contains(&v) {
+                        continue;
+                    }
                     let fx = u * (sb_res - 1) as f32;
                     let fy = v * (sb_res - 1) as f32;
                     let x0 = fx.floor() as usize;
@@ -1229,7 +1377,7 @@ pub fn cpu_combine(
                             + baked.starburst[(y0 * sb_res + x1) * 3 + c] * tx;
                         let b = baked.starburst[(y1 * sb_res + x0) * 3 + c] * (1.0 - tx)
                             + baked.starburst[(y1 * sb_res + x1) * 3 + c] * tx;
-                        *out_c = (a * (1.0 - ty) + b * ty) * p.starburst_intensity;
+                        *out_c += (a * (1.0 - ty) + b * ty) * p.starburst_intensity * light.rgb[c];
                     }
                 }
             }

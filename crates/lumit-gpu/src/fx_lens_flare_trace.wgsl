@@ -65,6 +65,20 @@ struct Vertex {
     rrel: f32,
 };
 
+// One flare source (see fx_lens_flare_detect.wgsl): position as a raster
+// fraction, colour already multiplied by its gate weight. All-zero rgb is a
+// dead slot the passes skip.
+struct Light {
+    pos_x: f32,
+    pos_y: f32,
+    r: f32,
+    g: f32,
+    b: f32,
+    _pad0: f32,
+    _pad1: f32,
+    _pad2: f32,
+};
+
 struct TraceParams {
     surface_count: u32,
     combo_count: u32,
@@ -72,13 +86,15 @@ struct TraceParams {
     combo_offset: u32, // first combo of this batch
     launch_mm: f32,
     coating: f32,
-    dir_x: f32,
-    dir_y: f32,
-    dir_z: f32,
+    // The light-direction inputs (lumit_core `light_direction`, mirrored in
+    // `dir_of` below): frame aspect h/w and the lens focal length.
+    aspect: f32,
+    focal_mm: f32,
     // Projection for build_verts.
     screen_transform: f32, // raster px per sensor mm
     raster_w: f32,
     raster_h: f32,
+    light_count: u32,
 };
 
 @group(0) @binding(0) var<storage, read> surfaces: array<Surface>;
@@ -87,6 +103,21 @@ struct TraceParams {
 @group(0) @binding(3) var<storage, read_write> energies: array<f32>;
 @group(0) @binding(4) var<storage, read_write> verts: array<Vertex>;
 @group(0) @binding(5) var<uniform> tp: TraceParams;
+@group(0) @binding(6) var<storage, read> lights: array<Light>;
+
+// The light direction for a source at raster fraction (px, py) — the exact
+// WGSL twin of lumit_core::fx::lens_flare::light_direction (sensor y up, so
+// the y fraction flips sign; half the 36 mm sensor width is 18).
+fn dir_of(px: f32, py: f32) -> vec3<f32> {
+    let half_w = 18.0;
+    let x = (px * 2.0 - 1.0) * half_w;
+    let y = -(py * 2.0 - 1.0) * tp.aspect * half_w;
+    return normalize(vec3<f32>(-x, -y, -tp.focal_mm));
+}
+
+fn light_dead(l: Light) -> bool {
+    return l.r <= 0.0 && l.g <= 0.0 && l.b <= 0.0;
+}
 
 fn cauchy_ior(a: f32, b: f32, lambda_nm: f32) -> f32 {
     let um = lambda_nm * 1e-3;
@@ -192,7 +223,7 @@ fn intersect(pos: vec3<f32>, dir: vec3<f32>, s: Surface) -> SurfHit {
 
 // Trace one ray for one combo. Returns a dead ray (reflectance −1) on any
 // miss / total internal reflection, exactly where the CPU returns NaN.
-fn trace_one(combo: Combo, cell: vec2<u32>) -> Ray {
+fn trace_one(combo: Combo, cell: vec2<u32>, dir: vec3<f32>) -> Ray {
     var dead: Ray;
     dead.pos_x = 0.0;
     dead.pos_y = 0.0;
@@ -205,7 +236,6 @@ fn trace_one(combo: Combo, cell: vec2<u32>) -> Ray {
     let g = f32(max(tp.grid, 2u));
     let px = tp.launch_mm * (f32(cell.x) / (g - 1.0) - 0.5);
     let py = tp.launch_mm * (0.5 - f32(cell.y) / (g - 1.0));
-    let dir = vec3<f32>(tp.dir_x, tp.dir_y, tp.dir_z);
 
     let probe = intersect(vec3<f32>(px, py, 1.0), vec3<f32>(0.0, 0.0, -1.0), surfaces[0]);
     if (!probe.hit) {
@@ -306,12 +336,28 @@ fn trace_one(combo: Combo, cell: vec2<u32>) -> Ray {
 @compute @workgroup_size(64)
 fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     let ray_count = tp.grid * tp.grid;
-    if (gid.x >= ray_count || gid.y >= tp.combo_count) {
+    if (gid.x >= ray_count || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
+        return;
+    }
+    let slot = gid.z * tp.combo_count + gid.y;
+    let light = lights[gid.z];
+    var dead: Ray;
+    dead.pos_x = 0.0;
+    dead.pos_y = 0.0;
+    dead.uv_x = 0.0;
+    dead.uv_y = 0.0;
+    dead.rrel = 0.0;
+    dead.reflectance = -1.0;
+    if (light_dead(light)) {
+        // A dead slot still writes: the scratch buffers are reused across
+        // batches and stale rays must never leak into the raster.
+        rays[slot * ray_count + gid.x] = dead;
         return;
     }
     let combo = combos[tp.combo_offset + gid.y];
     let cell = vec2<u32>(gid.x % tp.grid, gid.x / tp.grid);
-    rays[gid.y * ray_count + gid.x] = trace_one(combo, cell);
+    let dir = dir_of(light.pos_x, light.pos_y);
+    rays[slot * ray_count + gid.x] = trace_one(combo, cell, dir);
 }
 
 // Shoelace edge function on landed sensor positions (mm).
@@ -323,13 +369,13 @@ fn edge_mm(a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> f32 {
 fn quad_energy(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = tp.grid - 1u;
     let quad_count = side * side;
-    if (gid.x >= quad_count || gid.y >= tp.combo_count) {
+    if (gid.x >= quad_count || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
         return;
     }
     let ray_count = tp.grid * tp.grid;
     let qx = gid.x % side;
     let qy = gid.x / side;
-    let base = gid.y * ray_count;
+    let base = (gid.z * tp.combo_count + gid.y) * ray_count;
     let r00 = rays[base + qy * tp.grid + qx];
     let r10 = rays[base + qy * tp.grid + qx + 1u];
     let r11 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
@@ -349,11 +395,12 @@ fn quad_energy(@builtin(global_invocation_id) gid: vec3<u32>) {
         let area = max(abs((a0 + a1) / 2.0), min_area);
         e = area_launch / area;
     }
-    energies[gid.y * quad_count + gid.x] = e;
+    energies[(gid.z * tp.combo_count + gid.y) * quad_count + gid.x] = e;
 }
 
 // The energy averaged over the live cells sharing corner (vx, vy).
-fn corner_energy(combo_id: u32, vx: i32, vy: i32) -> f32 {
+// `slot` is the flattened (light, combo) index.
+fn corner_energy(slot: u32, vx: i32, vy: i32) -> f32 {
     let side = i32(tp.grid - 1u);
     let quad_count = u32(side * side);
     var sum = 0.0;
@@ -363,7 +410,7 @@ fn corner_energy(combo_id: u32, vx: i32, vy: i32) -> f32 {
             let nx = vx + ox;
             let ny = vy + oy;
             if (nx >= 0 && nx < side && ny >= 0 && ny < side) {
-                let e = energies[combo_id * quad_count + u32(ny * side + nx)];
+                let e = energies[slot * quad_count + u32(ny * side + nx)];
                 if (e > 0.0) {
                     sum = sum + e;
                     count = count + 1.0;
@@ -374,10 +421,10 @@ fn corner_energy(combo_id: u32, vx: i32, vy: i32) -> f32 {
     return sum / max(count, 1.0);
 }
 
-fn build_corner(combo: Combo, combo_id: u32, cx: u32, cy: u32) -> Vertex {
+fn build_corner(combo: Combo, slot: u32, tint: vec3<f32>, cx: u32, cy: u32) -> Vertex {
     let ray_count = tp.grid * tp.grid;
-    let r = rays[combo_id * ray_count + cy * tp.grid + cx];
-    let e = corner_energy(combo_id, i32(cx), i32(cy));
+    let r = rays[slot * ray_count + cy * tp.grid + cx];
+    let e = corner_energy(slot, i32(cx), i32(cy));
     let refl = max(r.reflectance, 0.0);
     let gain = e * refl;
     // Sensor mm → raster px (y flip) → NDC (y up).
@@ -388,9 +435,9 @@ fn build_corner(combo: Combo, combo_id: u32, cx: u32, cy: u32) -> Vertex {
     v.ndc_y = 1.0 - py / tp.raster_h * 2.0;
     v.uv_x = r.uv_x;
     v.uv_y = r.uv_y;
-    v.r = combo.rgb_r * gain;
-    v.g = combo.rgb_g * gain;
-    v.b = combo.rgb_b * gain;
+    v.r = combo.rgb_r * gain * tint.x;
+    v.g = combo.rgb_g * gain * tint.y;
+    v.b = combo.rgb_b * gain * tint.z;
     v.rrel = r.rrel;
     return v;
 }
@@ -399,14 +446,17 @@ fn build_corner(combo: Combo, combo_id: u32, cx: u32, cy: u32) -> Vertex {
 fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = tp.grid - 1u;
     let quad_count = side * side;
-    if (gid.x >= quad_count || gid.y >= tp.combo_count) {
+    if (gid.x >= quad_count || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
         return;
     }
+    let slot = gid.z * tp.combo_count + gid.y;
     let combo = combos[tp.combo_offset + gid.y];
+    let light = lights[gid.z];
+    let tint = vec3<f32>(light.r, light.g, light.b);
     let qx = gid.x % side;
     let qy = gid.x / side;
-    let out_base = (gid.y * quad_count + gid.x) * 6u;
-    let live = energies[gid.y * quad_count + gid.x] > 0.0;
+    let out_base = (slot * quad_count + gid.x) * 6u;
+    let live = energies[slot * quad_count + gid.x] > 0.0;
     if (!live) {
         // Park the whole cell off-screen at zero intensity.
         var park: Vertex;
@@ -425,10 +475,10 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     // Corners (x, y), (x+1, y), (x+1, y+1), (x, y+1); triangles (0,1,2) and
     // (0,2,3) — the split the CPU reference mirrors exactly.
-    let c0 = build_corner(combo, gid.y, qx, qy);
-    let c1 = build_corner(combo, gid.y, qx + 1u, qy);
-    let c2 = build_corner(combo, gid.y, qx + 1u, qy + 1u);
-    let c3 = build_corner(combo, gid.y, qx, qy + 1u);
+    let c0 = build_corner(combo, slot, tint, qx, qy);
+    let c1 = build_corner(combo, slot, tint, qx + 1u, qy);
+    let c2 = build_corner(combo, slot, tint, qx + 1u, qy + 1u);
+    let c3 = build_corner(combo, slot, tint, qx, qy + 1u);
     verts[out_base] = c0;
     verts[out_base + 1u] = c1;
     verts[out_base + 2u] = c2;

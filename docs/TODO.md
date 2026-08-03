@@ -292,12 +292,17 @@ silently wrong. Pass the six domain floats through `LutParams`, or refuse
 non-default-domain cubes as a labelled no-op. The LUT caches also key by path
 alone - no mtime, no LRU bound (§4).
 
-**Lens flare follow-ups (K-256, [impl/lens-flare.md](impl/lens-flare.md))** — the shipped
-core is docs/08 §3.27; still owed, each stable against the shipped parameters:
-**Layer highlights mode** (top-K bright-source detection feeding the trace, impl note §6);
-aperture **dirt / scratches / grating** overlays and an **image aperture** file parameter;
-**custom lens prescription files**; an **Occlusion layer** reference fading the flare when
-the light is covered; per-wavelength sub-interpolation at Ultra quality.
+**Lens flare follow-ups (K-256/K-257, [impl/lens-flare.md](impl/lens-flare.md))** — the
+shipped core is docs/08 §3.27 (Matte source detection landed with K-257); still owed,
+each stable against the shipped parameters: the **Lights source wiring** (the mode is in
+the dropdown and resolves as Manual until light layers can act as flare sources);
+aperture **dirt / scratches / grating** overlays and an **image aperture** file
+parameter; the **lens designer** (a window building a custom prescription element by
+element with a live lens diagram — the intended custom-lens path, ahead of flat file
+loading); an **Occlusion layer** reference fading the flare when the light is covered;
+per-wavelength sub-interpolation. The panel side owes the pair row's dropper to
+**Transform's px@comp pairs** (needs the comp size threaded to the pick) and one-op
+writes for a paired keyframe toggle (two ops today).
 
 **Anti-aliasing in the renderer.** Edges of transformed layers, shape strokes and
 text stair-step, worst on a slow rotation. Two questions decide where the setting

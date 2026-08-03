@@ -202,6 +202,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   FootageReference dco_decode_box_autoadd_footage_reference(dynamic raw);
 
   @protected
+  PlatformInt64 dco_decode_box_autoadd_i_64(dynamic raw);
+
+  @protected
   ItemReference dco_decode_box_autoadd_item_reference(dynamic raw);
 
   @protected
@@ -212,6 +215,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   SolidReference dco_decode_box_autoadd_solid_reference(dynamic raw);
+
+  @protected
+  int dco_decode_box_autoadd_u_32(dynamic raw);
 
   @protected
   BridgeAudioClock dco_decode_bridge_audio_clock(dynamic raw);
@@ -326,6 +332,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgePaintMode dco_decode_bridge_paint_mode(dynamic raw);
+
+  @protected
+  BridgeParamGroup dco_decode_bridge_param_group(dynamic raw);
 
   @protected
   BridgeParamInfo dco_decode_bridge_param_info(dynamic raw);
@@ -498,6 +507,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<BridgeMask> dco_decode_list_bridge_mask(dynamic raw);
 
   @protected
+  List<BridgeParamGroup> dco_decode_list_bridge_param_group(dynamic raw);
+
+  @protected
   List<BridgeParamInfo> dco_decode_list_bridge_param_info(dynamic raw);
 
   @protected
@@ -596,6 +608,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   double? dco_decode_opt_box_autoadd_f_64(dynamic raw);
 
   @protected
+  PlatformInt64? dco_decode_opt_box_autoadd_i_64(dynamic raw);
+
+  @protected
   ItemReference? dco_decode_opt_box_autoadd_item_reference(dynamic raw);
 
   @protected
@@ -603,6 +618,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   ProjectReference? dco_decode_opt_box_autoadd_project_reference(dynamic raw);
+
+  @protected
+  int? dco_decode_opt_box_autoadd_u_32(dynamic raw);
 
   @protected
   ProjectReference dco_decode_project_reference(dynamic raw);
@@ -805,6 +823,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       SseDeserializer deserializer);
 
   @protected
+  PlatformInt64 sse_decode_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
   ItemReference sse_decode_box_autoadd_item_reference(
       SseDeserializer deserializer);
 
@@ -819,6 +840,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   SolidReference sse_decode_box_autoadd_solid_reference(
       SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
   BridgeAudioClock sse_decode_bridge_audio_clock(SseDeserializer deserializer);
@@ -946,6 +970,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
 
   @protected
   BridgePaintMode sse_decode_bridge_paint_mode(SseDeserializer deserializer);
+
+  @protected
+  BridgeParamGroup sse_decode_bridge_param_group(SseDeserializer deserializer);
 
   @protected
   BridgeParamInfo sse_decode_bridge_param_info(SseDeserializer deserializer);
@@ -1140,6 +1167,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   List<BridgeMask> sse_decode_list_bridge_mask(SseDeserializer deserializer);
 
   @protected
+  List<BridgeParamGroup> sse_decode_list_bridge_param_group(
+      SseDeserializer deserializer);
+
+  @protected
   List<BridgeParamInfo> sse_decode_list_bridge_param_info(
       SseDeserializer deserializer);
 
@@ -1256,6 +1287,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   double? sse_decode_opt_box_autoadd_f_64(SseDeserializer deserializer);
 
   @protected
+  PlatformInt64? sse_decode_opt_box_autoadd_i_64(SseDeserializer deserializer);
+
+  @protected
   ItemReference? sse_decode_opt_box_autoadd_item_reference(
       SseDeserializer deserializer);
 
@@ -1266,6 +1300,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   ProjectReference? sse_decode_opt_box_autoadd_project_reference(
       SseDeserializer deserializer);
+
+  @protected
+  int? sse_decode_opt_box_autoadd_u_32(SseDeserializer deserializer);
 
   @protected
   ProjectReference sse_decode_project_reference(SseDeserializer deserializer);
@@ -1471,6 +1508,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       FootageReference self, SseSerializer serializer);
 
   @protected
+  void sse_encode_box_autoadd_i_64(
+      PlatformInt64 self, SseSerializer serializer);
+
+  @protected
   void sse_encode_box_autoadd_item_reference(
       ItemReference self, SseSerializer serializer);
 
@@ -1485,6 +1526,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_box_autoadd_solid_reference(
       SolidReference self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_audio_clock(
@@ -1631,6 +1675,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_bridge_paint_mode(
       BridgePaintMode self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_bridge_param_group(
+      BridgeParamGroup self, SseSerializer serializer);
 
   @protected
   void sse_encode_bridge_param_info(
@@ -1842,6 +1890,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
       List<BridgeMask> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_bridge_param_group(
+      List<BridgeParamGroup> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_bridge_param_info(
       List<BridgeParamInfo> self, SseSerializer serializer);
 
@@ -1963,6 +2015,10 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   void sse_encode_opt_box_autoadd_f_64(double? self, SseSerializer serializer);
 
   @protected
+  void sse_encode_opt_box_autoadd_i_64(
+      PlatformInt64? self, SseSerializer serializer);
+
+  @protected
   void sse_encode_opt_box_autoadd_item_reference(
       ItemReference? self, SseSerializer serializer);
 
@@ -1973,6 +2029,9 @@ abstract class BridgeLibApiImplPlatform extends BaseApiImpl<BridgeLibWire> {
   @protected
   void sse_encode_opt_box_autoadd_project_reference(
       ProjectReference? self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_opt_box_autoadd_u_32(int? self, SseSerializer serializer);
 
   @protected
   void sse_encode_project_reference(

@@ -1107,11 +1107,12 @@ fn resolve_one(
             Some(Resolved::Lut { mix })
         }
         "lens_flare" => {
-            // Lens flare (docs/08 §3.27, K-256). Everything resolves to plain
-            // numbers; the bake derives from them GPU-side (cached by
-            // lens_flare::bake_key), so nothing travels beside the op. Light
-            // position is a raster fraction (the Radial blur centre shape);
-            // % of the frame keeps it resolution-independent (§2.3).
+            // Lens flare (docs/08 §3.27, K-256/K-257). Everything resolves to
+            // plain numbers; the bake derives from them GPU-side (cached by
+            // lens_flare::bake_key), so nothing travels beside the op except
+            // the Matte source's rendered layer (the DoF layer-input shape).
+            // Light position is a raster fraction; % keeps it
+            // resolution-independent (§2.3).
             let lx = (e.float_at("light_x", lt).unwrap_or(33.0) / 100.0) as f32;
             let ly = (e.float_at("light_y", lt).unwrap_or(30.0) / 100.0) as f32;
             let intensity = (e.float_at("intensity", lt).unwrap_or(1.0) as f32).max(0.0);
@@ -1119,14 +1120,26 @@ fn resolve_one(
                 Some(EffectValue::Choice(c)) => *c,
                 _ => 2,
             };
+            let coating_preset = match e.param("coating_preset") {
+                Some(EffectValue::Choice(c)) => (*c).min(3),
+                _ => 0,
+            };
             let fstop = (e.float_at("fstop", lt).unwrap_or(2.8) as f32).clamp(0.7, 32.0);
             let quality = match e.param("quality") {
                 Some(EffectValue::Choice(c)) => (*c).min(3),
                 _ => 1,
             };
+            // Source mode (K-257): Lights resolves as Manual until light
+            // layers land (the option is prepared, not wired).
+            let source = match e.param("source_type") {
+                Some(EffectValue::Choice(c)) => (*c).min(2),
+                _ => 0,
+            };
+            let threshold = (e.float_at("threshold", lt).unwrap_or(1.0) as f32).max(0.0);
+            let threshold_softness =
+                (e.float_at("threshold_softness", lt).unwrap_or(0.25) as f32).max(0.0);
             let anamorphic = (e.float_at("anamorphic", lt).unwrap_or(1.0) as f32).clamp(0.5, 3.0);
-            // Blades and Max ghosts are host-rounded floats (the Flash
-            // Nth-beat shape — no integer ParamKind exists).
+            // Int-kind params arrive as Float values; the resolve rounds.
             let blades = (e.float_at("blades", lt).unwrap_or(8.0).round() as i64).clamp(3, 16);
             let aperture_rotation = e.float_at("aperture_rotation", lt).unwrap_or(0.0) as f32;
             let roundness = (e.float_at("roundness", lt).unwrap_or(0.15) as f32).clamp(0.0, 1.0);
@@ -1140,10 +1153,7 @@ fn resolve_one(
             let coating = (e.float_at("coating", lt).unwrap_or(0.75) as f32).clamp(0.0, 1.0);
             let sb_intensity =
                 (e.float_at("starburst_intensity", lt).unwrap_or(1.0) as f32).max(0.0);
-            let sb_scale = (e.float_at("starburst_scale", lt).unwrap_or(1.0) as f32).max(0.0);
-            let sb_rotation = e.float_at("starburst_rotation", lt).unwrap_or(0.0) as f32;
-            let sb_softness =
-                (e.float_at("starburst_softness", lt).unwrap_or(0.0) as f32).clamp(0.0, 1.0);
+            let scale = (e.float_at("scale", lt).unwrap_or(1.0) as f32).clamp(0.05, 20.0);
             let mix = (e.float_at("mix", lt).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
             Some(Resolved::LensFlare(
                 crate::fx::lens_flare::LensFlareParams {
@@ -1160,9 +1170,11 @@ fn resolve_one(
                     dispersion,
                     coating,
                     starburst_intensity: sb_intensity,
-                    starburst_scale: sb_scale,
-                    starburst_rotation_deg: sb_rotation,
-                    starburst_softness: sb_softness,
+                    scale,
+                    coating_preset,
+                    source,
+                    threshold,
+                    threshold_softness,
                     anamorphic,
                     quality,
                     mix,

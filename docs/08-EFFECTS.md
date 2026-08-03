@@ -1432,27 +1432,47 @@ cast of real flares comes from.
    sprite placed at the light with its scale/rotation, and the whole flare takes the
    anamorphic squeeze. Mix blends against the untouched input.
 
-**Parameters.** Top level: **Light x / Light y** (% of the frame, open both sides — an
-off-frame light keeps flaring, as real ones do), **Intensity** (0–4, open above, default 1),
-**Lens** (choice: the bundled prescription library), **F-stop** (0.7–32, default 2.8 — a
-wider stop grows the ghost discs and softens the starburst), **Quality** (Draft / Normal /
-High / Ultra — the ray-grid density and wavelength count; Draft renders the flare at half
-resolution), **Mix**. Three collapsed groups:
+**Parameters (K-257 panel design).** Top level: **Light** (one x/y point row —
+the `_x`/`_y` pair convention of docs/07 §6.1 — with a pick-on-Viewer dropper;
+% of the frame, open both sides, since an off-frame light keeps flaring),
+**Intensity** (0–4, open above), **F-stop** (0.7–32 — wider grows the ghost
+discs and softens the starburst ringing), **Coating type** (Modern multicoat /
+Vintage single coat / Warm bias / Cool bias — the per-surface coating-tuning
+pattern, i.e. the ghost train's colour character; it sits above the lens it
+colours), **Lens** (the bundled prescription library, six real lenses), then
+three folds and the tail:
 
 | Group | Parameters |
 |---|---|
-| *Aperture* | Blades (5–16, default 8), Rotation, Roundness, Softness |
-| *Ghosts* | Ghost intensity (0–4), Max ghosts (0–150, default 60 — the brightest survive), Dispersion (0–2, scales chromatic spread), Coating (0–1 — 0 uncoated white ghosts, 1 fully coated colour-cast ghosts) |
-| *Starburst* | Starburst intensity (0–4), Scale, Rotation, Softness |
+| *Lens options* (twirl) | Anamorphic squeeze (0.5–3), Blades (int 3–16), Rotation, Coating (0 uncoated → 1 fully coated), Roundness, Softness |
+| *Flare options* (twirl) | Ghost intensity (0–4), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
+| *Source* | Source type (Manual light / Matte / Lights), then — Matte only, shown conditionally — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
 
-Plus **Anamorphic squeeze** (0.5–3, default 1): stretches the whole flare horizontally,
-the cheap honest form of the anamorphic look (a true cylindrical-element trace is a
-recorded non-goal for v1).
+and **Quality** (Draft / Normal / High / Ultra), **Mix**. Blades and Max
+ghosts are the first **Int-kind** parameters (§1.2): stored and animated as
+Float scalars, but declared whole-number so the row steps, displays and
+commits integers.
+
+**Source modes (K-257).** **Manual light** is the tracked-point workflow: one
+white source at the Light point. **Matte** detects the flare's sources in a
+referenced layer's picture (impl note §6): the brightest points — up to eight,
+non-max suppressed — each spawn a full flare, positioned on the source, tinted
+by its colour, gated by the soft Threshold; the matte layer renders alone
+exactly as a DoF depth pass does (its own masks and effects apply, K-142
+default) and is expected to be hidden. **Lights** is prepared for light
+layers: the option exists and resolves as Manual until they land, so projects
+built against it survive the wiring.
 
 **Reducing it.** The "it's doing too much" dials, in order: Intensity (everything),
 Ghost intensity / Starburst intensity (each half separately), Max ghosts (thins the
 train), Quality (cost), Mix (final blend). Defaults are tuned to read well on 1080p
 footage without touching anything (§1.2).
+
+**Chromatic smoothness.** The traced wavelength count is what separates a smooth
+spectral fringe from a stacked-copies RGB-split look, so the Quality ladder
+carries it: 3 bands at Draft, 5 at Normal, 7 at High, 9 at Ultra — each band
+weighted by its **integral** of the CIE colour-matching functions, not a point
+sample (impl note deviation D5).
 
 **Cost and traits.** `heavy` cost (the one effect that owns a render pass), `full-frame`
 ROI, `{0}` temporal, premultiplied (an additive light overlay), not seeded — the flare is
@@ -1471,16 +1491,19 @@ could hit at ULP tolerance — the same staged-oracle shape flow effects already
 CPU degradation rung renders the effect as a labelled no-op, like the LUT (K-114
 precedent). Exact numbers in the impl note §8.
 
-**Status (v1 core, shipped):** everything above — manual light, the bundled lens library
-(static data in `lumit-core`, no files), traced ghosts with coating colour and Abbe
-dispersion, FRFT ghost discs, the baked spectral starburst, the aperture group, both
-intensity groups, quality ladder, anamorphic squeeze, Mix. Pinned follow-ups (spec'd in
-the impl note, tracked in TODO): **Layer highlights mode** (the flare spawned from the
-layer's own brightest sources — detection exists in the impl note's design, §6), aperture
-**dirt / scratches / grating** overlays and an **image aperture** (file), **custom lens
-prescription files**, an **Occlusion layer** reference fading the flare when the light is
-covered, and per-wavelength sub-interpolation at Ultra. Every shipped parameter is stable
-when they land.
+**Status (v1 core K-256; panel + sources K-257, shipped):** everything above —
+the point-pair light row with its Viewer dropper, the six-lens library (real
+prescriptions: Voigtländer 105/3.5, Leica 35/1.4, Zeiss 50 T1.3, Nikon
+50-135/3.5, Kodak 100/3.8, Nikon 28-70/2.8), coating presets, traced ghosts
+with per-bake auto-exposure, FRFT ghost discs, the baked spectral starburst,
+whole-flare Scale, the Matte source mode, quality ladder, anamorphic squeeze,
+Mix. Pinned follow-ups (TODO): aperture **dirt / scratches / grating** overlays
+and an **image aperture** (file), **custom lens prescription files** and the
+**lens designer** (a window where the user builds a prescription element by
+element, the reference apps' diagram view), the **Lights** source wiring (waits
+on light layers as flare sources), an **Occlusion layer** reference fading the
+flare when the light is covered, and per-wavelength sub-interpolation. Every
+shipped parameter is stable when they land.
 
 ---
 
