@@ -4959,7 +4959,7 @@ fn lens_flare_neutral_points_and_default_resolve() {
             assert!((rp.light[0] - 640.0).abs() < 1e-3);
             assert!((rp.light[1] - 360.0).abs() < 1e-3);
             assert_eq!(rp.intensity, 1.0);
-            assert_eq!(rp.lens, 12, "default lens is the Master Prime 50");
+            assert_eq!(rp.lens, 1247, "default lens is the Master Prime 50");
             assert_eq!(rp.blades, 8);
             assert_eq!(rp.max_ghosts, 60);
             assert_eq!(rp.quality, 1);
@@ -5132,6 +5132,109 @@ fn lens_flare_focus_shift_follows_the_thin_lens() {
     assert!(focus_shift_mm(0.2, 50.0) <= 50.0);
 }
 
+// The streak guard (K-262), tested where the bug lived. K-261 inflated ANY
+// sub-pixel quad to 4 px² by scaling about its centroid — which for a
+// fold-straddling sliver (near-zero area, large extent) multiplied its
+// length by up to 100×, drawing the "random lines across the flare" the
+// owner reported. Both oracles agreed with each other while drawing it, so
+// parity could never have caught this; the guard itself is the pin.
+#[test]
+fn lens_flare_quad_guard_drops_slivers_and_keeps_ghosts() {
+    use crate::fx::lens_flare::*;
+    let diag = 1000.0_f32;
+    let quad = |pts: [[f32; 2]; 4]| -> [FlareVertex; 4] {
+        [
+            FlareVertex {
+                pos: pts[0],
+                rgb: [1.0; 3],
+            },
+            FlareVertex {
+                pos: pts[1],
+                rgb: [1.0; 3],
+            },
+            FlareVertex {
+                pos: pts[2],
+                rgb: [1.0; 3],
+            },
+            FlareVertex {
+                pos: pts[3],
+                rgb: [1.0; 3],
+            },
+        ]
+    };
+    let longest = |v: &[FlareVertex; 4]| {
+        (0..4)
+            .map(|i| {
+                let (a, b) = (v[i].pos, v[(i + 1) % 4].pos);
+                (a[0] - b[0]).hypot(a[1] - b[1])
+            })
+            .fold(0.0f32, f32::max)
+    };
+
+    // A big well-formed cell: drawn untouched.
+    let mut big = quad([[0.0, 0.0], [50.0, 0.0], [50.0, 50.0], [0.0, 50.0]]);
+    let before = big;
+    assert!(inflate_quad(&mut big, diag));
+    assert_eq!(big[2].pos, before[2].pos);
+    assert_eq!(big[0].rgb, before[0].rgb);
+
+    // A compact sub-pixel cell: inflated, flux conserved, still compact.
+    let mut tiny = quad([[10.0, 10.0], [11.0, 10.0], [11.0, 11.0], [10.0, 11.0]]);
+    assert!(inflate_quad(&mut tiny, diag));
+    assert!(
+        longest(&tiny) <= MAX_INFLATE_EDGE_PX * 3.0,
+        "{}",
+        longest(&tiny)
+    );
+    assert!(tiny[0].rgb[0] < 1.0, "inflation must dim to conserve flux");
+
+    // THE BUG: a sub-pixel SLIVER — 40 px long, hair thin. K-261 stretched
+    // this to ~400 px; it must be dropped.
+    let mut sliver = quad([[10.0, 10.0], [50.0, 10.02], [50.0, 10.03], [10.0, 10.01]]);
+    assert!(
+        !inflate_quad(&mut sliver, diag),
+        "a fold sliver must be dropped, never inflated"
+    );
+
+    // A long thin quad ABOVE the area floor is a streak too (its area is
+    // 150 px², well past MIN_QUAD_PX) and must also go.
+    let mut streak = quad([[0.0, 0.0], [300.0, 0.0], [300.0, 0.5], [0.0, 0.5]]);
+    assert!(
+        !inflate_quad(&mut streak, diag),
+        "a long thin quad must be dropped at any area"
+    );
+
+    // …but an elongated cell that is SHORT is a real caustic rim: kept.
+    let mut rim = quad([[0.0, 0.0], [12.0, 0.0], [12.0, 1.5], [0.0, 1.5]]);
+    assert!(inflate_quad(&mut rim, diag), "rim cells must survive");
+}
+
+// Adaptive grid (K-262): the budget follows the ghost's image size, and a
+// pair's grid is stable and sane whatever its spread.
+#[test]
+fn lens_flare_grid_budget_follows_ghost_size() {
+    use crate::fx::lens_flare::*;
+    // Monotonic in spread, and never outside the clamp.
+    let tight = pair_grid(64, 0.05);
+    let mid = pair_grid(64, 0.3);
+    let wide = pair_grid(64, 1.0);
+    let huge = pair_grid(64, 4.0);
+    assert!(
+        tight < mid && mid < wide && wide < huge,
+        "{tight} {mid} {wide} {huge}"
+    );
+    assert!(tight >= 8 && huge <= 256);
+    // Degenerate inputs stay in range rather than exploding a dispatch.
+    assert!((8..=256).contains(&pair_grid(2, 0.0)));
+    assert!((8..=256).contains(&pair_grid(256, 99.0)));
+
+    // Every bundled pair carries a finite, non-negative spread.
+    let p = default_flare_params();
+    let baked = bake(&p);
+    assert_eq!(baked.pairs.len(), baked.spreads.len());
+    assert!(baked.spreads.iter().all(|s| s.is_finite() && *s >= 0.0));
+}
+
 /// The documented drop-on defaults, shared by the lens flare tests.
 fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
     crate::fx::lens_flare::LensFlareParams {
@@ -5139,7 +5242,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         // manual_light, so any sane point works; this is 0.33/0.30 of 96×54.
         light: [31.7, 16.2],
         intensity: 1.0,
-        lens: 12,
+        lens: 1247,
         fstop: 2.8,
         focus_m: 100.0,
         blades: 8,
@@ -5147,7 +5250,7 @@ fn default_flare_params() -> crate::fx::lens_flare::LensFlareParams {
         roundness: 0.15,
         aperture_softness: 0.05,
         ghost_intensity: 1.0,
-        ghost_softness: 0.3,
+        ghost_softness: 0.05,
         max_ghosts: 60,
         dispersion: 1.0,
         coating: 0.75,

@@ -568,6 +568,19 @@ Two mechanisms make this safe, and you'll see them by name in the code:
   away, which needs far more rays than drawing the ray grid as connected little
   panels that brighten where rays bunch up. A new **Ghost softness** dial (borrowed
   from FlareSim's Ghost Blur) adds a touch of out-of-focus softness on top.
+  A follow-up pass (K-262) fixed what the owner found when actually using it.
+  The faint lines shooting across the flare turned out to be a bug in Lumit's
+  own drawing: when a cell of the ray grid lands across a "fold" in the light,
+  it arrives as a hair-thin sliver, and the code that rescues tiny cells from
+  being dropped was stretching those slivers into long streaks. Slivers are now
+  thrown away instead — the light they carry is spread to nothing anyway, and
+  their neighbours draw the real shape. The grid is also spent more cleverly:
+  each ghost gets rays in proportion to how big it lands, so a huge soft ghost
+  is no longer drawn with the same handful of cells as a tiny sharp one. That
+  is what makes the **Normal** quality usable rather than the tier where you
+  see the grid. And the Lens list, at 1299 entries, became a **searchable
+  picker** grouped by manufacturer — the plain dropdown was building all 1299
+  rows at once, which crashed the app.
 - **RGB split gains a Wavelength mode** (K-090's quality-tier pattern: where the smooth
   look is optional, it hides behind a Bool next to the fast one). Off — the default —
   the split is three tinted samples: the first colour pulled one way, the third the

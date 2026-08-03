@@ -5273,3 +5273,30 @@ renders honestly dim. Schema v3 → v4 (coating_preset removed, ghost_softness a
 pre-release, old lens indices land on different-but-valid library entries). Known limit,
 pinned in TODO: extreme-defocus prescriptions show grid-aligned steps at low quality —
 adaptive refinement is the follow-up.
+
+**K-262 · DECIDED · The flare's fold artefacts are fixed at the guard, the ray budget
+follows ghost size, and a 1299-option dropdown gets a searchable picker.** The owner's
+first pass over the shipped FlareSim model found three faults. **(1) The streaks.**
+K-261's sub-pixel inflation scaled ANY quad under 4 px² up about its centroid — correct
+for a small compact cell, wrong for a fold-straddling *sliver*, whose near-zero area made
+the scale factor up to 100× and stretched a 20 px sliver into a 2000 px line: the "random
+lines across the flare". Inflation is now restricted to compact quads; long-and-thin ones
+(past 4% of the frame diagonal with `longest² > 8 × area`) are dropped at any size, and
+the caustic density cap tightens from 10 000× to 333×, which removes the hard chromatic
+spikes while keeping the bright rims. Note the failure mode: **both oracles agreed while
+drawing the artefact**, because the CPU and WGSL mirrored the same wrong formula — so the
+regression pin is a unit test of the guard itself, verified to fail on the K-261 code.
+**(2) Normal quality.** The pupil grid is now allocated **per pair** by its measured
+image spread (½× to 2.5× the ladder base, which itself rises to 32/64/96/144): a
+frame-filling defocused ghost gets the cells it needs and a tight blob stops wasting
+them. Ghost softness accordingly defaults to 0.05 instead of 0.3, and **0 is a clean
+setting** — the blur was hiding artefacts, not adding character. **(3) The crash.** A
+1299-row dropdown built every row eagerly inside an `IntrinsicWidth`, which walks them
+all twice; the app died in a Flutter layout pass with a thread-allocation failure. Long
+option lists (≥ 40) now get `BareSearchDropdown`: a search field over a lazily-built
+`ListView.builder` with maker headings, and the library's labels are regenerated as
+`Maker · Model` (53 normalised makers, series names like "AI Nikkor" folded onto Nikon)
+so grouping and typing both work. Also capped the Ghost-softness blur radius at 80 px —
+an uncapped 2% radius on a 4K frame is ~1000 taps per pixel across six passes, a GPU
+timeout waiting to happen. The default lens index moves with the re-sort (pre-release; a
+saved index lands on a different valid lens).

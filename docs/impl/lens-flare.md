@@ -75,8 +75,8 @@ term makes defocus dilution physical, so compensating it would double-count.
 
 ## 3. The per-frame trace (the FlareSim three-phase walk)
 
-Rays launch from a **regular pupil grid**: `side²` corners over the pupil square (side
-from the Quality ladder), at `z = front vertex − 20 mm`, all parallel to the light
+Rays launch from a **regular pupil grid**: `side²` corners over the pupil square, at
+`z = front vertex − 20 mm`, all parallel to the light
 direction `normalize(−x, −y, focal)` from the light's raster fraction (36 mm sensor
 width, y up). The spray radius is the **entrance pupil** `focal / (2 · native f-number)
 × 1.5` clamped to the front semi-aperture — spraying the whole front bezel instead
@@ -100,6 +100,17 @@ crossing, full inside 0.95, gone at 1.0) zeroes their weight, so bundle boundari
 instead of dying quad-by-quad. The working f-stop scales the stop surface's semi-aperture
 and the pupil spray together by `native/f` (clamped 0.05..1).
 
+**The grid side is per PAIR, not per frame (K-262).** The Quality ladder sets a base
+(32 / 64 / 96 / 144); each pair's own grid is `pair_grid(base, spread)` where `spread` is
+the pair's on-axis image extent as a fraction of the sensor diagonal, measured by an 8×8
+probe at bake: under 0.12 → ½ base, under 0.5 → base, under 1.5 → 1.75×, else 2.5×
+(clamped 8..256). A ghost that lands in a tight blob is oversampled by a flat grid while a
+frame-filling one is undersampled and shows its cell facets — spending the budget by size
+is what lets Normal hold up. The GPU sorts combos grid-major and dispatches a batch per
+run of equal grid, with the ray/quad scratch strided by the widest grid in the frame; the
+build pass runs over that stride so cells a narrower batch does not fill are parked rather
+than left as a previous batch's stale vertices.
+
 ## 4. Rasterising the ghosts (the energy-conserving quad grid)
 
 Each live grid cell draws as two triangles whose density is `launch cell area ÷ landed
@@ -108,22 +119,34 @@ dim, and fold caustics blow up exactly as real rims do. Per-corner colour = dens
 Fresnel weight × mask × the wavelength's CIE band RGB × the light's colour × the
 exposure gain. Two guards:
 
-- **Degeneracy floor**: landed area is floored at 1e-4 of the launch cell (a formality —
-  the visual cap is the next guard).
-- **Sub-pixel inflation (K-261)**: a quad below 4 px² would be dropped by any rasteriser
-  as a zero-coverage triangle — deleting exactly the caustic flux that makes bright rims
-  and fold lines. Such quads inflate about their centroid to 4 px² with colour scaled by
+- **Caustic density cap (K-262)**: landed area is floored at 3e-3 of the launch cell, so
+  density tops out near 333×. At a fold the density genuinely diverges but its *integral*
+  over a pixel is finite; a discrete cell concentrates that whole divergence into a few
+  pixels, and an uncapped floor (1e-4 → 10 000×) drew hard chromatic lines through the
+  ghosts. The cap keeps the bright rims and arcs and removes the spikes.
+- **Sub-pixel inflation (K-261)**: a compact quad below 4 px² would be dropped by any
+  rasteriser as a zero-coverage triangle — deleting exactly the caustic flux that makes
+  bright rims. Such quads inflate about their centroid to 4 px² with colour scaled by
   true ÷ inflated area: flux exact, nothing dropped.
+- **Streak cull (K-262)**: a quad that is **long and thin** — longer than 4% of the frame
+  diagonal AND `longest² > 8 × area` — is dropped at any size, and a sub-pixel quad whose
+  longest edge exceeds 6 px is dropped rather than inflated. Both shapes are cells
+  straddling a caustic fold or a housing clip; see §7's trap for what happens without
+  this.
 
 The additive raster (hardware, one-one blend, fp16 buffer; Draft at half resolution) is
 followed by the **Ghost blur**: 3 separable box passes (≈ Gaussian) at a radius of
 `Ghost softness × 0.01 × frame diagonal` — FlareSim's Ghost Blur, a touch of
 out-of-focus softness that also hides quad facets at low qualities.
 
+The blur radius is capped at 80 px (K-262): the box pass is a naive `2r+1`-tap loop run
+six times, so an uncapped 2% radius on a 4K frame submits ~1000 taps per pixel — a GPU
+timeout. Three passes of an 80 px box already read as heavy defocus.
+
 **Known limit**: a lens whose ghosts are ALL extreme frame-filling defocus (some process
-lenses) resolves one pupil cell to tens of pixels; cull boundaries then show as
-grid-aligned steps at low quality. Higher quality shrinks them; adaptive grid refinement
-is the pinned follow-up (TODO).
+lenses) still resolves one pupil cell to several pixels at Draft; the adaptive budget
+(§3) and the streak cull remove the visible artefacts, but the cell structure is
+theoretically still there below the noise floor.
 
 ## 5. The bake (CPU, cached by parameter hash)
 
@@ -176,6 +199,14 @@ fits a compositor.
 - **Sub-pixel quads are silently dropped by every rasteriser.** The caustic flux that
   makes a flare's bright rims lives exactly there. The inflation of §4 is load-bearing;
   measured without it, the frame's dynamic range collapsed from ~116× to 6.6×.
+- **…but inflating a SLIVER draws a streak.** A cell straddling a fold has near-zero area
+  and large extent; scaling it about its centroid to reach the 4 px² floor multiplies its
+  *length* by up to 100×, so a 20 px sliver becomes a 2000 px line. This shipped in K-261
+  and is the "random lines across the flare" the owner reported. Inflate only COMPACT
+  quads; drop stretched ones (§4). Note that both oracles agreed with each other while
+  drawing it — the CPU and WGSL mirrored the same wrong formula — so **parity tests can
+  never catch this class**: the pin is a unit test of the guard itself
+  (`lens_flare_quad_guard_drops_slivers_and_keeps_ghosts`), which fails on the K-261 code.
 - **Do not spray the front bezel.** Prescriptions list housing semi-apertures far wider
   than the entrance beam; a full-width spray wastes ~96% of its rays on some lenses and
   the survivors render as noise. Size the spray to the entrance pupil (§3).
@@ -206,6 +237,12 @@ fits a compositor.
 4. **Trace**: the top pairs land a solid live population with finite positions and
    weights in [0, 1]; the pupil mask is 1 at centre, 0 far outside, and passes less area
    as a hexagon than as a circle.
+4b. **Quad guard (K-262)**: a big cell is drawn untouched; a compact sub-pixel cell is
+   inflated, dimmed and stays compact; a sub-pixel sliver and a long thin quad are both
+   dropped; a short elongated rim cell survives. Fails on the K-261 inflation.
+4c. **Grid budget (K-262)**: `pair_grid` is monotonic in spread, clamped to 8..256 for
+   degenerate inputs, and every bundled pair carries a finite spread. The GPU's mirrored
+   copy is pinned equal to lumit-core's across bases and spreads.
 5. **GPU trace oracle** (§8.5 shape, K-261 bounds): corner-for-corner against
    `trace_splat` across two lenses × two lights — mean position error < 0.2 px, p99
    < 3 px (a few-ULP difference near a fold legitimately lands a ray on the other

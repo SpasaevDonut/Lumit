@@ -9,6 +9,7 @@
 // Every document operation is genuine; see frb_test_support.dart.
 
 import 'package:flutter/widgets.dart';
+import 'package:lumit_flutter/widgets/controls.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lumit_flutter/main.dart';
 import 'package:lumit_flutter/panels/effect_controls_panel_frb.dart';
@@ -463,6 +464,43 @@ void main() {
       expect(find.text('Light tint'), findsOneWidget);
       expect(find.text('Use source colour'), findsNothing);
       expect(find.text('Matte layer'), findsNothing);
+    });
+
+    // The Lens picker (K-262). The library is 1299 options, and the plain
+    // dropdown builds every row eagerly inside an IntrinsicWidth — which
+    // took the app down in a layout pass. The long-list picker must open
+    // with a search field and build only a screenful of rows.
+    testWidgets('the lens picker searches and builds lazily', (tester) async {
+      final p = withLayer();
+      p.layer.addEffect(name: 'lens_flare');
+      p.uiState.model.refresh();
+      await mount(tester, p, transform: false);
+
+      // The row shows the default lens, and it is the searchable kind.
+      final picker = find.byType(BareSearchDropdown);
+      expect(picker, findsOneWidget);
+      expect(find.byType(BareDropdown<int>), findsWidgets); // Quality etc.
+
+      await tester.tap(picker);
+      await tester.pumpAndSettle();
+
+      // A search field opened, and only a screenful of rows exists — the
+      // whole point: 1299 eager rows is the crash.
+      expect(find.byType(HouseTextField), findsOneWidget);
+      final rows = tester.widgetList(find.byType(MenuRow)).length;
+      expect(rows, lessThan(80), reason: 'the picker must build lazily');
+
+      // Typing narrows it, and the maker headings are there to group by.
+      await tester.enterText(find.byType(HouseTextField), 'zeiss planar');
+      await tester.pumpAndSettle();
+      final narrowed = tester.widgetList(find.byType(MenuRow)).length;
+      expect(narrowed, lessThan(rows));
+      expect(narrowed, greaterThan(0));
+
+      // A query matching nothing says so rather than showing a blank sheet.
+      await tester.enterText(find.byType(HouseTextField), 'qqqzzz');
+      await tester.pumpAndSettle();
+      expect(find.text('No matches'), findsOneWidget);
     });
 
     // Without the built library there is nothing to test against; the harness

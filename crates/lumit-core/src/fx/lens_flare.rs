@@ -116,10 +116,13 @@ pub struct LensFlareParams {
 /// little under `side²` after the aperture mask.
 pub fn quality_ladder(quality: u32) -> (u32, u32, u32) {
     match quality {
-        0 => (24, 3, 2),
-        2 => (80, 16, 1),
-        3 => (128, 32, 1),
-        _ => (48, 8, 1),
+        0 => (32, 3, 2),
+        2 => (96, 16, 1),
+        3 => (144, 32, 1),
+        // Normal must stand on its own as the working tier (K-262): the
+        // adaptive per-pair budget spends most of this on the big
+        // defocused ghosts, where the cell facets used to show.
+        _ => (64, 8, 1),
     }
 }
 
@@ -336,6 +339,11 @@ pub struct FlareBaked {
     /// Ranked ghost pairs, brightest first; the frame renders the first
     /// `max_ghosts`.
     pub pairs: Vec<[u32; 2]>,
+    /// Each pair's on-axis image extent as a fraction of the sensor
+    /// diagonal, parallel to `pairs` (K-262): what [`pair_grid`] spends the
+    /// ray budget by. A tight 5%-of-frame ghost needs a fraction of the
+    /// grid a frame-filling defocused one does.
+    pub spreads: Vec<f32>,
     /// The auto-exposure gain (closed loop, K-258): multiplies every splat
     /// so all bundled lenses read comparably at default Intensity.
     pub energy_gain: f32,
@@ -828,6 +836,25 @@ pub fn pupil_mask(u: f32, v: f32, blades: u32, rot_rad: f32, roundness: f32, sof
     1.0 - t * t * (3.0 - 2.0 * t)
 }
 
+/// The pupil grid one ghost pair gets, from the Quality ladder's base and
+/// the pair's image spread (K-262). A ghost that lands in a tight blob is
+/// oversampled by the base grid; a frame-filling defocused one is
+/// undersampled and shows its cell facets. Spending the budget by size
+/// makes Normal hold up without paying Ultra's cost everywhere. Shared by
+/// the CPU reference and the GPU dispatch so both trace the same rays.
+pub fn pair_grid(base: u32, spread: f32) -> u32 {
+    let mult = if spread < 0.12 {
+        0.5
+    } else if spread < 0.5 {
+        1.0
+    } else if spread < 1.5 {
+        1.75
+    } else {
+        2.5
+    };
+    ((base as f32 * mult).round() as u32).clamp(8, 256)
+}
+
 /// The effective iris roundness for a working f-stop (K-260): wide open a
 /// real iris retracts behind the housing's circular bore, so ghosts go
 /// round whatever the blade count; two stops down the polygon is fully
@@ -1037,6 +1064,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         front_semi_ap,
         surfaces: lens.surfaces,
         pairs: Vec::new(),
+        spreads: Vec::new(),
         energy_gain: 1.0,
         starburst: Vec::new(),
     };
@@ -1053,7 +1081,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
     };
     let centre = [0.0, 0.0, baked.start_z_mm];
     let axis = [0.0, 0.0, 1.0];
-    let mut ranked: Vec<([u32; 2], f32)> = Vec::new();
+    let mut ranked: Vec<([u32; 2], f32, f32)> = Vec::new();
     for a in 0..n {
         if !has_interface(a) {
             continue;
@@ -1075,7 +1103,38 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
             if est < PAIR_MIN_INTENSITY {
                 continue;
             }
-            ranked.push((pair, est));
+            // Image extent: an 8×8 on-axis spray's landing bounding box
+            // against the sensor diagonal (K-262) — the grid budget's
+            // input. Cheap: 64 rays per surviving pair, at bake only.
+            const G: u32 = 8;
+            let (mut min_x, mut max_x) = (f32::MAX, f32::MIN);
+            let (mut min_y, mut max_y) = (f32::MAX, f32::MIN);
+            let mut seen = 0u32;
+            for gy in 0..G {
+                for gx in 0..G {
+                    let u = ((gx as f32 + 0.5) / G as f32) * 2.0 - 1.0;
+                    let v = ((gy as f32 + 0.5) / G as f32) * 2.0 - 1.0;
+                    if u * u + v * v > 1.0 {
+                        continue;
+                    }
+                    let o = [u * baked.pupil_mm, v * baked.pupil_mm, baked.start_z_mm];
+                    if let Some((pos, _)) = trace_splat(&baked, pair, 550.0, o, axis, 1.0, 1.0, 0.0)
+                    {
+                        min_x = min_x.min(pos[0]);
+                        max_x = max_x.max(pos[0]);
+                        min_y = min_y.min(pos[1]);
+                        max_y = max_y.max(pos[1]);
+                        seen += 1;
+                    }
+                }
+            }
+            let sensor_diag = (SENSOR_MM[0] * SENSOR_MM[0] + SENSOR_MM[1] * SENSOR_MM[1]).sqrt();
+            let spread = if seen >= 2 {
+                ((max_x - min_x).hypot(max_y - min_y) / sensor_diag).clamp(0.0, 8.0)
+            } else {
+                1.0
+            };
+            ranked.push((pair, est, spread));
         }
     }
     // Descending probe brightness; ties by pair order (deterministic).
@@ -1084,7 +1143,8 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
             .unwrap_or(std::cmp::Ordering::Equal)
             .then(a.0.cmp(&b.0))
     });
-    baked.pairs = ranked.iter().map(|&(g, _)| g).collect();
+    baked.pairs = ranked.iter().map(|&(g, _, _)| g).collect();
+    baked.spreads = ranked.iter().map(|&(_, _, sp)| sp).collect();
 
     let aperture = bake_aperture(p, native_fstop, APERTURE_RES);
     baked.starburst = bake_starburst(&aperture, STARBURST_RES);
@@ -1106,7 +1166,7 @@ pub fn bake(p: &LensFlareParams) -> FlareBaked {
         roundness: p.roundness,
         aperture_softness: p.aperture_softness,
         ghost_intensity: 1.0,
-        ghost_softness: 0.3,
+        ghost_softness: 0.05,
         max_ghosts: 32,
         dispersion: 1.0,
         coating: 0.6,
@@ -1208,9 +1268,9 @@ pub fn screen_transform(w: u32) -> f32 {
 /// One rasterisation vertex (matches the WGSL vertex buffer): raster
 /// position, RGB-weighted intensity.
 #[derive(Debug, Clone, Copy)]
-struct FlareVertex {
-    pos: [f32; 2],
-    rgb: [f32; 3],
+pub(crate) struct FlareVertex {
+    pub pos: [f32; 2],
+    pub rgb: [f32; 3],
 }
 
 /// Minimum screen area a drawn quad may have, px² (K-261). A caustic-folded
@@ -1220,25 +1280,64 @@ struct FlareVertex {
 /// this area with their colour scaled by (true / inflated) area, so the
 /// deposited flux is conserved and every quad reliably covers samples.
 pub const MIN_QUAD_PX: f32 = 4.0;
+/// Longest screen edge a quad may have and still be *inflated* (K-262). A
+/// cell whose ray corners straddle a caustic fold or a housing clip lands
+/// as a SLIVER: near-zero area but large extent. Scaling such a quad up to
+/// [`MIN_QUAD_PX`] stretches it along its long axis — a 20 px sliver became
+/// a 2000 px line, which is the "random lines across the flare" artefact.
+/// Slivers are dropped instead: their flux is genuinely smeared to nothing,
+/// and the neighbouring well-formed cells carry the ghost's light.
+pub const MAX_INFLATE_EDGE_PX: f32 = 6.0;
+/// A quad longer than this fraction of the frame diagonal AND thin for its
+/// length (see [`STREAK_ASPECT`]) is dropped at any size (K-262). Cells at
+/// a real caustic rim are legitimately elongated, but they are *short* —
+/// they tile into the rim. A cell that jumps the frame is one that spans a
+/// discontinuity, and drawing it is the streak artefact.
+pub const STREAK_LEN_FRAC: f32 = 0.04;
+/// How thin "thin" is: `longest² > STREAK_ASPECT × area` (a square scores
+/// 1, a 3:1 parallelogram ~3, a fold sliver hundreds).
+pub const STREAK_ASPECT: f32 = 8.0;
 
-/// Floor on a landed quad's area as a fraction of its launch cell — a
-/// guard against a fully-degenerate fold burning to infinity; the visual
-/// cap is the screen-space inflation, not this.
-pub const MIN_AREA_FRAC: f32 = 1e-4;
+/// Floor on a landed quad's area as a fraction of its launch cell — which
+/// is really a **cap on caustic density** (K-262). At a fold the density
+/// `cell ÷ landed` genuinely diverges, but the *integral* over a pixel is
+/// finite: our discrete cell concentrates that whole divergence into a few
+/// pixels, so one cell reaching 10 000× drew a hard chromatic line. Capping
+/// at 1/3e-3 ≈ 333× keeps the bright rims and arcs and removes the spikes.
+pub const MIN_AREA_FRAC: f32 = 3e-3;
 
-/// Flux-conserving screen-space floor on a quad's size (K-261, mirrored by
-/// the WGSL build): a quad smaller than [`MIN_QUAD_PX`] on screen inflates
-/// about its centroid to that area, its colour scaled by the true ÷
-/// inflated area ratio.
-fn inflate_quad(v: &mut [FlareVertex; 4]) {
+/// Flux-conserving screen-space floor on a quad's size (K-261, refined by
+/// K-262; mirrored by the WGSL build). Returns false when the quad must be
+/// dropped.
+///
+/// - Long and thin at ANY size: dropped (the streak test).
+/// - Area at or above [`MIN_QUAD_PX`]: drawn unchanged.
+/// - Below it and COMPACT (longest edge within [`MAX_INFLATE_EDGE_PX`]):
+///   inflated about its centroid to the floor, colour scaled by the true ÷
+///   inflated area ratio — flux exact, and the rasteriser can no longer
+///   drop it for covering no pixel centre.
+/// - Below it and STRETCHED: dropped, same reason as the streak test.
+pub(crate) fn inflate_quad(v: &mut [FlareVertex; 4], diag_px: f32) -> bool {
     let e = |a: [f32; 2], b: [f32; 2], c: [f32; 2]| {
         (a[0] - b[0]) * (c[1] - a[1]) - (a[1] - b[1]) * (c[0] - a[0])
     };
     let a0 = e(v[0].pos, v[1].pos, v[2].pos);
     let a1 = e(v[0].pos, v[2].pos, v[3].pos);
     let area_px = ((a0 + a1) / 2.0).abs();
+    let mut longest = 0.0_f32;
+    for i in 0..4 {
+        let a = v[i].pos;
+        let b = v[(i + 1) % 4].pos;
+        longest = longest.max((a[0] - b[0]).hypot(a[1] - b[1]));
+    }
+    if longest > STREAK_LEN_FRAC * diag_px && longest * longest > STREAK_ASPECT * area_px {
+        return false;
+    }
     if area_px >= MIN_QUAD_PX {
-        return;
+        return true;
+    }
+    if longest > MAX_INFLATE_EDGE_PX {
+        return false;
     }
     let eps = MIN_QUAD_PX * 1e-4;
     let s = (MIN_QUAD_PX / area_px.max(eps)).sqrt();
@@ -1252,6 +1351,7 @@ fn inflate_quad(v: &mut [FlareVertex; 4]) {
             *ch *= scale;
         }
     }
+    true
 }
 
 /// Scanline-rasterise one triangle with barycentric colour interpolation
@@ -1317,8 +1417,7 @@ pub fn cpu_flare(
     if w == 0 || h == 0 || p.ghost_intensity <= 0.0 {
         return out;
     }
-    let (side, lambda_count, _) = quality_ladder(p.quality);
-    let side = side.max(2) as usize;
+    let (base_side, lambda_count, _) = quality_ladder(p.quality);
     let weights = lambda_weights(lambda_count, p.dispersion);
     let roundness = effective_roundness(p.roundness, p.fstop, baked.native_fstop);
     let rot = p.aperture_rotation_deg.to_radians();
@@ -1328,21 +1427,25 @@ pub fn cpu_flare(
     let st = screen_transform(w);
     let gain = p.ghost_intensity * baked.energy_gain;
     let pair_count = baked.pairs.len().min(p.max_ghosts as usize);
-
-    // The pupil grid: corner (i, j) at unit coords, masked by the iris.
-    let unit = |i: usize| (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
-    let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (side - 1) as f32;
-    let cell_area_px = cell_mm * cell_mm * st * st;
+    let diag_px = ((w * w + h * h) as f32).sqrt();
 
     // Per-corner trace results for one (pair, λ): landing px and weight
-    // (Fresnel × mask); None = dead.
-    let mut corners: Vec<Option<([f32; 2], f32)>> = vec![None; side * side];
+    // (Fresnel × mask); None = dead. Sized for the widest grid in play.
+    let mut corners: Vec<Option<([f32; 2], f32)>> = Vec::new();
     for light in lights {
         if light.rgb[0] <= 0.0 && light.rgb[1] <= 0.0 && light.rgb[2] <= 0.0 {
             continue;
         }
         let dir = light_direction(light.pos, aspect, baked.focal_mm);
-        for pair in baked.pairs.iter().take(pair_count) {
+        for (pi, pair) in baked.pairs.iter().take(pair_count).enumerate() {
+            // The pair's own grid (K-262), by its measured image spread.
+            let side =
+                pair_grid(base_side, baked.spreads.get(pi).copied().unwrap_or(1.0)).max(2) as usize;
+            let unit = |i: usize| (i as f32 / (side - 1) as f32) * 2.0 - 1.0;
+            let cell_mm = 2.0 * baked.pupil_mm * stop_scale / (side - 1) as f32;
+            let cell_area_px = cell_mm * cell_mm * st * st;
+            corners.clear();
+            corners.resize(side * side, None);
             for &(nm, rgb_w) in &weights {
                 for j in 0..side {
                     for i in 0..side {
@@ -1421,7 +1524,9 @@ pub fn cpu_flare(
                                 b * rgb_w[2] * light.rgb[2],
                             ];
                         }
-                        inflate_quad(&mut v);
+                        if !inflate_quad(&mut v, diag_px) {
+                            continue;
+                        }
                         raster_triangle(&mut out, w, h, [v[0], v[1], v[2]]);
                         raster_triangle(&mut out, w, h, [v[0], v[2], v[3]]);
                     }
@@ -1484,10 +1589,19 @@ pub fn blur_flare(buf: &mut [f32], w: u32, h: u32, radius_px: u32, passes: u32) 
 
 /// The Ghost-softness blur radius in pixels for a buffer size: the dial is
 /// a percentage of the frame diagonal (0.3 ≈ FlareSim's suggested 0.003).
+///
+/// Capped at [`MAX_BLUR_RADIUS_PX`] (K-262): the box blur is a naive
+/// `2r+1`-tap loop run six times, so an uncapped 2% radius on a 4K frame
+/// submits ~1000 taps per pixel — firmly in GPU-timeout territory. Three
+/// passes of an 80 px box already read as a heavy defocus, so the cap
+/// costs nothing anyone can see.
 pub fn ghost_blur_radius(softness: f32, w: u32, h: u32) -> u32 {
     let diag = ((w * w + h * h) as f32).sqrt();
-    (softness.clamp(0.0, 2.0) * 0.01 * diag).round() as u32
+    ((softness.clamp(0.0, 2.0) * 0.01 * diag).round() as u32).min(MAX_BLUR_RADIUS_PX)
 }
+
+/// See [`ghost_blur_radius`].
+pub const MAX_BLUR_RADIUS_PX: u32 = 80;
 
 /// The combine stage, mirrored by the WGSL combine kernel: `out = orig +
 /// intensity · (flare(scaled · squeezed) + starbursts)`, alpha saturating

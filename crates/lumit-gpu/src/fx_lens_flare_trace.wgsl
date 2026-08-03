@@ -95,13 +95,12 @@ struct TraceParams {
     sensor_z_mm: f32,
     stop_scale: f32,       // scales the stop surface's semi-aperture
     cell_area_px: f32,     // launch cell area in flare-buffer px²
+    ray_stride: u32,       // rays per slot (max grid², K-262)
+    quad_stride: u32,      // quads per slot (max (grid-1)², K-262)
     blades: u32,
     rot_rad: f32,
     roundness: f32,        // effective (wide-open blended)
     softness: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 };
 
 @group(0) @binding(0) var<storage, read> surfaces: array<Surface>;
@@ -310,7 +309,7 @@ fn trace(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= ray_count || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
         return;
     }
-    let slot = (gid.z * tp.combo_count + gid.y) * ray_count + gid.x;
+    let slot = (gid.z * tp.combo_count + gid.y) * tp.ray_stride + gid.x;
     var dead: Ray;
     dead.pos_x = 0.0;
     dead.pos_y = 0.0;
@@ -474,10 +473,9 @@ fn quad_energy(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (gid.x >= quad_count || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
         return;
     }
-    let ray_count = tp.grid * tp.grid;
     let qx = gid.x % side;
     let qy = gid.x / side;
-    let base = (gid.z * tp.combo_count + gid.y) * ray_count;
+    let base = (gid.z * tp.combo_count + gid.y) * tp.ray_stride;
     let r00 = rays[base + qy * tp.grid + qx];
     let r10 = rays[base + qy * tp.grid + qx + 1u];
     let r11 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
@@ -490,17 +488,23 @@ fn quad_energy(@builtin(global_invocation_id) gid: vec3<u32>) {
         let p01 = vec2<f32>(r01.pos_x, r01.pos_y);
         let a0 = edge_px(p00, p10, p11);
         let a1 = edge_px(p00, p11, p01);
-        let landed = max(abs((a0 + a1) / 2.0), 1e-4 * tp.cell_area_px);
+        // MIN_AREA_FRAC (K-262): a cap on caustic density, not a
+        // formality — see the CPU twin's comment.
+        let landed = max(abs((a0 + a1) / 2.0), 3e-3 * tp.cell_area_px);
         e = tp.cell_area_px / landed;
     }
-    energies[(gid.z * tp.combo_count + gid.y) * quad_count + gid.x] = e;
+    energies[(gid.z * tp.combo_count + gid.y) * tp.quad_stride + gid.x] = e;
 }
 
 @compute @workgroup_size(64)
 fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = tp.grid - 1u;
-    let quad_count = side * side;
-    if (gid.x >= quad_count || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
+    let live_quads = side * side;
+    // Dispatched over the STRIDE, not this batch's quad count (K-262): the
+    // scratch is strided by the widest grid in the frame, so every cell the
+    // batch does not fill must be parked or a previous batch's vertices are
+    // drawn again.
+    if (gid.x >= tp.quad_stride || gid.y >= tp.combo_count || gid.z >= tp.light_count) {
         return;
     }
     let slot = gid.z * tp.combo_count + gid.y;
@@ -508,8 +512,11 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
     let light = lights[gid.z];
     let qx = gid.x % side;
     let qy = gid.x / side;
-    let out_base = (slot * quad_count + gid.x) * 6u;
-    let e = energies[slot * quad_count + gid.x];
+    let out_base = (slot * tp.quad_stride + gid.x) * 6u;
+    var e = 0.0;
+    if (gid.x < live_quads) {
+        e = energies[slot * tp.quad_stride + gid.x];
+    }
     if (e <= 0.0) {
         var park: Vertex;
         park.ndc_x = -4.0;
@@ -525,8 +532,7 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
         }
         return;
     }
-    let ray_count = tp.grid * tp.grid;
-    let base = slot * ray_count;
+    let base = slot * tp.ray_stride;
     let c0 = rays[base + qy * tp.grid + qx];
     let c1 = rays[base + qy * tp.grid + qx + 1u];
     let c2 = rays[base + (qy + 1u) * tp.grid + qx + 1u];
@@ -544,14 +550,45 @@ fn build_verts(@builtin(global_invocation_id) gid: vec3<u32>) {
         tint * (e * max(c2.weight, 0.0)),
         tint * (e * max(c3.weight, 0.0)),
     );
-    // Flux-conserving sub-pixel inflation (K-261, the CPU `inflate_quad`
-    // twin): a caustic-folded quad below 4 px² would be dropped by the
-    // hardware raster as a zero-coverage triangle; inflate it about its
-    // centroid and scale its colour by true ÷ inflated area.
+    // Flux-conserving sub-pixel inflation (K-261, refined K-262 — the CPU
+    // `inflate_quad` twin). A sub-pixel quad would be dropped by the
+    // hardware raster as zero-coverage, so it inflates about its centroid
+    // with its colour scaled by true ÷ inflated area. But only if it is
+    // COMPACT: a fold-straddling sliver has near-zero area and large
+    // extent, and inflating that stretches it into a frame-crossing streak
+    // — such quads are dropped instead.
     let min_quad_px = 4.0;
+    let max_inflate_edge_px = 6.0;
+    let streak_len_frac = 0.04;
+    let streak_aspect = 8.0;
     let a0 = edge_px(p[0], p[1], p[2]);
     let a1 = edge_px(p[0], p[2], p[3]);
     let area_px = abs((a0 + a1) / 2.0);
+    var longest = 0.0;
+    for (var i = 0; i < 4; i = i + 1) {
+        let d = p[i] - p[(i + 1) % 4];
+        longest = max(longest, length(d));
+    }
+    let diag_px = sqrt(tp.raster_w * tp.raster_w + tp.raster_h * tp.raster_h);
+    // Long AND thin at any size is a discontinuity-spanning cell: drop it
+    // (K-262). Rim cells are elongated too, but short.
+    let streak = longest > streak_len_frac * diag_px
+        && longest * longest > streak_aspect * area_px;
+    if (streak || (area_px < min_quad_px && longest > max_inflate_edge_px)) {
+        var park: Vertex;
+        park.ndc_x = -4.0;
+        park.ndc_y = -4.0;
+        park.r = 0.0;
+        park.g = 0.0;
+        park.b = 0.0;
+        park._pad0 = 0.0;
+        park._pad1 = 0.0;
+        park._pad2 = 0.0;
+        for (var i = 0u; i < 6u; i = i + 1u) {
+            verts[out_base + i] = park;
+        }
+        return;
+    }
     if (area_px < min_quad_px) {
         let eps = min_quad_px * 1e-4;
         let s = sqrt(min_quad_px / max(area_px, eps));

@@ -101,6 +101,9 @@ pub struct FlareBakeData {
     pub surfaces: Vec<[f32; 8]>,
     /// Ranked ghost pairs, brightest first.
     pub ghosts: Vec<[u32; 2]>,
+    /// Each pair's image spread (fraction of the sensor diagonal), parallel
+    /// to `ghosts` — the adaptive grid budget's input (K-262).
+    pub spreads: Vec<f32>,
     /// Sensor plane z, mm.
     pub sensor_z_mm: f32,
     /// Focal length, mm — the in-shader light direction's z.
@@ -124,6 +127,7 @@ struct GpuBaked {
     surfaces: wgpu::Buffer,
     surface_count: u32,
     ghosts: Vec<[u32; 2]>,
+    spreads: Vec<f32>,
     sensor_z_mm: f32,
     focal_mm: f32,
     native_fstop: f32,
@@ -190,13 +194,12 @@ struct TraceParams {
     sensor_z_mm: f32,
     stop_scale: f32,
     cell_area_px: f32,
+    ray_stride: u32,
+    quad_stride: u32,
     blades: u32,
     rot_rad: f32,
     roundness: f32,
     softness: f32,
-    _pad0: f32,
-    _pad1: f32,
-    _pad2: f32,
 }
 
 #[repr(C)]
@@ -537,6 +540,23 @@ impl LensFlareFx {
     }
 }
 
+/// The pupil grid one pair gets, from the quality base and the pair's image
+/// spread — the exact twin of `lumit_core::fx::lens_flare::pair_grid`
+/// (lumit-gpu stays lumit-core-free in production, so the formula is
+/// mirrored and a test pins the two together).
+pub fn pair_grid_of(base: u32, spread: f32) -> u32 {
+    let mult = if spread < 0.12 {
+        0.5
+    } else if spread < 0.5 {
+        1.0
+    } else if spread < 1.5 {
+        1.75
+    } else {
+        2.5
+    };
+    ((base as f32 * mult).round() as u32).clamp(8, 256)
+}
+
 /// Upload one bake's buffers as GPU resources.
 fn upload_bake(ctx: &GpuContext, data: &FlareBakeData) -> GpuBaked {
     use wgpu::util::DeviceExt;
@@ -591,6 +611,7 @@ fn upload_bake(ctx: &GpuContext, data: &FlareBakeData) -> GpuBaked {
         surfaces,
         surface_count: data.surfaces.len() as u32,
         ghosts: data.ghosts.clone(),
+        spreads: data.spreads.clone(),
         sensor_z_mm: data.sensor_z_mm,
         focal_mm: data.focal_mm,
         native_fstop: data.native_fstop,
@@ -780,23 +801,38 @@ impl FxEngine {
             // only known GPU-side in Matte mode).
             let ghost_count = (ghost_count_max as usize).min(baked.ghosts.len());
             let gain = baked.energy_gain;
-            let mut combos: Vec<GpuCombo> = Vec::with_capacity(ghost_count * op.lambdas.len());
-            for ghost in baked.ghosts.iter().take(ghost_count) {
+            // Each pair gets its own pupil grid by its measured image spread
+            // (K-262, mirroring `lumit_core::fx::lens_flare::pair_grid`), so
+            // combos are sorted grid-major: a run of equal-grid combos is one
+            // dispatch batch, and the scratch is sized for the widest grid.
+            let mut tagged: Vec<(u32, GpuCombo)> =
+                Vec::with_capacity(ghost_count * op.lambdas.len());
+            for (gi, ghost) in baked.ghosts.iter().take(ghost_count).enumerate() {
+                let spread = baked.spreads.get(gi).copied().unwrap_or(1.0);
+                let pg = pair_grid_of(op.grid, spread);
                 for &(lambda_nm, rgb) in &op.lambdas {
-                    combos.push(GpuCombo {
-                        bounce1: ghost[0],
-                        bounce2: ghost[1],
-                        lambda_nm,
-                        _pad: 0.0,
-                        rgb: [rgb[0] * gain, rgb[1] * gain, rgb[2] * gain],
-                        _pad2: 0.0,
-                    });
+                    tagged.push((
+                        pg,
+                        GpuCombo {
+                            bounce1: ghost[0],
+                            bounce2: ghost[1],
+                            lambda_nm,
+                            _pad: 0.0,
+                            rgb: [rgb[0] * gain, rgb[1] * gain, rgb[2] * gain],
+                            _pad2: 0.0,
+                        },
+                    ));
                 }
             }
+            // Stable sort: equal grids become contiguous runs and ties keep
+            // the ranked pair order (determinism, §2.4).
+            tagged.sort_by_key(|&(g, _)| g);
+            let combo_grids: Vec<u32> = tagged.iter().map(|&(g, _)| g).collect();
+            let combos: Vec<GpuCombo> = tagged.into_iter().map(|(_, c)| c).collect();
             if !combos.is_empty() {
-                let grid = op.grid.clamp(2, 128);
-                let ray_count = grid * grid;
-                let side = grid - 1;
+                let max_grid = combo_grids.iter().copied().max().unwrap_or(2).clamp(2, 256);
+                let ray_count = max_grid * max_grid;
+                let side = max_grid - 1;
                 let quad_count = side * side;
                 // Batch size bounded by the vertex scratch budget: eight
                 // lights at an Ultra grid would otherwise ask for a
@@ -838,7 +874,17 @@ impl FxEngine {
                 let flare_view = flare_tex.create_view(&Default::default());
                 let mut offset = 0u32;
                 while (offset as usize) < combos.len() {
-                    let batch = batch_cap.min(combos.len() as u32 - offset);
+                    // A batch stops at the end of its grid's run, so every
+                    // combo in it dispatches at the same grid.
+                    let grid = combo_grids[offset as usize];
+                    let run_end = combo_grids[offset as usize..]
+                        .iter()
+                        .position(|&g| g != grid)
+                        .map(|n| offset + n as u32)
+                        .unwrap_or(combos.len() as u32);
+                    let batch = batch_cap.min(run_end - offset);
+                    let batch_rays = grid * grid;
+                    let batch_quads = (grid - 1) * (grid - 1);
                     // Frame-time optics shared with the CPU reference
                     // (K-261): the stop-down scale, the wide-open roundness
                     // blend, and the launch cell area in flare-buffer px².
@@ -884,13 +930,12 @@ impl FxEngine {
                                 sensor_z_mm: baked.sensor_z_mm,
                                 stop_scale,
                                 cell_area_px: cell_mm * cell_mm * st_flare * st_flare,
+                                ray_stride: ray_count,
+                                quad_stride: quad_count,
                                 blades: op.blades.clamp(3, 16),
                                 rot_rad: op.aperture_rotation_deg.to_radians(),
                                 roundness: op.roundness.max(wide_open),
                                 softness: op.aperture_softness,
-                                _pad0: 0.0,
-                                _pad1: 0.0,
-                                _pad2: 0.0,
                             }),
                             usage: wgpu::BufferUsages::UNIFORM,
                         });
@@ -931,8 +976,10 @@ impl FxEngine {
                     // Each stage in its own pass: pass boundaries are the
                     // write-then-read barriers between them.
                     let stages: [(&wgpu::ComputePipeline, u32, &str); 3] = [
-                        (&lf.trace, ray_count, "fx-lens-flare-trace-pass"),
-                        (&lf.quad_energy, quad_count, "fx-lens-flare-quad-pass"),
+                        (&lf.trace, batch_rays, "fx-lens-flare-trace-pass"),
+                        (&lf.quad_energy, batch_quads, "fx-lens-flare-quad-pass"),
+                        // Over the STRIDE: unwritten cells must be parked,
+                        // or a wider batch's vertices are drawn again.
                         (&lf.build_verts, quad_count, "fx-lens-flare-verts-pass"),
                     ];
                     for (pipeline, x_items, label) in stages {
@@ -969,9 +1016,12 @@ impl FxEngine {
             // passes over the flare buffer, ping-ponging through a scratch
             // texture — an even pass count lands the result back in
             // `flare_tex` for the combine.
+            // Mirrors `lumit_core::fx::lens_flare::ghost_blur_radius`,
+            // cap included (K-262: an uncapped radius on a 4K frame is a
+            // thousand taps per pixel across six passes — a GPU timeout).
             let radius = {
                 let diag = ((fw * fw + fh * fh) as f32).sqrt();
-                (op.ghost_softness.clamp(0.0, 2.0) * 0.01 * diag).round() as u32
+                ((op.ghost_softness.clamp(0.0, 2.0) * 0.01 * diag).round() as u32).min(80)
             };
             if radius > 0 {
                 let scratch_tex = work_texture(ctx, fw, fh, "fx-lens-flare-blur-scratch");
@@ -1238,13 +1288,12 @@ impl FxEngine {
                         sensor_z_mm: baked.sensor_z_mm,
                         stop_scale,
                         cell_area_px: cell_mm * cell_mm * op.screen_transform * op.screen_transform,
+                        ray_stride: grid * grid,
+                        quad_stride: (grid - 1) * (grid - 1),
                         blades: op.blades.clamp(3, 16),
                         rot_rad: op.aperture_rotation_deg.to_radians(),
                         roundness: op.roundness.max(wide_open),
                         softness: op.aperture_softness,
-                        _pad0: 0.0,
-                        _pad1: 0.0,
-                        _pad2: 0.0,
                     }
                 }),
                 usage: wgpu::BufferUsages::UNIFORM,

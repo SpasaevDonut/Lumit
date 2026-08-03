@@ -2920,7 +2920,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         // Raster pixels of a 192×108 probe framing (K-260).
         light: [63.4, 32.4],
         intensity: 1.0,
-        lens: 12,
+        lens: 1247,
         fstop: 2.8,
         focus_m: 100.0,
         blades: 8,
@@ -2928,7 +2928,7 @@ fn flare_params() -> lumit_core::fx::lens_flare::LensFlareParams {
         roundness: 0.15,
         aperture_softness: 0.05,
         ghost_intensity: 1.0,
-        ghost_softness: 0.3,
+        ghost_softness: 0.05,
         max_ghosts: 10,
         dispersion: 1.0,
         coating: 0.75,
@@ -3008,6 +3008,7 @@ fn flare_bake_data(p: &lumit_core::fx::lens_flare::LensFlareParams) -> FlareBake
             })
             .collect(),
         ghosts: b.pairs.clone(),
+        spreads: b.spreads.clone(),
         sensor_z_mm: b.sensor_z_mm,
         focal_mm: b.focal_mm,
         native_fstop: b.native_fstop,
@@ -3016,6 +3017,24 @@ fn flare_bake_data(p: &lumit_core::fx::lens_flare::LensFlareParams) -> FlareBake
         energy_gain: b.energy_gain,
         starburst: b.starburst,
         sb_res: lf::STARBURST_RES,
+    }
+}
+
+// The adaptive grid formula is mirrored in this crate (lumit-gpu stays
+// lumit-core-free in production), so the two copies are pinned together —
+// a drift would make the GPU trace different rays from the oracle (K-262).
+#[test]
+fn lens_flare_pair_grid_mirrors_lumit_core() {
+    for base in [8u32, 24, 48, 64, 96, 144] {
+        for spread in [
+            0.0f32, 0.05, 0.119, 0.12, 0.3, 0.49, 0.5, 1.0, 1.49, 1.5, 4.0, 99.0,
+        ] {
+            assert_eq!(
+                crate::fx::lens_flare::pair_grid_of(base, spread),
+                lumit_core::fx::lens_flare::pair_grid(base, spread),
+                "base {base} spread {spread}"
+            );
+        }
     }
 }
 
@@ -3033,7 +3052,7 @@ fn wgsl_lens_flare_trace_matches_the_cpu_reference() {
     let fx = FxEngine::new(&ctx);
     use lumit_core::fx::lens_flare as lf;
     let (w, h) = (192u32, 108u32);
-    for lens in [12u32, 500] {
+    for lens in [1247u32, 500] {
         for light_frac in [[0.33f32, 0.30f32], [0.85, 0.75]] {
             let p = lf::LensFlareParams {
                 lens,

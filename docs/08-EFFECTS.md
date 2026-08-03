@@ -1425,8 +1425,9 @@ cast of real flares comes from.
    triangles at density `launch cell area ÷ landed area` (energy
    conservation — a ghost focused small burns bright; fold caustics blow up
    into the bright rims real flares show), with sub-pixel fold quads
-   inflated flux-exactly so no rasteriser can drop them, then the Ghost
-   softness box blur.
+   inflated flux-exactly so no rasteriser can drop them, cells that straddle
+   a fold dropped rather than stretched into streaks, and the caustic
+   density capped (K-262), then the Ghost softness box blur.
 4. **Combine** (GPU compute): `out = input + intensity · (flare + starburst)`
    in linear light, alpha saturating toward 1 (the Glow shape); the starburst
    is a baked sprite at each light; the whole flare takes Scale and the
@@ -1440,14 +1441,17 @@ parameters are always authored in comp pixels, K-260),
 from the lens's native f-number; wide open the ghosts are big and round,
 stopped down small and bladed), **Lens** (the embedded prescription library,
 K-261: **1299 real lenses** transcribed from patents via the FlareSim /
-PhotonsToPhotos collection, sorted by name — every prescription carries its
-own per-surface anti-reflective coating layers, which is what replaced the
-K-257 Coating-type presets), then three folds and the tail:
+PhotonsToPhotos collection — every prescription carries its own per-surface
+anti-reflective coating layers, which is what replaced the K-257
+Coating-type presets. Labelled `Maker · Model` and grouped by maker in a
+**searchable picker** (K-262): type to filter, headings per manufacturer,
+and the list builds lazily — a plain dropdown of 1299 rows crashed the app
+in layout), then three folds and the tail:
 
 | Group | Parameters |
 |---|---|
 | *Lens options* (twirl) | Focus (m) (0.5–100 slider, hard min 0.2 — the focus distance; K-260, refocusing shifts the sensor plane and visibly rearranges the whole ghost train, the "same lens, different focus" look), Anamorphic squeeze (0.5–3), Blades (int 3–16), Rotation, Coating (0 uncoated → 1 fully coated), Roundness, Softness |
-| *Flare options* (twirl) | Ghost intensity (0–4), Ghost softness (0–1 slider, % of the frame diagonal — FlareSim's Ghost Blur, K-261: a touch of out-of-focus softness on the ghost train), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
+| *Flare options* (twirl) | Ghost intensity (0–4), Ghost softness (0–1 slider, % of the frame diagonal — FlareSim's Ghost Blur, K-261: a touch of out-of-focus softness on the ghost train; default 0.05 since K-262, and **0 is a clean setting** now that the artefacts it used to hide are gone), Max ghosts (int 0–200 — the brightest survive), Dispersion (0–2), Starburst intensity (0–4), Scale (0.05–20 — the WHOLE flare about the optical centre, ghosts and starbursts together) |
 | *Source* | Source type (Manual light / Matte / Lights); **Light tint** (a colour, with picker and eyedropper — multiplies every light in every mode); then, shown conditionally: **Use source colour** (Matte *and* Lights) and — Matte only — Matte layer (a layer reference), Threshold (linear luma, slider 0–1, open above), Threshold softness |
 
 and **Quality** (Draft / Normal / High / Ultra), **Background** (Transparent /
@@ -1482,12 +1486,15 @@ Ghost intensity / Starburst intensity (each half separately), Max ghosts (thins 
 train), Quality (cost), Mix (final blend). Defaults are tuned to read well on 1080p
 footage without touching anything (§1.2).
 
-**Chromatic smoothness.** The traced wavelength count is what separates a smooth
-spectral fringe from a stacked-copies RGB-split look, so the Quality ladder
-carries it: 4 bands at Draft, 8 at Normal, 16 at High, 32 at Ultra (K-258 —
-the extreme tier is deliberately expensive; Normal stays real-time), each band
-weighted by its **integral** of the CIE colour-matching functions, not a point
-sample (impl note deviation D5).
+**Quality.** Two axes ride the ladder: the traced wavelength count (3 bands
+at Draft, 8 at Normal, 16 at High, 32 at Ultra — what separates a smooth
+spectral fringe from a stacked-copies RGB-split look, each band weighted by
+its **integral** of the CIE colour-matching functions rather than a point
+sample, impl note deviation D5), and the pupil-grid base (32 / 64 / 96 / 144).
+The grid base is only a budget: each ghost pair's own grid scales by its
+measured image size (K-262), so a frame-filling defocused ghost gets up to
+2.5× the cells and a tight blob half — which is what lets **Normal stand on
+its own** rather than being the tier where cell facets show.
 
 **Cost and traits.** `heavy` cost (the one effect that owns a render pass), `full-frame`
 ROI, `{0}` temporal, premultiplied (an additive light overlay), not seeded — the flare is
@@ -1506,17 +1513,13 @@ could hit at ULP tolerance — the same staged-oracle shape flow effects already
 CPU degradation rung renders the effect as a labelled no-op, like the LUT (K-114
 precedent). Exact numbers in the impl note §8.
 
-**Status (core K-256..K-260; FlareSim model K-261, shipped):** everything
-above — the 1299-lens embedded library with per-surface coatings, the
+**Status (core K-256..K-260; FlareSim model K-261; artefact and picker
+pass K-262, shipped):** everything above — the 1299-lens embedded library with per-surface coatings, the
 three-phase pupil-grid trace with energy-conserving quad raster and
 flux-exact caustic inflation, the Ghost softness blur, Focus distance, the
 point-pair light row with its Viewer dropper, the Matte source mode, quality
-ladder, anamorphic squeeze, Mix. Pinned follow-ups (TODO): **adaptive grid
-refinement** for extreme-defocus ghosts (a few process-lens prescriptions
-resolve one pupil cell to tens of pixels at low quality and show grid-aligned
-steps); a **searchable Lens picker** (1299 entries deserve better than one
-long dropdown); aperture **dirt / scratches** overlays and an **image
-aperture**; **custom .lens file loading** (the parser already reads the
+ladder, anamorphic squeeze, Mix. Pinned follow-ups (TODO): aperture **dirt / scratches** overlays and an
+**image aperture**; **custom .lens file loading** (the parser already reads the
 standard format) and the **lens designer** window; the **Lights** source
 wiring (waits on light layers); an **Occlusion layer** reference. Every
 shipped parameter is stable when they land.

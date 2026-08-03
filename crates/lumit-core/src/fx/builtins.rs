@@ -2663,7 +2663,7 @@ pub const BUILTINS: &[EffectSchema] = &[
                 // own per-surface coating layers now.
                 kind: ParamKind::Choice {
                     options: &crate::fx::lens_library::LENS_OPTIONS,
-                    default: 12,
+                    default: 1247,
                     dividers_after: &[],
                 },
             },
@@ -2754,10 +2754,12 @@ pub const BUILTINS: &[EffectSchema] = &[
                 id: "ghost_softness",
                 label: "Ghost softness",
                 // Box-blur radius as % of the frame diagonal (K-261,
-                // FlareSim's Ghost Blur): a touch of out-of-focus softness
-                // that also hides splat grain at lower qualities.
+                // FlareSim's Ghost Blur): a touch of out-of-focus softness.
+                // Small by default since K-262 — the streak cull and the
+                // adaptive grid mean the ghosts no longer need blurring to
+                // hide artefacts, and 0 is now a usable, clean setting.
                 kind: ParamKind::Float {
-                    default: 0.3,
+                    default: 0.05,
                     slider: (0.0, 1.0),
                     hard: (Some(0.0), Some(2.0)),
                 },

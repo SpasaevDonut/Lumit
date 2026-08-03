@@ -832,6 +832,7 @@ pub fn run_ops(
                             })
                             .collect(),
                         ghosts: b.pairs.clone(),
+                        spreads: b.spreads.clone(),
                         sensor_z_mm: b.sensor_z_mm,
                         focal_mm: b.focal_mm,
                         native_fstop: b.native_fstop,

@@ -334,6 +334,214 @@ class BareDropdown<T> extends StatelessWidget {
   }
 }
 
+/// Options at or above this count get [BareSearchDropdown] instead of the
+/// plain [BareDropdown] (K-262). A plain dropdown builds every row eagerly
+/// inside an `IntrinsicWidth`, which walks all of them twice — fine for the
+/// handful of options every other parameter has, fatal for the Lens flare's
+/// 1299-lens library, which took the app down in layout.
+const int searchableOptionThreshold = 40;
+
+/// A dropdown for long option lists: a search field over a **lazily built**
+/// list, with the group headings drawn inline (K-262).
+///
+/// The list is a `ListView.builder` inside a bounded box, so only the rows
+/// on screen are ever built no matter how many options there are — the
+/// difference between "1299 lenses" being a feature and being a crash.
+class BareSearchDropdown extends StatelessWidget {
+  final int value;
+  final List<String> options;
+  final ValueChanged<int> onChanged;
+
+  /// The heading an option sits under, or null for none.
+  final String? Function(String)? group;
+
+  /// Placeholder for the search field — what the user is looking for.
+  final String hint;
+
+  const BareSearchDropdown({
+    super.key,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.group,
+    this.hint = 'Search',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    final label = value >= 0 && value < options.length ? options[value] : '—';
+    return HouseButton(
+      onPressed: () async {
+        final box = context.findRenderObject()! as RenderBox;
+        final origin = box.localToGlobal(Offset.zero);
+        final picked = await showLumitPopup<int>(
+          context: context,
+          position: origin + Offset(0, box.size.height + 2),
+          builder: (close) => FloatSurface(
+            child: _SearchPickerBody(
+              value: value,
+              options: options,
+              group: group,
+              hint: hint,
+              onPick: close,
+            ),
+          ),
+        );
+        if (picked != null) onChanged(picked);
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 4),
+          CustomPaint(
+            size: const Size(9, 9),
+            painter: _CaretPainter(t.textSecondary),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One row of the picker's flattened list: a heading, or an option.
+class _PickerEntry {
+  final String? heading;
+  final int? optionIndex;
+  const _PickerEntry.heading(this.heading) : optionIndex = null;
+  const _PickerEntry.option(this.optionIndex) : heading = null;
+}
+
+class _SearchPickerBody extends StatefulWidget {
+  final int value;
+  final List<String> options;
+  final String? Function(String)? group;
+  final String hint;
+  final void Function(int?) onPick;
+
+  const _SearchPickerBody({
+    required this.value,
+    required this.options,
+    required this.group,
+    required this.hint,
+    required this.onPick,
+  });
+
+  @override
+  State<_SearchPickerBody> createState() => _SearchPickerBodyState();
+}
+
+class _SearchPickerBodyState extends State<_SearchPickerBody> {
+  final TextEditingController _query = TextEditingController();
+  late List<_PickerEntry> _entries = _build('');
+
+  @override
+  void dispose() {
+    _query.dispose();
+    super.dispose();
+  }
+
+  /// The visible rows for a query: every option whose label contains it
+  /// (case-insensitively, all terms), with a heading each time the group
+  /// changes. Flattened so the list builder stays lazy.
+  List<_PickerEntry> _build(String query) {
+    final terms = query
+        .toLowerCase()
+        .split(' ')
+        .where((w) => w.isNotEmpty)
+        .toList();
+    final out = <_PickerEntry>[];
+    String? lastGroup;
+    for (var i = 0; i < widget.options.length; i++) {
+      final label = widget.options[i];
+      final lower = label.toLowerCase();
+      if (terms.any((w) => !lower.contains(w))) continue;
+      final g = widget.group?.call(label);
+      if (g != null && g != lastGroup) {
+        out.add(_PickerEntry.heading(g));
+        lastGroup = g;
+      }
+      out.add(_PickerEntry.option(i));
+    }
+    return out;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = ThemeScope.of(context).theme;
+    // A fixed box: the popup's own scroll view would otherwise give the
+    // list unbounded height, and an unbounded ListView cannot be lazy.
+    return SizedBox(
+      width: 300,
+      height: 380,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 2, 4, 6),
+            child: HouseTextField(
+              controller: _query,
+              width: 288,
+              autofocus: true,
+              hint: widget.hint,
+              onSubmitted: (_) {
+                // Enter takes the only match, which is what a search that
+                // has narrowed to one thing means.
+                final only = _entries.where((e) => e.optionIndex != null);
+                if (only.length == 1) widget.onPick(only.first.optionIndex);
+              },
+            ),
+          ),
+          Expanded(
+            child: _entries.isEmpty
+                ? Center(
+                    child: Text(
+                      'No matches',
+                      style: t.small.copyWith(color: t.textMuted),
+                    ),
+                  )
+                : ListView.builder(
+                    primary: false,
+                    itemCount: _entries.length,
+                    itemBuilder: (context, i) {
+                      final e = _entries[i];
+                      final heading = e.heading;
+                      if (heading != null) {
+                        return Padding(
+                          padding: EdgeInsets.fromLTRB(10, i == 0 ? 2 : 8, 10, 2),
+                          child: Text(
+                            heading,
+                            style: t.small.copyWith(color: t.textMuted),
+                          ),
+                        );
+                      }
+                      final idx = e.optionIndex!;
+                      return MenuRow(
+                        selected: idx == widget.value,
+                        onPressed: () => widget.onPick(idx),
+                        child: Text(
+                          widget.options[idx],
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _query.addListener(() {
+      setState(() => _entries = _build(_query.text));
+    });
+  }
+}
+
 /// A [BareDropdown] whose option list is built only when the menu opens.
 ///
 /// For pickers whose options are bridge reads (the Timeline's parent picker):

@@ -292,17 +292,17 @@ silently wrong. Pass the six domain floats through `LutParams`, or refuse
 non-default-domain cubes as a labelled no-op. The LUT caches also key by path
 alone - no mtime, no LRU bound (§4).
 
-**Lens flare follow-ups (K-256..K-261, [impl/lens-flare.md](impl/lens-flare.md))** — the
-shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261); still owed,
-each stable against the shipped parameters: **adaptive grid refinement** for
-extreme-defocus ghosts (a few process-lens prescriptions resolve one pupil cell to tens
-of pixels at low quality and show grid-aligned steps — subdividing cells whose screen
-area explodes fixes it properly); a **searchable Lens picker** (1299 dropdown entries
-want a type-to-filter browser); the **Lights source wiring** (the mode is in the
+**Lens flare follow-ups (K-256..K-262, [impl/lens-flare.md](impl/lens-flare.md))** — the
+shipped core is docs/08 §3.27 (FlareSim model + 1299-lens library, K-261; artefact and
+picker pass K-262); still owed, each stable against the shipped parameters: the
+**Lights source wiring** (the mode is in the
 dropdown and resolves as Manual until light layers can act as flare sources); aperture
 **dirt / scratches** overlays and an **image aperture** file parameter; **custom .lens
-file loading** (the parser already reads the standard format — only the file-picker
-plumbing is missing) and the **lens designer** (a window building a prescription element
+file loading** — *owner-requested, 2026-08-03*: import or point at a `.lens` file
+from disk and have it join the Lens picker. The parser already reads the standard
+FlareSim / PhotonsToPhotos format and the bake is file-driven, so what is missing is
+the file-picker plumbing, a project-relative path on the parameter (the LUT's `File`
+kind is the precedent) and a "Custom" group in the picker — and the **lens designer** (a window building a prescription element
 by element with a live lens diagram); an **Occlusion layer** reference fading the flare
 when the light is covered. The panel side owes the pair row's dropper to
 **Transform's px@comp pairs** (the pixel-writing pick exists since K-260 — the flare's

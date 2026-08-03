@@ -306,13 +306,29 @@ class EffectParamRowFrb extends StatelessWidget {
           final index = field0 < options.length ? field0.toInt() : 0;
           return SizedBox(
             width: effectCellWidth + 40,
-            child: BareDropdown<int>(
-              key: ValueKey<String>('fx-choice-$id-${param.id}'),
-              value: index,
-              options: [for (var i = 0; i < options.length; i++) i],
-              label: (i) => options[i],
-              onChanged: (i) => _set(BridgeEffectValue.choice(i)),
-            ),
+            // A long list (the Lens flare's 1299-lens library) gets the
+            // searchable, lazily-built picker: a plain dropdown builds
+            // every row eagerly and took the app down in layout (K-262).
+            child: options.length >= searchableOptionThreshold
+                ? BareSearchDropdown(
+                    key: ValueKey<String>('fx-choice-$id-${param.id}'),
+                    value: index,
+                    options: options,
+                    // "Maker · Model" labels group by their maker.
+                    group: (label) {
+                      final i = label.indexOf(' · ');
+                      return i > 0 ? label.substring(0, i) : null;
+                    },
+                    hint: 'Search ${param.label.toLowerCase()}',
+                    onChanged: (i) => _set(BridgeEffectValue.choice(i)),
+                  )
+                : BareDropdown<int>(
+                    key: ValueKey<String>('fx-choice-$id-${param.id}'),
+                    value: index,
+                    options: [for (var i = 0; i < options.length; i++) i],
+                    label: (i) => options[i],
+                    onChanged: (i) => _set(BridgeEffectValue.choice(i)),
+                  ),
           );
         }
         return Text('—', style: t.small);
