@@ -1,0 +1,54 @@
+---
+title: The toolbar
+description: Every tool, its shortcut, and whether it works yet.
+sidebar:
+  order: 1
+---
+
+import Shot from "../../../components/Shot.astro";
+
+The toolbar arms one tool at a time. Tools with several members open a flyout, and
+pressing the shortcut again steps through them.
+
+Shortcuts below are the defaults. Every one is rebindable.
+
+| Tool | Shortcut | Does |
+| --- | --- | --- |
+| **Selection** | `V` | Select and move layers. |
+| **Hand** | `H` | Pan the Viewer. |
+| **Zoom** | `Z` | Zoom the Viewer. |
+| **Rotation** | `W` | Rotate the selected layer. |
+| **Anchor point** | `Y` | Move the anchor point without moving the layer. |
+| **Razor** | `C` | Split a clip in a [Sequence layer](/use/sequence-layers/). |
+| **Shape** | `Q` | Rectangle, Rounded rectangle, Ellipse, Polygon, Star. |
+| **Pen** | `G` | Draw a bezier path. |
+| **Type** | `Ctrl+T` | Add [text](/use/text/). |
+| **Paint** | `Ctrl+B` | Brush, Clone stamp, Eraser. |
+| **Camera** | `Shift+C` | Orbit, Pan, Dolly the [camera](/use/camera/). |
+
+
+<Shot file="toolbar.png" caption="The toolbar. One tool is armed at a time; groups open a flyout." />
+
+## Shape and Pen: layer or mask?
+
+<Shot file="toolbar-flyout.png" caption="A shape group's flyout, with the five shape tools." />
+
+With **a layer selected**, these draw a [mask](/use/masks/) on it. With **nothing
+selected**, they make a new [shape layer](/use/shapes/).
+
+## Not built yet
+
+These appear in the strip but cannot be armed. They are shown rather than hidden, so
+the toolbar teaches the right shape of the application:
+
+- Vertical type
+- The Pen's editing siblings: Add vertex, Delete vertex, Convert vertex, Mask feather
+- Roto brush and Refine edge
+- The four Puppet pins
+
+A tool's tooltip names it, gives its current chord, and says if it is unbuilt.
+
+## Tool options
+
+The right-hand end of the strip carries options for the armed tool — fill and stroke
+for the shape tools, brush settings for paint, and so on.

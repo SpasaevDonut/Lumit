@@ -1,0 +1,76 @@
+---
+title: Timeline
+description: The ruler, the outline columns, the switches, and the lanes.
+sidebar:
+  order: 4
+---
+
+import Shot from "../../../components/Shot.astro";
+
+The Timeline is where layers meet time. It has two halves: the **outline** on the left
+and the **lanes** on the right.
+
+
+<Shot file="timeline.png" caption="The Timeline: outline on the left, lanes on the right." />
+
+## The ruler, above the lanes
+
+| Thing | What it is |
+| --- | --- |
+| **Work area** | The span that plays and exports. Drag its ends. |
+| **Markers ribbon** | Composition markers. |
+| **Layer markers** | Markers belonging to one layer, on its own row. |
+| **Beat markers** | Markers from audio onset detection. Not built yet. |
+| **Cache bar** | Which frames are cached, per tier. |
+
+## The outline columns
+
+<Shot file="timeline-outline.png" caption="The outline columns, left to right." />
+
+Left to right:
+
+1. **Visibility · audio · solo · lock · shy**
+2. **Twirl · label colour · layer number · name**
+3. **Collapse · effects bypass · motion blur · 3D**
+4. **Matte · blend mode**
+
+Visibility and audio change glyph when off — a closed eye, a muted speaker — rather
+than only dimming.
+
+## The switches
+
+| Switch | Does |
+| --- | --- |
+| **Visible** | Whether the layer draws. |
+| **Audible** | Whether its audio plays. |
+| **Solo** | Show only soloed layers. |
+| **Lock** | Refuse edits to the layer. |
+| **Shy** | Hide the row when the shy filter is on. Never changes what renders. |
+| **Quality** | Draft or full. |
+| **Motion blur** | Smear this layer along its own transform. |
+| **Adjustment** | Apply this layer's effects to everything below. |
+| **3D** | Let a [camera](/use/camera/) see this layer. |
+| **Collapse** | On a Precomp layer, render through rather than flatten first. |
+
+`Alt`-click a switch to apply it exclusively, the way solo behaves.
+
+## The lanes
+
+<Shot file="timeline-lanes.png" caption="A layer twirled open, showing its properties and their keyframes." />
+
+Each layer has a bar showing its extent. Drag the bar to move it, drag an end to trim.
+
+Twirl a layer open to reach its transform, masks, effects, and their keyframes.
+
+A [Sequence layer](/use/sequence-layers/) shows its clips on one row.
+
+## Snapping
+
+Dragging snaps to edit points, markers, the playhead, and the work area. There is no
+snapping switch; snapping is always available and is overridden by a modifier.
+
+## Related
+
+- [Layers](/use/layers/)
+- [Keyframes](/use/keyframes/)
+- [The graph editor](/panels/graph-editor/)

@@ -24,6 +24,7 @@ export default defineConfig({
       sidebar: [
         { label: "Start here", autogenerate: { directory: "start" } },
         { label: "Using Lumit", autogenerate: { directory: "use" } },
+        { label: "The panels", autogenerate: { directory: "panels" } },
         { label: "How Lumit works", autogenerate: { directory: "engine" } },
         { label: "Reference", autogenerate: { directory: "reference" } },
       ],

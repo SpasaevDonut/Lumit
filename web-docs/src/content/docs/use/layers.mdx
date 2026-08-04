@@ -5,6 +5,8 @@ sidebar:
   order: 3
 ---
 
+import Shot from "../../../components/Shot.astro";
+
 A composition holds an ordered stack of **layers**. Layers draw from the bottom up: the
 top layer composites over everything below it.
 
@@ -37,6 +39,8 @@ Drag a layer up or down to change what draws over what. Select several layers to
 an effect or a command to all of them at once.
 
 ## Switches
+
+<Shot file="layer-switches.png" caption="The switches on a layer's row." />
 
 Each layer carries switches in the timeline outline: visibility, lock, solo, shy, 3D,
 and motion blur among them.

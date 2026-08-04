@@ -1,0 +1,33 @@
+---
+title: Effect Controls
+description: The selected layer's effect parameters.
+sidebar:
+  order: 6
+---
+
+import Shot from "../../../components/Shot.astro";
+
+Effect Controls shows every effect on the selected layer, in stack order, with its
+parameters.
+
+| Thing | Does |
+| --- | --- |
+| **Parameter widgets** | Sliders, dials, colour pickers, dropdowns, point controls. |
+| **Stopwatch** | Start animating that parameter. |
+| **Drag to reorder** | Move an effect up or down the stack. |
+| **Preset save/load** | Store a configured effect and apply it again later. |
+
+Order matters: the stack runs top to bottom. See [Effects](/use/effects/).
+
+
+<Shot file="effect-controls.png" caption="Effect Controls, with two effects on one layer." />
+
+## The colour picker
+
+Colour parameters open a picker with a screen dropper, so you can sample a colour from
+anywhere in the application.
+
+## Related
+
+- [Effects](/use/effects/)
+- [Effects & Presets](/panels/effects-presets/)
