@@ -131,24 +131,55 @@ pub struct HeadlessRenderer {
     frame_texture_hits: u64,
     /// Bumped whenever the held set changes — see [`Self::frame_texture_version`].
     frame_texture_version: u64,
-    /// The Windows zero-copy Viewer target (K-177), held for the session and
-    /// re-created only when the comp's dimensions change. `None` until the first
-    /// `render_to_shared` call. Present only in the opt-in shared-texture build.
+    /// The Windows zero-copy Viewer targets (K-177): **one per size, kept and
+    /// reused**, most recently used last.
+    ///
+    /// This was a single texture re-created whenever the size changed, and that
+    /// is a handle churn the frontend cannot survive. Dart registers a texture
+    /// with the platform runner and identifies it by its handle, so a new handle
+    /// means a new registration and a round trip during which the outgoing
+    /// texture is still on screen. One size change is fine. The case that is not
+    /// is **alternation** — and creating a comp inside an existing project
+    /// produces exactly that, because renders for the outgoing comp are still in
+    /// flight while the new one starts, so present is called alternately at two
+    /// sizes and a re-created texture hands out a fresh handle every frame. The
+    /// registrations pile up, the compositor is asked to bind handles faster
+    /// than it can, and it dies with "Binding D3D surface failed". An empty
+    /// project has no outgoing comp, so no alternation and no crash — which is
+    /// exactly the difference the bug report drew.
+    ///
+    /// Held per size, alternation costs nothing after the first frame at each:
+    /// the same handle comes back, and Dart recognises it and does not
+    /// re-register at all. It also means a texture is never freed under a
+    /// compositor still drawing it, which is a second way the old shape could
+    /// fail and this one cannot.
+    ///
+    /// Bounded and least-recently-used, because sizes are unbounded in
+    /// principle: dragging the Viewer walks through a great many.
     #[cfg(all(windows, feature = "shared-texture"))]
-    shared: Option<lumit_gpu::shared::SharedTexture>,
-    /// The Linux zero-copy Viewer target (K-177), the DMA-BUF sibling of
-    /// [`Self::shared`]. Held for the session and re-created only when the comp's
-    /// dimensions change. `None` until the first `render_to_shared_dmabuf` call.
-    /// Present only in the opt-in shared-texture-linux build.
+    shared: Vec<lumit_gpu::shared::SharedTexture>,
+    /// The Linux DMA-BUF sibling of [`Self::shared`], same reasoning — one Dart
+    /// controller serves all three platforms.
     #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
-    shared_dmabuf: Option<lumit_gpu::shared_linux::SharedDmabuf>,
-    /// The macOS zero-copy Viewer target (K-195), the IOSurface sibling of
-    /// [`Self::shared`]. Held for the session and re-created only when the comp's
-    /// dimensions change. `None` until the first `render_to_shared` call.
-    /// Present only in the opt-in shared-texture-macos build.
+    shared_dmabuf: Vec<lumit_gpu::shared_linux::SharedDmabuf>,
+    /// The macOS IOSurface sibling of [`Self::shared`] (K-195).
     #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
-    shared_iosurface: Option<lumit_gpu::shared_metal::SharedIoSurface>,
+    shared_iosurface: Vec<lumit_gpu::shared_metal::SharedIoSurface>,
 }
+
+/// How many differently-sized Viewer targets to keep alive at once.
+///
+/// Enough that the sizes actually in play — the outgoing comp, the incoming
+/// one, and a resolution tier either side — all stay resident, so switching
+/// between them re-uses handles instead of minting them. Small enough that a
+/// slow drag through many sizes does not accumulate: each is roughly two
+/// textures' worth of video memory.
+#[cfg(any(
+    all(windows, feature = "shared-texture"),
+    all(target_os = "linux", feature = "shared-texture-linux"),
+    all(target_os = "macos", feature = "shared-texture-macos")
+))]
+const SHARED_TARGET_POOL: usize = 4;
 
 /// One frame's decoded per-layer pixels, kept alongside the decode plan that
 /// asked for them, so the next render can tell at a glance whether it needs new
@@ -455,11 +486,11 @@ impl HeadlessRenderer {
             frame_texture_version: 0,
             frame_texture_hits: 0,
             #[cfg(all(windows, feature = "shared-texture"))]
-            shared: None,
+            shared: Vec::new(),
             #[cfg(all(target_os = "linux", feature = "shared-texture-linux"))]
-            shared_dmabuf: None,
+            shared_dmabuf: Vec::new(),
             #[cfg(all(target_os = "macos", feature = "shared-texture-macos"))]
-            shared_iosurface: None,
+            shared_iosurface: Vec::new(),
         })
     }
 
@@ -1292,16 +1323,31 @@ impl HeadlessRenderer {
         // Re-create the shared texture when it is missing or the size changed
         // (a comp resize or a tier change) — a new handle is reported then,
         // which the bridge relays so Dart re-registers.
-        let needs_new = match self.shared.as_ref() {
-            Some(sh) => sh.width != aw || sh.height != ah,
-            None => true,
-        };
-        if needs_new {
-            self.shared = Some(lumit_gpu::shared::SharedTexture::new(&self.gpu, aw, ah)?);
+        // Reuse the target for this size when we already hold one — the same
+        // handle comes back, so Dart does not re-register and nothing has to be
+        // bound afresh. Only a size never seen (or long unused) mints one.
+        let found = self
+            .shared
+            .iter()
+            .position(|sh| sh.width == aw && sh.height == ah);
+        match found {
+            Some(i) => {
+                // Most recently used last, so the eviction below takes the
+                // size that has gone longest without a frame.
+                let sh = self.shared.remove(i);
+                self.shared.push(sh);
+            }
+            None => {
+                let made = lumit_gpu::shared::SharedTexture::new(&self.gpu, aw, ah)?;
+                self.shared.push(made);
+                while self.shared.len() > SHARED_TARGET_POOL {
+                    self.shared.remove(0);
+                }
+            }
         }
         let target = self
             .shared
-            .as_ref()
+            .last()
             .ok_or_else(|| "headless render: shared texture missing after create".to_string())?;
         target.present(&self.gpu, shown);
         Ok(SharedFrameInfo {
@@ -1352,18 +1398,28 @@ impl HeadlessRenderer {
         // Re-create the DMA-BUF texture when it is missing or the size changed
         // (a comp resize or a tier change) — a new fd is reported then, which
         // the bridge relays so Dart re-registers.
-        let needs_new = match self.shared_dmabuf.as_ref() {
-            Some(sh) => sh.width != aw || sh.height != ah,
-            None => true,
-        };
-        if needs_new {
-            self.shared_dmabuf = Some(lumit_gpu::shared_linux::SharedDmabuf::new(
-                &self.gpu, aw, ah,
-            )?);
+        // Per size and reused — see `shared` for why re-creating churns
+        // handles the frontend cannot keep up with.
+        let found = self
+            .shared_dmabuf
+            .iter()
+            .position(|sh| sh.width == aw && sh.height == ah);
+        match found {
+            Some(i) => {
+                let sh = self.shared_dmabuf.remove(i);
+                self.shared_dmabuf.push(sh);
+            }
+            None => {
+                let made = lumit_gpu::shared_linux::SharedDmabuf::new(&self.gpu, aw, ah)?;
+                self.shared_dmabuf.push(made);
+                while self.shared_dmabuf.len() > SHARED_TARGET_POOL {
+                    self.shared_dmabuf.remove(0);
+                }
+            }
         }
         let target = self
             .shared_dmabuf
-            .as_ref()
+            .last()
             .ok_or_else(|| "headless render: dmabuf texture missing after create".to_string())?;
         target.present(&self.gpu, shown);
         let info = target.info();
@@ -1420,18 +1476,27 @@ impl HeadlessRenderer {
         // Re-create the surface when it is missing or the size changed (a comp
         // resize or a tier change) — a new id is reported then, which the bridge
         // relays so Dart re-registers.
-        let needs_new = match self.shared_iosurface.as_ref() {
-            Some(sh) => sh.width != aw || sh.height != ah,
-            None => true,
-        };
-        if needs_new {
-            self.shared_iosurface = Some(lumit_gpu::shared_metal::SharedIoSurface::new(
-                &self.gpu, aw, ah,
-            )?);
+        // Per size and reused — see `shared`.
+        let found = self
+            .shared_iosurface
+            .iter()
+            .position(|sh| sh.width == aw && sh.height == ah);
+        match found {
+            Some(i) => {
+                let sh = self.shared_iosurface.remove(i);
+                self.shared_iosurface.push(sh);
+            }
+            None => {
+                let made = lumit_gpu::shared_metal::SharedIoSurface::new(&self.gpu, aw, ah)?;
+                self.shared_iosurface.push(made);
+                while self.shared_iosurface.len() > SHARED_TARGET_POOL {
+                    self.shared_iosurface.remove(0);
+                }
+            }
         }
         let target = self
             .shared_iosurface
-            .as_ref()
+            .last()
             .ok_or_else(|| "headless render: iosurface missing after create".to_string())?;
         target.present(&self.gpu, &prepared.texture);
         Ok(SharedFrameInfo {
@@ -1440,6 +1505,44 @@ impl HeadlessRenderer {
             height: ah,
             format: "rgba8888",
         })
+    }
+
+    /// Acquire (or reuse) the Viewer target for `w × h` and report its handle,
+    /// without rendering anything into it.
+    ///
+    /// Exists for the tests that pin the *handle churn* — how many distinct
+    /// handles a run of presents hands out — which is the thing that crashed
+    /// the compositor and is invisible to any assertion about pixels.
+    #[cfg(all(windows, feature = "shared-texture"))]
+    pub fn present_probe_size(&mut self, w: u32, h: u32) -> Result<u64, String> {
+        let found = self
+            .shared
+            .iter()
+            .position(|sh| sh.width == w && sh.height == h);
+        match found {
+            Some(i) => {
+                let sh = self.shared.remove(i);
+                self.shared.push(sh);
+            }
+            None => {
+                let made = lumit_gpu::shared::SharedTexture::new(&self.gpu, w, h)?;
+                self.shared.push(made);
+                while self.shared.len() > SHARED_TARGET_POOL {
+                    self.shared.remove(0);
+                }
+            }
+        }
+        self.shared
+            .last()
+            .map(lumit_gpu::shared::SharedTexture::handle)
+            .ok_or_else(|| "shared target missing after acquire".to_string())
+    }
+
+    /// How many differently-sized Viewer targets are being held.
+    #[cfg(all(windows, feature = "shared-texture"))]
+    #[must_use]
+    pub fn shared_target_count(&self) -> usize {
+        self.shared.len()
     }
 
     /// Rebuild the `ItemInfo` map from the document's footage, probing any item
