@@ -1,6 +1,7 @@
 # lumitlab.com
 
-Two Astro sites, both static, both deployed from this repository to Cloudflare Pages.
+Two Astro sites, both static, both deployed from this repository to Cloudflare
+Workers (static assets — the successor to Pages).
 
 | Directory   | Domain                | What it is                          |
 | ----------- | --------------------- | ----------------------------------- |
@@ -19,24 +20,29 @@ cd web && npm install && npm run dev      # http://localhost:4321
 The domain is already on Cloudflare, so Pages is the path of least resistance: it is
 free, has no bandwidth cap, and serves from Cloudflare's CDN.
 
-Create **two** Pages projects, both pointed at this repository:
+Each directory is its own Worker, with a `wrangler.jsonc` declaring `dist` as its
+static asset directory. There is no server code — Cloudflare serves the built files
+from the edge.
 
-| Setting            | `lumitlab.com` | `docs.lumitlab.com` |
-| ------------------ | -------------- | ------------------- |
-| Root directory     | `web`          | `web-docs`          |
-| Build command      | `npm run build`| `npm run build`     |
-| Output directory   | `dist`         | `dist`              |
-| Build watch path   | `web/*`        | `web-docs/*`        |
+| Setting            | `lumitlab.com`      | `docs.lumitlab.com` |
+| ------------------ | ------------------- | ------------------- |
+| Worker name        | `lumit`             | `lumit-docs`        |
+| Root directory     | `web`               | `web-docs`          |
+| Build command      | `npm run build`     | `npm run build`     |
+| Deploy command     | `npx wrangler deploy` | `npx wrangler deploy` |
+| Build watch path   | `web/*`             | `web-docs/*`        |
 
-Node is pinned by `.node-version` (22) in each directory — Pages defaults to an
-older Node than Astro 5 will build on, and that file is what stops it guessing.
-The build watch paths keep a change to one site from rebuilding the other, and keep
-engine commits from rebuilding either.
+The watch paths are **case-sensitive** — `Web/*` will silently never match and the
+Worker will simply stop building on push. Node is pinned by `.node-version` (22) in
+each directory, because the platform default is older than Astro 5 will build on.
 
-Then add the custom domain to each under **Custom domains**. Because the DNS is
-already in the same Cloudflare account, the records are created for you.
+The Worker name in `wrangler.jsonc` must match the Worker the dashboard created, or
+`wrangler deploy` makes a second one alongside it.
 
-Pushing to `main` deploys. Pull requests get preview URLs automatically.
+Then add the custom domain to each under **Domains**. Because the DNS is already in
+the same Cloudflare account, the records are created for you.
+
+Pushing to the production branch deploys; other branches get preview URLs.
 
 ## Where the downloads come from
 
